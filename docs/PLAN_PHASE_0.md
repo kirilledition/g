@@ -4,18 +4,19 @@ Before writing the core engine, we must establish a reproducible environment, st
 
 ## **1\. Project Structure**
 
-The repository will be structured to support Rust (src/), Python (python/), and reproducible dev-ops (scripts/ and Justfile).
+The repository uses Maturin's unified mixed-layout structure to support Rust (src/lib.rs) and Python (src/g/) side-by-side, coordinated by scripts/ and a Justfile.
 
 ├── data/                  \# .gitignore'd: Raw 1KG data and phenotypes  
 ├── scripts/               \# Standalone Python/Bash helper scripts  
 │   ├── fetch\_1kg.py       \# Downloads 1000 Genomes data  
 │   ├── simulate\_phenos.py \# Generates deterministic test phenotypes  
 │   └── benchmark.py       \# Runs baselines & generates hardware reports  
-├── src/                   \# Core Rust engine  
-├── python/                \# Python FFI wrappers  
+├── src/                   \# Unified Source Directory  
+│   ├── lib.rs             \# Rust PyO3 Extension Module  
+│   └── g/                 \# Python Package Code  
 ├── tests/                 \# Pytest suite testing against baselines  
 ├── Justfile               \# Task runner (e.g., \`just setup-data\`)  
-└── pyproject.toml         \# Maturin build and Python dependencies
+└── Cargo.toml             \# Rust dependencies
 
 ## **2\. Test Data Generation (just setup-data)**
 

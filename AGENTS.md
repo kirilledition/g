@@ -8,13 +8,12 @@ You are an AI coding assistant operating within a high-performance, mixed-langua
 * **Task Runner:** just. Always check the Justfile for available project-specific commands.  
 * **Linting & Formatting:** Ensure code passes before committing:  
   * Python: uv run ruff format ., uv run ruff check . \--fix, and uv run ty (type-checking).  
-  * Rust: cargo fmt and cargo clippy \--workspace \--all-targets \-- \-D warnings.
+  * Rust: cargo fmt and cargo clippy \--workspace \--all-targets \-- \-D warnings \-W clippy::pedantic.
 
 ## **Repository Structure**
 
 * pyproject.toml / Cargo.toml: Maturin mixed-layout configuration.  
-* python/: Phase 1 pure Python MVP codebase.  
-* src/: Phase 2+ Rust performance rewrites and FFI entry points.  
+* src/: Unified source directory containing both Rust FFI entry points (lib.rs) and Python package code (g/).  
 * tests/: Pytest suite for mathematical regressions and correctness.  
 * scripts/: Dev-ops and preparation scripts (fetch\_1kg.py, benchmark.py).  
 * data/: Local git-ignored directory for 1KG variants and simulated phenotypes. **Never commit files in this directory.**  
