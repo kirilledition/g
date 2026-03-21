@@ -7,6 +7,7 @@ The project follows a hybrid **Strangler Fig** architecture: a flexible Python f
 ## Documentation
 
 - [Roadmap & Architecture](docs/ROADMAP.md) — overarching vision, milestones, and delivery strategy.
+- [Vision & Guiding Principles](docs/VISION.md) — product intent, end-state, and strategic direction.
 - [Phase 0: Preparation & Baselines](docs/PLAN_PHASE_0.md) — reproducible data setup and benchmark baseline plan.
 - [Phase 1: Foundation & plink Parity](docs/PLAN_PHASE_1.md) — pure Python/JAX correctness milestone and parity plan.
 - [Development Style Guide](docs/STYLEGUIDE.md) — strict Python/Rust coding conventions.
