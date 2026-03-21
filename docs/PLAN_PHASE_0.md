@@ -16,6 +16,7 @@ The repository uses Maturin's unified mixed-layout structure to support Rust (sr
 │   └── g/                 \# Python Package Code  
 ├── tests/                 \# Pytest suite testing against baselines  
 ├── Justfile               \# Task runner (e.g., \`just setup-data\`)  
+├── pyproject.toml         \# Python packaging & Maturin config  
 └── Cargo.toml             \# Rust dependencies
 
 ## **2\. Test Data Generation (just setup-data)**

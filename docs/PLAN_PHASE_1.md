@@ -35,7 +35,7 @@ The Python package will be decoupled into strict modules within the unified src/
   * Fast matrix inversion and standard error calculation.  
 * **src/g/compute/logistic.py**:  
   * JAX-compiled Newton-Raphson solver for binary traits.  
-* **src/g/cli.py**:  
+* **src/g/__init__.py** (current CLI entry point implementing `g:main`; may later be refactored into `src/g/cli.py`):  
   * User interface mirroring plink arguments (e.g., \--bfile, \--pheno, \--covar).
 
 ## **4\. Execution Plan**

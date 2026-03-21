@@ -9,7 +9,7 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
       in {
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
@@ -31,7 +31,7 @@
           shellHook = ''
             export UV_PYTHON=python3.14
             export CUDA_PATH=${pkgs.cudaPackages.cudatoolkit}
-            export LD_LIBRARY_PATH=${pkgs.cudaPackages.cudatoolkit}/lib64:$LD_LIBRARY_PATH
+            export LD_LIBRARY_PATH=${pkgs.cudaPackages.cudatoolkit}/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
             echo "GWAS Engine dev shell ready (uv, Rust, plink2, regenie, CUDA toolkit)."
           '';
         };
