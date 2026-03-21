@@ -22,7 +22,7 @@ You are an AI coding assistant operating within a high-performance, mixed-langua
 
 ## **Coding Standards (Strictly Enforced)**
 
-**You must strictly adhere to the rules defined in styleguide.md.** Do not write code without reading it. Key highlights include:
+**You must strictly adhere to the rules defined in [styleguide](docs/STYLEGUIDE.md).** Do not write code without reading it. Key highlights include:
 
 * 100% strict type coverage.  
 * Full-word variable names only (no abbreviations or single-letter math variables).  
@@ -43,9 +43,7 @@ You are an AI coding assistant operating within a high-performance, mixed-langua
 
 * **Ask First Before:**  
   * Adding new dependencies.  
-  * Modifying core data ingestion logic (e.g., bed-reader integration).  
   * Changing mathematical formulations of the regression solvers.  
 * **Never Do This:**  
   * Commit credentials, API keys, or genomic data files.  
-  * Bypass the type-checker (\# type: ignore) without explicit permission and a detailed explanatory comment.  
-  * Use print() for production logging (use the logging library).
+  * Bypass the type-checker (\# type: ignore) without explicit permission and a detailed explanatory comment. 
