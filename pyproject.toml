@@ -20,6 +20,15 @@ python-source = "src"
 [tool.uv]
 cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }]
 
+[dependency-groups]
+dev = [
+    "gputil>=1.4.0",
+    "numpy>=2.4.3",
+    "pandas>=3.0.1",
+    "psutil>=7.2.2",
+    "py-cpuinfo>=9.0.0",
+]
+
 [build-system]
 requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
@@ -55,10 +64,13 @@ select = [
     "COM",  # enforce trailing comma rules
     "DTZ",  # require strict timezone manipulation with datetime
     "FBT",  # detect boolean traps
-    "T201", # print() in code
-    "DOC",  # pydocstyle
     "D",    # docstrings
 ]
 ignore = [
     "COM812", # enforce trailing comma rules
+    "D100",   # missing docstring in public module
+    "D103",   # missing docstring in public function
+    "T201",   # allow print() in scripts
+    "D200",   # one-line docstring should fit on one line
+    "PTH123", # open() instead of Path.open()
 ]
