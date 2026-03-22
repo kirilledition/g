@@ -102,6 +102,9 @@ uv run python scripts/evaluate_phase1.py
 - `docs/VISION.md` - project intent and product direction
 - `docs/PLAN_PHASE_0.md` - baseline/data-preparation plan
 - `docs/PLAN_PHASE_1.md` - Phase 1 correctness and parity plan
+- `docs/PLAN_PHASE_2.md` - master Phase 2 implementation plan
+- `docs/PLAN_PHASE_2_GPU.md` - detailed GPU acceleration plan
+- `docs/PLAN_PHASE_2_RUST.md` - detailed Rust integration plan
 - `docs/PHASE1_STATUS.md` - tracked end-of-Phase-1 benchmark/parity snapshot
 - `docs/STYLEGUIDE.md` - coding rules
 - `AGENTS.md` - repository-specific agent instructions
