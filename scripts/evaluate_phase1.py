@@ -7,7 +7,6 @@ import json
 import subprocess
 import time
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -305,7 +304,7 @@ def main() -> None:
         linear_parity=summarize_linear_parity(baseline_paths, phase1_linear_frame),
         logistic_parity=summarize_logistic_parity(baseline_paths, phase1_logistic_frame),
     )
-    report_path = Path("data") / "phase1_evaluation_report.json"
+    report_path = baseline_paths.data_directory / "phase1_evaluation_report.json"
     report_path.write_text(f"{json.dumps(asdict(report), indent=2)}\n")
     print(report_path)
 

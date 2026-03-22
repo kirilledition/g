@@ -65,6 +65,15 @@ class LinearAssociationChunkResult(NamedTuple):
     valid_mask: jax.Array
 
 
+class LinearAssociationState(NamedTuple):
+    """Precomputed covariate-only state for linear association chunks."""
+
+    covariate_matrix: jax.Array
+    covariate_crossproduct_inverse: jax.Array
+    phenotype_residual: jax.Array
+    phenotype_residual_sum_squares: jax.Array
+
+
 class LogisticAssociationChunkResult(NamedTuple):
     """Association outputs for a logistic-regression chunk."""
 
@@ -75,3 +84,11 @@ class LogisticAssociationChunkResult(NamedTuple):
     converged_mask: jax.Array
     valid_mask: jax.Array
     iteration_count: jax.Array
+
+
+class LogisticAssociationEvaluation(NamedTuple):
+    """Logistic association result and per-variant summary values."""
+
+    logistic_result: LogisticAssociationChunkResult
+    allele_one_frequency: jax.Array
+    observation_count: jax.Array

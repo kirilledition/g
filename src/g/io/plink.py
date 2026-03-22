@@ -112,11 +112,7 @@ def iter_genotype_chunks(
 
     """
     variant_table = load_variant_table(bed_prefix)
-    total_variant_count = (
-        variant_table.height
-        if variant_limit is None
-        else min(variant_limit, variant_table.height)
-    )
+    total_variant_count = variant_table.height if variant_limit is None else min(variant_limit, variant_table.height)
     bed_path = bed_prefix.with_suffix(".bed")
     sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
     chromosome_values = variant_table.get_column("chromosome").cast(pl.String).to_numpy()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from g.engine import run_linear_association, run_logistic_association
+from g.engine import iter_linear_output_frames, iter_logistic_output_frames, write_frame_iterator_to_tsv
 
 
 def parse_covariate_names(raw_covariate_names: str | None) -> tuple[str, ...] | None:
@@ -40,7 +40,7 @@ def main() -> None:
     covariate_names = parse_covariate_names(arguments.covar_names)
 
     if arguments.glm == "linear":
-        result_frame = run_linear_association(
+        frame_iterator = iter_linear_output_frames(
             bed_prefix=arguments.bfile,
             phenotype_path=arguments.pheno,
             phenotype_name=arguments.pheno_name,
@@ -51,7 +51,7 @@ def main() -> None:
         )
         output_path = arguments.out.with_suffix(".linear.tsv")
     else:
-        result_frame = run_logistic_association(
+        frame_iterator = iter_logistic_output_frames(
             bed_prefix=arguments.bfile,
             phenotype_path=arguments.pheno,
             phenotype_name=arguments.pheno_name,
@@ -64,4 +64,4 @@ def main() -> None:
         )
         output_path = arguments.out.with_suffix(".logistic.tsv")
 
-    result_frame.write_csv(output_path, separator="\t")
+    write_frame_iterator_to_tsv(frame_iterator, output_path)

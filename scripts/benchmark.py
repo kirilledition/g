@@ -176,7 +176,7 @@ def run_command(command_name: str, command_arguments: list[str], output_prefix: 
 
 def build_baseline_paths() -> BaselinePaths:
     """Build the standard Phase 0 file paths."""
-    data_directory = Path("data")
+    data_directory = Path(os.environ.get("GWAS_ENGINE_DATA_DIR", "data"))
     baseline_directory = data_directory / "baselines"
     bed_prefix = data_directory / "1kg_chr22_full"
     return BaselinePaths(

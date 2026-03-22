@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIRECTORY = REPOSITORY_ROOT / "data"
+DATA_DIRECTORY = Path(os.environ.get("GWAS_ENGINE_DATA_DIR", str(REPOSITORY_ROOT / "data")))
 
 
 def load_module(module_name: str, relative_path: str) -> ModuleType:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -19,7 +20,7 @@ from g.io.tabular import load_aligned_sample_data
 from g.models import GenotypeChunk, VariantMetadata
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIRECTORY = REPOSITORY_ROOT / "data"
+DATA_DIRECTORY = Path(os.environ.get("GWAS_ENGINE_DATA_DIR", str(REPOSITORY_ROOT / "data")))
 BED_PREFIX = DATA_DIRECTORY / "1kg_chr22_full"
 CONTINUOUS_BASELINE_PATH = DATA_DIRECTORY / "baselines" / "plink_cont.phenotype_continuous.glm.linear"
 BINARY_BASELINE_PATH = DATA_DIRECTORY / "baselines" / "plink_bin.phenotype_binary.glm.logistic.hybrid"
