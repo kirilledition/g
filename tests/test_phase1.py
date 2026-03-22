@@ -3,14 +3,20 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import jax.numpy as jnp
 import numpy as np
 import polars as pl
 import pytest
 
 from g.cli import main as cli_main
-from g.engine import run_linear_association, run_logistic_association
+from g.engine import (
+    compute_logistic_association_with_missing_exclusion,
+    run_linear_association,
+    run_logistic_association,
+)
 from g.io.plink import iter_genotype_chunks
 from g.io.tabular import load_aligned_sample_data
+from g.models import GenotypeChunk, VariantMetadata
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIRECTORY = REPOSITORY_ROOT / "data"
@@ -84,6 +90,59 @@ def test_genotype_chunk_reader_matches_expected_metadata() -> None:
     ]
     assert first_chunk.genotypes.shape == (2504, 8)
     assert math.isclose(float(np.asarray(first_chunk.allele_one_frequency)[0]), 0.00638978, rel_tol=0.0, abs_tol=1e-6)
+
+
+def test_logistic_missing_rows_are_excluded_per_variant() -> None:
+    """Ensure logistic regression excludes missing genotype rows per variant."""
+    covariate_matrix = jnp.asarray(
+        [
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+        ]
+    )
+    phenotype_vector = jnp.asarray([0.0, 1.0, 0.0, 1.0])
+    genotype_chunk = GenotypeChunk(
+        genotypes=jnp.asarray(
+            [
+                [0.0, 0.0],
+                [1.0, 1.0],
+                [2.0, 1.0],
+                [1.0, 2.0],
+            ]
+        ),
+        missing_mask=jnp.asarray(
+            [
+                [False, False],
+                [False, False],
+                [True, False],
+                [False, False],
+            ]
+        ),
+        metadata=VariantMetadata(
+            chromosome=np.asarray(["1", "1"]),
+            variant_identifiers=np.asarray(["variant_one", "variant_two"]),
+            position=np.asarray([1, 2]),
+            allele_one=np.asarray(["A", "C"]),
+            allele_two=np.asarray(["G", "T"]),
+        ),
+        allele_one_frequency=jnp.asarray([0.0, 0.0]),
+        observation_count=jnp.asarray([4, 4]),
+    )
+
+    logistic_result, allele_frequency, observation_count = compute_logistic_association_with_missing_exclusion(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        genotype_chunk=genotype_chunk,
+        covariate_only_coefficients=jnp.asarray([0.0, 0.0]),
+        max_iterations=50,
+        tolerance=1.0e-8,
+    )
+
+    assert np.asarray(logistic_result.beta).shape == (2,)
+    np.testing.assert_array_equal(observation_count, np.asarray([3, 4]))
+    np.testing.assert_allclose(allele_frequency, np.asarray([1.0 / 3.0, 0.5]), atol=1e-8)
 
 
 def test_linear_parity_matches_plink_baseline_subset() -> None:

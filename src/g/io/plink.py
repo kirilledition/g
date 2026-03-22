@@ -79,19 +79,25 @@ def iter_genotype_chunks(
 
         for variant_start in range(0, total_variant_count, chunk_size):
             variant_stop = min(total_variant_count, variant_start + chunk_size)
-            genotype_matrix = np.asarray(
-                bed_handle.read(index=np.s_[sample_indices, variant_start:variant_stop], dtype=np.float64),
-                dtype=np.float64,
+            genotype_matrix = jnp.asarray(
+                bed_handle.read(
+                    index=np.s_[sample_indices, variant_start:variant_stop],
+                    dtype=np.float64,
+                    order="C",
+                )
             )
-            column_means = np.nanmean(genotype_matrix, axis=0)
-            sanitized_column_means = np.where(np.isnan(column_means), 0.0, column_means)
-            imputed_matrix = np.where(np.isnan(genotype_matrix), sanitized_column_means[None, :], genotype_matrix)
+            missing_mask = jnp.isnan(genotype_matrix)
+            observed_genotype_total = jnp.where(missing_mask, 0.0, genotype_matrix).sum(axis=0)
+            observation_count = jnp.sum(~missing_mask, axis=0, dtype=jnp.int64)
+            column_means = observed_genotype_total / jnp.maximum(observation_count, 1)
+            sanitized_column_means = jnp.where(observation_count > 0, column_means, 0.0)
+            imputed_matrix = jnp.where(missing_mask, sanitized_column_means[None, :], genotype_matrix)
             allele_one_frequency = sanitized_column_means / 2.0
-            observation_count = np.full((variant_stop - variant_start,), imputed_matrix.shape[0], dtype=np.int64)
             metadata_table = variant_table.slice(variant_start, variant_stop - variant_start)
 
             yield GenotypeChunk(
                 genotypes=jnp.asarray(imputed_matrix),
+                missing_mask=jnp.asarray(missing_mask),
                 metadata=VariantMetadata(
                     chromosome=metadata_table.get_column("chromosome").cast(pl.String).to_numpy(),
                     variant_identifiers=metadata_table.get_column("variant_identifier").cast(pl.String).to_numpy(),

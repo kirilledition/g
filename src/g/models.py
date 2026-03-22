@@ -49,6 +49,7 @@ class GenotypeChunk(NamedTuple):
     """Genotype matrix and metadata for a chunk of variants."""
 
     genotypes: jax.Array
+    missing_mask: jax.Array
     metadata: VariantMetadata
     allele_one_frequency: jax.Array
     observation_count: jax.Array

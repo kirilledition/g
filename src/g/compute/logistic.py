@@ -31,6 +31,7 @@ class LogisticState(NamedTuple):
     coefficients: jax.Array
     converged_mask: jax.Array
     iteration_count: jax.Array
+    last_information_matrix: jax.Array
 
 
 def compute_information_matrix(design_matrix: jax.Array, weights: jax.Array) -> jax.Array:
@@ -58,8 +59,6 @@ def fit_covariate_only_logistic_regression(
         Covariate-only coefficient estimates.
 
     """
-    covariate_matrix = covariate_matrix.astype(jnp.float32)
-    phenotype_vector = phenotype_vector.astype(jnp.float32)
     coefficient_count = covariate_matrix.shape[1]
     initial_coefficients = jnp.zeros((coefficient_count,), dtype=covariate_matrix.dtype)
     iteration_limit = jnp.minimum(jnp.int32(max_iterations), jnp.int32(PLINK_UNFINISHED_CHECK_START))
@@ -75,7 +74,7 @@ def fit_covariate_only_logistic_regression(
         score = covariate_matrix.T @ (mu - phenotype_vector)
         information_matrix = covariate_matrix.T @ (covariate_matrix * weights[:, None])
         step = jnp.linalg.solve(information_matrix, score)
-        return jnp.sum(jnp.abs(step)) < PLINK_DELTA_TOLERANCE
+        return jnp.sum(jnp.abs(step)) < tolerance
 
     def body_function(state: tuple[jax.Array, int]) -> tuple[jax.Array, int]:
         coefficients, iteration_count = state
@@ -88,7 +87,7 @@ def fit_covariate_only_logistic_regression(
         return coefficients - step, iteration_count + 1
 
     fitted_coefficients, _ = jax.lax.while_loop(condition_function, body_function, (initial_coefficients, 0))
-    return fitted_coefficients.astype(jnp.float64)
+    return fitted_coefficients
 
 
 @jax.jit
@@ -114,11 +113,6 @@ def compute_logistic_association_chunk(
         Chunk-level logistic association statistics.
 
     """
-    covariate_matrix = covariate_matrix.astype(jnp.float32)
-    phenotype_vector = phenotype_vector.astype(jnp.float32)
-    genotype_matrix = genotype_matrix.astype(jnp.float32)
-    covariate_only_coefficients = covariate_only_coefficients.astype(jnp.float32)
-
     sample_count = covariate_matrix.shape[0]
     variant_count = genotype_matrix.shape[1]
     covariate_count = covariate_matrix.shape[1]
@@ -134,6 +128,10 @@ def compute_logistic_association_chunk(
         ],
         axis=1,
     )
+    initial_information_matrix = jnp.broadcast_to(
+        jnp.eye(covariate_count + 1, dtype=covariate_matrix.dtype)[None, :, :],
+        (variant_count, covariate_count + 1, covariate_count + 1),
+    )
 
     def condition_function(state: LogisticState) -> jax.Array:
         return (jnp.max(state.iteration_count) < iteration_limit) & jnp.any(~state.converged_mask)
@@ -147,9 +145,19 @@ def compute_logistic_association_chunk(
         step = jnp.linalg.solve(information_matrix, score[:, :, None]).squeeze(-1)
         step = jnp.where(state.converged_mask[:, None], 0.0, step)
         updated_coefficients = state.coefficients - step
-        updated_converged_mask = state.converged_mask | (jnp.sum(jnp.abs(step), axis=1) < PLINK_DELTA_TOLERANCE)
+        updated_converged_mask = state.converged_mask | (jnp.sum(jnp.abs(step), axis=1) < tolerance)
         updated_iteration_count = state.iteration_count + (~state.converged_mask).astype(jnp.int32)
-        return LogisticState(updated_coefficients, updated_converged_mask, updated_iteration_count)
+        updated_information_matrix = jnp.where(
+            state.converged_mask[:, None, None],
+            state.last_information_matrix,
+            information_matrix,
+        )
+        return LogisticState(
+            updated_coefficients,
+            updated_converged_mask,
+            updated_iteration_count,
+            updated_information_matrix,
+        )
 
     final_state = jax.lax.while_loop(
         condition_function,
@@ -158,21 +166,18 @@ def compute_logistic_association_chunk(
             coefficients=initial_coefficients,
             converged_mask=jnp.zeros((variant_count,), dtype=bool),
             iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
+            last_information_matrix=initial_information_matrix,
         ),
     )
 
-    eta = jnp.einsum("mnd,md->mn", design_matrix, final_state.coefficients)
-    mu = jnp.clip(jax.nn.sigmoid(eta), MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
-    weights = jnp.clip(mu * (1.0 - mu), MINIMUM_WEIGHT)
-    information_matrix = compute_information_matrix(design_matrix, weights)
     identity_matrix = jnp.broadcast_to(
         jnp.eye(
             design_matrix.shape[2],
             dtype=design_matrix.dtype,
         ),
-        information_matrix.shape,
+        final_state.last_information_matrix.shape,
     )
-    covariance_matrix = jnp.linalg.solve(information_matrix, identity_matrix)
+    covariance_matrix = jnp.linalg.solve(final_state.last_information_matrix, identity_matrix)
     beta = final_state.coefficients[:, -1]
     standard_error = jnp.sqrt(covariance_matrix[:, -1, -1])
     test_statistic = beta / standard_error
@@ -181,10 +186,10 @@ def compute_logistic_association_chunk(
     converged_mask = final_state.converged_mask
 
     return LogisticAssociationChunkResult(
-        beta=beta.astype(jnp.float64),
-        standard_error=standard_error.astype(jnp.float64),
-        test_statistic=test_statistic.astype(jnp.float64),
-        p_value=p_value.astype(jnp.float64),
+        beta=beta,
+        standard_error=standard_error,
+        test_statistic=test_statistic,
+        p_value=p_value,
         converged_mask=converged_mask,
         valid_mask=valid_mask,
         iteration_count=final_state.iteration_count,
