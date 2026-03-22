@@ -8,6 +8,8 @@ import jax.numpy as jnp
 from g import jax_setup  # noqa: F401
 from g.models import LinearAssociationChunkResult, LinearAssociationState
 
+MISSING_P_VALUE = jnp.asarray(jnp.nan)
+
 
 def prepare_linear_association_state(
     covariate_matrix: jax.Array,
@@ -72,7 +74,7 @@ def compute_linear_association_chunk(
     test_statistic = beta / standard_error
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
 
-    placeholder_p_values = jnp.full(beta.shape, jnp.nan, dtype=beta.dtype)
+    placeholder_p_values = jnp.broadcast_to(MISSING_P_VALUE.astype(beta.dtype), beta.shape)
     return LinearAssociationChunkResult(
         beta=beta,
         standard_error=standard_error,

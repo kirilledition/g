@@ -6,7 +6,6 @@ from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jax.scipy.stats import norm
 
 from g import jax_setup  # noqa: F401
@@ -15,8 +14,16 @@ from g.models import LogisticAssociationChunkResult
 MINIMUM_PROBABILITY = 1.0e-12
 MINIMUM_WEIGHT = 1.0e-12
 INITIAL_RESPONSE_SCALE = 4.863891244002886
+MISSING_PROBABILITY_FILL = 0.5
+LOG_LIKELIHOOD_CONVERGENCE_OFFSET = 0.05
+BINARY_CASE_THRESHOLD = 0.5
+ALLELE_COUNT_MULTIPLIER = 2.0
+FIRTH_GRADIENT_TOLERANCE = 1.0e-4
+FIRTH_COEFFICIENT_TOLERANCE = 1.0e-4
+FIRTH_LIKELIHOOD_TOLERANCE = 1.0e-4
+FIRTH_MAXIMUM_STEP_SIZE = 5.0
+FIRTH_TOLERANCE_FLOOR = 1.0e-12
 MAX_ITERATION_COUNT = 100
-MAX_STEP_HALVING_COUNT = 12
 LOGISTIC_METHOD_STANDARD = 0
 LOGISTIC_METHOD_FIRTH = 1
 LOGISTIC_ERROR_NONE = 0
@@ -61,15 +68,6 @@ class FirthState(NamedTuple):
     failed: jax.Array
     iteration_count: jax.Array
     previous_penalized_log_likelihood: jax.Array
-
-
-class StepHalvingState(NamedTuple):
-    """State container for Firth step halving."""
-
-    candidate_coefficients: jax.Array
-    candidate_penalized_log_likelihood: jax.Array
-    accepted: jax.Array
-    step_scale: jax.Array
 
 
 class InformationComponents(NamedTuple):
@@ -163,7 +161,7 @@ def initialize_full_model_coefficients(
     observation_mask: jax.Array,
 ) -> jax.Array:
     """Initialize full-model coefficients with pseudo-response regression."""
-    pseudo_response = INITIAL_RESPONSE_SCALE * (phenotype_matrix - 0.5)
+    pseudo_response = INITIAL_RESPONSE_SCALE * (phenotype_matrix - BINARY_CASE_THRESHOLD)
     masked_pseudo_response = jnp.where(observation_mask, pseudo_response, 0.0)
     observation_mask_float = observation_mask.astype(covariate_matrix.dtype)
     covariate_information_matrix = jnp.einsum(
@@ -225,7 +223,7 @@ def compute_firth_penalized_log_likelihood(
     information_matrix: jax.Array,
 ) -> jax.Array:
     """Compute the Firth-penalized log-likelihood for one variant."""
-    masked_probability_vector = jnp.where(observation_mask, probability_vector, 0.5)
+    masked_probability_vector = jnp.where(observation_mask, probability_vector, MISSING_PROBABILITY_FILL)
     masked_phenotype_vector = jnp.where(observation_mask, phenotype_vector, 0.0)
     log_likelihood = jnp.sum(
         masked_phenotype_vector * jnp.log(masked_probability_vector)
@@ -233,34 +231,8 @@ def compute_firth_penalized_log_likelihood(
         * jnp.log1p(-masked_probability_vector),
     )
     sign, log_absolute_determinant = jnp.linalg.slogdet(information_matrix)
-    penalty_term = jnp.where(sign > 0.0, 0.5 * log_absolute_determinant, -jnp.inf)
+    penalty_term = jnp.where(sign > 0.0, BINARY_CASE_THRESHOLD * log_absolute_determinant, -jnp.inf)
     return log_likelihood + penalty_term
-
-
-def compute_firth_adjusted_score(
-    covariate_matrix: jax.Array,
-    phenotype_vector: jax.Array,
-    genotype_vector: jax.Array,
-    probability_vector: jax.Array,
-    observation_mask: jax.Array,
-    information_matrix: jax.Array,
-) -> jax.Array:
-    """Compute the Firth-adjusted score vector for one variant."""
-    full_design_matrix = jnp.concatenate([covariate_matrix, genotype_vector[:, None]], axis=1)
-    effective_weights = jnp.where(
-        observation_mask,
-        jnp.clip(probability_vector * (1.0 - probability_vector), MINIMUM_WEIGHT),
-        0.0,
-    )
-    weighted_design_matrix = full_design_matrix * effective_weights[:, None]
-    information_solution = jnp.linalg.solve(information_matrix, weighted_design_matrix.T)
-    leverage_vector = jnp.sum(full_design_matrix.T * information_solution, axis=0)
-    adjusted_residual = jnp.where(
-        observation_mask,
-        phenotype_vector - probability_vector + leverage_vector * (0.5 - probability_vector),
-        0.0,
-    )
-    return full_design_matrix.T @ adjusted_residual
 
 
 def compute_firth_statistics(
@@ -327,7 +299,7 @@ def fit_covariate_only_logistic_regression(
     observation_mask = jnp.ones((1, phenotype_vector.shape[0]), dtype=bool)
     initial_coefficients = jnp.linalg.solve(
         covariate_matrix.T @ covariate_matrix,
-        covariate_matrix.T @ (INITIAL_RESPONSE_SCALE * (phenotype_vector - 0.5)),
+        covariate_matrix.T @ (INITIAL_RESPONSE_SCALE * (phenotype_vector - BINARY_CASE_THRESHOLD)),
     )
     return fit_masked_covariate_only_logistic_regression(
         covariate_matrix=covariate_matrix,
@@ -370,7 +342,11 @@ def fit_masked_covariate_only_logistic_regression(
     initial_probability_matrix = compute_covariate_only_probability_matrix(
         covariate_matrix, broadcast_initial_coefficients
     )
-    masked_initial_probability_matrix = jnp.where(observation_mask, initial_probability_matrix, 0.5)
+    masked_initial_probability_matrix = jnp.where(
+        observation_mask,
+        initial_probability_matrix,
+        MISSING_PROBABILITY_FILL,
+    )
     initial_log_likelihood = compute_log_likelihood(masked_initial_probability_matrix, phenotype_matrix)
 
     def condition_function(state: CovariateOnlyLogisticState) -> jax.Array:
@@ -389,12 +365,19 @@ def fit_masked_covariate_only_logistic_regression(
         step = jnp.linalg.solve(information_matrix, score[:, :, None]).squeeze(-1)
         step = jnp.where(state.converged_mask[:, None], 0.0, step)
         updated_coefficients = state.coefficients - step
-        updated_probability_matrix = compute_covariate_only_probability_matrix(covariate_matrix, updated_coefficients)
-        masked_updated_probability_matrix = jnp.where(observation_mask, updated_probability_matrix, 0.5)
+        updated_probability_matrix = compute_covariate_only_probability_matrix(
+            covariate_matrix,
+            updated_coefficients,
+        )
+        masked_updated_probability_matrix = jnp.where(
+            observation_mask,
+            updated_probability_matrix,
+            MISSING_PROBABILITY_FILL,
+        )
         updated_log_likelihood = compute_log_likelihood(masked_updated_probability_matrix, phenotype_matrix)
         updated_converged_mask = state.converged_mask | (
             jnp.abs(updated_log_likelihood - state.previous_log_likelihood)
-            < (tolerance * (0.05 + jnp.abs(updated_log_likelihood)))
+            < (tolerance * (LOG_LIKELIHOOD_CONVERGENCE_OFFSET + jnp.abs(updated_log_likelihood)))
         )
         updated_iteration_count = state.iteration_count + (~state.converged_mask).astype(jnp.int32)
         return CovariateOnlyLogisticState(
@@ -425,14 +408,14 @@ def compute_firth_pre_dispatch_mask(
 ) -> jax.Array:
     """Identify variants with obvious allele-count separation before logistic IRLS."""
     phenotype_matrix = jnp.broadcast_to(phenotype_vector[None, :], observation_mask.shape)
-    case_observation_mask = observation_mask & (phenotype_matrix > 0.5)
-    control_observation_mask = observation_mask & (phenotype_matrix < 0.5)
+    case_observation_mask = observation_mask & (phenotype_matrix > BINARY_CASE_THRESHOLD)
+    control_observation_mask = observation_mask & (phenotype_matrix < BINARY_CASE_THRESHOLD)
     case_sample_count = jnp.sum(case_observation_mask, axis=1, dtype=genotype_matrix_by_variant.dtype)
     control_sample_count = jnp.sum(control_observation_mask, axis=1, dtype=genotype_matrix_by_variant.dtype)
     case_allele_count = jnp.sum(jnp.where(case_observation_mask, genotype_matrix_by_variant, 0.0), axis=1)
     control_allele_count = jnp.sum(jnp.where(control_observation_mask, genotype_matrix_by_variant, 0.0), axis=1)
-    case_reference_allele_count = 2.0 * case_sample_count - case_allele_count
-    control_reference_allele_count = 2.0 * control_sample_count - control_allele_count
+    case_reference_allele_count = ALLELE_COUNT_MULTIPLIER * case_sample_count - case_allele_count
+    control_reference_allele_count = ALLELE_COUNT_MULTIPLIER * control_sample_count - control_allele_count
     return (
         (case_allele_count <= 0.0)
         | (control_allele_count <= 0.0)
@@ -465,7 +448,11 @@ def compute_standard_logistic_association_chunk_with_mask(
     initial_probability_matrix = compute_probability_matrix(
         covariate_matrix, genotype_matrix_by_variant, initial_coefficients
     )
-    masked_initial_probability_matrix = jnp.where(observation_mask, initial_probability_matrix, 0.5)
+    masked_initial_probability_matrix = jnp.where(
+        observation_mask,
+        initial_probability_matrix,
+        MISSING_PROBABILITY_FILL,
+    )
     initial_log_likelihood = compute_log_likelihood(masked_initial_probability_matrix, phenotype_matrix)
     initial_covariate_information_matrix = jnp.broadcast_to(
         jnp.eye(covariate_count, dtype=covariate_matrix.dtype)[None, :, :],
@@ -505,11 +492,15 @@ def compute_standard_logistic_association_chunk_with_mask(
         updated_probability_matrix = compute_probability_matrix(
             covariate_matrix, genotype_matrix_by_variant, updated_coefficients
         )
-        masked_updated_probability_matrix = jnp.where(observation_mask, updated_probability_matrix, 0.5)
+        masked_updated_probability_matrix = jnp.where(
+            observation_mask,
+            updated_probability_matrix,
+            MISSING_PROBABILITY_FILL,
+        )
         updated_log_likelihood = compute_log_likelihood(masked_updated_probability_matrix, phenotype_matrix)
         updated_converged_mask = state.converged_mask | (
             jnp.abs(updated_log_likelihood - state.previous_log_likelihood)
-            < (tolerance * (0.05 + jnp.abs(updated_log_likelihood)))
+            < (tolerance * (LOG_LIKELIHOOD_CONVERGENCE_OFFSET + jnp.abs(updated_log_likelihood)))
         )
         updated_iteration_count = state.iteration_count + (~state.converged_mask).astype(jnp.int32)
         updated_covariate_information_matrix = jnp.where(
@@ -607,10 +598,10 @@ def fit_single_variant_firth_logistic_regression(
 ) -> FirthVariantResult:
     """Fit Firth logistic regression for one variant."""
     iteration_limit = jnp.minimum(jnp.int32(max_iterations), jnp.int32(MAX_ITERATION_COUNT))
-    gradient_tolerance = jnp.asarray(1.0e-4, dtype=covariate_matrix.dtype)
-    coefficient_tolerance = jnp.asarray(1.0e-4, dtype=covariate_matrix.dtype)
-    likelihood_tolerance = jnp.asarray(1.0e-4, dtype=covariate_matrix.dtype)
-    maximum_step_size = jnp.asarray(5.0, dtype=covariate_matrix.dtype)
+    gradient_tolerance = jnp.asarray(FIRTH_GRADIENT_TOLERANCE, dtype=covariate_matrix.dtype)
+    coefficient_tolerance = jnp.asarray(FIRTH_COEFFICIENT_TOLERANCE, dtype=covariate_matrix.dtype)
+    likelihood_tolerance = jnp.asarray(FIRTH_LIKELIHOOD_TOLERANCE, dtype=covariate_matrix.dtype)
+    maximum_step_size = jnp.asarray(FIRTH_MAXIMUM_STEP_SIZE, dtype=covariate_matrix.dtype)
 
     def compute_probability_vector(coefficients: jax.Array) -> jax.Array:
         covariate_coefficients = coefficients[:-1]
@@ -638,7 +629,8 @@ def fit_single_variant_firth_logistic_regression(
         leverage_vector = variance_vector * jnp.sum(projected_design_matrix * full_design_matrix, axis=1)
         adjusted_weight_vector = jnp.where(
             observation_mask,
-            (phenotype_vector - probability_vector) + leverage_vector * (0.5 - probability_vector),
+            (phenotype_vector - probability_vector)
+            + leverage_vector * (BINARY_CASE_THRESHOLD - probability_vector),
             0.0,
         )
         second_weight_vector = jnp.where(observation_mask, (1.0 + leverage_vector) * variance_vector, 0.0)
@@ -679,7 +671,7 @@ def fit_single_variant_firth_logistic_regression(
         second_covariance_matrix = compute_covariance_matrix_from_weights(second_weight_vector)
         coefficient_step = second_covariance_matrix @ adjusted_score
         maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
-        step_scale = jnp.minimum(1.0, maximum_step_size / jnp.maximum(maximum_coefficient_step, 1.0e-12))
+        step_scale = jnp.minimum(1.0, maximum_step_size / jnp.maximum(maximum_coefficient_step, FIRTH_TOLERANCE_FLOOR))
         scaled_coefficient_step = coefficient_step * step_scale
         updated_coefficients = state.coefficients + scaled_coefficient_step
         updated_probability_vector = compute_probability_vector(updated_coefficients)
@@ -754,22 +746,22 @@ compute_firth_association_chunk_variantwise = jax.jit(
 )
 
 
-def transfer_logistic_result_to_host(logistic_result: LogisticAssociationChunkResult) -> dict[str, np.ndarray]:
+def transfer_logistic_result_to_host(logistic_result: LogisticAssociationChunkResult) -> dict[str, object]:
     """Copy a logistic result container to host arrays."""
     return {
-        "beta": np.asarray(jax.device_get(logistic_result.beta)),
-        "standard_error": np.asarray(jax.device_get(logistic_result.standard_error)),
-        "test_statistic": np.asarray(jax.device_get(logistic_result.test_statistic)),
-        "p_value": np.asarray(jax.device_get(logistic_result.p_value)),
-        "method_code": np.asarray(jax.device_get(logistic_result.method_code)),
-        "error_code": np.asarray(jax.device_get(logistic_result.error_code)),
-        "converged_mask": np.asarray(jax.device_get(logistic_result.converged_mask)),
-        "valid_mask": np.asarray(jax.device_get(logistic_result.valid_mask)),
-        "iteration_count": np.asarray(jax.device_get(logistic_result.iteration_count)),
+        "beta": jax.device_get(logistic_result.beta),
+        "standard_error": jax.device_get(logistic_result.standard_error),
+        "test_statistic": jax.device_get(logistic_result.test_statistic),
+        "p_value": jax.device_get(logistic_result.p_value),
+        "method_code": jax.device_get(logistic_result.method_code),
+        "error_code": jax.device_get(logistic_result.error_code),
+        "converged_mask": jax.device_get(logistic_result.converged_mask),
+        "valid_mask": jax.device_get(logistic_result.valid_mask),
+        "iteration_count": jax.device_get(logistic_result.iteration_count),
     }
 
 
-def build_logistic_result_from_host(host_values: dict[str, np.ndarray]) -> LogisticAssociationChunkResult:
+def build_logistic_result_from_host(host_values: dict[str, object]) -> LogisticAssociationChunkResult:
     """Build a logistic result container from host arrays."""
     return LogisticAssociationChunkResult(
         beta=jnp.asarray(host_values["beta"]),
@@ -878,35 +870,38 @@ def compute_logistic_association_chunk_with_mask(
     del covariate_only_coefficients
     genotype_matrix_by_variant = genotype_matrix.T
     variant_count = genotype_matrix_by_variant.shape[0]
-    heuristic_firth_mask = np.asarray(
-        jax.device_get(
-            compute_firth_pre_dispatch_mask(
-                phenotype_vector=phenotype_vector,
-                genotype_matrix_by_variant=genotype_matrix_by_variant,
-                observation_mask=observation_mask,
-            )
-        ),
-        dtype=bool,
-    )
+    heuristic_firth_mask = jax.device_get(
+        compute_firth_pre_dispatch_mask(
+            phenotype_vector=phenotype_vector,
+            genotype_matrix_by_variant=genotype_matrix_by_variant,
+            observation_mask=observation_mask,
+        )
+    ).copy()
     standard_mask = ~heuristic_firth_mask
 
-    beta_values = np.full((variant_count,), np.nan, dtype=np.float64)
-    standard_error_values = np.full((variant_count,), np.nan, dtype=np.float64)
-    test_statistic_values = np.full((variant_count,), np.nan, dtype=np.float64)
-    p_value_values = np.full((variant_count,), np.nan, dtype=np.float64)
-    method_code_values = np.full((variant_count,), LOGISTIC_METHOD_STANDARD, dtype=np.int32)
-    error_code_values = np.full((variant_count,), LOGISTIC_ERROR_LOGISTIC_CONVERGE_FAIL, dtype=np.int32)
-    converged_mask_values = np.zeros((variant_count,), dtype=bool)
-    valid_mask_values = np.zeros((variant_count,), dtype=bool)
-    iteration_count_values = np.zeros((variant_count,), dtype=np.int32)
+    beta_values = jax.device_get(jnp.full((variant_count,), jnp.nan, dtype=genotype_matrix.dtype)).copy()
+    standard_error_values = jax.device_get(jnp.full((variant_count,), jnp.nan, dtype=genotype_matrix.dtype)).copy()
+    test_statistic_values = jax.device_get(jnp.full((variant_count,), jnp.nan, dtype=genotype_matrix.dtype)).copy()
+    p_value_values = jax.device_get(jnp.full((variant_count,), jnp.nan, dtype=genotype_matrix.dtype)).copy()
+    method_code_values = jax.device_get(
+        jnp.full((variant_count,), LOGISTIC_METHOD_STANDARD, dtype=jnp.int32),
+    ).copy()
+    error_code_values = jax.device_get(
+        jnp.full((variant_count,), LOGISTIC_ERROR_LOGISTIC_CONVERGE_FAIL, dtype=jnp.int32),
+    ).copy()
+    converged_mask_values = jax.device_get(jnp.zeros((variant_count,), dtype=bool)).copy()
+    valid_mask_values = jax.device_get(jnp.zeros((variant_count,), dtype=bool)).copy()
+    iteration_count_values = jax.device_get(jnp.zeros((variant_count,), dtype=jnp.int32)).copy()
 
-    standard_coefficients_by_variant = np.zeros(
-        (variant_count, covariate_matrix.shape[1] + 1),
-        dtype=np.asarray(covariate_matrix).dtype,
-    )
+    standard_coefficients_by_variant = jax.device_get(
+        jnp.zeros(
+            (variant_count, covariate_matrix.shape[1] + 1),
+            dtype=covariate_matrix.dtype,
+        )
+    ).copy()
     fallback_mask = heuristic_firth_mask.copy()
 
-    if np.any(standard_mask):
+    if bool(jax.device_get(jnp.any(standard_mask))):
         standard_evaluation = compute_standard_logistic_association_chunk_with_mask(
             covariate_matrix=covariate_matrix,
             phenotype_vector=phenotype_vector,
@@ -916,21 +911,23 @@ def compute_logistic_association_chunk_with_mask(
             tolerance=tolerance,
         )
         standard_host_values = transfer_logistic_result_to_host(standard_evaluation.logistic_result)
-        standard_coefficients_host = np.asarray(jax.device_get(standard_evaluation.coefficients))
+        standard_coefficients_host = jax.device_get(standard_evaluation.coefficients).copy()
+        standard_converged_mask = jax.device_get(standard_evaluation.logistic_result.converged_mask).copy()
+        standard_valid_mask = jax.device_get(standard_evaluation.logistic_result.valid_mask).copy()
         beta_values[standard_mask] = standard_host_values["beta"]
         standard_error_values[standard_mask] = standard_host_values["standard_error"]
         test_statistic_values[standard_mask] = standard_host_values["test_statistic"]
         p_value_values[standard_mask] = standard_host_values["p_value"]
         method_code_values[standard_mask] = standard_host_values["method_code"]
         error_code_values[standard_mask] = standard_host_values["error_code"]
-        converged_mask_values[standard_mask] = standard_host_values["converged_mask"]
-        valid_mask_values[standard_mask] = standard_host_values["valid_mask"]
+        converged_mask_values[standard_mask] = standard_converged_mask
+        valid_mask_values[standard_mask] = standard_valid_mask
         iteration_count_values[standard_mask] = standard_host_values["iteration_count"]
         standard_coefficients_by_variant[standard_mask, :] = standard_coefficients_host
-        fallback_mask[standard_mask] = (~standard_host_values["converged_mask"]) | (~standard_host_values["valid_mask"])
+        fallback_mask[standard_mask] = (~standard_converged_mask) | (~standard_valid_mask)
 
-    if np.any(fallback_mask):
-        firth_tolerance = min(tolerance, 1.0e-12)
+    if bool(jax.device_get(jnp.any(fallback_mask))):
+        firth_tolerance = min(tolerance, FIRTH_TOLERANCE_FLOOR)
         phenotype_matrix = jnp.broadcast_to(phenotype_vector[None, :], observation_mask.shape)
         initial_coefficients = initialize_full_model_coefficients(
             covariate_matrix=covariate_matrix,
@@ -938,9 +935,9 @@ def compute_logistic_association_chunk_with_mask(
             phenotype_matrix=phenotype_matrix[fallback_mask, :],
             observation_mask=observation_mask[fallback_mask, :],
         )
-        initial_coefficients_host = np.asarray(jax.device_get(initial_coefficients))
+        initial_coefficients_host = jax.device_get(initial_coefficients).copy()
         standard_fallback_mask = fallback_mask & standard_mask
-        if np.any(standard_fallback_mask):
+        if bool(jax.device_get(jnp.any(standard_fallback_mask))):
             initial_coefficients_host[standard_mask[fallback_mask], :] = standard_coefficients_by_variant[
                 standard_fallback_mask,
                 :,

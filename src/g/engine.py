@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import polars as pl
-from scipy import stats
+from jax.scipy.special import betainc
 
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
 from g.compute.logistic import (
@@ -70,7 +70,14 @@ def build_linear_output_frame(
         }
     )
     degrees_of_freedom = sample_count - covariate_parameter_count - 1
-    p_value = stats.t.sf(np.abs(host_values["test_statistic"]), df=degrees_of_freedom) * 2.0
+    absolute_test_statistic = jnp.abs(jnp.asarray(host_values["test_statistic"]))
+    degrees_of_freedom_value = jnp.asarray(degrees_of_freedom, dtype=absolute_test_statistic.dtype)
+    beta_inc_argument = degrees_of_freedom_value / (
+        degrees_of_freedom_value + absolute_test_statistic * absolute_test_statistic
+    )
+    p_value = jax.device_get(
+        betainc(0.5 * degrees_of_freedom_value, 0.5, beta_inc_argument),
+    )
     return pl.DataFrame(
         {
             "chromosome": metadata.chromosome,
