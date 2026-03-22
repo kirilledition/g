@@ -41,14 +41,21 @@ class LinearParitySummary:
 
 @dataclass(frozen=True)
 class LogisticParitySummary:
-    """Full logistic parity summary for non-Firth variants."""
+    """Full logistic parity summary for hybrid logistic regression."""
 
     compared_variant_count: int
-    skipped_firth_variant_count: int
+    non_firth_variant_count: int
+    firth_variant_count: int
+    method_mismatch_count: int
+    error_code_mismatch_count: int
     max_abs_beta_difference: float
     max_abs_standard_error_difference: float
     max_abs_z_statistic_difference: float
     max_abs_p_value_difference: float
+    firth_max_abs_beta_difference: float
+    firth_max_abs_standard_error_difference: float
+    firth_max_abs_z_statistic_difference: float
+    firth_max_abs_p_value_difference: float
     allele_reversal_count: int
     max_abs_abs_beta_difference: float
     max_abs_abs_z_statistic_difference: float
@@ -129,6 +136,13 @@ def run_phase1_logistic(baseline_paths: BaselinePaths) -> tuple[pl.DataFrame, fl
 def expression_value(data_frame: pl.DataFrame, expression: pl.Expr) -> float:
     """Evaluate a Polars expression and return its scalar value."""
     return float(data_frame.select(expression.alias("value")).item())
+
+
+def expression_value_or_zero(data_frame: pl.DataFrame, expression: pl.Expr) -> float:
+    """Evaluate a Polars expression, returning zero for empty frames."""
+    if data_frame.height == 0:
+        return 0.0
+    return expression_value(data_frame, expression)
 
 
 def align_to_plink_a1(
@@ -213,31 +227,31 @@ def summarize_linear_parity(baseline_paths: BaselinePaths, phase1_frame: pl.Data
 
 
 def summarize_logistic_parity(baseline_paths: BaselinePaths, phase1_frame: pl.DataFrame) -> LogisticParitySummary:
-    """Summarize full logistic parity against non-Firth PLINK output."""
-    full_baseline_frame = (
+    """Summarize full logistic parity against PLINK hybrid output."""
+    baseline_frame = (
         pl.read_csv(
             baseline_paths.baseline_directory / "plink_bin.phenotype_binary.glm.logistic.hybrid",
             separator="\t",
         )
         .filter(pl.col("TEST") == "ADD")
         .with_row_index("row_index")
-    )
-    non_firth_baseline_frame = (
-        full_baseline_frame.filter(pl.col("FIRTH?") == "N")
-        .select("row_index", "ID", "A1", "OR", "LOG(OR)_SE", "Z_STAT", "P")
+        .select("row_index", "ID", "A1", "OR", "LOG(OR)_SE", "Z_STAT", "P", "FIRTH?", "ERRCODE")
         .with_columns(pl.col("OR").log().alias("baseline_beta"))
         .rename({"ID": "variant_identifier", "LOG(OR)_SE": "baseline_standard_error", "P": "baseline_p_value"})
     )
     phase1_indexed_frame = phase1_frame.with_row_index("row_index")
     joined_frame = align_to_plink_a1(
-        phase1_indexed_frame.join(non_firth_baseline_frame, on="row_index", how="inner"),
+        phase1_indexed_frame.join(baseline_frame, on="row_index", how="inner"),
         baseline_allele_column="A1",
         statistic_column="z_statistic",
     )
-    skipped_firth_variant_count = full_baseline_frame.height - non_firth_baseline_frame.height
+    firth_joined_frame = joined_frame.filter(pl.col("FIRTH?") == "Y")
     return LogisticParitySummary(
         compared_variant_count=joined_frame.height,
-        skipped_firth_variant_count=skipped_firth_variant_count,
+        non_firth_variant_count=joined_frame.filter(pl.col("FIRTH?") == "N").height,
+        firth_variant_count=firth_joined_frame.height,
+        method_mismatch_count=joined_frame.filter(pl.col("firth_flag") != pl.col("FIRTH?")).height,
+        error_code_mismatch_count=joined_frame.filter(pl.col("error_code") != pl.col("ERRCODE")).height,
         max_abs_beta_difference=expression_value(
             joined_frame,
             (pl.col("aligned_beta") - pl.col("baseline_beta")).abs().max(),
@@ -252,6 +266,22 @@ def summarize_logistic_parity(baseline_paths: BaselinePaths, phase1_frame: pl.Da
         ),
         max_abs_p_value_difference=expression_value(
             joined_frame,
+            (pl.col("p_value") - pl.col("baseline_p_value")).abs().max(),
+        ),
+        firth_max_abs_beta_difference=expression_value_or_zero(
+            firth_joined_frame,
+            (pl.col("aligned_beta") - pl.col("baseline_beta")).abs().max(),
+        ),
+        firth_max_abs_standard_error_difference=expression_value_or_zero(
+            firth_joined_frame,
+            (pl.col("standard_error") - pl.col("baseline_standard_error")).abs().max(),
+        ),
+        firth_max_abs_z_statistic_difference=expression_value_or_zero(
+            firth_joined_frame,
+            (pl.col("aligned_statistic") - pl.col("Z_STAT")).abs().max(),
+        ),
+        firth_max_abs_p_value_difference=expression_value_or_zero(
+            firth_joined_frame,
             (pl.col("p_value") - pl.col("baseline_p_value")).abs().max(),
         ),
         allele_reversal_count=joined_frame.filter(pl.col("allele_alignment_sign") < 0).height,

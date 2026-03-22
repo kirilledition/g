@@ -12,6 +12,10 @@ from scipy import stats
 
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
 from g.compute.logistic import (
+    LOGISTIC_ERROR_FIRTH_CONVERGE_FAIL,
+    LOGISTIC_ERROR_LOGISTIC_CONVERGE_FAIL,
+    LOGISTIC_ERROR_UNFINISHED,
+    LOGISTIC_METHOD_FIRTH,
     compute_logistic_association_chunk,
     compute_logistic_association_chunk_with_mask,
 )
@@ -22,6 +26,28 @@ from g.models import LogisticAssociationEvaluation
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+
+def format_logistic_method_codes(method_code_values: np.ndarray) -> np.ndarray:
+    """Convert logistic method codes to PLINK-style FIRTH flags."""
+    return np.where(method_code_values == LOGISTIC_METHOD_FIRTH, "Y", "N")
+
+
+def format_logistic_error_codes(error_code_values: np.ndarray) -> np.ndarray:
+    """Convert logistic error codes to PLINK-style error labels."""
+    return np.where(
+        error_code_values == LOGISTIC_ERROR_FIRTH_CONVERGE_FAIL,
+        "FIRTH_CONVERGE_FAIL",
+        np.where(
+            error_code_values == LOGISTIC_ERROR_LOGISTIC_CONVERGE_FAIL,
+            "LOGISTIC_CONVERGE_FAIL",
+            np.where(
+                error_code_values == LOGISTIC_ERROR_UNFINISHED,
+                "UNFINISHED",
+                ".",
+            ),
+        ),
+    )
 
 
 def build_linear_output_frame(
@@ -78,6 +104,8 @@ def build_logistic_output_frame(
             "standard_error": logistic_result.standard_error,
             "test_statistic": logistic_result.test_statistic,
             "p_value": logistic_result.p_value,
+            "method_code": logistic_result.method_code,
+            "error_code": logistic_result.error_code,
             "converged_mask": logistic_result.converged_mask,
             "iteration_count": logistic_result.iteration_count,
             "valid_mask": logistic_result.valid_mask,
@@ -96,6 +124,8 @@ def build_logistic_output_frame(
             "standard_error": host_values["standard_error"],
             "z_statistic": host_values["test_statistic"],
             "p_value": host_values["p_value"],
+            "firth_flag": format_logistic_method_codes(host_values["method_code"]),
+            "error_code": format_logistic_error_codes(host_values["error_code"]),
             "converged": host_values["converged_mask"],
             "iteration_count": host_values["iteration_count"],
             "is_valid": host_values["valid_mask"],

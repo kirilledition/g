@@ -200,8 +200,8 @@ def test_linear_parity_matches_plink_baseline_subset() -> None:
     )
 
 
-def test_logistic_parity_matches_non_firth_plink_baseline_subset() -> None:
-    """Ensure logistic regression matches non-Firth PLINK baseline rows."""
+def test_logistic_hybrid_parity_matches_plink_baseline_subset() -> None:
+    """Ensure logistic hybrid regression matches PLINK baseline rows."""
     require_phase_zero_inputs()
 
     variant_limit = 64
@@ -218,38 +218,72 @@ def test_logistic_parity_matches_non_firth_plink_baseline_subset() -> None:
     )
     baseline_frame = (
         pl.read_csv(BINARY_BASELINE_PATH, separator="\t")
-        .filter((pl.col("TEST") == "ADD") & (pl.col("FIRTH?") == "N"))
-        .select("ID", "A1", "OR", "LOG(OR)_SE", "Z_STAT", "P")
+        .filter(pl.col("TEST") == "ADD")
+        .with_row_index("row_index")
+        .select("row_index", "ID", "A1", "OR", "LOG(OR)_SE", "Z_STAT", "P", "FIRTH?", "ERRCODE")
         .head(variant_limit)
         .with_columns(pl.col("OR").log().alias("baseline_beta"))
         .rename({"ID": "variant_identifier", "LOG(OR)_SE": "baseline_standard_error", "P": "baseline_p_value"})
     )
 
-    joined_frame = result_frame.join(baseline_frame, on="variant_identifier", how="inner").with_columns(
-        pl.when(pl.col("A1") == pl.col("allele_one")).then(pl.lit(1.0)).otherwise(pl.lit(-1.0)).alias("alignment_sign"),
+    joined_frame = (
+        result_frame.with_row_index("row_index")
+        .join(baseline_frame, on="row_index", how="inner")
+        .with_columns(
+            pl.when(pl.col("A1") == pl.col("allele_one"))
+            .then(pl.lit(1.0))
+            .otherwise(pl.lit(-1.0))
+            .alias("alignment_sign"),
+        )
     )
-    assert joined_frame.height >= 48
-    aligned_beta_values = (joined_frame.get_column("beta") * joined_frame.get_column("alignment_sign")).to_numpy()
-    aligned_z_values = (joined_frame.get_column("z_statistic") * joined_frame.get_column("alignment_sign")).to_numpy()
+    assert joined_frame.height == variant_limit
+    assert joined_frame.get_column("firth_flag").to_list() == joined_frame.get_column("FIRTH?").to_list()
+    assert joined_frame.get_column("error_code").to_list() == joined_frame.get_column("ERRCODE").to_list()
+    joined_frame = joined_frame.with_columns(
+        (pl.col("beta") * pl.col("alignment_sign")).alias("aligned_beta"),
+        (pl.col("z_statistic") * pl.col("alignment_sign")).alias("aligned_z"),
+    )
+    non_firth_joined_frame = joined_frame.filter(pl.col("FIRTH?") == "N")
+    firth_joined_frame = joined_frame.filter(pl.col("FIRTH?") == "Y")
     np.testing.assert_allclose(
-        aligned_beta_values,
-        joined_frame.get_column("baseline_beta").to_numpy(),
+        non_firth_joined_frame.get_column("aligned_beta").to_numpy(),
+        non_firth_joined_frame.get_column("baseline_beta").to_numpy(),
         atol=1e-4,
     )
     np.testing.assert_allclose(
-        joined_frame.get_column("standard_error").to_numpy(),
-        joined_frame.get_column("baseline_standard_error").to_numpy(),
+        non_firth_joined_frame.get_column("standard_error").to_numpy(),
+        non_firth_joined_frame.get_column("baseline_standard_error").to_numpy(),
         atol=1e-4,
     )
     np.testing.assert_allclose(
-        aligned_z_values,
-        joined_frame.get_column("Z_STAT").to_numpy(),
+        non_firth_joined_frame.get_column("aligned_z").to_numpy(),
+        non_firth_joined_frame.get_column("Z_STAT").to_numpy(),
         atol=1e-4,
     )
     np.testing.assert_allclose(
-        joined_frame.get_column("p_value").to_numpy(),
-        joined_frame.get_column("baseline_p_value").to_numpy(),
+        non_firth_joined_frame.get_column("p_value").to_numpy(),
+        non_firth_joined_frame.get_column("baseline_p_value").to_numpy(),
         atol=1e-4,
+    )
+    np.testing.assert_allclose(
+        firth_joined_frame.get_column("aligned_beta").to_numpy(),
+        firth_joined_frame.get_column("baseline_beta").to_numpy(),
+        atol=5e-4,
+    )
+    np.testing.assert_allclose(
+        firth_joined_frame.get_column("standard_error").to_numpy(),
+        firth_joined_frame.get_column("baseline_standard_error").to_numpy(),
+        atol=1e-3,
+    )
+    np.testing.assert_allclose(
+        firth_joined_frame.get_column("aligned_z").to_numpy(),
+        firth_joined_frame.get_column("Z_STAT").to_numpy(),
+        atol=1e-3,
+    )
+    np.testing.assert_allclose(
+        firth_joined_frame.get_column("p_value").to_numpy(),
+        firth_joined_frame.get_column("baseline_p_value").to_numpy(),
+        atol=1e-3,
     )
 
 

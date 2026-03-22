@@ -81,6 +81,8 @@ class LogisticAssociationChunkResult(NamedTuple):
     standard_error: jax.Array
     test_statistic: jax.Array
     p_value: jax.Array
+    method_code: jax.Array
+    error_code: jax.Array
     converged_mask: jax.Array
     valid_mask: jax.Array
     iteration_count: jax.Array
