@@ -6,12 +6,12 @@ set allow-duplicate-recipes := true
 
 # Download and prepare 1KG test data
 setup-data:
-    uv run scripts/fetch_1kg.py
-    uv run scripts/simulate_phenos.py
+    uv run python scripts/fetch_1kg.py
+    uv run python scripts/simulate_phenos.py
 
 # Run plink2/regenie baselines and generate hardware report
 benchmark-baselines: setup-data
-    uv run scripts/benchmark.py
+    uv run python scripts/benchmark.py
 
 # --- Development ---
 
@@ -27,7 +27,7 @@ lint:
 
 # Type check Python code
 typecheck:
-    uv run pyright . || echo "Please ensure pyright/ty is installed"
+    uv run ty check .
 
 # Run all checks (format, lint, typecheck)
 check: format lint typecheck

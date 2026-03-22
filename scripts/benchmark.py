@@ -1,201 +1,372 @@
 #!/usr/bin/env python3
-"""Runs PLINK2 and Regenie baselines, captures execution time and hardware specs.
+"""Run PLINK2 and Regenie Phase 0 baselines and save a benchmark report."""
 
-Generates a JSON report.
-"""
+from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
-import sys
 import time
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import cpuinfo
 import psutil
 
+GPUtilModule: Any | None
 try:
-    import GPUtil
+    import GPUtil as GPUtilModuleImport
+except ImportError:  # pragma: no cover - optional dependency branch
+    GPUtilModule = None
+else:
+    GPUtilModule = GPUtilModuleImport
 
-    HAS_GPU = True
-except ImportError:
-    HAS_GPU = False
+
+@dataclass(frozen=True)
+class HardwareGpu:
+    """Summary information for a detected GPU device."""
+
+    name: str
+    memory_total_megabytes: float
 
 
-def check_dependencies():
-    missing = []
+@dataclass(frozen=True)
+class HardwareSummary:
+    """Machine hardware summary used in the benchmark report."""
 
-    plink_bin = os.environ.get("PLINK2_BIN", "plink2")
+    cpu_model_name: str
+    physical_cpu_core_count: int | None
+    logical_cpu_core_count: int | None
+    total_memory_gigabytes: float
+    gpus: list[HardwareGpu]
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    """Execution metadata for a benchmark command."""
+
+    success: bool
+    command: str
+    duration_seconds: float
+    stdout: str
+    stderr: str
+    output_prefix: str | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class BaselinePaths:
+    """Paths required for running the Phase 0 benchmark suite."""
+
+    data_directory: Path
+    baseline_directory: Path
+    bed_prefix: Path
+    bgen_path: Path
+    sample_path: Path
+    continuous_phenotype_path: Path
+    binary_phenotype_path: Path
+    covariate_path: Path
+    regenie_prediction_list_path: Path
+
+
+def resolve_required_executable(environment_name: str, default_command: str) -> str:
+    """Resolve a required external executable from the environment or PATH.
+
+    Args:
+        environment_name: Environment variable override name.
+        default_command: Default executable name.
+
+    Returns:
+        The resolved command.
+
+    Raises:
+        RuntimeError: The executable cannot be found.
+
+    """
+    executable_name = os.environ.get(environment_name, default_command)
+    if shutil.which(executable_name) is None:
+        raise RuntimeError(
+            f"Required executable '{executable_name}' is not available. "
+            f"Set {environment_name} or enter the project nix shell."
+        )
+    return executable_name
+
+
+def collect_hardware_summary() -> HardwareSummary:
+    """Collect CPU, memory, and optional GPU information."""
+    gpu_summaries: list[HardwareGpu] = []
+    if GPUtilModule is not None:
+        for gpu in GPUtilModule.getGPUs():
+            gpu_summaries.append(
+                HardwareGpu(
+                    name=gpu.name,
+                    memory_total_megabytes=float(gpu.memoryTotal),
+                )
+            )
+
+    return HardwareSummary(
+        cpu_model_name=cpuinfo.get_cpu_info().get("brand_raw", "Unknown CPU"),
+        physical_cpu_core_count=psutil.cpu_count(logical=False),
+        logical_cpu_core_count=psutil.cpu_count(logical=True),
+        total_memory_gigabytes=round(psutil.virtual_memory().total / (1024**3), 2),
+        gpus=gpu_summaries,
+    )
+
+
+def run_command(command_name: str, command_arguments: list[str], output_prefix: Path | None = None) -> CommandResult:
+    """Run an external benchmark command and capture structured output.
+
+    Args:
+        command_name: Human-readable command label.
+        command_arguments: Command line arguments.
+        output_prefix: Optional output prefix associated with this command.
+
+    Returns:
+        Structured command execution details.
+
+    """
+    command_line = " ".join(command_arguments)
+    print(f"\n--- Running {command_name} ---")
+    print(f"Command: {command_line}")
+
+    start_time = time.perf_counter()
     try:
-        subprocess.run([plink_bin, "--version"], capture_output=True, check=True)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        missing.append(f"plink2 (checked via '{plink_bin}')")
+        completed_process = subprocess.run(
+            command_arguments,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as error:
+        duration_seconds = time.perf_counter() - start_time
+        error_message = str(error)
+        print(error_message)
+        return CommandResult(
+            success=False,
+            command=command_line,
+            duration_seconds=duration_seconds,
+            stdout="",
+            stderr=error_message,
+            output_prefix=str(output_prefix) if output_prefix is not None else None,
+            error=error_message,
+        )
 
-    regenie_bin = os.environ.get("REGENIE_BIN", "regenie")
-    try:
-        subprocess.run([regenie_bin, "--help"], capture_output=True, check=True)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        missing.append(f"regenie (checked via '{regenie_bin}')")
+    duration_seconds = time.perf_counter() - start_time
+    success = completed_process.returncode == 0
+    if success:
+        print(f"Success: {command_name} completed in {duration_seconds:.2f} seconds.")
+        error_message = None
+    else:
+        error_message = completed_process.stderr.strip() or f"Command exited with code {completed_process.returncode}."
+        print(f"Error running {command_name}:\n{error_message}")
 
-    if missing:
-        print("Warning: The following required baseline tools are missing in PATH:")
-        for tool in missing:
-            print(f"  - {tool}")
-        print("You can specify their paths using PLINK2_BIN and REGENIE_BIN environment variables.")
-        print("Benchmarks will fail if these are not available.")
-
-    return plink_bin, regenie_bin
-
-
-def get_hardware_specs():
-    specs = {
-        "cpu_info": cpuinfo.get_cpu_info().get("brand_raw", "Unknown CPU"),
-        "cpu_cores_physical": psutil.cpu_count(logical=False),
-        "cpu_cores_logical": psutil.cpu_count(logical=True),
-        "ram_total_gb": round(psutil.virtual_memory().total / (1024**3), 2),
-        "gpus": [],
-    }
-
-    if HAS_GPU:
-        gpus = GPUtil.getGPUs()
-        for gpu in gpus:
-            specs["gpus"].append({"name": gpu.name, "memory_total_mb": gpu.memoryTotal})
-
-    return specs
-
-
-def run_command(name, cmd_list):
-    print(f"\n--- Running {name} ---")
-    cmd_str = " ".join(cmd_list)
-    print(f"Command: {cmd_str}")
-
-    start_time = time.time()
-    try:
-        subprocess.run(cmd_list, capture_output=True, text=True, check=True)
-        end_time = time.time()
-        duration = end_time - start_time
-        print(f"Success: {name} completed in {duration:.2f} seconds.")
-        return {"success": True, "duration_seconds": duration, "command": cmd_str}
-    except subprocess.CalledProcessError as e:
-        end_time = time.time()
-        duration = end_time - start_time
-        print(f"Error running {name}:")
-        print(e.stderr)
-        return {
-            "success": False,
-            "duration_seconds": duration,
-            "error": e.stderr,
-            "command": cmd_str,
-        }
+    return CommandResult(
+        success=success,
+        command=command_line,
+        duration_seconds=duration_seconds,
+        stdout=completed_process.stdout,
+        stderr=completed_process.stderr,
+        output_prefix=str(output_prefix) if output_prefix is not None else None,
+        error=error_message,
+    )
 
 
-def main():
-    plink_bin, regenie_bin = check_dependencies()
+def build_baseline_paths() -> BaselinePaths:
+    """Build the standard Phase 0 file paths."""
+    data_directory = Path("data")
+    baseline_directory = data_directory / "baselines"
+    bed_prefix = data_directory / "1kg_chr22_full"
+    return BaselinePaths(
+        data_directory=data_directory,
+        baseline_directory=baseline_directory,
+        bed_prefix=bed_prefix,
+        bgen_path=data_directory / "1kg_chr22_full.bgen",
+        sample_path=data_directory / "1kg_chr22_full.sample",
+        continuous_phenotype_path=data_directory / "pheno_cont.txt",
+        binary_phenotype_path=data_directory / "pheno_bin.txt",
+        covariate_path=data_directory / "covariates.txt",
+        regenie_prediction_list_path=baseline_directory / "regenie_step1_pred.list",
+    )
 
-    data_dir = Path("data")
-    base_out = data_dir / "baselines"
-    base_out.mkdir(exist_ok=True)
 
-    bfile = str(data_dir / "1kg_chr22_full")
-    bgen_file = str(data_dir / "1kg_chr22_full.bgen")
-    pheno_cont = str(data_dir / "pheno_cont.txt")
-    pheno_bin = str(data_dir / "pheno_bin.txt")
-    covar = str(data_dir / "covariates.txt")
+def validate_input_files(baseline_paths: BaselinePaths) -> None:
+    """Ensure all required input files exist before benchmarking.
 
-    if not Path(f"{bfile}.bed").exists():
-        print(f"Error: Missing {bfile}.bed. Please run fetch_1kg.py first.")
-        sys.exit(1)
+    Args:
+        baseline_paths: Standard benchmark file paths.
 
-    if not Path(pheno_bin).exists():
-        print(f"Error: Missing {pheno_bin}. Please run simulate_phenos.py first.")
-        sys.exit(1)
+    Raises:
+        FileNotFoundError: One or more required inputs are missing.
 
-    print("Gathering hardware specs...")
-    hw_specs = get_hardware_specs()
+    """
+    required_paths = [
+        baseline_paths.bed_prefix.with_suffix(".bed"),
+        baseline_paths.bed_prefix.with_suffix(".bim"),
+        baseline_paths.bed_prefix.with_suffix(".fam"),
+        baseline_paths.bgen_path,
+        baseline_paths.sample_path,
+        baseline_paths.continuous_phenotype_path,
+        baseline_paths.binary_phenotype_path,
+        baseline_paths.covariate_path,
+    ]
+    missing_paths = [path for path in required_paths if not path.exists()]
+    if missing_paths:
+        missing_path_lines = "\n".join(str(path) for path in missing_paths)
+        raise FileNotFoundError(f"Required benchmark inputs are missing:\n{missing_path_lines}")
 
-    results = {}
 
-    plink_cont_cmd = [
-        plink_bin,
+def build_plink_continuous_command(plink_executable: str, baseline_paths: BaselinePaths) -> list[str]:
+    """Build the PLINK2 continuous trait command."""
+    return [
+        plink_executable,
         "--bfile",
-        bfile,
+        str(baseline_paths.bed_prefix),
         "--pheno",
-        pheno_cont,
+        str(baseline_paths.continuous_phenotype_path),
         "--covar",
-        covar,
+        str(baseline_paths.covariate_path),
         "--glm",
         "allow-no-covars",
         "--out",
-        str(base_out / "plink_cont"),
+        str(baseline_paths.baseline_directory / "plink_cont"),
     ]
-    results["plink_cont"] = run_command("PLINK2 Continuous", plink_cont_cmd)
 
-    plink_bin_cmd = [
-        plink_bin,
+
+def build_plink_binary_command(plink_executable: str, baseline_paths: BaselinePaths) -> list[str]:
+    """Build the PLINK2 binary trait command."""
+    return [
+        plink_executable,
         "--bfile",
-        bfile,
+        str(baseline_paths.bed_prefix),
         "--pheno",
-        pheno_bin,
+        str(baseline_paths.binary_phenotype_path),
         "--covar",
-        covar,
+        str(baseline_paths.covariate_path),
         "--glm",
         "firth-fallback",
         "allow-no-covars",
         "--out",
-        str(base_out / "plink_bin"),
+        str(baseline_paths.baseline_directory / "plink_bin"),
     ]
-    results["plink_bin"] = run_command("PLINK2 Binary", plink_bin_cmd)
 
-    regenie_step1_cmd = [
-        regenie_bin,
+
+def build_regenie_step1_command(regenie_executable: str, baseline_paths: BaselinePaths) -> list[str]:
+    """Build the Regenie step 1 command."""
+    return [
+        regenie_executable,
         "--step",
         "1",
         "--bed",
-        bfile,
+        str(baseline_paths.bed_prefix),
         "--phenoFile",
-        pheno_bin,
+        str(baseline_paths.binary_phenotype_path),
         "--covarFile",
-        covar,
+        str(baseline_paths.covariate_path),
         "--bt",
+        "--cc12",
+        "--force-step1",
         "--bsize",
         "1000",
         "--out",
-        str(base_out / "regenie_step1"),
+        str(baseline_paths.baseline_directory / "regenie_step1"),
     ]
-    results["regenie_step1"] = run_command("Regenie Step 1", regenie_step1_cmd)
 
-    regenie_step2_cmd = [
-        regenie_bin,
+
+def build_regenie_step2_command(regenie_executable: str, baseline_paths: BaselinePaths) -> list[str]:
+    """Build the Regenie step 2 command."""
+    return [
+        regenie_executable,
         "--step",
         "2",
         "--bgen",
-        bgen_file,
+        str(baseline_paths.bgen_path),
+        "--sample",
+        str(baseline_paths.sample_path),
+        "--ref-first",
         "--phenoFile",
-        pheno_bin,
+        str(baseline_paths.binary_phenotype_path),
         "--covarFile",
-        covar,
+        str(baseline_paths.covariate_path),
         "--bt",
+        "--cc12",
         "--firth",
         "--approx",
+        "--bsize",
+        "400",
         "--pred",
-        str(base_out / "regenie_step1_pred.list"),
+        str(baseline_paths.regenie_prediction_list_path),
         "--out",
-        str(base_out / "regenie_step2"),
+        str(baseline_paths.baseline_directory / "regenie_step2"),
     ]
 
-    if results.get("regenie_step1", {}).get("success"):
-        results["regenie_step2"] = run_command("Regenie Step 2", regenie_step2_cmd)
+
+def serialize_results(results_by_name: dict[str, CommandResult]) -> dict[str, dict[str, Any]]:
+    """Convert command results into JSON-serializable dictionaries."""
+    return {result_name: asdict(command_result) for result_name, command_result in results_by_name.items()}
+
+
+def main() -> None:
+    """Run all Phase 0 baseline commands and save the benchmark report."""
+    plink_executable = resolve_required_executable("PLINK2_BIN", "plink2")
+    regenie_executable = resolve_required_executable("REGENIE_BIN", "regenie")
+
+    baseline_paths = build_baseline_paths()
+    baseline_paths.baseline_directory.mkdir(exist_ok=True)
+    validate_input_files(baseline_paths)
+
+    print("Gathering hardware specs...")
+    hardware_summary = collect_hardware_summary()
+
+    results_by_name: dict[str, CommandResult] = {}
+    results_by_name["plink_cont"] = run_command(
+        "PLINK2 Continuous",
+        build_plink_continuous_command(plink_executable, baseline_paths),
+        baseline_paths.baseline_directory / "plink_cont",
+    )
+    results_by_name["plink_bin"] = run_command(
+        "PLINK2 Binary",
+        build_plink_binary_command(plink_executable, baseline_paths),
+        baseline_paths.baseline_directory / "plink_bin",
+    )
+    results_by_name["regenie_step1"] = run_command(
+        "Regenie Step 1",
+        build_regenie_step1_command(regenie_executable, baseline_paths),
+        baseline_paths.baseline_directory / "regenie_step1",
+    )
+
+    if results_by_name["regenie_step1"].success and baseline_paths.regenie_prediction_list_path.exists():
+        results_by_name["regenie_step2"] = run_command(
+            "Regenie Step 2",
+            build_regenie_step2_command(regenie_executable, baseline_paths),
+            baseline_paths.baseline_directory / "regenie_step2",
+        )
     else:
-        print("\nSkipping Regenie Step 2 because Step 1 failed.")
-        results["regenie_step2"] = {"success": False, "error": "Step 1 failed"}
+        error_message = (
+            f"Missing Regenie prediction list: {baseline_paths.regenie_prediction_list_path}"
+            if results_by_name["regenie_step1"].success
+            else "Regenie step 1 failed."
+        )
+        print(f"\nSkipping Regenie Step 2: {error_message}")
+        results_by_name["regenie_step2"] = CommandResult(
+            success=False,
+            command="",
+            duration_seconds=0.0,
+            stdout="",
+            stderr=error_message,
+            output_prefix=str(baseline_paths.baseline_directory / "regenie_step2"),
+            error=error_message,
+        )
 
-    report = {"timestamp": datetime.now(UTC).isoformat(), "hardware": hw_specs, "results": results}
-
-    report_path = data_dir / "benchmark_report.json"
-    with report_path.open("w") as f:
-        json.dump(report, f, indent=4)
-
+    report = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "hardware": asdict(hardware_summary),
+        "results": serialize_results(results_by_name),
+    }
+    report_path = baseline_paths.data_directory / "benchmark_report.json"
+    report_path.write_text(f"{json.dumps(report, indent=2)}\n")
     print(f"\nBenchmark complete. Report saved to {report_path}")
 
 
