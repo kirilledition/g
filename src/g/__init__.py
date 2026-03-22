@@ -1,7 +1,7 @@
 """Python entrypoints for the GWAS engine package."""
 
-from g._core import hello_from_bin
+from __future__ import annotations
 
+from g.cli import main
 
-def main() -> None:
-    print(hello_from_bin())
+__all__ = ["main"]

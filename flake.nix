@@ -60,7 +60,7 @@
           packages = with pkgs; [
             uv
             just
-            python314
+            python313
             maturin
             ruff
             zstd
@@ -76,7 +76,7 @@
           ];
 
           shellHook = ''
-            export UV_PYTHON=python3.14
+            export UV_PYTHON=python3.13
             export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             export NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             echo "GWAS Engine dev shell ready (uv, Rust, plink2, regenie)."

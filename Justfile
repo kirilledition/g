@@ -15,6 +15,18 @@ benchmark-baselines: setup-data
 
 # --- Development ---
 
+# Run the Phase 1 linear engine
+phase1-linear:
+    uv run g --bfile data/1kg_chr22_full --pheno data/pheno_cont.txt --pheno-name phenotype_continuous --covar data/covariates.txt --covar-names age,sex --glm linear --out data/phase1_linear
+
+# Run the Phase 1 logistic engine
+phase1-logistic:
+    uv run g --bfile data/1kg_chr22_full --pheno data/pheno_bin.txt --pheno-name phenotype_binary --covar data/covariates.txt --covar-names age,sex --glm logistic --out data/phase1_logistic
+
+# Evaluate Phase 1 parity and runtime versus PLINK
+phase1-evaluate:
+    uv run python scripts/evaluate_phase1.py
+
 # Format code
 format:
     uv run ruff format .

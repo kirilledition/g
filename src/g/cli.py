@@ -1,0 +1,67 @@
+"""Command-line interface for the GWAS engine."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from g.engine import run_linear_association, run_logistic_association
+
+
+def parse_covariate_names(raw_covariate_names: str | None) -> tuple[str, ...] | None:
+    """Parse a comma-separated covariate name list."""
+    if raw_covariate_names is None:
+        return None
+    covariate_names = tuple(name.strip() for name in raw_covariate_names.split(",") if name.strip())
+    return covariate_names or None
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser."""
+    parser = argparse.ArgumentParser(description="Run GWAS association testing with JAX and Polars.")
+    parser.add_argument("--bfile", required=True, type=Path, help="PLINK dataset prefix.")
+    parser.add_argument("--pheno", required=True, type=Path, help="Phenotype table path.")
+    parser.add_argument("--pheno-name", required=True, help="Phenotype column name to analyze.")
+    parser.add_argument("--covar", required=True, type=Path, help="Covariate table path.")
+    parser.add_argument("--covar-names", help="Optional comma-separated covariate column names.")
+    parser.add_argument("--glm", required=True, choices=("linear", "logistic"), help="Association model.")
+    parser.add_argument("--out", required=True, type=Path, help="Output prefix.")
+    parser.add_argument("--chunk-size", type=int, default=512, help="Variants per BED chunk.")
+    parser.add_argument("--variant-limit", type=int, help="Optional variant cap for debugging or tests.")
+    parser.add_argument("--max-iterations", type=int, default=50, help="Maximum logistic IRLS iterations.")
+    parser.add_argument("--tolerance", type=float, default=1.0e-8, help="Logistic convergence tolerance.")
+    return parser
+
+
+def main() -> None:
+    """Run the GWAS CLI."""
+    argument_parser = build_argument_parser()
+    arguments = argument_parser.parse_args()
+    covariate_names = parse_covariate_names(arguments.covar_names)
+
+    if arguments.glm == "linear":
+        result_frame = run_linear_association(
+            bed_prefix=arguments.bfile,
+            phenotype_path=arguments.pheno,
+            phenotype_name=arguments.pheno_name,
+            covariate_path=arguments.covar,
+            covariate_names=covariate_names,
+            chunk_size=arguments.chunk_size,
+            variant_limit=arguments.variant_limit,
+        )
+        output_path = arguments.out.with_suffix(".linear.tsv")
+    else:
+        result_frame = run_logistic_association(
+            bed_prefix=arguments.bfile,
+            phenotype_path=arguments.pheno,
+            phenotype_name=arguments.pheno_name,
+            covariate_path=arguments.covar,
+            covariate_names=covariate_names,
+            chunk_size=arguments.chunk_size,
+            variant_limit=arguments.variant_limit,
+            max_iterations=arguments.max_iterations,
+            tolerance=arguments.tolerance,
+        )
+        output_path = arguments.out.with_suffix(".logistic.tsv")
+
+    result_frame.write_csv(output_path, separator="\t")
