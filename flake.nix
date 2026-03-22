@@ -15,8 +15,8 @@
           version = "2.0.0-a.6.33";
 
           src = pkgs.fetchzip {
-            url = "https://github.com/chrchang/plink-ng/releases/download/v2.0.0-a.6.33/plink2_linux_x86_64.zip";
-            hash = "sha256-F7VT6g+BlSXThNKgtAHKPeTv40qmFWBF7RVtIsHcXiQ=";
+            url = "https://s3.amazonaws.com/plink2-assets/alpha6/plink2_linux_amd_avx2_20260228.zip";
+            hash = "sha256-VEu1NJ1mTel3wKRZgnm0dCHylN5vjbw0x9hPRbTpaXQ=";
             stripRoot = false;
           };
 
@@ -25,7 +25,9 @@
             mkdir -p "$out/bin" "$out/share/doc/plink2"
             install -m755 plink2 "$out/bin/plink2"
             install -m755 vcf_subset "$out/bin/vcf_subset"
-            install -m644 intel-simplified-software-license.txt "$out/share/doc/plink2/"
+            if [ -f intel-simplified-software-license.txt ]; then
+              install -m644 intel-simplified-software-license.txt "$out/share/doc/plink2/"
+            fi
             runHook postInstall
           '';
         };
