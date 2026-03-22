@@ -103,16 +103,18 @@ def test_linear_parity_matches_plink_baseline_subset() -> None:
     baseline_frame = (
         pl.read_csv(CONTINUOUS_BASELINE_PATH, separator="\t")
         .filter(pl.col("TEST") == "ADD")
-        .select("ID", "BETA", "SE", "T_STAT", "P")
+        .select("ID", "A1", "BETA", "SE", "T_STAT", "P")
         .head(variant_limit)
         .rename({"ID": "variant_identifier", "SE": "baseline_standard_error", "P": "baseline_p_value"})
     )
 
-    joined_frame = result_frame.join(baseline_frame, on="variant_identifier", how="inner")
+    joined_frame = result_frame.join(baseline_frame, on="variant_identifier", how="inner").with_columns(
+        pl.when(pl.col("A1") == pl.col("allele_one")).then(pl.lit(1.0)).otherwise(pl.lit(-1.0)).alias("alignment_sign"),
+    )
     assert joined_frame.height == variant_limit
-    beta_values = joined_frame.get_column("beta").to_numpy()
+    beta_values = (joined_frame.get_column("beta") * joined_frame.get_column("alignment_sign")).to_numpy()
     baseline_beta_values = joined_frame.get_column("BETA").to_numpy()
-    t_statistic_values = joined_frame.get_column("t_statistic").to_numpy()
+    t_statistic_values = (joined_frame.get_column("t_statistic") * joined_frame.get_column("alignment_sign")).to_numpy()
     baseline_t_statistic_values = joined_frame.get_column("T_STAT").to_numpy()
     p_values = joined_frame.get_column("p_value").to_numpy()
     baseline_p_values = joined_frame.get_column("baseline_p_value").to_numpy()
@@ -157,16 +159,20 @@ def test_logistic_parity_matches_non_firth_plink_baseline_subset() -> None:
     baseline_frame = (
         pl.read_csv(BINARY_BASELINE_PATH, separator="\t")
         .filter((pl.col("TEST") == "ADD") & (pl.col("FIRTH?") == "N"))
-        .select("ID", "OR", "LOG(OR)_SE", "Z_STAT", "P")
+        .select("ID", "A1", "OR", "LOG(OR)_SE", "Z_STAT", "P")
         .head(variant_limit)
         .with_columns(pl.col("OR").log().alias("baseline_beta"))
         .rename({"ID": "variant_identifier", "LOG(OR)_SE": "baseline_standard_error", "P": "baseline_p_value"})
     )
 
-    joined_frame = result_frame.join(baseline_frame, on="variant_identifier", how="inner")
+    joined_frame = result_frame.join(baseline_frame, on="variant_identifier", how="inner").with_columns(
+        pl.when(pl.col("A1") == pl.col("allele_one")).then(pl.lit(1.0)).otherwise(pl.lit(-1.0)).alias("alignment_sign"),
+    )
     assert joined_frame.height >= 48
+    aligned_beta_values = (joined_frame.get_column("beta") * joined_frame.get_column("alignment_sign")).to_numpy()
+    aligned_z_values = (joined_frame.get_column("z_statistic") * joined_frame.get_column("alignment_sign")).to_numpy()
     np.testing.assert_allclose(
-        joined_frame.get_column("beta").to_numpy(),
+        aligned_beta_values,
         joined_frame.get_column("baseline_beta").to_numpy(),
         atol=1e-4,
     )
@@ -176,7 +182,7 @@ def test_logistic_parity_matches_non_firth_plink_baseline_subset() -> None:
         atol=1e-4,
     )
     np.testing.assert_allclose(
-        joined_frame.get_column("z_statistic").to_numpy(),
+        aligned_z_values,
         joined_frame.get_column("Z_STAT").to_numpy(),
         atol=1e-4,
     )

@@ -34,7 +34,7 @@ class LinearParitySummary:
     max_abs_standard_error_difference: float
     max_abs_t_statistic_difference: float
     max_abs_p_value_difference: float
-    sign_mismatch_variant_count: int
+    allele_reversal_count: int
     max_abs_abs_beta_difference: float
     max_abs_abs_t_statistic_difference: float
     p_value_difference_over_1e_minus_5_count: int
@@ -50,7 +50,7 @@ class LogisticParitySummary:
     max_abs_standard_error_difference: float
     max_abs_z_statistic_difference: float
     max_abs_p_value_difference: float
-    sign_mismatch_variant_count: int
+    allele_reversal_count: int
     max_abs_abs_beta_difference: float
     max_abs_abs_z_statistic_difference: float
     standard_error_difference_over_1e_minus_4_count: int
@@ -132,40 +132,80 @@ def expression_value(data_frame: pl.DataFrame, expression: pl.Expr) -> float:
     return float(data_frame.select(expression.alias("value")).item())
 
 
+def align_to_plink_a1(
+    joined_frame: pl.DataFrame,
+    baseline_allele_column: str,
+    statistic_column: str,
+) -> pl.DataFrame:
+    """Align engine effect directions to PLINK's reported A1 allele.
+
+    Args:
+        joined_frame: Joined engine and PLINK result frame.
+        baseline_allele_column: Baseline column containing PLINK's A1 allele.
+        statistic_column: Engine statistic column to direction-align.
+
+    Returns:
+        Frame with direction-adjusted effect/statistic columns.
+
+    Raises:
+        ValueError: If allele labels do not line up between both outputs.
+
+    """
+    aligned_frame = joined_frame.with_columns(
+        pl.when(pl.col(baseline_allele_column) == pl.col("allele_one"))
+        .then(pl.lit(1.0))
+        .when(pl.col(baseline_allele_column) == pl.col("allele_two"))
+        .then(pl.lit(-1.0))
+        .otherwise(None)
+        .alias("allele_alignment_sign"),
+    )
+    if aligned_frame.get_column("allele_alignment_sign").null_count() > 0:
+        message = "At least one variant could not be aligned to PLINK's reported A1 allele."
+        raise ValueError(message)
+    return aligned_frame.with_columns(
+        (pl.col("beta") * pl.col("allele_alignment_sign")).alias("aligned_beta"),
+        (pl.col(statistic_column) * pl.col("allele_alignment_sign")).alias("aligned_statistic"),
+    )
+
+
 def summarize_linear_parity(baseline_paths: BaselinePaths, phase1_frame: pl.DataFrame) -> LinearParitySummary:
     """Summarize full linear parity against PLINK output."""
     baseline_frame = (
         pl.read_csv(baseline_paths.baseline_directory / "plink_cont.phenotype_continuous.glm.linear", separator="\t")
         .filter(pl.col("TEST") == "ADD")
         .with_row_index("row_index")
-        .select("row_index", "ID", "BETA", "SE", "T_STAT", "P")
+        .select("row_index", "ID", "A1", "BETA", "SE", "T_STAT", "P")
         .rename({"ID": "variant_identifier", "SE": "baseline_standard_error", "P": "baseline_p_value"})
     )
     phase1_indexed_frame = phase1_frame.with_row_index("row_index")
-    joined_frame = phase1_indexed_frame.join(baseline_frame, on="row_index", how="inner")
+    joined_frame = align_to_plink_a1(
+        phase1_indexed_frame.join(baseline_frame, on="row_index", how="inner"),
+        baseline_allele_column="A1",
+        statistic_column="t_statistic",
+    )
     return LinearParitySummary(
         variant_count=joined_frame.height,
-        max_abs_beta_difference=expression_value(joined_frame, (pl.col("beta") - pl.col("BETA")).abs().max()),
+        max_abs_beta_difference=expression_value(joined_frame, (pl.col("aligned_beta") - pl.col("BETA")).abs().max()),
         max_abs_standard_error_difference=expression_value(
             joined_frame,
             (pl.col("standard_error") - pl.col("baseline_standard_error")).abs().max(),
         ),
         max_abs_t_statistic_difference=expression_value(
             joined_frame,
-            (pl.col("t_statistic") - pl.col("T_STAT")).abs().max(),
+            (pl.col("aligned_statistic") - pl.col("T_STAT")).abs().max(),
         ),
         max_abs_p_value_difference=expression_value(
             joined_frame,
             (pl.col("p_value") - pl.col("baseline_p_value")).abs().max(),
         ),
-        sign_mismatch_variant_count=joined_frame.filter((pl.col("beta") * pl.col("BETA")) < 0).height,
+        allele_reversal_count=joined_frame.filter(pl.col("allele_alignment_sign") < 0).height,
         max_abs_abs_beta_difference=expression_value(
             joined_frame,
-            (pl.col("beta").abs() - pl.col("BETA").abs()).abs().max(),
+            (pl.col("aligned_beta").abs() - pl.col("BETA").abs()).abs().max(),
         ),
         max_abs_abs_t_statistic_difference=expression_value(
             joined_frame,
-            (pl.col("t_statistic").abs() - pl.col("T_STAT").abs()).abs().max(),
+            (pl.col("aligned_statistic").abs() - pl.col("T_STAT").abs()).abs().max(),
         ),
         p_value_difference_over_1e_minus_5_count=joined_frame.filter(
             (pl.col("p_value") - pl.col("baseline_p_value")).abs() > 1.0e-5,
@@ -185,19 +225,23 @@ def summarize_logistic_parity(baseline_paths: BaselinePaths, phase1_frame: pl.Da
     )
     non_firth_baseline_frame = (
         full_baseline_frame.filter(pl.col("FIRTH?") == "N")
-        .select("row_index", "ID", "OR", "LOG(OR)_SE", "Z_STAT", "P")
+        .select("row_index", "ID", "A1", "OR", "LOG(OR)_SE", "Z_STAT", "P")
         .with_columns(pl.col("OR").log().alias("baseline_beta"))
         .rename({"ID": "variant_identifier", "LOG(OR)_SE": "baseline_standard_error", "P": "baseline_p_value"})
     )
     phase1_indexed_frame = phase1_frame.with_row_index("row_index")
-    joined_frame = phase1_indexed_frame.join(non_firth_baseline_frame, on="row_index", how="inner")
+    joined_frame = align_to_plink_a1(
+        phase1_indexed_frame.join(non_firth_baseline_frame, on="row_index", how="inner"),
+        baseline_allele_column="A1",
+        statistic_column="z_statistic",
+    )
     skipped_firth_variant_count = full_baseline_frame.height - non_firth_baseline_frame.height
     return LogisticParitySummary(
         compared_variant_count=joined_frame.height,
         skipped_firth_variant_count=skipped_firth_variant_count,
         max_abs_beta_difference=expression_value(
             joined_frame,
-            (pl.col("beta") - pl.col("baseline_beta")).abs().max(),
+            (pl.col("aligned_beta") - pl.col("baseline_beta")).abs().max(),
         ),
         max_abs_standard_error_difference=expression_value(
             joined_frame,
@@ -205,20 +249,20 @@ def summarize_logistic_parity(baseline_paths: BaselinePaths, phase1_frame: pl.Da
         ),
         max_abs_z_statistic_difference=expression_value(
             joined_frame,
-            (pl.col("z_statistic") - pl.col("Z_STAT")).abs().max(),
+            (pl.col("aligned_statistic") - pl.col("Z_STAT")).abs().max(),
         ),
         max_abs_p_value_difference=expression_value(
             joined_frame,
             (pl.col("p_value") - pl.col("baseline_p_value")).abs().max(),
         ),
-        sign_mismatch_variant_count=joined_frame.filter((pl.col("beta") * pl.col("baseline_beta")) < 0).height,
+        allele_reversal_count=joined_frame.filter(pl.col("allele_alignment_sign") < 0).height,
         max_abs_abs_beta_difference=expression_value(
             joined_frame,
-            (pl.col("beta").abs() - pl.col("baseline_beta").abs()).abs().max(),
+            (pl.col("aligned_beta").abs() - pl.col("baseline_beta").abs()).abs().max(),
         ),
         max_abs_abs_z_statistic_difference=expression_value(
             joined_frame,
-            (pl.col("z_statistic").abs() - pl.col("Z_STAT").abs()).abs().max(),
+            (pl.col("aligned_statistic").abs() - pl.col("Z_STAT").abs()).abs().max(),
         ),
         standard_error_difference_over_1e_minus_4_count=joined_frame.filter(
             (pl.col("standard_error") - pl.col("baseline_standard_error")).abs() > 1.0e-4,

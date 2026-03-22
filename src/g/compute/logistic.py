@@ -13,6 +13,16 @@ from g.models import LogisticAssociationChunkResult
 
 MINIMUM_PROBABILITY = 1.0e-9
 MINIMUM_WEIGHT = 1.0e-9
+PLINK_DELTA_TOLERANCE = 1.0e-4
+PLINK_DIVERGENCE_DELTA = 20.0
+PLINK_DIVERGENCE_FACTOR = 2.0
+PLINK_STUCK_DELTA_TARGET = 1.0
+PLINK_STUCK_DELTA_TOLERANCE = 1.0e-3
+PLINK_FAILURE_COEFFICIENT_LIMIT = 8.0e3
+PLINK_SUCCESS_COEFFICIENT_LIMIT = 6.0e4
+PLINK_FAILURE_CHECK_START = 4
+PLINK_STUCK_CHECK_START = 7
+PLINK_UNFINISHED_CHECK_START = 14
 
 
 class LogisticState(NamedTuple):
@@ -48,34 +58,37 @@ def fit_covariate_only_logistic_regression(
         Covariate-only coefficient estimates.
 
     """
+    covariate_matrix = covariate_matrix.astype(jnp.float32)
+    phenotype_vector = phenotype_vector.astype(jnp.float32)
     coefficient_count = covariate_matrix.shape[1]
     initial_coefficients = jnp.zeros((coefficient_count,), dtype=covariate_matrix.dtype)
+    iteration_limit = jnp.minimum(jnp.int32(max_iterations), jnp.int32(PLINK_UNFINISHED_CHECK_START))
 
     def condition_function(state: tuple[jax.Array, int]) -> jax.Array:
         coefficients, iteration_count = state
-        return (iteration_count < max_iterations) & jnp.logical_not(has_converged(coefficients))
+        return (iteration_count < iteration_limit) & jnp.logical_not(has_converged(coefficients))
 
     def has_converged(coefficients: jax.Array) -> jax.Array:
         eta = covariate_matrix @ coefficients
         mu = jnp.clip(jax.nn.sigmoid(eta), MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
         weights = jnp.clip(mu * (1.0 - mu), MINIMUM_WEIGHT)
-        score = covariate_matrix.T @ (phenotype_vector - mu)
+        score = covariate_matrix.T @ (mu - phenotype_vector)
         information_matrix = covariate_matrix.T @ (covariate_matrix * weights[:, None])
         step = jnp.linalg.solve(information_matrix, score)
-        return jnp.max(jnp.abs(step)) < tolerance
+        return jnp.sum(jnp.abs(step)) < PLINK_DELTA_TOLERANCE
 
     def body_function(state: tuple[jax.Array, int]) -> tuple[jax.Array, int]:
         coefficients, iteration_count = state
         eta = covariate_matrix @ coefficients
         mu = jnp.clip(jax.nn.sigmoid(eta), MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
         weights = jnp.clip(mu * (1.0 - mu), MINIMUM_WEIGHT)
-        score = covariate_matrix.T @ (phenotype_vector - mu)
+        score = covariate_matrix.T @ (mu - phenotype_vector)
         information_matrix = covariate_matrix.T @ (covariate_matrix * weights[:, None])
         step = jnp.linalg.solve(information_matrix, score)
-        return coefficients + step, iteration_count + 1
+        return coefficients - step, iteration_count + 1
 
     fitted_coefficients, _ = jax.lax.while_loop(condition_function, body_function, (initial_coefficients, 0))
-    return fitted_coefficients
+    return fitted_coefficients.astype(jnp.float64)
 
 
 @jax.jit
@@ -101,6 +114,11 @@ def compute_logistic_association_chunk(
         Chunk-level logistic association statistics.
 
     """
+    covariate_matrix = covariate_matrix.astype(jnp.float32)
+    phenotype_vector = phenotype_vector.astype(jnp.float32)
+    genotype_matrix = genotype_matrix.astype(jnp.float32)
+    covariate_only_coefficients = covariate_only_coefficients.astype(jnp.float32)
+
     sample_count = covariate_matrix.shape[0]
     variant_count = genotype_matrix.shape[1]
     covariate_count = covariate_matrix.shape[1]
@@ -108,6 +126,7 @@ def compute_logistic_association_chunk(
     repeated_covariates = jnp.broadcast_to(covariate_matrix[None, :, :], (variant_count, sample_count, covariate_count))
     design_matrix = jnp.concatenate([repeated_covariates, genotype_matrix.T[:, :, None]], axis=2)
     phenotype_matrix = jnp.broadcast_to(phenotype_vector[None, :], (variant_count, sample_count))
+    iteration_limit = jnp.minimum(jnp.int32(max_iterations), jnp.int32(PLINK_UNFINISHED_CHECK_START))
     initial_coefficients = jnp.concatenate(
         [
             jnp.broadcast_to(covariate_only_coefficients[None, :], (variant_count, covariate_count)),
@@ -117,18 +136,18 @@ def compute_logistic_association_chunk(
     )
 
     def condition_function(state: LogisticState) -> jax.Array:
-        return (jnp.max(state.iteration_count) < max_iterations) & jnp.any(~state.converged_mask)
+        return (jnp.max(state.iteration_count) < iteration_limit) & jnp.any(~state.converged_mask)
 
     def body_function(state: LogisticState) -> LogisticState:
         eta = jnp.einsum("mnd,md->mn", design_matrix, state.coefficients)
         mu = jnp.clip(jax.nn.sigmoid(eta), MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
         weights = jnp.clip(mu * (1.0 - mu), MINIMUM_WEIGHT)
-        score = jnp.einsum("mnd,mn->md", design_matrix, phenotype_matrix - mu)
+        score = jnp.einsum("mnd,mn->md", design_matrix, mu - phenotype_matrix)
         information_matrix = compute_information_matrix(design_matrix, weights)
         step = jnp.linalg.solve(information_matrix, score[:, :, None]).squeeze(-1)
         step = jnp.where(state.converged_mask[:, None], 0.0, step)
-        updated_coefficients = state.coefficients + step
-        updated_converged_mask = state.converged_mask | (jnp.max(jnp.abs(step), axis=1) < tolerance)
+        updated_coefficients = state.coefficients - step
+        updated_converged_mask = state.converged_mask | (jnp.sum(jnp.abs(step), axis=1) < PLINK_DELTA_TOLERANCE)
         updated_iteration_count = state.iteration_count + (~state.converged_mask).astype(jnp.int32)
         return LogisticState(updated_coefficients, updated_converged_mask, updated_iteration_count)
 
@@ -159,13 +178,14 @@ def compute_logistic_association_chunk(
     test_statistic = beta / standard_error
     p_value = 2.0 * norm.sf(jnp.abs(test_statistic))
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
+    converged_mask = final_state.converged_mask
 
     return LogisticAssociationChunkResult(
-        beta=beta,
-        standard_error=standard_error,
-        test_statistic=test_statistic,
-        p_value=p_value,
-        converged_mask=final_state.converged_mask,
+        beta=beta.astype(jnp.float64),
+        standard_error=standard_error.astype(jnp.float64),
+        test_statistic=test_statistic.astype(jnp.float64),
+        p_value=p_value.astype(jnp.float64),
+        converged_mask=converged_mask,
         valid_mask=valid_mask,
         iteration_count=final_state.iteration_count,
     )

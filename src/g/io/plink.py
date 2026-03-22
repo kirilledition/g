@@ -86,26 +86,19 @@ def iter_genotype_chunks(
             column_means = np.nanmean(genotype_matrix, axis=0)
             sanitized_column_means = np.where(np.isnan(column_means), 0.0, column_means)
             imputed_matrix = np.where(np.isnan(genotype_matrix), sanitized_column_means[None, :], genotype_matrix)
-            raw_allele_frequency = sanitized_column_means / 2.0
-            flip_mask = raw_allele_frequency > 0.5
-            oriented_matrix = np.where(flip_mask[None, :], 2.0 - imputed_matrix, imputed_matrix)
-            tested_allele_frequency = np.where(flip_mask, 1.0 - raw_allele_frequency, raw_allele_frequency)
+            allele_one_frequency = sanitized_column_means / 2.0
             observation_count = np.full((variant_stop - variant_start,), imputed_matrix.shape[0], dtype=np.int64)
             metadata_table = variant_table.slice(variant_start, variant_stop - variant_start)
-            raw_allele_one = metadata_table.get_column("allele_one").cast(pl.String).to_numpy()
-            raw_allele_two = metadata_table.get_column("allele_two").cast(pl.String).to_numpy()
-            tested_allele = np.where(flip_mask, raw_allele_two, raw_allele_one)
-            omitted_allele = np.where(flip_mask, raw_allele_one, raw_allele_two)
 
             yield GenotypeChunk(
-                genotypes=jnp.asarray(oriented_matrix),
+                genotypes=jnp.asarray(imputed_matrix),
                 metadata=VariantMetadata(
                     chromosome=metadata_table.get_column("chromosome").cast(pl.String).to_numpy(),
                     variant_identifiers=metadata_table.get_column("variant_identifier").cast(pl.String).to_numpy(),
                     position=metadata_table.get_column("position").cast(pl.Int64).to_numpy(),
-                    allele_one=tested_allele,
-                    allele_two=omitted_allele,
+                    allele_one=metadata_table.get_column("allele_one").cast(pl.String).to_numpy(),
+                    allele_two=metadata_table.get_column("allele_two").cast(pl.String).to_numpy(),
                 ),
-                allele_one_frequency=jnp.asarray(tested_allele_frequency),
+                allele_one_frequency=jnp.asarray(allele_one_frequency),
                 observation_count=jnp.asarray(observation_count),
             )
