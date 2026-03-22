@@ -265,13 +265,12 @@ def compute_firth_adjusted_score(
 
 def compute_firth_statistics(
     coefficients: jax.Array,
-    observed_information_matrix: jax.Array,
+    covariance_matrix: jax.Array,
     converged: jax.Array,
     failed: jax.Array,
     iteration_count: jax.Array,
 ) -> FirthVariantResult:
     """Build association statistics from a fitted Firth model."""
-    covariance_matrix = jnp.linalg.inv(observed_information_matrix)
     beta = coefficients[-1]
     genotype_variance = covariance_matrix[-1, -1]
     standard_error = jnp.sqrt(jnp.where(genotype_variance > 0.0, genotype_variance, jnp.nan))
@@ -608,6 +607,10 @@ def fit_single_variant_firth_logistic_regression(
 ) -> FirthVariantResult:
     """Fit Firth logistic regression for one variant."""
     iteration_limit = jnp.minimum(jnp.int32(max_iterations), jnp.int32(MAX_ITERATION_COUNT))
+    gradient_tolerance = jnp.asarray(1.0e-4, dtype=covariate_matrix.dtype)
+    coefficient_tolerance = jnp.asarray(1.0e-4, dtype=covariate_matrix.dtype)
+    likelihood_tolerance = jnp.asarray(1.0e-4, dtype=covariate_matrix.dtype)
+    maximum_step_size = jnp.asarray(5.0, dtype=covariate_matrix.dtype)
 
     def compute_probability_vector(coefficients: jax.Array) -> jax.Array:
         covariate_coefficients = coefficients[:-1]
@@ -615,20 +618,31 @@ def fit_single_variant_firth_logistic_regression(
         linear_predictor = covariate_matrix @ covariate_coefficients + genotype_vector * genotype_coefficient
         return jnp.clip(jax.nn.sigmoid(linear_predictor), MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
 
-    def compute_penalized_log_likelihood_for_coefficients(coefficients: jax.Array) -> jax.Array:
-        probability_vector = compute_probability_vector(coefficients)
-        information_components = compute_information_components(
-            covariate_matrix=covariate_matrix,
-            genotype_vector=genotype_vector,
-            probability_vector=probability_vector,
-            observation_mask=observation_mask,
+    full_design_matrix = jnp.concatenate([covariate_matrix, genotype_vector[:, None]], axis=1)
+
+    def compute_covariance_matrix_from_weights(weight_vector: jax.Array) -> jax.Array:
+        weighted_design_matrix = full_design_matrix * weight_vector[:, None]
+        hessian_matrix = full_design_matrix.T @ weighted_design_matrix
+        return jnp.linalg.inv(hessian_matrix)
+
+    def compute_hdiag_and_adjusted_weights(
+        covariance_matrix: jax.Array,
+        probability_vector: jax.Array,
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+        variance_vector = jnp.where(
+            observation_mask,
+            jnp.clip(probability_vector * (1.0 - probability_vector), MINIMUM_WEIGHT),
+            0.0,
         )
-        return compute_firth_penalized_log_likelihood(
-            probability_vector=probability_vector,
-            phenotype_vector=phenotype_vector,
-            observation_mask=observation_mask,
-            information_matrix=information_components.information_matrix,
+        projected_design_matrix = full_design_matrix @ covariance_matrix
+        leverage_vector = variance_vector * jnp.sum(projected_design_matrix * full_design_matrix, axis=1)
+        adjusted_weight_vector = jnp.where(
+            observation_mask,
+            (phenotype_vector - probability_vector) + leverage_vector * (0.5 - probability_vector),
+            0.0,
         )
+        second_weight_vector = jnp.where(observation_mask, (1.0 + leverage_vector) * variance_vector, 0.0)
+        return leverage_vector, adjusted_weight_vector, second_weight_vector
 
     initial_probability_vector = compute_probability_vector(initial_coefficients)
     initial_information_components = compute_information_components(
@@ -655,81 +669,41 @@ def fit_single_variant_firth_logistic_regression(
             probability_vector=probability_vector,
             observation_mask=observation_mask,
         )
-        adjusted_score = compute_firth_adjusted_score(
-            covariate_matrix=covariate_matrix,
-            phenotype_vector=phenotype_vector,
-            genotype_vector=genotype_vector,
+        covariance_matrix = jnp.linalg.inv(information_components.information_matrix)
+        _, adjusted_weight_vector, second_weight_vector = compute_hdiag_and_adjusted_weights(
+            covariance_matrix=covariance_matrix,
             probability_vector=probability_vector,
+        )
+        adjusted_score = full_design_matrix.T @ adjusted_weight_vector
+        adjusted_score_maximum = jnp.max(jnp.abs(adjusted_score))
+        second_covariance_matrix = compute_covariance_matrix_from_weights(second_weight_vector)
+        coefficient_step = second_covariance_matrix @ adjusted_score
+        maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
+        step_scale = jnp.minimum(1.0, maximum_step_size / jnp.maximum(maximum_coefficient_step, 1.0e-12))
+        scaled_coefficient_step = coefficient_step * step_scale
+        updated_coefficients = state.coefficients + scaled_coefficient_step
+        updated_probability_vector = compute_probability_vector(updated_coefficients)
+        updated_information_components = compute_information_components(
+            covariate_matrix=covariate_matrix,
+            genotype_vector=genotype_vector,
+            probability_vector=updated_probability_vector,
             observation_mask=observation_mask,
-            information_matrix=information_components.information_matrix,
         )
-        newton_step = jnp.linalg.solve(information_components.information_matrix, adjusted_score)
-
-        def step_halving_body(_: int, step_halving_state: StepHalvingState) -> StepHalvingState:
-            candidate_coefficients = jnp.where(
-                step_halving_state.accepted,
-                step_halving_state.candidate_coefficients,
-                state.coefficients + step_halving_state.step_scale * newton_step,
-            )
-            candidate_probability_vector = compute_probability_vector(candidate_coefficients)
-            candidate_information_components = compute_information_components(
-                covariate_matrix=covariate_matrix,
-                genotype_vector=genotype_vector,
-                probability_vector=candidate_probability_vector,
-                observation_mask=observation_mask,
-            )
-            candidate_penalized_log_likelihood = compute_firth_penalized_log_likelihood(
-                probability_vector=candidate_probability_vector,
-                phenotype_vector=phenotype_vector,
-                observation_mask=observation_mask,
-                information_matrix=candidate_information_components.information_matrix,
-            )
-            accepted = step_halving_state.accepted | (
-                jnp.isfinite(candidate_penalized_log_likelihood)
-                & (candidate_penalized_log_likelihood >= state.previous_penalized_log_likelihood)
-            )
-            return StepHalvingState(
-                candidate_coefficients=jnp.where(
-                    accepted,
-                    candidate_coefficients,
-                    step_halving_state.candidate_coefficients,
-                ),
-                candidate_penalized_log_likelihood=jnp.where(
-                    accepted,
-                    candidate_penalized_log_likelihood,
-                    step_halving_state.candidate_penalized_log_likelihood,
-                ),
-                accepted=accepted,
-                step_scale=jnp.where(accepted, step_halving_state.step_scale, step_halving_state.step_scale * 0.5),
-            )
-
-        step_halving_state = jax.lax.fori_loop(
-            0,
-            MAX_STEP_HALVING_COUNT,
-            step_halving_body,
-            StepHalvingState(
-                candidate_coefficients=state.coefficients,
-                candidate_penalized_log_likelihood=state.previous_penalized_log_likelihood,
-                accepted=jnp.zeros((), dtype=bool),
-                step_scale=jnp.asarray(1.0, dtype=state.coefficients.dtype),
-            ),
+        updated_penalized_log_likelihood = compute_firth_penalized_log_likelihood(
+            probability_vector=updated_probability_vector,
+            phenotype_vector=phenotype_vector,
+            observation_mask=observation_mask,
+            information_matrix=updated_information_components.information_matrix,
         )
-        updated_coefficients = jnp.where(
-            step_halving_state.accepted,
-            step_halving_state.candidate_coefficients,
-            state.coefficients,
+        updated_failed = (~jnp.isfinite(updated_penalized_log_likelihood)) | (
+            ~jnp.all(jnp.isfinite(updated_coefficients))
         )
-        updated_penalized_log_likelihood = jnp.where(
-            step_halving_state.accepted,
-            step_halving_state.candidate_penalized_log_likelihood,
-            state.previous_penalized_log_likelihood,
-        )
-        updated_failed = (
-            state.failed | (~step_halving_state.accepted) | (~jnp.isfinite(updated_penalized_log_likelihood))
-        )
-        updated_converged = (~updated_failed) & (
-            jnp.abs(updated_penalized_log_likelihood - state.previous_penalized_log_likelihood)
-            < (tolerance * (0.05 + jnp.abs(updated_penalized_log_likelihood)))
+        updated_converged = (
+            (state.iteration_count > 0)
+            & (jnp.max(jnp.abs(scaled_coefficient_step)) <= coefficient_tolerance)
+            & (adjusted_score_maximum < gradient_tolerance)
+            & ((updated_penalized_log_likelihood - state.previous_penalized_log_likelihood) < likelihood_tolerance)
+            & (~updated_failed)
         )
         return FirthState(
             coefficients=updated_coefficients,
@@ -750,12 +724,22 @@ def fit_single_variant_firth_logistic_regression(
             previous_penalized_log_likelihood=initial_penalized_log_likelihood,
         ),
     )
-    observed_information_matrix = -jax.hessian(
-        compute_penalized_log_likelihood_for_coefficients,
-    )(final_state.coefficients)
+    final_probability_vector = compute_probability_vector(final_state.coefficients)
+    final_information_components = compute_information_components(
+        covariate_matrix=covariate_matrix,
+        genotype_vector=genotype_vector,
+        probability_vector=final_probability_vector,
+        observation_mask=observation_mask,
+    )
+    final_covariance_matrix = jnp.linalg.inv(final_information_components.information_matrix)
+    _, _, final_second_weight_vector = compute_hdiag_and_adjusted_weights(
+        covariance_matrix=final_covariance_matrix,
+        probability_vector=final_probability_vector,
+    )
+    final_second_covariance_matrix = compute_covariance_matrix_from_weights(final_second_weight_vector)
     return compute_firth_statistics(
         coefficients=final_state.coefficients,
-        observed_information_matrix=observed_information_matrix,
+        covariance_matrix=final_second_covariance_matrix,
         converged=final_state.converged,
         failed=final_state.failed,
         iteration_count=final_state.iteration_count,
