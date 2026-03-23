@@ -1,11 +1,14 @@
 #![warn(clippy::pedantic)]
 
+use std::ffi::{c_int, c_void};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::ptr;
 
 use pyo3::buffer::PyBuffer;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyBufferError, PyValueError};
+use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 
@@ -24,27 +27,132 @@ struct NativeBedChunkReadResult {
     genotype_values_le: Py<PyBytes>,
 }
 
+#[pyclass]
+struct NativeFloat64Buffer {
+    values: Vec<f64>,
+    shape: [isize; 1],
+    strides: [isize; 1],
+}
+
+#[pyclass]
+struct NativeInt64Buffer {
+    values: Vec<i64>,
+    shape: [isize; 1],
+    strides: [isize; 1],
+}
+
+#[pyclass]
+struct NativeUInt8Buffer {
+    values: Vec<u8>,
+    shape: [isize; 1],
+    strides: [isize; 1],
+}
+
 /// Structured output for host-side genotype preprocessing.
 ///
 /// Allocation behavior:
 /// - Allocates one contiguous host matrix buffer for the mean-imputed genotype matrix.
 /// - Allocates one contiguous host mask buffer with one byte per genotype entry.
 /// - Allocates one allele-frequency vector and one observation-count vector.
-/// - Allocates four Python `bytes` objects to expose those buffers back to Python.
+/// - Exposes these buffers to Python through buffer-protocol owner objects without an additional bytes copy.
 #[pyclass(get_all)]
 struct NativePreprocessedGenotypeChunkResult {
     sample_count: usize,
     variant_count: usize,
-    imputed_genotype_values_le: Py<PyBytes>,
-    missing_mask_values: Py<PyBytes>,
-    allele_one_frequency_le: Py<PyBytes>,
-    observation_count_le: Py<PyBytes>,
+    imputed_genotype_values: Py<NativeFloat64Buffer>,
+    missing_mask_values: Py<NativeUInt8Buffer>,
+    allele_one_frequency_values: Py<NativeFloat64Buffer>,
+    observation_count_values: Py<NativeInt64Buffer>,
 }
 
 struct BedDimensions {
     sample_count: usize,
     variant_count: usize,
     packed_bytes_per_variant: usize,
+}
+
+#[derive(Clone, Copy)]
+struct BufferViewMetadata {
+    element_count: usize,
+    item_size: usize,
+    format_pointer: *mut std::ffi::c_char,
+    shape_pointer: *mut isize,
+    strides_pointer: *mut isize,
+}
+
+#[pymethods]
+impl NativeFloat64Buffer {
+    unsafe fn __getbuffer__(slf: Bound<'_, Self>, view: *mut ffi::Py_buffer, flags: c_int) -> PyResult<()> {
+        let borrowed_self = slf.borrow();
+        unsafe {
+            fill_view_from_readonly_slice(
+                view,
+                flags,
+                borrowed_self.values.as_ptr().cast::<c_void>(),
+                BufferViewMetadata {
+                    element_count: borrowed_self.values.len(),
+                    item_size: std::mem::size_of::<f64>(),
+                    format_pointer: ffi::c_str!("d").as_ptr().cast_mut(),
+                    shape_pointer: borrowed_self.shape.as_ptr().cast_mut(),
+                    strides_pointer: borrowed_self.strides.as_ptr().cast_mut(),
+                },
+                slf.into_any(),
+            )
+        }
+    }
+
+    #[allow(clippy::unused_self)]
+    unsafe fn __releasebuffer__(&self, _view: *mut ffi::Py_buffer) {}
+}
+
+#[pymethods]
+impl NativeInt64Buffer {
+    unsafe fn __getbuffer__(slf: Bound<'_, Self>, view: *mut ffi::Py_buffer, flags: c_int) -> PyResult<()> {
+        let borrowed_self = slf.borrow();
+        unsafe {
+            fill_view_from_readonly_slice(
+                view,
+                flags,
+                borrowed_self.values.as_ptr().cast::<c_void>(),
+                BufferViewMetadata {
+                    element_count: borrowed_self.values.len(),
+                    item_size: std::mem::size_of::<i64>(),
+                    format_pointer: ffi::c_str!("q").as_ptr().cast_mut(),
+                    shape_pointer: borrowed_self.shape.as_ptr().cast_mut(),
+                    strides_pointer: borrowed_self.strides.as_ptr().cast_mut(),
+                },
+                slf.into_any(),
+            )
+        }
+    }
+
+    #[allow(clippy::unused_self)]
+    unsafe fn __releasebuffer__(&self, _view: *mut ffi::Py_buffer) {}
+}
+
+#[pymethods]
+impl NativeUInt8Buffer {
+    unsafe fn __getbuffer__(slf: Bound<'_, Self>, view: *mut ffi::Py_buffer, flags: c_int) -> PyResult<()> {
+        let borrowed_self = slf.borrow();
+        unsafe {
+            fill_view_from_readonly_slice(
+                view,
+                flags,
+                borrowed_self.values.as_ptr().cast::<c_void>(),
+                BufferViewMetadata {
+                    element_count: borrowed_self.values.len(),
+                    item_size: std::mem::size_of::<u8>(),
+                    format_pointer: ffi::c_str!("B").as_ptr().cast_mut(),
+                    shape_pointer: borrowed_self.shape.as_ptr().cast_mut(),
+                    strides_pointer: borrowed_self.strides.as_ptr().cast_mut(),
+                },
+                slf.into_any(),
+            )
+        }
+    }
+
+    #[allow(clippy::unused_self)]
+    unsafe fn __releasebuffer__(&self, _view: *mut ffi::Py_buffer) {}
 }
 
 /// Read a contiguous block of variants from a PLINK BED file.
@@ -183,21 +291,52 @@ fn preprocess_genotype_matrix_f64(
         }
     }
 
-    let imputed_genotype_bytes = encode_f64_bytes(&imputed_genotype_values);
-    let allele_one_frequency_bytes = encode_f64_bytes(&allele_one_frequency_values);
-    let observation_count_bytes = encode_i64_bytes(&observation_counts);
+    let imputed_buffer = Py::new(py, NativeFloat64Buffer::from_values(imputed_genotype_values))?;
+    let missing_mask_buffer = Py::new(py, NativeUInt8Buffer::from_values(missing_mask_values))?;
+    let allele_one_frequency_buffer = Py::new(py, NativeFloat64Buffer::from_values(allele_one_frequency_values))?;
+    let observation_count_buffer = Py::new(py, NativeInt64Buffer::from_values(observation_counts))?;
 
     Py::new(
         py,
         NativePreprocessedGenotypeChunkResult {
             sample_count,
             variant_count,
-            imputed_genotype_values_le: PyBytes::new(py, &imputed_genotype_bytes).unbind(),
-            missing_mask_values: PyBytes::new(py, &missing_mask_values).unbind(),
-            allele_one_frequency_le: PyBytes::new(py, &allele_one_frequency_bytes).unbind(),
-            observation_count_le: PyBytes::new(py, &observation_count_bytes).unbind(),
+            imputed_genotype_values: imputed_buffer,
+            missing_mask_values: missing_mask_buffer,
+            allele_one_frequency_values: allele_one_frequency_buffer,
+            observation_count_values: observation_count_buffer,
         },
     )
+}
+
+impl NativeFloat64Buffer {
+    fn from_values(values: Vec<f64>) -> Self {
+        Self {
+            shape: [isize::try_from(values.len()).expect("float64 buffer length exceeds supported range")],
+            strides: [isize::try_from(std::mem::size_of::<f64>()).expect("float64 item size exceeds supported range")],
+            values,
+        }
+    }
+}
+
+impl NativeInt64Buffer {
+    fn from_values(values: Vec<i64>) -> Self {
+        Self {
+            shape: [isize::try_from(values.len()).expect("int64 buffer length exceeds supported range")],
+            strides: [isize::try_from(std::mem::size_of::<i64>()).expect("int64 item size exceeds supported range")],
+            values,
+        }
+    }
+}
+
+impl NativeUInt8Buffer {
+    fn from_values(values: Vec<u8>) -> Self {
+        Self {
+            shape: [isize::try_from(values.len()).expect("uint8 buffer length exceeds supported range")],
+            strides: [isize::try_from(std::mem::size_of::<u8>()).expect("uint8 item size exceeds supported range")],
+            values,
+        }
+    }
 }
 
 fn infer_bed_dimensions(bed_path: &Path) -> PyResult<BedDimensions> {
@@ -278,12 +417,57 @@ fn encode_f64_bytes(values: &[f64]) -> Vec<u8> {
     output_bytes
 }
 
-fn encode_i64_bytes(values: &[i64]) -> Vec<u8> {
-    let mut output_bytes = Vec::with_capacity(std::mem::size_of_val(values));
-    for value in values {
-        output_bytes.extend_from_slice(&value.to_le_bytes());
+unsafe fn fill_view_from_readonly_slice(
+    view: *mut ffi::Py_buffer,
+    flags: c_int,
+    data_pointer: *const c_void,
+    buffer_view_metadata: BufferViewMetadata,
+    owner: Bound<'_, PyAny>,
+) -> PyResult<()> {
+    if view.is_null() {
+        return Err(PyBufferError::new_err("View is null"));
     }
-    output_bytes
+
+    if (flags & ffi::PyBUF_WRITABLE) == ffi::PyBUF_WRITABLE {
+        return Err(PyBufferError::new_err("Object is not writable"));
+    }
+
+    let element_count_isize = isize::try_from(buffer_view_metadata.element_count)
+        .map_err(|_| PyBufferError::new_err("Buffer element count exceeds supported range."))?;
+    let item_size_isize = isize::try_from(buffer_view_metadata.item_size)
+        .map_err(|_| PyBufferError::new_err("Buffer item size exceeds supported range."))?;
+    let len_bytes = buffer_view_metadata
+        .element_count
+        .checked_mul(buffer_view_metadata.item_size)
+        .ok_or_else(|| PyBufferError::new_err("Buffer byte count exceeds supported range."))?;
+    let len_bytes_isize =
+        isize::try_from(len_bytes).map_err(|_| PyBufferError::new_err("Buffer byte count exceeds supported range."))?;
+
+    unsafe {
+        (*view).obj = owner.into_ptr();
+        (*view).buf = data_pointer.cast_mut();
+        (*view).len = len_bytes_isize;
+        (*view).readonly = 1;
+        (*view).itemsize = item_size_isize;
+        (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
+            buffer_view_metadata.format_pointer
+        } else {
+            ptr::null_mut()
+        };
+        (*view).ndim = 1;
+        (*view).shape =
+            if (flags & ffi::PyBUF_ND) == ffi::PyBUF_ND { buffer_view_metadata.shape_pointer } else { ptr::null_mut() };
+        (*view).strides = if (flags & ffi::PyBUF_STRIDES) == ffi::PyBUF_STRIDES {
+            buffer_view_metadata.strides_pointer
+        } else {
+            ptr::null_mut()
+        };
+        (*view).suboffsets = ptr::null_mut();
+        (*view).internal = ptr::null_mut();
+    }
+
+    let _ = element_count_isize;
+    Ok(())
 }
 
 #[pyfunction]
@@ -295,6 +479,9 @@ fn hello_from_bin() -> String {
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeBedChunkReadResult>()?;
+    module.add_class::<NativeFloat64Buffer>()?;
+    module.add_class::<NativeInt64Buffer>()?;
+    module.add_class::<NativeUInt8Buffer>()?;
     module.add_class::<NativePreprocessedGenotypeChunkResult>()?;
     module.add_function(wrap_pyfunction!(hello_from_bin, module)?)?;
     module.add_function(wrap_pyfunction!(preprocess_genotype_matrix_f64, module)?)?;

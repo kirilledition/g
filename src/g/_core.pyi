@@ -5,13 +5,26 @@ class NativeBedChunkReadResult:
     variant_count: int
     genotype_values_le: bytes
 
+
+class NativeFloat64Buffer:
+    def __buffer__(self, flags: int, /) -> memoryview: ...
+
+
+class NativeInt64Buffer:
+    def __buffer__(self, flags: int, /) -> memoryview: ...
+
+
+class NativeUInt8Buffer:
+    def __buffer__(self, flags: int, /) -> memoryview: ...
+
+
 class NativePreprocessedGenotypeChunkResult:
     sample_count: int
     variant_count: int
-    imputed_genotype_values_le: bytes
-    missing_mask_values: bytes
-    allele_one_frequency_le: bytes
-    observation_count_le: bytes
+    imputed_genotype_values: NativeFloat64Buffer
+    missing_mask_values: NativeUInt8Buffer
+    allele_one_frequency_values: NativeFloat64Buffer
+    observation_count_values: NativeInt64Buffer
 
 def hello_from_bin() -> str: ...
 def preprocess_genotype_matrix_f64(

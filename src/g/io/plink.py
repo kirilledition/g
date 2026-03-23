@@ -178,16 +178,16 @@ def preprocess_genotype_matrix_native(
 
     """
     native_result = _core.preprocess_genotype_matrix_f64(genotype_matrix=genotype_matrix_host)
-    imputed_genotype_matrix = np.frombuffer(native_result.imputed_genotype_values_le, dtype=np.float64).reshape(
+    imputed_genotype_matrix = np.frombuffer(memoryview(native_result.imputed_genotype_values), dtype=np.float64).reshape(
         (native_result.sample_count, native_result.variant_count),
         order="C",
     )
-    missing_mask = np.frombuffer(native_result.missing_mask_values, dtype=np.uint8).reshape(
+    missing_mask = np.frombuffer(memoryview(native_result.missing_mask_values), dtype=np.uint8).reshape(
         (native_result.sample_count, native_result.variant_count),
         order="C",
     )
-    allele_one_frequency = np.frombuffer(native_result.allele_one_frequency_le, dtype=np.float64)
-    observation_count = np.frombuffer(native_result.observation_count_le, dtype=np.int64)
+    allele_one_frequency = np.frombuffer(memoryview(native_result.allele_one_frequency_values), dtype=np.float64)
+    observation_count = np.frombuffer(memoryview(native_result.observation_count_values), dtype=np.int64)
     return PreprocessedGenotypeChunkData(
         genotypes=jax.device_put(imputed_genotype_matrix),
         missing_mask=jax.device_put(missing_mask.view(np.bool_)),
