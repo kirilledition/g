@@ -31,7 +31,6 @@ from g.engine import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    import polars as pl
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -126,9 +125,7 @@ def run_and_materialize_frames(
     chunk_count = 0
     for accumulator in frame_iterator:
         # Get the number of variants from the metadata
-        if isinstance(accumulator, LinearChunkAccumulator):
-            total_variants += len(accumulator.metadata.variant_identifiers)
-        elif isinstance(accumulator, LogisticChunkAccumulator):
+        if isinstance(accumulator, LinearChunkAccumulator) or isinstance(accumulator, LogisticChunkAccumulator):
             total_variants += len(accumulator.metadata.variant_identifiers)
         chunk_count += 1
     return {"total_variants": total_variants, "chunk_count": chunk_count}
