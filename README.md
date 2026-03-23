@@ -78,7 +78,7 @@ For GPU bring-up, install the optional GPU dependency group:
 uv sync --group gpu --group dev
 ```
 
-This currently installs `jax[cuda13]`, which matches the current project plan of keeping CPU parity mode as the default while making GPU runs explicit.
+This currently installs `jax[cuda12]`, which keeps CPU parity mode as the default while giving the project a more conservative first GPU bring-up target than jumping straight to the CUDA 13 wheel path.
 
 After installation, verify what JAX can see with:
 
