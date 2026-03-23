@@ -1,11 +1,11 @@
 """Benchmark JAX dataclasses vs NamedTuples for pure array containers."""
 
 import time
+from dataclasses import dataclass
 from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
-from dataclasses import dataclass
 
 
 # NamedTuple version (old approach)
@@ -210,7 +210,7 @@ def main():
         # JIT benchmark
         nt_time, dc_time = benchmark_jit(variant_count, coefficient_count, iterations=100)
         speedup = nt_time / dc_time if dc_time > 0 else float('inf')
-        print(f"  JIT Update (100 iters):")
+        print("  JIT Update (100 iters):")
         print(f"    NamedTuple: {nt_time:.4f}s")
         print(f"    Dataclass:  {dc_time:.4f}s")
         print(f"    Speedup:    {speedup:.2f}x")
@@ -219,7 +219,7 @@ def main():
         # While loop benchmark
         nt_time, dc_time = benchmark_while_loop(variant_count, coefficient_count, iterations=100)
         speedup = nt_time / dc_time if dc_time > 0 else float('inf')
-        print(f"  While Loop (100 iters):")
+        print("  While Loop (100 iters):")
         print(f"    NamedTuple: {nt_time:.4f}s")
         print(f"    Dataclass:  {dc_time:.4f}s")
         print(f"    Speedup:    {speedup:.2f}x")
@@ -228,7 +228,7 @@ def main():
         # Tree operations benchmark
         nt_time, dc_time = benchmark_tree_operations(variant_count, coefficient_count, iterations=100)
         speedup = nt_time / dc_time if dc_time > 0 else float('inf')
-        print(f"  Tree Operations (100 iters):")
+        print("  Tree Operations (100 iters):")
         print(f"    NamedTuple: {nt_time:.4f}s")
         print(f"    Dataclass:  {dc_time:.4f}s")
         print(f"    Speedup:    {speedup:.2f}x")

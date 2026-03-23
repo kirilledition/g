@@ -14,6 +14,7 @@ from g.engine import iter_linear_output_frames, iter_logistic_output_frames
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
     import polars as pl
 
 

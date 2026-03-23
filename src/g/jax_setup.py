@@ -42,6 +42,8 @@ def configure_jax_device(device: str) -> None:
 
     """
     if device == "gpu":
-        jax.config.update("jax_platforms", "cuda,rocm,cpu")
+        # Let JAX auto-detect GPU (CUDA or ROCm) with CPU fallback
+        # Don't force platform order to avoid ROCm initialization errors on NVIDIA systems
+        jax.config.update("jax_platforms", "")
     else:
         jax.config.update("jax_platforms", "cpu")

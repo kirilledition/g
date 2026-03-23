@@ -14,19 +14,23 @@ import argparse
 import cProfile
 import io
 import pstats
-import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import jax
 import jax.profiler
-import numpy as np
 
-from g.engine import iter_linear_output_frames, iter_logistic_output_frames
+from g.engine import (
+    LinearChunkAccumulator,
+    LogisticChunkAccumulator,
+    iter_linear_output_frames,
+    iter_logistic_output_frames,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
     import polars as pl
 
 
@@ -115,13 +119,17 @@ def parse_covariate_names(raw_covariate_names: str) -> tuple[str, ...] | None:
 
 
 def run_and_materialize_frames(
-    frame_iterator: Iterator[pl.DataFrame],
+    frame_iterator: Iterator[LinearChunkAccumulator] | Iterator[LogisticChunkAccumulator],
 ) -> dict[str, int]:
     """Force a full iterator run and return statistics."""
     total_variants = 0
     chunk_count = 0
-    for output_frame in frame_iterator:
-        total_variants += output_frame.height
+    for accumulator in frame_iterator:
+        # Get the number of variants from the metadata
+        if isinstance(accumulator, LinearChunkAccumulator):
+            total_variants += len(accumulator.metadata.variant_identifiers)
+        elif isinstance(accumulator, LogisticChunkAccumulator):
+            total_variants += len(accumulator.metadata.variant_identifiers)
         chunk_count += 1
     return {"total_variants": total_variants, "chunk_count": chunk_count}
 
@@ -133,13 +141,13 @@ def format_profiling_report(
 ) -> str:
     """Format comprehensive profiling report as plain text."""
     report_lines = []
-    
+
     # Header
     report_lines.append("=" * 80)
     report_lines.append(" " * 20 + "GWAS ENGINE DETAILED PROFILING REPORT")
     report_lines.append("=" * 80)
     report_lines.append("")
-    
+
     # Execution Summary
     report_lines.append("EXECUTION SUMMARY")
     report_lines.append("-" * 80)
@@ -149,7 +157,7 @@ def format_profiling_report(
     report_lines.append(f"  Wall Clock Time:     {execution_stats.get('wall_time', 'N/A'):.2f} seconds")
     report_lines.append(f"  Variants/Second:     {execution_stats.get('variants_per_second', 'N/A'):.0f}")
     report_lines.append("")
-    
+
     # JAX Device Info
     report_lines.append("JAX DEVICE CONFIGURATION")
     report_lines.append("-" * 80)
@@ -159,18 +167,18 @@ def format_profiling_report(
         report_lines.append(f"  Device {idx}:           {device}")
     report_lines.append(f"  Default Backend:     {jax.default_backend()}")
     report_lines.append("")
-    
+
     # cProfile Statistics
     report_lines.append("DETAILED FUNCTION CALL STATISTICS (cProfile)")
     report_lines.append("-" * 80)
     report_lines.append(stats_stream.getvalue())
     report_lines.append("")
-    
+
     # Footer
     report_lines.append("=" * 80)
     report_lines.append("END OF REPORT")
     report_lines.append("=" * 80)
-    
+
     return "\n".join(report_lines)
 
 
@@ -185,27 +193,27 @@ def generate_cprofile_report(
     stats = pstats.Stats(profiler, stream=stream)
     stats.strip_dirs()
     stats.sort_stats(sort_key)
-    
+
     # Print all function statistics (limited by limit parameter)
     stats.print_stats(limit)
-    
+
     # Also print call statistics for top functions
     stream.write("\n")
     stream.write("=" * 80 + "\n")
     stream.write("CALLER STATISTICS (Who called the top functions)\n")
     stream.write("=" * 80 + "\n")
     stats.print_callers(50)
-    
+
     stream.write("\n")
     stream.write("=" * 80 + "\n")
     stream.write("CALLEE STATISTICS (What the top functions called)\n")
     stream.write("=" * 80 + "\n")
     stats.print_callees(50)
-    
+
     # Write to file
     with open(output_path, "w") as file_handle:
         file_handle.write(stream.getvalue())
-    
+
     stream.close()
 
 
@@ -214,19 +222,19 @@ def main() -> None:
     argument_parser = build_argument_parser()
     arguments = argument_parser.parse_args()
     covariate_names = parse_covariate_names(arguments.covar_names)
-    
+
     # Create output directories
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
     jax_trace_dir = arguments.output_dir / f"{arguments.report_name}_jax_trace"
-    
+
     print(f"Profiling {arguments.glm.upper()} regression on full chromosome 22")
     print(f"Output directory: {arguments.output_dir}")
     print(f"Chunk size: {arguments.chunk_size}")
     print("-" * 80)
-    
+
     # Initialize cProfiler
     profiler = cProfile.Profile()
-    
+
     # Prepare execution context
     if arguments.glm == "linear":
         frame_iterator = iter_linear_output_frames(
@@ -250,12 +258,12 @@ def main() -> None:
             max_iterations=arguments.max_iterations,
             tolerance=arguments.tolerance,
         )
-    
+
     # Execute with profiling
     start_time = time.perf_counter()
-    
+
     profiler.enable()
-    
+
     if arguments.enable_jax_trace:
         # Run with JAX tracing enabled
         with jax.profiler.trace(jax_trace_dir, create_perfetto_trace=True):
@@ -263,28 +271,28 @@ def main() -> None:
     else:
         # Run without JAX tracing
         execution_stats = run_and_materialize_frames(frame_iterator)
-    
+
     profiler.disable()
-    
+
     end_time = time.perf_counter()
     wall_time = end_time - start_time
-    
+
     # Calculate derived statistics
     total_variants = execution_stats["total_variants"]
     variants_per_second = total_variants / wall_time if wall_time > 0 else 0
-    
+
     execution_stats.update({
         "wall_time": wall_time,
         "variants_per_second": variants_per_second,
     })
-    
-    print(f"\nExecution complete:")
+
+    print("\nExecution complete:")
     print(f"  Variants processed: {total_variants}")
     print(f"  Chunks processed:   {execution_stats['chunk_count']}")
     print(f"  Wall clock time:    {wall_time:.2f} seconds")
     print(f"  Throughput:         {variants_per_second:.0f} variants/second")
     print("-" * 80)
-    
+
     # Generate cProfile report (detailed)
     cprofile_path = arguments.output_dir / f"{arguments.report_name}_cprofile.txt"
     print(f"Generating cProfile report: {cprofile_path}")
@@ -294,41 +302,41 @@ def main() -> None:
         arguments.cprofile_sort,
         limit=200,  # Full detailed breakdown - top 200 functions
     )
-    
+
     # Dump raw cProfile stats for later analysis
     cprofile_raw_path = arguments.output_dir / f"{arguments.report_name}_cprofile.prof"
     profiler.dump_stats(str(cprofile_raw_path))
     print(f"Raw cProfile stats saved: {cprofile_raw_path}")
-    
+
     # Save memory profile if enabled
     if arguments.enable_memory_profile:
         memory_profile_path = arguments.output_dir / f"{arguments.report_name}_memory.prof"
         jax.profiler.save_device_memory_profile(memory_profile_path)
         print(f"Memory profile saved: {memory_profile_path}")
-    
+
     # Generate comprehensive summary report
     summary_stream = io.StringIO()
     stats = pstats.Stats(profiler, stream=summary_stream)
     stats.strip_dirs()
     stats.sort_stats(arguments.cprofile_sort)
     stats.print_stats(100)  # Top 100 for summary
-    
+
     summary_report = format_profiling_report(
         summary_stream,
         execution_stats,
         arguments.glm,
     )
-    
+
     summary_path = arguments.output_dir / f"{arguments.report_name}_summary.txt"
     with open(summary_path, "w") as file_handle:
         file_handle.write(summary_report)
     print(f"Summary report saved: {summary_path}")
-    
+
     # Print summary to console
     print("\n" + "=" * 80)
     print(summary_report)
     print("=" * 80)
-    
+
     print(f"\nAll profiling outputs saved to: {arguments.output_dir}")
     print("Files generated:")
     print(f"  - {cprofile_path.name} (detailed function statistics)")

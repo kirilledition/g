@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax
@@ -35,6 +36,42 @@ from g.models import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+
+@dataclass
+class LinearChunkAccumulator:
+    """Accumulator for linear regression chunk results (JAX arrays, device memory).
+
+    Attributes:
+        metadata: Variant metadata for the chunk.
+        allele_one_frequency: Allele frequencies per variant.
+        observation_count: Observation counts per variant.
+        linear_result: Linear regression results.
+
+    """
+
+    metadata: VariantMetadata
+    allele_one_frequency: jax.Array
+    observation_count: jax.Array
+    linear_result: LinearAssociationChunkResult
+
+
+@dataclass
+class LogisticChunkAccumulator:
+    """Accumulator for logistic regression chunk results (JAX arrays, device memory).
+
+    Attributes:
+        metadata: Variant metadata for the chunk.
+        allele_one_frequency: Allele frequencies per variant.
+        observation_count: Observation counts per variant.
+        logistic_result: Logistic regression results.
+
+    """
+
+    metadata: VariantMetadata
+    allele_one_frequency: jax.Array
+    observation_count: jax.Array
+    logistic_result: LogisticAssociationChunkResult
 
 
 def format_logistic_method_codes(method_code_values: np.ndarray) -> np.ndarray:
@@ -139,6 +176,186 @@ def build_logistic_output_frame(
     )
 
 
+def concatenate_linear_results(
+    accumulators: list[LinearChunkAccumulator],
+) -> pl.DataFrame:
+    """Concatenate linear chunk results and build a single DataFrame.
+
+    Args:
+        accumulators: List of chunk accumulators with JAX arrays.
+
+    Returns:
+        Single Polars DataFrame with all results.
+
+    """
+    if not accumulators:
+        return pl.DataFrame()
+
+    # Concatenate metadata (these are numpy arrays already)
+    all_chromosomes = np.concatenate(
+        [acc.metadata.chromosome for acc in accumulators]
+    )
+    all_positions = np.concatenate(
+        [acc.metadata.position for acc in accumulators]
+    )
+    all_variant_identifiers = np.concatenate(
+        [acc.metadata.variant_identifiers for acc in accumulators]
+    )
+    all_allele_one = np.concatenate(
+        [acc.metadata.allele_one for acc in accumulators]
+    )
+    all_allele_two = np.concatenate(
+        [acc.metadata.allele_two for acc in accumulators]
+    )
+
+    # Concatenate JAX arrays on device, then do ONE device_get
+    all_allele_one_frequency = jnp.concatenate(
+        [acc.allele_one_frequency for acc in accumulators]
+    )
+    all_observation_count = jnp.concatenate(
+        [acc.observation_count for acc in accumulators]
+    )
+    all_beta = jnp.concatenate([acc.linear_result.beta for acc in accumulators])
+    all_standard_error = jnp.concatenate(
+        [acc.linear_result.standard_error for acc in accumulators]
+    )
+    all_test_statistic = jnp.concatenate(
+        [acc.linear_result.test_statistic for acc in accumulators]
+    )
+    all_p_value = jnp.concatenate([acc.linear_result.p_value for acc in accumulators])
+    all_valid_mask = jnp.concatenate(
+        [acc.linear_result.valid_mask for acc in accumulators]
+    )
+
+    # Single host synchronization
+    host_values = jax.device_get({
+        "allele_one_frequency": all_allele_one_frequency,
+        "observation_count": all_observation_count,
+        "beta": all_beta,
+        "standard_error": all_standard_error,
+        "test_statistic": all_test_statistic,
+        "p_value": all_p_value,
+        "valid_mask": all_valid_mask,
+    })
+
+    return pl.DataFrame({
+        "chromosome": all_chromosomes,
+        "position": all_positions,
+        "variant_identifier": all_variant_identifiers,
+        "allele_one": all_allele_one,
+        "allele_two": all_allele_two,
+        "allele_one_frequency": host_values["allele_one_frequency"],
+        "observation_count": host_values["observation_count"],
+        "beta": host_values["beta"],
+        "standard_error": host_values["standard_error"],
+        "t_statistic": host_values["test_statistic"],
+        "p_value": host_values["p_value"],
+        "is_valid": host_values["valid_mask"],
+    })
+
+
+def concatenate_logistic_results(
+    accumulators: list[LogisticChunkAccumulator],
+) -> pl.DataFrame:
+    """Concatenate logistic chunk results and build a single DataFrame.
+
+    Args:
+        accumulators: List of chunk accumulators with JAX arrays.
+
+    Returns:
+        Single Polars DataFrame with all results.
+
+    """
+    if not accumulators:
+        return pl.DataFrame()
+
+    # Concatenate metadata (these are numpy arrays already)
+    all_chromosomes = np.concatenate(
+        [acc.metadata.chromosome for acc in accumulators]
+    )
+    all_positions = np.concatenate(
+        [acc.metadata.position for acc in accumulators]
+    )
+    all_variant_identifiers = np.concatenate(
+        [acc.metadata.variant_identifiers for acc in accumulators]
+    )
+    all_allele_one = np.concatenate(
+        [acc.metadata.allele_one for acc in accumulators]
+    )
+    all_allele_two = np.concatenate(
+        [acc.metadata.allele_two for acc in accumulators]
+    )
+
+    # Concatenate JAX arrays on device, then do ONE device_get
+    all_allele_one_frequency = jnp.concatenate(
+        [acc.allele_one_frequency for acc in accumulators]
+    )
+    all_observation_count = jnp.concatenate(
+        [acc.observation_count for acc in accumulators]
+    )
+    all_beta = jnp.concatenate(
+        [acc.logistic_result.beta for acc in accumulators]
+    )
+    all_standard_error = jnp.concatenate(
+        [acc.logistic_result.standard_error for acc in accumulators]
+    )
+    all_test_statistic = jnp.concatenate(
+        [acc.logistic_result.test_statistic for acc in accumulators]
+    )
+    all_p_value = jnp.concatenate(
+        [acc.logistic_result.p_value for acc in accumulators]
+    )
+    all_method_code = jnp.concatenate(
+        [acc.logistic_result.method_code for acc in accumulators]
+    )
+    all_error_code = jnp.concatenate(
+        [acc.logistic_result.error_code for acc in accumulators]
+    )
+    all_converged_mask = jnp.concatenate(
+        [acc.logistic_result.converged_mask for acc in accumulators]
+    )
+    all_iteration_count = jnp.concatenate(
+        [acc.logistic_result.iteration_count for acc in accumulators]
+    )
+    all_valid_mask = jnp.concatenate(
+        [acc.logistic_result.valid_mask for acc in accumulators]
+    )
+
+    # Single host synchronization
+    host_values = jax.device_get({
+        "allele_one_frequency": all_allele_one_frequency,
+        "observation_count": all_observation_count,
+        "beta": all_beta,
+        "standard_error": all_standard_error,
+        "test_statistic": all_test_statistic,
+        "p_value": all_p_value,
+        "method_code": all_method_code,
+        "error_code": all_error_code,
+        "converged_mask": all_converged_mask,
+        "iteration_count": all_iteration_count,
+        "valid_mask": all_valid_mask,
+    })
+
+    return pl.DataFrame({
+        "chromosome": all_chromosomes,
+        "position": all_positions,
+        "variant_identifier": all_variant_identifiers,
+        "allele_one": all_allele_one,
+        "allele_two": all_allele_two,
+        "allele_one_frequency": host_values["allele_one_frequency"],
+        "observation_count": host_values["observation_count"],
+        "beta": host_values["beta"],
+        "standard_error": host_values["standard_error"],
+        "z_statistic": host_values["test_statistic"],
+        "p_value": host_values["p_value"],
+        "firth_flag": format_logistic_method_codes(host_values["method_code"]),
+        "error_code": format_logistic_error_codes(host_values["error_code"]),
+        "converged": host_values["converged_mask"],
+        "iteration_count": host_values["iteration_count"],
+        "is_valid": host_values["valid_mask"],
+    })
+
+
 def compute_logistic_association_with_missing_exclusion(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
@@ -195,8 +412,8 @@ def iter_linear_output_frames(
     covariate_names: tuple[str, ...] | None,
     chunk_size: int,
     variant_limit: int | None,
-) -> Iterator[pl.DataFrame]:
-    """Yield linear association result frames chunk by chunk."""
+) -> Iterator[LinearChunkAccumulator]:
+    """Yield linear association chunk accumulators (JAX arrays, device memory)."""
     with jax.profiler.TraceAnnotation("linear.load_aligned_sample_data"):
         aligned_sample_data = load_aligned_sample_data(
             bed_prefix=bed_prefix,
@@ -231,8 +448,8 @@ def iter_linear_output_frames(
                     linear_association_state=linear_association_state,
                     genotype_matrix=current_chunk.genotypes,
                 )
-            with jax.profiler.TraceAnnotation("linear.format"):
-                yield build_linear_output_frame(
+            with jax.profiler.TraceAnnotation("linear.accumulate"):
+                yield LinearChunkAccumulator(
                     metadata=current_chunk.metadata,
                     allele_one_frequency=current_chunk.allele_one_frequency,
                     observation_count=current_chunk.observation_count,
@@ -251,8 +468,8 @@ def iter_logistic_output_frames(
     variant_limit: int | None,
     max_iterations: int,
     tolerance: float,
-) -> Iterator[pl.DataFrame]:
-    """Yield logistic association result frames chunk by chunk."""
+) -> Iterator[LogisticChunkAccumulator]:
+    """Yield logistic association chunk accumulators (JAX arrays, device memory)."""
     with jax.profiler.TraceAnnotation("logistic.load_aligned_sample_data"):
         aligned_sample_data = load_aligned_sample_data(
             bed_prefix=bed_prefix,
@@ -290,8 +507,8 @@ def iter_logistic_output_frames(
                     tolerance=tolerance,
                     no_missing_constants=no_missing_constants,
                 )
-            with jax.profiler.TraceAnnotation("logistic.format"):
-                yield build_logistic_output_frame(
+            with jax.profiler.TraceAnnotation("logistic.accumulate"):
+                yield LogisticChunkAccumulator(
                     metadata=current_chunk.metadata,
                     allele_one_frequency=logistic_evaluation.allele_one_frequency,
                     observation_count=logistic_evaluation.observation_count,
@@ -309,8 +526,13 @@ def run_linear_association(
     chunk_size: int,
     variant_limit: int | None,
 ) -> pl.DataFrame:
-    """Run additive linear regression for all requested variants."""
-    output_frames = list(
+    """Run additive linear regression for all requested variants.
+
+    Accumulates chunk results in device memory, then performs a single
+    host synchronization and builds one Polars DataFrame at the end.
+
+    """
+    accumulators = list(
         iter_linear_output_frames(
             bed_prefix=bed_prefix,
             phenotype_path=phenotype_path,
@@ -321,7 +543,7 @@ def run_linear_association(
             variant_limit=variant_limit,
         )
     )
-    return pl.concat(output_frames, how="vertical") if output_frames else pl.DataFrame()
+    return concatenate_linear_results(accumulators)
 
 
 def run_logistic_association(
@@ -335,8 +557,13 @@ def run_logistic_association(
     max_iterations: int,
     tolerance: float,
 ) -> pl.DataFrame:
-    """Run additive logistic regression for all requested variants."""
-    output_frames = list(
+    """Run additive logistic regression for all requested variants.
+
+    Accumulates chunk results in device memory, then performs a single
+    host synchronization and builds one Polars DataFrame at the end.
+
+    """
+    accumulators = list(
         iter_logistic_output_frames(
             bed_prefix=bed_prefix,
             phenotype_path=phenotype_path,
@@ -349,15 +576,42 @@ def run_logistic_association(
             tolerance=tolerance,
         )
     )
-    return pl.concat(output_frames, how="vertical") if output_frames else pl.DataFrame()
+    return concatenate_logistic_results(accumulators)
 
 
-def write_frame_iterator_to_tsv(frame_iterator: Iterator[pl.DataFrame], output_path: Path) -> None:
-    """Write chunked result frames to a TSV file incrementally."""
-    with output_path.open("w", encoding="utf-8") as output_handle:
-        for frame_index, output_frame in enumerate(frame_iterator):
-            output_frame.write_csv(
-                output_handle,
-                separator="\t",
-                include_header=frame_index == 0,
-            )
+def write_frame_iterator_to_tsv(
+    frame_iterator: Iterator[LinearChunkAccumulator] | Iterator[LogisticChunkAccumulator],
+    output_path: Path,
+) -> None:
+    """Write accumulated chunk results to a TSV file.
+
+    Accumulates all chunk results (keeping arrays in device memory),
+    then performs a single host synchronization to build the final
+    DataFrame and write to disk.
+
+    Args:
+        frame_iterator: Iterator yielding chunk accumulators.
+        output_path: Path to write the TSV file.
+
+    """
+    # Accumulate all chunks first (stays in device memory)
+    accumulators = list(frame_iterator)
+
+    if not accumulators:
+        # Write empty DataFrame with headers
+        pl.DataFrame().write_csv(output_path, separator="\t")
+        return
+
+    # Determine type and concatenate (single host sync)
+    first_acc = accumulators[0]
+    if isinstance(first_acc, LinearChunkAccumulator):
+        result_frame = concatenate_linear_results(
+            [acc for acc in accumulators if isinstance(acc, LinearChunkAccumulator)]
+        )
+    else:
+        result_frame = concatenate_logistic_results(
+            [acc for acc in accumulators if isinstance(acc, LogisticChunkAccumulator)]
+        )
+
+    # Write the complete DataFrame
+    result_frame.write_csv(output_path, separator="\t")
