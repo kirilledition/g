@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
+import jax
+
 if TYPE_CHECKING:
-    import jax
     import numpy as np
     import numpy.typing as npt
 
@@ -66,8 +68,19 @@ class PreprocessedGenotypeChunkData(NamedTuple):
     observation_count: jax.Array
 
 
-class LinearAssociationChunkResult(NamedTuple):
-    """Association outputs for a linear-regression chunk."""
+@jax.tree_util.register_dataclass
+@dataclass
+class LinearAssociationChunkResult:
+    """Association outputs for a linear-regression chunk.
+
+    Attributes:
+        beta: Estimated effect sizes.
+        standard_error: Standard errors of estimates.
+        test_statistic: t-statistics.
+        p_value: Two-tailed p-values.
+        valid_mask: Boolean mask for valid statistics.
+
+    """
 
     beta: jax.Array
     standard_error: jax.Array
@@ -76,8 +89,18 @@ class LinearAssociationChunkResult(NamedTuple):
     valid_mask: jax.Array
 
 
-class LinearAssociationState(NamedTuple):
-    """Precomputed covariate-only state for linear association chunks."""
+@jax.tree_util.register_dataclass
+@dataclass
+class LinearAssociationState:
+    """Precomputed covariate-only state for linear association chunks.
+
+    Attributes:
+        covariate_matrix: Covariate design matrix.
+        covariate_crossproduct_inverse: Inverse of X'X.
+        phenotype_residual: Residuals after covariate adjustment.
+        phenotype_residual_sum_squares: Sum of squared residuals.
+
+    """
 
     covariate_matrix: jax.Array
     covariate_crossproduct_inverse: jax.Array
@@ -85,8 +108,23 @@ class LinearAssociationState(NamedTuple):
     phenotype_residual_sum_squares: jax.Array
 
 
-class LogisticAssociationChunkResult(NamedTuple):
-    """Association outputs for a logistic-regression chunk."""
+@jax.tree_util.register_dataclass
+@dataclass
+class LogisticAssociationChunkResult:
+    """Association outputs for a logistic-regression chunk.
+
+    Attributes:
+        beta: Estimated effect sizes.
+        standard_error: Standard errors of estimates.
+        test_statistic: Z-statistics (Wald tests).
+        p_value: Two-tailed p-values.
+        method_code: Method indicator (0=standard, 1=Firth).
+        error_code: Error status code.
+        converged_mask: Boolean mask for convergence.
+        valid_mask: Boolean mask for valid statistics.
+        iteration_count: IRLS iterations performed.
+
+    """
 
     beta: jax.Array
     standard_error: jax.Array

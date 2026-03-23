@@ -43,6 +43,60 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
   def compute\_regression(features: jax.Array, targets: jax.Array) \-\> RegressionResult:  
       return RegressionResult(betas=betas, standard\_errors=standard\_errors)
 
+### **JAX Array Containers**
+
+* **Rule:** For containers consisting exclusively of JAX arrays (all fields are `jax.Array`), use `@dataclass` with `jax.tree_util.register_dataclass`.  
+  JAX provides optimized C++ pytree handling for dataclasses, resulting in ~25-35x faster tree operations (flatten/unflatten) compared to NamedTuple. This matters because JAX performs tree flattening/unflattening on every JIT compilation and transformation.
+
+  **Bad (for pure JAX array containers):**  
+  from typing import NamedTuple  
+  import jax
+
+  class LogisticState(NamedTuple):  
+      coefficients: jax.Array  
+      converged\_mask: jax.Array  
+      iteration\_count: jax.Array
+
+  **Good (for pure JAX array containers):**  
+  from dataclasses import dataclass  
+  import jax
+
+  @jax.tree\_util.register\_dataclass  
+  @dataclass  
+  class LogisticState:  
+      """State for batched logistic IRLS.
+
+      Attributes:
+          coefficients: Current coefficient estimates.
+          converged\_mask: Boolean convergence mask.
+          iteration\_count: Iteration counter.
+
+      """  
+      coefficients: jax.Array  
+      converged\_mask: jax.Array  
+      iteration\_count: jax.Array
+
+* **Rule:** Continue using NamedTuple for containers with mixed types (strings, booleans, numpy arrays alongside JAX arrays). NamedTuple automatically handles non-array metadata without requiring explicit `meta_fields` registration.  
+
+  **Good (for mixed types):**  
+  from typing import NamedTuple  
+  import jax  
+  import numpy.typing as npt  
+  import numpy as np
+
+  class GenotypeChunk(NamedTuple):  
+      """Genotype matrix with mixed metadata.
+
+      Attributes:
+          genotypes: JAX array of genotypes.
+          has\_missing\_values: Python boolean flag.
+          allele\_frequency: JAX array of frequencies.
+
+      """  
+      genotypes: jax.Array  
+      has\_missing\_values: bool  
+      allele\_frequency: jax.Array
+
 ### **Documentation**
 
 * Use the **Google Python Style Guide** format for docstrings.  

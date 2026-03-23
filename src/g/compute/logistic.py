@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
 import jax
@@ -38,8 +39,21 @@ LOGISTIC_ERROR_LOGISTIC_CONVERGE_FAIL = 2
 LOGISTIC_ERROR_FIRTH_CONVERGE_FAIL = 3
 
 
-class LogisticState(NamedTuple):
-    """State container for batched association IRLS."""
+@jax.tree_util.register_dataclass
+@dataclass
+class LogisticState:
+    """State container for batched association IRLS.
+
+    Attributes:
+        coefficients: Current coefficient estimates (variants x parameters).
+        converged_mask: Boolean convergence mask per variant.
+        iteration_count: Iteration counter per variant.
+        previous_log_likelihood: Previous log-likelihood per variant.
+        last_covariate_information_matrix: Last covariate information matrix.
+        last_cross_information_vector: Last cross-information vector.
+        last_genotype_information: Last genotype information scalar per variant.
+
+    """
 
     coefficients: jax.Array
     converged_mask: jax.Array
@@ -50,8 +64,18 @@ class LogisticState(NamedTuple):
     last_genotype_information: jax.Array
 
 
-class CovariateOnlyLogisticState(NamedTuple):
-    """State container for masked covariate-only IRLS."""
+@jax.tree_util.register_dataclass
+@dataclass
+class CovariateOnlyLogisticState:
+    """State container for masked covariate-only IRLS.
+
+    Attributes:
+        coefficients: Current coefficient estimates.
+        converged_mask: Boolean convergence mask.
+        iteration_count: Iteration counter.
+        previous_log_likelihood: Previous log-likelihood.
+
+    """
 
     coefficients: jax.Array
     converged_mask: jax.Array
@@ -66,8 +90,21 @@ class StandardLogisticChunkEvaluation(NamedTuple):
     coefficients: jax.Array
 
 
-class NoMissingLogisticConstants(NamedTuple):
-    """Chunk-invariant constants for no-missing logistic paths."""
+@jax.tree_util.register_dataclass
+@dataclass
+class NoMissingLogisticConstants:
+    """Chunk-invariant constants for no-missing logistic paths.
+
+    Attributes:
+        covariate_information_matrix: Precomputed covariate information matrix.
+        covariate_pseudo_response_score: Covariate pseudo-response score vector.
+        pseudo_response_vector: Pseudo-response vector for initialization.
+        case_mask: Boolean mask for case samples.
+        control_mask: Boolean mask for control samples.
+        case_sample_count: Number of case samples.
+        control_sample_count: Number of control samples.
+
+    """
 
     covariate_information_matrix: jax.Array
     covariate_pseudo_response_score: jax.Array
@@ -107,8 +144,19 @@ class FirthIndexBatch(NamedTuple):
     active_index_array: npt.NDArray[np.int64]
 
 
-class FirthState(NamedTuple):
-    """State container for single-variant Firth regression."""
+@jax.tree_util.register_dataclass
+@dataclass
+class FirthState:
+    """State container for single-variant Firth regression.
+
+    Attributes:
+        coefficients: Current coefficient estimates.
+        converged: Boolean convergence flag.
+        failed: Boolean failure flag.
+        iteration_count: Iteration counter.
+        previous_penalized_log_likelihood: Previous penalized log-likelihood.
+
+    """
 
     coefficients: jax.Array
     converged: jax.Array
@@ -117,8 +165,18 @@ class FirthState(NamedTuple):
     previous_penalized_log_likelihood: jax.Array
 
 
-class InformationComponents(NamedTuple):
-    """Per-variant information-matrix components."""
+@jax.tree_util.register_dataclass
+@dataclass
+class InformationComponents:
+    """Per-variant information-matrix components.
+
+    Attributes:
+        covariate_information_matrix: Covariate block of information matrix.
+        cross_information_vector: Cross terms between covariates and genotype.
+        genotype_information: Genotype variance component.
+        information_matrix: Full information matrix.
+
+    """
 
     covariate_information_matrix: jax.Array
     cross_information_vector: jax.Array
@@ -126,8 +184,22 @@ class InformationComponents(NamedTuple):
     information_matrix: jax.Array
 
 
-class FirthVariantResult(NamedTuple):
-    """Single-variant Firth fit outputs."""
+@jax.tree_util.register_dataclass
+@dataclass
+class FirthVariantResult:
+    """Single-variant Firth fit outputs.
+
+    Attributes:
+        beta: Estimated effect size.
+        standard_error: Standard error of estimate.
+        test_statistic: Z-statistic (Wald test).
+        p_value: Two-tailed p-value.
+        error_code: Error status code.
+        converged_mask: Boolean convergence flag.
+        valid_mask: Boolean valid flag.
+        iteration_count: IRLS iterations performed.
+
+    """
 
     beta: jax.Array
     standard_error: jax.Array
@@ -139,8 +211,17 @@ class FirthVariantResult(NamedTuple):
     iteration_count: jax.Array
 
 
-class AdjustedWeightComponents(NamedTuple):
-    """Intermediate leverage and weight vectors for Firth updates."""
+@jax.tree_util.register_dataclass
+@dataclass
+class AdjustedWeightComponents:
+    """Intermediate leverage and weight vectors for Firth updates.
+
+    Attributes:
+        leverage_vector: Diagonal leverage values.
+        adjusted_weight_vector: Adjusted response weights.
+        second_weight_vector: Second-order weight adjustment.
+
+    """
 
     leverage_vector: jax.Array
     adjusted_weight_vector: jax.Array
