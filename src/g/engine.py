@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from typing import TYPE_CHECKING
 
 import jax
@@ -151,15 +152,15 @@ def compute_logistic_association_with_missing_exclusion(
         with jax.profiler.TraceAnnotation("logistic.standard_no_missing"):
             return LogisticAssociationEvaluation(
                 logistic_result=compute_logistic_association_chunk(
-                covariate_matrix=covariate_matrix,
-                phenotype_vector=phenotype_vector,
-                genotype_matrix=genotype_chunk.genotypes,
-                max_iterations=max_iterations,
-                tolerance=tolerance,
-                no_missing_constants=no_missing_constants,
-            ),
-            allele_one_frequency=genotype_chunk.allele_one_frequency,
-            observation_count=genotype_chunk.observation_count,
+                    covariate_matrix=covariate_matrix,
+                    phenotype_vector=phenotype_vector,
+                    genotype_matrix=genotype_chunk.genotypes,
+                    max_iterations=max_iterations,
+                    tolerance=tolerance,
+                    no_missing_constants=no_missing_constants,
+                ),
+                allele_one_frequency=genotype_chunk.allele_one_frequency,
+                observation_count=genotype_chunk.observation_count,
             )
 
     with jax.profiler.TraceAnnotation("logistic.prepare_missing_exclusion"):
@@ -211,28 +212,33 @@ def iter_linear_output_frames(
             phenotype_vector=aligned_sample_data.phenotype_vector,
         )
 
-    for chunk_index, genotype_chunk in enumerate(
-        iter_genotype_chunks(
-            bed_prefix=bed_prefix,
-            sample_indices=aligned_sample_data.sample_indices,
-            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
-            chunk_size=chunk_size,
-            variant_limit=variant_limit,
-        )
+    chunk_iterator = iter_genotype_chunks(
+        bed_prefix=bed_prefix,
+        sample_indices=aligned_sample_data.sample_indices,
+        expected_individual_identifiers=aligned_sample_data.individual_identifiers,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+    )
+    current_chunk = next(chunk_iterator, None)
+    for chunk_index, next_chunk in enumerate(
+        itertools.chain(chunk_iterator, [None]),
     ):
+        if current_chunk is None:
+            break
         with jax.profiler.StepTraceAnnotation("linear_chunk", step_num=chunk_index):
             with jax.profiler.TraceAnnotation("linear.compute"):
                 linear_result = compute_linear_association_chunk(
                     linear_association_state=linear_association_state,
-                    genotype_matrix=genotype_chunk.genotypes,
+                    genotype_matrix=current_chunk.genotypes,
                 )
             with jax.profiler.TraceAnnotation("linear.format"):
                 yield build_linear_output_frame(
-                    metadata=genotype_chunk.metadata,
-                    allele_one_frequency=genotype_chunk.allele_one_frequency,
-                    observation_count=genotype_chunk.observation_count,
+                    metadata=current_chunk.metadata,
+                    allele_one_frequency=current_chunk.allele_one_frequency,
+                    observation_count=current_chunk.observation_count,
                     linear_result=linear_result,
                 )
+        current_chunk = next_chunk
 
 
 def iter_logistic_output_frames(
@@ -261,32 +267,37 @@ def iter_logistic_output_frames(
             covariate_matrix=aligned_sample_data.covariate_matrix,
             phenotype_vector=aligned_sample_data.phenotype_vector,
         )
-    for chunk_index, genotype_chunk in enumerate(
-        iter_genotype_chunks(
-            bed_prefix=bed_prefix,
-            sample_indices=aligned_sample_data.sample_indices,
-            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
-            chunk_size=chunk_size,
-            variant_limit=variant_limit,
-        )
+    chunk_iterator = iter_genotype_chunks(
+        bed_prefix=bed_prefix,
+        sample_indices=aligned_sample_data.sample_indices,
+        expected_individual_identifiers=aligned_sample_data.individual_identifiers,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+    )
+    current_chunk = next(chunk_iterator, None)
+    for chunk_index, next_chunk in enumerate(
+        itertools.chain(chunk_iterator, [None]),
     ):
+        if current_chunk is None:
+            break
         with jax.profiler.StepTraceAnnotation("logistic_chunk", step_num=chunk_index):
             with jax.profiler.TraceAnnotation("logistic.compute"):
                 logistic_evaluation = compute_logistic_association_with_missing_exclusion(
                     covariate_matrix=aligned_sample_data.covariate_matrix,
                     phenotype_vector=aligned_sample_data.phenotype_vector,
-                    genotype_chunk=genotype_chunk,
+                    genotype_chunk=current_chunk,
                     max_iterations=max_iterations,
                     tolerance=tolerance,
                     no_missing_constants=no_missing_constants,
                 )
             with jax.profiler.TraceAnnotation("logistic.format"):
                 yield build_logistic_output_frame(
-                    metadata=genotype_chunk.metadata,
+                    metadata=current_chunk.metadata,
                     allele_one_frequency=logistic_evaluation.allele_one_frequency,
                     observation_count=logistic_evaluation.observation_count,
                     logistic_result=logistic_evaluation.logistic_result,
                 )
+        current_chunk = next_chunk
 
 
 def run_linear_association(

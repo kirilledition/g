@@ -384,11 +384,9 @@ def compute_information_components(
     covariate_information_matrix = jnp.einsum("np,n,nq->pq", covariate_matrix, effective_weights, covariate_matrix)
     cross_information_vector = jnp.einsum("np,n->p", covariate_matrix, weighted_genotype_vector)
     genotype_information = jnp.sum(weighted_genotype_vector * genotype_vector)
-    information_matrix = assemble_full_information_matrix(
-        covariate_information_matrix=covariate_information_matrix[None, :, :],
-        cross_information_vector=cross_information_vector[None, :],
-        genotype_information=genotype_information[None],
-    )[0]
+    top_block = jnp.concatenate([covariate_information_matrix, cross_information_vector[:, None]], axis=1)
+    bottom_block = jnp.concatenate([cross_information_vector[None, :], genotype_information[None, None]], axis=1)
+    information_matrix = jnp.concatenate([top_block, bottom_block], axis=0)
     return InformationComponents(
         covariate_information_matrix=covariate_information_matrix,
         cross_information_vector=cross_information_vector,
@@ -411,10 +409,10 @@ def compute_firth_penalized_log_likelihood(
         + (observation_mask.astype(probability_vector.dtype) - masked_phenotype_vector)
         * jnp.log1p(-masked_probability_vector),
     )
-    slogdet_result = jnp.linalg.slogdet(information_matrix)
-    sign = jnp.asarray(slogdet_result.sign)
-    log_absolute_determinant = jnp.asarray(slogdet_result.logabsdet)
-    penalty_term = jnp.where(sign > 0.0, BINARY_CASE_THRESHOLD * log_absolute_determinant, -jnp.inf)
+    cholesky_factor = jnp.linalg.cholesky(information_matrix)
+    log_determinant = 2.0 * jnp.sum(jnp.log(jnp.diag(cholesky_factor)))
+    cholesky_valid = jnp.all(jnp.isfinite(cholesky_factor))
+    penalty_term = jnp.where(cholesky_valid, BINARY_CASE_THRESHOLD * log_determinant, -jnp.inf)
     return log_likelihood + penalty_term
 
 
