@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
+import jax.profiler
 import numpy as np
 import polars as pl
 
@@ -144,38 +145,41 @@ def compute_logistic_association_with_missing_exclusion(
 ) -> LogisticAssociationEvaluation:
     """Compute logistic regression while excluding missing genotype rows per variant."""
     if not genotype_chunk.has_missing_values:
+        with jax.profiler.TraceAnnotation("logistic.standard_no_missing"):
+            return LogisticAssociationEvaluation(
+                logistic_result=compute_logistic_association_chunk(
+                    covariate_matrix=covariate_matrix,
+                    phenotype_vector=phenotype_vector,
+                    genotype_matrix=genotype_chunk.genotypes,
+                    max_iterations=max_iterations,
+                    tolerance=tolerance,
+                ),
+                allele_one_frequency=genotype_chunk.allele_one_frequency,
+                observation_count=genotype_chunk.observation_count,
+            )
+
+    with jax.profiler.TraceAnnotation("logistic.prepare_missing_exclusion"):
+        observation_mask = ~jnp.transpose(genotype_chunk.missing_mask)
+        sanitized_genotype_matrix = jnp.where(genotype_chunk.missing_mask, 0.0, genotype_chunk.genotypes)
+        observation_count = jnp.sum(observation_mask, axis=1, dtype=jnp.int64)
+        allele_one_frequency = jnp.where(
+            observation_count > 0,
+            jnp.sum(jnp.transpose(sanitized_genotype_matrix), axis=1) / (2.0 * observation_count),
+            0.0,
+        )
+    with jax.profiler.TraceAnnotation("logistic.compute_missing_exclusion"):
         return LogisticAssociationEvaluation(
-            logistic_result=compute_logistic_association_chunk(
+            logistic_result=compute_logistic_association_chunk_with_mask(
                 covariate_matrix=covariate_matrix,
                 phenotype_vector=phenotype_vector,
                 genotype_matrix=genotype_chunk.genotypes,
+                observation_mask=observation_mask,
                 max_iterations=max_iterations,
                 tolerance=tolerance,
             ),
-            allele_one_frequency=genotype_chunk.allele_one_frequency,
-            observation_count=genotype_chunk.observation_count,
+            allele_one_frequency=allele_one_frequency,
+            observation_count=observation_count,
         )
-
-    observation_mask = ~jnp.transpose(genotype_chunk.missing_mask)
-    sanitized_genotype_matrix = jnp.where(genotype_chunk.missing_mask, 0.0, genotype_chunk.genotypes)
-    observation_count = jnp.sum(observation_mask, axis=1, dtype=jnp.int64)
-    allele_one_frequency = jnp.where(
-        observation_count > 0,
-        jnp.sum(jnp.transpose(sanitized_genotype_matrix), axis=1) / (2.0 * observation_count),
-        0.0,
-    )
-    return LogisticAssociationEvaluation(
-        logistic_result=compute_logistic_association_chunk_with_mask(
-            covariate_matrix=covariate_matrix,
-            phenotype_vector=phenotype_vector,
-            genotype_matrix=genotype_chunk.genotypes,
-            observation_mask=observation_mask,
-            max_iterations=max_iterations,
-            tolerance=tolerance,
-        ),
-        allele_one_frequency=allele_one_frequency,
-        observation_count=observation_count,
-    )
 
 
 def iter_linear_output_frames(
@@ -188,36 +192,43 @@ def iter_linear_output_frames(
     variant_limit: int | None,
 ) -> Iterator[pl.DataFrame]:
     """Yield linear association result frames chunk by chunk."""
-    aligned_sample_data = load_aligned_sample_data(
-        bed_prefix=bed_prefix,
-        phenotype_path=phenotype_path,
-        phenotype_name=phenotype_name,
-        covariate_path=covariate_path,
-        covariate_names=covariate_names,
-        is_binary_trait=False,
-    )
-    linear_association_state = prepare_linear_association_state(
-        covariate_matrix=aligned_sample_data.covariate_matrix,
-        phenotype_vector=aligned_sample_data.phenotype_vector,
-    )
+    with jax.profiler.TraceAnnotation("linear.load_aligned_sample_data"):
+        aligned_sample_data = load_aligned_sample_data(
+            bed_prefix=bed_prefix,
+            phenotype_path=phenotype_path,
+            phenotype_name=phenotype_name,
+            covariate_path=covariate_path,
+            covariate_names=covariate_names,
+            is_binary_trait=False,
+        )
+    with jax.profiler.TraceAnnotation("linear.prepare_state"):
+        linear_association_state = prepare_linear_association_state(
+            covariate_matrix=aligned_sample_data.covariate_matrix,
+            phenotype_vector=aligned_sample_data.phenotype_vector,
+        )
 
-    for genotype_chunk in iter_genotype_chunks(
-        bed_prefix=bed_prefix,
-        sample_indices=aligned_sample_data.sample_indices,
-        expected_individual_identifiers=aligned_sample_data.individual_identifiers,
-        chunk_size=chunk_size,
-        variant_limit=variant_limit,
+    for chunk_index, genotype_chunk in enumerate(
+        iter_genotype_chunks(
+            bed_prefix=bed_prefix,
+            sample_indices=aligned_sample_data.sample_indices,
+            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
+            chunk_size=chunk_size,
+            variant_limit=variant_limit,
+        )
     ):
-        linear_result = compute_linear_association_chunk(
-            linear_association_state=linear_association_state,
-            genotype_matrix=genotype_chunk.genotypes,
-        )
-        yield build_linear_output_frame(
-            metadata=genotype_chunk.metadata,
-            allele_one_frequency=genotype_chunk.allele_one_frequency,
-            observation_count=genotype_chunk.observation_count,
-            linear_result=linear_result,
-        )
+        with jax.profiler.StepTraceAnnotation("linear_chunk", step_num=chunk_index):
+            with jax.profiler.TraceAnnotation("linear.compute"):
+                linear_result = compute_linear_association_chunk(
+                    linear_association_state=linear_association_state,
+                    genotype_matrix=genotype_chunk.genotypes,
+                )
+            with jax.profiler.TraceAnnotation("linear.format"):
+                yield build_linear_output_frame(
+                    metadata=genotype_chunk.metadata,
+                    allele_one_frequency=genotype_chunk.allele_one_frequency,
+                    observation_count=genotype_chunk.observation_count,
+                    linear_result=linear_result,
+                )
 
 
 def iter_logistic_output_frames(
@@ -232,34 +243,40 @@ def iter_logistic_output_frames(
     tolerance: float,
 ) -> Iterator[pl.DataFrame]:
     """Yield logistic association result frames chunk by chunk."""
-    aligned_sample_data = load_aligned_sample_data(
-        bed_prefix=bed_prefix,
-        phenotype_path=phenotype_path,
-        phenotype_name=phenotype_name,
-        covariate_path=covariate_path,
-        covariate_names=covariate_names,
-        is_binary_trait=True,
-    )
-    for genotype_chunk in iter_genotype_chunks(
-        bed_prefix=bed_prefix,
-        sample_indices=aligned_sample_data.sample_indices,
-        expected_individual_identifiers=aligned_sample_data.individual_identifiers,
-        chunk_size=chunk_size,
-        variant_limit=variant_limit,
+    with jax.profiler.TraceAnnotation("logistic.load_aligned_sample_data"):
+        aligned_sample_data = load_aligned_sample_data(
+            bed_prefix=bed_prefix,
+            phenotype_path=phenotype_path,
+            phenotype_name=phenotype_name,
+            covariate_path=covariate_path,
+            covariate_names=covariate_names,
+            is_binary_trait=True,
+        )
+    for chunk_index, genotype_chunk in enumerate(
+        iter_genotype_chunks(
+            bed_prefix=bed_prefix,
+            sample_indices=aligned_sample_data.sample_indices,
+            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
+            chunk_size=chunk_size,
+            variant_limit=variant_limit,
+        )
     ):
-        logistic_evaluation = compute_logistic_association_with_missing_exclusion(
-            covariate_matrix=aligned_sample_data.covariate_matrix,
-            phenotype_vector=aligned_sample_data.phenotype_vector,
-            genotype_chunk=genotype_chunk,
-            max_iterations=max_iterations,
-            tolerance=tolerance,
-        )
-        yield build_logistic_output_frame(
-            metadata=genotype_chunk.metadata,
-            allele_one_frequency=logistic_evaluation.allele_one_frequency,
-            observation_count=logistic_evaluation.observation_count,
-            logistic_result=logistic_evaluation.logistic_result,
-        )
+        with jax.profiler.StepTraceAnnotation("logistic_chunk", step_num=chunk_index):
+            with jax.profiler.TraceAnnotation("logistic.compute"):
+                logistic_evaluation = compute_logistic_association_with_missing_exclusion(
+                    covariate_matrix=aligned_sample_data.covariate_matrix,
+                    phenotype_vector=aligned_sample_data.phenotype_vector,
+                    genotype_chunk=genotype_chunk,
+                    max_iterations=max_iterations,
+                    tolerance=tolerance,
+                )
+            with jax.profiler.TraceAnnotation("logistic.format"):
+                yield build_logistic_output_frame(
+                    metadata=genotype_chunk.metadata,
+                    allele_one_frequency=logistic_evaluation.allele_one_frequency,
+                    observation_count=logistic_evaluation.observation_count,
+                    logistic_result=logistic_evaluation.logistic_result,
+                )
 
 
 def run_linear_association(
