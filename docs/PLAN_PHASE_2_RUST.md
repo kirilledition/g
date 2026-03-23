@@ -8,19 +8,48 @@ The first target is not a full Rust rewrite of the project. The first target is 
 
 The central lesson from the first native BED experiment is important: replacing an already-optimized Rust-backed reader with a slower handwritten Rust decoder is not progress. Phase 2 Rust work must now be driven by measurement, reuse of strong native components, and boundary minimization.
 
+## **1.1 Current Status Snapshot**
+
+The Rust arm is no longer hypothetical. We have already implemented and measured several additive prototypes, and those measurements now constrain the plan.
+
+Completed so far:
+
+* `g._core` now exposes a real PyO3 extension surface rather than a placeholder.
+* A handwritten Rust BED reader prototype exists for contiguous chunk reads.
+* A Rust preprocessing path exists for missing-mask creation, observation counting, mean imputation, and allele-one frequency calculation.
+* Rust buffer-protocol exports were added to reduce Python boundary copies.
+* A dedicated benchmark harness exists in `scripts/benchmark_plink_reader.py`.
+* A dedicated hybrid logistic benchmark exists in `scripts/benchmark_logistic_fallback.py`.
+
+Measured outcomes so far:
+
+* The handwritten Rust BED reader is still slower than the incumbent `bed-reader` path and should not become the main ingestion strategy in its current form.
+* Rust fused preprocessing moved closer to parity after boundary cleanup, but it still does not beat the current Python/JAX path on the benchmarked CPU setup.
+* Host-side hybrid logistic cleanup did produce useful wins, so host orchestration remains a legitimate Rust-adjacent target even while GPU work becomes the primary Phase 2 track.
+
+The Rust arm therefore remains active, but it is no longer the primary frontier for large expected speedups. The best remaining Rust work is narrow host-boundary reduction and selective orchestration cleanup, not a broad rewrite.
+
 ## **2. Current Rust-Relevant Code Map**
 
 ### **Build and Packaging Surface**
 
 * `Cargo.toml` already builds a PyO3 extension module.
 * `pyproject.toml` already uses maturin and the mixed `src/` layout.
-* `src/lib.rs` now exposes an experimental native reader surface, but that surface is currently slower than the existing `bed-reader` path and should be treated as a prototype rather than the target architecture.
+* `src/lib.rs` now exposes an experimental native reader surface and a native preprocessing surface.
+* `rustfmt.toml` and `clippy.toml` now define repository-local Rust formatting and lint policy.
+* The current PyO3 build uses `abi3-py311` so the extension can consume newer buffer interfaces cleanly.
 
 ### **Python Host-Side Bottlenecks**
 
 * `src/g/io/plink.py` owns BED chunk reads, missing-value handling, mean imputation, allele frequency calculation, and observation counting.
 * `src/g/engine.py` depends on the chunk interface produced there.
 * `src/g/compute/logistic.py` owns substantial host-side fallback orchestration for the hybrid logistic/Firth path.
+
+### **Benchmark and Evaluation Surfaces Added During This Phase**
+
+* `scripts/benchmark_plink_reader.py` compares raw chunk reads, Rust preprocessing, and full iterator paths.
+* `scripts/benchmark_logistic_fallback.py` measures the hybrid logistic/Firth path on representative chunk sizes.
+* `tests/test_phase1.py` now includes parity checks for native reader and native preprocessing paths.
 
 ### **Existing Native Components We Should Reuse First**
 
@@ -44,6 +73,8 @@ Today the genotype path:
 
 This means the best early native opportunity is not necessarily a new BED decoder. The better target is the host-side work surrounding decode: repeated preprocessing passes, Python boundary conversions, and per-chunk orchestration.
 
+The implemented prototypes validated that framing. The raw BED decode rewrite underperformed, but the surrounding boundary and orchestration work produced actionable measurements and a clearer backlog.
+
 ## **4. Rust Arm Non-Goals**
 
 The Rust arm should not:
@@ -54,6 +85,7 @@ The Rust arm should not:
 * change the statistical definitions of missing-value handling, alignment, or association testing
 * skip explicit documentation of allocation and copy behavior at the FFI boundary
 * replace JAX mathematical kernels during the current phase unless profiling proves a host-side problem cannot be solved cleanly while keeping JAX in place
+* chase micro-optimizations in Rust after benchmarks show the main remaining wins have shifted to JAX/GPU execution
 
 ## **5. Recommended Execution Order**
 
@@ -69,6 +101,12 @@ At minimum, measure:
 * end-to-end linear and logistic wall time on representative subsets
 
 The benchmark harness should separate raw decode wins from Python/Rust boundary losses.
+
+Status:
+
+* Done for chunk ingestion and preprocessing via `scripts/benchmark_plink_reader.py`.
+* Partially done for hybrid logistic orchestration via `scripts/benchmark_logistic_fallback.py`.
+* Still missing: end-to-end benchmark attribution across read, transfer, compute, and formatting in one report.
 
 ### **Step 1: Define the Native Replacement Contract**
 
@@ -95,6 +133,11 @@ Preferred order:
 * keep using Python `bed-reader` if it remains the fastest raw decode path
 * if a Rust-side integration is needed, wrap or reuse the corresponding native reader logic rather than reimplementing PLINK decode naively
 * only keep a custom decoder if it wins on both chunk-level and end-to-end benchmarks
+
+Status:
+
+* The handwritten decoder does not currently win and should remain a prototype only.
+* The incumbent `bed-reader` path remains the raw-read baseline and the likely long-term ingestion source until a future GPU-oriented boundary design justifies something else.
 
 Recommended design constraints:
 
@@ -137,6 +180,13 @@ Once raw reads are correct and competitive, move the preprocessing now done in `
 
 This is the most promising early Rust target because it removes repeated host-side passes over the same chunk without touching JAX association math.
 
+Status:
+
+* Implemented in `src/lib.rs` and `src/g/io/plink.py`.
+* Correctness is covered by parity tests.
+* Performance improved after reducing output-copy overhead, but the path still does not beat the incumbent Python/JAX preprocessing path on the current benchmarked setup.
+* This means further work here should be opportunistic and benchmark-gated, not assumed to be the main Phase 2 win.
+
 ### **Step 6: Tighten the Python/Rust Memory Boundary**
 
 After the native path exists, revisit how buffers are exposed to Python and then to JAX.
@@ -152,6 +202,12 @@ This phase does not need to solve perfect zero-copy handoff, but it must elimina
 
 Direct host-side reads into JAX should not be treated as an automatic win. For the current architecture, `bed-reader` naturally fills host-resident NumPy buffers, and JAX still needs an import step. On the current CPU-backed setup, `jax.device_put(...)` is already very cheap and benchmarked slightly better than `jnp.from_dlpack(...)` for representative chunk sizes. Unless a future DLPack-based path removes a real measured bottleneck or enables a lower-copy GPU handoff, the project should keep the NumPy-to-JAX boundary and focus on larger host-side costs.
 
+Status:
+
+* The Rust preprocessing path no longer returns large Python `bytes` payloads; it now uses buffer-protocol exports to reduce copy overhead.
+* The handwritten BED reader still pays avoidable setup and transfer costs and should not be expanded further until it has a credible performance case.
+* Direct host-to-JAX import was explicitly evaluated and deprioritized for now.
+
 ### **Step 7: Reassess Whether More Python Host Logic Should Move**
 
 Only after ingestion and preprocessing are measured should the Rust arm consider moving more work, such as:
@@ -162,6 +218,31 @@ Only after ingestion and preprocessing are measured should the Rust arm consider
 * host-side fallback orchestration in `src/g/compute/logistic.py` if JAX compute is not the dominant cost
 
 Do not move work into Rust just because it seems elegant.
+
+Status:
+
+* Hybrid logistic fallback orchestration in `src/g/compute/logistic.py` has already shown measurable gains from reducing host-side Python overhead, even without moving JAX math out of Python.
+* This remains the most plausible remaining Rust-adjacent host target if we decide to keep investing in the Rust arm during GPU-focused work.
+
+## **5.1 Findings So Far**
+
+### **What Worked**
+
+* Benchmark-first iteration prevented bad architectural decisions from becoming defaults.
+* Rust buffer-protocol exports materially improved the preprocessing prototype.
+* Hybrid logistic cleanup benefited from reducing Python list handling, host patch loops, and unnecessary fallback-path work.
+
+### **What Did Not Work**
+
+* A handwritten Rust BED decode path did not beat `bed-reader`.
+* A direct host-to-JAX import strategy did not outperform `jax.device_put(...)` on the current CPU-backed setup.
+* Not every host/device cleanup in logistic produced a win; some changes regressed the benchmark and were intentionally reverted.
+
+### **Strategic Conclusions**
+
+* The Rust arm should stay narrow, additive, and benchmark-driven.
+* The GPU/JAX arm is now the primary source of likely Phase 2 gains.
+* Remaining Rust work should focus on selective orchestration/boundary cleanup, not broad native replacement.
 
 ## **6. Exact Python Behaviors the Rust Arm Must Preserve**
 
@@ -223,6 +304,8 @@ The project has a benchmark harness that compares incumbent and candidate native
 
 Rust returns missing masks, imputed genotypes, observation counts, and allele frequencies matching the current Python semantics while reusing or matching the incumbent raw-read performance.
 
+Current status: correctness achieved, performance parity not yet achieved.
+
 ### **Milestone 3: Engine Integration**
 
 `src/g/engine.py` can use the Rust-backed chunk path without changing user-visible behavior.
@@ -234,6 +317,25 @@ The project has a documented plan or implementation for lower-copy transfer into
 ### **Milestone 5: Host-Orchestration Reduction**
 
 If needed after ingestion work, Rust reduces expensive Python-side orchestration around hybrid logistic fallback or output formatting without replacing JAX math kernels.
+
+Current status: partially underway in Python/JAX cleanup form; may still justify targeted Rust support later.
+
+## **8.1 Backlog of Unfinished Rust Tasks**
+
+These items remain plausible, but none should proceed without a clear benchmark case.
+
+* Re-benchmark Rust preprocessing on GPU-backed JAX once the GPU lane is available; the CPU result may not be the final story.
+* If preprocessing still matters, consider returning NumPy-owned arrays directly from Rust through tighter FFI rather than layering more Python reconstruction.
+* If logistic host orchestration remains significant after JAX cleanup, consider moving Firth batch packaging/scatter helpers into Rust while leaving all numerical kernels in JAX.
+* Investigate whether output-side formatting is materially expensive before attempting any Rust-side result serialization.
+* Keep the handwritten BED reader as a reference/prototype only unless a future GPU-oriented boundary design gives it a clear reason to exist.
+
+## **8.2 Explicitly Deferred or Rejected Ideas**
+
+* A full Rust replacement for the current JAX math paths.
+* A broad rewrite of sample alignment or Polars-driven tabular work.
+* Direct host-side read into JAX arrays as a near-term optimization target.
+* Continued optimization of the handwritten BED reader without evidence that it can beat `bed-reader` or unlock a new boundary strategy.
 
 ## **9. Suggested Agent Workflow**
 
@@ -259,3 +361,5 @@ The Rust arm is successful when all of the following are true:
 * The native path beats or matches the incumbent `bed-reader`-based baseline for the specific stage it replaces.
 * The end-to-end engine can use the native path without breaking Phase 1 correctness gates.
 * The remaining host-side bottlenecks are documented clearly enough to guide later zero-copy and kernel work.
+
+For the current repository state, the Rust arm should be considered informative but incomplete: it has produced valuable infrastructure, measurements, and narrower targets, but it has not yet delivered a dominant end-to-end speedup over the incumbent host path.
