@@ -90,6 +90,42 @@ If GPU bring-up succeeds, the runtime section of that report should show a GPU b
 
 In the Nix dev shell, the project now exports `/run/opengl-driver/lib` on `LD_LIBRARY_PATH` so CUDA-enabled JAX can see the NVIDIA driver libraries. If you test outside the dev shell, you may need to provide the driver library path yourself.
 
+Current local GPU benchmarking snapshot on the RTX 4080 SUPER:
+
+- from `scripts/benchmark_jax_execution.py` with `chunk_size=256`
+  - backend: `gpu`
+  - warmed `device_put`: `~0.00039s`
+  - warmed linear compute: `~0.01171s`
+  - warmed logistic standard compute: `~0.01785s`
+  - warmed logistic fallback compute: `~0.01885s`
+- comparable CPU-backed snapshot for the same script and chunk size:
+  - warmed `device_put`: `~0.00055s`
+  - warmed linear compute: `~0.00089s`
+  - warmed logistic compute: `~0.04480s`
+- current interpretation:
+  - GPU already helps the logistic path by roughly `2.3x-2.5x`
+  - small linear chunks are still worse on GPU, so chunk sizing and batching remain important
+
+Current local GPU chunk-size sweep snapshot from `scripts/benchmark_jax_chunk_sweep.py`:
+
+- warmed linear compute means:
+  - `256`: `~0.01253s`
+  - `512`: `~0.01150s`
+  - `1024`: `~0.01247s`
+  - `2048`: `~0.01243s`
+- warmed logistic standard compute means:
+  - `256`: `~0.01947s`
+  - `512`: `~0.02730s`
+  - `1024`: `~0.04862s`
+  - `2048`: `~0.07549s`
+- warmed logistic fallback compute means:
+  - `256`: `~0.01806s`
+  - `512`: `~0.02729s`
+  - `1024`: `~0.04848s`
+  - `2048`: `~0.07750s`
+
+These snapshots are intentionally recorded here so later Phase 2 work can compare against a stable reference without rerunning the whole bring-up sequence first.
+
 ## Common Commands
 
 Run tests:

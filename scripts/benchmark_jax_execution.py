@@ -24,6 +24,7 @@ from g.engine import (
     build_linear_output_frame,
     build_logistic_output_frame,
     compute_logistic_association_with_missing_exclusion,
+    iter_logistic_output_frames,
 )
 from g.io.plink import iter_genotype_chunks, read_bed_chunk_host
 from g.io.tabular import load_aligned_sample_data
@@ -78,8 +79,11 @@ class JaxExecutionBenchmarkReport:
     linear_format: TimedMeasurement
     logistic_standard_chunk_compute: TimedMeasurement
     logistic_standard_chunk_format: TimedMeasurement
+    logistic_standard_chunk_compute_and_format: TimedMeasurement
     logistic_fallback_chunk_compute: TimedMeasurement
     logistic_fallback_chunk_format: TimedMeasurement
+    logistic_fallback_chunk_compute_and_format: TimedMeasurement
+    logistic_full_chunk_loop: TimedMeasurement
 
 
 def collect_runtime_summary() -> RuntimeSummary:
@@ -163,6 +167,11 @@ def count_firth_variants(logistic_evaluation: Any) -> int:
 def checksum_frame(output_frame: Any) -> float:
     """Build a stable checksum from a formatted Polars frame."""
     return float(output_frame.select(pl.col("p_value").sum()).item())
+
+
+def checksum_frame_list(output_frames: list[pl.DataFrame]) -> float:
+    """Build a stable checksum from a list of formatted Polars frames."""
+    return float(sum(frame.select(pl.col("p_value").sum()).item() for frame in output_frames))
 
 
 def select_fallback_logistic_chunk(
@@ -295,6 +304,22 @@ def main() -> None:
         checksum_operation=checksum_frame,
         repeat_count=repeat_count,
     )
+    logistic_standard_chunk_compute_and_format_measurement = time_operation(
+        operation=lambda: build_logistic_output_frame(
+            metadata=binary_chunk.metadata,
+            allele_one_frequency=binary_chunk.allele_one_frequency,
+            observation_count=binary_chunk.observation_count,
+            logistic_result=compute_logistic_association_chunk(
+                covariate_matrix=binary_sample_data.covariate_matrix,
+                phenotype_vector=binary_sample_data.phenotype_vector,
+                genotype_matrix=binary_chunk.genotypes,
+                max_iterations=100,
+                tolerance=1.0e-8,
+            ),
+        ),
+        checksum_operation=checksum_frame,
+        repeat_count=repeat_count,
+    )
     logistic_fallback_chunk_compute_measurement = time_operation(
         operation=lambda: compute_logistic_association_with_missing_exclusion(
             covariate_matrix=binary_sample_data.covariate_matrix,
@@ -320,6 +345,24 @@ def main() -> None:
             allele_one_frequency=fallback_logistic_evaluation.allele_one_frequency,
             observation_count=fallback_logistic_evaluation.observation_count,
             logistic_result=fallback_logistic_evaluation.logistic_result,
+        ),
+        checksum_operation=checksum_frame,
+        repeat_count=repeat_count,
+    )
+    logistic_fallback_chunk_compute_and_format_measurement = time_operation(
+        operation=lambda: build_logistic_output_frame(
+            metadata=fallback_chunk.metadata,
+            allele_one_frequency=(
+                logistic_evaluation := compute_logistic_association_with_missing_exclusion(
+                    covariate_matrix=binary_sample_data.covariate_matrix,
+                    phenotype_vector=binary_sample_data.phenotype_vector,
+                    genotype_chunk=fallback_chunk,
+                    max_iterations=100,
+                    tolerance=1.0e-8,
+                )
+            ).allele_one_frequency,
+            observation_count=logistic_evaluation.observation_count,
+            logistic_result=logistic_evaluation.logistic_result,
         ),
         checksum_operation=checksum_frame,
         repeat_count=repeat_count,
@@ -358,6 +401,23 @@ def main() -> None:
         checksum_operation=checksum_frame,
         repeat_count=repeat_count,
     )
+    logistic_full_chunk_loop_measurement = time_operation(
+        operation=lambda: list(
+            iter_logistic_output_frames(
+                bed_prefix=bed_prefix,
+                phenotype_path=Path("data/pheno_bin.txt"),
+                phenotype_name="phenotype_binary",
+                covariate_path=Path("data/covariates.txt"),
+                covariate_names=("age", "sex"),
+                chunk_size=chunk_size,
+                variant_limit=2048,
+                max_iterations=100,
+                tolerance=1.0e-8,
+            )
+        ),
+        checksum_operation=checksum_frame_list,
+        repeat_count=repeat_count,
+    )
     report = JaxExecutionBenchmarkReport(
         runtime=collect_runtime_summary(),
         variant_limit=variant_limit,
@@ -369,8 +429,11 @@ def main() -> None:
         linear_format=linear_format_measurement,
         logistic_standard_chunk_compute=logistic_standard_chunk_compute_measurement,
         logistic_standard_chunk_format=logistic_standard_chunk_format_measurement,
+        logistic_standard_chunk_compute_and_format=logistic_standard_chunk_compute_and_format_measurement,
         logistic_fallback_chunk_compute=logistic_fallback_chunk_compute_measurement,
         logistic_fallback_chunk_format=logistic_fallback_chunk_format_measurement,
+        logistic_fallback_chunk_compute_and_format=logistic_fallback_chunk_compute_and_format_measurement,
+        logistic_full_chunk_loop=logistic_full_chunk_loop_measurement,
     )
     print(json.dumps(asdict(report), indent=2))
 

@@ -143,7 +143,7 @@ def compute_logistic_association_with_missing_exclusion(
     tolerance: float,
 ) -> LogisticAssociationEvaluation:
     """Compute logistic regression while excluding missing genotype rows per variant."""
-    if not bool(jax.device_get(jnp.any(genotype_chunk.missing_mask))):
+    if not genotype_chunk.has_missing_values:
         return LogisticAssociationEvaluation(
             logistic_result=compute_logistic_association_chunk(
                 covariate_matrix=covariate_matrix,

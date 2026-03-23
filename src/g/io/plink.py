@@ -160,6 +160,7 @@ def preprocess_genotype_matrix(genotype_matrix: jax.Array) -> PreprocessedGenoty
     return PreprocessedGenotypeChunkData(
         genotypes=imputed_matrix,
         missing_mask=missing_mask,
+        has_missing_values=bool(jax.device_get(jnp.any(missing_mask))),
         allele_one_frequency=allele_one_frequency,
         observation_count=observation_count,
     )
@@ -178,7 +179,9 @@ def preprocess_genotype_matrix_native(
 
     """
     native_result = _core.preprocess_genotype_matrix_f64(genotype_matrix=genotype_matrix_host)
-    imputed_genotype_matrix = np.frombuffer(memoryview(native_result.imputed_genotype_values), dtype=np.float64).reshape(
+    imputed_genotype_matrix = np.frombuffer(
+        memoryview(native_result.imputed_genotype_values), dtype=np.float64
+    ).reshape(
         (native_result.sample_count, native_result.variant_count),
         order="C",
     )
@@ -191,6 +194,7 @@ def preprocess_genotype_matrix_native(
     return PreprocessedGenotypeChunkData(
         genotypes=jax.device_put(imputed_genotype_matrix),
         missing_mask=jax.device_put(missing_mask.view(np.bool_)),
+        has_missing_values=bool(np.any(missing_mask)),
         allele_one_frequency=jax.device_put(allele_one_frequency),
         observation_count=jax.device_put(observation_count),
     )
@@ -266,6 +270,7 @@ def build_genotype_chunk(
     return GenotypeChunk(
         genotypes=preprocessed_chunk_data.genotypes,
         missing_mask=preprocessed_chunk_data.missing_mask,
+        has_missing_values=preprocessed_chunk_data.has_missing_values,
         metadata=VariantMetadata(
             chromosome=chromosome_values[variant_start:variant_stop],
             variant_identifiers=variant_identifier_values[variant_start:variant_stop],

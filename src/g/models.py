@@ -50,6 +50,7 @@ class GenotypeChunk(NamedTuple):
 
     genotypes: jax.Array
     missing_mask: jax.Array
+    has_missing_values: bool
     metadata: VariantMetadata
     allele_one_frequency: jax.Array
     observation_count: jax.Array
@@ -60,6 +61,7 @@ class PreprocessedGenotypeChunkData(NamedTuple):
 
     genotypes: jax.Array
     missing_mask: jax.Array
+    has_missing_values: bool
     allele_one_frequency: jax.Array
     observation_count: jax.Array
 

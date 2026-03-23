@@ -235,6 +235,7 @@ def test_logistic_missing_rows_are_excluded_per_variant() -> None:
                 [False, False],
             ]
         ),
+        has_missing_values=True,
         metadata=VariantMetadata(
             chromosome=np.asarray(["1", "1"]),
             variant_identifiers=np.asarray(["variant_one", "variant_two"]),
