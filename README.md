@@ -88,6 +88,8 @@ uv run python scripts/benchmark_jax_execution.py
 
 If GPU bring-up succeeds, the runtime section of that report should show a GPU backend and one or more non-CPU JAX devices.
 
+In the Nix dev shell, the project now exports `/run/opengl-driver/lib` on `LD_LIBRARY_PATH` so CUDA-enabled JAX can see the NVIDIA driver libraries. If you test outside the dev shell, you may need to provide the driver library path yourself.
+
 ## Common Commands
 
 Run tests:

@@ -8,6 +8,9 @@ import os
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
+from pathlib import Path
+
+NVIDIA_DRIVER_LIBRARY_DIRECTORY = Path("/run/opengl-driver/lib")
 
 
 @dataclass(frozen=True)
@@ -51,10 +54,24 @@ def run_probe(probe_name: str, environment_overrides: dict[str, str]) -> ProbeRe
     )
 
 
+def build_gpu_library_environment() -> dict[str, str]:
+    """Build environment overrides that expose the NVIDIA driver libraries."""
+    if not NVIDIA_DRIVER_LIBRARY_DIRECTORY.exists():
+        return {}
+    existing_library_path = os.environ.get("LD_LIBRARY_PATH")
+    gpu_library_path = str(NVIDIA_DRIVER_LIBRARY_DIRECTORY)
+    combined_library_path = (
+        gpu_library_path if not existing_library_path else f"{gpu_library_path}:{existing_library_path}"
+    )
+    return {"LD_LIBRARY_PATH": combined_library_path}
+
+
 def main() -> None:
     """Run default and CPU-forced JAX probes and print a JSON report."""
+    gpu_library_environment = build_gpu_library_environment()
     probe_results = [
         run_probe(probe_name="default", environment_overrides={}),
+        run_probe(probe_name="gpu_driver_path", environment_overrides=gpu_library_environment),
         run_probe(probe_name="cpu_forced", environment_overrides={"JAX_PLATFORMS": "cpu"}),
     ]
     print(json.dumps([asdict(probe_result) for probe_result in probe_results], indent=2))

@@ -81,6 +81,7 @@
             export UV_PYTHON=python3.13
             export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             export NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+            export LD_LIBRARY_PATH=/run/opengl-driver/lib:''${NIX_LD_LIBRARY_PATH:+:$NIX_LD_LIBRARY_PATH}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
             echo "GWAS Engine dev shell ready (uv, Rust, plink2, regenie)."
           '';
         };
