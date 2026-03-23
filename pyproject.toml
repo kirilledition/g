@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 readme = "README.md"
 authors = [
-    { name = "kirill denisov", email = "101817863+kirilledition@users.noreply.github.com" }
+    { name = "kirill denisov", email = "101817863+kirilledition@users.noreply.github.com" },
 ]
 requires-python = ">=3.13,<3.14"
 dependencies = [
@@ -12,7 +12,6 @@ dependencies = [
     "jax[cpu]>=0.9.2",
     "numpy>=2.4.3",
     "polars>=1.39.3",
-    "scipy>=1.16.2",
 ]
 
 [project.scripts]
@@ -24,7 +23,12 @@ python-packages = ["g"]
 python-source = "src"
 
 [tool.uv]
-cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "src/**/*.rs" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+]
 
 [dependency-groups]
 dev = [
@@ -35,9 +39,7 @@ dev = [
     "pytest>=8.4.2",
     "ty>=0.0.1a19",
 ]
-gpu = [
-    "jax[cuda12]>=0.9.2",
-]
+gpu = ["jax[cuda12]>=0.9.2"]
 
 [build-system]
 requires = ["maturin>=1.0,<2.0"]
@@ -50,31 +52,31 @@ target-version = "py313"
 [tool.ruff.lint]
 fixable = ["ALL"]
 select = [
-    "F",    # Pyflakes rules
-    "W",    # PyCodeStyle warnings
-    "E",    # PyCodeStyle errors
-    "I",    # Sort imports properly
-    "UP",   # Warn if certain things can changed due to newer Python versions
-    "C4",   # Catch incorrect use of comprehensions, dict, list, etc
-    "FA",   # Enforce from __future__ import annotations
-    "ISC",  # Good use of string concatenation
-    "ICN",  # Use common import conventions
-    "RET",  # Good return practices
-    "SIM",  # Common simplification rules
-    "TID",  # Some good import practices
-    "TC",   # Enforce importing certain types in a TYPE_CHECKING block
-    "PTH",  # Use pathlib instead of os.path
-    "TD",   # Be diligent with TODO comments
-    "NPY",  # Some numpy-specific things
-    "PD",   # Pandas-specific rules
-    "N",    # Naming conventions
-    "RUF",  # Ruff-specific rules
-    "A",    # detect shadowed builtins
-    "BLE",  # disallow catch-all exceptions
-    "COM",  # enforce trailing comma rules
-    "DTZ",  # require strict timezone manipulation with datetime
-    "FBT",  # detect boolean traps
-    "D",    # docstrings
+    "F",   # Pyflakes rules
+    "W",   # PyCodeStyle warnings
+    "E",   # PyCodeStyle errors
+    "I",   # Sort imports properly
+    "UP",  # Warn if certain things can changed due to newer Python versions
+    "C4",  # Catch incorrect use of comprehensions, dict, list, etc
+    "FA",  # Enforce from __future__ import annotations
+    "ISC", # Good use of string concatenation
+    "ICN", # Use common import conventions
+    "RET", # Good return practices
+    "SIM", # Common simplification rules
+    "TID", # Some good import practices
+    "TC",  # Enforce importing certain types in a TYPE_CHECKING block
+    "PTH", # Use pathlib instead of os.path
+    "TD",  # Be diligent with TODO comments
+    "NPY", # Some numpy-specific things
+    "PD",  # Pandas-specific rules
+    "N",   # Naming conventions
+    "RUF", # Ruff-specific rules
+    "A",   # detect shadowed builtins
+    "BLE", # disallow catch-all exceptions
+    "COM", # enforce trailing comma rules
+    "DTZ", # require strict timezone manipulation with datetime
+    "FBT", # detect boolean traps
+    "D",   # docstrings
 ]
 ignore = [
     "COM812", # enforce trailing comma rules

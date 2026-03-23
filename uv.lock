@@ -39,7 +39,6 @@ dependencies = [
     { name = "jax" },
     { name = "numpy" },
     { name = "polars" },
-    { name = "scipy" },
 ]
 
 [package.dev-dependencies]
@@ -61,7 +60,6 @@ requires-dist = [
     { name = "jax", extras = ["cpu"], specifier = ">=0.9.2" },
     { name = "numpy", specifier = ">=2.4.3" },
     { name = "polars", specifier = ">=1.39.3" },
-    { name = "scipy", specifier = ">=1.16.2" },
 ]
 
 [package.metadata.requires-dev]

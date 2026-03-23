@@ -29,7 +29,7 @@ FIRTH_COEFFICIENT_TOLERANCE = 1.0e-4
 FIRTH_LIKELIHOOD_TOLERANCE = 1.0e-4
 FIRTH_MAXIMUM_STEP_SIZE = 5.0
 FIRTH_TOLERANCE_FLOOR = 1.0e-12
-FIRTH_BATCH_BUCKETS = (1, 2, 4, 8, 16, 32, 64)
+FIRTH_BATCH_SIZE = 64
 MAX_ITERATION_COUNT = 100
 LOGISTIC_METHOD_STANDARD = 0
 LOGISTIC_METHOD_FIRTH = 1
@@ -537,6 +537,12 @@ def fit_masked_covariate_only_logistic_regression(
 
     def body_function(state: CovariateOnlyLogisticState) -> CovariateOnlyLogisticState:
         probability_matrix = compute_covariate_only_probability_matrix(covariate_matrix, state.coefficients)
+        masked_probability_matrix = jnp.where(observation_mask, probability_matrix, MISSING_PROBABILITY_FILL)
+        current_log_likelihood = compute_log_likelihood(masked_probability_matrix, phenotype_matrix)
+        updated_converged_mask = state.converged_mask | (
+            jnp.abs(current_log_likelihood - state.previous_log_likelihood)
+            < (tolerance * (LOG_LIKELIHOOD_CONVERGENCE_OFFSET + jnp.abs(current_log_likelihood)))
+        )
         masked_residual = jnp.where(observation_mask, probability_matrix - phenotype_matrix, 0.0)
         effective_weights = jnp.where(
             observation_mask,
@@ -548,26 +554,12 @@ def fit_masked_covariate_only_logistic_regression(
         step = jnp.squeeze(jnp.linalg.solve(information_matrix, score[:, :, None]), axis=-1)
         step = jnp.where(state.converged_mask[:, None], 0.0, step)
         updated_coefficients = state.coefficients - step
-        updated_probability_matrix = compute_covariate_only_probability_matrix(
-            covariate_matrix,
-            updated_coefficients,
-        )
-        masked_updated_probability_matrix = jnp.where(
-            observation_mask,
-            updated_probability_matrix,
-            MISSING_PROBABILITY_FILL,
-        )
-        updated_log_likelihood = compute_log_likelihood(masked_updated_probability_matrix, phenotype_matrix)
-        updated_converged_mask = state.converged_mask | (
-            jnp.abs(updated_log_likelihood - state.previous_log_likelihood)
-            < (tolerance * (LOG_LIKELIHOOD_CONVERGENCE_OFFSET + jnp.abs(updated_log_likelihood)))
-        )
         updated_iteration_count = state.iteration_count + (~state.converged_mask).astype(jnp.int32)
         return CovariateOnlyLogisticState(
             coefficients=updated_coefficients,
             converged_mask=updated_converged_mask,
             iteration_count=updated_iteration_count,
-            previous_log_likelihood=updated_log_likelihood,
+            previous_log_likelihood=current_log_likelihood,
         )
 
     final_state = jax.lax.while_loop(
@@ -577,7 +569,7 @@ def fit_masked_covariate_only_logistic_regression(
             coefficients=broadcast_initial_coefficients,
             converged_mask=jnp.zeros((variant_count,), dtype=bool),
             iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
-            previous_log_likelihood=initial_log_likelihood,
+            previous_log_likelihood=jnp.full_like(initial_log_likelihood, -jnp.inf),
         ),
     )
     return final_state.coefficients
@@ -675,6 +667,12 @@ def compute_standard_logistic_association_chunk_with_mask(
         probability_matrix = compute_probability_matrix(
             covariate_matrix, genotype_matrix_by_variant, state.coefficients
         )
+        masked_probability_matrix = jnp.where(observation_mask, probability_matrix, MISSING_PROBABILITY_FILL)
+        current_log_likelihood = compute_log_likelihood(masked_probability_matrix, phenotype_matrix)
+        updated_converged_mask = state.converged_mask | (
+            jnp.abs(current_log_likelihood - state.previous_log_likelihood)
+            < (tolerance * (LOG_LIKELIHOOD_CONVERGENCE_OFFSET + jnp.abs(current_log_likelihood)))
+        )
         masked_residual = jnp.where(observation_mask, probability_matrix - phenotype_matrix, 0.0)
         effective_weights = jnp.where(
             observation_mask,
@@ -687,28 +685,20 @@ def compute_standard_logistic_association_chunk_with_mask(
         covariate_information_matrix = compute_covariate_information_matrix(covariate_matrix, effective_weights)
         cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, weighted_genotype_matrix)
         genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
-        information_matrix = assemble_full_information_matrix(
-            covariate_information_matrix=covariate_information_matrix,
-            cross_information_vector=cross_information_vector,
-            genotype_information=genotype_information,
+        covariate_information_solution = jnp.linalg.solve(covariate_information_matrix, covariate_score[:, :, None])
+        covariate_information_solution = jnp.squeeze(covariate_information_solution, axis=-1)
+        cross_solution = jnp.linalg.solve(covariate_information_matrix, cross_information_vector[:, :, None])
+        cross_solution = jnp.squeeze(cross_solution, axis=-1)
+        schur_complement = genotype_information - jnp.sum(cross_information_vector * cross_solution, axis=1)
+        safe_schur_complement = jnp.where(schur_complement > 0.0, schur_complement, 1.0)
+        adjusted_genotype_score = genotype_score - jnp.sum(
+            cross_information_vector * covariate_information_solution, axis=1
         )
-        score = jnp.concatenate([covariate_score, genotype_score[:, None]], axis=1)
-        step = jnp.squeeze(jnp.linalg.solve(information_matrix, score[:, :, None]), axis=-1)
+        genotype_step = adjusted_genotype_score / safe_schur_complement
+        covariate_step = covariate_information_solution - cross_solution * genotype_step[:, None]
+        step = jnp.concatenate([covariate_step, genotype_step[:, None]], axis=1)
         step = jnp.where(state.converged_mask[:, None], 0.0, step)
         updated_coefficients = state.coefficients - step
-        updated_probability_matrix = compute_probability_matrix(
-            covariate_matrix, genotype_matrix_by_variant, updated_coefficients
-        )
-        masked_updated_probability_matrix = jnp.where(
-            observation_mask,
-            updated_probability_matrix,
-            MISSING_PROBABILITY_FILL,
-        )
-        updated_log_likelihood = compute_log_likelihood(masked_updated_probability_matrix, phenotype_matrix)
-        updated_converged_mask = state.converged_mask | (
-            jnp.abs(updated_log_likelihood - state.previous_log_likelihood)
-            < (tolerance * (LOG_LIKELIHOOD_CONVERGENCE_OFFSET + jnp.abs(updated_log_likelihood)))
-        )
         updated_iteration_count = state.iteration_count + (~state.converged_mask).astype(jnp.int32)
         updated_covariate_information_matrix = jnp.where(
             state.converged_mask[:, None, None],
@@ -729,7 +719,7 @@ def compute_standard_logistic_association_chunk_with_mask(
             coefficients=updated_coefficients,
             converged_mask=updated_converged_mask,
             iteration_count=updated_iteration_count,
-            previous_log_likelihood=updated_log_likelihood,
+            previous_log_likelihood=current_log_likelihood,
             last_covariate_information_matrix=updated_covariate_information_matrix,
             last_cross_information_vector=updated_cross_information_vector,
             last_genotype_information=updated_genotype_information,
@@ -742,7 +732,7 @@ def compute_standard_logistic_association_chunk_with_mask(
             coefficients=initial_coefficients,
             converged_mask=jnp.zeros((variant_count,), dtype=bool),
             iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
-            previous_log_likelihood=initial_log_likelihood,
+            previous_log_likelihood=jnp.full_like(initial_log_likelihood, -jnp.inf),
             last_covariate_information_matrix=initial_covariate_information_matrix,
             last_cross_information_vector=initial_cross_information_vector,
             last_genotype_information=initial_genotype_information,
@@ -833,6 +823,11 @@ def compute_standard_logistic_association_chunk_without_mask(
         probability_matrix = compute_probability_matrix(
             covariate_matrix, genotype_matrix_by_variant, state.coefficients
         )
+        current_log_likelihood = compute_log_likelihood(probability_matrix, phenotype_matrix)
+        updated_converged_mask = state.converged_mask | (
+            jnp.abs(current_log_likelihood - state.previous_log_likelihood)
+            < (tolerance * (LOG_LIKELIHOOD_CONVERGENCE_OFFSET + jnp.abs(current_log_likelihood)))
+        )
         residual_matrix = probability_matrix - phenotype_matrix
         effective_weights = jnp.clip(probability_matrix * (1.0 - probability_matrix), MINIMUM_WEIGHT)
         weighted_genotype_matrix = effective_weights * genotype_matrix_by_variant
@@ -841,23 +836,20 @@ def compute_standard_logistic_association_chunk_without_mask(
         covariate_information_matrix = compute_covariate_information_matrix(covariate_matrix, effective_weights)
         cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, weighted_genotype_matrix)
         genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
-        information_matrix = assemble_full_information_matrix(
-            covariate_information_matrix=covariate_information_matrix,
-            cross_information_vector=cross_information_vector,
-            genotype_information=genotype_information,
+        covariate_information_solution = jnp.linalg.solve(covariate_information_matrix, covariate_score[:, :, None])
+        covariate_information_solution = jnp.squeeze(covariate_information_solution, axis=-1)
+        cross_solution = jnp.linalg.solve(covariate_information_matrix, cross_information_vector[:, :, None])
+        cross_solution = jnp.squeeze(cross_solution, axis=-1)
+        schur_complement = genotype_information - jnp.sum(cross_information_vector * cross_solution, axis=1)
+        safe_schur_complement = jnp.where(schur_complement > 0.0, schur_complement, 1.0)
+        adjusted_genotype_score = genotype_score - jnp.sum(
+            cross_information_vector * covariate_information_solution, axis=1
         )
-        score = jnp.concatenate([covariate_score, genotype_score[:, None]], axis=1)
-        step = jnp.squeeze(jnp.linalg.solve(information_matrix, score[:, :, None]), axis=-1)
+        genotype_step = adjusted_genotype_score / safe_schur_complement
+        covariate_step = covariate_information_solution - cross_solution * genotype_step[:, None]
+        step = jnp.concatenate([covariate_step, genotype_step[:, None]], axis=1)
         step = jnp.where(state.converged_mask[:, None], 0.0, step)
         updated_coefficients = state.coefficients - step
-        updated_probability_matrix = compute_probability_matrix(
-            covariate_matrix, genotype_matrix_by_variant, updated_coefficients
-        )
-        updated_log_likelihood = compute_log_likelihood(updated_probability_matrix, phenotype_matrix)
-        updated_converged_mask = state.converged_mask | (
-            jnp.abs(updated_log_likelihood - state.previous_log_likelihood)
-            < (tolerance * (LOG_LIKELIHOOD_CONVERGENCE_OFFSET + jnp.abs(updated_log_likelihood)))
-        )
         updated_iteration_count = state.iteration_count + (~state.converged_mask).astype(jnp.int32)
         updated_covariate_information_matrix = jnp.where(
             state.converged_mask[:, None, None],
@@ -878,7 +870,7 @@ def compute_standard_logistic_association_chunk_without_mask(
             coefficients=updated_coefficients,
             converged_mask=updated_converged_mask,
             iteration_count=updated_iteration_count,
-            previous_log_likelihood=updated_log_likelihood,
+            previous_log_likelihood=current_log_likelihood,
             last_covariate_information_matrix=updated_covariate_information_matrix,
             last_cross_information_vector=updated_cross_information_vector,
             last_genotype_information=updated_genotype_information,
@@ -891,7 +883,7 @@ def compute_standard_logistic_association_chunk_without_mask(
             coefficients=initial_coefficients,
             converged_mask=jnp.zeros((variant_count,), dtype=bool),
             iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
-            previous_log_likelihood=initial_log_likelihood,
+            previous_log_likelihood=jnp.full_like(initial_log_likelihood, -jnp.inf),
             last_covariate_information_matrix=initial_covariate_information_matrix,
             last_cross_information_vector=initial_cross_information_vector,
             last_genotype_information=initial_genotype_information,
@@ -1110,29 +1102,24 @@ compute_firth_association_chunk_variantwise = jax.jit(
 )
 
 
-def choose_firth_batch_size(active_variant_count: int) -> int:
-    """Choose the smallest configured Firth batch bucket for a count."""
-    for batch_size in FIRTH_BATCH_BUCKETS:
-        if active_variant_count <= batch_size:
-            return batch_size
-    return FIRTH_BATCH_BUCKETS[-1]
-
-
 def build_firth_padded_index_batches(
     fallback_index_vector: npt.NDArray[np.int64],
 ) -> list[FirthIndexBatch]:
-    """Build padded fallback index batches using size buckets."""
+    """Build padded fallback index batches using a fixed batch size.
+
+    All batches are padded to FIRTH_BATCH_SIZE to ensure a single XLA
+    compilation of the vmap'd Firth kernel, avoiding recompilation overhead
+    from varying batch dimensions.
+    """
     if fallback_index_vector.size == 0:
         return []
     padded_batches: list[FirthIndexBatch] = []
     batch_start = 0
     while batch_start < fallback_index_vector.size:
-        remaining_variant_count = fallback_index_vector.size - batch_start
-        batch_size = choose_firth_batch_size(min(remaining_variant_count, FIRTH_BATCH_BUCKETS[-1]))
-        active_index_array = fallback_index_vector[batch_start : batch_start + batch_size]
+        active_index_array = fallback_index_vector[batch_start : batch_start + FIRTH_BATCH_SIZE]
         active_variant_count = active_index_array.size
         pad_index_value = int(active_index_array[0])
-        padded_index_array = np.full((batch_size,), pad_index_value, dtype=np.int32)
+        padded_index_array = np.full((FIRTH_BATCH_SIZE,), pad_index_value, dtype=np.int32)
         padded_index_array[:active_variant_count] = active_index_array.astype(np.int32, copy=False)
         padded_batches.append(
             FirthIndexBatch(
@@ -1141,7 +1128,7 @@ def build_firth_padded_index_batches(
                 active_index_array=active_index_array,
             )
         )
-        batch_start += batch_size
+        batch_start += FIRTH_BATCH_SIZE
     return padded_batches
 
 

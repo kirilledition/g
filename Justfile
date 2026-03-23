@@ -63,6 +63,40 @@ profile-linear-chr22:
     mkdir -p {{data_dir}}/profiles/jax_linear_full_chr22
     XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_PYTHON_CLIENT_MEM_FRACTION=.50 uv run python scripts/profile_full_chr22_jax.py --bfile {{data_dir}}/1kg_chr22_full --pheno {{data_dir}}/pheno_cont.txt --pheno-name phenotype_continuous --covar {{data_dir}}/covariates.txt --covar-names age,sex --glm linear --chunk-size 512 --trace-dir {{data_dir}}/profiles/jax_linear_full_chr22 --memory-profile {{data_dir}}/profiles/jax_linear_full_chr22_memory.prof
 
+# Capture detailed cProfile + JAX profiler report for full chr22 logistic
+profile-logistic-detailed:
+    mkdir -p {{data_dir}}/profiles/logistic_detailed
+    XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_PYTHON_CLIENT_MEM_FRACTION=.50 uv run python scripts/profile_full_chr22_detailed.py \
+        --bfile {{data_dir}}/1kg_chr22_full \
+        --pheno {{data_dir}}/pheno_bin.txt \
+        --pheno-name phenotype_binary \
+        --covar {{data_dir}}/covariates.txt \
+        --covar-names age,sex \
+        --glm logistic \
+        --chunk-size 512 \
+        --output-dir {{data_dir}}/profiles/logistic_detailed \
+        --report-name logistic_chr22_full \
+        --enable-jax-trace \
+        --enable-memory-profile \
+        --cprofile-sort cumulative
+
+# Capture detailed cProfile + JAX profiler report for full chr22 linear
+profile-linear-detailed:
+    mkdir -p {{data_dir}}/profiles/linear_detailed
+    XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_PYTHON_CLIENT_MEM_FRACTION=.50 uv run python scripts/profile_full_chr22_detailed.py \
+        --bfile {{data_dir}}/1kg_chr22_full \
+        --pheno {{data_dir}}/pheno_cont.txt \
+        --pheno-name phenotype_continuous \
+        --covar {{data_dir}}/covariates.txt \
+        --covar-names age,sex \
+        --glm linear \
+        --chunk-size 512 \
+        --output-dir {{data_dir}}/profiles/linear_detailed \
+        --report-name linear_chr22_full \
+        --enable-jax-trace \
+        --enable-memory-profile \
+        --cprofile-sort cumulative
+
 # Format code
 format:
     uv run ruff format .
