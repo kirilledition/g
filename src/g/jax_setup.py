@@ -8,7 +8,7 @@ from pathlib import Path
 import jax
 
 ENABLE_X64 = True
-ENABLE_PERSISTENT_COMPILATION_CACHE = os.environ.get("G_ENABLE_JAX_PERSISTENT_COMPILATION_CACHE", "0") == "1"
+ENABLE_PERSISTENT_COMPILATION_CACHE = os.environ.get("G_ENABLE_JAX_PERSISTENT_COMPILATION_CACHE", "1") == "1"
 PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = -1
 PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
 
@@ -22,6 +22,7 @@ def resolve_jax_compilation_cache_directory() -> Path:
     if xdg_cache_home is not None:
         return Path(xdg_cache_home).expanduser() / "g" / "jax"
     return Path.home() / ".cache" / "g" / "jax"
+
 
 jax.config.update("jax_enable_x64", ENABLE_X64)
 if ENABLE_PERSISTENT_COMPILATION_CACHE:

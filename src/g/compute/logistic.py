@@ -960,13 +960,12 @@ def fit_single_variant_firth_logistic_regression(
 
     full_design_matrix = jnp.concatenate([covariate_matrix, genotype_vector[:, None]], axis=1)
 
-    def compute_covariance_matrix_from_weights(weight_vector: jax.Array) -> jax.Array:
+    def compute_hessian_from_weights(weight_vector: jax.Array) -> jax.Array:
         weighted_design_matrix = full_design_matrix * weight_vector[:, None]
-        hessian_matrix = full_design_matrix.T @ weighted_design_matrix
-        return jnp.linalg.inv(hessian_matrix)
+        return full_design_matrix.T @ weighted_design_matrix
 
     def compute_hdiag_and_adjusted_weights(
-        covariance_matrix: jax.Array,
+        information_matrix: jax.Array,
         probability_vector: jax.Array,
     ) -> AdjustedWeightComponents:
         variance_vector = jnp.where(
@@ -974,7 +973,7 @@ def fit_single_variant_firth_logistic_regression(
             jnp.clip(probability_vector * (1.0 - probability_vector), MINIMUM_WEIGHT),
             0.0,
         )
-        projected_design_matrix = full_design_matrix @ covariance_matrix
+        projected_design_matrix = jnp.linalg.solve(information_matrix, full_design_matrix.T).T
         leverage_vector = variance_vector * jnp.sum(projected_design_matrix * full_design_matrix, axis=1)
         adjusted_weight_vector = jnp.where(
             observation_mask,
@@ -1013,50 +1012,42 @@ def fit_single_variant_firth_logistic_regression(
             probability_vector=probability_vector,
             observation_mask=observation_mask,
         )
-        covariance_matrix = jnp.linalg.inv(information_components.information_matrix)
+        current_penalized_log_likelihood = compute_firth_penalized_log_likelihood(
+            probability_vector=probability_vector,
+            phenotype_vector=phenotype_vector,
+            observation_mask=observation_mask,
+            information_matrix=information_components.information_matrix,
+        )
+        current_failed = (~jnp.isfinite(current_penalized_log_likelihood)) | (
+            ~jnp.all(jnp.isfinite(state.coefficients))
+        )
         adjusted_weight_components = compute_hdiag_and_adjusted_weights(
-            covariance_matrix=covariance_matrix,
+            information_matrix=information_components.information_matrix,
             probability_vector=probability_vector,
         )
         adjusted_score = full_design_matrix.T @ adjusted_weight_components.adjusted_weight_vector
         adjusted_score_maximum = jnp.max(jnp.abs(adjusted_score))
-        second_covariance_matrix = compute_covariance_matrix_from_weights(
-            adjusted_weight_components.second_weight_vector
-        )
-        coefficient_step = second_covariance_matrix @ adjusted_score
+        second_hessian = compute_hessian_from_weights(adjusted_weight_components.second_weight_vector)
+        coefficient_step = jnp.linalg.solve(second_hessian, adjusted_score)
         maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
         step_scale = jnp.minimum(1.0, maximum_step_size / jnp.maximum(maximum_coefficient_step, FIRTH_TOLERANCE_FLOOR))
         scaled_coefficient_step = coefficient_step * step_scale
-        updated_coefficients = state.coefficients + scaled_coefficient_step
-        updated_probability_vector = compute_probability_vector(updated_coefficients)
-        updated_information_components = compute_information_components(
-            covariate_matrix=covariate_matrix,
-            genotype_vector=genotype_vector,
-            probability_vector=updated_probability_vector,
-            observation_mask=observation_mask,
-        )
-        updated_penalized_log_likelihood = compute_firth_penalized_log_likelihood(
-            probability_vector=updated_probability_vector,
-            phenotype_vector=phenotype_vector,
-            observation_mask=observation_mask,
-            information_matrix=updated_information_components.information_matrix,
-        )
-        updated_failed = (~jnp.isfinite(updated_penalized_log_likelihood)) | (
-            ~jnp.all(jnp.isfinite(updated_coefficients))
-        )
         updated_converged = (
             (state.iteration_count > 0)
             & (jnp.max(jnp.abs(scaled_coefficient_step)) <= coefficient_tolerance)
             & (adjusted_score_maximum < gradient_tolerance)
-            & ((updated_penalized_log_likelihood - state.previous_penalized_log_likelihood) < likelihood_tolerance)
-            & (~updated_failed)
+            & ((current_penalized_log_likelihood - state.previous_penalized_log_likelihood) < likelihood_tolerance)
+            & (~current_failed)
+        )
+        updated_coefficients = jnp.where(
+            updated_converged | current_failed, state.coefficients, state.coefficients + scaled_coefficient_step
         )
         return FirthState(
             coefficients=updated_coefficients,
             converged=updated_converged,
-            failed=updated_failed,
+            failed=current_failed,
             iteration_count=state.iteration_count + jnp.asarray(1, dtype=jnp.int32),
-            previous_penalized_log_likelihood=updated_penalized_log_likelihood,
+            previous_penalized_log_likelihood=current_penalized_log_likelihood,
         )
 
     final_state = jax.lax.while_loop(
@@ -1077,14 +1068,12 @@ def fit_single_variant_firth_logistic_regression(
         probability_vector=final_probability_vector,
         observation_mask=observation_mask,
     )
-    final_covariance_matrix = jnp.linalg.inv(final_information_components.information_matrix)
     final_adjusted_weight_components = compute_hdiag_and_adjusted_weights(
-        covariance_matrix=final_covariance_matrix,
+        information_matrix=final_information_components.information_matrix,
         probability_vector=final_probability_vector,
     )
-    final_second_covariance_matrix = compute_covariance_matrix_from_weights(
-        final_adjusted_weight_components.second_weight_vector
-    )
+    final_second_hessian = compute_hessian_from_weights(final_adjusted_weight_components.second_weight_vector)
+    final_second_covariance_matrix = jnp.linalg.inv(final_second_hessian)
     return compute_firth_statistics(
         coefficients=final_state.coefficients,
         covariance_matrix=final_second_covariance_matrix,
