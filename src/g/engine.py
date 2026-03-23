@@ -8,7 +8,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import polars as pl
-from jax.scipy.special import betainc
 
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
 from g.compute.logistic import (
@@ -21,7 +20,13 @@ from g.compute.logistic import (
 )
 from g.io.plink import iter_genotype_chunks
 from g.io.tabular import load_aligned_sample_data
-from g.models import LogisticAssociationEvaluation
+from g.models import (
+    GenotypeChunk,
+    LinearAssociationChunkResult,
+    LogisticAssociationChunkResult,
+    LogisticAssociationEvaluation,
+    VariantMetadata,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -51,12 +56,10 @@ def format_logistic_error_codes(error_code_values: np.ndarray) -> np.ndarray:
 
 
 def build_linear_output_frame(
-    metadata,
-    allele_one_frequency,
-    observation_count,
-    linear_result,
-    sample_count: int,
-    covariate_parameter_count: int,
+    metadata: VariantMetadata,
+    allele_one_frequency: jax.Array,
+    observation_count: jax.Array,
+    linear_result: LinearAssociationChunkResult,
 ) -> pl.DataFrame:
     """Build a tabular linear association result frame."""
     host_values = jax.device_get(
@@ -66,17 +69,9 @@ def build_linear_output_frame(
             "beta": linear_result.beta,
             "standard_error": linear_result.standard_error,
             "test_statistic": linear_result.test_statistic,
+            "p_value": linear_result.p_value,
             "valid_mask": linear_result.valid_mask,
         }
-    )
-    degrees_of_freedom = sample_count - covariate_parameter_count - 1
-    absolute_test_statistic = jnp.abs(jnp.asarray(host_values["test_statistic"]))
-    degrees_of_freedom_value = jnp.asarray(degrees_of_freedom, dtype=absolute_test_statistic.dtype)
-    beta_inc_argument = degrees_of_freedom_value / (
-        degrees_of_freedom_value + absolute_test_statistic * absolute_test_statistic
-    )
-    p_value = jax.device_get(
-        betainc(0.5 * degrees_of_freedom_value, 0.5, beta_inc_argument),
     )
     return pl.DataFrame(
         {
@@ -90,17 +85,17 @@ def build_linear_output_frame(
             "beta": host_values["beta"],
             "standard_error": host_values["standard_error"],
             "t_statistic": host_values["test_statistic"],
-            "p_value": p_value,
+            "p_value": host_values["p_value"],
             "is_valid": host_values["valid_mask"],
         }
     )
 
 
 def build_logistic_output_frame(
-    metadata,
-    allele_one_frequency,
-    observation_count,
-    logistic_result,
+    metadata: VariantMetadata,
+    allele_one_frequency: jax.Array,
+    observation_count: jax.Array,
+    logistic_result: LogisticAssociationChunkResult,
 ) -> pl.DataFrame:
     """Build a tabular logistic association result frame."""
     host_values = jax.device_get(
@@ -141,10 +136,9 @@ def build_logistic_output_frame(
 
 
 def compute_logistic_association_with_missing_exclusion(
-    covariate_matrix,
-    phenotype_vector,
-    genotype_chunk,
-    covariate_only_coefficients,
+    covariate_matrix: jax.Array,
+    phenotype_vector: jax.Array,
+    genotype_chunk: GenotypeChunk,
     max_iterations: int,
     tolerance: float,
 ) -> LogisticAssociationEvaluation:
@@ -155,7 +149,6 @@ def compute_logistic_association_with_missing_exclusion(
                 covariate_matrix=covariate_matrix,
                 phenotype_vector=phenotype_vector,
                 genotype_matrix=genotype_chunk.genotypes,
-                covariate_only_coefficients=covariate_only_coefficients,
                 max_iterations=max_iterations,
                 tolerance=tolerance,
             ),
@@ -163,12 +156,12 @@ def compute_logistic_association_with_missing_exclusion(
             observation_count=genotype_chunk.observation_count,
         )
 
-    observation_mask = ~genotype_chunk.missing_mask.T
+    observation_mask = ~jnp.transpose(genotype_chunk.missing_mask)
     sanitized_genotype_matrix = jnp.where(genotype_chunk.missing_mask, 0.0, genotype_chunk.genotypes)
     observation_count = jnp.sum(observation_mask, axis=1, dtype=jnp.int64)
     allele_one_frequency = jnp.where(
         observation_count > 0,
-        jnp.sum(sanitized_genotype_matrix.T, axis=1) / (2.0 * observation_count),
+        jnp.sum(jnp.transpose(sanitized_genotype_matrix), axis=1) / (2.0 * observation_count),
         0.0,
     )
     return LogisticAssociationEvaluation(
@@ -177,7 +170,6 @@ def compute_logistic_association_with_missing_exclusion(
             phenotype_vector=phenotype_vector,
             genotype_matrix=genotype_chunk.genotypes,
             observation_mask=observation_mask,
-            covariate_only_coefficients=covariate_only_coefficients,
             max_iterations=max_iterations,
             tolerance=tolerance,
         ),
@@ -225,8 +217,6 @@ def iter_linear_output_frames(
             allele_one_frequency=genotype_chunk.allele_one_frequency,
             observation_count=genotype_chunk.observation_count,
             linear_result=linear_result,
-            sample_count=aligned_sample_data.covariate_matrix.shape[0],
-            covariate_parameter_count=aligned_sample_data.covariate_matrix.shape[1],
         )
 
 
@@ -250,11 +240,6 @@ def iter_logistic_output_frames(
         covariate_names=covariate_names,
         is_binary_trait=True,
     )
-    covariate_only_coefficients = jnp.zeros(
-        (aligned_sample_data.covariate_matrix.shape[1],),
-        dtype=aligned_sample_data.covariate_matrix.dtype,
-    )
-
     for genotype_chunk in iter_genotype_chunks(
         bed_prefix=bed_prefix,
         sample_indices=aligned_sample_data.sample_indices,
@@ -266,7 +251,6 @@ def iter_logistic_output_frames(
             covariate_matrix=aligned_sample_data.covariate_matrix,
             phenotype_vector=aligned_sample_data.phenotype_vector,
             genotype_chunk=genotype_chunk,
-            covariate_only_coefficients=covariate_only_coefficients,
             max_iterations=max_iterations,
             tolerance=tolerance,
         )

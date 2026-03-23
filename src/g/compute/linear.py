@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+from jax.scipy.special import betainc
 
 from g import jax_setup  # noqa: F401
 from g.models import LinearAssociationChunkResult, LinearAssociationState
-
-MISSING_P_VALUE = jnp.asarray(jnp.nan)
 
 
 def prepare_linear_association_state(
@@ -72,13 +71,18 @@ def compute_linear_association_chunk(
     residual_variance = residual_sum_squares / degrees_of_freedom
     standard_error = jnp.sqrt(residual_variance / safe_denominator)
     test_statistic = beta / standard_error
+    absolute_test_statistic = jnp.abs(test_statistic)
+    degrees_of_freedom_value = jnp.asarray(degrees_of_freedom, dtype=beta.dtype)
+    beta_inc_argument = degrees_of_freedom_value / (
+        degrees_of_freedom_value + absolute_test_statistic * absolute_test_statistic
+    )
+    p_value = betainc(0.5 * degrees_of_freedom_value, 0.5, beta_inc_argument)
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
 
-    placeholder_p_values = jnp.broadcast_to(MISSING_P_VALUE.astype(beta.dtype), beta.shape)
     return LinearAssociationChunkResult(
         beta=beta,
         standard_error=standard_error,
         test_statistic=test_statistic,
-        p_value=placeholder_p_values,
+        p_value=p_value,
         valid_mask=valid_mask,
     )

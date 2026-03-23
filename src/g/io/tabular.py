@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 import polars as pl
@@ -13,6 +14,8 @@ from g.models import AlignedSampleData
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import jax
 
 FAMILY_TABLE_COLUMNS = (
     "family_identifier",
@@ -84,7 +87,7 @@ def infer_covariate_names(covariate_table: pl.DataFrame) -> tuple[str, ...]:
     return covariate_names
 
 
-def convert_frame_to_float64_jax(data_frame: pl.DataFrame):
+def convert_frame_to_float64_jax(data_frame: pl.DataFrame) -> jax.Array:
     """Convert a numeric Polars DataFrame to a float64 JAX array.
 
     Args:
@@ -94,7 +97,7 @@ def convert_frame_to_float64_jax(data_frame: pl.DataFrame):
         JAX array exported from Polars.
 
     """
-    return data_frame.to_jax(dtype=pl.Float64, order="c")
+    return jnp.asarray(data_frame.to_jax(dtype=pl.Float64, order="c"))
 
 
 def recode_binary_phenotype(phenotype_values: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
