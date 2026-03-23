@@ -13,8 +13,9 @@ The longer-term goal is a hybrid Python/Rust/GPU system that outperforms CPU-bou
 ## Current Status
 
 - Phase 1 correctness milestone is complete
-- Phase 1 remains CPU-oriented and correctness-first
-- Phase 2 has not started yet; major performance work is still ahead
+- Phase 1 remains the correctness baseline
+- Phase 2 performance work is active in both the Rust and GPU/JAX arms
+- Current Phase 2 focus is optimized JAX on GPU before any custom-kernel work
 
 Tracked Phase 1 snapshot:
 
@@ -29,12 +30,20 @@ Latest tracked parity snapshot from `docs/PHASE1_STATUS.md`:
 - logistic method mismatches: `0`
 - logistic error-code mismatches: `0`
 
-Latest tracked runtime snapshot on the local Phase 0 dataset:
+Tracked end-of-Phase-1 runtime snapshot on the local Phase 0 dataset:
 
 - linear runtime slowdown vs PLINK: `22.459x`
 - logistic runtime slowdown vs PLINK: `16.292x`
 
-That performance is expected for Phase 1. This stage was about locking down data alignment, masking, solver behavior, and PLINK-compatible outputs before moving into kernel and I/O optimization.
+That performance is expected for Phase 1. This stage was about locking down data alignment, masking, solver behavior, and PLINK-compatible outputs before moving into kernel, orchestration, and I/O optimization.
+
+Current Phase 2 reality:
+
+- the handwritten Rust BED reader prototype does not beat `bed-reader`
+- the Rust preprocessing path is correct but still slower than the incumbent Python/JAX path on the current local benchmark
+- GPU JAX bring-up now works in the dev shell on the local RTX 4080 SUPER
+- the logistic path already benefits materially from GPU execution
+- the linear path is still dominated by chunk iteration, I/O, preprocessing, and output handling rather than the linear math kernel
 
 ## What Is Implemented
 
@@ -44,6 +53,8 @@ That performance is expected for Phase 1. This stage was about locking down data
 - JAX linear regression kernel
 - JAX logistic regression kernel
 - JAX Firth/hybrid logistic fallback path for binary traits
+- GPU JAX benchmark and profiling harnesses
+- PyO3/Rust prototype surfaces for native BED reading and preprocessing
 - PLINK parity/evaluation harnesses
 - thin CLI/library entrypoints for running association scans
 
@@ -90,6 +101,12 @@ If GPU bring-up succeeds, the runtime section of that report should show a GPU b
 
 In the Nix dev shell, the project now exports `/run/opengl-driver/lib` on `LD_LIBRARY_PATH` so CUDA-enabled JAX can see the NVIDIA driver libraries. If you test outside the dev shell, you may need to provide the driver library path yourself.
 
+If the GPU path is unstable, use the dedicated runtime probe first:
+
+```bash
+just probe-jax
+```
+
 Current local GPU benchmarking snapshot on the RTX 4080 SUPER:
 
 - from `scripts/benchmark_jax_execution.py` with `chunk_size=256`
@@ -126,12 +143,35 @@ Current local GPU chunk-size sweep snapshot from `scripts/benchmark_jax_chunk_sw
 
 These snapshots are intentionally recorded here so later Phase 2 work can compare against a stable reference without rerunning the whole bring-up sequence first.
 
+Current local full-loop logistic GPU snapshot from `scripts/benchmark_logistic_loop_sweep.py` with `variant_limit=4096`:
+
+- warmed `compute_only` means:
+  - `128`: `~0.492s`
+  - `256`: `~0.375s`
+  - `512`: `~0.283s`
+  - `1024`: `~0.237s`
+- warmed `compute_and_format` means:
+  - `128`: `~0.500s`
+  - `256`: `~0.379s`
+  - `512`: `~0.286s`
+  - `1024`: `~0.240s`
+- current interpretation:
+  - formatting is negligible relative to logistic compute
+  - larger chunk sizes materially improve end-to-end logistic loop throughput on GPU
+  - `1024` currently looks better than the old `512` default for GPU logistic work
+
 ## Common Commands
 
 Run tests:
 
 ```bash
 just test
+```
+
+Run the main development checks:
+
+```bash
+just check
 ```
 
 Run formatting and linting manually:
@@ -154,6 +194,30 @@ Run the full Phase 1 evaluation:
 uv run python scripts/evaluate_phase1.py
 ```
 
+Phase 2 benchmarking and profiling commands:
+
+```bash
+just probe-jax
+just benchmark-jax
+just benchmark-jax-chunks
+just benchmark-logistic-loop
+just benchmark-logistic-fallback
+just benchmark-plink-reader
+just profile-logistic-chr22
+just profile-linear-chr22
+```
+
+What these do:
+
+- `just probe-jax` checks whether the current JAX runtime sees CPU/GPU devices cleanly
+- `just benchmark-jax` measures host read, transfer, compute, and formatting boundaries
+- `just benchmark-jax-chunks` sweeps chunk sizes for isolated JAX compute kernels
+- `just benchmark-logistic-loop` measures full logistic loop throughput across chunk sizes
+- `just benchmark-logistic-fallback` isolates the hybrid fallback-heavy path
+- `just benchmark-plink-reader` compares reader and preprocessing paths
+- `just profile-logistic-chr22` captures a full-chromosome logistic JAX trace and memory profile
+- `just profile-linear-chr22` captures a full-chromosome linear JAX trace and memory profile
+
 ## Documentation
 
 - `docs/ROADMAP.md` - long-term architecture and milestones
@@ -167,22 +231,20 @@ uv run python scripts/evaluate_phase1.py
 - `docs/STYLEGUIDE.md` - coding rules
 - `AGENTS.md` - repository-specific agent instructions
 
-## Are We Ready For Phase 2?
+## Current Phase 2 Direction
 
-Mostly yes.
+The repository is already in active Phase 2 work.
 
-Based on `docs/PLAN_PHASE_1.md`, the project is ready to move into Phase 2 because:
+Current priorities are:
 
-- the engine runs on the Phase 0 chr22 dataset
-- continuous-trait parity is within tolerance
-- binary-trait hybrid logistic parity is within tolerance
-- `ruff`, `ty`, and `pytest` pass
-- the current codebase has clear I/O / compute / orchestration boundaries suitable for replacement work
+- optimize the logistic association path on GPU using pure JAX first
+- keep using `bed-reader` as the baseline ingestion path unless a replacement proves it is faster
+- use profiling and benchmark gates for every performance change
+- defer custom kernels until the optimized-JAX ceiling is understood
 
-Before serious Phase 2 execution, the practical prerequisites are:
+The two key planning documents are:
 
-- install and verify the optional CUDA-enabled JAX path
-- profile the logistic path to identify the dominant bottlenecks
-- decide whether Phase 2 starts with Rust I/O, GPU JAX execution, or custom kernels first
+- `docs/PLAN_PHASE_2_GPU.md`
+- `docs/PLAN_PHASE_2_RUST.md`
 
-So the answer is: yes, the repository looks ready to move on from Phase 1 correctness work into Phase 2 performance work.
+If you are continuing performance work, start with the benchmark/profiling commands above rather than assuming the old defaults or bottlenecks are still current.

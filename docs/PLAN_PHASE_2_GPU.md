@@ -339,3 +339,85 @@ The next GPU work should be practical and sequential.
 4. Profile `src/g/engine.py` and `src/g/compute/logistic.py` to quantify where device synchronization still happens.
 5. Optimize standard JAX device residency and fallback orchestration before discussing precision changes.
 6. Only after those steps, decide whether there is still a compute-core bottleneck that could justify custom kernels.
+
+## **11. Current Logistic Optimization Plan**
+
+The full-chromosome profiling work has narrowed the next GPU/JAX work substantially.
+
+### **What the Current Profiles Show**
+
+From the full chr22 logistic `cProfile` run:
+
+* `src/g/compute/logistic.py:compute_logistic_association_chunk_with_mask` dominates total runtime.
+* `src/g/compute/logistic.py:compute_firth_association_chunk_with_mask` is the largest secondary hotspot.
+* `src/g/compute/logistic.py:initialize_full_model_coefficients` is a meaningful tertiary hotspot.
+* BED reads, preprocessing, and output formatting are much smaller than logistic compute.
+* JAX compilation cost is still material enough that it must be tracked separately from steady-state execution.
+
+From the GPU loop benchmarks:
+
+* logistic already benefits from GPU execution.
+* formatting remains negligible relative to compute.
+* larger chunk sizes materially improve full-loop throughput.
+
+This means the best next optimization work is inside logistic compute, not in output formatting and not in the linear kernel.
+
+### **Priority 1: Add Finer JAX Trace Attribution**
+
+Before changing more solver code, capture finer-grained JAX profiler traces inside `src/g/compute/logistic.py` around:
+
+* pre-dispatch Firth heuristic
+* standard logistic computation
+* fallback mask construction and host transfer
+* fallback batch assembly with `jnp.take(...)`
+* fallback initial coefficient preparation
+* Firth batch execution
+* fallback merge/scatter back into the chunk result
+
+Goal:
+
+* split `logistic.compute` into standard-path, fallback-path, and merge-overhead regions
+* confirm which of those regions dominates on GPU after warmup
+
+### **Priority 2: Separate Compile Cost From Steady-State Cost**
+
+For full logistic profiling, always distinguish:
+
+* first-run compile-heavy execution
+* warmed execution with stable shapes and populated cache
+
+Goal:
+
+* decide whether the next work should focus on shape stability and cache reuse or on the kernel/orchestration body itself
+
+### **Priority 3: Reduce Fallback Host/Device Churn**
+
+If the finer trace confirms that fallback orchestration is still large, the next candidate optimizations are:
+
+* reduce or delay `jax.device_get(...)` of Firth batch results
+* reduce host-side scatter/merge work
+* reduce repeated `jnp.take(...)` assembly cost where practical
+* reduce mixed-batch initialization work further
+
+This is the most likely next win if standard IRLS is not the clear dominant steady-state cost.
+
+### **Priority 4: Revisit Standard Logistic Kernel Structure Only If the Trace Justifies It**
+
+Potential later directions:
+
+* reduce intermediate materialization inside the IRLS loop
+* revisit solve/inversion structure if profiling supports it
+* inspect `einsum`/`where` heavy sections for poor GPU behavior
+
+This is important work, but it should follow better attribution rather than happen speculatively.
+
+### **Priority 5: Keep Linear as a Separate Performance Track**
+
+The linear full-run profile shows that linear is not compute-bound. For linear, the main speed opportunities remain:
+
+* chunk iteration overhead
+* BED read and preprocessing cost
+* device staging
+* output writing
+
+Do not mix linear kernel work into the logistic optimization queue.
