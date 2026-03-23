@@ -363,3 +363,47 @@ The Rust arm is successful when all of the following are true:
 * The remaining host-side bottlenecks are documented clearly enough to guide later zero-copy and kernel work.
 
 For the current repository state, the Rust arm should be considered informative but incomplete: it has produced valuable infrastructure, measurements, and narrower targets, but it has not yet delivered a dominant end-to-end speedup over the incumbent host path.
+
+## 11. Rust Arm Implementation Status (2026-03-23)
+
+### Milestone Status
+
+| Milestone | Status | Notes |
+|---|---|---|
+| 1: Benchmark-validated native boundary | ✅ Done | `benchmark_plink_reader.py` and `benchmark_logistic_fallback.py` exist. |
+| 2: Fused native preprocessing | Partial | Correctness achieved. Performance parity not yet achieved — Rust preprocessing does not beat Python/JAX path on CPU. Decision: keep as prototype, revisit on GPU. |
+| 3: Engine integration | Not done | Native paths exist in `lib.rs` but engine uses Python/bed-reader defaults. Decision: deferred because native path doesn't outperform incumbent. |
+| 4: Memory-boundary improvement | Partial | Buffer-protocol exports reduce copy overhead. DLPack explicitly deprioritized after benchmarks showed `device_put` slightly faster. |
+| 5: Host-orchestration reduction | ✅ Done | Achieved via Python/JAX cleanup rather than Rust: on-device merge, reduced `device_get` calls. |
+
+### Completed Additive Rust Work
+
+- ✅ Handwritten BED reader prototype in `lib.rs` (`read_bed_chunk_f64`).
+- ✅ Rust preprocessing prototype (`preprocess_genotype_matrix_f64`).
+- ✅ Buffer-protocol exports for zero-copy Python access.
+- ✅ Parity tests for native reader and preprocessing paths.
+- ✅ Sequential BED reads optimization (single seek + sequential reads).
+
+### Decisions Made
+
+- **Handwritten BED reader kept as prototype only** — it still does not outperform `bed-reader`. The plan's §5 Step 2 explicitly says "only keep a custom decoder if it wins on both chunk-level and end-to-end benchmarks."
+- **Direct host-to-JAX import deprioritized** — `jax.device_put()` benchmarked slightly faster than `jnp.from_dlpack()` on CPU.
+- **Host orchestration reduction achieved in Python/JAX** — the on-device merge refactor eliminated the need for Rust-side Firth batch packaging/scatter helpers.
+- **Broad Rust rewrite explicitly rejected** — per §4, the Rust arm should stay narrow and benchmark-driven.
+
+### §8.1 Backlog Disposition
+
+| Backlog Item | Decision |
+|---|---|
+| Re-benchmark Rust preprocessing on GPU | Deferred — blocked on GPU bring-up |
+| Return NumPy-owned arrays directly from Rust | Deferred — buffer-protocol exports already reduce copies |
+| Move Firth batch packaging to Rust | Rejected — on-device merge makes this unnecessary |
+| Investigate output-side formatting cost | Not needed — profiling showed formatting is negligible |
+| Keep handwritten BED reader as reference | ✅ Kept as prototype, not production path |
+
+### Remaining Work
+
+1. Re-benchmark Rust preprocessing once GPU bring-up is available — CPU result may not be the final story.
+2. If preprocessing becomes a bottleneck on GPU, consider tighter FFI (NumPy-owned arrays from Rust).
+3. The Rust arm is now on hold pending GPU measurement results.
+

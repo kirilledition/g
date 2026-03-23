@@ -421,3 +421,43 @@ The linear full-run profile shows that linear is not compute-bound. For linear, 
 * output writing
 
 Do not mix linear kernel work into the logistic optimization queue.
+
+## 12. GPU Arm Implementation Status (2026-03-23)
+
+### Step Completion
+
+| Step | Status | Notes |
+|---|---|---|
+| Step 0: Establish GPU baseline | Not started | CUDA-enabled jaxlib available via special install flag but not yet exercised. No GPU profiling yet. |
+| Step 1: Device policy | ✅ Done | `--device cpu\|gpu` CLI flag added. `configure_jax_device()` in `jax_setup.py` sets `jax_platforms` accordingly. CPU is default; GPU mode sets `cuda,rocm,cpu` preference order. |
+| Step 2: Clean up linear | Partially done | Linear p-values stay on device. I/O–compute prefetch added. No GPU-specific measurement yet. |
+| Step 3: Refactor standard logistic for device residency | ✅ Done | Standard results stay fully device-resident. `inv` → `solve` done. Shape-stable JIT caching confirmed. |
+| Step 4: Refactor hybrid logistic dispatch | ✅ Done | On-device merge via `result.at[indices].set(values)`. Eliminated `transfer_standard_logistic_evaluation_to_host` and per-batch `device_get`. Only 3 minimal host transfers remain (1 scalar `has_fallback`, 2 boolean mask vectors). |
+| Step 5: Precision strategy | Not started | Explicitly deferred — the plan says this is downstream of GPU bring-up. Float64 remains the only mode. |
+| Step 6: Tune throughput parameters | Not started | Blocked on GPU bring-up and measurement. |
+| Step 7: Custom kernel evaluation | Not started | Blocked — optimized-JAX ceiling not yet documented. |
+
+### Deliverable Status
+
+| Deliverable | Status |
+|---|---|
+| 1: Reproducible GPU bring-up | Not done — path exists but not tested/documented |
+| 2: GPU-aware benchmark harness | Not done |
+| 3: Device-resident linear path | Substantially done (CPU-verified) |
+| 4: Improved hybrid logistic path | ✅ Done — on-device merge, reduced transfers |
+| 5: Precision and runtime policy | Partially done — device modes exist, precision modes do not |
+
+### Decisions Made
+
+- **Device policy implemented as CLI flag** rather than environment variable, for explicit per-run control. Environment variable override still possible via `JAX_PLATFORMS`.
+- **Standard logistic solve/Cholesky optimizations** done during CPU optimization phase, benefiting GPU path as well.
+- **Premature host materialization fully eliminated** — this was the highest-priority GPU engineering task and is now complete.
+
+### Remaining Work
+
+1. Install and verify CUDA-enabled jaxlib on target GPU machine.
+2. Run linear + logistic paths unchanged on GPU to establish baseline.
+3. Add GPU-oriented benchmark harness separating compile/read/transfer/compute/format.
+4. GPU-specific chunk size tuning.
+5. Precision strategy (only if GPU profiling justifies it).
+

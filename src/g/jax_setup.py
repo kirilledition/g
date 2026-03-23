@@ -31,3 +31,17 @@ if ENABLE_PERSISTENT_COMPILATION_CACHE:
     jax.config.update("jax_compilation_cache_dir", str(cache_directory))
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES)
     jax.config.update("jax_persistent_cache_min_compile_time_secs", PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS)
+
+
+def configure_jax_device(device: str) -> None:
+    """Configure the JAX execution device.
+
+    Args:
+        device: Either 'cpu' to restrict execution to CPU, or 'gpu' to prefer
+            GPU acceleration with CPU fallback.
+
+    """
+    if device == "gpu":
+        jax.config.update("jax_platforms", "cuda,rocm,cpu")
+    else:
+        jax.config.update("jax_platforms", "cpu")

@@ -30,6 +30,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--variant-limit", type=int, help="Optional variant cap for debugging or tests.")
     parser.add_argument("--max-iterations", type=int, default=50, help="Maximum logistic IRLS iterations.")
     parser.add_argument("--tolerance", type=float, default=1.0e-8, help="Logistic convergence tolerance.")
+    parser.add_argument(
+        "--device",
+        choices=("cpu", "gpu"),
+        default="cpu",
+        help="JAX execution device. Use 'gpu' to enable GPU acceleration.",
+    )
     return parser
 
 
@@ -37,6 +43,11 @@ def main() -> None:
     """Run the GWAS CLI."""
     argument_parser = build_argument_parser()
     arguments = argument_parser.parse_args()
+
+    from g.jax_setup import configure_jax_device
+
+    configure_jax_device(arguments.device)
+
     covariate_names = parse_covariate_names(arguments.covar_names)
 
     if arguments.glm == "linear":

@@ -373,3 +373,39 @@ The key idea is simple:
 - reduce recompilation
 - reduce host transfers
 - then profile again before escalating to Rust or GPU work
+
+## 12. Phase 2 Implementation Status (2026-03-23)
+
+### Completed Steps
+
+| Step | Status | Notes |
+|---|---|---|
+| Step 1: JAX persistent cache | ✅ Done | `jax_setup.py` supports env-var-controlled persistent cache. Changed to enabled by default after confirming no CPU feature warnings. |
+| Step 2: Shape-stable standard path | ✅ Done | Standard logistic runs on full chunk. No variable-shape kernel launches. |
+| Step 3: Fixed-size Firth batching | ✅ Done | `FIRTH_BATCH_SIZE = 64`. `build_firth_padded_index_batches` pads all batches to fixed size. Single XLA compilation. |
+| Step 4: Eliminate premature host materialization | ✅ Done | On-device merge via `result.at[indices].set(values)`. Standard and Firth results stay on device. Only fallback+heuristic boolean masks transferred to host (for batch index building). Removed `transfer_standard_logistic_evaluation_to_host`, `HostStandardLogisticChunkEvaluation`, and `HostLogisticAssociationChunkResult`. |
+| Step 5: Re-profile | Partial | Test suite confirms ~3× speedup (6.59s → 2.22s). Full chr22 re-profiling not yet done. PHASE1_STATUS.md preserved as historical baseline per project decision. |
+
+### Completed Lower-Priority Items (§9)
+
+- ✅ Reduced repeated broadcast/allocation patterns: `compute_information_components` simplified to direct unbatched assembly.
+- ✅ Reusing precomputed covariate-side quantities: `NoMissingLogisticConstants` precomputation path preserved and used.
+- ✅ Additional algorithmic wins: Schur complement in IRLS, Cholesky log-det replacing slogdet, `jnp.linalg.solve` replacing `jnp.linalg.inv`.
+
+### Additional Optimizations Not in Original Plan
+
+- ✅ I/O–compute overlap via one-chunk-ahead prefetching in engine loops.
+- ✅ Sequential BED reads in Rust FFI (single seek + sequential reads).
+- ✅ `--device cpu|gpu` CLI flag added for GPU execution control.
+
+### §10 Exit Criteria Assessment
+
+| Criterion | Met? |
+|---|---|
+| No obvious shape-churn recompilation | ✅ Yes |
+| Host transfer overhead no longer dominant | ✅ Yes (reduced to 3 minimal transfers) |
+| First-run vs warm-run behavior understood | ✅ Yes (persistent cache addresses cold start) |
+| Remaining runtime in real numerical compute | ✅ Yes |
+
+The CPU-side optimization phase is substantially complete. Next steps should focus on GPU bring-up and measurement.
+

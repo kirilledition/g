@@ -10,6 +10,64 @@ Today, the repository contains a Phase 1 Python/JAX implementation that matches 
 
 The longer-term goal is a hybrid Python/Rust/GPU system that outperforms CPU-bound GWAS tools such as PLINK 2 and Regenie on large datasets.
 
+## Current Benchmarks
+
+All benchmarks run on AMD Ryzen 7 9800X3D (8 cores/16 threads) with 60GB RAM, comparing against PLINK 2.0.0-a.6.33 AVX2 AMD.
+
+### Full Chromosome 22 (418,943 variants, 2,504 samples)
+
+**Command:** `nix develop -c just benchmark-baselines` and `nix develop -c just phase1-evaluate`
+
+| Tool | Linear (seconds) | Logistic (seconds) | Slowdown vs PLINK |
+|------|------------------|-------------------|-------------------|
+| PLINK 2 | 0.26 | 3.24 | 1.0x (baseline) |
+| g (GPU JAX) | 13.18 | 19.77 | 51.2x / 6.1x |
+
+**Key Findings:**
+- g achieves mathematical parity with PLINK (max beta diff: 5.0e-06, max p-value diff: 5.2e-07)
+- Logistic Firth-fallback behavior matches PLINK exactly (0 method mismatches, 0 error-code mismatches)
+- GPU execution shows JAX PjRt-IFRT compilation warnings but completes successfully
+- Linear regression is currently I/O and preprocessing bound, not compute bound
+- Logistic regression benefits from GPU acceleration on the compute kernels
+
+### Phase 2 GPU/JAX Microbenchmarks
+
+Current local GPU benchmarking snapshot on the RTX 4080 SUPER:
+
+- from `scripts/benchmark_jax_execution.py` with `chunk_size=256`
+  - backend: `gpu`
+  - warmed `device_put`: `~0.00039s`
+  - warmed linear compute: `~0.01171s`
+  - warmed logistic standard compute: `~0.01785s`
+  - warmed logistic fallback compute: `~0.01885s`
+- comparable CPU-backed snapshot for the same script and chunk size:
+  - warmed `device_put`: `~0.00055s`
+  - warmed linear compute: `~0.00089s`
+  - warmed logistic compute: `~0.04480s`
+- current interpretation:
+  - GPU already helps the logistic path by roughly `2.3x-2.5x` on pure compute
+  - small linear chunks are still worse on GPU, so chunk sizing and batching remain important
+  - end-to-end throughput is dominated by I/O, preprocessing, and output formatting, not raw compute
+
+### How to Reproduce
+
+Run the full benchmark suite:
+
+```bash
+nix develop
+just benchmark-baselines  # PLINK and Regenie baselines
+just phase1-evaluate      # g vs PLINK comparison with parity checks
+```
+
+Run individual profiling commands:
+
+```bash
+just probe-jax            # Check JAX device configuration
+just benchmark-jax        # JAX execution boundaries
+just profile-logistic-chr22  # Full chromosome JAX trace + memory
+just profile-linear-chr22    # Full chromosome JAX trace + memory
+```
+
 ## Current Status
 
 - Phase 1 correctness milestone is complete
