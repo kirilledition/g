@@ -1,0 +1,2 @@
+too-many-arguments-threshold = 8
+doc-valid-idents = ["GWAS", "JAX", "NumPy", "PLINK", "Polars", "PyO3"]

@@ -149,6 +149,64 @@ def test_native_genotype_chunk_reader_matches_python_path() -> None:
         )
 
 
+def test_native_genotype_chunk_preprocessing_matches_python_path() -> None:
+    """Ensure Rust preprocessing matches the Python chunk-preprocessing path."""
+    require_phase_zero_inputs()
+
+    aligned_sample_data = load_aligned_sample_data(
+        bed_prefix=BED_PREFIX,
+        phenotype_path=DATA_DIRECTORY / "pheno_cont.txt",
+        phenotype_name="phenotype_continuous",
+        covariate_path=DATA_DIRECTORY / "covariates.txt",
+        covariate_names=("age", "sex"),
+        is_binary_trait=False,
+    )
+
+    python_chunks = list(
+        iter_genotype_chunks(
+            bed_prefix=BED_PREFIX,
+            sample_indices=aligned_sample_data.sample_indices,
+            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
+            chunk_size=16,
+            variant_limit=64,
+            use_native_reader=False,
+            use_native_preprocessing=False,
+        )
+    )
+    native_chunks = list(
+        iter_genotype_chunks(
+            bed_prefix=BED_PREFIX,
+            sample_indices=aligned_sample_data.sample_indices,
+            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
+            chunk_size=16,
+            variant_limit=64,
+            use_native_reader=False,
+            use_native_preprocessing=True,
+        )
+    )
+
+    assert len(python_chunks) == len(native_chunks)
+    for python_chunk, native_chunk in zip(python_chunks, native_chunks, strict=True):
+        np.testing.assert_allclose(np.asarray(native_chunk.genotypes), np.asarray(python_chunk.genotypes), atol=0.0)
+        np.testing.assert_array_equal(np.asarray(native_chunk.missing_mask), np.asarray(python_chunk.missing_mask))
+        np.testing.assert_array_equal(native_chunk.metadata.chromosome, python_chunk.metadata.chromosome)
+        np.testing.assert_array_equal(
+            native_chunk.metadata.variant_identifiers, python_chunk.metadata.variant_identifiers
+        )
+        np.testing.assert_array_equal(native_chunk.metadata.position, python_chunk.metadata.position)
+        np.testing.assert_array_equal(native_chunk.metadata.allele_one, python_chunk.metadata.allele_one)
+        np.testing.assert_array_equal(native_chunk.metadata.allele_two, python_chunk.metadata.allele_two)
+        np.testing.assert_allclose(
+            np.asarray(native_chunk.allele_one_frequency),
+            np.asarray(python_chunk.allele_one_frequency),
+            atol=1e-12,
+        )
+        np.testing.assert_array_equal(
+            np.asarray(native_chunk.observation_count),
+            np.asarray(python_chunk.observation_count),
+        )
+
+
 def test_logistic_missing_rows_are_excluded_per_variant() -> None:
     """Ensure logistic regression excludes missing genotype rows per variant."""
     covariate_matrix = jnp.asarray(
