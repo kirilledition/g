@@ -68,6 +68,26 @@ Enter the shell with:
 nix develop
 ```
 
+### Optional GPU JAX Path
+
+The default project dependency set keeps the repository on CPU-backed JAX.
+
+For GPU bring-up, install the optional GPU dependency group:
+
+```bash
+uv sync --group gpu --group dev
+```
+
+This currently installs `jax[cuda13]`, which matches the current project plan of keeping CPU parity mode as the default while making GPU runs explicit.
+
+After installation, verify what JAX can see with:
+
+```bash
+uv run python scripts/benchmark_jax_execution.py
+```
+
+If GPU bring-up succeeds, the runtime section of that report should show a GPU backend and one or more non-CPU JAX devices.
+
 ## Common Commands
 
 Run tests:
@@ -123,7 +143,7 @@ Based on `docs/PLAN_PHASE_1.md`, the project is ready to move into Phase 2 becau
 
 Before serious Phase 2 execution, the practical prerequisites are:
 
-- install a CUDA-enabled `jaxlib` or decide the first GPU execution path
+- install and verify the optional CUDA-enabled JAX path
 - profile the logistic path to identify the dominant bottlenecks
 - decide whether Phase 2 starts with Rust I/O, GPU JAX execution, or custom kernels first
 

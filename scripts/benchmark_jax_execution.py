@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -17,6 +19,7 @@ from bed_reader import open_bed
 from bed_reader._open_bed import get_num_threads
 
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
+from g.compute.logistic import LOGISTIC_METHOD_FIRTH, compute_logistic_association_chunk
 from g.engine import (
     build_linear_output_frame,
     build_logistic_output_frame,
@@ -47,6 +50,8 @@ class RuntimeSummary:
     local_device_count: int
     devices: list[DeviceSummary]
     x64_enabled: bool
+    nvidia_smi_available: bool
+    nvidia_smi_gpus: list[str]
 
 
 @dataclass(frozen=True)
@@ -71,12 +76,26 @@ class JaxExecutionBenchmarkReport:
     device_put: TimedMeasurement
     linear_compute: TimedMeasurement
     linear_format: TimedMeasurement
-    logistic_compute: TimedMeasurement
-    logistic_format: TimedMeasurement
+    logistic_standard_chunk_compute: TimedMeasurement
+    logistic_standard_chunk_format: TimedMeasurement
+    logistic_fallback_chunk_compute: TimedMeasurement
+    logistic_fallback_chunk_format: TimedMeasurement
 
 
 def collect_runtime_summary() -> RuntimeSummary:
     """Collect JAX backend and visible device information."""
+    nvidia_smi_path = shutil.which("nvidia-smi")
+    nvidia_smi_gpus: list[str] = []
+    if nvidia_smi_path is not None:
+        completed_process = subprocess.run(
+            [nvidia_smi_path, "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed_process.returncode == 0:
+            nvidia_smi_gpus = [line for line in completed_process.stdout.splitlines() if line]
+
     return RuntimeSummary(
         jax_version=jax.__version__,
         default_backend=jax.default_backend(),
@@ -90,6 +109,8 @@ def collect_runtime_summary() -> RuntimeSummary:
             for device in jax.devices()
         ],
         x64_enabled=bool(jax.config.read("jax_enable_x64")),
+        nvidia_smi_available=nvidia_smi_path is not None,
+        nvidia_smi_gpus=nvidia_smi_gpus,
     )
 
 
@@ -133,9 +154,46 @@ def checksum_logistic_result(logistic_evaluation: Any) -> float:
     return float(np.asarray(jnp.sum(logistic_result.beta) + jnp.sum(logistic_result.p_value)))
 
 
+def count_firth_variants(logistic_evaluation: Any) -> int:
+    """Count Firth-fallback variants in one logistic evaluation."""
+    method_code = np.asarray(logistic_evaluation.logistic_result.method_code)
+    return int(np.count_nonzero(method_code == LOGISTIC_METHOD_FIRTH))
+
+
 def checksum_frame(output_frame: Any) -> float:
     """Build a stable checksum from a formatted Polars frame."""
     return float(output_frame.select(pl.col("p_value").sum()).item())
+
+
+def select_fallback_logistic_chunk(
+    bed_prefix: Path,
+    sample_indices: np.ndarray,
+    expected_individual_identifiers: np.ndarray,
+    chunk_size: int,
+    search_variant_limit: int,
+    covariate_matrix: jax.Array,
+    phenotype_vector: jax.Array,
+) -> GenotypeChunk:
+    """Find one chunk that exercises hybrid logistic fallback."""
+    for genotype_chunk in iter_genotype_chunks(
+        bed_prefix=bed_prefix,
+        sample_indices=sample_indices,
+        expected_individual_identifiers=expected_individual_identifiers,
+        chunk_size=chunk_size,
+        variant_limit=search_variant_limit,
+    ):
+        logistic_evaluation = compute_logistic_association_with_missing_exclusion(
+            covariate_matrix=covariate_matrix,
+            phenotype_vector=phenotype_vector,
+            genotype_chunk=genotype_chunk,
+            max_iterations=100,
+            tolerance=1.0e-8,
+        )
+        firth_variant_count = count_firth_variants(logistic_evaluation)
+        if firth_variant_count > 0:
+            return genotype_chunk
+
+    raise RuntimeError("Could not find a fallback logistic chunk in the configured search range.")
 
 
 def main() -> None:
@@ -143,6 +201,7 @@ def main() -> None:
     bed_prefix = Path("data/1kg_chr22_full")
     chunk_size = 256
     variant_limit = chunk_size
+    search_variant_limit = 4096
     repeat_count = 5
 
     continuous_sample_data = load_aligned_sample_data(
@@ -195,6 +254,76 @@ def main() -> None:
             variant_limit=variant_limit,
         )
     )
+    fallback_chunk = select_fallback_logistic_chunk(
+        bed_prefix=bed_prefix,
+        sample_indices=binary_sample_data.sample_indices,
+        expected_individual_identifiers=binary_sample_data.individual_identifiers,
+        chunk_size=chunk_size,
+        search_variant_limit=search_variant_limit,
+        covariate_matrix=binary_sample_data.covariate_matrix,
+        phenotype_vector=binary_sample_data.phenotype_vector,
+    )
+
+    logistic_standard_chunk_compute_measurement = time_operation(
+        operation=lambda: compute_logistic_association_chunk(
+            covariate_matrix=binary_sample_data.covariate_matrix,
+            phenotype_vector=binary_sample_data.phenotype_vector,
+            genotype_matrix=binary_chunk.genotypes,
+            max_iterations=100,
+            tolerance=1.0e-8,
+        ),
+        checksum_operation=lambda logistic_result: float(
+            np.asarray(jnp.sum(logistic_result.beta) + jnp.sum(logistic_result.p_value))
+        ),
+        repeat_count=repeat_count,
+    )
+    standard_logistic_result = compute_logistic_association_chunk(
+        covariate_matrix=binary_sample_data.covariate_matrix,
+        phenotype_vector=binary_sample_data.phenotype_vector,
+        genotype_matrix=binary_chunk.genotypes,
+        max_iterations=100,
+        tolerance=1.0e-8,
+    )
+    block_tree_until_ready(standard_logistic_result)
+    logistic_standard_chunk_format_measurement = time_operation(
+        operation=lambda: build_logistic_output_frame(
+            metadata=binary_chunk.metadata,
+            allele_one_frequency=binary_chunk.allele_one_frequency,
+            observation_count=binary_chunk.observation_count,
+            logistic_result=standard_logistic_result,
+        ),
+        checksum_operation=checksum_frame,
+        repeat_count=repeat_count,
+    )
+    logistic_fallback_chunk_compute_measurement = time_operation(
+        operation=lambda: compute_logistic_association_with_missing_exclusion(
+            covariate_matrix=binary_sample_data.covariate_matrix,
+            phenotype_vector=binary_sample_data.phenotype_vector,
+            genotype_chunk=fallback_chunk,
+            max_iterations=100,
+            tolerance=1.0e-8,
+        ),
+        checksum_operation=checksum_logistic_result,
+        repeat_count=repeat_count,
+    )
+    fallback_logistic_evaluation = compute_logistic_association_with_missing_exclusion(
+        covariate_matrix=binary_sample_data.covariate_matrix,
+        phenotype_vector=binary_sample_data.phenotype_vector,
+        genotype_chunk=fallback_chunk,
+        max_iterations=100,
+        tolerance=1.0e-8,
+    )
+    block_tree_until_ready(fallback_logistic_evaluation)
+    logistic_fallback_chunk_format_measurement = time_operation(
+        operation=lambda: build_logistic_output_frame(
+            metadata=fallback_chunk.metadata,
+            allele_one_frequency=fallback_logistic_evaluation.allele_one_frequency,
+            observation_count=fallback_logistic_evaluation.observation_count,
+            logistic_result=fallback_logistic_evaluation.logistic_result,
+        ),
+        checksum_operation=checksum_frame,
+        repeat_count=repeat_count,
+    )
 
     linear_association_state = prepare_linear_association_state(
         covariate_matrix=continuous_sample_data.covariate_matrix,
@@ -229,36 +358,6 @@ def main() -> None:
         checksum_operation=checksum_frame,
         repeat_count=repeat_count,
     )
-    logistic_compute_measurement = time_operation(
-        operation=lambda: compute_logistic_association_with_missing_exclusion(
-            covariate_matrix=binary_sample_data.covariate_matrix,
-            phenotype_vector=binary_sample_data.phenotype_vector,
-            genotype_chunk=binary_chunk,
-            max_iterations=100,
-            tolerance=1.0e-8,
-        ),
-        checksum_operation=checksum_logistic_result,
-        repeat_count=repeat_count,
-    )
-    logistic_evaluation = compute_logistic_association_with_missing_exclusion(
-        covariate_matrix=binary_sample_data.covariate_matrix,
-        phenotype_vector=binary_sample_data.phenotype_vector,
-        genotype_chunk=binary_chunk,
-        max_iterations=100,
-        tolerance=1.0e-8,
-    )
-    block_tree_until_ready(logistic_evaluation)
-    logistic_format_measurement = time_operation(
-        operation=lambda: build_logistic_output_frame(
-            metadata=binary_chunk.metadata,
-            allele_one_frequency=logistic_evaluation.allele_one_frequency,
-            observation_count=logistic_evaluation.observation_count,
-            logistic_result=logistic_evaluation.logistic_result,
-        ),
-        checksum_operation=checksum_frame,
-        repeat_count=repeat_count,
-    )
-
     report = JaxExecutionBenchmarkReport(
         runtime=collect_runtime_summary(),
         variant_limit=variant_limit,
@@ -268,8 +367,10 @@ def main() -> None:
         device_put=device_put_measurement,
         linear_compute=linear_compute_measurement,
         linear_format=linear_format_measurement,
-        logistic_compute=logistic_compute_measurement,
-        logistic_format=logistic_format_measurement,
+        logistic_standard_chunk_compute=logistic_standard_chunk_compute_measurement,
+        logistic_standard_chunk_format=logistic_standard_chunk_format_measurement,
+        logistic_fallback_chunk_compute=logistic_fallback_chunk_compute_measurement,
+        logistic_fallback_chunk_format=logistic_fallback_chunk_format_measurement,
     )
     print(json.dumps(asdict(report), indent=2))
 
