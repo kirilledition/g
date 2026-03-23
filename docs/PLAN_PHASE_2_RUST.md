@@ -150,6 +150,8 @@ Key questions to answer explicitly:
 
 This phase does not need to solve perfect zero-copy handoff, but it must eliminate obviously avoidable overhead such as reopening files per chunk, converting NumPy arrays to Python lists, or copying through temporary byte buffers.
 
+Direct host-side reads into JAX should not be treated as an automatic win. For the current architecture, `bed-reader` naturally fills host-resident NumPy buffers, and JAX still needs an import step. On the current CPU-backed setup, `jax.device_put(...)` is already very cheap and benchmarked slightly better than `jnp.from_dlpack(...)` for representative chunk sizes. Unless a future DLPack-based path removes a real measured bottleneck or enables a lower-copy GPU handoff, the project should keep the NumPy-to-JAX boundary and focus on larger host-side costs.
+
 ### **Step 7: Reassess Whether More Python Host Logic Should Move**
 
 Only after ingestion and preprocessing are measured should the Rust arm consider moving more work, such as:
