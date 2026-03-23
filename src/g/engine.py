@@ -16,8 +16,10 @@ from g.compute.logistic import (
     LOGISTIC_ERROR_LOGISTIC_CONVERGE_FAIL,
     LOGISTIC_ERROR_UNFINISHED,
     LOGISTIC_METHOD_FIRTH,
+    NoMissingLogisticConstants,
     compute_logistic_association_chunk,
     compute_logistic_association_chunk_with_mask,
+    prepare_no_missing_logistic_constants,
 )
 from g.io.plink import iter_genotype_chunks
 from g.io.tabular import load_aligned_sample_data
@@ -142,20 +144,22 @@ def compute_logistic_association_with_missing_exclusion(
     genotype_chunk: GenotypeChunk,
     max_iterations: int,
     tolerance: float,
+    no_missing_constants: NoMissingLogisticConstants | None = None,
 ) -> LogisticAssociationEvaluation:
     """Compute logistic regression while excluding missing genotype rows per variant."""
     if not genotype_chunk.has_missing_values:
         with jax.profiler.TraceAnnotation("logistic.standard_no_missing"):
             return LogisticAssociationEvaluation(
                 logistic_result=compute_logistic_association_chunk(
-                    covariate_matrix=covariate_matrix,
-                    phenotype_vector=phenotype_vector,
-                    genotype_matrix=genotype_chunk.genotypes,
-                    max_iterations=max_iterations,
-                    tolerance=tolerance,
-                ),
-                allele_one_frequency=genotype_chunk.allele_one_frequency,
-                observation_count=genotype_chunk.observation_count,
+                covariate_matrix=covariate_matrix,
+                phenotype_vector=phenotype_vector,
+                genotype_matrix=genotype_chunk.genotypes,
+                max_iterations=max_iterations,
+                tolerance=tolerance,
+                no_missing_constants=no_missing_constants,
+            ),
+            allele_one_frequency=genotype_chunk.allele_one_frequency,
+            observation_count=genotype_chunk.observation_count,
             )
 
     with jax.profiler.TraceAnnotation("logistic.prepare_missing_exclusion"):
@@ -252,6 +256,11 @@ def iter_logistic_output_frames(
             covariate_names=covariate_names,
             is_binary_trait=True,
         )
+    with jax.profiler.TraceAnnotation("logistic.prepare_no_missing_constants"):
+        no_missing_constants = prepare_no_missing_logistic_constants(
+            covariate_matrix=aligned_sample_data.covariate_matrix,
+            phenotype_vector=aligned_sample_data.phenotype_vector,
+        )
     for chunk_index, genotype_chunk in enumerate(
         iter_genotype_chunks(
             bed_prefix=bed_prefix,
@@ -269,6 +278,7 @@ def iter_logistic_output_frames(
                     genotype_chunk=genotype_chunk,
                     max_iterations=max_iterations,
                     tolerance=tolerance,
+                    no_missing_constants=no_missing_constants,
                 )
             with jax.profiler.TraceAnnotation("logistic.format"):
                 yield build_logistic_output_frame(

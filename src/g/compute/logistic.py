@@ -66,6 +66,18 @@ class StandardLogisticChunkEvaluation(NamedTuple):
     coefficients: jax.Array
 
 
+class NoMissingLogisticConstants(NamedTuple):
+    """Chunk-invariant constants for no-missing logistic paths."""
+
+    covariate_information_matrix: jax.Array
+    covariate_pseudo_response_score: jax.Array
+    pseudo_response_vector: jax.Array
+    case_mask: jax.Array
+    control_mask: jax.Array
+    case_sample_count: jax.Array
+    control_sample_count: jax.Array
+
+
 class HostStandardLogisticChunkEvaluation(NamedTuple):
     """Host-resident standard-logistic outputs plus coefficient estimates."""
 
@@ -233,12 +245,11 @@ def initialize_full_model_coefficients(
 def initialize_full_model_coefficients_without_mask(
     covariate_matrix: jax.Array,
     genotype_matrix_by_variant: jax.Array,
-    phenotype_vector: jax.Array,
+    no_missing_constants: NoMissingLogisticConstants,
 ) -> jax.Array:
     """Initialize full-model coefficients for chunks with no missing genotypes."""
-    pseudo_response_vector = INITIAL_RESPONSE_SCALE * (phenotype_vector - BINARY_CASE_THRESHOLD)
     covariate_information_matrix = jnp.broadcast_to(
-        (covariate_matrix.T @ covariate_matrix)[None, :, :],
+        no_missing_constants.covariate_information_matrix[None, :, :],
         (genotype_matrix_by_variant.shape[0], covariate_matrix.shape[1], covariate_matrix.shape[1]),
     )
     cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, genotype_matrix_by_variant)
@@ -249,12 +260,31 @@ def initialize_full_model_coefficients_without_mask(
         genotype_information=genotype_information,
     )
     covariate_score = jnp.broadcast_to(
-        (covariate_matrix.T @ pseudo_response_vector)[None, :],
+        no_missing_constants.covariate_pseudo_response_score[None, :],
         (genotype_matrix_by_variant.shape[0], covariate_matrix.shape[1]),
     )
-    genotype_score = genotype_matrix_by_variant @ pseudo_response_vector
+    genotype_score = genotype_matrix_by_variant @ no_missing_constants.pseudo_response_vector
     full_score = jnp.concatenate([covariate_score, genotype_score[:, None]], axis=1)
     return jnp.squeeze(jnp.linalg.solve(full_information_matrix, full_score[:, :, None]), axis=-1)
+
+
+def prepare_no_missing_logistic_constants(
+    covariate_matrix: jax.Array,
+    phenotype_vector: jax.Array,
+) -> NoMissingLogisticConstants:
+    """Prepare chunk-invariant constants for no-missing logistic computation."""
+    pseudo_response_vector = INITIAL_RESPONSE_SCALE * (phenotype_vector - BINARY_CASE_THRESHOLD)
+    case_mask = phenotype_vector > BINARY_CASE_THRESHOLD
+    control_mask = phenotype_vector < BINARY_CASE_THRESHOLD
+    return NoMissingLogisticConstants(
+        covariate_information_matrix=covariate_matrix.T @ covariate_matrix,
+        covariate_pseudo_response_score=covariate_matrix.T @ pseudo_response_vector,
+        pseudo_response_vector=pseudo_response_vector,
+        case_mask=case_mask,
+        control_mask=control_mask,
+        case_sample_count=jnp.sum(case_mask, dtype=covariate_matrix.dtype),
+        control_sample_count=jnp.sum(control_mask, dtype=covariate_matrix.dtype),
+    )
 
 
 def compute_information_components(
@@ -498,18 +528,20 @@ def compute_firth_pre_dispatch_mask(
 
 @jax.jit
 def compute_firth_pre_dispatch_mask_without_mask(
-    phenotype_vector: jax.Array,
     genotype_matrix_by_variant: jax.Array,
+    no_missing_constants: NoMissingLogisticConstants,
 ) -> jax.Array:
     """Identify obvious allele-count separation for chunks with no missing genotypes."""
-    case_mask = phenotype_vector > BINARY_CASE_THRESHOLD
-    control_mask = phenotype_vector < BINARY_CASE_THRESHOLD
-    case_sample_count = jnp.sum(case_mask, dtype=genotype_matrix_by_variant.dtype)
-    control_sample_count = jnp.sum(control_mask, dtype=genotype_matrix_by_variant.dtype)
-    case_allele_count = jnp.sum(jnp.where(case_mask[None, :], genotype_matrix_by_variant, 0.0), axis=1)
-    control_allele_count = jnp.sum(jnp.where(control_mask[None, :], genotype_matrix_by_variant, 0.0), axis=1)
-    case_reference_allele_count = ALLELE_COUNT_MULTIPLIER * case_sample_count - case_allele_count
-    control_reference_allele_count = ALLELE_COUNT_MULTIPLIER * control_sample_count - control_allele_count
+    case_allele_count = jnp.sum(
+        jnp.where(no_missing_constants.case_mask[None, :], genotype_matrix_by_variant, 0.0), axis=1
+    )
+    control_allele_count = jnp.sum(
+        jnp.where(no_missing_constants.control_mask[None, :], genotype_matrix_by_variant, 0.0), axis=1
+    )
+    case_reference_allele_count = ALLELE_COUNT_MULTIPLIER * no_missing_constants.case_sample_count - case_allele_count
+    control_reference_allele_count = (
+        ALLELE_COUNT_MULTIPLIER * no_missing_constants.control_sample_count - control_allele_count
+    )
     return (
         (case_allele_count <= 0.0)
         | (control_allele_count <= 0.0)
@@ -687,6 +719,7 @@ def compute_standard_logistic_association_chunk_without_mask(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
     genotype_matrix: jax.Array,
+    no_missing_constants: NoMissingLogisticConstants,
     max_iterations: int,
     tolerance: float,
 ) -> StandardLogisticChunkEvaluation:
@@ -699,14 +732,14 @@ def compute_standard_logistic_association_chunk_without_mask(
     initial_coefficients = initialize_full_model_coefficients_without_mask(
         covariate_matrix=covariate_matrix,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
-        phenotype_vector=phenotype_vector,
+        no_missing_constants=no_missing_constants,
     )
     initial_probability_matrix = compute_probability_matrix(
         covariate_matrix, genotype_matrix_by_variant, initial_coefficients
     )
     initial_log_likelihood = compute_log_likelihood(initial_probability_matrix, phenotype_matrix)
     initial_covariate_information_matrix = jnp.broadcast_to(
-        (covariate_matrix.T @ covariate_matrix)[None, :, :],
+        no_missing_constants.covariate_information_matrix[None, :, :],
         (variant_count, covariate_count, covariate_count),
     )
     initial_cross_information_vector = jnp.zeros((variant_count, covariate_count), dtype=covariate_matrix.dtype)
@@ -1126,6 +1159,7 @@ def compute_logistic_association_chunk(
     genotype_matrix: jax.Array,
     max_iterations: int,
     tolerance: float,
+    no_missing_constants: NoMissingLogisticConstants | None = None,
 ) -> LogisticAssociationChunkResult:
     """Compute batched logistic association statistics for a chunk of variants.
 
@@ -1135,17 +1169,23 @@ def compute_logistic_association_chunk(
         genotype_matrix: Genotype matrix.
         max_iterations: Maximum IRLS iterations.
         tolerance: Relative log-likelihood convergence tolerance.
+        no_missing_constants: Optional precomputed constants for the no-missing path.
 
     Returns:
         Chunk-level logistic association statistics.
 
     """
+    if no_missing_constants is None:
+        no_missing_constants = prepare_no_missing_logistic_constants(
+            covariate_matrix=covariate_matrix,
+            phenotype_vector=phenotype_vector,
+        )
     genotype_matrix_by_variant = genotype_matrix.T
     with jax.profiler.TraceAnnotation("logistic.pre_dispatch_mask"):
         heuristic_firth_mask = jax.device_get(
             compute_firth_pre_dispatch_mask_without_mask(
-                phenotype_vector=phenotype_vector,
                 genotype_matrix_by_variant=genotype_matrix_by_variant,
+                no_missing_constants=no_missing_constants,
             )
         )
     with jax.profiler.TraceAnnotation("logistic.standard_chunk"):
@@ -1153,6 +1193,7 @@ def compute_logistic_association_chunk(
             covariate_matrix=covariate_matrix,
             phenotype_vector=phenotype_vector,
             genotype_matrix=genotype_matrix,
+            no_missing_constants=no_missing_constants,
             max_iterations=max_iterations,
             tolerance=tolerance,
         )
@@ -1209,7 +1250,7 @@ def compute_logistic_association_chunk(
                     batch_initial_coefficients = initialize_full_model_coefficients_without_mask(
                         covariate_matrix=covariate_matrix,
                         genotype_matrix_by_variant=batch_genotype_matrix.T,
-                        phenotype_vector=phenotype_vector,
+                        no_missing_constants=no_missing_constants,
                     )
             with jax.profiler.TraceAnnotation("logistic.firth_batch_compute"):
                 firth_host_result = jax.device_get(
