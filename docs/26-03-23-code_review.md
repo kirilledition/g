@@ -63,7 +63,7 @@ This is dead code that adds parameter clutter and cognitive overhead.
 
 Parameters `metadata`, `allele_one_frequency`, `observation_count`, and `linear_result`/`logistic_result` are all untyped `Any`, violating the project's "100% type annotation coverage" rule.
 
-### 7. [convert_frame_to_float64_jax](file:///home/kirill/Projects/g/src/g/io/tabular.py#87-98) has no return type annotation
+### 7. [convert_frame_to_float32_jax](file:///home/kirill/Projects/g/src/g/io/tabular.py#87-98) has no return type annotation
 
 [tabular.py:87](file:///home/kirill/Projects/g/src/g/io/tabular.py#L87) — returns bare implicit `Any`.
 
@@ -193,7 +193,7 @@ This section records which review items were implemented immediately, which were
 - **#3** `src/g/compute/logistic.py` now uses `max(tolerance, FIRTH_TOLERANCE_FLOOR)` so user-provided logistic tolerance is no longer accidentally ignored for Firth fallback.
 - **#5** Removed dead `covariate_only_coefficients` plumbing from `src/g/engine.py`, `src/g/compute/logistic.py`, and the affected tests.
 - **#6** Added exact type annotations to `build_linear_output_frame`, `build_logistic_output_frame`, and `compute_logistic_association_with_missing_exclusion` in `src/g/engine.py`.
-- **#7** Added an explicit return type to `convert_frame_to_float64_jax` in `src/g/io/tabular.py`.
+- **#7** Added an explicit return type to `convert_frame_to_float32_jax` in `src/g/io/tabular.py`.
 - **#8** Replaced the bare tuple returned by `compute_hdiag_and_adjusted_weights` in `src/g/compute/logistic.py` with the named `AdjustedWeightComponents` result type.
 - **#9** Tightened the host-side logistic transfer path in `src/g/compute/logistic.py` with a dedicated `HostLogisticAssociationChunkResult`, which makes the host mutation step more explicit.
 - **#21** The hardcoded fixed Firth batch size concern is no longer current in the optimized code path; the implementation already uses `FIRTH_BATCH_BUCKETS` with bucket selection instead of a single fixed `FIRTH_BATCH_SIZE = 64` constant.

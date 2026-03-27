@@ -22,7 +22,7 @@ def test_read_bed_chunk_host():
     variant_stop = 20
     num_threads = 4
 
-    with patch("g.io.plink.read_f64") as mock_read_f64:
+    with patch("g.io.plink.read_f32") as mock_read_f32:
         # Define a side effect to populate the array
         def side_effect(
             path, cloud_options, iid_count, sid_count, is_a1_counted, iid_index, sid_index, val, num_threads
@@ -30,7 +30,7 @@ def test_read_bed_chunk_host():
             # Populate val with ones to simulate reading
             val.fill(1.0)
 
-        mock_read_f64.side_effect = side_effect
+        mock_read_f32.side_effect = side_effect
 
         result = read_bed_chunk_host(
             bed_handle=mock_bed_handle,
@@ -44,14 +44,14 @@ def test_read_bed_chunk_host():
         # Verify the shape
         expected_shape = (5, 10)  # 5 samples, 10 variants (20 - 10)
         assert result.shape == expected_shape
-        assert result.dtype == np.float64
+        assert result.dtype == np.float32
 
         # Verify side effect works
         assert np.all(result == 1.0)
 
-        # Verify read_f64 was called correctly
-        mock_read_f64.assert_called_once()
-        args, kwargs = mock_read_f64.call_args
+        # Verify read_f32 was called correctly
+        mock_read_f32.assert_called_once()
+        args, kwargs = mock_read_f32.call_args
 
         assert args[0] == "fake/path/to/file.bed"
         assert args[1] == {"option": "value"}

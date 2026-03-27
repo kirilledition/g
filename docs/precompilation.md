@@ -23,7 +23,7 @@ Cache reuse should be treated as supported only when the source and target envir
 - same `jax` version
 - same `jaxlib` version
 - same backend type (`gpu`)
-- same numeric mode (currently `float32` or `bfloat16`)
+- same float32 runtime configuration
 - same effective shapes and static arguments
 - same or highly similar GPU architecture
 - compatible CUDA/XLA/runtime stack
@@ -145,7 +145,7 @@ Write a metadata file alongside the cache directory, for example `cache-metadata
 - `jaxlib` version
 - backend
 - GPU device kind
-- numeric mode
+- float dtype configuration
 - matmul precision
 - supported chunk sizes warmed
 - supported Firth bucket sizes warmed
@@ -182,7 +182,7 @@ For production users on expensive GPU machines:
 
 - warm on a cheaper machine with the same GPU family if possible
 - use the same container, Nix shell, or software image as production
-- use the same numeric mode and chunk sizes intended for production
+- use the same float32 runtime configuration and chunk sizes intended for production
 
 This should be documented as a compatibility requirement, not a soft suggestion.
 

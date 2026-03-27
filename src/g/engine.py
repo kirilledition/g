@@ -253,8 +253,7 @@ def concatenate_logistic_results(
     if not accumulators:
         return pl.DataFrame()
 
-    # TODO: Isnt it faster to do that in polars???
-    # Concatenate metadata (these are numpy arrays already)
+    # Concatenate metadata on the host; these values are already NumPy arrays.
     all_chromosomes = np.concatenate([acc.metadata.chromosome for acc in accumulators])
     all_positions = np.concatenate([acc.metadata.position for acc in accumulators])
     all_variant_identifiers = np.concatenate([acc.metadata.variant_identifiers for acc in accumulators])
@@ -343,7 +342,7 @@ def compute_logistic_association_with_missing_exclusion(
             jnp.where(genotype_chunk.missing_mask, 0.0, genotype_chunk.genotypes),
             dtype=jnp.float32,
         )
-        observation_count = jnp.sum(observation_mask, axis=1, dtype=jnp.int64)
+        observation_count = jnp.sum(observation_mask, axis=1, dtype=jnp.int32)
         allele_one_frequency = jnp.where(
             observation_count > 0,
             jnp.sum(jnp.transpose(sanitized_genotype_matrix), axis=1) / (2.0 * observation_count),

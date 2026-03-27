@@ -18,13 +18,10 @@ Highest-value plan
   - Replace avoidable inverses like jnp.linalg.inv in src/g/compute/linear.py:28 with solve/factorization-based forms.
   - Audit repeated tiny solves/einsums in logistic IRLS (src/g/compute/logistic.py:667, src/g/compute/logistic.py:828, src/g/compute/logistic.py:1037) and prefer reused factorizations or dedicated linear-algebra paths where they preserve math.
   - Keep result semantics identical first; use benchmarks to confirm speedup before changing numerics.
-- Treat mixed precision as a separate experiment, not the default path
+- Keep the runtime float32-only
   - JAX docs say default_matmul_precision / lax.Precision mainly affect 32-bit matmul/conv behavior on GPU; they do not change input/output dtypes by themselves.
-  - Since this repo is explicitly x64 today, the safe order is:
-    1. get profiling data,
-    2. land structural speedups in current precision,
-    3. only then try fp32/bfloat16 experiments behind a switch.
-  - I would not start with float16; for this workload, float32 is the realistic first candidate, with bfloat16 only for carefully isolated operations if the profiler shows matmul-heavy kernels and parity survives.
+  - This repo now standardizes on float32 throughout the maintained path.
+  - Performance work should focus on structural speedups, batching, host/device boundaries, and kernel behavior rather than dtype switches.
 Validation plan
 - Fast checks after each change:
   - tests/test_phase1.py:263
@@ -43,4 +40,4 @@ Recommended execution order
 - 2) Remove host sync / Python fallback orchestration
 - 3) Restrict Firth work to true fallback variants only
 - 4) Rework solver/factorization hotspots without changing dtype
-- 5) Only then run controlled fp32/bfloat16 experiments behind flags
+- 5) Keep the float32 path and continue profiling-based optimization

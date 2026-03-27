@@ -196,8 +196,6 @@ def test_main_dispatches_linear_arguments(monkeypatch: pytest.MonkeyPatch) -> No
             "linear",
             "--out",
             "results/output",
-            "--numeric-mode",
-            "float32",
             "--device",
             "gpu",
         ],
@@ -219,7 +217,7 @@ def test_main_dispatches_linear_arguments(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_main_dispatches_logistic_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure the CLI dispatches the logistic path and sets the requested numeric mode."""
+    """Ensure the CLI dispatches the logistic path with the requested options."""
     mock_write = Mock()
 
     monkeypatch.setattr(
@@ -242,8 +240,6 @@ def test_main_dispatches_logistic_arguments(monkeypatch: pytest.MonkeyPatch) -> 
             "75",
             "--tolerance",
             "1e-6",
-            "--numeric-mode",
-            "bfloat16",
         ],
     )
 

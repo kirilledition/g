@@ -12,7 +12,7 @@ import pytest
 
 from g.io.tabular import (
     FAMILY_TABLE_COLUMNS,
-    convert_frame_to_float64_jax,
+    convert_frame_to_float32_jax,
     infer_covariate_names,
     load_aligned_sample_data,
     load_family_table,
@@ -101,8 +101,8 @@ def test_infer_covariate_names_empty_raises() -> None:
         infer_covariate_names(covariate_table)
 
 
-def test_convert_frame_to_float64_jax() -> None:
-    """Ensure convert_frame_to_float64_jax converts DataFrame correctly."""
+def test_convert_frame_to_float32_jax() -> None:
+    """Ensure convert_frame_to_float32_jax converts DataFrame correctly."""
     df = pl.DataFrame(
         {
             "col1": [1.0, 2.0, 3.0],
@@ -110,7 +110,7 @@ def test_convert_frame_to_float64_jax() -> None:
         }
     )
 
-    result = convert_frame_to_float64_jax(df)
+    result = convert_frame_to_float32_jax(df)
 
     assert result.shape == (3, 2)
     assert result.dtype == jnp.float32

@@ -48,7 +48,7 @@ def load_family_table(family_path: Path) -> pl.DataFrame:
             "paternal_identifier": pl.String,
             "maternal_identifier": pl.String,
             "reported_sex": pl.Int64,
-            "placeholder_phenotype": pl.Float64,
+            "placeholder_phenotype": pl.Float32,
         },
     ).with_row_index("sample_index")
 

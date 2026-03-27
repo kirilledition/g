@@ -117,7 +117,7 @@ def preprocess_genotype_matrix(genotype_matrix: jax.Array) -> PreprocessedGenoty
     genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
     missing_mask = jnp.isnan(genotype_matrix_float32)
     observed_genotype_total = jnp.where(missing_mask, 0.0, genotype_matrix_float32).sum(axis=0)
-    observation_count = jnp.sum(~missing_mask, axis=0, dtype=jnp.int64)
+    observation_count = jnp.sum(~missing_mask, axis=0, dtype=jnp.int32)
     column_means = observed_genotype_total / jnp.maximum(observation_count, 1)
     sanitized_column_means = jnp.where(observation_count > 0, column_means, 0.0)
     imputed_matrix = jnp.where(missing_mask, sanitized_column_means[None, :], genotype_matrix_float32)
@@ -229,6 +229,7 @@ def iter_genotype_chunks(
         expected_individual_identifiers: Expected sample order after alignment.
         chunk_size: Number of variants per chunk.
         variant_limit: Optional cap on the number of variants.
+
     Yields:
         Mean-imputed genotype chunks with metadata.
 

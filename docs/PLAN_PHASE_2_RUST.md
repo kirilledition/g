@@ -14,17 +14,14 @@ The Rust arm is no longer hypothetical. We have already implemented and measured
 
 Completed so far:
 
-* `g._core` now exposes a real PyO3 extension surface rather than a placeholder.
-* A handwritten Rust BED reader prototype exists for contiguous chunk reads.
-* A Rust preprocessing path exists for missing-mask creation, observation counting, mean imputation, and allele-one frequency calculation.
-* Rust buffer-protocol exports were added to reduce Python boundary copies.
+* `g._core` is currently a minimal PyO3 placeholder module.
 * A dedicated benchmark harness exists in `scripts/benchmark_plink_reader.py`.
 * A dedicated hybrid logistic benchmark exists in `scripts/benchmark_logistic_fallback.py`.
 
 Measured outcomes so far:
 
-* The handwritten Rust BED reader is still slower than the incumbent `bed-reader` path and should not become the main ingestion strategy in its current form.
-* Rust fused preprocessing moved closer to parity after boundary cleanup, but it still does not beat the current Python/JAX path on the benchmarked CPU setup.
+* The handwritten Rust BED reader and Rust preprocessing prototypes were removed after they were deprioritized.
+* The incumbent `bed-reader` plus Python/JAX preprocessing path remains the maintained ingestion strategy.
 * Host-side hybrid logistic cleanup did produce useful wins, so host orchestration remains a legitimate Rust-adjacent target even while GPU work becomes the primary Phase 2 track.
 
 The Rust arm therefore remains active, but it is no longer the primary frontier for large expected speedups. The best remaining Rust work is narrow host-boundary reduction and selective orchestration cleanup, not a broad rewrite.
@@ -35,7 +32,7 @@ The Rust arm therefore remains active, but it is no longer the primary frontier 
 
 * `Cargo.toml` already builds a PyO3 extension module.
 * `pyproject.toml` already uses maturin and the mixed `src/` layout.
-* `src/lib.rs` now exposes an experimental native reader surface and a native preprocessing surface.
+* `src/lib.rs` currently exposes only a placeholder PyO3 module surface.
 * `rustfmt.toml` and `clippy.toml` now define repository-local Rust formatting and lint policy.
 * The current PyO3 build uses `abi3-py311` so the extension can consume newer buffer interfaces cleanly.
 
@@ -47,9 +44,9 @@ The Rust arm therefore remains active, but it is no longer the primary frontier 
 
 ### **Benchmark and Evaluation Surfaces Added During This Phase**
 
-* `scripts/benchmark_plink_reader.py` compares raw chunk reads, Rust preprocessing, and full iterator paths.
+* `scripts/benchmark_plink_reader.py` compares the supported raw chunk reads and full iterator path.
 * `scripts/benchmark_logistic_fallback.py` measures the hybrid logistic/Firth path on representative chunk sizes.
-* `tests/test_phase1.py` now includes parity checks for native reader and native preprocessing paths.
+* `tests/test_phase1.py` now focuses on the maintained Python/JAX ingestion path.
 
 ### **Existing Native Components We Should Reuse First**
 
@@ -371,22 +368,21 @@ For the current repository state, the Rust arm should be considered informative 
 | Milestone | Status | Notes |
 |---|---|---|
 | 1: Benchmark-validated native boundary | ✅ Done | `benchmark_plink_reader.py` and `benchmark_logistic_fallback.py` exist. |
-| 2: Fused native preprocessing | Partial | Correctness achieved. Performance parity not yet achieved — Rust preprocessing does not beat Python/JAX path on CPU. Decision: keep as prototype, revisit on GPU. |
-| 3: Engine integration | Not done | Native paths exist in `lib.rs` but engine uses Python/bed-reader defaults. Decision: deferred because native path doesn't outperform incumbent. |
-| 4: Memory-boundary improvement | Partial | Buffer-protocol exports reduce copy overhead. DLPack explicitly deprioritized after benchmarks showed `device_put` slightly faster. |
+| 2: Fused native preprocessing | Removed | Prototype removed after deprioritization; revisit only if Rust work becomes active again. |
+| 3: Engine integration | Deferred | `lib.rs` was reduced back to a placeholder surface while the engine stays on Python/bed-reader defaults. |
+| 4: Memory-boundary improvement | Deferred | Buffer-protocol work was removed alongside the paused Rust ingestion prototypes. |
 | 5: Host-orchestration reduction | ✅ Done | Achieved via Python/JAX cleanup rather than Rust: on-device merge, reduced `device_get` calls. |
 
 ### Completed Additive Rust Work
 
-- ✅ Handwritten BED reader prototype in `lib.rs` (`read_bed_chunk_f64`).
-- ✅ Rust preprocessing prototype (`preprocess_genotype_matrix_f64`).
-- ✅ Buffer-protocol exports for zero-copy Python access.
-- ✅ Parity tests for native reader and preprocessing paths.
-- ✅ Sequential BED reads optimization (single seek + sequential reads).
+- Removed handwritten BED reader prototype from `lib.rs`.
+- Removed Rust preprocessing prototype from `lib.rs`.
+- Removed buffer-protocol exports tied to the paused ingestion prototype.
+- Removed parity tests for native reader and native preprocessing paths.
 
 ### Decisions Made
 
-- **Handwritten BED reader kept as prototype only** — it still does not outperform `bed-reader`. The plan's §5 Step 2 explicitly says "only keep a custom decoder if it wins on both chunk-level and end-to-end benchmarks."
+- **Handwritten BED reader removed** — it did not outperform `bed-reader`, so keeping it in-tree added maintenance cost without product value.
 - **Direct host-to-JAX import deprioritized** — `jax.device_put()` benchmarked slightly faster than `jnp.from_dlpack()` on CPU.
 - **Host orchestration reduction achieved in Python/JAX** — the on-device merge refactor eliminated the need for Rust-side Firth batch packaging/scatter helpers.
 - **Broad Rust rewrite explicitly rejected** — per §4, the Rust arm should stay narrow and benchmark-driven.
@@ -406,4 +402,3 @@ For the current repository state, the Rust arm should be considered informative 
 1. Re-benchmark Rust preprocessing once GPU bring-up is available — CPU result may not be the final story.
 2. If preprocessing becomes a bottleneck on GPU, consider tighter FFI (NumPy-owned arrays from Rust).
 3. The Rust arm is now on hold pending GPU measurement results.
-

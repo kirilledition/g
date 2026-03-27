@@ -137,7 +137,9 @@ class LogisticAssociationChunkResult:
     iteration_count: jax.Array
 
 
-class LogisticAssociationEvaluation(NamedTuple):
+@jax.tree_util.register_dataclass
+@dataclass
+class LogisticAssociationEvaluation:
     """Logistic association result and per-variant summary values."""
 
     logistic_result: LogisticAssociationChunkResult

@@ -120,8 +120,9 @@ That performance is expected for Phase 1. This stage was about locking down data
 
 Current Phase 2 reality:
 
-- the handwritten Rust BED reader prototype does not beat `bed-reader`
-- the Rust preprocessing path is correct but still slower than the incumbent Python/JAX path on the current local benchmark
+- the handwritten Rust BED reader and preprocessing prototypes were removed after being deprioritized
+- the maintained ingestion path is the incumbent `bed-reader` plus Python/JAX preprocessing stack
+- the maintained numeric path is now float32-only; mixed-precision and dtype-selection experiments were removed
 - GPU JAX bring-up now works in the dev shell on the local RTX 4080 SUPER
 - the logistic path already benefits materially from GPU execution
 - the linear path is still dominated by chunk iteration, I/O, preprocessing, and output handling rather than the linear math kernel

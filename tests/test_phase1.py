@@ -45,7 +45,7 @@ def assert_log10_p_value_parity(
     max_log10_difference: float,
 ) -> None:
     """Assert that p-values match in log10 space within the requested bound."""
-    minimum_positive_value = np.finfo(np.float64).tiny
+    minimum_positive_value = np.finfo(np.float32).tiny
     observed_log10_p_values = np.log10(np.clip(observed_p_values, minimum_positive_value, None))
     expected_log10_p_values = np.log10(np.clip(expected_p_values, minimum_positive_value, None))
     log10_difference = np.abs(observed_log10_p_values - expected_log10_p_values)
@@ -162,7 +162,7 @@ def test_logistic_missing_rows_are_excluded_per_variant() -> None:
         observation_count=jnp.asarray([4, 4]),
     )
 
-    logistic_result, allele_frequency, observation_count = compute_logistic_association_with_missing_exclusion(
+    logistic_evaluation = compute_logistic_association_with_missing_exclusion(
         covariate_matrix=covariate_matrix,
         phenotype_vector=phenotype_vector,
         genotype_chunk=genotype_chunk,
@@ -170,9 +170,9 @@ def test_logistic_missing_rows_are_excluded_per_variant() -> None:
         tolerance=1.0e-8,
     )
 
-    assert np.asarray(logistic_result.beta).shape == (2,)
-    np.testing.assert_array_equal(observation_count, np.asarray([3, 4]))
-    np.testing.assert_allclose(allele_frequency, np.asarray([1.0 / 3.0, 0.5]), atol=1e-8)
+    assert np.asarray(logistic_evaluation.logistic_result.beta).shape == (2,)
+    np.testing.assert_array_equal(logistic_evaluation.observation_count, np.asarray([3, 4]))
+    np.testing.assert_allclose(logistic_evaluation.allele_one_frequency, np.asarray([1.0 / 3.0, 0.5]), atol=1e-8)
 
 
 def test_linear_parity_matches_plink_baseline_subset() -> None:

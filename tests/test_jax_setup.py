@@ -10,10 +10,7 @@ if TYPE_CHECKING:
 import jax.numpy as jnp
 
 from g.jax_setup import (
-    ARRAY_DTYPE,
-    SOLVER_DTYPE,
-    cast_array_to_runtime_dtype,
-    cast_array_to_solver_dtype,
+    FLOAT_DTYPE,
     configure_jax_device,
     resolve_jax_compilation_cache_directory,
 )
@@ -93,19 +90,6 @@ def test_configure_jax_device_unknown_fallback() -> None:
         mock_update.assert_called_once_with("jax_platforms", "cpu")
 
 
-def test_cast_array_to_runtime_dtype_uses_configured_dtype() -> None:
-    """Ensure runtime casting follows the configured JAX array dtype."""
-    input_array = jnp.array([1.0, 2.0], dtype=jnp.float32)
-
-    result_array = cast_array_to_runtime_dtype(input_array)
-
-    assert result_array.dtype == ARRAY_DTYPE
-
-
-def test_cast_array_to_solver_dtype_uses_configured_dtype() -> None:
-    """Ensure solver casting follows the configured solver dtype."""
-    input_array = jnp.array([1.0, 2.0], dtype=jnp.float32)
-
-    result_array = cast_array_to_solver_dtype(input_array)
-
-    assert result_array.dtype == SOLVER_DTYPE
+def test_float_dtype_is_float32() -> None:
+    """Ensure the codebase-wide JAX float dtype is fixed to float32."""
+    assert jnp.float32 == FLOAT_DTYPE

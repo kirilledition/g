@@ -7,6 +7,7 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
+
 FLOAT_DTYPE = jnp.float32
 JAX_ENABLE_X64 = False
 DEFAULT_MATMUL_PRECISION = os.environ.get(

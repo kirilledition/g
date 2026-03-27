@@ -117,7 +117,7 @@ def test_read_bed_chunk() -> None:
     sample_indices = np.array([0, 1, 2], dtype=np.intp)
 
     with patch("g.io.plink.read_bed_chunk_host") as mock_host:
-        mock_host.return_value = np.ones((3, 5), dtype=np.float64)
+        mock_host.return_value = np.ones((3, 5), dtype=np.float32)
 
         result = read_bed_chunk(
             bed_handle=mock_bed_handle,
