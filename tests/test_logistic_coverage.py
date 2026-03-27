@@ -169,12 +169,12 @@ def test_standard_logistic_with_mask_matches_without_mask_for_complete_data() ->
     )
 
     np.testing.assert_allclose(
-        masked_evaluation.logistic_result.beta, unmasked_evaluation.logistic_result.beta, atol=1e-5
+        masked_evaluation.logistic_result.beta, unmasked_evaluation.logistic_result.beta, atol=1e-4
     )
     np.testing.assert_allclose(
         masked_evaluation.logistic_result.standard_error,
         unmasked_evaluation.logistic_result.standard_error,
-        atol=1e-5,
+        atol=1e-4,
     )
     np.testing.assert_array_equal(
         masked_evaluation.logistic_result.converged_mask,

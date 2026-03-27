@@ -52,7 +52,7 @@ def read_bed_chunk_host(
         num_threads: Thread count for the BED reader.
 
     Returns:
-        Genotype chunk as a host NumPy array with float64 precision.
+        Genotype chunk as a host NumPy array with float32 precision.
 
     """
     variant_index_array = np.arange(variant_start, variant_stop, dtype=np.intp)
@@ -168,7 +168,7 @@ def preprocess_genotype_matrix(genotype_matrix: jax.Array) -> PreprocessedGenoty
 
 
 def preprocess_genotype_matrix_native(
-    genotype_matrix_host: npt.NDArray[np.float64],
+    genotype_matrix_host: npt.NDArray[np.float32] | npt.NDArray[np.float64],
 ) -> PreprocessedGenotypeChunkData:
     """Preprocess a raw genotype matrix through the Rust extension.
 
