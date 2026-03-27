@@ -17,7 +17,10 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Install Python dependencies
-        run: uv sync --dev --all-dependencies
+        run: uv sync --dev
+
+      - name: Install maturin
+        run: uv pip install maturin
 
       - name: Build Rust extension
         run: uv run maturin develop
