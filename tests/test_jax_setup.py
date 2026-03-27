@@ -95,7 +95,7 @@ def test_configure_jax_device_unknown_fallback() -> None:
 
 def test_cast_array_to_runtime_dtype_uses_configured_dtype() -> None:
     """Ensure runtime casting follows the configured JAX array dtype."""
-    input_array = jnp.array([1.0, 2.0], dtype=jnp.float64)
+    input_array = jnp.array([1.0, 2.0], dtype=jnp.float32)
 
     result_array = cast_array_to_runtime_dtype(input_array)
 
@@ -104,7 +104,7 @@ def test_cast_array_to_runtime_dtype_uses_configured_dtype() -> None:
 
 def test_cast_array_to_solver_dtype_uses_configured_dtype() -> None:
     """Ensure solver casting follows the configured solver dtype."""
-    input_array = jnp.array([1.0, 2.0], dtype=jnp.float64)
+    input_array = jnp.array([1.0, 2.0], dtype=jnp.float32)
 
     result_array = cast_array_to_solver_dtype(input_array)
 

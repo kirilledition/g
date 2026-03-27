@@ -15,6 +15,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 
 @dataclass
@@ -28,6 +29,15 @@ class BenchmarkResult:
     run_number: int  # 1 for warmup, 2 for actual
     elapsed_seconds: float
     output_file: Path | None = None
+
+
+class VerificationResult(TypedDict):
+    """Comparison summary between PLINK and g outputs."""
+
+    max_beta_diff: float
+    max_p_diff: float
+    passed: bool
+    error: NotRequired[str]
 
 
 @dataclass
@@ -192,7 +202,7 @@ def verify_correctness(
     g_file: Path,
     mode: str,
     tolerance: float = 1e-5,
-) -> dict[str, float]:
+) -> VerificationResult:
     """Verify g output matches PLINK within tolerance."""
     import numpy as np
     import polars as pl
@@ -206,7 +216,11 @@ def verify_correctness(
         g_sorted = g_df.sort("position")
 
         # Compare key columns
-        comparisons = {}
+        comparisons: VerificationResult = {
+            "max_beta_diff": 0.0,
+            "max_p_diff": 0.0,
+            "passed": False,
+        }
 
         if mode == "linear":
             beta_col_plink = "BETA"
@@ -231,7 +245,12 @@ def verify_correctness(
 
     except RuntimeError as e:
         print(f"Verification error: {e}")
-        return {"error": str(e), "passed": False}
+        return {
+            "max_beta_diff": float("nan"),
+            "max_p_diff": float("nan"),
+            "passed": False,
+            "error": str(e),
+        }
 
 
 def main():

@@ -15,7 +15,7 @@ from g.engine import iter_linear_output_frames, iter_logistic_output_frames
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    import polars as pl
+    from g.engine import LinearChunkAccumulator, LogisticChunkAccumulator
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -46,10 +46,12 @@ def parse_covariate_names(raw_covariate_names: str) -> tuple[str, ...] | None:
     return covariate_names or None
 
 
-def run_and_materialize_frames(frame_iterator: Iterator[pl.DataFrame]) -> None:
+def run_and_materialize_frames(
+    frame_iterator: Iterator[LinearChunkAccumulator] | Iterator[LogisticChunkAccumulator],
+) -> None:
     """Force a full iterator run so the trace captures compute and formatting work."""
-    for output_frame in frame_iterator:
-        _ = output_frame.height
+    for accumulator in frame_iterator:
+        _ = len(accumulator.metadata.variant_identifiers)
 
 
 def main() -> None:
