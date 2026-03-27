@@ -19,7 +19,7 @@ from bed_reader import open_bed
 from bed_reader._open_bed import get_num_threads
 
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
-from g.compute.logistic import LOGISTIC_METHOD_FIRTH, compute_logistic_association_chunk
+from g.compute.logistic import LogisticMethod, compute_logistic_association_chunk
 from g.engine import (
     LinearChunkAccumulator,
     LogisticChunkAccumulator,
@@ -163,7 +163,7 @@ def checksum_logistic_result(logistic_evaluation: Any) -> float:
 def count_firth_variants(logistic_evaluation: Any) -> int:
     """Count Firth-fallback variants in one logistic evaluation."""
     method_code = np.asarray(logistic_evaluation.logistic_result.method_code)
-    return int(np.count_nonzero(method_code == LOGISTIC_METHOD_FIRTH))
+    return int(np.count_nonzero(method_code == LogisticMethod.FIRTH))
 
 
 def checksum_frame(output_frame: Any) -> float:

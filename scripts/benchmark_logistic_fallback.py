@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from g.compute.logistic import LOGISTIC_METHOD_FIRTH, LOGISTIC_METHOD_STANDARD
+from g.compute.logistic import LogisticMethod
 from g.engine import compute_logistic_association_with_missing_exclusion
 from g.io.plink import iter_genotype_chunks
 from g.io.tabular import load_aligned_sample_data
@@ -65,8 +65,8 @@ def benchmark_logistic_chunks(
             tolerance=1.0e-8,
         )
         method_code = np.asarray(logistic_evaluation.logistic_result.method_code)
-        firth_variant_count += int(np.count_nonzero(method_code == LOGISTIC_METHOD_FIRTH))
-        standard_variant_count += int(np.count_nonzero(method_code == LOGISTIC_METHOD_STANDARD))
+        firth_variant_count += int(np.count_nonzero(method_code == LogisticMethod.FIRTH))
+        standard_variant_count += int(np.count_nonzero(method_code == LogisticMethod.STANDARD))
         checksum += float(np.asarray(logistic_evaluation.logistic_result.beta).sum())
         checksum += float(np.asarray(logistic_evaluation.logistic_result.p_value).sum())
     return checksum, firth_variant_count, standard_variant_count

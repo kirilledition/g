@@ -14,10 +14,8 @@ import polars as pl
 
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
 from g.compute.logistic import (
-    LOGISTIC_ERROR_FIRTH_CONVERGE_FAIL,
-    LOGISTIC_ERROR_LOGISTIC_CONVERGE_FAIL,
-    LOGISTIC_ERROR_UNFINISHED,
-    LOGISTIC_METHOD_FIRTH,
+    LogisticErrorCode,
+    LogisticMethod,
     NoMissingLogisticConstants,
     compute_logistic_association_chunk,
     compute_logistic_association_chunk_with_mask,
@@ -76,19 +74,19 @@ class LogisticChunkAccumulator:
 
 def format_logistic_method_codes(method_code_values: np.ndarray) -> np.ndarray:
     """Convert logistic method codes to PLINK-style FIRTH flags."""
-    return np.where(method_code_values == LOGISTIC_METHOD_FIRTH, "Y", "N")
+    return np.where(method_code_values == LogisticMethod.FIRTH, "Y", "N")
 
 
 def format_logistic_error_codes(error_code_values: np.ndarray) -> np.ndarray:
     """Convert logistic error codes to PLINK-style error labels."""
     return np.where(
-        error_code_values == LOGISTIC_ERROR_FIRTH_CONVERGE_FAIL,
+        error_code_values == LogisticErrorCode.FIRTH_CONVERGE_FAIL,
         "FIRTH_CONVERGE_FAIL",
         np.where(
-            error_code_values == LOGISTIC_ERROR_LOGISTIC_CONVERGE_FAIL,
+            error_code_values == LogisticErrorCode.LOGISTIC_CONVERGE_FAIL,
             "LOGISTIC_CONVERGE_FAIL",
             np.where(
-                error_code_values == LOGISTIC_ERROR_UNFINISHED,
+                error_code_values == LogisticErrorCode.UNFINISHED,
                 "UNFINISHED",
                 ".",
             ),

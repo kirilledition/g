@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import NamedTuple
 
 import jax
@@ -30,12 +31,22 @@ FIRTH_TOLERANCE_FLOOR = 1.0e-12
 FIRTH_BATCH_SIZE = 64
 FIRTH_BATCH_BUCKET_SIZES = (1, 2, 4, 8, 16, 32, 64)
 MAX_ITERATION_COUNT = 100
-LOGISTIC_METHOD_STANDARD = 0
-LOGISTIC_METHOD_FIRTH = 1
-LOGISTIC_ERROR_NONE = 0
-LOGISTIC_ERROR_UNFINISHED = 1
-LOGISTIC_ERROR_LOGISTIC_CONVERGE_FAIL = 2
-LOGISTIC_ERROR_FIRTH_CONVERGE_FAIL = 3
+
+
+class LogisticMethod(IntEnum):
+    """Method codes emitted by logistic association kernels."""
+
+    STANDARD = 0
+    FIRTH = 1
+
+
+class LogisticErrorCode(IntEnum):
+    """Error codes emitted by logistic association kernels."""
+
+    NONE = 0
+    UNFINISHED = 1
+    LOGISTIC_CONVERGE_FAIL = 2
+    FIRTH_CONVERGE_FAIL = 3
 
 
 @jax.tree_util.register_dataclass
@@ -435,11 +446,11 @@ def compute_firth_statistics(
     )
     error_code = jnp.where(
         failed | (~valid_mask),
-        jnp.asarray(LOGISTIC_ERROR_FIRTH_CONVERGE_FAIL, dtype=jnp.int32),
+        jnp.asarray(LogisticErrorCode.FIRTH_CONVERGE_FAIL, dtype=jnp.int32),
         jnp.where(
             converged,
-            jnp.asarray(LOGISTIC_ERROR_NONE, dtype=jnp.int32),
-            jnp.asarray(LOGISTIC_ERROR_UNFINISHED, dtype=jnp.int32),
+            jnp.asarray(LogisticErrorCode.NONE, dtype=jnp.int32),
+            jnp.asarray(LogisticErrorCode.UNFINISHED, dtype=jnp.int32),
         ),
     )
     return FirthVariantResult(
@@ -763,11 +774,11 @@ def compute_standard_logistic_association_chunk_with_mask(
     )
     error_code = jnp.where(
         valid_mask & final_state.converged_mask,
-        jnp.full((variant_count,), LOGISTIC_ERROR_NONE, dtype=jnp.int32),
+        jnp.full((variant_count,), LogisticErrorCode.NONE, dtype=jnp.int32),
         jnp.where(
             valid_mask,
-            jnp.full((variant_count,), LOGISTIC_ERROR_UNFINISHED, dtype=jnp.int32),
-            jnp.full((variant_count,), LOGISTIC_ERROR_LOGISTIC_CONVERGE_FAIL, dtype=jnp.int32),
+            jnp.full((variant_count,), LogisticErrorCode.UNFINISHED, dtype=jnp.int32),
+            jnp.full((variant_count,), LogisticErrorCode.LOGISTIC_CONVERGE_FAIL, dtype=jnp.int32),
         ),
     )
     return StandardLogisticChunkEvaluation(
@@ -776,7 +787,7 @@ def compute_standard_logistic_association_chunk_with_mask(
             standard_error=standard_error,
             test_statistic=test_statistic,
             p_value=p_value,
-            method_code=jnp.full((variant_count,), LOGISTIC_METHOD_STANDARD, dtype=jnp.int32),
+            method_code=jnp.full((variant_count,), LogisticMethod.STANDARD, dtype=jnp.int32),
             error_code=error_code,
             converged_mask=final_state.converged_mask,
             valid_mask=valid_mask,
@@ -914,11 +925,11 @@ def compute_standard_logistic_association_chunk_without_mask(
     )
     error_code = jnp.where(
         valid_mask & final_state.converged_mask,
-        jnp.full((variant_count,), LOGISTIC_ERROR_NONE, dtype=jnp.int32),
+        jnp.full((variant_count,), LogisticErrorCode.NONE, dtype=jnp.int32),
         jnp.where(
             valid_mask,
-            jnp.full((variant_count,), LOGISTIC_ERROR_UNFINISHED, dtype=jnp.int32),
-            jnp.full((variant_count,), LOGISTIC_ERROR_LOGISTIC_CONVERGE_FAIL, dtype=jnp.int32),
+            jnp.full((variant_count,), LogisticErrorCode.UNFINISHED, dtype=jnp.int32),
+            jnp.full((variant_count,), LogisticErrorCode.LOGISTIC_CONVERGE_FAIL, dtype=jnp.int32),
         ),
     )
     return StandardLogisticChunkEvaluation(
@@ -927,7 +938,7 @@ def compute_standard_logistic_association_chunk_without_mask(
             standard_error=standard_error,
             test_statistic=test_statistic,
             p_value=p_value,
-            method_code=jnp.full((variant_count,), LOGISTIC_METHOD_STANDARD, dtype=jnp.int32),
+            method_code=jnp.full((variant_count,), LogisticMethod.STANDARD, dtype=jnp.int32),
             error_code=error_code,
             converged_mask=final_state.converged_mask,
             valid_mask=valid_mask,
@@ -1113,7 +1124,11 @@ def fit_single_variant_firth_logistic_regression(
         standard_error=jnp.where(skip_firth, dummy_standard_error, computed_result.standard_error),
         test_statistic=jnp.where(skip_firth, dummy_test_statistic, computed_result.test_statistic),
         p_value=jnp.where(skip_firth, dummy_p_value, computed_result.p_value),
-        error_code=jnp.where(skip_firth, jnp.asarray(LOGISTIC_ERROR_NONE, dtype=jnp.int32), computed_result.error_code),
+        error_code=jnp.where(
+            skip_firth,
+            jnp.asarray(LogisticErrorCode.NONE, dtype=jnp.int32),
+            computed_result.error_code,
+        ),
         converged_mask=~skip_firth | final_state.converged,
         valid_mask=jnp.where(skip_firth, jnp.zeros((), dtype=bool), computed_result.valid_mask),
         iteration_count=jnp.where(skip_firth, jnp.asarray(0, dtype=jnp.int32), computed_result.iteration_count),
@@ -1236,7 +1251,7 @@ def compute_firth_association_chunk_with_mask(
         standard_error=firth_result.standard_error,
         test_statistic=firth_result.test_statistic,
         p_value=firth_result.p_value,
-        method_code=jnp.full((variant_count,), LOGISTIC_METHOD_FIRTH, dtype=jnp.int32),
+        method_code=jnp.full((variant_count,), LogisticMethod.FIRTH, dtype=jnp.int32),
         error_code=firth_result.error_code,
         converged_mask=firth_result.converged_mask,
         valid_mask=firth_result.valid_mask,

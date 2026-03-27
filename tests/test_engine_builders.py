@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import polars as pl
 
-from g.compute.logistic import LOGISTIC_ERROR_NONE, LOGISTIC_ERROR_UNFINISHED, LOGISTIC_METHOD_FIRTH
+from g.compute.logistic import LogisticErrorCode, LogisticMethod
 from g.engine import (
     LinearChunkAccumulator,
     LogisticChunkAccumulator,
@@ -72,8 +72,8 @@ def test_build_logistic_output_frame() -> None:
         standard_error=jnp.array([0.01, 0.02]),
         test_statistic=jnp.array([10.0, 10.0]),
         p_value=jnp.array([0.001, 0.001]),
-        method_code=jnp.array([LOGISTIC_METHOD_FIRTH, 0]),
-        error_code=jnp.array([LOGISTIC_ERROR_NONE, LOGISTIC_ERROR_UNFINISHED]),
+        method_code=jnp.array([LogisticMethod.FIRTH, LogisticMethod.STANDARD]),
+        error_code=jnp.array([LogisticErrorCode.NONE, LogisticErrorCode.UNFINISHED]),
         converged_mask=jnp.array([True, False]),
         iteration_count=jnp.array([10, 50]),
         valid_mask=jnp.array([True, True]),
@@ -195,8 +195,8 @@ def test_concatenate_logistic_results_single_chunk() -> None:
             standard_error=jnp.array([0.01]),
             test_statistic=jnp.array([10.0]),
             p_value=jnp.array([0.001]),
-            method_code=jnp.array([0]),
-            error_code=jnp.array([LOGISTIC_ERROR_NONE]),
+            method_code=jnp.array([LogisticMethod.STANDARD]),
+            error_code=jnp.array([LogisticErrorCode.NONE]),
             converged_mask=jnp.array([True]),
             iteration_count=jnp.array([10]),
             valid_mask=jnp.array([True]),
@@ -226,8 +226,8 @@ def test_concatenate_logistic_results_multiple_chunks() -> None:
             standard_error=jnp.array([0.01]),
             test_statistic=jnp.array([10.0]),
             p_value=jnp.array([0.001]),
-            method_code=jnp.array([0]),
-            error_code=jnp.array([LOGISTIC_ERROR_NONE]),
+            method_code=jnp.array([LogisticMethod.STANDARD]),
+            error_code=jnp.array([LogisticErrorCode.NONE]),
             converged_mask=jnp.array([True]),
             iteration_count=jnp.array([10]),
             valid_mask=jnp.array([True]),
@@ -248,8 +248,8 @@ def test_concatenate_logistic_results_multiple_chunks() -> None:
             standard_error=jnp.array([0.02]),
             test_statistic=jnp.array([10.0]),
             p_value=jnp.array([0.001]),
-            method_code=jnp.array([LOGISTIC_METHOD_FIRTH]),
-            error_code=jnp.array([LOGISTIC_ERROR_NONE]),
+            method_code=jnp.array([LogisticMethod.FIRTH]),
+            error_code=jnp.array([LogisticErrorCode.NONE]),
             converged_mask=jnp.array([True]),
             iteration_count=jnp.array([20]),
             valid_mask=jnp.array([True]),
@@ -310,8 +310,8 @@ def test_write_frame_iterator_to_tsv_logistic(tmp_path: Path) -> None:
             standard_error=jnp.array([0.01]),
             test_statistic=jnp.array([10.0]),
             p_value=jnp.array([0.001]),
-            method_code=jnp.array([0]),
-            error_code=jnp.array([LOGISTIC_ERROR_NONE]),
+            method_code=jnp.array([LogisticMethod.STANDARD]),
+            error_code=jnp.array([LogisticErrorCode.NONE]),
             converged_mask=jnp.array([True]),
             iteration_count=jnp.array([10]),
             valid_mask=jnp.array([True]),

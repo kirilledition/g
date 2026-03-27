@@ -118,8 +118,8 @@ class LogisticAssociationChunkResult:
         standard_error: Standard errors of estimates.
         test_statistic: Z-statistics (Wald tests).
         p_value: Two-tailed p-values.
-        method_code: Method indicator (0=standard, 1=Firth).
-        error_code: Error status code.
+        method_code: Method indicator encoded by `g.compute.logistic.LogisticMethod`.
+        error_code: Error status code encoded by `g.compute.logistic.LogisticErrorCode`.
         converged_mask: Boolean mask for convergence.
         valid_mask: Boolean mask for valid statistics.
         iteration_count: IRLS iterations performed.

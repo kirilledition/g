@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
-from g.compute.logistic import LOGISTIC_METHOD_FIRTH, compute_logistic_association_chunk
+from g.compute.logistic import LogisticMethod, compute_logistic_association_chunk
 from g.engine import compute_logistic_association_with_missing_exclusion
 from g.io.plink import iter_genotype_chunks
 from g.io.tabular import load_aligned_sample_data
@@ -132,7 +132,7 @@ def load_first_fallback_chunk(
             tolerance=1.0e-8,
         )
         method_code = np.asarray(logistic_evaluation.logistic_result.method_code)
-        if np.any(method_code == LOGISTIC_METHOD_FIRTH):
+        if np.any(method_code == LogisticMethod.FIRTH):
             return genotype_chunk
     raise RuntimeError("Could not find a fallback chunk in the configured search range.")
 
