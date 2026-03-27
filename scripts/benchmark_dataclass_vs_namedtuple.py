@@ -30,10 +30,10 @@ class StateDataclass:
     previous_log_likelihood: jax.Array
 
 
-def create_test_state(variant_count: int, coefficient_count: int, use_dataclass: bool = True):
+def create_test_state(variant_count: int, coefficient_count: int, *, use_dataclass: bool = True):
     """Create a test state with random data."""
     key = jax.random.PRNGKey(42)
-    key1, key2, key3 = jax.random.split(key, 3)
+    key1, _key2, key3 = jax.random.split(key, 3)
 
     coefficients = jax.random.normal(key1, (variant_count, coefficient_count))
     converged_mask = jnp.zeros((variant_count,), dtype=bool)
@@ -57,7 +57,7 @@ def create_test_state(variant_count: int, coefficient_count: int, use_dataclass:
 
 @jax.jit
 def update_state_namedtuple(state: StateNamedTuple) -> StateNamedTuple:
-    """Simple update function for NamedTuple state."""
+    """Update function for NamedTuple state."""
     return StateNamedTuple(
         coefficients=state.coefficients + 0.01,
         converged_mask=state.converged_mask | (state.iteration_count > 5),
@@ -68,7 +68,7 @@ def update_state_namedtuple(state: StateNamedTuple) -> StateNamedTuple:
 
 @jax.jit
 def update_state_dataclass(state: StateDataclass) -> StateDataclass:
-    """Simple update function for dataclass state."""
+    """Update function for dataclass state."""
     return StateDataclass(
         coefficients=state.coefficients + 0.01,
         converged_mask=state.converged_mask | (state.iteration_count > 5),
