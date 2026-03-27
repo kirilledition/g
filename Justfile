@@ -37,6 +37,10 @@ probe-jax:
 benchmark-jax:
     uv run python scripts/benchmark_jax_execution.py
 
+# Compare runtime and parity across JAX numeric modes
+benchmark-numeric-modes:
+    uv run python scripts/benchmark_numeric_modes.py --run-phase1-evaluate
+
 # Sweep chunk sizes for JAX compute kernels
 benchmark-jax-chunks:
     uv run python scripts/benchmark_jax_chunk_sweep.py

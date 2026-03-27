@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.special import betainc
 
-from g import jax_setup  # noqa: F401
+from g import jax_setup
 from g.models import LinearAssociationChunkResult, LinearAssociationState
 
 
@@ -24,13 +24,15 @@ def prepare_linear_association_state(
         Reusable linear-regression state for genotype chunks.
 
     """
-    covariate_crossproduct = covariate_matrix.T @ covariate_matrix
+    solver_covariate_matrix = jax_setup.cast_array_to_solver_dtype(covariate_matrix)
+    solver_phenotype_vector = jax_setup.cast_array_to_solver_dtype(phenotype_vector)
+    covariate_crossproduct = solver_covariate_matrix.T @ solver_covariate_matrix
     covariate_crossproduct_inverse = jnp.linalg.inv(covariate_crossproduct)
-    phenotype_projection = covariate_crossproduct_inverse @ (covariate_matrix.T @ phenotype_vector)
-    phenotype_residual = phenotype_vector - covariate_matrix @ phenotype_projection
+    phenotype_projection = jnp.linalg.solve(covariate_crossproduct, solver_covariate_matrix.T @ solver_phenotype_vector)
+    phenotype_residual = solver_phenotype_vector - solver_covariate_matrix @ phenotype_projection
     phenotype_residual_sum_squares = jnp.dot(phenotype_residual, phenotype_residual)
     return LinearAssociationState(
-        covariate_matrix=covariate_matrix,
+        covariate_matrix=solver_covariate_matrix,
         covariate_crossproduct_inverse=covariate_crossproduct_inverse,
         phenotype_residual=phenotype_residual,
         phenotype_residual_sum_squares=phenotype_residual_sum_squares,
@@ -53,6 +55,7 @@ def compute_linear_association_chunk(
 
     """
     covariate_matrix = linear_association_state.covariate_matrix
+    genotype_matrix = jax_setup.cast_array_to_solver_dtype(genotype_matrix)
     sample_count = covariate_matrix.shape[0]
     covariate_parameter_count = covariate_matrix.shape[1]
     degrees_of_freedom = sample_count - covariate_parameter_count - 1

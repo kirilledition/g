@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -12,7 +13,7 @@ import numpy as np
 import numpy.typing as npt
 from jax.scipy.stats import norm
 
-from g import jax_setup  # noqa: F401
+from g import jax_setup
 from g.models import LogisticAssociationChunkResult
 
 MINIMUM_PROBABILITY = 1.0e-12
@@ -28,6 +29,7 @@ FIRTH_LIKELIHOOD_TOLERANCE = 1.0e-4
 FIRTH_MAXIMUM_STEP_SIZE = 5.0
 FIRTH_TOLERANCE_FLOOR = 1.0e-12
 FIRTH_BATCH_SIZE = 64
+FIRTH_BATCH_BUCKET_SIZES = (1, 2, 4, 8, 16, 32, 64)
 MAX_ITERATION_COUNT = 100
 LOGISTIC_METHOD_STANDARD = 0
 LOGISTIC_METHOD_FIRTH = 1
@@ -240,9 +242,20 @@ def assemble_full_information_matrix(
     return jnp.concatenate([top_block, bottom_block], axis=1)
 
 
+def clip_probability_matrix(probability_matrix: jax.Array) -> jax.Array:
+    """Clip probabilities to a numerically safe open interval for the active dtype."""
+    dtype_info = jnp.finfo(probability_matrix.dtype)
+    minimum_probability = jnp.maximum(
+        jnp.asarray(MINIMUM_PROBABILITY, dtype=probability_matrix.dtype),
+        jnp.asarray(dtype_info.eps, dtype=probability_matrix.dtype),
+    )
+    maximum_probability = jnp.asarray(1.0, dtype=probability_matrix.dtype) - minimum_probability
+    return jnp.clip(probability_matrix, minimum_probability, maximum_probability)
+
+
 def compute_log_likelihood(probability_matrix: jax.Array, phenotype_matrix: jax.Array) -> jax.Array:
     """Compute batched logistic log-likelihood values."""
-    clipped_probability_matrix = jnp.clip(probability_matrix, MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
+    clipped_probability_matrix = clip_probability_matrix(probability_matrix)
     return jnp.sum(
         phenotype_matrix * jnp.log(clipped_probability_matrix)
         + (1.0 - phenotype_matrix) * jnp.log1p(-clipped_probability_matrix),
@@ -256,7 +269,7 @@ def compute_covariate_only_probability_matrix(
 ) -> jax.Array:
     """Compute batched covariate-only logistic probabilities."""
     linear_predictor = jnp.einsum("np,mp->mn", covariate_matrix, coefficients)
-    return jnp.clip(jax.nn.sigmoid(linear_predictor), MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
+    return clip_probability_matrix(jax.nn.sigmoid(linear_predictor))
 
 
 def compute_probability_matrix(
@@ -271,7 +284,7 @@ def compute_probability_matrix(
         jnp.einsum("np,mp->mn", covariate_matrix, covariate_coefficients)
         + genotype_matrix_by_variant * genotype_coefficients[:, None]
     )
-    return jnp.clip(jax.nn.sigmoid(linear_predictor), MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
+    return clip_probability_matrix(jax.nn.sigmoid(linear_predictor))
 
 
 def initialize_full_model_coefficients(
@@ -962,7 +975,7 @@ def fit_single_variant_firth_logistic_regression(
         covariate_coefficients = coefficients[:-1]
         genotype_coefficient = coefficients[-1]
         linear_predictor = covariate_matrix @ covariate_coefficients + genotype_vector * genotype_coefficient
-        return jnp.clip(jax.nn.sigmoid(linear_predictor), MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
+        return clip_probability_matrix(jax.nn.sigmoid(linear_predictor))
 
     full_design_matrix = jnp.concatenate([covariate_matrix, genotype_vector[:, None]], axis=1)
 
@@ -1232,6 +1245,146 @@ def compute_firth_association_chunk_with_mask(
     )
 
 
+def build_device_firth_batch_plan(
+    fallback_mask: jax.Array,
+    variant_count: int,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Build fixed-size fallback batches without transferring masks to host."""
+    max_batch_count = math.ceil(variant_count / FIRTH_BATCH_SIZE)
+    padded_variant_count = max_batch_count * FIRTH_BATCH_SIZE
+    fallback_index_vector = jnp.nonzero(fallback_mask, size=variant_count, fill_value=0)[0]
+    fallback_count = jnp.sum(fallback_mask, dtype=jnp.int32)
+    padded_index_vector = jnp.pad(
+        fallback_index_vector,
+        (0, padded_variant_count - variant_count),
+        constant_values=0,
+    )
+    active_mask_vector = jnp.arange(padded_variant_count, dtype=jnp.int32) < fallback_count
+    batch_active_count_vector = jnp.sum(
+        active_mask_vector.reshape((max_batch_count, FIRTH_BATCH_SIZE)),
+        axis=1,
+        dtype=jnp.int32,
+    )
+    return (
+        padded_index_vector.reshape((max_batch_count, FIRTH_BATCH_SIZE)),
+        active_mask_vector.reshape((max_batch_count, FIRTH_BATCH_SIZE)),
+        batch_active_count_vector,
+    )
+
+
+def resolve_firth_bucket_size(active_variant_count: int) -> int:
+    """Resolve the smallest supported Firth bucket size for an active batch."""
+    for bucket_size in FIRTH_BATCH_BUCKET_SIZES:
+        if active_variant_count <= bucket_size:
+            return bucket_size
+    message = f"Unsupported Firth batch size {active_variant_count}."
+    raise ValueError(message)
+
+
+def merge_firth_batch_result(
+    current_result: LogisticAssociationChunkResult,
+    fallback_indices: jax.Array,
+    batch_active_mask: jax.Array,
+    firth_result: LogisticAssociationChunkResult,
+) -> LogisticAssociationChunkResult:
+    """Merge one fixed-size Firth batch into the running chunk result."""
+    def merge_array(current_values: jax.Array, firth_values: jax.Array) -> jax.Array:
+        current_batch_values = jnp.take(current_values, fallback_indices, axis=0)
+        merged_batch_values = jnp.where(batch_active_mask, firth_values, current_batch_values)
+        return current_values.at[fallback_indices].set(merged_batch_values)
+
+    return LogisticAssociationChunkResult(
+        beta=merge_array(current_result.beta, firth_result.beta),
+        standard_error=merge_array(current_result.standard_error, firth_result.standard_error),
+        test_statistic=merge_array(current_result.test_statistic, firth_result.test_statistic),
+        p_value=merge_array(current_result.p_value, firth_result.p_value),
+        method_code=merge_array(current_result.method_code, firth_result.method_code),
+        error_code=merge_array(current_result.error_code, firth_result.error_code),
+        converged_mask=merge_array(current_result.converged_mask, firth_result.converged_mask),
+        valid_mask=merge_array(current_result.valid_mask, firth_result.valid_mask),
+        iteration_count=merge_array(current_result.iteration_count, firth_result.iteration_count),
+    )
+
+
+def compute_batched_firth_updates_without_mask(
+    covariate_matrix: jax.Array,
+    phenotype_vector: jax.Array,
+    genotype_matrix: jax.Array,
+    no_missing_constants: NoMissingLogisticConstants,
+    standard_evaluation: StandardLogisticChunkEvaluation,
+    max_iterations: int,
+    tolerance: float,
+) -> LogisticAssociationChunkResult:
+    """Apply Firth fallback only to no-missing variants that need it."""
+    genotype_matrix_by_variant = genotype_matrix.T
+    variant_count = genotype_matrix_by_variant.shape[0]
+    device_heuristic_firth_mask = compute_firth_pre_dispatch_mask_without_mask(
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        no_missing_constants=no_missing_constants,
+    )
+    device_fallback_mask = (
+        device_heuristic_firth_mask
+        | (~standard_evaluation.logistic_result.converged_mask)
+        | (~standard_evaluation.logistic_result.valid_mask)
+    )
+    has_fallback = bool(jax.device_get(jnp.any(device_fallback_mask)))
+    if not has_fallback:
+        return standard_evaluation.logistic_result
+
+    firth_tolerance = max(tolerance, FIRTH_TOLERANCE_FLOOR)
+    fallback_index_matrix, fallback_active_mask_matrix, batch_active_count_vector = build_device_firth_batch_plan(
+        fallback_mask=device_fallback_mask,
+        variant_count=variant_count,
+    )
+    host_batch_active_count_vector = np.asarray(jax.device_get(batch_active_count_vector))
+    result = standard_evaluation.logistic_result
+    max_batch_count = fallback_index_matrix.shape[0]
+
+    for batch_index in range(max_batch_count):
+        with jax.profiler.StepTraceAnnotation("logistic_firth_batch_no_missing", step_num=batch_index):
+            active_variant_count = int(host_batch_active_count_vector[batch_index])
+            if active_variant_count == 0:
+                continue
+            bucket_size = resolve_firth_bucket_size(active_variant_count)
+            fallback_indices = fallback_index_matrix[batch_index][:bucket_size]
+            batch_active_mask = fallback_active_mask_matrix[batch_index][:bucket_size]
+            batch_genotype_matrix = jnp.take(genotype_matrix, fallback_indices, axis=1)
+            batch_standard_coefficients = jnp.take(standard_evaluation.coefficients, fallback_indices, axis=0)
+            batch_heuristic_firth_mask = jnp.take(device_heuristic_firth_mask, fallback_indices, axis=0)
+            batch_heuristic_firth_mask = batch_heuristic_firth_mask & batch_active_mask
+            batch_initial_coefficients = jax.lax.cond(
+                jnp.any(batch_heuristic_firth_mask),
+                lambda: jnp.where(
+                    batch_heuristic_firth_mask[:, None],
+                    initialize_full_model_coefficients_without_mask(
+                        covariate_matrix=covariate_matrix,
+                        genotype_matrix_by_variant=batch_genotype_matrix.T,
+                        no_missing_constants=no_missing_constants,
+                    ),
+                    batch_standard_coefficients,
+                ),
+                lambda: batch_standard_coefficients,
+            )
+            batch_observation_mask = jnp.ones(batch_genotype_matrix.T.shape, dtype=bool)
+            firth_result = compute_firth_association_chunk_with_mask(
+                covariate_matrix=covariate_matrix,
+                phenotype_vector=phenotype_vector,
+                genotype_matrix=batch_genotype_matrix,
+                observation_mask=batch_observation_mask,
+                initial_coefficients=batch_initial_coefficients,
+                max_iterations=max_iterations,
+                tolerance=firth_tolerance,
+            )
+            result = merge_firth_batch_result(
+                current_result=result,
+                fallback_indices=fallback_indices,
+                batch_active_mask=batch_active_mask,
+                firth_result=firth_result,
+            )
+
+    return result
+
+
 compute_firth_association_chunk_variantwise = jax.jit(
     jax.vmap(
         fit_single_variant_firth_logistic_regression,
@@ -1262,118 +1415,32 @@ def compute_logistic_association_chunk(
         Chunk-level logistic association statistics.
 
     """
+    covariate_matrix = jax_setup.cast_array_to_solver_dtype(covariate_matrix)
+    phenotype_vector = jax_setup.cast_array_to_solver_dtype(phenotype_vector)
+    genotype_matrix = jax_setup.cast_array_to_solver_dtype(genotype_matrix)
     if no_missing_constants is None:
         no_missing_constants = prepare_no_missing_logistic_constants(
             covariate_matrix=covariate_matrix,
             phenotype_vector=phenotype_vector,
         )
 
-    genotype_matrix_by_variant = genotype_matrix.T
-    variant_count = genotype_matrix_by_variant.shape[0]
-    sample_count = genotype_matrix.shape[0]
-    firth_tolerance = jnp.maximum(tolerance, FIRTH_TOLERANCE_FLOOR)
-
-    def run_standard_logistic() -> StandardLogisticChunkEvaluation:
-        return compute_standard_logistic_association_chunk_without_mask(
-            covariate_matrix=covariate_matrix,
-            phenotype_vector=phenotype_vector,
-            genotype_matrix=genotype_matrix,
-            no_missing_constants=no_missing_constants,
-            max_iterations=max_iterations,
-            tolerance=tolerance,
-        )
-
-    def build_firth_result(
-        standard_evaluation: StandardLogisticChunkEvaluation,
-    ) -> LogisticAssociationChunkResult:
-        """Build Firth result using jax.lax.cond to avoid host sync."""
-        standard_result = standard_evaluation.logistic_result
-        standard_coefficients = standard_evaluation.coefficients
-
-        # Compute heuristic mask on device
-        heuristic_mask = compute_firth_pre_dispatch_mask_without_mask(
-            genotype_matrix_by_variant=genotype_matrix_by_variant,
-            no_missing_constants=no_missing_constants,
-        )
-
-        # Compute fallback mask on device
-        fallback_mask = heuristic_mask | (~standard_result.converged_mask) | (~standard_result.valid_mask)
-
-        # Initialize Firth coefficients: use heuristic init where needed, otherwise standard
-        firth_initial_coefficients = jnp.where(
-            heuristic_mask[:, None],
-            initialize_full_model_coefficients_without_mask(
-                covariate_matrix=covariate_matrix,
-                genotype_matrix_by_variant=genotype_matrix_by_variant,
-                no_missing_constants=no_missing_constants,
-            ),
-            standard_coefficients,
-        )
-
-        # Create observation mask for all variants (all ones for no-missing path)
-        observation_mask = jnp.ones((variant_count, sample_count), dtype=bool)
-
-        # Create skip_firth mask (inverse of fallback_mask)
-        skip_firth_mask = ~fallback_mask
-
-        def firth_branch(
-            standard_result_inner: LogisticAssociationChunkResult,
-        ) -> LogisticAssociationChunkResult:
-            """Run Firth on all variants with skip flag, then merge results."""
-            firth_result = compute_firth_association_chunk_variantwise(
-                covariate_matrix,
-                phenotype_vector,
-                genotype_matrix,
-                observation_mask,
-                firth_initial_coefficients,
-                skip_firth_mask,
-                max_iterations,
-                firth_tolerance,
-            )
-
-            # Merge: use Firth where fallback_mask is True, standard otherwise
-            return LogisticAssociationChunkResult(
-                beta=jnp.where(fallback_mask, firth_result.beta, standard_result_inner.beta),
-                standard_error=jnp.where(
-                    fallback_mask, firth_result.standard_error, standard_result_inner.standard_error
-                ),
-                test_statistic=jnp.where(
-                    fallback_mask, firth_result.test_statistic, standard_result_inner.test_statistic
-                ),
-                p_value=jnp.where(fallback_mask, firth_result.p_value, standard_result_inner.p_value),
-                method_code=jnp.where(
-                    fallback_mask,
-                    jnp.full((variant_count,), LOGISTIC_METHOD_FIRTH, dtype=jnp.int32),
-                    standard_result_inner.method_code,
-                ),
-                error_code=jnp.where(fallback_mask, firth_result.error_code, standard_result_inner.error_code),
-                converged_mask=jnp.where(
-                    fallback_mask, firth_result.converged_mask, standard_result_inner.converged_mask
-                ),
-                valid_mask=jnp.where(fallback_mask, firth_result.valid_mask, standard_result_inner.valid_mask),
-                iteration_count=jnp.where(
-                    fallback_mask, firth_result.iteration_count, standard_result_inner.iteration_count
-                ),
-            )
-
-        def no_firth_branch(
-            standard_result_inner: LogisticAssociationChunkResult,
-        ) -> LogisticAssociationChunkResult:
-            """Return standard result unchanged."""
-            return standard_result_inner
-
-        # Use jax.lax.cond to branch on device without host sync
-        return jax.lax.cond(
-            jnp.any(fallback_mask),
-            lambda: firth_branch(standard_result),
-            lambda: no_firth_branch(standard_result),
-        )
-
-    # Run standard logistic (this is always needed as first step)
-    standard_evaluation = run_standard_logistic()
-
-    # Build final result with conditional Firth fallback (no host sync)
-    return build_firth_result(standard_evaluation)
+    standard_evaluation = compute_standard_logistic_association_chunk_without_mask(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        genotype_matrix=genotype_matrix,
+        no_missing_constants=no_missing_constants,
+        max_iterations=max_iterations,
+        tolerance=tolerance,
+    )
+    return compute_batched_firth_updates_without_mask(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        genotype_matrix=genotype_matrix,
+        no_missing_constants=no_missing_constants,
+        standard_evaluation=standard_evaluation,
+        max_iterations=max_iterations,
+        tolerance=tolerance,
+    )
 
 
 def compute_logistic_association_chunk_with_mask(
@@ -1401,6 +1468,9 @@ def compute_logistic_association_chunk_with_mask(
         Chunk-level logistic association statistics.
 
     """
+    covariate_matrix = jax_setup.cast_array_to_solver_dtype(covariate_matrix)
+    phenotype_vector = jax_setup.cast_array_to_solver_dtype(phenotype_vector)
+    genotype_matrix = jax_setup.cast_array_to_solver_dtype(genotype_matrix)
     genotype_matrix_by_variant = genotype_matrix.T
     with jax.profiler.TraceAnnotation("logistic.pre_dispatch_mask"):
         device_heuristic_firth_mask = compute_firth_pre_dispatch_mask(

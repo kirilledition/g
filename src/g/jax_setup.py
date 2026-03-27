@@ -6,8 +6,34 @@ import os
 from pathlib import Path
 
 import jax
+import jax.numpy as jnp
+import numpy as np
 
-ENABLE_X64 = True
+NUMERIC_MODE_FLOAT32 = "float32"
+NUMERIC_MODE_BFLOAT16 = "bfloat16"
+SUPPORTED_NUMERIC_MODES = {
+    NUMERIC_MODE_FLOAT32,
+    NUMERIC_MODE_BFLOAT16,
+}
+NUMERIC_MODE = os.environ.get("G_JAX_NUMERIC_MODE", NUMERIC_MODE_FLOAT32).strip().lower()
+if NUMERIC_MODE not in SUPPORTED_NUMERIC_MODES:
+    message = (
+        f"Unsupported G_JAX_NUMERIC_MODE value '{NUMERIC_MODE}'. Expected one of {sorted(SUPPORTED_NUMERIC_MODES)}."
+    )
+    raise ValueError(message)
+
+ARRAY_DTYPE = (
+    jnp.float32
+    if NUMERIC_MODE == NUMERIC_MODE_FLOAT32
+    else jnp.bfloat16
+)
+SOLVER_DTYPE = ARRAY_DTYPE
+HOST_NUMPY_DTYPE = np.float32
+JAX_ENABLE_X64 = False
+DEFAULT_MATMUL_PRECISION = os.environ.get(
+    "G_JAX_DEFAULT_MATMUL_PRECISION",
+    "float32",
+)
 ENABLE_PERSISTENT_COMPILATION_CACHE = os.environ.get("G_ENABLE_JAX_PERSISTENT_COMPILATION_CACHE", "1") == "1"
 PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = -1
 PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
@@ -24,7 +50,8 @@ def resolve_jax_compilation_cache_directory() -> Path:
     return Path.home() / ".cache" / "g" / "jax"
 
 
-jax.config.update("jax_enable_x64", ENABLE_X64)
+jax.config.update("jax_enable_x64", JAX_ENABLE_X64)
+jax.config.update("jax_default_matmul_precision", DEFAULT_MATMUL_PRECISION)
 if ENABLE_PERSISTENT_COMPILATION_CACHE:
     cache_directory = resolve_jax_compilation_cache_directory()
     cache_directory.mkdir(parents=True, exist_ok=True)
@@ -47,3 +74,13 @@ def configure_jax_device(device: str) -> None:
         jax.config.update("jax_platforms", "")
     else:
         jax.config.update("jax_platforms", "cpu")
+
+
+def cast_array_to_runtime_dtype(array: jax.Array) -> jax.Array:
+    """Cast an array to the configured runtime storage dtype."""
+    return array.astype(ARRAY_DTYPE)
+
+
+def cast_array_to_solver_dtype(array: jax.Array) -> jax.Array:
+    """Cast an array to the configured solver dtype."""
+    return array.astype(SOLVER_DTYPE)

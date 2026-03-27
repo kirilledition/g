@@ -21,6 +21,8 @@ from bed_reader._open_bed import get_num_threads
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
 from g.compute.logistic import LOGISTIC_METHOD_FIRTH, compute_logistic_association_chunk
 from g.engine import (
+    LinearChunkAccumulator,
+    LogisticChunkAccumulator,
     build_linear_output_frame,
     build_logistic_output_frame,
     compute_logistic_association_with_missing_exclusion,
@@ -169,9 +171,15 @@ def checksum_frame(output_frame: Any) -> float:
     return float(output_frame.select(pl.col("p_value").sum()).item())
 
 
-def checksum_frame_list(output_frames: list[pl.DataFrame]) -> float:
-    """Build a stable checksum from a list of formatted Polars frames."""
-    return float(sum(frame.select(pl.col("p_value").sum()).item() for frame in output_frames))
+def checksum_frame_list(output_frames: list[LinearChunkAccumulator] | list[LogisticChunkAccumulator]) -> float:
+    """Build a stable checksum from a list of chunk accumulators."""
+    checksum = 0.0
+    for output_frame in output_frames:
+        if isinstance(output_frame, LinearChunkAccumulator):
+            checksum += float(np.asarray(output_frame.linear_result.p_value).sum())
+        else:
+            checksum += float(np.asarray(output_frame.logistic_result.p_value).sum())
+    return checksum
 
 
 def select_fallback_logistic_chunk(

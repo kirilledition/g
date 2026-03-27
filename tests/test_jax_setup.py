@@ -7,7 +7,16 @@ from unittest.mock import patch
 if TYPE_CHECKING:
     import pytest
 
-from g.jax_setup import configure_jax_device, resolve_jax_compilation_cache_directory
+import jax.numpy as jnp
+
+from g.jax_setup import (
+    ARRAY_DTYPE,
+    SOLVER_DTYPE,
+    cast_array_to_runtime_dtype,
+    cast_array_to_solver_dtype,
+    configure_jax_device,
+    resolve_jax_compilation_cache_directory,
+)
 
 
 def test_resolve_jax_cache_uses_jax_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -82,3 +91,21 @@ def test_configure_jax_device_unknown_fallback() -> None:
     with patch("g.jax_setup.jax.config.update") as mock_update:
         configure_jax_device("tpu")
         mock_update.assert_called_once_with("jax_platforms", "cpu")
+
+
+def test_cast_array_to_runtime_dtype_uses_configured_dtype() -> None:
+    """Ensure runtime casting follows the configured JAX array dtype."""
+    input_array = jnp.array([1.0, 2.0], dtype=jnp.float64)
+
+    result_array = cast_array_to_runtime_dtype(input_array)
+
+    assert result_array.dtype == ARRAY_DTYPE
+
+
+def test_cast_array_to_solver_dtype_uses_configured_dtype() -> None:
+    """Ensure solver casting follows the configured solver dtype."""
+    input_array = jnp.array([1.0, 2.0], dtype=jnp.float64)
+
+    result_array = cast_array_to_solver_dtype(input_array)
+
+    assert result_array.dtype == SOLVER_DTYPE

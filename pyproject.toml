@@ -85,5 +85,7 @@ ignore = [
     "D103",   # missing docstring in public function
     "T201",   # allow print() in scripts
     "D200",   # one-line docstring should fit on one line
+    "D203",   # allow blank line before class docstrings
     "PTH123", # open() instead of Path.open()
+    "D213",   # allow free-form second summary line
 ]

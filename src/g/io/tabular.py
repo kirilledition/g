@@ -9,7 +9,7 @@ import numpy as np
 import numpy.typing as npt
 import polars as pl
 
-from g import jax_setup  # noqa: F401
+from g import jax_setup
 from g.models import AlignedSampleData
 
 if TYPE_CHECKING:
@@ -87,8 +87,8 @@ def infer_covariate_names(covariate_table: pl.DataFrame) -> tuple[str, ...]:
     return covariate_names
 
 
-def convert_frame_to_float64_jax(data_frame: pl.DataFrame) -> jax.Array:
-    """Convert a numeric Polars DataFrame to a float64 JAX array.
+def convert_frame_to_solver_dtype_jax(data_frame: pl.DataFrame) -> jax.Array:
+    """Convert a numeric Polars DataFrame to the configured solver dtype.
 
     Args:
         data_frame: Numeric Polars DataFrame.
@@ -97,7 +97,13 @@ def convert_frame_to_float64_jax(data_frame: pl.DataFrame) -> jax.Array:
         JAX array exported from Polars.
 
     """
-    return jnp.asarray(data_frame.to_jax(dtype=pl.Float64, order="c"))
+    host_array = data_frame.to_numpy(order="c")
+    return jnp.asarray(host_array, dtype=jax_setup.SOLVER_DTYPE)
+
+
+def convert_frame_to_float64_jax(data_frame: pl.DataFrame) -> jax.Array:
+    """Backward-compatible alias for solver-dtype conversion."""
+    return convert_frame_to_solver_dtype_jax(data_frame)
 
 
 def recode_binary_phenotype(phenotype_values: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
@@ -201,8 +207,8 @@ def load_aligned_sample_data(
         family_identifiers=aligned_table.get_column("family_identifier").cast(pl.String).to_numpy(),
         individual_identifiers=aligned_table.get_column("individual_identifier").cast(pl.String).to_numpy(),
         phenotype_name=phenotype_name,
-        phenotype_vector=convert_frame_to_float64_jax(phenotype_frame).reshape((-1,)),
+        phenotype_vector=convert_frame_to_solver_dtype_jax(phenotype_frame).reshape((-1,)),
         covariate_names=("intercept", *selected_covariate_names),
-        covariate_matrix=convert_frame_to_float64_jax(design_table),
+        covariate_matrix=convert_frame_to_solver_dtype_jax(design_table),
         is_binary_trait=is_binary_trait,
     )

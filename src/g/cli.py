@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
-
-from g.engine import iter_linear_output_frames, iter_logistic_output_frames, write_frame_iterator_to_tsv
 
 
 def parse_covariate_names(raw_covariate_names: str | None) -> tuple[str, ...] | None:
@@ -31,6 +30,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-iterations", type=int, default=50, help="Maximum logistic IRLS iterations.")
     parser.add_argument("--tolerance", type=float, default=1.0e-8, help="Logistic convergence tolerance.")
     parser.add_argument(
+        "--numeric-mode",
+        choices=("float32", "bfloat16"),
+        default=os.environ.get("G_JAX_NUMERIC_MODE", "float32"),
+        help="JAX numeric mode for runtime experiments.",
+    )
+    parser.add_argument(
         "--device",
         choices=("cpu", "gpu"),
         default="cpu",
@@ -44,6 +49,9 @@ def main() -> None:
     argument_parser = build_argument_parser()
     arguments = argument_parser.parse_args()
 
+    os.environ["G_JAX_NUMERIC_MODE"] = arguments.numeric_mode
+
+    from g.engine import iter_linear_output_frames, iter_logistic_output_frames, write_frame_iterator_to_tsv
     from g.jax_setup import configure_jax_device
 
     configure_jax_device(arguments.device)

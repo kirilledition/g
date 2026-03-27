@@ -8,6 +8,11 @@ from g.compute.logistic import (
 )
 
 
+def expected_probability_floor() -> float:
+    """Return the numerically safe probability floor for float32 runs."""
+    return max(MINIMUM_PROBABILITY, float(jnp.finfo(jnp.float32).eps))
+
+
 def test_compute_log_likelihood() -> None:
     """Ensure logistic log-likelihood behaves correctly with normal and extreme inputs."""
     probability_matrix = jnp.array([[0.5, 0.8, 0.2], [0.0, 1.0, 0.5]])
@@ -15,8 +20,9 @@ def test_compute_log_likelihood() -> None:
 
     log_likelihood = compute_log_likelihood(probability_matrix, phenotype_matrix)
 
+    minimum_probability = expected_probability_floor()
     expected_row_0 = np.log(0.5) + np.log(0.8) + np.log(0.8)
-    expected_row_1 = np.log(MINIMUM_PROBABILITY) + np.log(MINIMUM_PROBABILITY) + np.log(0.5)
+    expected_row_1 = np.log(minimum_probability) + np.log(minimum_probability) + np.log(0.5)
 
     expected_log_likelihood = jnp.array([expected_row_0, expected_row_1])
 
@@ -43,15 +49,16 @@ def test_compute_covariate_only_probability_matrix() -> None:
     result = compute_covariate_only_probability_matrix(covariate_matrix, coefficients)
 
     assert result.shape == (2, 3)
+    minimum_probability = expected_probability_floor()
 
     expected_prob_0 = jnp.array([0.5, 0.5, 0.5])
     np.testing.assert_allclose(result[0], expected_prob_0, rtol=1e-5)
 
     expected_prob_1 = jnp.array(
         [
-            1.0 - MINIMUM_PROBABILITY,
+            1.0 - minimum_probability,
             0.5,
-            1.0 - MINIMUM_PROBABILITY,
+            1.0 - minimum_probability,
         ]
     )
     np.testing.assert_allclose(result[1], expected_prob_1, rtol=1e-5)
@@ -65,9 +72,9 @@ def test_compute_covariate_only_probability_matrix() -> None:
 
     expected_prob_neg = jnp.array(
         [
-            MINIMUM_PROBABILITY,
-            MINIMUM_PROBABILITY,
-            MINIMUM_PROBABILITY,
+            minimum_probability,
+            minimum_probability,
+            minimum_probability,
         ]
     )
     np.testing.assert_allclose(result_neg[0], expected_prob_neg, rtol=1e-5)

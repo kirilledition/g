@@ -113,7 +113,7 @@ def test_convert_frame_to_float64_jax() -> None:
     result = convert_frame_to_float64_jax(df)
 
     assert result.shape == (3, 2)
-    assert result.dtype == jnp.float64
+    assert result.dtype == jnp.float32
     np.testing.assert_allclose(result[:, 0], jnp.array([1.0, 2.0, 3.0]))
 
 
@@ -257,3 +257,33 @@ def test_load_aligned_sample_data_no_aligned_samples(tmp_path: Path) -> None:
             covariate_names=("age",),
             is_binary_trait=False,
         )
+
+
+def test_load_aligned_sample_data_sorts_by_family_order_and_drops_null_rows(tmp_path: Path) -> None:
+    """Ensure alignment follows FAM order and excludes rows with null phenotype or covariates."""
+    fam_path = tmp_path / "test.fam"
+    fam_path.write_text("f1\ts2\t0\t0\t1\t-9\nf1\ts1\t0\t0\t1\t-9\nf1\ts3\t0\t0\t1\t-9\n")
+
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts3\t3.0\nf1\ts1\t1.0\nf1\ts2\t2.0\n")
+
+    covariate_path = tmp_path / "covar.txt"
+    covariate_path.write_text("FID\tIID\tage\tsex\nf1\ts1\t25\t1\nf1\ts2\tNA\t2\nf1\ts3\t35\t1\n")
+
+    aligned_sample_data = load_aligned_sample_data(
+        bed_prefix=tmp_path / "test",
+        phenotype_path=phenotype_path,
+        phenotype_name="trait",
+        covariate_path=covariate_path,
+        covariate_names=None,
+        is_binary_trait=False,
+    )
+
+    np.testing.assert_array_equal(aligned_sample_data.sample_indices, np.array([1, 2]))
+    np.testing.assert_array_equal(aligned_sample_data.individual_identifiers, np.array(["s1", "s3"]))
+    np.testing.assert_allclose(np.asarray(aligned_sample_data.phenotype_vector), np.array([1.0, 3.0]), atol=0.0)
+    np.testing.assert_allclose(
+        np.asarray(aligned_sample_data.covariate_matrix),
+        np.array([[1.0, 25.0, 1.0], [1.0, 35.0, 1.0]]),
+        atol=0.0,
+    )
