@@ -58,9 +58,7 @@ def compute_linear_association_chunk(
     degrees_of_freedom = sample_count - covariate_parameter_count - 1
 
     covariate_genotype_crossproduct = covariate_matrix.T @ genotype_matrix
-    genotype_projection = (
-        linear_association_state.covariate_crossproduct_inverse @ covariate_genotype_crossproduct
-    )
+    genotype_projection = linear_association_state.covariate_crossproduct_inverse @ covariate_genotype_crossproduct
 
     genotype_sum_squares = jnp.sum(genotype_matrix * genotype_matrix, axis=0)
     projection_sum_squares = jnp.sum(covariate_genotype_crossproduct * genotype_projection, axis=0)
