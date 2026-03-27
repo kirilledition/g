@@ -5,18 +5,14 @@ class NativeBedChunkReadResult:
     variant_count: int
     genotype_values_le: bytes
 
-
 class NativeFloat64Buffer:
     def __buffer__(self, flags: int, /) -> memoryview: ...
-
 
 class NativeInt64Buffer:
     def __buffer__(self, flags: int, /) -> memoryview: ...
 
-
 class NativeUInt8Buffer:
     def __buffer__(self, flags: int, /) -> memoryview: ...
-
 
 class NativePreprocessedGenotypeChunkResult:
     sample_count: int
