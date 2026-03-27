@@ -57,12 +57,15 @@ def compute_linear_association_chunk(
     covariate_parameter_count = covariate_matrix.shape[1]
     degrees_of_freedom = sample_count - covariate_parameter_count - 1
 
-    genotype_projection = linear_association_state.covariate_crossproduct_inverse @ (
-        covariate_matrix.T @ genotype_matrix
+    # ⚡ Bolt Optimization: Use geometric properties of orthogonal projections
+    # to compute the sum of squares and covariance without ever materializing
+    # the massive N x M genotype_residual matrix in device memory.
+    covariate_genotype_product = covariate_matrix.T @ genotype_matrix
+    genotype_projection = linear_association_state.covariate_crossproduct_inverse @ covariate_genotype_product
+    genotype_residual_sum_squares = jnp.sum(genotype_matrix * genotype_matrix, axis=0) - jnp.sum(
+        genotype_projection * covariate_genotype_product, axis=0
     )
-    genotype_residual = genotype_matrix - covariate_matrix @ genotype_projection
-    genotype_residual_sum_squares = jnp.sum(genotype_residual * genotype_residual, axis=0)
-    covariance_with_phenotype = genotype_residual.T @ linear_association_state.phenotype_residual
+    covariance_with_phenotype = genotype_matrix.T @ linear_association_state.phenotype_residual
 
     safe_denominator = jnp.where(genotype_residual_sum_squares > 0.0, genotype_residual_sum_squares, jnp.nan)
     beta = covariance_with_phenotype / safe_denominator
