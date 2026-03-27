@@ -12,7 +12,6 @@ import jax.profiler
 import numpy as np
 import polars as pl
 
-from g import jax_setup
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
 from g.compute.logistic import (
     LOGISTIC_ERROR_FIRTH_CONVERGE_FAIL,
@@ -254,6 +253,7 @@ def concatenate_logistic_results(
     if not accumulators:
         return pl.DataFrame()
 
+    # TODO: Isnt it faster to do that in polars???
     # Concatenate metadata (these are numpy arrays already)
     all_chromosomes = np.concatenate([acc.metadata.chromosome for acc in accumulators])
     all_positions = np.concatenate([acc.metadata.position for acc in accumulators])
@@ -339,8 +339,9 @@ def compute_logistic_association_with_missing_exclusion(
 
     with jax.profiler.TraceAnnotation("logistic.prepare_missing_exclusion"):
         observation_mask = ~jnp.transpose(genotype_chunk.missing_mask)
-        sanitized_genotype_matrix = jax_setup.cast_array_to_solver_dtype(
-            jnp.where(genotype_chunk.missing_mask, 0.0, genotype_chunk.genotypes)
+        sanitized_genotype_matrix = jnp.asarray(
+            jnp.where(genotype_chunk.missing_mask, 0.0, genotype_chunk.genotypes),
+            dtype=jnp.float32,
         )
         observation_count = jnp.sum(observation_mask, axis=1, dtype=jnp.int64)
         allele_one_frequency = jnp.where(

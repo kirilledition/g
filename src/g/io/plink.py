@@ -12,10 +12,6 @@ import polars as pl
 from bed_reader import open_bed, read_f32
 from bed_reader._open_bed import get_num_threads
 
-from g import (
-    _core,
-    jax_setup,
-)
 from g.io.tabular import load_family_table
 from g.models import GenotypeChunk, PreprocessedGenotypeChunkData, VariantMetadata
 
@@ -52,7 +48,7 @@ def read_bed_chunk_host(
         num_threads: Thread count for the BED reader.
 
     Returns:
-        Genotype chunk as a host NumPy array with float64 precision.
+        Genotype chunk as a host NumPy array with float32 precision.
 
     """
     variant_index_array = np.arange(variant_start, variant_stop, dtype=np.intp)
@@ -94,7 +90,7 @@ def read_bed_chunk(
         num_threads: Thread count for the BED reader.
 
     Returns:
-        Genotype chunk as a JAX array in the configured runtime dtype.
+        Genotype chunk as a float32 JAX array.
 
     """
     genotype_matrix_host = read_bed_chunk_host(
@@ -105,39 +101,7 @@ def read_bed_chunk(
         variant_stop=variant_stop,
         num_threads=num_threads,
     )
-    return jnp.asarray(genotype_matrix_host, dtype=jax_setup.ARRAY_DTYPE)
-
-
-def read_bed_chunk_native(
-    bed_path: Path,
-    sample_index_array: np.ndarray,
-    variant_start: int,
-    variant_stop: int,
-) -> jax.Array:
-    """Read one BED chunk through the native Rust decoder.
-
-    Args:
-        bed_path: PLINK BED file path.
-        sample_index_array: Contiguous sample indices.
-        variant_start: Inclusive variant start index.
-        variant_stop: Exclusive variant stop index.
-
-    Returns:
-        Genotype chunk as a JAX array in the configured runtime dtype.
-
-    """
-    native_chunk = _core.read_bed_chunk_f64(
-        bed_path=bed_path,
-        sample_indices=sample_index_array.tolist(),
-        variant_start=variant_start,
-        variant_stop=variant_stop,
-    )
-    genotype_matrix_host = np.frombuffer(native_chunk.genotype_values_le, dtype=jax_setup.HOST_NUMPY_DTYPE).reshape(
-        (native_chunk.sample_count, native_chunk.variant_count),
-        order="C",
-    )
-    host_array = genotype_matrix_host.astype(jax_setup.HOST_NUMPY_DTYPE, copy=False)
-    return jnp.asarray(host_array, dtype=jax_setup.ARRAY_DTYPE)
+    return jnp.asarray(genotype_matrix_host, dtype=jnp.float32)
 
 
 def preprocess_genotype_matrix(genotype_matrix: jax.Array) -> PreprocessedGenotypeChunkData:
@@ -150,56 +114,20 @@ def preprocess_genotype_matrix(genotype_matrix: jax.Array) -> PreprocessedGenoty
         Mean-imputed genotype arrays and summary values.
 
     """
-    solver_genotype_matrix = jax_setup.cast_array_to_solver_dtype(genotype_matrix)
-    missing_mask = jnp.isnan(solver_genotype_matrix)
-    observed_genotype_total = jnp.where(missing_mask, 0.0, solver_genotype_matrix).sum(axis=0)
+    genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
+    missing_mask = jnp.isnan(genotype_matrix_float32)
+    observed_genotype_total = jnp.where(missing_mask, 0.0, genotype_matrix_float32).sum(axis=0)
     observation_count = jnp.sum(~missing_mask, axis=0, dtype=jnp.int64)
     column_means = observed_genotype_total / jnp.maximum(observation_count, 1)
     sanitized_column_means = jnp.where(observation_count > 0, column_means, 0.0)
-    imputed_matrix = jnp.where(missing_mask, sanitized_column_means[None, :], solver_genotype_matrix)
+    imputed_matrix = jnp.where(missing_mask, sanitized_column_means[None, :], genotype_matrix_float32)
     allele_one_frequency = sanitized_column_means / 2.0
     return PreprocessedGenotypeChunkData(
-        genotypes=jax_setup.cast_array_to_runtime_dtype(imputed_matrix),
+        genotypes=imputed_matrix,
         missing_mask=missing_mask,
         has_missing_values=bool(jax.device_get(jnp.any(missing_mask))),
         allele_one_frequency=allele_one_frequency,
         observation_count=observation_count,
-    )
-
-
-def preprocess_genotype_matrix_native(
-    genotype_matrix_host: npt.NDArray[np.float64],
-) -> PreprocessedGenotypeChunkData:
-    """Preprocess a raw genotype matrix through the Rust extension.
-
-    Args:
-        genotype_matrix_host: Raw genotype matrix with NaNs for missing values.
-
-    Returns:
-        Mean-imputed genotype arrays and summary values.
-
-    """
-    native_result = _core.preprocess_genotype_matrix_f64(genotype_matrix=genotype_matrix_host)
-    imputed_genotype_matrix = np.frombuffer(
-        memoryview(native_result.imputed_genotype_values), dtype=jax_setup.HOST_NUMPY_DTYPE
-    ).reshape(
-        (native_result.sample_count, native_result.variant_count),
-        order="C",
-    )
-    missing_mask = np.frombuffer(memoryview(native_result.missing_mask_values), dtype=np.uint8).reshape(
-        (native_result.sample_count, native_result.variant_count),
-        order="C",
-    )
-    allele_one_frequency = np.frombuffer(memoryview(native_result.allele_one_frequency_values), dtype=np.float64)
-    observation_count = np.frombuffer(memoryview(native_result.observation_count_values), dtype=np.int64)
-    solver_imputed_genotype_matrix = imputed_genotype_matrix.astype(jax_setup.HOST_NUMPY_DTYPE, copy=False)
-    solver_allele_one_frequency = allele_one_frequency.astype(jax_setup.HOST_NUMPY_DTYPE, copy=False)
-    return PreprocessedGenotypeChunkData(
-        genotypes=jnp.asarray(solver_imputed_genotype_matrix, dtype=jax_setup.ARRAY_DTYPE),
-        missing_mask=jax.device_put(missing_mask.view(np.bool_)),
-        has_missing_values=bool(np.any(missing_mask)),
-        allele_one_frequency=jnp.asarray(solver_allele_one_frequency, dtype=jax_setup.SOLVER_DTYPE),
-        observation_count=jax.device_put(observation_count),
     )
 
 
@@ -292,9 +220,6 @@ def iter_genotype_chunks(
     expected_individual_identifiers: np.ndarray,
     chunk_size: int,
     variant_limit: int | None = None,
-    *,
-    use_native_reader: bool = False,
-    use_native_preprocessing: bool = False,
 ) -> Iterator[GenotypeChunk]:
     """Yield mean-imputed genotype chunks from a PLINK BED file.
 
@@ -304,9 +229,6 @@ def iter_genotype_chunks(
         expected_individual_identifiers: Expected sample order after alignment.
         chunk_size: Number of variants per chunk.
         variant_limit: Optional cap on the number of variants.
-        use_native_reader: Whether to decode BED chunks through the Rust extension.
-        use_native_preprocessing: Whether to preprocess BED chunks through the Rust extension.
-
     Yields:
         Mean-imputed genotype chunks with metadata.
 
@@ -330,32 +252,6 @@ def iter_genotype_chunks(
         expected_individual_identifiers=expected_individual_identifiers,
     )
 
-    if use_native_reader:
-        for variant_start in range(0, total_variant_count, chunk_size):
-            variant_stop = min(total_variant_count, variant_start + chunk_size)
-            genotype_matrix = read_bed_chunk_native(
-                bed_path=bed_path,
-                sample_index_array=sample_index_array,
-                variant_start=variant_start,
-                variant_stop=variant_stop,
-            )
-            preprocessed_chunk_data = (
-                preprocess_genotype_matrix_native(jax.device_get(genotype_matrix))
-                if use_native_preprocessing
-                else preprocess_genotype_matrix(genotype_matrix)
-            )
-            yield build_genotype_chunk(
-                preprocessed_chunk_data=preprocessed_chunk_data,
-                chromosome_values=chromosome_values,
-                variant_identifier_values=variant_identifier_values,
-                position_values=position_values,
-                allele_one_values=allele_one_values,
-                allele_two_values=allele_two_values,
-                variant_start=variant_start,
-                variant_stop=variant_stop,
-            )
-        return
-
     with open_bed(str(bed_path)) as bed_handle:
         num_threads = get_num_threads(getattr(bed_handle, "_num_threads", None))
 
@@ -369,11 +265,7 @@ def iter_genotype_chunks(
                 variant_stop=variant_stop,
                 num_threads=num_threads,
             )
-            preprocessed_chunk_data = (
-                preprocess_genotype_matrix_native(genotype_matrix_host)
-                if use_native_preprocessing
-                else preprocess_genotype_matrix(jax.device_put(genotype_matrix_host))
-            )
+            preprocessed_chunk_data = preprocess_genotype_matrix(jax.device_put(genotype_matrix_host))
             yield build_genotype_chunk(
                 preprocessed_chunk_data=preprocessed_chunk_data,
                 chromosome_values=chromosome_values,

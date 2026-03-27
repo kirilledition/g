@@ -13,7 +13,6 @@ import numpy as np
 import numpy.typing as npt
 from jax.scipy.stats import norm
 
-from g import jax_setup
 from g.models import LogisticAssociationChunkResult
 
 MINIMUM_PROBABILITY = 1.0e-12
@@ -1489,9 +1488,9 @@ def compute_logistic_association_chunk(
         Chunk-level logistic association statistics.
 
     """
-    covariate_matrix = jax_setup.cast_array_to_solver_dtype(covariate_matrix)
-    phenotype_vector = jax_setup.cast_array_to_solver_dtype(phenotype_vector)
-    genotype_matrix = jax_setup.cast_array_to_solver_dtype(genotype_matrix)
+    covariate_matrix = jnp.asarray(covariate_matrix, dtype=jnp.float32)
+    phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float32)
+    genotype_matrix = jnp.asarray(genotype_matrix, dtype=jnp.float32)
     if no_missing_constants is None:
         no_missing_constants = prepare_no_missing_logistic_constants(
             covariate_matrix=covariate_matrix,
@@ -1542,9 +1541,9 @@ def compute_logistic_association_chunk_with_mask(
         Chunk-level logistic association statistics.
 
     """
-    covariate_matrix = jax_setup.cast_array_to_solver_dtype(covariate_matrix)
-    phenotype_vector = jax_setup.cast_array_to_solver_dtype(phenotype_vector)
-    genotype_matrix = jax_setup.cast_array_to_solver_dtype(genotype_matrix)
+    covariate_matrix = jnp.asarray(covariate_matrix, dtype=jnp.float32)
+    phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float32)
+    genotype_matrix = jnp.asarray(genotype_matrix, dtype=jnp.float32)
     genotype_matrix_by_variant = genotype_matrix.T
     with jax.profiler.TraceAnnotation("logistic.pre_dispatch_mask"):
         device_heuristic_firth_mask = compute_firth_pre_dispatch_mask(

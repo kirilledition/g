@@ -30,18 +30,12 @@ BETA_MAX_ABSOLUTE_ERROR = 1.0e-3
 P_VALUE_MAX_LOG10_ERROR = 1.0e-2
 
 
-def active_numeric_mode() -> str:
-    """Return the configured JAX numeric mode for the current test run."""
-    return os.environ.get("G_JAX_NUMERIC_MODE", "float32").strip().lower()
-
-
 def assert_beta_parity(observed_beta: np.ndarray, expected_beta: np.ndarray) -> None:
     """Assert that beta values stay within the allowed absolute error budget."""
     absolute_error = np.abs(observed_beta - expected_beta)
     max_absolute_error = float(np.max(absolute_error, initial=0.0))
     assert max_absolute_error < BETA_MAX_ABSOLUTE_ERROR, (
-        f"beta max absolute error {max_absolute_error:.6g} exceeds "
-        f"{BETA_MAX_ABSOLUTE_ERROR:.6g} in numeric mode {active_numeric_mode()}"
+        f"beta max absolute error {max_absolute_error:.6g} exceeds {BETA_MAX_ABSOLUTE_ERROR:.6g}"
     )
 
 
@@ -57,8 +51,7 @@ def assert_log10_p_value_parity(
     log10_difference = np.abs(observed_log10_p_values - expected_log10_p_values)
     max_observed_difference = float(np.max(log10_difference, initial=0.0))
     assert max_observed_difference < max_log10_difference, (
-        f"max log10(p) error {max_observed_difference:.6g} exceeds "
-        f"{max_log10_difference:.6g} in numeric mode {active_numeric_mode()}"
+        f"max log10(p) error {max_observed_difference:.6g} exceeds {max_log10_difference:.6g}"
     )
 
 
@@ -127,120 +120,6 @@ def test_genotype_chunk_reader_matches_expected_metadata() -> None:
     ]
     assert first_chunk.genotypes.shape == (2504, 8)
     assert math.isclose(float(np.asarray(first_chunk.allele_one_frequency)[0]), 0.00638978, rel_tol=0.0, abs_tol=1e-6)
-
-
-def test_native_genotype_chunk_reader_matches_python_path() -> None:
-    """Ensure Rust BED chunk ingestion matches the Python reader path."""
-    require_phase_zero_inputs()
-
-    aligned_sample_data = load_aligned_sample_data(
-        bed_prefix=BED_PREFIX,
-        phenotype_path=DATA_DIRECTORY / "pheno_cont.txt",
-        phenotype_name="phenotype_continuous",
-        covariate_path=DATA_DIRECTORY / "covariates.txt",
-        covariate_names=("age", "sex"),
-        is_binary_trait=False,
-    )
-
-    python_chunks = list(
-        iter_genotype_chunks(
-            bed_prefix=BED_PREFIX,
-            sample_indices=aligned_sample_data.sample_indices,
-            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
-            chunk_size=16,
-            variant_limit=64,
-            use_native_reader=False,
-        )
-    )
-    native_chunks = list(
-        iter_genotype_chunks(
-            bed_prefix=BED_PREFIX,
-            sample_indices=aligned_sample_data.sample_indices,
-            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
-            chunk_size=16,
-            variant_limit=64,
-            use_native_reader=True,
-        )
-    )
-
-    assert len(python_chunks) == len(native_chunks)
-    for python_chunk, native_chunk in zip(python_chunks, native_chunks, strict=True):
-        np.testing.assert_allclose(np.asarray(native_chunk.genotypes), np.asarray(python_chunk.genotypes), atol=0.0)
-        np.testing.assert_array_equal(np.asarray(native_chunk.missing_mask), np.asarray(python_chunk.missing_mask))
-        np.testing.assert_array_equal(native_chunk.metadata.chromosome, python_chunk.metadata.chromosome)
-        np.testing.assert_array_equal(
-            native_chunk.metadata.variant_identifiers, python_chunk.metadata.variant_identifiers
-        )
-        np.testing.assert_array_equal(native_chunk.metadata.position, python_chunk.metadata.position)
-        np.testing.assert_array_equal(native_chunk.metadata.allele_one, python_chunk.metadata.allele_one)
-        np.testing.assert_array_equal(native_chunk.metadata.allele_two, python_chunk.metadata.allele_two)
-        np.testing.assert_allclose(
-            np.asarray(native_chunk.allele_one_frequency),
-            np.asarray(python_chunk.allele_one_frequency),
-            atol=1e-12,
-        )
-        np.testing.assert_array_equal(
-            np.asarray(native_chunk.observation_count),
-            np.asarray(python_chunk.observation_count),
-        )
-
-
-def test_native_genotype_chunk_preprocessing_matches_python_path() -> None:
-    """Ensure Rust preprocessing matches the Python chunk-preprocessing path."""
-    require_phase_zero_inputs()
-
-    aligned_sample_data = load_aligned_sample_data(
-        bed_prefix=BED_PREFIX,
-        phenotype_path=DATA_DIRECTORY / "pheno_cont.txt",
-        phenotype_name="phenotype_continuous",
-        covariate_path=DATA_DIRECTORY / "covariates.txt",
-        covariate_names=("age", "sex"),
-        is_binary_trait=False,
-    )
-
-    python_chunks = list(
-        iter_genotype_chunks(
-            bed_prefix=BED_PREFIX,
-            sample_indices=aligned_sample_data.sample_indices,
-            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
-            chunk_size=16,
-            variant_limit=64,
-            use_native_reader=False,
-            use_native_preprocessing=False,
-        )
-    )
-    native_chunks = list(
-        iter_genotype_chunks(
-            bed_prefix=BED_PREFIX,
-            sample_indices=aligned_sample_data.sample_indices,
-            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
-            chunk_size=16,
-            variant_limit=64,
-            use_native_reader=False,
-            use_native_preprocessing=True,
-        )
-    )
-
-    assert len(python_chunks) == len(native_chunks)
-    for python_chunk, native_chunk in zip(python_chunks, native_chunks, strict=True):
-        np.testing.assert_allclose(np.asarray(native_chunk.genotypes), np.asarray(python_chunk.genotypes), atol=0.0)
-        np.testing.assert_array_equal(np.asarray(native_chunk.missing_mask), np.asarray(python_chunk.missing_mask))
-        np.testing.assert_array_equal(native_chunk.metadata.chromosome, python_chunk.metadata.chromosome)
-        np.testing.assert_array_equal(
-            native_chunk.metadata.variant_identifiers, python_chunk.metadata.variant_identifiers
-        )
-        np.testing.assert_array_equal(native_chunk.metadata.position, python_chunk.metadata.position)
-        np.testing.assert_array_equal(native_chunk.metadata.allele_one, python_chunk.metadata.allele_one)
-        np.testing.assert_array_equal(native_chunk.metadata.allele_two, python_chunk.metadata.allele_two)
-        np.testing.assert_allclose(
-            np.asarray(native_chunk.allele_one_frequency),
-            np.asarray(python_chunk.allele_one_frequency),
-            atol=1e-12,
-        )
-        np.testing.assert_array_equal(
-            np.asarray(native_chunk.observation_count),
-            np.asarray(python_chunk.observation_count),
-        )
 
 
 def test_logistic_missing_rows_are_excluded_per_variant() -> None:

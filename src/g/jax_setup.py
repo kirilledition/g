@@ -7,24 +7,7 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
-import numpy as np
-
-NUMERIC_MODE_FLOAT32 = "float32"
-NUMERIC_MODE_BFLOAT16 = "bfloat16"
-SUPPORTED_NUMERIC_MODES = {
-    NUMERIC_MODE_FLOAT32,
-    NUMERIC_MODE_BFLOAT16,
-}
-NUMERIC_MODE = os.environ.get("G_JAX_NUMERIC_MODE", NUMERIC_MODE_FLOAT32).strip().lower()
-if NUMERIC_MODE not in SUPPORTED_NUMERIC_MODES:
-    message = (
-        f"Unsupported G_JAX_NUMERIC_MODE value '{NUMERIC_MODE}'. Expected one of {sorted(SUPPORTED_NUMERIC_MODES)}."
-    )
-    raise ValueError(message)
-
-ARRAY_DTYPE = jnp.float32 if NUMERIC_MODE == NUMERIC_MODE_FLOAT32 else jnp.bfloat16
-SOLVER_DTYPE = ARRAY_DTYPE
-HOST_NUMPY_DTYPE = np.float32
+FLOAT_DTYPE = jnp.float32
 JAX_ENABLE_X64 = False
 DEFAULT_MATMUL_PRECISION = os.environ.get(
     "G_JAX_DEFAULT_MATMUL_PRECISION",
@@ -70,13 +53,3 @@ def configure_jax_device(device: str) -> None:
         jax.config.update("jax_platforms", "")
     else:
         jax.config.update("jax_platforms", "cpu")
-
-
-def cast_array_to_runtime_dtype(array: jax.Array) -> jax.Array:
-    """Cast an array to the configured runtime storage dtype."""
-    return array.astype(ARRAY_DTYPE)
-
-
-def cast_array_to_solver_dtype(array: jax.Array) -> jax.Array:
-    """Cast an array to the configured solver dtype."""
-    return array.astype(SOLVER_DTYPE)

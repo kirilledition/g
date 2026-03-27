@@ -9,7 +9,6 @@ import numpy as np
 import numpy.typing as npt
 import polars as pl
 
-from g import jax_setup
 from g.models import AlignedSampleData
 
 if TYPE_CHECKING:
@@ -87,8 +86,8 @@ def infer_covariate_names(covariate_table: pl.DataFrame) -> tuple[str, ...]:
     return covariate_names
 
 
-def convert_frame_to_solver_dtype_jax(data_frame: pl.DataFrame) -> jax.Array:
-    """Convert a numeric Polars DataFrame to the configured solver dtype.
+def convert_frame_to_float32_jax(data_frame: pl.DataFrame) -> jax.Array:
+    """Convert a numeric Polars DataFrame to a float32 JAX array.
 
     Args:
         data_frame: Numeric Polars DataFrame.
@@ -98,15 +97,10 @@ def convert_frame_to_solver_dtype_jax(data_frame: pl.DataFrame) -> jax.Array:
 
     """
     host_array = data_frame.to_numpy(order="c")
-    return jnp.asarray(host_array, dtype=jax_setup.SOLVER_DTYPE)
+    return jnp.asarray(host_array, dtype=jnp.float32)
 
 
-def convert_frame_to_float64_jax(data_frame: pl.DataFrame) -> jax.Array:
-    """Backward-compatible alias for solver-dtype conversion."""
-    return convert_frame_to_solver_dtype_jax(data_frame)
-
-
-def recode_binary_phenotype(phenotype_values: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+def recode_binary_phenotype(phenotype_values: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
     """Recode PLINK binary phenotypes from 1/2 encoding to 0/1.
 
     Args:
@@ -193,22 +187,22 @@ def load_aligned_sample_data(
         message = "No aligned samples remain after joining phenotype and covariate tables."
         raise ValueError(message)
 
-    phenotype_values = aligned_table.get_column(phenotype_name).cast(pl.Float64).to_numpy()
+    phenotype_values = aligned_table.get_column(phenotype_name).cast(pl.Float32).to_numpy()
     phenotype_array = recode_binary_phenotype(phenotype_values) if is_binary_trait else phenotype_values
 
     design_table = aligned_table.select(
         pl.lit(1.0).alias("intercept"),
-        *[pl.col(column_name).cast(pl.Float64).alias(column_name) for column_name in selected_covariate_names],
+        *[pl.col(column_name).cast(pl.Float32).alias(column_name) for column_name in selected_covariate_names],
     )
-    phenotype_frame = pl.DataFrame({phenotype_name: phenotype_array}, schema={phenotype_name: pl.Float64})
+    phenotype_frame = pl.DataFrame({phenotype_name: phenotype_array}, schema={phenotype_name: pl.Float32})
 
     return AlignedSampleData(
         sample_indices=aligned_table.get_column("sample_index").cast(pl.Int64).to_numpy(),
         family_identifiers=aligned_table.get_column("family_identifier").cast(pl.String).to_numpy(),
         individual_identifiers=aligned_table.get_column("individual_identifier").cast(pl.String).to_numpy(),
         phenotype_name=phenotype_name,
-        phenotype_vector=convert_frame_to_solver_dtype_jax(phenotype_frame).reshape((-1,)),
+        phenotype_vector=convert_frame_to_float32_jax(phenotype_frame).reshape((-1,)),
         covariate_names=("intercept", *selected_covariate_names),
-        covariate_matrix=convert_frame_to_solver_dtype_jax(design_table),
+        covariate_matrix=convert_frame_to_float32_jax(design_table),
         is_binary_trait=is_binary_trait,
     )
