@@ -22,11 +22,7 @@ if NUMERIC_MODE not in SUPPORTED_NUMERIC_MODES:
     )
     raise ValueError(message)
 
-ARRAY_DTYPE = (
-    jnp.float32
-    if NUMERIC_MODE == NUMERIC_MODE_FLOAT32
-    else jnp.bfloat16
-)
+ARRAY_DTYPE = jnp.float32 if NUMERIC_MODE == NUMERIC_MODE_FLOAT32 else jnp.bfloat16
 SOLVER_DTYPE = ARRAY_DTYPE
 HOST_NUMPY_DTYPE = np.float32
 JAX_ENABLE_X64 = False

@@ -1272,6 +1272,17 @@ def build_device_firth_batch_plan(
     )
 
 
+def compute_batch_heuristic_count_vector(
+    heuristic_firth_mask: jax.Array,
+    fallback_index_matrix: jax.Array,
+    fallback_active_mask_matrix: jax.Array,
+) -> jax.Array:
+    """Count heuristic-initialized lanes for each fallback batch."""
+    batch_heuristic_mask_matrix = jnp.take(heuristic_firth_mask, fallback_index_matrix, axis=0)
+    batch_heuristic_mask_matrix = batch_heuristic_mask_matrix & fallback_active_mask_matrix
+    return jnp.sum(batch_heuristic_mask_matrix, axis=1, dtype=jnp.int32)
+
+
 def resolve_firth_bucket_size(active_variant_count: int) -> int:
     """Resolve the smallest supported Firth bucket size for an active batch."""
     for bucket_size in FIRTH_BATCH_BUCKET_SIZES:
@@ -1288,10 +1299,34 @@ def merge_firth_batch_result(
     firth_result: LogisticAssociationChunkResult,
 ) -> LogisticAssociationChunkResult:
     """Merge one fixed-size Firth batch into the running chunk result."""
+
     def merge_array(current_values: jax.Array, firth_values: jax.Array) -> jax.Array:
         current_batch_values = jnp.take(current_values, fallback_indices, axis=0)
         merged_batch_values = jnp.where(batch_active_mask, firth_values, current_batch_values)
         return current_values.at[fallback_indices].set(merged_batch_values)
+
+    return LogisticAssociationChunkResult(
+        beta=merge_array(current_result.beta, firth_result.beta),
+        standard_error=merge_array(current_result.standard_error, firth_result.standard_error),
+        test_statistic=merge_array(current_result.test_statistic, firth_result.test_statistic),
+        p_value=merge_array(current_result.p_value, firth_result.p_value),
+        method_code=merge_array(current_result.method_code, firth_result.method_code),
+        error_code=merge_array(current_result.error_code, firth_result.error_code),
+        converged_mask=merge_array(current_result.converged_mask, firth_result.converged_mask),
+        valid_mask=merge_array(current_result.valid_mask, firth_result.valid_mask),
+        iteration_count=merge_array(current_result.iteration_count, firth_result.iteration_count),
+    )
+
+
+def merge_firth_result_once(
+    current_result: LogisticAssociationChunkResult,
+    fallback_indices: jax.Array,
+    firth_result: LogisticAssociationChunkResult,
+) -> LogisticAssociationChunkResult:
+    """Merge all fallback updates into the chunk result with one scatter per field."""
+
+    def merge_array(current_values: jax.Array, firth_values: jax.Array) -> jax.Array:
+        return current_values.at[fallback_indices].set(firth_values)
 
     return LogisticAssociationChunkResult(
         beta=merge_array(current_result.beta, firth_result.beta),
@@ -1337,7 +1372,22 @@ def compute_batched_firth_updates_without_mask(
         variant_count=variant_count,
     )
     host_batch_active_count_vector = np.asarray(jax.device_get(batch_active_count_vector))
-    result = standard_evaluation.logistic_result
+    batch_heuristic_count_vector = compute_batch_heuristic_count_vector(
+        heuristic_firth_mask=device_heuristic_firth_mask,
+        fallback_index_matrix=fallback_index_matrix,
+        fallback_active_mask_matrix=fallback_active_mask_matrix,
+    )
+    host_batch_heuristic_count_vector = np.asarray(jax.device_get(batch_heuristic_count_vector))
+    fallback_index_chunks: list[jax.Array] = []
+    fallback_beta_chunks: list[jax.Array] = []
+    fallback_standard_error_chunks: list[jax.Array] = []
+    fallback_test_statistic_chunks: list[jax.Array] = []
+    fallback_p_value_chunks: list[jax.Array] = []
+    fallback_method_code_chunks: list[jax.Array] = []
+    fallback_error_code_chunks: list[jax.Array] = []
+    fallback_converged_mask_chunks: list[jax.Array] = []
+    fallback_valid_mask_chunks: list[jax.Array] = []
+    fallback_iteration_count_chunks: list[jax.Array] = []
     max_batch_count = fallback_index_matrix.shape[0]
 
     for batch_index in range(max_batch_count):
@@ -1346,25 +1396,29 @@ def compute_batched_firth_updates_without_mask(
             if active_variant_count == 0:
                 continue
             bucket_size = resolve_firth_bucket_size(active_variant_count)
+            heuristic_variant_count = int(host_batch_heuristic_count_vector[batch_index])
             fallback_indices = fallback_index_matrix[batch_index][:bucket_size]
             batch_active_mask = fallback_active_mask_matrix[batch_index][:bucket_size]
             batch_genotype_matrix = jnp.take(genotype_matrix, fallback_indices, axis=1)
             batch_standard_coefficients = jnp.take(standard_evaluation.coefficients, fallback_indices, axis=0)
-            batch_heuristic_firth_mask = jnp.take(device_heuristic_firth_mask, fallback_indices, axis=0)
-            batch_heuristic_firth_mask = batch_heuristic_firth_mask & batch_active_mask
-            batch_initial_coefficients = jax.lax.cond(
-                jnp.any(batch_heuristic_firth_mask),
-                lambda: jnp.where(
-                    batch_heuristic_firth_mask[:, None],
-                    initialize_full_model_coefficients_without_mask(
-                        covariate_matrix=covariate_matrix,
-                        genotype_matrix_by_variant=batch_genotype_matrix.T,
-                        no_missing_constants=no_missing_constants,
-                    ),
-                    batch_standard_coefficients,
-                ),
-                lambda: batch_standard_coefficients,
-            )
+            if heuristic_variant_count == 0:
+                batch_initial_coefficients = batch_standard_coefficients
+            else:
+                batch_heuristic_firth_mask = jnp.take(device_heuristic_firth_mask, fallback_indices, axis=0)
+                batch_heuristic_firth_mask = batch_heuristic_firth_mask & batch_active_mask
+                heuristic_initial_coefficients = initialize_full_model_coefficients_without_mask(
+                    covariate_matrix=covariate_matrix,
+                    genotype_matrix_by_variant=batch_genotype_matrix.T,
+                    no_missing_constants=no_missing_constants,
+                )
+                if heuristic_variant_count == active_variant_count:
+                    batch_initial_coefficients = heuristic_initial_coefficients
+                else:
+                    batch_initial_coefficients = jnp.where(
+                        batch_heuristic_firth_mask[:, None],
+                        heuristic_initial_coefficients,
+                        batch_standard_coefficients,
+                    )
             batch_observation_mask = jnp.ones(batch_genotype_matrix.T.shape, dtype=bool)
             firth_result = compute_firth_association_chunk_with_mask(
                 covariate_matrix=covariate_matrix,
@@ -1375,14 +1429,34 @@ def compute_batched_firth_updates_without_mask(
                 max_iterations=max_iterations,
                 tolerance=firth_tolerance,
             )
-            result = merge_firth_batch_result(
-                current_result=result,
-                fallback_indices=fallback_indices,
-                batch_active_mask=batch_active_mask,
-                firth_result=firth_result,
-            )
+            fallback_index_chunks.append(fallback_indices[:active_variant_count])
+            fallback_beta_chunks.append(firth_result.beta[:active_variant_count])
+            fallback_standard_error_chunks.append(firth_result.standard_error[:active_variant_count])
+            fallback_test_statistic_chunks.append(firth_result.test_statistic[:active_variant_count])
+            fallback_p_value_chunks.append(firth_result.p_value[:active_variant_count])
+            fallback_method_code_chunks.append(firth_result.method_code[:active_variant_count])
+            fallback_error_code_chunks.append(firth_result.error_code[:active_variant_count])
+            fallback_converged_mask_chunks.append(firth_result.converged_mask[:active_variant_count])
+            fallback_valid_mask_chunks.append(firth_result.valid_mask[:active_variant_count])
+            fallback_iteration_count_chunks.append(firth_result.iteration_count[:active_variant_count])
 
-    return result
+    fallback_indices = jnp.concatenate(fallback_index_chunks, axis=0)
+    fallback_result = LogisticAssociationChunkResult(
+        beta=jnp.concatenate(fallback_beta_chunks, axis=0),
+        standard_error=jnp.concatenate(fallback_standard_error_chunks, axis=0),
+        test_statistic=jnp.concatenate(fallback_test_statistic_chunks, axis=0),
+        p_value=jnp.concatenate(fallback_p_value_chunks, axis=0),
+        method_code=jnp.concatenate(fallback_method_code_chunks, axis=0),
+        error_code=jnp.concatenate(fallback_error_code_chunks, axis=0),
+        converged_mask=jnp.concatenate(fallback_converged_mask_chunks, axis=0),
+        valid_mask=jnp.concatenate(fallback_valid_mask_chunks, axis=0),
+        iteration_count=jnp.concatenate(fallback_iteration_count_chunks, axis=0),
+    )
+    return merge_firth_result_once(
+        current_result=standard_evaluation.logistic_result,
+        fallback_indices=fallback_indices,
+        firth_result=fallback_result,
+    )
 
 
 compute_firth_association_chunk_variantwise = jax.jit(

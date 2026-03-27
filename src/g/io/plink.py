@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 import polars as pl
-from bed_reader import open_bed, read_f64
+from bed_reader import open_bed, read_f32
 from bed_reader._open_bed import get_num_threads
 
 from g import (
@@ -40,7 +40,7 @@ def read_bed_chunk_host(
     variant_start: int,
     variant_stop: int,
     num_threads: int,
-) -> npt.NDArray[np.float64]:
+) -> npt.NDArray[np.float32]:
     """Read one BED chunk into a host NumPy array.
 
     Args:
@@ -58,10 +58,10 @@ def read_bed_chunk_host(
     variant_index_array = np.arange(variant_start, variant_stop, dtype=np.intp)
     genotype_matrix_host = np.zeros(
         (sample_index_array.shape[0], variant_index_array.shape[0]),
-        dtype=np.float64,
+        dtype=np.float32,
         order="C",
     )
-    read_f64(
+    read_f32(
         str(bed_path),
         bed_handle.cloud_options,
         iid_count=bed_handle.iid_count,
