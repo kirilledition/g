@@ -192,66 +192,50 @@ def concatenate_linear_results(
         return pl.DataFrame()
 
     # Concatenate metadata (these are numpy arrays already)
-    all_chromosomes = np.concatenate(
-        [acc.metadata.chromosome for acc in accumulators]
-    )
-    all_positions = np.concatenate(
-        [acc.metadata.position for acc in accumulators]
-    )
-    all_variant_identifiers = np.concatenate(
-        [acc.metadata.variant_identifiers for acc in accumulators]
-    )
-    all_allele_one = np.concatenate(
-        [acc.metadata.allele_one for acc in accumulators]
-    )
-    all_allele_two = np.concatenate(
-        [acc.metadata.allele_two for acc in accumulators]
-    )
+    all_chromosomes = np.concatenate([acc.metadata.chromosome for acc in accumulators])
+    all_positions = np.concatenate([acc.metadata.position for acc in accumulators])
+    all_variant_identifiers = np.concatenate([acc.metadata.variant_identifiers for acc in accumulators])
+    all_allele_one = np.concatenate([acc.metadata.allele_one for acc in accumulators])
+    all_allele_two = np.concatenate([acc.metadata.allele_two for acc in accumulators])
 
     # Concatenate JAX arrays on device, then do ONE device_get
-    all_allele_one_frequency = jnp.concatenate(
-        [acc.allele_one_frequency for acc in accumulators]
-    )
-    all_observation_count = jnp.concatenate(
-        [acc.observation_count for acc in accumulators]
-    )
+    all_allele_one_frequency = jnp.concatenate([acc.allele_one_frequency for acc in accumulators])
+    all_observation_count = jnp.concatenate([acc.observation_count for acc in accumulators])
     all_beta = jnp.concatenate([acc.linear_result.beta for acc in accumulators])
-    all_standard_error = jnp.concatenate(
-        [acc.linear_result.standard_error for acc in accumulators]
-    )
-    all_test_statistic = jnp.concatenate(
-        [acc.linear_result.test_statistic for acc in accumulators]
-    )
+    all_standard_error = jnp.concatenate([acc.linear_result.standard_error for acc in accumulators])
+    all_test_statistic = jnp.concatenate([acc.linear_result.test_statistic for acc in accumulators])
     all_p_value = jnp.concatenate([acc.linear_result.p_value for acc in accumulators])
-    all_valid_mask = jnp.concatenate(
-        [acc.linear_result.valid_mask for acc in accumulators]
-    )
+    all_valid_mask = jnp.concatenate([acc.linear_result.valid_mask for acc in accumulators])
 
     # Single host synchronization
-    host_values = jax.device_get({
-        "allele_one_frequency": all_allele_one_frequency,
-        "observation_count": all_observation_count,
-        "beta": all_beta,
-        "standard_error": all_standard_error,
-        "test_statistic": all_test_statistic,
-        "p_value": all_p_value,
-        "valid_mask": all_valid_mask,
-    })
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": all_allele_one_frequency,
+            "observation_count": all_observation_count,
+            "beta": all_beta,
+            "standard_error": all_standard_error,
+            "test_statistic": all_test_statistic,
+            "p_value": all_p_value,
+            "valid_mask": all_valid_mask,
+        }
+    )
 
-    return pl.DataFrame({
-        "chromosome": all_chromosomes,
-        "position": all_positions,
-        "variant_identifier": all_variant_identifiers,
-        "allele_one": all_allele_one,
-        "allele_two": all_allele_two,
-        "allele_one_frequency": host_values["allele_one_frequency"],
-        "observation_count": host_values["observation_count"],
-        "beta": host_values["beta"],
-        "standard_error": host_values["standard_error"],
-        "t_statistic": host_values["test_statistic"],
-        "p_value": host_values["p_value"],
-        "is_valid": host_values["valid_mask"],
-    })
+    return pl.DataFrame(
+        {
+            "chromosome": all_chromosomes,
+            "position": all_positions,
+            "variant_identifier": all_variant_identifiers,
+            "allele_one": all_allele_one,
+            "allele_two": all_allele_two,
+            "allele_one_frequency": host_values["allele_one_frequency"],
+            "observation_count": host_values["observation_count"],
+            "beta": host_values["beta"],
+            "standard_error": host_values["standard_error"],
+            "t_statistic": host_values["test_statistic"],
+            "p_value": host_values["p_value"],
+            "is_valid": host_values["valid_mask"],
+        }
+    )
 
 
 def concatenate_logistic_results(
@@ -270,90 +254,62 @@ def concatenate_logistic_results(
         return pl.DataFrame()
 
     # Concatenate metadata (these are numpy arrays already)
-    all_chromosomes = np.concatenate(
-        [acc.metadata.chromosome for acc in accumulators]
-    )
-    all_positions = np.concatenate(
-        [acc.metadata.position for acc in accumulators]
-    )
-    all_variant_identifiers = np.concatenate(
-        [acc.metadata.variant_identifiers for acc in accumulators]
-    )
-    all_allele_one = np.concatenate(
-        [acc.metadata.allele_one for acc in accumulators]
-    )
-    all_allele_two = np.concatenate(
-        [acc.metadata.allele_two for acc in accumulators]
-    )
+    all_chromosomes = np.concatenate([acc.metadata.chromosome for acc in accumulators])
+    all_positions = np.concatenate([acc.metadata.position for acc in accumulators])
+    all_variant_identifiers = np.concatenate([acc.metadata.variant_identifiers for acc in accumulators])
+    all_allele_one = np.concatenate([acc.metadata.allele_one for acc in accumulators])
+    all_allele_two = np.concatenate([acc.metadata.allele_two for acc in accumulators])
 
     # Concatenate JAX arrays on device, then do ONE device_get
-    all_allele_one_frequency = jnp.concatenate(
-        [acc.allele_one_frequency for acc in accumulators]
-    )
-    all_observation_count = jnp.concatenate(
-        [acc.observation_count for acc in accumulators]
-    )
-    all_beta = jnp.concatenate(
-        [acc.logistic_result.beta for acc in accumulators]
-    )
-    all_standard_error = jnp.concatenate(
-        [acc.logistic_result.standard_error for acc in accumulators]
-    )
-    all_test_statistic = jnp.concatenate(
-        [acc.logistic_result.test_statistic for acc in accumulators]
-    )
-    all_p_value = jnp.concatenate(
-        [acc.logistic_result.p_value for acc in accumulators]
-    )
-    all_method_code = jnp.concatenate(
-        [acc.logistic_result.method_code for acc in accumulators]
-    )
-    all_error_code = jnp.concatenate(
-        [acc.logistic_result.error_code for acc in accumulators]
-    )
-    all_converged_mask = jnp.concatenate(
-        [acc.logistic_result.converged_mask for acc in accumulators]
-    )
-    all_iteration_count = jnp.concatenate(
-        [acc.logistic_result.iteration_count for acc in accumulators]
-    )
-    all_valid_mask = jnp.concatenate(
-        [acc.logistic_result.valid_mask for acc in accumulators]
-    )
+    all_allele_one_frequency = jnp.concatenate([acc.allele_one_frequency for acc in accumulators])
+    all_observation_count = jnp.concatenate([acc.observation_count for acc in accumulators])
+    all_beta = jnp.concatenate([acc.logistic_result.beta for acc in accumulators])
+    all_standard_error = jnp.concatenate([acc.logistic_result.standard_error for acc in accumulators])
+    all_test_statistic = jnp.concatenate([acc.logistic_result.test_statistic for acc in accumulators])
+    all_p_value = jnp.concatenate([acc.logistic_result.p_value for acc in accumulators])
+    all_method_code = jnp.concatenate([acc.logistic_result.method_code for acc in accumulators])
+    all_error_code = jnp.concatenate([acc.logistic_result.error_code for acc in accumulators])
+    all_converged_mask = jnp.concatenate([acc.logistic_result.converged_mask for acc in accumulators])
+    all_iteration_count = jnp.concatenate([acc.logistic_result.iteration_count for acc in accumulators])
+    all_valid_mask = jnp.concatenate([acc.logistic_result.valid_mask for acc in accumulators])
 
     # Single host synchronization
-    host_values = jax.device_get({
-        "allele_one_frequency": all_allele_one_frequency,
-        "observation_count": all_observation_count,
-        "beta": all_beta,
-        "standard_error": all_standard_error,
-        "test_statistic": all_test_statistic,
-        "p_value": all_p_value,
-        "method_code": all_method_code,
-        "error_code": all_error_code,
-        "converged_mask": all_converged_mask,
-        "iteration_count": all_iteration_count,
-        "valid_mask": all_valid_mask,
-    })
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": all_allele_one_frequency,
+            "observation_count": all_observation_count,
+            "beta": all_beta,
+            "standard_error": all_standard_error,
+            "test_statistic": all_test_statistic,
+            "p_value": all_p_value,
+            "method_code": all_method_code,
+            "error_code": all_error_code,
+            "converged_mask": all_converged_mask,
+            "iteration_count": all_iteration_count,
+            "valid_mask": all_valid_mask,
+        }
+    )
 
-    return pl.DataFrame({
-        "chromosome": all_chromosomes,
-        "position": all_positions,
-        "variant_identifier": all_variant_identifiers,
-        "allele_one": all_allele_one,
-        "allele_two": all_allele_two,
-        "allele_one_frequency": host_values["allele_one_frequency"],
-        "observation_count": host_values["observation_count"],
-        "beta": host_values["beta"],
-        "standard_error": host_values["standard_error"],
-        "z_statistic": host_values["test_statistic"],
-        "p_value": host_values["p_value"],
-        "firth_flag": format_logistic_method_codes(host_values["method_code"]),
-        "error_code": format_logistic_error_codes(host_values["error_code"]),
-        "converged": host_values["converged_mask"],
-        "iteration_count": host_values["iteration_count"],
-        "is_valid": host_values["valid_mask"],
-    })
+    return pl.DataFrame(
+        {
+            "chromosome": all_chromosomes,
+            "position": all_positions,
+            "variant_identifier": all_variant_identifiers,
+            "allele_one": all_allele_one,
+            "allele_two": all_allele_two,
+            "allele_one_frequency": host_values["allele_one_frequency"],
+            "observation_count": host_values["observation_count"],
+            "beta": host_values["beta"],
+            "standard_error": host_values["standard_error"],
+            "z_statistic": host_values["test_statistic"],
+            "p_value": host_values["p_value"],
+            "firth_flag": format_logistic_method_codes(host_values["method_code"]),
+            "error_code": format_logistic_error_codes(host_values["error_code"]),
+            "converged": host_values["converged_mask"],
+            "iteration_count": host_values["iteration_count"],
+            "is_valid": host_values["valid_mask"],
+        }
+    )
 
 
 def compute_logistic_association_with_missing_exclusion(

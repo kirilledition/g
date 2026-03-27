@@ -198,7 +198,7 @@ def main():
     print()
 
     sizes = [
-        (100, 10),   # Small
+        (100, 10),  # Small
         (1000, 20),  # Medium
         (5000, 50),  # Large
     ]
@@ -209,7 +209,7 @@ def main():
 
         # JIT benchmark
         nt_time, dc_time = benchmark_jit(variant_count, coefficient_count, iterations=100)
-        speedup = nt_time / dc_time if dc_time > 0 else float('inf')
+        speedup = nt_time / dc_time if dc_time > 0 else float("inf")
         print("  JIT Update (100 iters):")
         print(f"    NamedTuple: {nt_time:.4f}s")
         print(f"    Dataclass:  {dc_time:.4f}s")
@@ -218,7 +218,7 @@ def main():
 
         # While loop benchmark
         nt_time, dc_time = benchmark_while_loop(variant_count, coefficient_count, iterations=100)
-        speedup = nt_time / dc_time if dc_time > 0 else float('inf')
+        speedup = nt_time / dc_time if dc_time > 0 else float("inf")
         print("  While Loop (100 iters):")
         print(f"    NamedTuple: {nt_time:.4f}s")
         print(f"    Dataclass:  {dc_time:.4f}s")
@@ -227,7 +227,7 @@ def main():
 
         # Tree operations benchmark
         nt_time, dc_time = benchmark_tree_operations(variant_count, coefficient_count, iterations=100)
-        speedup = nt_time / dc_time if dc_time > 0 else float('inf')
+        speedup = nt_time / dc_time if dc_time > 0 else float("inf")
         print("  Tree Operations (100 iters):")
         print(f"    NamedTuple: {nt_time:.4f}s")
         print(f"    Dataclass:  {dc_time:.4f}s")

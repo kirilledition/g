@@ -1326,32 +1326,24 @@ def compute_logistic_association_chunk(
 
             # Merge: use Firth where fallback_mask is True, standard otherwise
             return LogisticAssociationChunkResult(
-                beta=jnp.where(
-                    fallback_mask, firth_result.beta, standard_result_inner.beta
-                ),
+                beta=jnp.where(fallback_mask, firth_result.beta, standard_result_inner.beta),
                 standard_error=jnp.where(
                     fallback_mask, firth_result.standard_error, standard_result_inner.standard_error
                 ),
                 test_statistic=jnp.where(
                     fallback_mask, firth_result.test_statistic, standard_result_inner.test_statistic
                 ),
-                p_value=jnp.where(
-                    fallback_mask, firth_result.p_value, standard_result_inner.p_value
-                ),
+                p_value=jnp.where(fallback_mask, firth_result.p_value, standard_result_inner.p_value),
                 method_code=jnp.where(
                     fallback_mask,
                     jnp.full((variant_count,), LOGISTIC_METHOD_FIRTH, dtype=jnp.int32),
                     standard_result_inner.method_code,
                 ),
-                error_code=jnp.where(
-                    fallback_mask, firth_result.error_code, standard_result_inner.error_code
-                ),
+                error_code=jnp.where(fallback_mask, firth_result.error_code, standard_result_inner.error_code),
                 converged_mask=jnp.where(
                     fallback_mask, firth_result.converged_mask, standard_result_inner.converged_mask
                 ),
-                valid_mask=jnp.where(
-                    fallback_mask, firth_result.valid_mask, standard_result_inner.valid_mask
-                ),
+                valid_mask=jnp.where(fallback_mask, firth_result.valid_mask, standard_result_inner.valid_mask),
                 iteration_count=jnp.where(
                     fallback_mask, firth_result.iteration_count, standard_result_inner.iteration_count
                 ),
@@ -1375,7 +1367,6 @@ def compute_logistic_association_chunk(
 
     # Build final result with conditional Firth fallback (no host sync)
     return build_firth_result(standard_evaluation)
-
 
 
 def compute_logistic_association_chunk_with_mask(
