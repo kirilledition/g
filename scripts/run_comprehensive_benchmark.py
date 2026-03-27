@@ -75,24 +75,39 @@ def run_plink_benchmark(
     if mode == "linear":
         command = [
             "plink2",
-            "--bfile", str(data_dir / "1kg_chr22_full"),
-            "--pheno", str(data_dir / "pheno_cont.txt"),
-            "--pheno-name", "phenotype_continuous",
-            "--covar", str(data_dir / "covariates.txt"),
-            "--glm", "linear",
-            "--out", str(output_dir / f"plink_{prefix}"),
-            "--threads", "16",
+            "--bfile",
+            str(data_dir / "1kg_chr22_full"),
+            "--pheno",
+            str(data_dir / "pheno_cont.txt"),
+            "--pheno-name",
+            "phenotype_continuous",
+            "--covar",
+            str(data_dir / "covariates.txt"),
+            "--glm",
+            "linear",
+            "--out",
+            str(output_dir / f"plink_{prefix}"),
+            "--threads",
+            "16",
         ]
     else:
         command = [
             "plink2",
-            "--bfile", str(data_dir / "1kg_chr22_full"),
-            "--pheno", str(data_dir / "pheno_bin.txt"),
-            "--pheno-name", "phenotype_binary",
-            "--covar", str(data_dir / "covariates.txt"),
-            "--glm", "logistic", "firth",
-            "--out", str(output_dir / f"plink_{prefix}"),
-            "--threads", "16",
+            "--bfile",
+            str(data_dir / "1kg_chr22_full"),
+            "--pheno",
+            str(data_dir / "pheno_bin.txt"),
+            "--pheno-name",
+            "phenotype_binary",
+            "--covar",
+            str(data_dir / "covariates.txt"),
+            "--glm",
+            "logistic",
+            "firth",
+            "--out",
+            str(output_dir / f"plink_{prefix}"),
+            "--threads",
+            "16",
         ]
 
     # PLINK only needs one run (no warmup needed)
@@ -100,15 +115,17 @@ def run_plink_benchmark(
     elapsed, success = run_command_with_timing(command)
 
     if success:
-        results.append(BenchmarkResult(
-            tool="PLINK 2",
-            mode=mode,
-            device="plink",
-            chunk_size=None,
-            run_number=1,
-            elapsed_seconds=elapsed,
-            output_file=output_file,
-        ))
+        results.append(
+            BenchmarkResult(
+                tool="PLINK 2",
+                mode=mode,
+                device="plink",
+                chunk_size=None,
+                run_number=1,
+                elapsed_seconds=elapsed,
+                output_file=output_file,
+            )
+        )
         print(f"  Completed in {elapsed:.2f}s")
     else:
         print("  FAILED")
@@ -129,16 +146,27 @@ def run_g_benchmark(
     output_file = output_dir / f"{prefix}.tsv"
 
     command = [
-        "uv", "run", "g",
-        "--bfile", str(data_dir / "1kg_chr22_full"),
-        "--pheno", str(data_dir / f"pheno_{'cont' if mode == 'linear' else 'bin'}.txt"),
-        "--pheno-name", f"phenotype_{'continuous' if mode == 'linear' else 'binary'}",
-        "--covar", str(data_dir / "covariates.txt"),
-        "--covar-names", "age,sex",
-        "--glm", mode,
-        "--out", str(output_dir / prefix),
-        "--device", device,
-        "--chunk-size", str(chunk_size),
+        "uv",
+        "run",
+        "g",
+        "--bfile",
+        str(data_dir / "1kg_chr22_full"),
+        "--pheno",
+        str(data_dir / f"pheno_{'cont' if mode == 'linear' else 'bin'}.txt"),
+        "--pheno-name",
+        f"phenotype_{'continuous' if mode == 'linear' else 'binary'}",
+        "--covar",
+        str(data_dir / "covariates.txt"),
+        "--covar-names",
+        "age,sex",
+        "--glm",
+        mode,
+        "--out",
+        str(output_dir / prefix),
+        "--device",
+        device,
+        "--chunk-size",
+        str(chunk_size),
     ]
 
     print(f"Running g {mode} on {device} (chunk={chunk_size}, run={run_number})...")
@@ -192,12 +220,8 @@ def verify_correctness(
             p_col_g = "p_value"
 
         # Calculate max absolute differences
-        beta_diff = np.max(np.abs(
-            plink_sorted[beta_col_plink].to_numpy() - g_sorted[beta_col_g].to_numpy()
-        ))
-        p_diff = np.max(np.abs(
-            plink_sorted[p_col_plink].to_numpy() - g_sorted[p_col_g].to_numpy()
-        ))
+        beta_diff = np.max(np.abs(plink_sorted[beta_col_plink].to_numpy() - g_sorted[beta_col_g].to_numpy()))
+        p_diff = np.max(np.abs(plink_sorted[p_col_plink].to_numpy() - g_sorted[p_col_g].to_numpy()))
 
         comparisons["max_beta_diff"] = float(beta_diff)
         comparisons["max_p_diff"] = float(p_diff)
@@ -269,12 +293,10 @@ def main():
 
     # Get PLINK baselines for speedup calculation
     plink_linear_time = next(
-        (r.elapsed_seconds for r in all_results if r.tool == "PLINK 2" and r.mode == "linear"),
-        None
+        (r.elapsed_seconds for r in all_results if r.tool == "PLINK 2" and r.mode == "linear"), None
     )
     plink_logistic_time = next(
-        (r.elapsed_seconds for r in all_results if r.tool == "PLINK 2" and r.mode == "logistic"),
-        None
+        (r.elapsed_seconds for r in all_results if r.tool == "PLINK 2" and r.mode == "logistic"), None
     )
 
     for result in all_results:
@@ -291,7 +313,9 @@ def main():
         chunk_str = str(result.chunk_size) if result.chunk_size else "N/A"
         run_str = "warmup" if result.run_number == 1 else "actual"
 
-        print(f"{result.tool:<15} {result.mode:<10} {result.device:<8} {chunk_str:<8} {run_str:<6} {result.elapsed_seconds:<12.2f} {speedup:<10}")
+        print(
+            f"{result.tool:<15} {result.mode:<10} {result.device:<8} {chunk_str:<8} {run_str:<6} {result.elapsed_seconds:<12.2f} {speedup:<10}"
+        )
 
     print()
 
@@ -316,7 +340,9 @@ def main():
                     print(f"  ERROR: {comparison['error']}")
                 else:
                     status = "✓ PASS" if comparison["passed"] else "✗ FAIL"
-                    print(f"  {status} - Beta diff: {comparison['max_beta_diff']:.2e}, P diff: {comparison['max_p_diff']:.2e}")
+                    print(
+                        f"  {status} - Beta diff: {comparison['max_beta_diff']:.2e}, P diff: {comparison['max_p_diff']:.2e}"
+                    )
 
     print()
     print("=" * 80)

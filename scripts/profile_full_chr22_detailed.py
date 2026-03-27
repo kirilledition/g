@@ -32,24 +32,13 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
-
 def build_argument_parser() -> argparse.ArgumentParser:
     """Build the command-line parser for detailed profiling."""
-    parser = argparse.ArgumentParser(
-        description="Profile full chr22 GWAS run with cProfile + JAX tracing."
-    )
-    parser.add_argument(
-        "--bfile", required=True, type=Path, help="PLINK dataset prefix."
-    )
-    parser.add_argument(
-        "--pheno", required=True, type=Path, help="Phenotype table path."
-    )
-    parser.add_argument(
-        "--pheno-name", required=True, help="Phenotype column name to analyze."
-    )
-    parser.add_argument(
-        "--covar", required=True, type=Path, help="Covariate table path."
-    )
+    parser = argparse.ArgumentParser(description="Profile full chr22 GWAS run with cProfile + JAX tracing.")
+    parser.add_argument("--bfile", required=True, type=Path, help="PLINK dataset prefix.")
+    parser.add_argument("--pheno", required=True, type=Path, help="Phenotype table path.")
+    parser.add_argument("--pheno-name", required=True, help="Phenotype column name to analyze.")
+    parser.add_argument("--covar", required=True, type=Path, help="Covariate table path.")
     parser.add_argument(
         "--covar-names",
         default="age,sex",
@@ -61,12 +50,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
         choices=("linear", "logistic"),
         help="Association model.",
     )
-    parser.add_argument(
-        "--chunk-size", type=int, default=512, help="Variants per chunk."
-    )
-    parser.add_argument(
-        "--variant-limit", type=int, help="Optional variant cap."
-    )
+    parser.add_argument("--chunk-size", type=int, default=512, help="Variants per chunk.")
+    parser.add_argument("--variant-limit", type=int, help="Optional variant cap.")
     parser.add_argument(
         "--max-iterations",
         type=int,
@@ -111,9 +96,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 def parse_covariate_names(raw_covariate_names: str) -> tuple[str, ...] | None:
     """Parse a comma-separated covariate name list."""
-    covariate_names = tuple(
-        name.strip() for name in raw_covariate_names.split(",") if name.strip()
-    )
+    covariate_names = tuple(name.strip() for name in raw_covariate_names.split(",") if name.strip())
     return covariate_names or None
 
 
@@ -278,10 +261,12 @@ def main() -> None:
     total_variants = execution_stats["total_variants"]
     variants_per_second = total_variants / wall_time if wall_time > 0 else 0
 
-    execution_stats.update({
-        "wall_time": wall_time,
-        "variants_per_second": variants_per_second,
-    })
+    execution_stats.update(
+        {
+            "wall_time": wall_time,
+            "variants_per_second": variants_per_second,
+        }
+    )
 
     print("\nExecution complete:")
     print(f"  Variants processed: {total_variants}")
