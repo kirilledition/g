@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from g.cli import build_argument_parser
+from g.cli import build_argument_parser, parse_covariate_names
 
 
 def test_build_argument_parser() -> None:
@@ -129,3 +129,45 @@ def test_parse_arguments_all_options() -> None:
     assert args.max_iterations == 100
     assert args.tolerance == 1e-6
     assert args.device == "gpu"
+
+
+def test_parse_covariate_names_none() -> None:
+    """Test parse_covariate_names returns None for None input."""
+    result = parse_covariate_names(None)
+    assert result is None
+
+
+def test_parse_covariate_names_empty_string() -> None:
+    """Test parse_covariate_names returns None for empty string."""
+    result = parse_covariate_names("")
+    assert result is None
+
+
+def test_parse_covariate_names_whitespace_only() -> None:
+    """Test parse_covariate_names returns None for whitespace-only string."""
+    result = parse_covariate_names("   ,  ,  ")
+    assert result is None
+
+
+def test_parse_covariate_names_single() -> None:
+    """Test parse_covariate_names with single name."""
+    result = parse_covariate_names("age")
+    assert result == ("age",)
+
+
+def test_parse_covariate_names_multiple() -> None:
+    """Test parse_covariate_names with multiple names."""
+    result = parse_covariate_names("age,sex,bmi")
+    assert result == ("age", "sex", "bmi")
+
+
+def test_parse_covariate_names_with_whitespace() -> None:
+    """Test parse_covariate_names strips whitespace."""
+    result = parse_covariate_names("  age , sex ,  bmi  ")
+    assert result == ("age", "sex", "bmi")
+
+
+def test_parse_covariate_names_skips_empty() -> None:
+    """Test parse_covariate_names skips empty entries."""
+    result = parse_covariate_names("age,,sex,")
+    assert result == ("age", "sex")
