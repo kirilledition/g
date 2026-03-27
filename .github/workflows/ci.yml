@@ -18,12 +18,17 @@ jobs:
 
       - name: Install Python dependencies
         run: uv sync --dev
+        env:
+          RUSTFLAGS: "--allow=non-local-definitions"
 
       - name: Install maturin
         run: uv pip install maturin
 
       - name: Build Rust extension
         run: uv run maturin develop
+
+      - name: Install ruff
+        run: uv pip install ruff
 
       - name: Ruff format check
         run: uv run ruff format --check .
