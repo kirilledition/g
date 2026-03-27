@@ -27,7 +27,9 @@ def prepare_linear_association_state(
     phenotype_vector_float32 = jnp.asarray(phenotype_vector, dtype=jnp.float32)
     covariate_crossproduct = covariate_matrix_float32.T @ covariate_matrix_float32
     covariate_crossproduct_inverse = jnp.linalg.inv(covariate_crossproduct)
-    phenotype_projection = jnp.linalg.solve(covariate_crossproduct, covariate_matrix_float32.T @ phenotype_vector_float32)
+    phenotype_projection = jnp.linalg.solve(
+        covariate_crossproduct, covariate_matrix_float32.T @ phenotype_vector_float32
+    )
     phenotype_residual = phenotype_vector_float32 - covariate_matrix_float32 @ phenotype_projection
     phenotype_residual_sum_squares = jnp.dot(phenotype_residual, phenotype_residual)
     return LinearAssociationState(
