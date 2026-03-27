@@ -17,9 +17,9 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Install Python dependencies
-        run: |
-          echo "RUSTFLAGS=--allow=non-local-definitions" >> $GITHUB_ENV
-          uv sync --dev
+        run: uv sync --dev
+        env:
+          RUSTFLAGS: "--allow=non-local-definitions"
 
       - name: Install maturin
         run: uv pip install maturin
