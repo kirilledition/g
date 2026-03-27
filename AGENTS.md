@@ -6,10 +6,10 @@ You are an AI coding assistant operating within a high-performance, mixed-langua
 
 * **Package Management:** uv (Python) and cargo (Rust).  
 * **Task Runner:** just. Always check the Justfile for available project-specific commands.  
-* **Linting & Formatting:** Ensure code passes before committing:  
-  * Python: uv run ruff format ., uv run ruff check . \--fix, and uv run ty (type-checking).  
-  * Rust: cargo fmt and cargo clippy \--workspace \--all-targets \-- \-D warnings \-W clippy::pedantic.
-
+* **Linting & Formatting:** Ensure code passes before committing (use nix develop):  
+  * just check
+  * just test
+  * 
 ## **Repository Structure**
 
 * pyproject.toml / Cargo.toml: Maturin mixed-layout configuration.  
