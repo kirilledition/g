@@ -113,7 +113,7 @@ def recode_binary_phenotype(phenotype_values: npt.NDArray[np.float64]) -> npt.ND
         ValueError: If values other than 1 and 2 are present.
 
     """
-    unique_values = set(np.unique(phenotype_values).tolist())
+    unique_values = set(np.unique(phenotype_values))
     if not unique_values.issubset({1.0, 2.0}):
         message = f"Binary phenotype must contain only PLINK values 1 and 2, found {sorted(unique_values)}."
         raise ValueError(message)
