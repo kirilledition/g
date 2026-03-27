@@ -108,7 +108,7 @@ def run_and_materialize_frames(
     chunk_count = 0
     for accumulator in frame_iterator:
         # Get the number of variants from the metadata
-        if isinstance(accumulator, LinearChunkAccumulator) or isinstance(accumulator, LogisticChunkAccumulator):
+        if isinstance(accumulator, (LinearChunkAccumulator, LogisticChunkAccumulator)):
             total_variants += len(accumulator.metadata.variant_identifiers)
         chunk_count += 1
     return {"total_variants": total_variants, "chunk_count": chunk_count}

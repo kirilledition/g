@@ -46,7 +46,7 @@ def run_command_with_timing(command: list[str]) -> tuple[float, bool]:
     """Run a command and return elapsed time and success status."""
     start_time = time.time()
     try:
-        result = subprocess.run(
+        subprocess.run(
             command,
             capture_output=True,
             text=True,
@@ -229,7 +229,7 @@ def verify_correctness(
 
         return comparisons
 
-    except Exception as e:
+    except RuntimeError as e:
         print(f"Verification error: {e}")
         return {"error": str(e), "passed": False}
 
@@ -314,7 +314,8 @@ def main():
         run_str = "warmup" if result.run_number == 1 else "actual"
 
         print(
-            f"{result.tool:<15} {result.mode:<10} {result.device:<8} {chunk_str:<8} {run_str:<6} {result.elapsed_seconds:<12.2f} {speedup:<10}"
+            f"{result.tool:<15} {result.mode:<10} {result.device:<8} {chunk_str:<8} "
+            f"{run_str:<6} {result.elapsed_seconds:<12.2f} {speedup:<10}"
         )
 
     print()
@@ -341,7 +342,8 @@ def main():
                 else:
                     status = "✓ PASS" if comparison["passed"] else "✗ FAIL"
                     print(
-                        f"  {status} - Beta diff: {comparison['max_beta_diff']:.2e}, P diff: {comparison['max_p_diff']:.2e}"
+                        f"  {status} - Beta diff: {comparison['max_beta_diff']:.2e}, "
+                        f"P diff: {comparison['max_p_diff']:.2e}"
                     )
 
     print()
