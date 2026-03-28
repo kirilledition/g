@@ -57,6 +57,7 @@ class LogisticState:
     Attributes:
         coefficients: Current coefficient estimates (variants x parameters).
         converged_mask: Boolean convergence mask per variant.
+        global_iteration_count: Chunk-level loop counter.
         iteration_count: Iteration counter per variant.
         previous_log_likelihood: Previous log-likelihood per variant.
         last_covariate_information_matrix: Last covariate information matrix.
@@ -67,6 +68,7 @@ class LogisticState:
 
     coefficients: jax.Array
     converged_mask: jax.Array
+    global_iteration_count: jax.Array
     iteration_count: jax.Array
     previous_log_likelihood: jax.Array
     last_covariate_information_matrix: jax.Array
@@ -82,6 +84,7 @@ class CovariateOnlyLogisticState:
     Attributes:
         coefficients: Current coefficient estimates.
         converged_mask: Boolean convergence mask.
+        global_iteration_count: Chunk-level loop counter.
         iteration_count: Iteration counter.
         previous_log_likelihood: Previous log-likelihood.
 
@@ -89,6 +92,7 @@ class CovariateOnlyLogisticState:
 
     coefficients: jax.Array
     converged_mask: jax.Array
+    global_iteration_count: jax.Array
     iteration_count: jax.Array
     previous_log_likelihood: jax.Array
 
@@ -229,8 +233,8 @@ def compute_covariate_information_matrix(
     effective_weights: jax.Array,
 ) -> jax.Array:
     """Compute batched Fisher information matrices for covariates."""
-    sample_crossproduct_matrix = jnp.einsum("np,nq->npq", covariate_matrix, covariate_matrix)
-    return jnp.tensordot(effective_weights, sample_crossproduct_matrix, axes=((1,), (0,)))
+    sample_covariate_crossproduct = jnp.einsum("np,nq->npq", covariate_matrix, covariate_matrix)
+    return jnp.tensordot(effective_weights, sample_covariate_crossproduct, axes=((1,), (0,)))
 
 
 def solve_batched_positive_definite_system(
@@ -559,7 +563,7 @@ def fit_masked_covariate_only_logistic_regression(
     initial_log_likelihood = compute_log_likelihood(masked_initial_probability_matrix, phenotype_matrix)
 
     def condition_function(state: CovariateOnlyLogisticState) -> jax.Array:
-        return (jnp.max(state.iteration_count) < iteration_limit) & jnp.any(~state.converged_mask)
+        return (state.global_iteration_count < iteration_limit) & jnp.any(~state.converged_mask)
 
     def body_function(state: CovariateOnlyLogisticState) -> CovariateOnlyLogisticState:
         probability_matrix = compute_covariate_only_probability_matrix(covariate_matrix, state.coefficients)
@@ -576,14 +580,19 @@ def fit_masked_covariate_only_logistic_regression(
             0.0,
         )
         score = compute_covariate_score(covariate_matrix, masked_residual)
-        information_matrix = compute_covariate_information_matrix(covariate_matrix, effective_weights)
+        information_matrix = compute_covariate_information_matrix(
+            covariate_matrix,
+            effective_weights,
+        )
         step = jnp.squeeze(jnp.linalg.solve(information_matrix, score[:, :, None]), axis=-1)
         step = jnp.where(state.converged_mask[:, None], 0.0, step)
         updated_coefficients = state.coefficients - step
+        updated_global_iteration_count = state.global_iteration_count + jnp.asarray(1, dtype=jnp.int32)
         updated_iteration_count = state.iteration_count + (~state.converged_mask).astype(jnp.int32)
         return CovariateOnlyLogisticState(
             coefficients=updated_coefficients,
             converged_mask=updated_converged_mask,
+            global_iteration_count=updated_global_iteration_count,
             iteration_count=updated_iteration_count,
             previous_log_likelihood=current_log_likelihood,
         )
@@ -594,6 +603,7 @@ def fit_masked_covariate_only_logistic_regression(
         CovariateOnlyLogisticState(
             coefficients=broadcast_initial_coefficients,
             converged_mask=jnp.zeros((variant_count,), dtype=bool),
+            global_iteration_count=jnp.asarray(0, dtype=jnp.int32),
             iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
             previous_log_likelihood=jnp.full_like(initial_log_likelihood, -jnp.inf),
         ),
@@ -687,7 +697,7 @@ def compute_standard_logistic_association_chunk_with_mask(
     initial_genotype_information = jnp.ones((variant_count,), dtype=covariate_matrix.dtype)
 
     def condition_function(state: LogisticState) -> jax.Array:
-        return (jnp.max(state.iteration_count) < iteration_limit) & jnp.any(~state.converged_mask)
+        return (state.global_iteration_count < iteration_limit) & jnp.any(~state.converged_mask)
 
     def body_function(state: LogisticState) -> LogisticState:
         probability_matrix = compute_probability_matrix(
@@ -708,7 +718,10 @@ def compute_standard_logistic_association_chunk_with_mask(
         weighted_genotype_matrix = effective_weights * genotype_matrix_by_variant
         covariate_score = compute_covariate_score(covariate_matrix, masked_residual)
         genotype_score = jnp.sum(genotype_matrix_by_variant * masked_residual, axis=1)
-        covariate_information_matrix = compute_covariate_information_matrix(covariate_matrix, effective_weights)
+        covariate_information_matrix = compute_covariate_information_matrix(
+            covariate_matrix,
+            effective_weights,
+        )
         cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, weighted_genotype_matrix)
         genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
         rhs = jnp.stack([covariate_score, cross_information_vector], axis=-1)
@@ -725,6 +738,7 @@ def compute_standard_logistic_association_chunk_with_mask(
         step = jnp.concatenate([covariate_step, genotype_step[:, None]], axis=1)
         step = jnp.where(state.converged_mask[:, None], 0.0, step)
         updated_coefficients = state.coefficients - step
+        updated_global_iteration_count = state.global_iteration_count + jnp.asarray(1, dtype=jnp.int32)
         updated_iteration_count = state.iteration_count + (~state.converged_mask).astype(jnp.int32)
         updated_covariate_information_matrix = jnp.where(
             state.converged_mask[:, None, None],
@@ -744,6 +758,7 @@ def compute_standard_logistic_association_chunk_with_mask(
         return LogisticState(
             coefficients=updated_coefficients,
             converged_mask=updated_converged_mask,
+            global_iteration_count=updated_global_iteration_count,
             iteration_count=updated_iteration_count,
             previous_log_likelihood=current_log_likelihood,
             last_covariate_information_matrix=updated_covariate_information_matrix,
@@ -757,6 +772,7 @@ def compute_standard_logistic_association_chunk_with_mask(
         LogisticState(
             coefficients=initial_coefficients,
             converged_mask=jnp.zeros((variant_count,), dtype=bool),
+            global_iteration_count=jnp.asarray(0, dtype=jnp.int32),
             iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
             previous_log_likelihood=jnp.full_like(initial_log_likelihood, -jnp.inf),
             last_covariate_information_matrix=initial_covariate_information_matrix,
@@ -843,7 +859,7 @@ def compute_standard_logistic_association_chunk_without_mask(
     initial_genotype_information = jnp.ones((variant_count,), dtype=covariate_matrix.dtype)
 
     def condition_function(state: LogisticState) -> jax.Array:
-        return (jnp.max(state.iteration_count) < iteration_limit) & jnp.any(~state.converged_mask)
+        return (state.global_iteration_count < iteration_limit) & jnp.any(~state.converged_mask)
 
     def body_function(state: LogisticState) -> LogisticState:
         probability_matrix = compute_probability_matrix(
@@ -859,7 +875,10 @@ def compute_standard_logistic_association_chunk_without_mask(
         weighted_genotype_matrix = effective_weights * genotype_matrix_by_variant
         covariate_score = compute_covariate_score(covariate_matrix, residual_matrix)
         genotype_score = jnp.sum(genotype_matrix_by_variant * residual_matrix, axis=1)
-        covariate_information_matrix = compute_covariate_information_matrix(covariate_matrix, effective_weights)
+        covariate_information_matrix = compute_covariate_information_matrix(
+            covariate_matrix,
+            effective_weights,
+        )
         cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, weighted_genotype_matrix)
         genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
         combined_right_hand_sides = jnp.stack((covariate_score, cross_information_vector), axis=-1)
@@ -879,6 +898,7 @@ def compute_standard_logistic_association_chunk_without_mask(
         step = jnp.concatenate([covariate_step, genotype_step[:, None]], axis=1)
         step = jnp.where(state.converged_mask[:, None], 0.0, step)
         updated_coefficients = state.coefficients - step
+        updated_global_iteration_count = state.global_iteration_count + jnp.asarray(1, dtype=jnp.int32)
         updated_iteration_count = state.iteration_count + (~state.converged_mask).astype(jnp.int32)
         updated_covariate_information_matrix = jnp.where(
             state.converged_mask[:, None, None],
@@ -898,6 +918,7 @@ def compute_standard_logistic_association_chunk_without_mask(
         return LogisticState(
             coefficients=updated_coefficients,
             converged_mask=updated_converged_mask,
+            global_iteration_count=updated_global_iteration_count,
             iteration_count=updated_iteration_count,
             previous_log_likelihood=current_log_likelihood,
             last_covariate_information_matrix=updated_covariate_information_matrix,
@@ -911,6 +932,7 @@ def compute_standard_logistic_association_chunk_without_mask(
         LogisticState(
             coefficients=initial_coefficients,
             converged_mask=jnp.zeros((variant_count,), dtype=bool),
+            global_iteration_count=jnp.asarray(0, dtype=jnp.int32),
             iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
             previous_log_likelihood=jnp.full_like(initial_log_likelihood, -jnp.inf),
             last_covariate_information_matrix=initial_covariate_information_matrix,
