@@ -13,8 +13,11 @@ from __future__ import annotations
 import argparse
 import cProfile
 import io
+import gzip
+import json
 import pstats
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,6 +33,36 @@ from g.engine import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+
+@dataclass(frozen=True)
+class ProfileEventSummary:
+    """Aggregated duration summary for one Perfetto event name."""
+
+    name: str
+    event_count: int
+    total_duration_microseconds: float
+    mean_duration_microseconds: float
+
+
+@dataclass(frozen=True)
+class DetailedProfileSummary:
+    """Structured summary of one detailed profiling run."""
+
+    glm_mode: str
+    backend: str
+    total_variants: int
+    chunk_count: int
+    wall_time_seconds: float
+    variants_per_second: float
+    trace_enabled: bool
+    memory_profile_enabled: bool
+    cprofile_path: str
+    cprofile_raw_path: str
+    summary_path: str
+    trace_dir: str | None
+    perfetto_trace_path: str | None
+    perfetto_event_summaries: list[ProfileEventSummary]
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -90,6 +123,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default="cumulative",
         choices=("cumulative", "time", "calls", "name"),
         help="Sort key for cProfile statistics.",
+    )
+    parser.add_argument(
+        "--json-summary-path",
+        type=Path,
+        help="Optional JSON summary output path. Defaults to <output-dir>/<report-name>_summary.json.",
+    )
+    parser.add_argument(
+        "--transfer-guard-device-to-host",
+        choices=("allow", "log", "log_explicit", "disallow", "disallow_explicit"),
+        help="Optional JAX device-to-host transfer guard level applied during the run.",
     )
     return parser
 
@@ -197,6 +240,42 @@ def generate_cprofile_report(
     stream.close()
 
 
+def find_perfetto_trace_path(trace_dir: Path) -> Path | None:
+    """Locate the generated Perfetto trace file inside a trace directory."""
+    perfetto_trace_candidates = sorted(trace_dir.rglob("perfetto_trace.json.gz"))
+    if not perfetto_trace_candidates:
+        return None
+    return perfetto_trace_candidates[-1]
+
+
+def summarize_perfetto_trace(perfetto_trace_path: Path, limit: int = 50) -> list[ProfileEventSummary]:
+    """Aggregate named Perfetto events into a compact JSON-friendly summary."""
+    with gzip.open(perfetto_trace_path, mode="rt", encoding="utf-8") as file_handle:
+        trace_payload = json.load(file_handle)
+
+    event_totals: dict[str, tuple[int, float]] = {}
+    for event in trace_payload.get("traceEvents", []):
+        event_name = event.get("name")
+        if not isinstance(event_name, str) or not event_name:
+            continue
+        event_duration = event.get("dur")
+        if not isinstance(event_duration, int | float):
+            continue
+        event_count, total_duration_microseconds = event_totals.get(event_name, (0, 0.0))
+        event_totals[event_name] = (event_count + 1, total_duration_microseconds + float(event_duration))
+
+    ranked_events = sorted(event_totals.items(), key=lambda item: item[1][1], reverse=True)[:limit]
+    return [
+        ProfileEventSummary(
+            name=event_name,
+            event_count=event_count,
+            total_duration_microseconds=total_duration_microseconds,
+            mean_duration_microseconds=total_duration_microseconds / event_count,
+        )
+        for event_name, (event_count, total_duration_microseconds) in ranked_events
+    ]
+
+
 def main() -> None:
     """Capture detailed profiling for full chr22 association run."""
     argument_parser = build_argument_parser()
@@ -244,13 +323,25 @@ def main() -> None:
 
     profiler.enable()
 
-    if arguments.enable_jax_trace:
-        # Run with JAX tracing enabled
-        with jax.profiler.trace(jax_trace_dir, create_perfetto_trace=True):
+    transfer_guard_context = (
+        jax.transfer_guard(arguments.transfer_guard_device_to_host)
+        if arguments.transfer_guard_device_to_host is not None
+        else None
+    )
+
+    if transfer_guard_context is None:
+        if arguments.enable_jax_trace:
+            with jax.profiler.trace(jax_trace_dir, create_perfetto_trace=True):
+                execution_stats = run_and_materialize_frames(frame_iterator)
+        else:
             execution_stats = run_and_materialize_frames(frame_iterator)
     else:
-        # Run without JAX tracing
-        execution_stats = run_and_materialize_frames(frame_iterator)
+        with transfer_guard_context:
+            if arguments.enable_jax_trace:
+                with jax.profiler.trace(jax_trace_dir, create_perfetto_trace=True):
+                    execution_stats = run_and_materialize_frames(frame_iterator)
+            else:
+                execution_stats = run_and_materialize_frames(frame_iterator)
 
     profiler.disable()
 
@@ -314,6 +405,31 @@ def main() -> None:
         file_handle.write(summary_report)
     print(f"Summary report saved: {summary_path}")
 
+    perfetto_trace_path = find_perfetto_trace_path(jax_trace_dir) if arguments.enable_jax_trace else None
+    perfetto_event_summaries = (
+        summarize_perfetto_trace(perfetto_trace_path) if perfetto_trace_path is not None else []
+    )
+    json_summary_path = arguments.json_summary_path or (arguments.output_dir / f"{arguments.report_name}_summary.json")
+    json_summary = DetailedProfileSummary(
+        glm_mode=arguments.glm,
+        backend=jax.default_backend(),
+        total_variants=int(total_variants),
+        chunk_count=int(execution_stats["chunk_count"]),
+        wall_time_seconds=float(wall_time),
+        variants_per_second=float(variants_per_second),
+        trace_enabled=arguments.enable_jax_trace,
+        memory_profile_enabled=arguments.enable_memory_profile,
+        cprofile_path=str(cprofile_path),
+        cprofile_raw_path=str(cprofile_raw_path),
+        summary_path=str(summary_path),
+        trace_dir=str(jax_trace_dir) if arguments.enable_jax_trace else None,
+        perfetto_trace_path=str(perfetto_trace_path) if perfetto_trace_path is not None else None,
+        perfetto_event_summaries=perfetto_event_summaries,
+    )
+    with open(json_summary_path, "w") as file_handle:
+        json.dump(asdict(json_summary), file_handle, indent=2)
+    print(f"JSON summary saved: {json_summary_path}")
+
     # Print summary to console
     print("\n" + "=" * 80)
     print(summary_report)
@@ -328,6 +444,7 @@ def main() -> None:
     if arguments.enable_memory_profile:
         print(f"  - {memory_profile_path.name} (device memory profile)")
     print(f"  - {summary_path.name} (execution summary)")
+    print(f"  - {json_summary_path.name} (structured JSON summary)")
 
 
 if __name__ == "__main__":

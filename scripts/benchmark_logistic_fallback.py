@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import time
 from dataclasses import asdict, dataclass
@@ -28,6 +29,19 @@ class LogisticChunkBenchmarkResult:
     firth_variant_count: int
     standard_variant_count: int
     checksum: float
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser for the fallback benchmark."""
+    parser = argparse.ArgumentParser(description="Benchmark logistic fallback orchestration.")
+    parser.add_argument("--bed-prefix", type=Path, default=Path("data/1kg_chr22_full"), help="PLINK dataset prefix.")
+    parser.add_argument("--phenotype-path", type=Path, default=Path("data/pheno_bin.txt"), help="Phenotype file.")
+    parser.add_argument("--covariate-path", type=Path, default=Path("data/covariates.txt"), help="Covariate file.")
+    parser.add_argument("--variant-limit", type=int, default=2048, help="Maximum number of variants to process.")
+    parser.add_argument("--chunk-size", type=int, default=256, help="Variants per chunk.")
+    parser.add_argument("--repeat-count", type=int, default=5, help="Number of warmed timing repetitions.")
+    parser.add_argument("--output-path", type=Path, help="Optional JSON output path.")
+    return parser
 
 
 def benchmark_logistic_chunks(
@@ -74,12 +88,13 @@ def benchmark_logistic_chunks(
 
 def main() -> None:
     """Run the logistic fallback benchmark on the standard chr22 binary dataset."""
-    bed_prefix = Path("data/1kg_chr22_full")
-    phenotype_path = Path("data/pheno_bin.txt")
-    covariate_path = Path("data/covariates.txt")
-    variant_limit = 2048
-    chunk_size = 256
-    repeat_count = 5
+    arguments = build_argument_parser().parse_args()
+    bed_prefix = arguments.bed_prefix
+    phenotype_path = arguments.phenotype_path
+    covariate_path = arguments.covariate_path
+    variant_limit = arguments.variant_limit
+    chunk_size = arguments.chunk_size
+    repeat_count = arguments.repeat_count
 
     benchmark_logistic_chunks(
         bed_prefix=bed_prefix,
@@ -114,7 +129,11 @@ def main() -> None:
         standard_variant_count=standard_variant_count,
         checksum=checksum,
     )
-    print(json.dumps(asdict(result), indent=2))
+    result_json = json.dumps(asdict(result), indent=2)
+    if arguments.output_path is not None:
+        arguments.output_path.parent.mkdir(parents=True, exist_ok=True)
+        arguments.output_path.write_text(result_json)
+    print(result_json)
 
 
 if __name__ == "__main__":

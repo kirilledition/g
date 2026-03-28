@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import subprocess
@@ -86,6 +87,23 @@ class JaxExecutionBenchmarkReport:
     logistic_fallback_chunk_format: TimedMeasurement
     logistic_fallback_chunk_compute_and_format: TimedMeasurement
     logistic_full_chunk_loop: TimedMeasurement
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser for the JAX execution benchmark."""
+    parser = argparse.ArgumentParser(description="Benchmark JAX execution surfaces for GWAS kernels.")
+    parser.add_argument("--bed-prefix", type=Path, default=Path("data/1kg_chr22_full"), help="PLINK dataset prefix.")
+    parser.add_argument("--chunk-size", type=int, default=256, help="Variants per chunk.")
+    parser.add_argument("--variant-limit", type=int, help="Variant count used for standard-chunk measurements.")
+    parser.add_argument(
+        "--search-variant-limit",
+        type=int,
+        default=4096,
+        help="Variant search window used to locate a fallback-heavy chunk.",
+    )
+    parser.add_argument("--repeat-count", type=int, default=5, help="Number of warmed timing repetitions.")
+    parser.add_argument("--output-path", type=Path, help="Optional JSON output path.")
+    return parser
 
 
 def collect_runtime_summary() -> RuntimeSummary:
@@ -215,11 +233,12 @@ def select_fallback_logistic_chunk(
 
 def main() -> None:
     """Benchmark representative JAX transfer, compute, and formatting surfaces."""
-    bed_prefix = Path("data/1kg_chr22_full")
-    chunk_size = 256
-    variant_limit = chunk_size
-    search_variant_limit = 4096
-    repeat_count = 5
+    arguments = build_argument_parser().parse_args()
+    bed_prefix = arguments.bed_prefix
+    chunk_size = arguments.chunk_size
+    variant_limit = arguments.variant_limit or chunk_size
+    search_variant_limit = arguments.search_variant_limit
+    repeat_count = arguments.repeat_count
 
     continuous_sample_data = load_aligned_sample_data(
         bed_prefix=bed_prefix,
@@ -443,7 +462,11 @@ def main() -> None:
         logistic_fallback_chunk_compute_and_format=logistic_fallback_chunk_compute_and_format_measurement,
         logistic_full_chunk_loop=logistic_full_chunk_loop_measurement,
     )
-    print(json.dumps(asdict(report), indent=2))
+    report_json = json.dumps(asdict(report), indent=2)
+    if arguments.output_path is not None:
+        arguments.output_path.parent.mkdir(parents=True, exist_ok=True)
+        arguments.output_path.write_text(report_json)
+    print(report_json)
 
 
 if __name__ == "__main__":

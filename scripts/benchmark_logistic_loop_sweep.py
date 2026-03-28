@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import time
 from dataclasses import asdict, dataclass
@@ -38,6 +39,26 @@ class LogisticLoopSweepReport:
     chunk_sizes: list[int]
     compute_only: list[LoopMeasurement]
     compute_and_format: list[LoopMeasurement]
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser for the logistic loop sweep."""
+    parser = argparse.ArgumentParser(description="Benchmark full logistic loop behavior across chunk sizes.")
+    parser.add_argument("--bed-prefix", type=Path, default=Path("data/1kg_chr22_full"), help="PLINK dataset prefix.")
+    parser.add_argument("--variant-limit", type=int, default=4096, help="Maximum number of variants to process.")
+    parser.add_argument("--repeat-count", type=int, default=5, help="Number of warmed timing repetitions.")
+    parser.add_argument(
+        "--chunk-sizes",
+        default="128,256,512,1024",
+        help="Comma-separated chunk sizes to benchmark.",
+    )
+    parser.add_argument("--output-path", type=Path, help="Optional JSON output path.")
+    return parser
+
+
+def parse_chunk_sizes(raw_chunk_sizes: str) -> list[int]:
+    """Parse a comma-separated chunk size list."""
+    return [int(chunk_size.strip()) for chunk_size in raw_chunk_sizes.split(",") if chunk_size.strip()]
 
 
 def block_tree_until_ready(value: Any) -> Any:
@@ -137,10 +158,11 @@ def benchmark_compute_and_format(
 
 def main() -> None:
     """Run a logistic loop sweep on the active JAX backend."""
-    bed_prefix = Path("data/1kg_chr22_full")
-    variant_limit = 4096
-    repeat_count = 5
-    chunk_sizes = [128, 256, 512, 1024]
+    arguments = build_argument_parser().parse_args()
+    bed_prefix = arguments.bed_prefix
+    variant_limit = arguments.variant_limit
+    repeat_count = arguments.repeat_count
+    chunk_sizes = parse_chunk_sizes(arguments.chunk_sizes)
 
     compute_only_measurements: list[LoopMeasurement] = []
     compute_and_format_measurements: list[LoopMeasurement] = []
@@ -189,7 +211,11 @@ def main() -> None:
         compute_only=compute_only_measurements,
         compute_and_format=compute_and_format_measurements,
     )
-    print(json.dumps(asdict(report), indent=2))
+    report_json = json.dumps(asdict(report), indent=2)
+    if arguments.output_path is not None:
+        arguments.output_path.parent.mkdir(parents=True, exist_ok=True)
+        arguments.output_path.write_text(report_json)
+    print(report_json)
 
 
 if __name__ == "__main__":
