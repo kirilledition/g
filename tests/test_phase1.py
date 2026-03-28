@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 from pathlib import Path
@@ -301,3 +302,33 @@ def test_cli_writes_linear_output_file(tmp_path: Path, monkeypatch: pytest.Monke
     output_frame = pl.read_csv(output_path, separator="\t")
     assert output_frame.height == 16
     assert {"variant_identifier", "beta", "p_value"}.issubset(set(output_frame.columns))
+
+
+def test_phase_one_evaluation_report_includes_hail_sections_when_present() -> None:
+    """Validate Hail comparison sections in the saved Phase 1 evaluation report."""
+    evaluation_report_path = DATA_DIRECTORY / "phase1_evaluation_report.json"
+    if not evaluation_report_path.exists():
+        pytest.skip("Phase 1 evaluation report has not been generated yet.")
+
+    evaluation_report = json.loads(evaluation_report_path.read_text())
+    required_runtime_keys = {
+        "hail_cache_prepare_runtime",
+        "linear_plink_runtime",
+        "logistic_plink_runtime",
+        "linear_hail_runtime",
+        "logistic_hail_wald_runtime",
+        "logistic_hail_firth_runtime",
+        "logistic_hail_hybrid_upper_bound_runtime",
+    }
+    required_parity_keys = {
+        "linear_plink_parity",
+        "logistic_plink_parity",
+        "linear_hail_parity",
+        "logistic_hail_hybrid_parity",
+    }
+    if required_runtime_keys.issubset(evaluation_report) and required_parity_keys.issubset(evaluation_report):
+        assert evaluation_report["hail_cache_prepare_runtime"]["baseline_name"] == "hail_matrix_table_prepare"
+        assert evaluation_report["linear_hail_runtime"]["baseline_name"] == "hail_linear"
+        assert evaluation_report["logistic_hail_wald_runtime"]["baseline_name"] == "hail_logistic_wald"
+        assert "max_abs_log10_p_value_difference" in evaluation_report["linear_hail_parity"]
+        assert "firth_missing_variant_count" in evaluation_report["logistic_hail_hybrid_parity"]

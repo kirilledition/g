@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run PLINK2 and Regenie Phase 0 baselines and save a benchmark report."""
+"""Run PLINK2, Hail, and Regenie baselines and save a benchmark report."""
 
 from __future__ import annotations
 
@@ -23,6 +23,14 @@ except ImportError:  # pragma: no cover - optional dependency branch
     GPUtilModule = None
 else:
     GPUtilModule = GPUtilModuleImport
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+HAIL_ENVIRONMENT_DIRECTORY_NAME = ".venv-hail"
+HAIL_REQUIREMENT = "hail==0.2.137"
+HAIL_PYSPARK_REQUIREMENT = "pyspark==3.5.3"
+HAIL_PY4J_REQUIREMENT = "py4j==0.10.9.7"
+HAIL_COVARIATE_NAMES = "age,sex"
 
 
 @dataclass(frozen=True)
@@ -69,6 +77,9 @@ class BaselinePaths:
     continuous_phenotype_path: Path
     binary_phenotype_path: Path
     covariate_path: Path
+    hail_directory: Path
+    hail_matrix_table_path: Path
+    hail_suite_report_path: Path
     regenie_prediction_list_path: Path
 
 
@@ -188,6 +199,9 @@ def build_baseline_paths() -> BaselinePaths:
         continuous_phenotype_path=data_directory / "pheno_cont.txt",
         binary_phenotype_path=data_directory / "pheno_bin.txt",
         covariate_path=data_directory / "covariates.txt",
+        hail_directory=data_directory / "hail",
+        hail_matrix_table_path=data_directory / "hail" / "1kg_chr22_full.mt",
+        hail_suite_report_path=baseline_directory / "hail_suite_report.json",
         regenie_prediction_list_path=baseline_directory / "regenie_step1_pred.list",
     )
 
@@ -216,6 +230,101 @@ def validate_input_files(baseline_paths: BaselinePaths) -> None:
     if missing_paths:
         missing_path_lines = "\n".join(str(path) for path in missing_paths)
         raise FileNotFoundError(f"Required benchmark inputs are missing:\n{missing_path_lines}")
+
+
+def run_setup_command(command_arguments: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run an environment-setup command and raise a detailed error on failure."""
+    completed_process = subprocess.run(command_arguments, check=False, capture_output=True, text=True)
+    if completed_process.returncode != 0:
+        raise RuntimeError(
+            "Command failed\n"
+            f"Command: {' '.join(command_arguments)}\n"
+            f"Exit code: {completed_process.returncode}\n"
+            f"STDOUT:\n{completed_process.stdout}\n"
+            f"STDERR:\n{completed_process.stderr}"
+        )
+    return completed_process
+
+
+def hail_runner_path() -> Path:
+    """Return the Hail baseline runner script path."""
+    return REPOSITORY_ROOT / "scripts" / "run_hail_baseline.py"
+
+
+def hail_suite_runner_path() -> Path:
+    """Return the Hail benchmark suite runner path."""
+    return REPOSITORY_ROOT / "scripts" / "run_hail_benchmark_suite.py"
+
+
+def hail_environment_directory() -> Path:
+    """Return the managed virtual environment directory for Hail."""
+    return REPOSITORY_ROOT / HAIL_ENVIRONMENT_DIRECTORY_NAME
+
+
+def hail_python_path() -> Path:
+    """Return the managed Hail virtual environment Python path."""
+    return hail_environment_directory() / "bin" / "python"
+
+
+def hail_output_path(baseline_paths: BaselinePaths, output_name: str) -> Path:
+    """Return the exported Hail result path for one benchmark."""
+    return baseline_paths.baseline_directory / f"{output_name}.tsv"
+
+
+def hail_log_path(baseline_paths: BaselinePaths, output_name: str) -> Path:
+    """Return the Hail log path for one benchmark."""
+    return baseline_paths.baseline_directory / f"{output_name}.hail.log"
+
+
+def hail_python_has_expected_package(hail_python_executable: Path) -> bool:
+    """Return whether the managed Python can import the pinned Hail version."""
+    completed_process = subprocess.run(
+        [str(hail_python_executable), "-c", "import hail; print(hail.__version__)"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    expected_version_prefix = HAIL_REQUIREMENT.split("==", maxsplit=1)[1]
+    return completed_process.returncode == 0 and completed_process.stdout.strip().startswith(expected_version_prefix)
+
+
+def ensure_hail_environment() -> str:
+    """Create or reuse the managed Hail virtual environment."""
+    overridden_hail_python_executable = os.environ.get("HAIL_PYTHON_BIN")
+    if overridden_hail_python_executable is not None:
+        if (
+            shutil.which(overridden_hail_python_executable) is None
+            and not Path(overridden_hail_python_executable).exists()
+        ):
+            raise RuntimeError(f"Configured HAIL_PYTHON_BIN '{overridden_hail_python_executable}' is not available.")
+        return overridden_hail_python_executable
+
+    managed_hail_python_path = hail_python_path()
+    if managed_hail_python_path.exists() and hail_python_has_expected_package(managed_hail_python_path):
+        return str(managed_hail_python_path)
+
+    bootstrap_python_executable = resolve_required_executable("HAIL_BOOTSTRAP_PYTHON", "python3.11")
+    environment_directory = hail_environment_directory()
+    if not managed_hail_python_path.exists():
+        run_setup_command([bootstrap_python_executable, "-m", "venv", str(environment_directory)])
+
+    run_setup_command([str(managed_hail_python_path), "-m", "pip", "install", "--upgrade", "pip"])
+    run_setup_command(
+        [
+            str(managed_hail_python_path),
+            "-m",
+            "pip",
+            "install",
+            HAIL_REQUIREMENT,
+            HAIL_PYSPARK_REQUIREMENT,
+            HAIL_PY4J_REQUIREMENT,
+        ]
+    )
+    if not hail_python_has_expected_package(managed_hail_python_path):
+        raise RuntimeError(
+            f"Managed Hail environment at {managed_hail_python_path} does not import {HAIL_REQUIREMENT}."
+        )
+    return str(managed_hail_python_path)
 
 
 def build_plink_continuous_command(plink_executable: str, baseline_paths: BaselinePaths) -> list[str]:
@@ -303,6 +412,164 @@ def build_regenie_step2_command(regenie_executable: str, baseline_paths: Baselin
     ]
 
 
+def build_hail_linear_command(hail_python_executable: str, baseline_paths: BaselinePaths) -> list[str]:
+    """Build the cached Hail continuous trait command."""
+    output_name = "hail_cont"
+    return [
+        hail_python_executable,
+        str(hail_runner_path()),
+        "--matrix-table-cache",
+        str(baseline_paths.hail_matrix_table_path),
+        "--cache-mode",
+        "require",
+        "--bfile",
+        str(baseline_paths.bed_prefix),
+        "--pheno",
+        str(baseline_paths.continuous_phenotype_path),
+        "--pheno-name",
+        "phenotype_continuous",
+        "--covar",
+        str(baseline_paths.covariate_path),
+        "--covar-names",
+        HAIL_COVARIATE_NAMES,
+        "--glm",
+        "linear",
+        "--out",
+        str(hail_output_path(baseline_paths, output_name)),
+        "--log-path",
+        str(hail_log_path(baseline_paths, output_name)),
+    ]
+
+
+def build_hail_logistic_command(
+    hail_python_executable: str,
+    baseline_paths: BaselinePaths,
+    test_name: str,
+) -> list[str]:
+    """Build one cached Hail binary trait command."""
+    output_name = f"hail_bin_{test_name}"
+    return [
+        hail_python_executable,
+        str(hail_runner_path()),
+        "--matrix-table-cache",
+        str(baseline_paths.hail_matrix_table_path),
+        "--cache-mode",
+        "require",
+        "--bfile",
+        str(baseline_paths.bed_prefix),
+        "--pheno",
+        str(baseline_paths.binary_phenotype_path),
+        "--pheno-name",
+        "phenotype_binary",
+        "--covar",
+        str(baseline_paths.covariate_path),
+        "--covar-names",
+        HAIL_COVARIATE_NAMES,
+        "--glm",
+        "logistic",
+        "--logistic-test",
+        test_name,
+        "--out",
+        str(hail_output_path(baseline_paths, output_name)),
+        "--log-path",
+        str(hail_log_path(baseline_paths, output_name)),
+    ]
+
+
+def build_hail_cache_prepare_command(
+    hail_python_executable: str,
+    baseline_paths: BaselinePaths,
+    cache_mode: str,
+) -> list[str]:
+    """Build the Hail MatrixTable cache preparation command."""
+    return [
+        hail_python_executable,
+        str(hail_runner_path()),
+        "--matrix-table-cache",
+        str(baseline_paths.hail_matrix_table_path),
+        "--cache-mode",
+        cache_mode,
+        "--prepare-cache-only",
+        "--bfile",
+        str(baseline_paths.bed_prefix),
+        "--pheno",
+        str(baseline_paths.continuous_phenotype_path),
+        "--pheno-name",
+        "phenotype_continuous",
+        "--covar",
+        str(baseline_paths.covariate_path),
+        "--covar-names",
+        HAIL_COVARIATE_NAMES,
+        "--glm",
+        "linear",
+        "--out",
+        str(hail_output_path(baseline_paths, "hail_cache_prepare")),
+        "--log-path",
+        str(hail_log_path(baseline_paths, "hail_cache_prepare")),
+    ]
+
+
+def build_hail_suite_command(
+    hail_python_executable: str,
+    baseline_paths: BaselinePaths,
+    cache_mode: str,
+) -> list[str]:
+    """Build the one-session cached Hail benchmark suite command."""
+    return [
+        hail_python_executable,
+        str(hail_suite_runner_path()),
+        "--matrix-table-cache",
+        str(baseline_paths.hail_matrix_table_path),
+        "--cache-mode",
+        cache_mode,
+        "--bfile",
+        str(baseline_paths.bed_prefix),
+        "--covar",
+        str(baseline_paths.covariate_path),
+        "--covar-names",
+        HAIL_COVARIATE_NAMES,
+        "--continuous-pheno",
+        str(baseline_paths.continuous_phenotype_path),
+        "--continuous-pheno-name",
+        "phenotype_continuous",
+        "--binary-pheno",
+        str(baseline_paths.binary_phenotype_path),
+        "--binary-pheno-name",
+        "phenotype_binary",
+        "--linear-out",
+        str(hail_output_path(baseline_paths, "hail_cont")),
+        "--wald-out",
+        str(hail_output_path(baseline_paths, "hail_bin_wald")),
+        "--firth-out",
+        str(hail_output_path(baseline_paths, "hail_bin_firth")),
+        "--log-path",
+        str(hail_log_path(baseline_paths, "hail_suite")),
+        "--report-path",
+        str(baseline_paths.hail_suite_report_path),
+    ]
+
+
+def load_hail_suite_report(report_path: Path) -> dict[str, Any]:
+    """Load the JSON report emitted by the Hail benchmark suite."""
+    return json.loads(report_path.read_text())
+
+
+def build_hail_step_result(
+    suite_command_result: CommandResult,
+    step_report: dict[str, Any],
+) -> CommandResult:
+    """Convert one suite step report into a benchmark command result."""
+    return CommandResult(
+        success=suite_command_result.success,
+        command=suite_command_result.command,
+        duration_seconds=float(step_report["duration_seconds"]),
+        stdout=suite_command_result.stdout,
+        stderr=suite_command_result.stderr,
+        output_prefix=str(step_report["output_path"]),
+        error=suite_command_result.error,
+    )
+
+
 def serialize_results(results_by_name: dict[str, CommandResult]) -> dict[str, dict[str, Any]]:
     """Convert command results into JSON-serializable dictionaries."""
     return {result_name: asdict(command_result) for result_name, command_result in results_by_name.items()}
@@ -312,9 +579,11 @@ def main() -> None:
     """Run all Phase 0 baseline commands and save the benchmark report."""
     plink_executable = resolve_required_executable("PLINK2_BIN", "plink2")
     regenie_executable = resolve_required_executable("REGENIE_BIN", "regenie")
+    hail_python_executable = ensure_hail_environment()
 
     baseline_paths = build_baseline_paths()
     baseline_paths.baseline_directory.mkdir(exist_ok=True)
+    baseline_paths.hail_directory.mkdir(exist_ok=True)
     validate_input_files(baseline_paths)
 
     print("Gathering hardware specs...")
@@ -331,6 +600,49 @@ def main() -> None:
         build_plink_binary_command(plink_executable, baseline_paths),
         baseline_paths.baseline_directory / "plink_bin",
     )
+    results_by_name["hail_matrix_table_prepare"] = run_command(
+        "Hail MatrixTable Prepare",
+        build_hail_cache_prepare_command(hail_python_executable, baseline_paths, cache_mode="refresh"),
+        baseline_paths.hail_matrix_table_path,
+    )
+    results_by_name["hail_suite_cached"] = run_command(
+        "Hail Cached Suite",
+        build_hail_suite_command(hail_python_executable, baseline_paths, cache_mode="require"),
+        baseline_paths.hail_suite_report_path,
+    )
+    if results_by_name["hail_suite_cached"].success and baseline_paths.hail_suite_report_path.exists():
+        hail_suite_report = load_hail_suite_report(baseline_paths.hail_suite_report_path)
+        hail_step_reports = {
+            step_report["output_name"]: step_report for step_report in hail_suite_report["step_reports"]
+        }
+        results_by_name["hail_cont"] = build_hail_step_result(
+            results_by_name["hail_suite_cached"],
+            hail_step_reports["hail_cont"],
+        )
+        results_by_name["hail_bin_wald"] = build_hail_step_result(
+            results_by_name["hail_suite_cached"],
+            hail_step_reports["hail_bin_wald"],
+        )
+        results_by_name["hail_bin_firth"] = build_hail_step_result(
+            results_by_name["hail_suite_cached"],
+            hail_step_reports["hail_bin_firth"],
+        )
+    else:
+        error_message = (
+            f"Missing Hail suite report: {baseline_paths.hail_suite_report_path}"
+            if results_by_name["hail_suite_cached"].success
+            else "Hail cached suite failed."
+        )
+        for result_name in ["hail_cont", "hail_bin_wald", "hail_bin_firth"]:
+            results_by_name[result_name] = CommandResult(
+                success=False,
+                command=results_by_name["hail_suite_cached"].command,
+                duration_seconds=0.0,
+                stdout=results_by_name["hail_suite_cached"].stdout,
+                stderr=results_by_name["hail_suite_cached"].stderr,
+                output_prefix=str(hail_output_path(baseline_paths, result_name)),
+                error=error_message,
+            )
     results_by_name["regenie_step1"] = run_command(
         "Regenie Step 1",
         build_regenie_step1_command(regenie_executable, baseline_paths),

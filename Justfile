@@ -11,7 +11,7 @@ setup-data:
     uv run python scripts/fetch_1kg.py
     uv run python scripts/simulate_phenos.py
 
-# Run plink2/regenie baselines and generate hardware report
+# Run PLINK2/Hail/Regenie baselines and generate hardware report
 benchmark-baselines: setup-data
     uv run python scripts/benchmark.py
 

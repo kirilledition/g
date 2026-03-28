@@ -100,6 +100,53 @@ def test_regenie_step_two_command_uses_required_bgen_inputs() -> None:
     assert "--ref-first" in command_arguments
 
 
+def test_hail_commands_use_managed_runner_and_expected_outputs() -> None:
+    """Ensure Hail baseline commands point at the managed runner and output paths."""
+    baseline_paths = benchmark_module.build_baseline_paths()
+
+    linear_command_arguments = benchmark_module.build_hail_linear_command("/tmp/hail-python", baseline_paths)
+    logistic_command_arguments = benchmark_module.build_hail_logistic_command(
+        "/tmp/hail-python",
+        baseline_paths,
+        test_name="wald",
+    )
+    suite_command_arguments = benchmark_module.build_hail_suite_command(
+        "/tmp/hail-python",
+        baseline_paths,
+        cache_mode="require",
+    )
+
+    assert linear_command_arguments[0] == "/tmp/hail-python"
+    assert linear_command_arguments[1].endswith("scripts/run_hail_baseline.py")
+    assert "--matrix-table-cache" in linear_command_arguments
+    assert str(baseline_paths.hail_matrix_table_path) in linear_command_arguments
+    assert "--cache-mode" in linear_command_arguments
+    assert "require" in linear_command_arguments
+    assert "--glm" in linear_command_arguments
+    assert "linear" in linear_command_arguments
+    assert str(benchmark_module.hail_output_path(baseline_paths, "hail_cont")) in linear_command_arguments
+    assert str(benchmark_module.hail_log_path(baseline_paths, "hail_cont")) in linear_command_arguments
+
+    assert logistic_command_arguments[0] == "/tmp/hail-python"
+    assert logistic_command_arguments[1].endswith("scripts/run_hail_baseline.py")
+    assert "--matrix-table-cache" in logistic_command_arguments
+    assert str(baseline_paths.hail_matrix_table_path) in logistic_command_arguments
+    assert "--glm" in logistic_command_arguments
+    assert "logistic" in logistic_command_arguments
+    assert "--logistic-test" in logistic_command_arguments
+    assert "wald" in logistic_command_arguments
+    assert str(benchmark_module.hail_output_path(baseline_paths, "hail_bin_wald")) in logistic_command_arguments
+    assert str(benchmark_module.hail_log_path(baseline_paths, "hail_bin_wald")) in logistic_command_arguments
+
+    assert suite_command_arguments[0] == "/tmp/hail-python"
+    assert suite_command_arguments[1].endswith("scripts/run_hail_benchmark_suite.py")
+    assert "--report-path" in suite_command_arguments
+    assert str(baseline_paths.hail_suite_report_path) in suite_command_arguments
+    assert str(benchmark_module.hail_output_path(baseline_paths, "hail_cont")) in suite_command_arguments
+    assert str(benchmark_module.hail_output_path(baseline_paths, "hail_bin_wald")) in suite_command_arguments
+    assert str(benchmark_module.hail_output_path(baseline_paths, "hail_bin_firth")) in suite_command_arguments
+
+
 def test_validate_input_files_reports_all_missing_paths(tmp_path: Path) -> None:
     """Ensure benchmark preflight lists every missing required file."""
     baseline_paths = benchmark_module.BaselinePaths(
@@ -111,6 +158,9 @@ def test_validate_input_files_reports_all_missing_paths(tmp_path: Path) -> None:
         continuous_phenotype_path=tmp_path / "pheno_cont.txt",
         binary_phenotype_path=tmp_path / "pheno_bin.txt",
         covariate_path=tmp_path / "covariates.txt",
+        hail_directory=tmp_path / "hail",
+        hail_matrix_table_path=tmp_path / "hail/missing_dataset.mt",
+        hail_suite_report_path=tmp_path / "baselines/hail_suite_report.json",
         regenie_prediction_list_path=tmp_path / "baselines/regenie_step1_pred.list",
     )
 
@@ -168,6 +218,20 @@ def test_benchmark_report_and_baselines_are_parseable_when_present() -> None:
     assert "results" in report
     assert {"plink_cont", "plink_bin", "regenie_step1", "regenie_step2"}.issubset(report["results"])
 
+    hail_result_paths = [
+        DATA_DIRECTORY / "baselines" / "hail_cont.tsv",
+        DATA_DIRECTORY / "baselines" / "hail_bin_wald.tsv",
+        DATA_DIRECTORY / "baselines" / "hail_bin_firth.tsv",
+    ]
+    if any(path.exists() for path in hail_result_paths):
+        assert {
+            "hail_matrix_table_prepare",
+            "hail_suite_cached",
+            "hail_cont",
+            "hail_bin_wald",
+            "hail_bin_firth",
+        }.issubset(report["results"])
+
     continuous_result_paths = sorted((DATA_DIRECTORY / "baselines").glob("plink_cont*.glm.linear"))
     binary_result_paths = sorted((DATA_DIRECTORY / "baselines").glob("plink_bin*.glm.logistic*"))
     regenie_result_paths = sorted((DATA_DIRECTORY / "baselines").glob("regenie_step2*.regenie"))
@@ -184,3 +248,9 @@ def test_benchmark_report_and_baselines_are_parseable_when_present() -> None:
     assert {"ID", "P"}.issubset(continuous_frame.columns)
     assert {"ID", "P"}.issubset(binary_frame.columns)
     assert {"ID", "LOG10P"}.issubset(regenie_frame.columns)
+
+    hail_existing_result_paths = [path for path in hail_result_paths if path.exists()]
+    if hail_existing_result_paths:
+        hail_frame = pd.read_csv(hail_existing_result_paths[0], sep="\t")
+        assert not hail_frame.empty
+        assert {"variant_identifier", "beta", "p_value", "hail_test"}.issubset(hail_frame.columns)
