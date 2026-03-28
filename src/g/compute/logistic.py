@@ -252,17 +252,6 @@ def assemble_full_information_matrix(
     return jnp.concatenate([top_block, bottom_block], axis=1)
 
 
-def solve_positive_definite_system(matrix: jax.Array, right_hand_side: jax.Array) -> jax.Array:
-    """Solve a positive-definite linear system from its Cholesky factor."""
-    cholesky_factor, lower_triangle_indicator = jax.scipy.linalg.cho_factor(matrix)
-    return jax.scipy.linalg.cho_solve((cholesky_factor, lower_triangle_indicator), right_hand_side)
-
-
-def solve_positive_definite_system_batched(matrix_batch: jax.Array, right_hand_side_batch: jax.Array) -> jax.Array:
-    """Solve a batch of positive-definite linear systems."""
-    return jax.vmap(solve_positive_definite_system)(matrix_batch, right_hand_side_batch)
-
-
 def clip_probability_matrix(probability_matrix: jax.Array) -> jax.Array:
     """Clip probabilities to a numerically safe open interval for the active dtype."""
     dtype_info = jnp.finfo(probability_matrix.dtype)
@@ -338,7 +327,7 @@ def initialize_full_model_coefficients(
     covariate_score = compute_covariate_score(covariate_matrix, masked_pseudo_response)
     genotype_score = jnp.sum(genotype_matrix_by_variant * masked_pseudo_response, axis=1)
     full_score = jnp.concatenate([covariate_score, genotype_score[:, None]], axis=1)
-    return jnp.squeeze(solve_positive_definite_system_batched(full_information_matrix, full_score[:, :, None]), axis=-1)
+    return jnp.squeeze(jnp.linalg.solve(full_information_matrix, full_score[:, :, None]), axis=-1)
 
 
 def initialize_full_model_coefficients_without_mask(
@@ -364,7 +353,7 @@ def initialize_full_model_coefficients_without_mask(
     )
     genotype_score = genotype_matrix_by_variant @ no_missing_constants.pseudo_response_vector
     full_score = jnp.concatenate([covariate_score, genotype_score[:, None]], axis=1)
-    return jnp.squeeze(solve_positive_definite_system_batched(full_information_matrix, full_score[:, :, None]), axis=-1)
+    return jnp.squeeze(jnp.linalg.solve(full_information_matrix, full_score[:, :, None]), axis=-1)
 
 
 def prepare_no_missing_logistic_constants(
@@ -495,7 +484,7 @@ def fit_covariate_only_logistic_regression(
 
     """
     observation_mask = jnp.ones((1, phenotype_vector.shape[0]), dtype=bool)
-    initial_coefficients = solve_positive_definite_system(
+    initial_coefficients = jnp.linalg.solve(
         covariate_matrix.T @ covariate_matrix,
         covariate_matrix.T @ (INITIAL_RESPONSE_SCALE * (phenotype_vector - BINARY_CASE_THRESHOLD)),
     )
@@ -566,7 +555,7 @@ def fit_masked_covariate_only_logistic_regression(
         )
         score = compute_covariate_score(covariate_matrix, masked_residual)
         information_matrix = compute_covariate_information_matrix(covariate_matrix, effective_weights)
-        step = jnp.squeeze(solve_positive_definite_system_batched(information_matrix, score[:, :, None]), axis=-1)
+        step = jnp.squeeze(jnp.linalg.solve(information_matrix, score[:, :, None]), axis=-1)
         step = jnp.where(state.converged_mask[:, None], 0.0, step)
         updated_coefficients = state.coefficients - step
         updated_iteration_count = state.iteration_count + (~state.converged_mask).astype(jnp.int32)
@@ -702,7 +691,11 @@ def compute_standard_logistic_association_chunk_with_mask(
         genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
         rhs = jnp.stack([covariate_score, cross_information_vector], axis=-1)
 
-        sols = solve_positive_definite_system_batched(covariate_information_matrix, rhs)
+        def cho_solve_single(matrix: jax.Array, right_hand_side: jax.Array) -> jax.Array:
+            factor, lower = jax.scipy.linalg.cho_factor(matrix)
+            return jax.scipy.linalg.cho_solve((factor, lower), right_hand_side)
+
+        sols = jax.vmap(cho_solve_single)(covariate_information_matrix, rhs)
         covariate_information_solution = sols[..., 0]
         cross_solution = sols[..., 1]
         schur_complement = genotype_information - jnp.sum(cross_information_vector * cross_solution, axis=1)
@@ -755,7 +748,7 @@ def compute_standard_logistic_association_chunk_with_mask(
         ),
     )
 
-    cross_information_solution = solve_positive_definite_system_batched(
+    cross_information_solution = jnp.linalg.solve(
         final_state.last_covariate_information_matrix,
         final_state.last_cross_information_vector[:, :, None],
     )
@@ -854,7 +847,17 @@ def compute_standard_logistic_association_chunk_without_mask(
         genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
         combined_right_hand_sides = jnp.stack((covariate_score, cross_information_vector), axis=-1)
 
-        information_solution_matrix = solve_positive_definite_system_batched(
+        def solve_information_system(
+            information_matrix: jax.Array,
+            right_hand_side_matrix: jax.Array,
+        ) -> jax.Array:
+            cholesky_factor, lower_triangle_indicator = jax.scipy.linalg.cho_factor(information_matrix)
+            return jax.scipy.linalg.cho_solve(
+                (cholesky_factor, lower_triangle_indicator),
+                right_hand_side_matrix,
+            )
+
+        information_solution_matrix = jax.vmap(solve_information_system)(
             covariate_information_matrix,
             combined_right_hand_sides,
         )
@@ -910,7 +913,7 @@ def compute_standard_logistic_association_chunk_without_mask(
         ),
     )
 
-    cross_information_solution = solve_positive_definite_system_batched(
+    cross_information_solution = jnp.linalg.solve(
         final_state.last_covariate_information_matrix,
         final_state.last_cross_information_vector[:, :, None],
     )
@@ -1233,13 +1236,9 @@ def initialize_mixed_firth_batch_coefficients(
         phenotype_vector=phenotype_vector,
         observation_mask=heuristic_observation_mask,
     )
-    device_use_heuristic_mask = jnp.broadcast_to(
-        batch_heuristic_mask[:, None],
-        batch_standard_coefficients.shape
-    )
+    device_use_heuristic_mask = batch_heuristic_mask[:, None]
     heuristic_padded = jnp.zeros_like(batch_standard_coefficients)
-    if heuristic_variant_count > 0:
-        heuristic_padded = heuristic_padded.at[heuristic_position_vector].set(heuristic_initial_coefficients)
+    heuristic_padded = heuristic_padded.at[heuristic_position_vector].set(heuristic_initial_coefficients)
     return jnp.where(device_use_heuristic_mask, heuristic_padded, batch_standard_coefficients)
 
 

@@ -4,12 +4,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from g.compute.logistic import LogisticMethod
 from g.compute.logistic import (
     BINARY_CASE_THRESHOLD,
     FIRTH_BATCH_SIZE,
     INITIAL_RESPONSE_SCALE,
-    LogisticErrorCode,
+    LOGISTIC_ERROR_NONE,
+    LOGISTIC_METHOD_FIRTH,
     build_firth_padded_index_batches,
     compute_covariate_only_probability_matrix,
     compute_firth_association_chunk_with_mask,
@@ -202,7 +202,7 @@ def test_fit_single_variant_firth_logistic_regression_respects_skip_flag() -> No
 
     assert bool(result.converged_mask)
     assert not bool(result.valid_mask)
-    assert int(result.error_code) == LogisticErrorCode.NONE
+    assert int(result.error_code) == LOGISTIC_ERROR_NONE
     assert int(result.iteration_count) == 0
     assert np.isnan(float(result.beta))
 
@@ -234,13 +234,12 @@ def test_build_firth_padded_index_batches_preserves_active_indices_and_padding()
 def test_initialize_mixed_firth_batch_coefficients_preserves_standard_rows_when_no_heuristics() -> None:
     """Ensure mixed initialization keeps standard coefficients for non-heuristic rows."""
     covariate_matrix, phenotype_vector, genotype_matrix, observation_mask = build_logistic_fixture()
-    standard_coefficients = jnp.zeros((64, 3))
-    standard_coefficients = standard_coefficients.at[:2].set(jnp.array(
+    standard_coefficients = jnp.array(
         [
             [0.1, 0.2, 0.3],
             [0.4, 0.5, 0.6],
         ]
-    ))
+    )
     firth_index_batch = build_firth_padded_index_batches(np.array([0, 1], dtype=np.int64))[0]
 
     batch_coefficients = initialize_mixed_firth_batch_coefficients(
@@ -249,11 +248,11 @@ def test_initialize_mixed_firth_batch_coefficients_preserves_standard_rows_when_
         genotype_matrix,
         observation_mask,
         firth_index_batch,
-        np.array([False, False] + [False] * 62),
+        np.array([False, False]),
         standard_coefficients,
     )
 
-    np.testing.assert_allclose(batch_coefficients[:2], np.array(standard_coefficients[:2]), atol=0.0)
+    np.testing.assert_allclose(batch_coefficients[:2], np.array(standard_coefficients), atol=0.0)
 
 
 def test_compute_firth_association_chunk_with_mask_marks_firth_method() -> None:
@@ -272,7 +271,8 @@ def test_compute_firth_association_chunk_with_mask_marks_firth_method() -> None:
     )
 
     np.testing.assert_array_equal(
-        logistic_result.method_code, jnp.full_like(logistic_result.method_code, LogisticMethod.FIRTH)
+        logistic_result.method_code,
+        np.full((genotype_matrix.shape[1],), LOGISTIC_METHOD_FIRTH, dtype=np.int32),
     )
     assert logistic_result.beta.shape == (genotype_matrix.shape[1],)
 
@@ -299,7 +299,7 @@ def test_top_level_logistic_chunk_functions_match_on_complete_data() -> None:
         tolerance=1.0e-8,
     )
 
-    np.testing.assert_allclose(masked_result.beta, unmasked_result.beta, atol=5e-5)
+    np.testing.assert_allclose(masked_result.beta, unmasked_result.beta, atol=1e-5)
     np.testing.assert_allclose(masked_result.p_value, unmasked_result.p_value, atol=1e-6)
     np.testing.assert_array_equal(masked_result.method_code, unmasked_result.method_code)
 
