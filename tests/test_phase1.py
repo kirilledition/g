@@ -274,6 +274,7 @@ def test_cli_writes_linear_output_file(tmp_path: Path, monkeypatch: pytest.Monke
         "sys.argv",
         [
             "g",
+            "linear",
             "--bfile",
             str(BED_PREFIX),
             "--pheno",
@@ -284,8 +285,6 @@ def test_cli_writes_linear_output_file(tmp_path: Path, monkeypatch: pytest.Monke
             str(DATA_DIRECTORY / "covariates.txt"),
             "--covar-names",
             "age,sex",
-            "--glm",
-            "linear",
             "--out",
             str(output_prefix),
             "--chunk-size",

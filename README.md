@@ -95,12 +95,12 @@ Run the engine directly:
 
 ```bash
 uv run g \
+  linear \
   --bfile data/1kg_chr22_full \
   --pheno data/pheno_cont.txt \
   --pheno-name phenotype_continuous \
   --covar data/covariates.txt \
   --covar-names age,sex \
-  --glm linear \
   --out data/example_linear
 ```
 
@@ -108,12 +108,12 @@ Run logistic mode:
 
 ```bash
 uv run g \
+  logistic \
   --bfile data/1kg_chr22_full \
   --pheno data/pheno_bin.txt \
   --pheno-name phenotype_binary \
   --covar data/covariates.txt \
   --covar-names age,sex \
-  --glm logistic \
   --out data/example_logistic
 ```
 
@@ -125,8 +125,29 @@ Output files are written as:
 You can also force device selection through the CLI:
 
 ```bash
-uv run g --device cpu ...
-uv run g --device gpu ...
+uv run g linear --device cpu ...
+uv run g logistic --device gpu ...
+```
+
+Covariates are now optional. Omitting `--covar` and `--covar-names` runs an intercept-only model.
+
+Python scripts can use the public API directly:
+
+```python
+from pathlib import Path
+
+import g
+
+artifacts = g.linear(
+    bfile=Path("data/1kg_chr22_full"),
+    pheno=Path("data/pheno_cont.txt"),
+    pheno_name="phenotype_continuous",
+    covar=Path("data/covariates.txt"),
+    covar_names=["age", "sex"],
+    out=Path("data/example_linear"),
+)
+
+print(artifacts.sumstats_tsv)
 ```
 
 ## Common Commands
