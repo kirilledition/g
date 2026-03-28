@@ -1,4 +1,4 @@
-## Logistic optimization phases - 2026-03-28 (updated)
+## Logistic optimization phases - 2026-03-29 (updated)
 
 Goal: maximize warmed-state GPU throughput for `src/g/compute/logistic.py` (primary) and `src/g/compute/linear.py` (secondary) while preserving PLINK-equivalent correctness.
 
@@ -12,7 +12,7 @@ Goal: maximize warmed-state GPU throughput for `src/g/compute/logistic.py` (prim
 
 ## Benchmark environment (current recommendation)
 
-### Throughput-first default
+### Throughput-first default (benchmarks)
 
 Use this first on the local RTX 4080 SUPER:
 
@@ -26,15 +26,14 @@ Notes:
 - Keep Triton GEMM enabled by default (do not set `--xla_gpu_enable_triton_gemm=false`).
 - Recent local probes showed a small warmed-state advantage with Triton enabled.
 
-### Compatibility fallback (only if Triton/autotune becomes unstable)
+### Stability fallback (profiling and low-memory runs)
 
 ```bash
-XLA_FLAGS="--xla_gpu_enable_triton_gemm=false" \
-XLA_PYTHON_CLIENT_PREALLOCATE=true \
-XLA_PYTHON_CLIENT_MEM_FRACTION=.95
+XLA_PYTHON_CLIENT_PREALLOCATE=false \
+XLA_PYTHON_CLIENT_MEM_FRACTION=.50
 ```
 
-Use this only when the throughput-first preset fails or is numerically unstable in your environment.
+Use this when profiler or benchmark runs fail with cuBLAS/cuSOLVER handle allocation errors.
 
 ## Completed optimizations
 
@@ -44,6 +43,7 @@ Use this only when the throughput-first preset fails or is numerically unstable 
   - JSON outputs for benchmark scripts.
   - Structured summary export in `scripts/profile_full_chr22_detailed.py`.
   - Perfetto trace summarization and optional transfer-guard profiling.
+  - Warmed-only profile support via `--warmup-pass-count` in `scripts/profile_full_chr22_detailed.py`.
 - Logistic standard path improvements:
   - Removed redundant hot-path dtype coercions when inputs are already device `float32`.
   - Switched heavy batched information solves to batched Cholesky + triangular solve.
@@ -52,6 +52,7 @@ Use this only when the throughput-first preset fails or is numerically unstable 
   - Replaced hot-path covariate-score and cross-information `einsum` forms with direct matmul layouts.
 - Firth path improvements:
   - Replaced explicit inverse and generic solves with Cholesky-based solves in the single-variant Firth solver.
+  - Reduced Firth leverage/solve overhead by reusing factorization and avoiding redundant solve dispatch work.
 - Linear path improvement:
   - Replaced `cho_solve` wrapper usage with explicit triangular solves in SPD systems.
 
@@ -60,8 +61,9 @@ Use this only when the throughput-first preset fails or is numerically unstable 
 - Device-only padded Firth fallback plan: rejected for steady-state throughput (inactive padded lanes still paid heavy compute cost).
 - Transient grouped/packed merge experiments: rejected (regressed merge hotspot vs simple per-field scatter).
 - Full device-resident no-missing planner path: mixed result (better first-run/profiled latency, worse warmed fallback-heavy throughput).
+- Full no-missing specialized Firth kernel split (mask-free variant stack): reverted after instability/regression in fallback-heavy sweeps.
 
-## Ideas that do not make sense to prioritize
+## Ideas that do not make sense to prioritize now
 
 - Blanket host-side dtype-cast cleanup as a standalone project.
 - `jax.pmap` for Firth on a single-GPU workstation.
@@ -69,66 +71,38 @@ Use this only when the throughput-first preset fails or is numerically unstable 
 - Factorization reuse across IRLS iterations where weights change each iteration.
 - More standard-IRLS covariate-information rewrites without fresh kernel evidence.
 - Linear-kernel algebra rewrites unless full-chromosome profiling shows linear is materially on the critical path.
+- Any optimization that increases GPU handle churn or adds many new tiny solver invocations per iteration.
 
 ## Active backlog (warmed-throughput focused)
 
-### P0 - Refresh warmed-state profiling with compilation noise isolated
+### P0 - Reduce fallback orchestration and merge overhead
 
 Why:
 
-- The codebase changed materially and the remaining bottleneck moved.
-- The current detailed profile still contains substantial lowering/cache-miss noise, which obscures steady-state GPU cost.
+- Fresh warmed profiles still show `compute_batched_firth_updates_without_mask(...)` as the dominant chunk-level hotspot.
+- `merge_firth_result_once(...)` and scatter-heavy merge operations remain a meaningful secondary cost.
 
-What to measure:
+Plan:
 
-- warmed throughput for `chunk_size=512` and `chunk_size=1024`
-- kernel launch count and dominant kernels in standard masked/no-missing IRLS
-- fallback-heavy behavior at `variant_limit=2048`, `chunk_size=256`
-- warmed full-chromosome logistic throughput after one explicit warmup pass
-- relative time split between standard path, Firth compute, fallback planning, and host transfers
+- Fuse fallback result materialization to reduce per-field concatenate/scatter traffic.
+- Reduce host round-trips in fallback planning (`device_get` of batch counts and masks) where possible.
+- Keep fixed-bucket strategy only if inactive-lane compute does not increase.
 
 Success criterion:
 
-- clear attribution of steady-state time split between Firth arithmetic, fallback orchestration, and any remaining standard-path kernels.
+- Improved fallback-heavy benchmark (`variant_limit=2048`, `chunk_size=256`) with unchanged checksums.
 
-### P0 - Optimize no-missing Firth fallback compute
-
-Why:
-
-- Fresh profiling shows the dominant remaining chunk-level hotspot is now `compute_batched_firth_updates_without_mask(...)` and the vmapped `fit_single_variant_firth_logistic_regression(...)` path, not standard IRLS assembly.
-
-Candidate directions:
-
-- Rewrite leverage / projected-design work inside Firth to minimize repeated solves and transient matrices.
-- Benchmark whether a bucket-specialized vmapped Firth kernel reduces overhead versus the current generic path.
-- Inspect whether genotype-last scalar-stat extraction can avoid rebuilding full intermediate matrices late in the solver.
-
-Constraint:
-
-- Keep Firth convergence semantics and PLINK-equivalent output parity unchanged.
-
-### P1 - Reduce fallback orchestration overhead only where profiles still justify it
+### P0 - Harden warmed benchmarking/profiling execution presets
 
 Why:
 
-- Fresh profile still shows planning/orchestration cost (`nonzero`, batch planning, Python-side batch loop), but it is now secondary to Firth arithmetic.
+- Throughput-first memory settings can intermittently fail with cuBLAS/cuSOLVER handle allocation errors on long profiling runs.
 
 Plan:
 
-- Keep warmed-throughput path as production default.
-- Focus only on changes that reduce host transfers or batch-loop overhead without reintroducing padded inactive-lane compute.
-- Prefer changes that preserve the current good fallback-heavy warmed throughput characteristics.
-
-### P1 - Add a warmed-only profiling harness
-
-Why:
-
-- The existing detailed profile is useful, but first-run tracing/lowering work still dominates too much of the summary to guide steady-state kernel work precisely.
-
-Plan:
-
-- Warm once, then profile a second pass over representative chunk sizes and one full-chromosome run.
-- Emit machine-readable summaries separating compile/lower time from warmed execution time.
+- Keep throughput-first settings for benchmark comparisons.
+- Add an explicit low-memory profiling preset to avoid run failures.
+- Record environment preset in every benchmark/profile JSON artifact.
 
 ### P2 - Revisit fallback merge layout only if merge reappears as top hotspot
 
@@ -157,14 +131,16 @@ Action:
   - fallback-heavy `chunk_size=256` improved modestly.
   - `chunk_size=512` was effectively flat, and some compute+format surfaces regressed slightly.
 - Fresh detailed profiling shows the remaining dominant chunk-level cost is Firth fallback compute and its orchestration, not the standard no-missing IRLS Fisher assembly.
-- Because of that shift, more standard-path algebra rewrites should be deprioritized until fresh `nsys`/`ncu` evidence says otherwise.
+- Firth leverage/factorization work improved fallback-heavy throughput materially relative to older baseline runs.
+- Full no-missing Firth kernel specialization attempt was reverted due instability/regression signals in fallback-heavy runs.
+- Because of that, further Firth changes should be incremental and benchmark-gated, not large-path rewrites.
 
 ## Recommended next implementation order
 
-1. Add warmed-only profiling so steady-state kernel costs are isolated cleanly.
-2. Optimize no-missing Firth fallback compute.
-3. Recheck fallback orchestration only if it still consumes a meaningful share after the Firth rewrite.
-4. Leave `src/g/compute/linear.py` alone unless a later full profile elevates it.
+1. Optimize fallback merge/orchestration in `compute_batched_firth_updates_without_mask(...)`.
+2. Add benchmark/profile preset metadata and stability guardrails.
+3. Re-profile and only then consider another small Firth arithmetic optimization.
+4. Leave `src/g/compute/linear.py` unchanged unless future full-run profile elevates it.
 
 ## Suggested command sequence
 
@@ -200,6 +176,6 @@ Interpretation hints:
 
 ## Immediate next steps
 
-1. Re-baseline with throughput-first env and archive JSON outputs.
-2. Confirm top warmed-state hotspot with `nsys` before touching kernels.
-3. Only implement kernel algebra rewrites that win in warmed throughput and keep parity tests green.
+1. Re-baseline fallback-heavy and loop-sweep benchmarks under throughput-first env.
+2. Run warmed detailed profile with low-memory preset if handle allocation failures appear.
+3. Prioritize fallback merge/orchestration reductions with checksum parity gates.
