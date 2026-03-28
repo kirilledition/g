@@ -44,7 +44,8 @@ def test_prepare_linear_association_state_basic() -> None:
     state = prepare_linear_association_state(covariate_matrix, phenotype_vector)
 
     assert state.covariate_matrix.shape == (3, 2)
-    assert state.covariate_crossproduct_inverse.shape == (2, 2)
+    assert state.covariate_matrix_transpose.shape == (2, 3)
+    assert state.covariate_crossproduct_cholesky_factor.shape == (2, 2)
     assert state.phenotype_residual.shape == (3,)
     assert float(state.phenotype_residual_sum_squares) >= 0.0
 

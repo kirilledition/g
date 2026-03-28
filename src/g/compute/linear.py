@@ -4,9 +4,18 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import jax.scipy.linalg
 from jax.scipy.special import betainc
 
 from g.models import LinearAssociationChunkResult, LinearAssociationState
+
+
+def solve_positive_definite_system(
+    cholesky_factor: jax.Array,
+    right_hand_side: jax.Array,
+) -> jax.Array:
+    """Solve a positive-definite linear system from its Cholesky factor."""
+    return jax.scipy.linalg.cho_solve((cholesky_factor, True), right_hand_side)
 
 
 def prepare_linear_association_state(
@@ -25,16 +34,19 @@ def prepare_linear_association_state(
     """
     covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=jnp.float32)
     phenotype_vector_float32 = jnp.asarray(phenotype_vector, dtype=jnp.float32)
-    covariate_crossproduct = covariate_matrix_float32.T @ covariate_matrix_float32
-    covariate_crossproduct_inverse = jnp.linalg.inv(covariate_crossproduct)
-    phenotype_projection = jnp.linalg.solve(
-        covariate_crossproduct, covariate_matrix_float32.T @ phenotype_vector_float32
+    covariate_matrix_transpose = covariate_matrix_float32.T
+    covariate_crossproduct = covariate_matrix_transpose @ covariate_matrix_float32
+    covariate_crossproduct_cholesky_factor = jnp.linalg.cholesky(covariate_crossproduct)
+    phenotype_projection = solve_positive_definite_system(
+        covariate_crossproduct_cholesky_factor,
+        covariate_matrix_transpose @ phenotype_vector_float32,
     )
     phenotype_residual = phenotype_vector_float32 - covariate_matrix_float32 @ phenotype_projection
     phenotype_residual_sum_squares = jnp.dot(phenotype_residual, phenotype_residual)
     return LinearAssociationState(
         covariate_matrix=covariate_matrix_float32,
-        covariate_crossproduct_inverse=covariate_crossproduct_inverse,
+        covariate_matrix_transpose=covariate_matrix_transpose,
+        covariate_crossproduct_cholesky_factor=covariate_crossproduct_cholesky_factor,
         phenotype_residual=phenotype_residual,
         phenotype_residual_sum_squares=phenotype_residual_sum_squares,
     )
@@ -56,13 +68,17 @@ def compute_linear_association_chunk(
 
     """
     covariate_matrix = linear_association_state.covariate_matrix
+    covariate_matrix_transpose = linear_association_state.covariate_matrix_transpose
     genotype_matrix = jnp.asarray(genotype_matrix, dtype=jnp.float32)
     sample_count = covariate_matrix.shape[0]
     covariate_parameter_count = covariate_matrix.shape[1]
     degrees_of_freedom = sample_count - covariate_parameter_count - 1
 
-    covariate_genotype_crossproduct = covariate_matrix.T @ genotype_matrix
-    genotype_projection = linear_association_state.covariate_crossproduct_inverse @ covariate_genotype_crossproduct
+    covariate_genotype_crossproduct = covariate_matrix_transpose @ genotype_matrix
+    genotype_projection = solve_positive_definite_system(
+        linear_association_state.covariate_crossproduct_cholesky_factor,
+        covariate_genotype_crossproduct,
+    )
 
     genotype_sum_squares = jnp.sum(genotype_matrix * genotype_matrix, axis=0)
     projection_sum_squares = jnp.sum(covariate_genotype_crossproduct * genotype_projection, axis=0)

@@ -96,14 +96,16 @@ class LinearAssociationState:
 
     Attributes:
         covariate_matrix: Covariate design matrix.
-        covariate_crossproduct_inverse: Inverse of X'X.
+        covariate_matrix_transpose: Transpose of the covariate design matrix.
+        covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
         phenotype_residual: Residuals after covariate adjustment.
         phenotype_residual_sum_squares: Sum of squared residuals.
 
     """
 
     covariate_matrix: jax.Array
-    covariate_crossproduct_inverse: jax.Array
+    covariate_matrix_transpose: jax.Array
+    covariate_crossproduct_cholesky_factor: jax.Array
     phenotype_residual: jax.Array
     phenotype_residual_sum_squares: jax.Array
 
