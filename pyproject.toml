@@ -40,6 +40,11 @@ dev = [
     "ty>=0.0.1a19",
 ]
 gpu = ["jax[cuda12]>=0.9.2"]
+triton-gpu = [
+    "jax[cuda12]>=0.9.2",
+    "torch",
+    "triton",
+]
 
 [build-system]
 requires = ["maturin>=1.0,<2.0"]

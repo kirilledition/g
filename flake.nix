@@ -82,7 +82,12 @@
             export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             export NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             export LD_LIBRARY_PATH=/run/opengl-driver/lib:''${NIX_LD_LIBRARY_PATH:+:$NIX_LD_LIBRARY_PATH}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-            echo "GWAS Engine dev shell ready (uv, Rust, plink2, regenie)."
+            export TRITON_LIBCUDA_PATH=/run/opengl-driver/lib
+            if ! uv pip show triton torch > /dev/null 2>&1; then
+              uv pip install --index-url https://download.pytorch.org/whl/cu128 torch
+              uv pip install triton
+            fi
+            echo "GWAS Engine dev shell ready (uv, Rust, plink2, regenie, triton)."
           '';
         };
       });
