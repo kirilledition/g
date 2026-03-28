@@ -70,7 +70,7 @@ def test_iter_linear_output_frames_yields_one_accumulator_per_chunk() -> None:
     with (
         patch("g.engine.load_aligned_sample_data", return_value=aligned_sample_data) as mock_load_aligned_sample_data,
         patch("g.engine.prepare_linear_association_state", return_value="linear-state") as mock_prepare_state,
-        patch("g.engine.iter_genotype_chunks", return_value=iter(genotype_chunks)) as mock_iter_genotype_chunks,
+        patch("g.engine.iter_linear_genotype_chunks", return_value=iter(genotype_chunks)) as mock_iter_genotype_chunks,
         patch("g.engine.compute_linear_association_chunk", return_value=linear_result) as mock_compute_chunk,
     ):
         accumulators = list(

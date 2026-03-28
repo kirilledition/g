@@ -12,7 +12,7 @@ import pytest
 
 from g.io.tabular import (
     FAMILY_TABLE_COLUMNS,
-    convert_frame_to_float64_jax,
+    convert_frame_to_float32_jax,
     infer_covariate_names,
     load_aligned_sample_data,
     load_family_table,
@@ -101,8 +101,8 @@ def test_infer_covariate_names_empty_raises() -> None:
         infer_covariate_names(covariate_table)
 
 
-def test_convert_frame_to_float64_jax() -> None:
-    """Ensure convert_frame_to_float64_jax converts DataFrame correctly."""
+def test_convert_frame_to_float32_jax() -> None:
+    """Ensure convert_frame_to_float32_jax converts DataFrame correctly."""
     df = pl.DataFrame(
         {
             "col1": [1.0, 2.0, 3.0],
@@ -110,10 +110,10 @@ def test_convert_frame_to_float64_jax() -> None:
         }
     )
 
-    result = convert_frame_to_float64_jax(df)
+    result = convert_frame_to_float32_jax(df)
 
     assert result.shape == (3, 2)
-    assert result.dtype == jnp.float64
+    assert result.dtype == jnp.float32
     np.testing.assert_allclose(result[:, 0], jnp.array([1.0, 2.0, 3.0]))
 
 
@@ -254,6 +254,46 @@ def test_load_aligned_sample_data_no_aligned_samples(tmp_path: Path) -> None:
             phenotype_path=pheno_path,
             phenotype_name="trait",
             covariate_path=covar_path,
+            covariate_names=("age",),
+            is_binary_trait=False,
+        )
+
+
+def test_load_aligned_sample_data_supports_intercept_only_runs(tmp_path: Path) -> None:
+    """Ensure aligned sample loading supports runs without an external covariate table."""
+    fam_path = tmp_path / "test.fam"
+    fam_path.write_text("f1\ts1\t0\t0\t1\t-9\nf2\ts2\t0\t0\t2\t-9\n")
+
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\t1.5\nf2\ts2\t2.5\n")
+
+    aligned_sample_data = load_aligned_sample_data(
+        bed_prefix=tmp_path / "test",
+        phenotype_path=phenotype_path,
+        phenotype_name="trait",
+        covariate_path=None,
+        covariate_names=None,
+        is_binary_trait=False,
+    )
+
+    assert aligned_sample_data.covariate_names == ("intercept",)
+    np.testing.assert_allclose(np.asarray(aligned_sample_data.covariate_matrix), np.array([[1.0], [1.0]]), atol=0.0)
+
+
+def test_load_aligned_sample_data_rejects_covariate_names_without_table(tmp_path: Path) -> None:
+    """Ensure explicit covariate names require a covariate table."""
+    fam_path = tmp_path / "test.fam"
+    fam_path.write_text("f1\ts1\t0\t0\t1\t-9\n")
+
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\t1.5\n")
+
+    with pytest.raises(ValueError, match="Covariate names cannot be provided without a covariate table"):
+        load_aligned_sample_data(
+            bed_prefix=tmp_path / "test",
+            phenotype_path=phenotype_path,
+            phenotype_name="trait",
+            covariate_path=None,
             covariate_names=("age",),
             is_binary_trait=False,
         )

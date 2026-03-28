@@ -124,7 +124,7 @@ def load_aligned_sample_data(
     bed_prefix: Path,
     phenotype_path: Path,
     phenotype_name: str,
-    covariate_path: Path,
+    covariate_path: Path | None,
     covariate_names: tuple[str, ...] | None,
     *,
     is_binary_trait: bool,
@@ -151,37 +151,41 @@ def load_aligned_sample_data(
         pl.col("FID").cast(pl.String),
         pl.col("IID").cast(pl.String),
     )
-    covariate_table = load_phenotype_or_covariate_table(covariate_path).with_columns(
-        pl.col("FID").cast(pl.String),
-        pl.col("IID").cast(pl.String),
-    )
-
     if phenotype_name not in phenotype_table.columns:
         message = f"Phenotype column '{phenotype_name}' was not found in {phenotype_path}."
         raise ValueError(message)
 
-    selected_covariate_names = covariate_names or infer_covariate_names(covariate_table)
-    missing_covariates = [name for name in selected_covariate_names if name not in covariate_table.columns]
-    if missing_covariates:
-        message = f"Covariate columns are missing from {covariate_path}: {missing_covariates}."
-        raise ValueError(message)
+    aligned_table = family_table.join(
+        phenotype_table.select("FID", "IID", phenotype_name),
+        left_on=["family_identifier", "individual_identifier"],
+        right_on=["FID", "IID"],
+        how="inner",
+    )
 
-    aligned_table = (
-        family_table.join(
-            phenotype_table.select("FID", "IID", phenotype_name),
-            left_on=["family_identifier", "individual_identifier"],
-            right_on=["FID", "IID"],
-            how="inner",
+    selected_covariate_names: tuple[str, ...]
+    if covariate_path is None:
+        if covariate_names is not None:
+            message = "Covariate names cannot be provided without a covariate table."
+            raise ValueError(message)
+        selected_covariate_names = ()
+    else:
+        covariate_table = load_phenotype_or_covariate_table(covariate_path).with_columns(
+            pl.col("FID").cast(pl.String),
+            pl.col("IID").cast(pl.String),
         )
-        .join(
+        selected_covariate_names = covariate_names or infer_covariate_names(covariate_table)
+        missing_covariates = [name for name in selected_covariate_names if name not in covariate_table.columns]
+        if missing_covariates:
+            message = f"Covariate columns are missing from {covariate_path}: {missing_covariates}."
+            raise ValueError(message)
+        aligned_table = aligned_table.join(
             covariate_table.select("FID", "IID", *selected_covariate_names),
             left_on=["family_identifier", "individual_identifier"],
             right_on=["FID", "IID"],
             how="inner",
         )
-        .drop_nulls(subset=[phenotype_name, *selected_covariate_names])
-        .sort("sample_index")
-    )
+
+    aligned_table = aligned_table.drop_nulls(subset=[phenotype_name, *selected_covariate_names]).sort("sample_index")
 
     if aligned_table.height == 0:
         message = "No aligned samples remain after joining phenotype and covariate tables."
@@ -190,10 +194,16 @@ def load_aligned_sample_data(
     phenotype_values = aligned_table.get_column(phenotype_name).cast(pl.Float32).to_numpy()
     phenotype_array = recode_binary_phenotype(phenotype_values) if is_binary_trait else phenotype_values
 
-    design_table = aligned_table.select(
-        pl.lit(1.0).alias("intercept"),
-        *[pl.col(column_name).cast(pl.Float32).alias(column_name) for column_name in selected_covariate_names],
-    )
+    if selected_covariate_names:
+        design_table = aligned_table.select(
+            pl.lit(1.0).alias("intercept"),
+            *[pl.col(column_name).cast(pl.Float32).alias(column_name) for column_name in selected_covariate_names],
+        )
+    else:
+        design_table = pl.DataFrame(
+            {"intercept": np.ones(aligned_table.height, dtype=np.float32)},
+            schema={"intercept": pl.Float32},
+        )
     phenotype_frame = pl.DataFrame({phenotype_name: phenotype_array}, schema={phenotype_name: pl.Float32})
 
     return AlignedSampleData(
