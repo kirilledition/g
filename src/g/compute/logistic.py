@@ -425,14 +425,13 @@ def compute_firth_penalized_log_likelihood(
 
 def compute_firth_statistics(
     coefficients: jax.Array,
-    covariance_matrix: jax.Array,
+    genotype_variance: jax.Array,
     converged: jax.Array,
     failed: jax.Array,
     iteration_count: jax.Array,
 ) -> FirthVariantResult:
     """Build association statistics from a fitted Firth model."""
     beta = coefficients[-1]
-    genotype_variance = covariance_matrix[-1, -1]
     standard_error = jnp.sqrt(jnp.where(genotype_variance > 0.0, genotype_variance, jnp.nan))
     test_statistic = beta / standard_error
     p_value = 2.0 * norm.sf(jnp.abs(test_statistic))
@@ -690,8 +689,6 @@ def compute_standard_logistic_association_chunk_with_mask(
         covariate_information_matrix = compute_covariate_information_matrix(covariate_matrix, effective_weights)
         cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, weighted_genotype_matrix)
         genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
-        # Optimize: combine RHS and use cho_solve for symmetric PSD Fisher information matrix
-        # This saves a full solve and leverages the PSD structure for a ~2x speedup on this block.
         rhs = jnp.stack([covariate_score, cross_information_vector], axis=-1)
 
         def cho_solve_single(matrix: jax.Array, right_hand_side: jax.Array) -> jax.Array:
@@ -1002,6 +999,11 @@ def fit_single_variant_firth_logistic_regression(
         return clip_probability_matrix(jax.nn.sigmoid(linear_predictor))
 
     full_design_matrix = jnp.concatenate([covariate_matrix, genotype_vector[:, None]], axis=1)
+    unit_genotype_vector = jnp.zeros((full_design_matrix.shape[1],), dtype=covariate_matrix.dtype).at[-1].set(1.0)
+
+    def solve_positive_definite_system(matrix: jax.Array, right_hand_side: jax.Array) -> jax.Array:
+        cholesky_factor, lower_triangle_indicator = jax.scipy.linalg.cho_factor(matrix)
+        return jax.scipy.linalg.cho_solve((cholesky_factor, lower_triangle_indicator), right_hand_side)
 
     def compute_hessian_from_weights(weight_vector: jax.Array) -> jax.Array:
         weighted_design_matrix = full_design_matrix * weight_vector[:, None]
@@ -1016,7 +1018,7 @@ def fit_single_variant_firth_logistic_regression(
             jnp.clip(probability_vector * (1.0 - probability_vector), MINIMUM_WEIGHT),
             0.0,
         )
-        projected_design_matrix = jnp.linalg.solve(information_matrix, full_design_matrix.T).T
+        projected_design_matrix = solve_positive_definite_system(information_matrix, full_design_matrix.T).T
         leverage_vector = variance_vector * jnp.sum(projected_design_matrix * full_design_matrix, axis=1)
         adjusted_weight_vector = jnp.where(
             observation_mask,
@@ -1071,7 +1073,7 @@ def fit_single_variant_firth_logistic_regression(
         adjusted_score = full_design_matrix.T @ adjusted_weight_components.adjusted_weight_vector
         adjusted_score_maximum = jnp.max(jnp.abs(adjusted_score))
         second_hessian = compute_hessian_from_weights(adjusted_weight_components.second_weight_vector)
-        coefficient_step = jnp.linalg.solve(second_hessian, adjusted_score)
+        coefficient_step = solve_positive_definite_system(second_hessian, adjusted_score)
         maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
         step_scale = jnp.minimum(1.0, maximum_step_size / jnp.maximum(maximum_coefficient_step, FIRTH_TOLERANCE_FLOOR))
         scaled_coefficient_step = coefficient_step * step_scale
@@ -1123,10 +1125,10 @@ def fit_single_variant_firth_logistic_regression(
         probability_vector=final_probability_vector,
     )
     final_second_hessian = compute_hessian_from_weights(final_adjusted_weight_components.second_weight_vector)
-    final_second_covariance_matrix = jnp.linalg.inv(final_second_hessian)
+    genotype_variance = solve_positive_definite_system(final_second_hessian, unit_genotype_vector)[-1]
     computed_result = compute_firth_statistics(
         coefficients=final_state.coefficients,
-        covariance_matrix=final_second_covariance_matrix,
+        genotype_variance=genotype_variance,
         converged=final_state.converged,
         failed=final_state.failed,
         iteration_count=final_state.iteration_count,

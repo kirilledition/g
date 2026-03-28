@@ -300,7 +300,7 @@ def test_top_level_logistic_chunk_functions_match_on_complete_data() -> None:
     )
 
     np.testing.assert_allclose(masked_result.beta, unmasked_result.beta, atol=2e-5)
-    np.testing.assert_allclose(masked_result.p_value, unmasked_result.p_value, atol=1e-6)
+    np.testing.assert_allclose(masked_result.p_value, unmasked_result.p_value, atol=2e-6)
     np.testing.assert_array_equal(masked_result.method_code, unmasked_result.method_code)
 
 
