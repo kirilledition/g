@@ -11,9 +11,13 @@ setup-data:
     uv run python scripts/fetch_1kg.py
     uv run python scripts/simulate_phenos.py
 
-# Run PLINK2/Hail/Regenie baselines and generate hardware report
+# Run PLINK2/Regenie baselines and generate hardware report (excludes slow Hail benchmarks by default)
 benchmark-baselines: setup-data
     uv run python scripts/benchmark.py
+
+# Run full baselines including Hail (slow - requires cached MatrixTable)
+benchmark-baselines-full: setup-data
+    HAIL_INCLUDE=1 uv run python scripts/benchmark.py
 
 # --- Development ---
 

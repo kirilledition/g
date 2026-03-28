@@ -600,49 +600,53 @@ def main() -> None:
         build_plink_binary_command(plink_executable, baseline_paths),
         baseline_paths.baseline_directory / "plink_bin",
     )
-    results_by_name["hail_matrix_table_prepare"] = run_command(
-        "Hail MatrixTable Prepare",
-        build_hail_cache_prepare_command(hail_python_executable, baseline_paths, cache_mode="refresh"),
-        baseline_paths.hail_matrix_table_path,
-    )
-    results_by_name["hail_suite_cached"] = run_command(
-        "Hail Cached Suite",
-        build_hail_suite_command(hail_python_executable, baseline_paths, cache_mode="require"),
-        baseline_paths.hail_suite_report_path,
-    )
-    if results_by_name["hail_suite_cached"].success and baseline_paths.hail_suite_report_path.exists():
-        hail_suite_report = load_hail_suite_report(baseline_paths.hail_suite_report_path)
-        hail_step_reports = {
-            step_report["output_name"]: step_report for step_report in hail_suite_report["step_reports"]
-        }
-        results_by_name["hail_cont"] = build_hail_step_result(
-            results_by_name["hail_suite_cached"],
-            hail_step_reports["hail_cont"],
+
+    # Conditionally run Hail benchmarks (slow - ~10+ minutes for full chr22)
+    if os.environ.get("HAIL_INCLUDE"):
+        results_by_name["hail_matrix_table_prepare"] = run_command(
+            "Hail MatrixTable Prepare",
+            build_hail_cache_prepare_command(hail_python_executable, baseline_paths, cache_mode="refresh"),
+            baseline_paths.hail_matrix_table_path,
         )
-        results_by_name["hail_bin_wald"] = build_hail_step_result(
-            results_by_name["hail_suite_cached"],
-            hail_step_reports["hail_bin_wald"],
+        results_by_name["hail_suite_cached"] = run_command(
+            "Hail Cached Suite",
+            build_hail_suite_command(hail_python_executable, baseline_paths, cache_mode="require"),
+            baseline_paths.hail_suite_report_path,
         )
-        results_by_name["hail_bin_firth"] = build_hail_step_result(
-            results_by_name["hail_suite_cached"],
-            hail_step_reports["hail_bin_firth"],
-        )
-    else:
-        error_message = (
-            f"Missing Hail suite report: {baseline_paths.hail_suite_report_path}"
-            if results_by_name["hail_suite_cached"].success
-            else "Hail cached suite failed."
-        )
-        for result_name in ["hail_cont", "hail_bin_wald", "hail_bin_firth"]:
-            results_by_name[result_name] = CommandResult(
-                success=False,
-                command=results_by_name["hail_suite_cached"].command,
-                duration_seconds=0.0,
-                stdout=results_by_name["hail_suite_cached"].stdout,
-                stderr=results_by_name["hail_suite_cached"].stderr,
-                output_prefix=str(hail_output_path(baseline_paths, result_name)),
-                error=error_message,
+        if results_by_name["hail_suite_cached"].success and baseline_paths.hail_suite_report_path.exists():
+            hail_suite_report = load_hail_suite_report(baseline_paths.hail_suite_report_path)
+            hail_step_reports = {
+                step_report["output_name"]: step_report for step_report in hail_suite_report["step_reports"]
+            }
+            results_by_name["hail_cont"] = build_hail_step_result(
+                results_by_name["hail_suite_cached"],
+                hail_step_reports["hail_cont"],
             )
+            results_by_name["hail_bin_wald"] = build_hail_step_result(
+                results_by_name["hail_suite_cached"],
+                hail_step_reports["hail_bin_wald"],
+            )
+            results_by_name["hail_bin_firth"] = build_hail_step_result(
+                results_by_name["hail_suite_cached"],
+                hail_step_reports["hail_bin_firth"],
+            )
+        else:
+            error_message = (
+                f"Missing Hail suite report: {baseline_paths.hail_suite_report_path}"
+                if results_by_name["hail_suite_cached"].success
+                else "Hail cached suite failed."
+            )
+            for result_name in ["hail_cont", "hail_bin_wald", "hail_bin_firth"]:
+                results_by_name[result_name] = CommandResult(
+                    success=False,
+                    command=results_by_name["hail_suite_cached"].command,
+                    duration_seconds=0.0,
+                    stdout=results_by_name["hail_suite_cached"].stdout,
+                    stderr=results_by_name["hail_suite_cached"].stderr,
+                    output_prefix=str(hail_output_path(baseline_paths, result_name)),
+                    error=error_message,
+                )
+
     results_by_name["regenie_step1"] = run_command(
         "Regenie Step 1",
         build_regenie_step1_command(regenie_executable, baseline_paths),

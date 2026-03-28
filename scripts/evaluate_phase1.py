@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from dataclasses import asdict, dataclass
@@ -614,30 +615,55 @@ def main() -> None:
         build_plink_binary_command,
         build_plink_continuous_command,
         ensure_hail_environment,
+        hail_output_path,
         load_hail_suite_report,
         resolve_required_executable,
     )
 
     baseline_paths = build_baseline_paths()
     plink_executable = resolve_required_executable("PLINK2_BIN", "plink2")
-    hail_python_executable = ensure_hail_environment()
 
-    hail_cache_prepare_seconds = time_command(
-        build_hail_cache_prepare_command(hail_python_executable, baseline_paths, cache_mode="reuse")
-    )
+    # Check if Hail baselines exist or should be run
+    hail_cont_path = hail_output_path(baseline_paths, "hail_cont")
+    hail_bin_wald_path = hail_output_path(baseline_paths, "hail_bin_wald")
+    hail_bin_firth_path = hail_output_path(baseline_paths, "hail_bin_firth")
+    hail_baselines_exist = all(p.exists() for p in [hail_cont_path, hail_bin_wald_path, hail_bin_firth_path])
+
+    if os.environ.get("HAIL_INCLUDE") or hail_baselines_exist:
+        hail_python_executable = ensure_hail_environment()
+
+        if os.environ.get("HAIL_INCLUDE"):
+            # Run Hail benchmarks if explicitly enabled
+            hail_cache_prepare_seconds = time_command(
+                build_hail_cache_prepare_command(hail_python_executable, baseline_paths, cache_mode="reuse")
+            )
+            hail_suite_command_arguments = build_hail_suite_command(
+                hail_python_executable,
+                baseline_paths,
+                cache_mode="require",
+            )
+            time_command(hail_suite_command_arguments)
+        else:
+            # Use cached values from existing report if not running
+            hail_cache_prepare_seconds = 0.0
+
+        hail_suite_report = load_hail_suite_report(baseline_paths.hail_suite_report_path)
+        hail_step_reports = {
+            step_report["output_name"]: step_report
+            for step_report in hail_suite_report["step_reports"]
+        }
+        hail_linear_seconds = float(hail_step_reports["hail_cont"]["duration_seconds"])
+        hail_logistic_wald_seconds = float(hail_step_reports["hail_bin_wald"]["duration_seconds"])
+        hail_logistic_firth_seconds = float(hail_step_reports["hail_bin_firth"]["duration_seconds"])
+    else:
+        # Hail baselines not available - will be skipped in report
+        hail_cache_prepare_seconds = 0.0
+        hail_linear_seconds = 0.0
+        hail_logistic_wald_seconds = 0.0
+        hail_logistic_firth_seconds = 0.0
+
     plink_linear_seconds = time_command(build_plink_continuous_command(plink_executable, baseline_paths))
     plink_logistic_seconds = time_command(build_plink_binary_command(plink_executable, baseline_paths))
-    hail_suite_command_arguments = build_hail_suite_command(
-        hail_python_executable,
-        baseline_paths,
-        cache_mode="require",
-    )
-    time_command(hail_suite_command_arguments)
-    hail_suite_report = load_hail_suite_report(baseline_paths.hail_suite_report_path)
-    hail_step_reports = {step_report["output_name"]: step_report for step_report in hail_suite_report["step_reports"]}
-    hail_linear_seconds = float(hail_step_reports["hail_cont"]["duration_seconds"])
-    hail_logistic_wald_seconds = float(hail_step_reports["hail_bin_wald"]["duration_seconds"])
-    hail_logistic_firth_seconds = float(hail_step_reports["hail_bin_firth"]["duration_seconds"])
     phase1_linear_run = run_phase1_linear(baseline_paths)
     phase1_logistic_run = run_phase1_logistic(baseline_paths)
 
