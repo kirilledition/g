@@ -4,12 +4,12 @@ You are an AI coding assistant operating within a high-performance, mixed-langua
 
 ## **Environment & Tooling**
 
-* **Package Management:** uv (Python) and cargo (Rust).  
+* **Package Management:** uv (Python) and cargo (Rust). Run Python and project tooling via `nix develop --command ...`, using the repo-local `.venv` managed by `uv`.  
 * **Task Runner:** just. Always check the Justfile for available project-specific commands.  
 * **Linting & Formatting:** Ensure code passes before committing (use nix develop):  
   * just check
   * just test
-  * 
+   
 ## **Repository Structure**
 
 * pyproject.toml / Cargo.toml: Maturin mixed-layout configuration.  
