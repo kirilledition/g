@@ -1217,8 +1217,14 @@ def initialize_mixed_firth_batch_coefficients(
     """
     padded_index_vector = firth_index_batch.padded_index_vector
     batch_standard_coefficients = jnp.take(standard_coefficients, padded_index_vector, axis=0)
-    heuristic_positions = np.nonzero(batch_heuristic_firth_mask)[0]
-    heuristic_indices = firth_index_batch.active_index_array[heuristic_positions]
+    batch_heuristic_mask = jnp.asarray(batch_heuristic_firth_mask)
+    heuristic_variant_count = int(jax.device_get(jnp.sum(batch_heuristic_mask, dtype=jnp.int32)))
+    heuristic_position_vector = jnp.nonzero(
+        batch_heuristic_mask,
+        size=FIRTH_BATCH_SIZE,
+        fill_value=0,
+    )[0][:heuristic_variant_count]
+    heuristic_indices = firth_index_batch.padded_index_vector[heuristic_position_vector]
     heuristic_genotype_matrix = jnp.take(genotype_matrix, heuristic_indices.astype(np.int32), axis=1)
     if observation_mask is None:
         heuristic_observation_mask = jnp.ones(heuristic_genotype_matrix.T.shape, dtype=bool)
@@ -1230,11 +1236,9 @@ def initialize_mixed_firth_batch_coefficients(
         phenotype_vector=phenotype_vector,
         observation_mask=heuristic_observation_mask,
     )
-    use_heuristic_mask = np.zeros(FIRTH_BATCH_SIZE, dtype=bool)
-    use_heuristic_mask[heuristic_positions] = True
-    device_use_heuristic_mask = jnp.asarray(use_heuristic_mask)[:, None]
+    device_use_heuristic_mask = batch_heuristic_mask[:, None]
     heuristic_padded = jnp.zeros_like(batch_standard_coefficients)
-    heuristic_padded = heuristic_padded.at[heuristic_positions].set(heuristic_initial_coefficients)
+    heuristic_padded = heuristic_padded.at[heuristic_position_vector].set(heuristic_initial_coefficients)
     return jnp.where(device_use_heuristic_mask, heuristic_padded, batch_standard_coefficients)
 
 
@@ -1436,8 +1440,11 @@ def compute_batched_firth_updates_without_mask(
             else:
                 batch_heuristic_firth_mask = jnp.take(device_heuristic_firth_mask, fallback_indices, axis=0)
                 batch_heuristic_firth_mask = batch_heuristic_firth_mask & batch_active_mask
-                host_batch_heuristic_mask = np.asarray(jax.device_get(batch_heuristic_firth_mask))
-                heuristic_position_vector = np.nonzero(host_batch_heuristic_mask)[0]
+                heuristic_position_vector = jnp.nonzero(
+                    batch_heuristic_firth_mask,
+                    size=bucket_size,
+                    fill_value=0,
+                )[0][:heuristic_variant_count]
                 if heuristic_variant_count == active_variant_count:
                     batch_initial_coefficients = initialize_full_model_coefficients_without_mask(
                         covariate_matrix=covariate_matrix,

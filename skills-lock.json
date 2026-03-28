@@ -1,10 +1,30 @@
 {
   "version": 1,
   "skills": {
+    "cuda": {
+      "source": "technillogue/ptx-isa-markdown",
+      "sourceType": "github",
+      "computedHash": "b615fcd919d1f5f041527905d71fc14694b4c58c83a78d286a4a2d98ad2a47c2"
+    },
+    "cuda-skill": {
+      "source": "slowlyc/cursor-gpu-skills",
+      "sourceType": "github",
+      "computedHash": "25a56030069a0433ce10841f416ba65a7a9c3a25e3bbfa6b3629b47f850b20ca"
+    },
     "find-skills": {
       "source": "vercel-labs/skills",
       "sourceType": "github",
       "computedHash": "d31e234f0c90694a670222cdd1dafa853e051d7066beda389f1097c22dadd461"
+    },
+    "jax-best-practices": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "computedHash": "71a86fb53bf232f5fe55b2194bf45e115a4cc573c7db496fdcff653c6ccf8e97"
+    },
+    "triton-skill": {
+      "source": "slowlyc/cursor-gpu-skills",
+      "sourceType": "github",
+      "computedHash": "7264fa7778a20a2dc55cfbff95443328f1e8070a9e1005d2777c19257f9891db"
     }
   }
 }

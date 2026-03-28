@@ -1,11 +1,10 @@
-"""Benchmark PyTorch+Triton linear association path against baseline JAX."""
-
 from __future__ import annotations
 
 import argparse
 import json
 import time
 from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -18,6 +17,35 @@ from g.compute.linear_triton import (
     compute_linear_association_statistics_with_triton,
     prepare_triton_linear_association_state,
 )
+
+if TYPE_CHECKING:
+    from typing import Protocol
+
+    from g.compute.linear_triton import TritonLinearAssociationStatistics
+    from g.models import LinearAssociationChunkResult
+
+    class CompiledCallable(Protocol):
+        def __call__(
+            self,
+            linear_association_state: object,
+            genotype_matrix: jax.Array,
+        ) -> LinearAssociationChunkResult: ...
+
+
+class CompiledTiming(NamedTuple):
+    compiled_callable: CompiledCallable
+    compile_seconds: float
+
+
+class TritonTiming(NamedTuple):
+    triton_state: TritonLinearAssociationState
+    compile_seconds: float
+
+
+class JaxTiming(NamedTuple):
+    compiled_callable: CompiledCallable
+    linear_association_state: object
+    compile_seconds: float
 
 
 @dataclass
@@ -86,7 +114,7 @@ def compile_jax_baseline(
     covariate_matrix: np.ndarray,
     phenotype_vector: np.ndarray,
     genotype_matrix: np.ndarray,
-) -> tuple[object, object, float]:
+) -> JaxTiming:
     linear_association_state = prepare_linear_association_state(
         jnp.asarray(covariate_matrix),
         jnp.asarray(phenotype_vector),
@@ -98,15 +126,19 @@ def compile_jax_baseline(
         genotype_matrix_jax,
     ).compile()
     compile_seconds = time.perf_counter() - compile_start_time
-    return compiled_function, linear_association_state, compile_seconds
+    return JaxTiming(
+        compiled_callable=compiled_function,  # type: ignore[arg-type]
+        linear_association_state=linear_association_state,
+        compile_seconds=compile_seconds,
+    )
 
 
 def benchmark_jax_baseline(
-    compiled_function: object,
+    compiled_function: CompiledCallable,
     linear_association_state: object,
     genotype_matrix: np.ndarray,
     repeat_count: int,
-) -> tuple[object, float, float]:
+) -> tuple[LinearAssociationChunkResult, float, float]:
     execution_times: list[float] = []
     genotype_matrix_jax = jnp.asarray(genotype_matrix)
     result = compiled_function(linear_association_state, genotype_matrix_jax)
@@ -125,7 +157,7 @@ def compile_triton_experiment(
     phenotype_vector: np.ndarray,
     genotype_matrix: np.ndarray,
     device: torch.device,
-) -> tuple[TritonLinearAssociationState, float]:
+) -> TritonTiming:
     triton_linear_association_state = prepare_triton_linear_association_state(
         covariate_matrix,
         phenotype_vector,
@@ -139,7 +171,10 @@ def compile_triton_experiment(
     torch.cuda.synchronize(device)
     compile_seconds = time.perf_counter() - compile_start_time
     del warmup_result
-    return triton_linear_association_state, compile_seconds
+    return TritonTiming(
+        triton_state=triton_linear_association_state,
+        compile_seconds=compile_seconds,
+    )
 
 
 def benchmark_triton_experiment(
@@ -147,7 +182,7 @@ def benchmark_triton_experiment(
     genotype_matrix: np.ndarray,
     repeat_count: int,
     device: torch.device,
-) -> tuple[object, float, float]:
+) -> tuple[TritonLinearAssociationStatistics, float, float]:
     execution_times: list[float] = []
     result = compute_linear_association_statistics_with_triton(
         triton_linear_association_state,
@@ -182,26 +217,26 @@ def main() -> None:
         seed=arguments.seed,
     )
     device = torch.device("cuda")
-    baseline_compiled_function, baseline_state, baseline_compile_seconds = compile_jax_baseline(
+    jax_timing = compile_jax_baseline(
         covariate_matrix,
         phenotype_vector,
         genotype_matrix,
     )
     torch.cuda.empty_cache()
-    triton_state, triton_compile_seconds = compile_triton_experiment(
+    triton_timing = compile_triton_experiment(
         covariate_matrix,
         phenotype_vector,
         genotype_matrix,
         device,
     )
     baseline_result, baseline_mean_execution_seconds, baseline_minimum_execution_seconds = benchmark_jax_baseline(
-        baseline_compiled_function,
-        baseline_state,
+        jax_timing.compiled_callable,
+        jax_timing.linear_association_state,
         genotype_matrix,
         arguments.repeat_count,
     )
     triton_result, triton_mean_execution_seconds, triton_minimum_execution_seconds = benchmark_triton_experiment(
-        triton_state,
+        triton_timing.triton_state,
         genotype_matrix,
         arguments.repeat_count,
         device,
@@ -224,12 +259,12 @@ def main() -> None:
         variant_count=arguments.variant_count,
         repeat_count=arguments.repeat_count,
         baseline=TimingSummary(
-            compile_seconds=baseline_compile_seconds,
+            compile_seconds=jax_timing.compile_seconds,
             mean_execution_seconds=baseline_mean_execution_seconds,
             minimum_execution_seconds=baseline_minimum_execution_seconds,
         ),
         triton=TimingSummary(
-            compile_seconds=triton_compile_seconds,
+            compile_seconds=triton_timing.compile_seconds,
             mean_execution_seconds=triton_mean_execution_seconds,
             minimum_execution_seconds=triton_minimum_execution_seconds,
         ),

@@ -9,7 +9,7 @@ You are an AI coding assistant operating within a high-performance, mixed-langua
 * **Linting & Formatting:** Ensure code passes before committing (use nix develop):  
   * just check
   * just test
-  * 
+   
 ## **Repository Structure**
 
 * pyproject.toml / Cargo.toml: Maturin mixed-layout configuration.  
