@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, NamedTuple
@@ -13,6 +14,8 @@ from typing import TYPE_CHECKING, NamedTuple
 import polars as pl
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from benchmark import BaselinePaths
 
 
@@ -21,6 +24,7 @@ class RuntimeComparison:
     """Runtime comparison between one baseline and the Phase 1 engine."""
 
     baseline_name: str
+    phase1_backend: str
     baseline_seconds: float
     phase1_seconds: float
     speed_ratio_baseline_over_phase1: float
@@ -86,27 +90,27 @@ class LogisticHailHybridParitySummary:
 
 
 @dataclass(frozen=True)
-class Phase1EvaluationReport:
-    """Combined Phase 1 parity and runtime report."""
+class Plink1LogisticParitySummary:
+    """Best-effort logistic parity summary against PLINK 1.9."""
 
-    hail_cache_prepare_runtime: RuntimeComparison
-    linear_plink_runtime: RuntimeComparison
-    logistic_plink_runtime: RuntimeComparison
-    linear_hail_runtime: RuntimeComparison
-    logistic_hail_wald_runtime: RuntimeComparison
-    logistic_hail_firth_runtime: RuntimeComparison
-    logistic_hail_hybrid_upper_bound_runtime: RuntimeComparison
-    linear_plink_parity: LinearParitySummary
-    logistic_plink_parity: LogisticParitySummary
-    linear_hail_parity: LinearParitySummary
-    logistic_hail_hybrid_parity: LogisticHailHybridParitySummary
+    compared_variant_count: int
+    max_abs_beta_difference: float
+    max_abs_standard_error_difference: float
+    max_abs_z_statistic_difference: float
+    max_abs_log10_p_value_difference: float
+    allele_reversal_count: int
+    max_abs_abs_beta_difference: float
+    max_abs_abs_z_statistic_difference: float
 
 
-class Phase1RunResult(NamedTuple):
-    """Result frame and runtime for one Phase 1 execution."""
+class Phase1CommandResult(NamedTuple):
+    """Output table and runtime for one subprocess Phase 1 execution."""
 
-    result_frame: pl.DataFrame
-    duration_seconds: float
+    success: bool
+    result_frame: pl.DataFrame | None
+    duration_seconds: float | None
+    output_path: Path
+    error_message: str | None
 
 
 MINIMUM_POSITIVE_P_VALUE = 1.0e-300
@@ -134,42 +138,140 @@ def time_command(command_arguments: list[str]) -> float:
     return duration_seconds
 
 
-def run_phase1_linear(baseline_paths: BaselinePaths) -> Phase1RunResult:
-    """Run the full Phase 1 linear engine and return results with runtime."""
-    from g.engine import run_linear_association
+def read_whitespace_table(table_path: Path) -> pl.DataFrame:
+    """Read a whitespace-delimited results table into a Polars frame."""
+    table_lines = [line.strip() for line in table_path.read_text().splitlines() if line.strip()]
+    if not table_lines:
+        raise ValueError(f"Results table is empty: {table_path}")
+    header_columns = table_lines[0].split()
+    rows: list[dict[str, str]] = []
+    for line in table_lines[1:]:
+        values = line.split()
+        if len(values) != len(header_columns):
+            raise ValueError(
+                f"Unexpected column count in {table_path}: expected {len(header_columns)}, got {len(values)}"
+            )
+        rows.append(dict(zip(header_columns, values, strict=True)))
+    return pl.DataFrame(rows)
+
+
+def build_phase1_command(
+    baseline_paths: BaselinePaths,
+    association_mode: str,
+    phase1_backend: str,
+    output_prefix: Path,
+) -> list[str]:
+    """Build one subprocess command for the Phase 1 CLI."""
+    if association_mode == "linear":
+        return [
+            sys.executable,
+            "-c",
+            "from g.cli import main; main()",
+            "linear",
+            "--bfile",
+            str(baseline_paths.bed_prefix),
+            "--pheno",
+            str(baseline_paths.continuous_phenotype_path),
+            "--pheno-name",
+            "phenotype_continuous",
+            "--covar",
+            str(baseline_paths.covariate_path),
+            "--covar-names",
+            "age,sex",
+            "--chunk-size",
+            "2048",
+            "--device",
+            phase1_backend,
+            "--out",
+            str(output_prefix),
+        ]
+    return [
+        sys.executable,
+        "-c",
+        "from g.cli import main; main()",
+        "logistic",
+        "--bfile",
+        str(baseline_paths.bed_prefix),
+        "--pheno",
+        str(baseline_paths.binary_phenotype_path),
+        "--pheno-name",
+        "phenotype_binary",
+        "--covar",
+        str(baseline_paths.covariate_path),
+        "--covar-names",
+        "age,sex",
+        "--chunk-size",
+        "512",
+        "--device",
+        phase1_backend,
+        "--max-iterations",
+        "50",
+        "--tolerance",
+        "1.0e-8",
+        "--out",
+        str(output_prefix),
+    ]
+
+
+def output_path_for_phase1_run(output_prefix: Path, association_mode: str) -> Path:
+    """Return the expected result path for one Phase 1 CLI run."""
+    output_suffix = ".linear.tsv" if association_mode == "linear" else ".logistic.tsv"
+    return output_prefix.with_suffix(output_suffix)
+
+
+def run_phase1_command(
+    baseline_paths: BaselinePaths,
+    association_mode: str,
+    phase1_backend: str,
+    output_prefix: Path,
+) -> Phase1CommandResult:
+    """Run one Phase 1 CLI command in a subprocess and load its results."""
+    command_arguments = build_phase1_command(
+        baseline_paths=baseline_paths,
+        association_mode=association_mode,
+        phase1_backend=phase1_backend,
+        output_prefix=output_prefix,
+    )
+    command_environment = os.environ.copy()
+    command_environment["JAX_PLATFORMS"] = phase1_backend
+    expected_output_path = output_path_for_phase1_run(output_prefix, association_mode)
 
     start_time = time.perf_counter()
-    result_frame = run_linear_association(
-        bed_prefix=baseline_paths.bed_prefix,
-        phenotype_path=baseline_paths.continuous_phenotype_path,
-        phenotype_name="phenotype_continuous",
-        covariate_path=baseline_paths.covariate_path,
-        covariate_names=("age", "sex"),
-        chunk_size=2048,
-        variant_limit=None,
+    completed_process = subprocess.run(
+        command_arguments,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=command_environment,
     )
     duration_seconds = time.perf_counter() - start_time
-    return Phase1RunResult(result_frame=result_frame, duration_seconds=duration_seconds)
 
+    if completed_process.returncode != 0:
+        error_message = completed_process.stderr.strip() or completed_process.stdout.strip() or "Phase 1 run failed."
+        return Phase1CommandResult(
+            success=False,
+            result_frame=None,
+            duration_seconds=None,
+            output_path=expected_output_path,
+            error_message=error_message,
+        )
 
-def run_phase1_logistic(baseline_paths: BaselinePaths) -> Phase1RunResult:
-    """Run the full Phase 1 logistic engine and return results with runtime."""
-    from g.engine import run_logistic_association
+    if not expected_output_path.exists():
+        return Phase1CommandResult(
+            success=False,
+            result_frame=None,
+            duration_seconds=None,
+            output_path=expected_output_path,
+            error_message=f"Expected output file was not written: {expected_output_path}",
+        )
 
-    start_time = time.perf_counter()
-    result_frame = run_logistic_association(
-        bed_prefix=baseline_paths.bed_prefix,
-        phenotype_path=baseline_paths.binary_phenotype_path,
-        phenotype_name="phenotype_binary",
-        covariate_path=baseline_paths.covariate_path,
-        covariate_names=("age", "sex"),
-        chunk_size=512,
-        variant_limit=None,
-        max_iterations=50,
-        tolerance=1.0e-8,
+    return Phase1CommandResult(
+        success=True,
+        result_frame=pl.read_csv(expected_output_path, separator="\t"),
+        duration_seconds=duration_seconds,
+        output_path=expected_output_path,
+        error_message=None,
     )
-    duration_seconds = time.perf_counter() - start_time
-    return Phase1RunResult(result_frame=result_frame, duration_seconds=duration_seconds)
 
 
 def expression_value(data_frame: pl.DataFrame, expression: pl.Expr) -> float:
@@ -265,6 +367,77 @@ def summarize_linear_plink_parity(baseline_paths: BaselinePaths, phase1_frame: p
         max_abs_abs_t_statistic_difference=expression_value(
             joined_frame,
             (pl.col("aligned_statistic").abs() - pl.col("T_STAT").abs()).abs().max(),
+        ),
+        log10_p_value_difference_over_1e_minus_5_count=joined_frame.filter(
+            absolute_log10_p_value_difference("p_value", "baseline_p_value") > 1.0e-5,
+        ).height,
+    )
+
+
+def summarize_linear_plink1_parity(baseline_paths: BaselinePaths, phase1_frame: pl.DataFrame) -> LinearParitySummary:
+    """Summarize best-effort linear parity against PLINK 1.9 output."""
+    baseline_path = baseline_paths.baseline_directory / "plink1_cont.assoc.linear"
+    baseline_table = read_whitespace_table(baseline_path)
+    variant_column_name = "SNP" if "SNP" in baseline_table.columns else "ID"
+    statistic_column_name = "STAT" if "STAT" in baseline_table.columns else "T_STAT"
+    has_standard_error = "SE" in baseline_table.columns
+    baseline_frame = (
+        (baseline_table.filter(pl.col("TEST") == "ADD") if "TEST" in baseline_table.columns else baseline_table)
+        .with_columns(
+            pl.col(variant_column_name).cast(pl.String),
+            pl.col("A1").cast(pl.String),
+            pl.col("BETA").cast(pl.Float64, strict=False),
+            pl.col(statistic_column_name).cast(pl.Float64, strict=False),
+            pl.col("P").cast(pl.Float64, strict=False),
+        )
+        .with_columns(
+            pl.col("SE").cast(pl.Float64, strict=False)
+            if has_standard_error
+            else pl.lit(None).cast(pl.Float64).alias("SE")
+        )
+        .select(variant_column_name, "A1", "BETA", "SE", statistic_column_name, "P")
+        .rename(
+            {
+                variant_column_name: "variant_identifier",
+                "SE": "baseline_standard_error",
+                statistic_column_name: "baseline_t_statistic",
+                "P": "baseline_p_value",
+            }
+        )
+    )
+    joined_frame = align_to_effect_allele(
+        phase1_frame.join(baseline_frame, on="variant_identifier", how="inner"),
+        baseline_effect_allele_column="A1",
+        statistic_column="t_statistic",
+    )
+    return LinearParitySummary(
+        variant_count=joined_frame.height,
+        max_abs_beta_difference=expression_value(
+            joined_frame,
+            (pl.col("aligned_beta") - pl.col("BETA")).abs().max(),
+        ),
+        max_abs_standard_error_difference=expression_value(
+            joined_frame,
+            (pl.col("standard_error") - pl.col("baseline_standard_error")).abs().max()
+            if has_standard_error
+            else pl.lit(float("nan")),
+        ),
+        max_abs_t_statistic_difference=expression_value(
+            joined_frame,
+            (pl.col("aligned_statistic") - pl.col("baseline_t_statistic")).abs().max(),
+        ),
+        max_abs_log10_p_value_difference=expression_value(
+            joined_frame,
+            absolute_log10_p_value_difference("p_value", "baseline_p_value").max(),
+        ),
+        allele_reversal_count=joined_frame.filter(pl.col("allele_alignment_sign") < 0).height,
+        max_abs_abs_beta_difference=expression_value(
+            joined_frame,
+            (pl.col("aligned_beta").abs() - pl.col("BETA").abs()).abs().max(),
+        ),
+        max_abs_abs_t_statistic_difference=expression_value(
+            joined_frame,
+            (pl.col("aligned_statistic").abs() - pl.col("baseline_t_statistic").abs()).abs().max(),
         ),
         log10_p_value_difference_over_1e_minus_5_count=joined_frame.filter(
             absolute_log10_p_value_difference("p_value", "baseline_p_value") > 1.0e-5,
@@ -428,6 +601,83 @@ def summarize_logistic_plink_parity(baseline_paths: BaselinePaths, phase1_frame:
         log10_p_value_difference_over_1e_minus_4_count=joined_frame.filter(
             absolute_log10_p_value_difference("p_value", "baseline_p_value") > 1.0e-4,
         ).height,
+    )
+
+
+def summarize_logistic_plink1_parity(
+    baseline_paths: BaselinePaths,
+    phase1_frame: pl.DataFrame,
+) -> Plink1LogisticParitySummary:
+    """Summarize best-effort logistic parity against PLINK 1.9 output."""
+    baseline_path = baseline_paths.baseline_directory / "plink1_bin.assoc.logistic"
+    baseline_table = read_whitespace_table(baseline_path)
+    variant_column_name = "SNP" if "SNP" in baseline_table.columns else "ID"
+    statistic_column_name = "STAT" if "STAT" in baseline_table.columns else "Z_STAT"
+    standard_error_column_name = "SE" if "SE" in baseline_table.columns else "LOG(OR)_SE"
+    has_standard_error = standard_error_column_name in baseline_table.columns
+    beta_column_expression = (
+        pl.col("BETA").cast(pl.Float64, strict=False)
+        if "BETA" in baseline_table.columns
+        else pl.col("OR").cast(pl.Float64, strict=False).log()
+    )
+    baseline_frame = (
+        (baseline_table.filter(pl.col("TEST") == "ADD") if "TEST" in baseline_table.columns else baseline_table)
+        .with_columns(
+            pl.col(variant_column_name).cast(pl.String),
+            pl.col("A1").cast(pl.String),
+            beta_column_expression.alias("baseline_beta"),
+            pl.col(statistic_column_name).cast(pl.Float64, strict=False).alias("baseline_z_statistic"),
+            pl.col("P").cast(pl.Float64, strict=False).alias("baseline_p_value"),
+        )
+        .with_columns(
+            pl.col(standard_error_column_name).cast(pl.Float64, strict=False).alias("baseline_standard_error")
+            if has_standard_error
+            else pl.lit(None).cast(pl.Float64).alias("baseline_standard_error")
+        )
+        .select(
+            variant_column_name,
+            "A1",
+            "baseline_beta",
+            "baseline_standard_error",
+            "baseline_z_statistic",
+            "baseline_p_value",
+        )
+        .rename({variant_column_name: "variant_identifier"})
+    )
+    joined_frame = align_to_effect_allele(
+        phase1_frame.join(baseline_frame, on="variant_identifier", how="inner"),
+        baseline_effect_allele_column="A1",
+        statistic_column="z_statistic",
+    )
+    return Plink1LogisticParitySummary(
+        compared_variant_count=joined_frame.height,
+        max_abs_beta_difference=expression_value(
+            joined_frame,
+            (pl.col("aligned_beta") - pl.col("baseline_beta")).abs().max(),
+        ),
+        max_abs_standard_error_difference=expression_value(
+            joined_frame,
+            (pl.col("standard_error") - pl.col("baseline_standard_error")).abs().max()
+            if has_standard_error
+            else pl.lit(float("nan")),
+        ),
+        max_abs_z_statistic_difference=expression_value(
+            joined_frame,
+            (pl.col("aligned_statistic") - pl.col("baseline_z_statistic")).abs().max(),
+        ),
+        max_abs_log10_p_value_difference=expression_value(
+            joined_frame,
+            absolute_log10_p_value_difference("p_value", "baseline_p_value").max(),
+        ),
+        allele_reversal_count=joined_frame.filter(pl.col("allele_alignment_sign") < 0).height,
+        max_abs_abs_beta_difference=expression_value(
+            joined_frame,
+            (pl.col("aligned_beta").abs() - pl.col("baseline_beta").abs()).abs().max(),
+        ),
+        max_abs_abs_z_statistic_difference=expression_value(
+            joined_frame,
+            (pl.col("aligned_statistic").abs() - pl.col("baseline_z_statistic").abs()).abs().max(),
+        ),
     )
 
 
@@ -596,14 +846,44 @@ def summarize_logistic_hail_hybrid_parity(
     )
 
 
-def build_runtime_comparison(baseline_name: str, baseline_seconds: float, phase1_seconds: float) -> RuntimeComparison:
+def build_runtime_comparison(
+    baseline_name: str,
+    baseline_seconds: float,
+    phase1_backend: str,
+    phase1_seconds: float,
+) -> RuntimeComparison:
     """Build a runtime comparison structure."""
     return RuntimeComparison(
         baseline_name=baseline_name,
+        phase1_backend=phase1_backend,
         baseline_seconds=baseline_seconds,
         phase1_seconds=phase1_seconds,
         speed_ratio_baseline_over_phase1=baseline_seconds / phase1_seconds,
     )
+
+
+def build_runtime_comparison_or_none(
+    baseline_name: str,
+    baseline_seconds: float | None,
+    phase1_backend: str,
+    phase1_seconds: float | None,
+) -> RuntimeComparison | None:
+    """Build a runtime comparison only when both timings are available."""
+    if baseline_seconds is None or phase1_seconds is None:
+        return None
+    return build_runtime_comparison(
+        baseline_name=baseline_name,
+        baseline_seconds=baseline_seconds,
+        phase1_backend=phase1_backend,
+        phase1_seconds=phase1_seconds,
+    )
+
+
+def serialize_dataclass_or_none(value: object | None) -> dict[str, object] | None:
+    """Convert an optional dataclass value to a JSON-serializable dictionary."""
+    if value is None:
+        return None
+    return asdict(value)
 
 
 def main() -> None:
@@ -612,8 +892,10 @@ def main() -> None:
         build_baseline_paths,
         build_hail_cache_prepare_command,
         build_hail_suite_command,
-        build_plink_binary_command,
-        build_plink_continuous_command,
+        build_plink1_binary_command,
+        build_plink1_continuous_command,
+        build_plink2_binary_command,
+        build_plink2_continuous_command,
         ensure_hail_environment,
         hail_output_path,
         load_hail_suite_report,
@@ -621,20 +903,21 @@ def main() -> None:
     )
 
     baseline_paths = build_baseline_paths()
-    plink_executable = resolve_required_executable("PLINK2_BIN", "plink2")
+    plink1_executable = resolve_required_executable("PLINK1_BIN", "plink")
+    plink2_executable = resolve_required_executable("PLINK2_BIN", "plink2")
 
-    # Check if Hail baselines exist or should be run
-    hail_cont_path = hail_output_path(baseline_paths, "hail_cont")
-    hail_bin_wald_path = hail_output_path(baseline_paths, "hail_bin_wald")
-    hail_bin_firth_path = hail_output_path(baseline_paths, "hail_bin_firth")
-    hail_baselines_exist = all(p.exists() for p in [hail_cont_path, hail_bin_wald_path, hail_bin_firth_path])
+    hail_continuous_path = hail_output_path(baseline_paths, "hail_cont")
+    hail_binary_wald_path = hail_output_path(baseline_paths, "hail_bin_wald")
+    hail_binary_firth_path = hail_output_path(baseline_paths, "hail_bin_firth")
+    hail_baselines_exist = all(
+        path.exists() for path in [hail_continuous_path, hail_binary_wald_path, hail_binary_firth_path]
+    )
 
     if os.environ.get("HAIL_INCLUDE") or hail_baselines_exist:
         hail_python_executable = ensure_hail_environment()
 
         if os.environ.get("HAIL_INCLUDE"):
-            # Run Hail benchmarks if explicitly enabled
-            hail_cache_prepare_seconds = time_command(
+            hail_cache_prepare_seconds: float | None = time_command(
                 build_hail_cache_prepare_command(hail_python_executable, baseline_paths, cache_mode="reuse")
             )
             hail_suite_command_arguments = build_hail_suite_command(
@@ -644,75 +927,226 @@ def main() -> None:
             )
             time_command(hail_suite_command_arguments)
         else:
-            # Use cached values from existing report if not running
             hail_cache_prepare_seconds = 0.0
 
         hail_suite_report = load_hail_suite_report(baseline_paths.hail_suite_report_path)
         hail_step_reports = {
-            step_report["output_name"]: step_report
-            for step_report in hail_suite_report["step_reports"]
+            step_report["output_name"]: step_report for step_report in hail_suite_report["step_reports"]
         }
-        hail_linear_seconds = float(hail_step_reports["hail_cont"]["duration_seconds"])
-        hail_logistic_wald_seconds = float(hail_step_reports["hail_bin_wald"]["duration_seconds"])
-        hail_logistic_firth_seconds = float(hail_step_reports["hail_bin_firth"]["duration_seconds"])
+        hail_linear_seconds: float | None = float(hail_step_reports["hail_cont"]["duration_seconds"])
+        hail_logistic_wald_seconds: float | None = float(hail_step_reports["hail_bin_wald"]["duration_seconds"])
+        hail_logistic_firth_seconds: float | None = float(hail_step_reports["hail_bin_firth"]["duration_seconds"])
     else:
-        # Hail baselines not available - will be skipped in report
-        hail_cache_prepare_seconds = 0.0
-        hail_linear_seconds = 0.0
-        hail_logistic_wald_seconds = 0.0
-        hail_logistic_firth_seconds = 0.0
+        hail_cache_prepare_seconds = None
+        hail_linear_seconds = None
+        hail_logistic_wald_seconds = None
+        hail_logistic_firth_seconds = None
 
-    plink_linear_seconds = time_command(build_plink_continuous_command(plink_executable, baseline_paths))
-    plink_logistic_seconds = time_command(build_plink_binary_command(plink_executable, baseline_paths))
-    phase1_linear_run = run_phase1_linear(baseline_paths)
-    phase1_logistic_run = run_phase1_logistic(baseline_paths)
+    plink1_linear_seconds = time_command(build_plink1_continuous_command(plink1_executable, baseline_paths))
+    plink1_logistic_seconds = time_command(build_plink1_binary_command(plink1_executable, baseline_paths))
+    plink2_linear_seconds = time_command(build_plink2_continuous_command(plink2_executable, baseline_paths))
+    plink2_logistic_seconds = time_command(build_plink2_binary_command(plink2_executable, baseline_paths))
 
-    report = Phase1EvaluationReport(
-        hail_cache_prepare_runtime=build_runtime_comparison(
-            "hail_matrix_table_prepare",
-            hail_cache_prepare_seconds,
-            phase1_linear_run.duration_seconds,
-        ),
-        linear_plink_runtime=build_runtime_comparison(
-            "plink_linear",
-            plink_linear_seconds,
-            phase1_linear_run.duration_seconds,
-        ),
-        logistic_plink_runtime=build_runtime_comparison(
-            "plink_logistic_hybrid",
-            plink_logistic_seconds,
-            phase1_logistic_run.duration_seconds,
-        ),
-        linear_hail_runtime=build_runtime_comparison(
-            "hail_linear",
-            hail_linear_seconds,
-            phase1_linear_run.duration_seconds,
-        ),
-        logistic_hail_wald_runtime=build_runtime_comparison(
-            "hail_logistic_wald",
-            hail_logistic_wald_seconds,
-            phase1_logistic_run.duration_seconds,
-        ),
-        logistic_hail_firth_runtime=build_runtime_comparison(
-            "hail_logistic_firth",
-            hail_logistic_firth_seconds,
-            phase1_logistic_run.duration_seconds,
-        ),
-        logistic_hail_hybrid_upper_bound_runtime=build_runtime_comparison(
-            "hail_logistic_hybrid_upper_bound",
-            hail_logistic_wald_seconds + hail_logistic_firth_seconds,
-            phase1_logistic_run.duration_seconds,
-        ),
-        linear_plink_parity=summarize_linear_plink_parity(baseline_paths, phase1_linear_run.result_frame),
-        logistic_plink_parity=summarize_logistic_plink_parity(baseline_paths, phase1_logistic_run.result_frame),
-        linear_hail_parity=summarize_linear_hail_parity(baseline_paths, phase1_linear_run.result_frame),
-        logistic_hail_hybrid_parity=summarize_logistic_hail_hybrid_parity(
-            baseline_paths,
-            phase1_logistic_run.result_frame,
-        ),
+    phase1_linear_cpu_run = run_phase1_command(
+        baseline_paths=baseline_paths,
+        association_mode="linear",
+        phase1_backend="cpu",
+        output_prefix=baseline_paths.data_directory / "phase1_linear_cpu",
     )
+    phase1_logistic_cpu_run = run_phase1_command(
+        baseline_paths=baseline_paths,
+        association_mode="logistic",
+        phase1_backend="cpu",
+        output_prefix=baseline_paths.data_directory / "phase1_logistic_cpu",
+    )
+    phase1_linear_gpu_run = run_phase1_command(
+        baseline_paths=baseline_paths,
+        association_mode="linear",
+        phase1_backend="gpu",
+        output_prefix=baseline_paths.data_directory / "phase1_linear_gpu",
+    )
+    phase1_logistic_gpu_run = run_phase1_command(
+        baseline_paths=baseline_paths,
+        association_mode="logistic",
+        phase1_backend="gpu",
+        output_prefix=baseline_paths.data_directory / "phase1_logistic_gpu",
+    )
+
+    if not phase1_linear_cpu_run.success or phase1_linear_cpu_run.result_frame is None:
+        raise RuntimeError(phase1_linear_cpu_run.error_message or "CPU linear Phase 1 run failed.")
+    if not phase1_logistic_cpu_run.success or phase1_logistic_cpu_run.result_frame is None:
+        raise RuntimeError(phase1_logistic_cpu_run.error_message or "CPU logistic Phase 1 run failed.")
+
+    linear_plink1_parity_error: str | None = None
+    linear_plink1_parity: LinearParitySummary | None = None
+    try:
+        linear_plink1_parity = summarize_linear_plink1_parity(baseline_paths, phase1_linear_cpu_run.result_frame)
+    except (FileNotFoundError, ValueError, pl.exceptions.PolarsError) as error:
+        linear_plink1_parity_error = str(error)
+
+    logistic_plink1_parity_error: str | None = None
+    logistic_plink1_parity: Plink1LogisticParitySummary | None = None
+    try:
+        logistic_plink1_parity = summarize_logistic_plink1_parity(baseline_paths, phase1_logistic_cpu_run.result_frame)
+    except (FileNotFoundError, ValueError, pl.exceptions.PolarsError) as error:
+        logistic_plink1_parity_error = str(error)
+
+    report = {
+        "linear_plink1_cpu_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="plink1_linear",
+                baseline_seconds=plink1_linear_seconds,
+                phase1_backend="cpu",
+                phase1_seconds=phase1_linear_cpu_run.duration_seconds,
+            )
+        ),
+        "linear_plink1_gpu_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="plink1_linear",
+                baseline_seconds=plink1_linear_seconds,
+                phase1_backend="gpu",
+                phase1_seconds=phase1_linear_gpu_run.duration_seconds,
+            )
+        ),
+        "logistic_plink1_cpu_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="plink1_logistic",
+                baseline_seconds=plink1_logistic_seconds,
+                phase1_backend="cpu",
+                phase1_seconds=phase1_logistic_cpu_run.duration_seconds,
+            )
+        ),
+        "logistic_plink1_gpu_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="plink1_logistic",
+                baseline_seconds=plink1_logistic_seconds,
+                phase1_backend="gpu",
+                phase1_seconds=phase1_logistic_gpu_run.duration_seconds,
+            )
+        ),
+        "linear_plink2_cpu_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="plink2_linear",
+                baseline_seconds=plink2_linear_seconds,
+                phase1_backend="cpu",
+                phase1_seconds=phase1_linear_cpu_run.duration_seconds,
+            )
+        ),
+        "linear_plink2_gpu_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="plink2_linear",
+                baseline_seconds=plink2_linear_seconds,
+                phase1_backend="gpu",
+                phase1_seconds=phase1_linear_gpu_run.duration_seconds,
+            )
+        ),
+        "logistic_plink2_cpu_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="plink2_logistic_hybrid",
+                baseline_seconds=plink2_logistic_seconds,
+                phase1_backend="cpu",
+                phase1_seconds=phase1_logistic_cpu_run.duration_seconds,
+            )
+        ),
+        "logistic_plink2_gpu_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="plink2_logistic_hybrid",
+                baseline_seconds=plink2_logistic_seconds,
+                phase1_backend="gpu",
+                phase1_seconds=phase1_logistic_gpu_run.duration_seconds,
+            )
+        ),
+        "hail_cache_prepare_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="hail_matrix_table_prepare",
+                baseline_seconds=hail_cache_prepare_seconds,
+                phase1_backend="cpu",
+                phase1_seconds=phase1_linear_cpu_run.duration_seconds,
+            )
+        ),
+        "linear_hail_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="hail_linear",
+                baseline_seconds=hail_linear_seconds,
+                phase1_backend="cpu",
+                phase1_seconds=phase1_linear_cpu_run.duration_seconds,
+            )
+        ),
+        "logistic_hail_wald_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="hail_logistic_wald",
+                baseline_seconds=hail_logistic_wald_seconds,
+                phase1_backend="cpu",
+                phase1_seconds=phase1_logistic_cpu_run.duration_seconds,
+            )
+        ),
+        "logistic_hail_firth_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="hail_logistic_firth",
+                baseline_seconds=hail_logistic_firth_seconds,
+                phase1_backend="cpu",
+                phase1_seconds=phase1_logistic_cpu_run.duration_seconds,
+            )
+        ),
+        "logistic_hail_hybrid_upper_bound_runtime": serialize_dataclass_or_none(
+            build_runtime_comparison_or_none(
+                baseline_name="hail_logistic_hybrid_upper_bound",
+                baseline_seconds=(hail_logistic_wald_seconds + hail_logistic_firth_seconds)
+                if hail_logistic_wald_seconds is not None and hail_logistic_firth_seconds is not None
+                else None,
+                phase1_backend="cpu",
+                phase1_seconds=phase1_logistic_cpu_run.duration_seconds,
+            )
+        ),
+        "phase1_run_status": {
+            "linear_cpu": {
+                "success": phase1_linear_cpu_run.success,
+                "duration_seconds": phase1_linear_cpu_run.duration_seconds,
+                "output_path": str(phase1_linear_cpu_run.output_path),
+                "error_message": phase1_linear_cpu_run.error_message,
+            },
+            "linear_gpu": {
+                "success": phase1_linear_gpu_run.success,
+                "duration_seconds": phase1_linear_gpu_run.duration_seconds,
+                "output_path": str(phase1_linear_gpu_run.output_path),
+                "error_message": phase1_linear_gpu_run.error_message,
+            },
+            "logistic_cpu": {
+                "success": phase1_logistic_cpu_run.success,
+                "duration_seconds": phase1_logistic_cpu_run.duration_seconds,
+                "output_path": str(phase1_logistic_cpu_run.output_path),
+                "error_message": phase1_logistic_cpu_run.error_message,
+            },
+            "logistic_gpu": {
+                "success": phase1_logistic_gpu_run.success,
+                "duration_seconds": phase1_logistic_gpu_run.duration_seconds,
+                "output_path": str(phase1_logistic_gpu_run.output_path),
+                "error_message": phase1_logistic_gpu_run.error_message,
+            },
+        },
+        "linear_plink2_parity": asdict(
+            summarize_linear_plink_parity(baseline_paths, phase1_linear_cpu_run.result_frame)
+        ),
+        "logistic_plink2_parity": asdict(
+            summarize_logistic_plink_parity(baseline_paths, phase1_logistic_cpu_run.result_frame)
+        ),
+        "linear_hail_parity": serialize_dataclass_or_none(
+            summarize_linear_hail_parity(baseline_paths, phase1_linear_cpu_run.result_frame)
+            if hail_linear_seconds is not None
+            else None
+        ),
+        "logistic_hail_hybrid_parity": serialize_dataclass_or_none(
+            summarize_logistic_hail_hybrid_parity(baseline_paths, phase1_logistic_cpu_run.result_frame)
+            if hail_logistic_wald_seconds is not None and hail_logistic_firth_seconds is not None
+            else None
+        ),
+        "linear_plink1_parity": serialize_dataclass_or_none(linear_plink1_parity),
+        "linear_plink1_parity_error": linear_plink1_parity_error,
+        "logistic_plink1_parity": serialize_dataclass_or_none(logistic_plink1_parity),
+        "logistic_plink1_parity_error": logistic_plink1_parity_error,
+    }
     report_path = baseline_paths.data_directory / "phase1_evaluation_report.json"
-    report_path.write_text(f"{json.dumps(asdict(report), indent=2)}\n")
+    report_path.write_text(f"{json.dumps(report, indent=2)}\n")
     print(report_path)
 
 

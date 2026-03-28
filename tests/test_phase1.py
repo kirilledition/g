@@ -294,7 +294,10 @@ def test_cli_writes_linear_output_file(tmp_path: Path, monkeypatch: pytest.Monke
         ],
     )
 
-    cli_main()
+    with pytest.raises(SystemExit) as exit_info:
+        cli_main()
+
+    assert exit_info.value.code == 0
 
     output_path = output_prefix.with_suffix(".linear.tsv")
     assert output_path.exists()
@@ -312,22 +315,49 @@ def test_phase_one_evaluation_report_includes_hail_sections_when_present() -> No
     evaluation_report = json.loads(evaluation_report_path.read_text())
     required_runtime_keys = {
         "hail_cache_prepare_runtime",
-        "linear_plink_runtime",
-        "logistic_plink_runtime",
+        "linear_plink1_cpu_runtime",
+        "linear_plink1_gpu_runtime",
+        "logistic_plink1_cpu_runtime",
+        "logistic_plink1_gpu_runtime",
+        "linear_plink2_cpu_runtime",
+        "linear_plink2_gpu_runtime",
+        "logistic_plink2_cpu_runtime",
+        "logistic_plink2_gpu_runtime",
         "linear_hail_runtime",
         "logistic_hail_wald_runtime",
         "logistic_hail_firth_runtime",
         "logistic_hail_hybrid_upper_bound_runtime",
+        "phase1_run_status",
     }
     required_parity_keys = {
-        "linear_plink_parity",
-        "logistic_plink_parity",
+        "linear_plink2_parity",
+        "logistic_plink2_parity",
         "linear_hail_parity",
         "logistic_hail_hybrid_parity",
+        "linear_plink1_parity",
+        "linear_plink1_parity_error",
+        "logistic_plink1_parity",
+        "logistic_plink1_parity_error",
     }
     if required_runtime_keys.issubset(evaluation_report) and required_parity_keys.issubset(evaluation_report):
-        assert evaluation_report["hail_cache_prepare_runtime"]["baseline_name"] == "hail_matrix_table_prepare"
-        assert evaluation_report["linear_hail_runtime"]["baseline_name"] == "hail_linear"
-        assert evaluation_report["logistic_hail_wald_runtime"]["baseline_name"] == "hail_logistic_wald"
-        assert "max_abs_log10_p_value_difference" in evaluation_report["linear_hail_parity"]
-        assert "firth_missing_variant_count" in evaluation_report["logistic_hail_hybrid_parity"]
+        if evaluation_report["hail_cache_prepare_runtime"] is not None:
+            assert evaluation_report["hail_cache_prepare_runtime"]["baseline_name"] == "hail_matrix_table_prepare"
+        if evaluation_report["linear_hail_runtime"] is not None:
+            assert evaluation_report["linear_hail_runtime"]["baseline_name"] == "hail_linear"
+        if evaluation_report["logistic_hail_wald_runtime"] is not None:
+            assert evaluation_report["logistic_hail_wald_runtime"]["baseline_name"] == "hail_logistic_wald"
+
+        assert evaluation_report["linear_plink2_cpu_runtime"]["baseline_name"] == "plink2_linear"
+        assert evaluation_report["linear_plink2_cpu_runtime"]["phase1_backend"] == "cpu"
+        assert evaluation_report["logistic_plink2_cpu_runtime"]["baseline_name"] == "plink2_logistic_hybrid"
+        assert "linear_cpu" in evaluation_report["phase1_run_status"]
+
+        if evaluation_report["linear_hail_parity"] is not None:
+            assert "max_abs_log10_p_value_difference" in evaluation_report["linear_hail_parity"]
+        if evaluation_report["logistic_hail_hybrid_parity"] is not None:
+            assert "firth_missing_variant_count" in evaluation_report["logistic_hail_hybrid_parity"]
+
+        if evaluation_report["linear_plink1_parity"] is not None:
+            assert "max_abs_log10_p_value_difference" in evaluation_report["linear_plink1_parity"]
+        if evaluation_report["logistic_plink1_parity"] is not None:
+            assert "max_abs_z_statistic_difference" in evaluation_report["logistic_plink1_parity"]

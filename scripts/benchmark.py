@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run PLINK2, Hail, and Regenie baselines and save a benchmark report."""
+"""Run PLINK 1.9, PLINK2, Hail, and Regenie baselines and save a benchmark report."""
 
 from __future__ import annotations
 
@@ -327,7 +327,42 @@ def ensure_hail_environment() -> str:
     return str(managed_hail_python_path)
 
 
-def build_plink_continuous_command(plink_executable: str, baseline_paths: BaselinePaths) -> list[str]:
+def build_plink1_continuous_command(plink_executable: str, baseline_paths: BaselinePaths) -> list[str]:
+    """Build the PLINK 1.9 continuous trait command."""
+    return [
+        plink_executable,
+        "--bfile",
+        str(baseline_paths.bed_prefix),
+        "--pheno",
+        str(baseline_paths.continuous_phenotype_path),
+        "--covar",
+        str(baseline_paths.covariate_path),
+        "--linear",
+        "hide-covar",
+        "--out",
+        str(baseline_paths.baseline_directory / "plink1_cont"),
+    ]
+
+
+def build_plink1_binary_command(plink_executable: str, baseline_paths: BaselinePaths) -> list[str]:
+    """Build the PLINK 1.9 binary trait command."""
+    return [
+        plink_executable,
+        "--bfile",
+        str(baseline_paths.bed_prefix),
+        "--pheno",
+        str(baseline_paths.binary_phenotype_path),
+        "--covar",
+        str(baseline_paths.covariate_path),
+        "--logistic",
+        "beta",
+        "hide-covar",
+        "--out",
+        str(baseline_paths.baseline_directory / "plink1_bin"),
+    ]
+
+
+def build_plink2_continuous_command(plink_executable: str, baseline_paths: BaselinePaths) -> list[str]:
     """Build the PLINK2 continuous trait command."""
     return [
         plink_executable,
@@ -344,7 +379,7 @@ def build_plink_continuous_command(plink_executable: str, baseline_paths: Baseli
     ]
 
 
-def build_plink_binary_command(plink_executable: str, baseline_paths: BaselinePaths) -> list[str]:
+def build_plink2_binary_command(plink_executable: str, baseline_paths: BaselinePaths) -> list[str]:
     """Build the PLINK2 binary trait command."""
     return [
         plink_executable,
@@ -577,7 +612,8 @@ def serialize_results(results_by_name: dict[str, CommandResult]) -> dict[str, di
 
 def main() -> None:
     """Run all Phase 0 baseline commands and save the benchmark report."""
-    plink_executable = resolve_required_executable("PLINK2_BIN", "plink2")
+    plink1_executable = resolve_required_executable("PLINK1_BIN", "plink")
+    plink2_executable = resolve_required_executable("PLINK2_BIN", "plink2")
     regenie_executable = resolve_required_executable("REGENIE_BIN", "regenie")
     hail_python_executable = ensure_hail_environment()
 
@@ -590,14 +626,24 @@ def main() -> None:
     hardware_summary = collect_hardware_summary()
 
     results_by_name: dict[str, CommandResult] = {}
+    results_by_name["plink1_cont"] = run_command(
+        "PLINK 1.9 Continuous",
+        build_plink1_continuous_command(plink1_executable, baseline_paths),
+        baseline_paths.baseline_directory / "plink1_cont",
+    )
+    results_by_name["plink1_bin"] = run_command(
+        "PLINK 1.9 Binary",
+        build_plink1_binary_command(plink1_executable, baseline_paths),
+        baseline_paths.baseline_directory / "plink1_bin",
+    )
     results_by_name["plink_cont"] = run_command(
         "PLINK2 Continuous",
-        build_plink_continuous_command(plink_executable, baseline_paths),
+        build_plink2_continuous_command(plink2_executable, baseline_paths),
         baseline_paths.baseline_directory / "plink_cont",
     )
     results_by_name["plink_bin"] = run_command(
         "PLINK2 Binary",
-        build_plink_binary_command(plink_executable, baseline_paths),
+        build_plink2_binary_command(plink2_executable, baseline_paths),
         baseline_paths.baseline_directory / "plink_bin",
     )
 

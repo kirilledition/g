@@ -49,6 +49,7 @@ Included tools:
 - `just`
 - Python 3.13
 - Rust toolchain
+- `plink`
 - `plink2`
 - `regenie`
 - Java 11, BLAS/LAPACK, and Python 3.11 for local Hail baselines
@@ -83,13 +84,13 @@ Prepare the local chr22 dataset and simulated phenotypes:
 just setup-data
 ```
 
-Run baseline PLINK/Regenie commands:
+Run baseline PLINK 1.9/PLINK2/Regenie commands:
 
 ```bash
 just benchmark-baselines
 ```
 
-`just benchmark-baselines` now also runs local Hail baselines. On the first run it bootstraps a dedicated `.venv-hail` with Python 3.11 and `hail==0.2.137`, imports the PLINK dataset once, and saves a reusable Hail `MatrixTable` cache at `data/hail/1kg_chr22_full.mt`. Later Hail runs reuse that local cache instead of re-importing PLINK every time.
+`just benchmark-baselines` now also runs PLINK 1.9, PLINK2, and local Hail baselines. On the first run it bootstraps a dedicated `.venv-hail` with Python 3.11 and `hail==0.2.137`, imports the PLINK dataset once, and saves a reusable Hail `MatrixTable` cache at `data/hail/1kg_chr22_full.mt`. Later Hail runs reuse that local cache instead of re-importing PLINK every time.
 
 Run the engine directly:
 

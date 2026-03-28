@@ -217,6 +217,8 @@ def test_benchmark_report_and_baselines_are_parseable_when_present() -> None:
     assert "hardware" in report
     assert "results" in report
     assert {"plink_cont", "plink_bin", "regenie_step1", "regenie_step2"}.issubset(report["results"])
+    if "plink1_cont" in report["results"] or "plink1_bin" in report["results"]:
+        assert {"plink1_cont", "plink1_bin"}.issubset(report["results"])
 
     hail_result_paths = [
         DATA_DIRECTORY / "baselines" / "hail_cont.tsv",
@@ -234,6 +236,8 @@ def test_benchmark_report_and_baselines_are_parseable_when_present() -> None:
 
     continuous_result_paths = sorted((DATA_DIRECTORY / "baselines").glob("plink_cont*.glm.linear"))
     binary_result_paths = sorted((DATA_DIRECTORY / "baselines").glob("plink_bin*.glm.logistic*"))
+    plink1_continuous_result_paths = sorted((DATA_DIRECTORY / "baselines").glob("plink1_cont*.assoc.linear"))
+    plink1_binary_result_paths = sorted((DATA_DIRECTORY / "baselines").glob("plink1_bin*.assoc.logistic"))
     regenie_result_paths = sorted((DATA_DIRECTORY / "baselines").glob("regenie_step2*.regenie"))
     if not continuous_result_paths or not binary_result_paths or not regenie_result_paths:
         pytest.skip("One or more baseline result files are not available yet.")
@@ -248,6 +252,14 @@ def test_benchmark_report_and_baselines_are_parseable_when_present() -> None:
     assert {"ID", "P"}.issubset(continuous_frame.columns)
     assert {"ID", "P"}.issubset(binary_frame.columns)
     assert {"ID", "LOG10P"}.issubset(regenie_frame.columns)
+
+    if plink1_continuous_result_paths and plink1_binary_result_paths:
+        plink1_continuous_frame = pd.read_csv(plink1_continuous_result_paths[0], sep=r"\s+")
+        plink1_binary_frame = pd.read_csv(plink1_binary_result_paths[0], sep=r"\s+")
+        assert not plink1_continuous_frame.empty
+        assert not plink1_binary_frame.empty
+        assert {"P"}.issubset(plink1_continuous_frame.columns)
+        assert {"P"}.issubset(plink1_binary_frame.columns)
 
     hail_existing_result_paths = [path for path in hail_result_paths if path.exists()]
     if hail_existing_result_paths:

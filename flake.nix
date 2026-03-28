@@ -10,6 +10,27 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
+        plink1Package = pkgs.stdenvNoCC.mkDerivation {
+          pname = "plink";
+          version = "1.90b7.11";
+
+          src = pkgs.fetchzip {
+            url = "https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20250819.zip";
+            hash = "sha256-NSjHOUMPFrhiv33UGQ1+z/9AeTYRbs7YgUCLd+Y07qA=";
+            stripRoot = false;
+          };
+
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/bin" "$out/share/doc/plink"
+            install -m755 plink "$out/bin/plink"
+            if [ -f LICENSE ]; then
+              install -m644 LICENSE "$out/share/doc/plink/"
+            fi
+            runHook postInstall
+          '';
+        };
+
         plink2Package = pkgs.stdenvNoCC.mkDerivation {
           pname = "plink2";
           version = "2.0.0-a.6.33";
@@ -77,6 +98,7 @@
             openjdk11_headless
             openblas
             lapack
+            plink1Package
             plink2Package
             regeniePackage
           ];
@@ -87,7 +109,7 @@
             export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             export NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             export LD_LIBRARY_PATH=/run/opengl-driver/lib:''${NIX_LD_LIBRARY_PATH:+:$NIX_LD_LIBRARY_PATH}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-            echo "GWAS Engine dev shell ready (uv, Rust, plink2, regenie, Hail runtime tools)."
+            echo "GWAS Engine dev shell ready (uv, Rust, plink, plink2, regenie, Hail runtime tools)."
           '';
         };
       });
