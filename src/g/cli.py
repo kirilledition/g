@@ -28,6 +28,7 @@ app = typer.Typer(
     rich_markup_mode=None,
 )
 
+
 def resolve_chunk_size(requested_chunk_size: int | None, association_mode: str) -> int:
     """Resolve the effective chunk size for an association mode."""
     if requested_chunk_size is not None:

@@ -48,6 +48,8 @@ Use this only when the throughput-first preset fails or is numerically unstable 
   - Removed redundant hot-path dtype coercions when inputs are already device `float32`.
   - Switched heavy batched information solves to batched Cholesky + triangular solve.
   - Reduced loop-control overhead by replacing per-iteration `jnp.max(iteration_count)` checks with scalar global counters in logistic IRLS loop state.
+  - Precomputed flattened per-sample covariate outer products once per chunk and rewrote hot IRLS Fisher assembly as batched matmul.
+  - Replaced hot-path covariate-score and cross-information `einsum` forms with direct matmul layouts.
 - Firth path improvements:
   - Replaced explicit inverse and generic solves with Cholesky-based solves in the single-variant Firth solver.
 - Linear path improvement:
@@ -65,51 +67,68 @@ Use this only when the throughput-first preset fails or is numerically unstable 
 - `jax.pmap` for Firth on a single-GPU workstation.
 - Generic masking-removal rewrites without profiler evidence.
 - Factorization reuse across IRLS iterations where weights change each iteration.
+- More standard-IRLS covariate-information rewrites without fresh kernel evidence.
+- Linear-kernel algebra rewrites unless full-chromosome profiling shows linear is materially on the critical path.
 
 ## Active backlog (warmed-throughput focused)
 
-### P0 - Refresh kernel-level profiling on current code
+### P0 - Refresh warmed-state profiling with compilation noise isolated
 
 Why:
 
-- The codebase changed materially; old hotspot assumptions are stale.
+- The codebase changed materially and the remaining bottleneck moved.
+- The current detailed profile still contains substantial lowering/cache-miss noise, which obscures steady-state GPU cost.
 
 What to measure:
 
 - warmed throughput for `chunk_size=512` and `chunk_size=1024`
 - kernel launch count and dominant kernels in standard masked/no-missing IRLS
 - fallback-heavy behavior at `variant_limit=2048`, `chunk_size=256`
+- warmed full-chromosome logistic throughput after one explicit warmup pass
+- relative time split between standard path, Firth compute, fallback planning, and host transfers
 
 Success criterion:
 
-- clear attribution of time split between standard IRLS arithmetic, loop/control overhead, and fallback orchestration.
+- clear attribution of steady-state time split between Firth arithmetic, fallback orchestration, and any remaining standard-path kernels.
 
-### P0 - Rework standard IRLS covariate information assembly only if profiling confirms matrix-assembly pressure
+### P0 - Optimize no-missing Firth fallback compute
 
 Why:
 
-- `compute_covariate_information_matrix(...)` still materializes per-sample crossproducts each iteration.
+- Fresh profiling shows the dominant remaining chunk-level hotspot is now `compute_batched_firth_updates_without_mask(...)` and the vmapped `fit_single_variant_firth_logistic_regression(...)` path, not standard IRLS assembly.
 
-Candidate directions (A/B under `nsys`/`ncu`):
+Candidate directions:
 
-- current `einsum + tensordot`
-- weighted-matmul layouts that avoid large transient tensors
-- alternate `dot_general`/`matmul` formulations for cross-information terms
+- Rewrite leverage / projected-design work inside Firth to minimize repeated solves and transient matrices.
+- Benchmark whether a bucket-specialized vmapped Firth kernel reduces overhead versus the current generic path.
+- Inspect whether genotype-last scalar-stat extraction can avoid rebuilding full intermediate matrices late in the solver.
 
 Constraint:
 
-- keep Schur-complement update and convergence semantics unchanged.
+- Keep Firth convergence semantics and PLINK-equivalent output parity unchanged.
 
-### P1 - Optimize fallback orchestration behind explicit mode split
+### P1 - Reduce fallback orchestration overhead only where profiles still justify it
 
 Why:
 
-- warm-throughput and first-run latency optimizations pull in opposite directions.
+- Fresh profile still shows planning/orchestration cost (`nonzero`, batch planning, Python-side batch loop), but it is now secondary to Firth arithmetic.
 
 Plan:
 
-- keep warmed-throughput path as production default
-- optionally retain a low-orchestration mode for profiling and one-shot latency runs
+- Keep warmed-throughput path as production default.
+- Focus only on changes that reduce host transfers or batch-loop overhead without reintroducing padded inactive-lane compute.
+- Prefer changes that preserve the current good fallback-heavy warmed throughput characteristics.
+
+### P1 - Add a warmed-only profiling harness
+
+Why:
+
+- The existing detailed profile is useful, but first-run tracing/lowering work still dominates too much of the summary to guide steady-state kernel work precisely.
+
+Plan:
+
+- Warm once, then profile a second pass over representative chunk sizes and one full-chromosome run.
+- Emit machine-readable summaries separating compile/lower time from warmed execution time.
 
 ### P2 - Revisit fallback merge layout only if merge reappears as top hotspot
 
@@ -130,6 +149,22 @@ Why:
 Action:
 
 - only invest further if fresh profile shows linear compute is material vs I/O/formatting.
+
+## Fresh findings from the latest implementation pass
+
+- The standard logistic no-missing IRLS matrix-assembly rewrite delivered a small warmed-state improvement, but not a large one:
+  - `chunk_size=1024` compute-only improved slightly.
+  - fallback-heavy `chunk_size=256` improved modestly.
+  - `chunk_size=512` was effectively flat, and some compute+format surfaces regressed slightly.
+- Fresh detailed profiling shows the remaining dominant chunk-level cost is Firth fallback compute and its orchestration, not the standard no-missing IRLS Fisher assembly.
+- Because of that shift, more standard-path algebra rewrites should be deprioritized until fresh `nsys`/`ncu` evidence says otherwise.
+
+## Recommended next implementation order
+
+1. Add warmed-only profiling so steady-state kernel costs are isolated cleanly.
+2. Optimize no-missing Firth fallback compute.
+3. Recheck fallback orchestration only if it still consumes a meaningful share after the Firth rewrite.
+4. Leave `src/g/compute/linear.py` alone unless a later full profile elevates it.
 
 ## Suggested command sequence
 
