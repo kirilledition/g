@@ -112,7 +112,7 @@ def test_iter_logistic_output_frames_passes_no_missing_constants() -> None:
             iteration_count=jnp.array([3], dtype=jnp.int32),
         ),
         allele_one_frequency=jnp.array([0.25]),
-        observation_count=jnp.array([2], dtype=jnp.int32),
+        observation_count=jnp.array([2], dtype=jnp.int64),
     )
     no_missing_constants = object()
 
