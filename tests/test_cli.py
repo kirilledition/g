@@ -20,6 +20,14 @@ def test_root_command_without_arguments_shows_help() -> None:
     assert "logistic" in result.output
 
 
+def test_root_help_renders_without_style_errors() -> None:
+    """Ensure Rich style overrides do not break help rendering."""
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "MissingStyle" not in result.output
+    assert "Usage:" in result.output
+
+
 def test_resolve_chunk_size_uses_linear_default() -> None:
     """Ensure the linear path uses the tuned default chunk size."""
     assert resolve_chunk_size(None, "linear") == DEFAULT_LINEAR_CHUNK_SIZE

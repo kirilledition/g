@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import typer
+from typer import rich_utils
 
 from g.api import (
     DEFAULT_LINEAR_CHUNK_SIZE,
@@ -25,8 +26,22 @@ app = typer.Typer(
     name="g",
     help="Blazing fast GWAS engine.",
     no_args_is_help=True,
+    rich_markup_mode="rich",
 )
 
+rich_utils.STYLE_OPTIONS_PANEL_BORDER = "dim"
+rich_utils.STYLE_COMMANDS_PANEL_BORDER = "dim"
+rich_utils.STYLE_ERRORS_PANEL_BORDER = "red"
+rich_utils.STYLE_OPTIONS_TABLE_BOX = "SIMPLE"
+rich_utils.STYLE_COMMANDS_TABLE_BOX = "SIMPLE"
+rich_utils.STYLE_OPTIONS_TABLE_PADDING = (0, 1)
+rich_utils.STYLE_COMMANDS_TABLE_PADDING = (0, 1)
+rich_utils.STYLE_OPTION = "bold cyan"
+rich_utils.STYLE_SWITCH = "bold green"
+rich_utils.STYLE_USAGE_COMMAND = "bold green"
+rich_utils.STYLE_USAGE = "bold yellow"
+rich_utils.STYLE_ERRORS_SUGGESTION = "bold yellow"
+rich_utils.STYLE_ERROR = "bold red"
 
 def resolve_chunk_size(requested_chunk_size: int | None, association_mode: str) -> int:
     """Resolve the effective chunk size for an association mode."""
