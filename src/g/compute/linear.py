@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-import jax.scipy.linalg
 from jax.scipy.special import betainc
 
 from g.models import LinearAssociationChunkResult, LinearAssociationState
@@ -15,7 +14,19 @@ def solve_positive_definite_system(
     right_hand_side: jax.Array,
 ) -> jax.Array:
     """Solve a positive-definite linear system from its Cholesky factor."""
-    return jax.scipy.linalg.cho_solve((cholesky_factor, True), right_hand_side)
+    forward_substitution = jax.lax.linalg.triangular_solve(
+        cholesky_factor,
+        right_hand_side,
+        left_side=True,
+        lower=True,
+    )
+    return jax.lax.linalg.triangular_solve(
+        cholesky_factor,
+        forward_substitution,
+        left_side=True,
+        lower=True,
+        transpose_a=True,
+    )
 
 
 def prepare_linear_association_state(
