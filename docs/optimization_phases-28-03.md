@@ -170,3 +170,24 @@ Artifacts:
 - Re-ran the fallback-heavy benchmark with the stable GPU flags and captured `data/profiles/current_logistic_fallback_iter_second.json`.
 - Current result: `variant_limit=2048`, `chunk_size=256`, mean `0.21879 s`.
 - This is modestly faster than the previous final checkpoint (`0.22199 s`), though a fresh-process cold run still shows noticeable compile/warmup variance.
+
+### Scatter-hint follow-up
+
+- Replaced the transient grouped merge with the original per-field merge plus JAX scatter hints: `indices_are_sorted=True`, `unique_indices=True`, and `mode="promise_in_bounds"`.
+- Validation remained clean: `just check` passed and `just test` passed with the stable XLA flags.
+- New artifacts:
+  - `data/profiles/current_logistic_fallback_scatter_hints.json`
+  - `data/profiles/logistic_detailed_scatter_hints/logistic_scatter_hints_4096_summary.txt`
+  - `data/profiles/logistic_detailed_scatter_hints/logistic_scatter_hints_4096_summary.json`
+- Result: this was better than the grouped-stack merge, but still not better than the original simple per-field scatter in the detailed profile. The merge hotspot measured about `0.95 s`, versus about `1.32 s` for grouped scatter and about `0.87 s` for the original no-hint version.
+- Conclusion: JAX scatter hints alone do not recover enough performance here; the next serious option is an internal variant-major packed result layout so merge-time grouping does not require transient `stack`/unstack work.
+
+### Packed-float merge follow-up
+
+- Prototyped a variant-major packed float merge path that updated `(variant, 4)` float rows in one scatter while keeping integer and boolean fields as simple per-field scatters.
+- New artifacts:
+  - `data/profiles/current_logistic_fallback_packed_float.json`
+  - `data/profiles/logistic_detailed_packed_float/logistic_packed_float_4096_summary.txt`
+  - `data/profiles/logistic_detailed_packed_float/logistic_packed_float_4096_summary.json`
+- Result: this also regressed. The fallback benchmark mean was about `0.22802 s`, and the detailed profile showed the merge hotspot at about `1.12 s`, worse than the original simple per-field merge.
+- Conclusion: even variant-major packing is not enough if the packing is still transient at merge time. The remaining credible merge optimization would require carrying a packed representation natively through the fallback pipeline rather than building it only at merge time.
