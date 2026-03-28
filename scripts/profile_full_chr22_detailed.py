@@ -130,6 +130,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Optional JSON summary output path. Defaults to <output-dir>/<report-name>_summary.json.",
     )
     parser.add_argument(
+        "--warmup-pass-count",
+        type=int,
+        default=0,
+        help="Number of unprofiled full passes before timed profiling.",
+    )
+    parser.add_argument(
         "--transfer-guard-device-to-host",
         choices=("allow", "log", "log_explicit", "disallow", "disallow_explicit"),
         help="Optional JAX device-to-host transfer guard level applied during the run.",
@@ -155,6 +161,32 @@ def run_and_materialize_frames(
             total_variants += len(accumulator.metadata.variant_identifiers)
         chunk_count += 1
     return {"total_variants": total_variants, "chunk_count": chunk_count}
+
+
+def build_frame_iterator(arguments: argparse.Namespace) -> Iterator[LinearChunkAccumulator] | Iterator[LogisticChunkAccumulator]:
+    """Build a fresh full-run frame iterator from command-line arguments."""
+    covariate_names = parse_covariate_names(arguments.covar_names)
+    if arguments.glm == "linear":
+        return iter_linear_output_frames(
+            bed_prefix=arguments.bfile,
+            phenotype_path=arguments.pheno,
+            phenotype_name=arguments.pheno_name,
+            covariate_path=arguments.covar,
+            covariate_names=covariate_names,
+            chunk_size=arguments.chunk_size,
+            variant_limit=arguments.variant_limit,
+        )
+    return iter_logistic_output_frames(
+        bed_prefix=arguments.bfile,
+        phenotype_path=arguments.pheno,
+        phenotype_name=arguments.pheno_name,
+        covariate_path=arguments.covar,
+        covariate_names=covariate_names,
+        chunk_size=arguments.chunk_size,
+        variant_limit=arguments.variant_limit,
+        max_iterations=arguments.max_iterations,
+        tolerance=arguments.tolerance,
+    )
 
 
 def format_profiling_report(
@@ -280,7 +312,7 @@ def main() -> None:
     """Capture detailed profiling for full chr22 association run."""
     argument_parser = build_argument_parser()
     arguments = argument_parser.parse_args()
-    covariate_names = parse_covariate_names(arguments.covar_names)
+    warmup_pass_count = max(0, int(arguments.warmup_pass_count))
 
     # Create output directories
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
@@ -294,29 +326,14 @@ def main() -> None:
     # Initialize cProfiler
     profiler = cProfile.Profile()
 
-    # Prepare execution context
-    if arguments.glm == "linear":
-        frame_iterator = iter_linear_output_frames(
-            bed_prefix=arguments.bfile,
-            phenotype_path=arguments.pheno,
-            phenotype_name=arguments.pheno_name,
-            covariate_path=arguments.covar,
-            covariate_names=covariate_names,
-            chunk_size=arguments.chunk_size,
-            variant_limit=arguments.variant_limit,
+    for warmup_pass_index in range(warmup_pass_count):
+        warmup_stats = run_and_materialize_frames(build_frame_iterator(arguments))
+        print(
+            f"Warmup pass {warmup_pass_index + 1}/{warmup_pass_count} complete: "
+            f"{warmup_stats['total_variants']} variants"
         )
-    else:
-        frame_iterator = iter_logistic_output_frames(
-            bed_prefix=arguments.bfile,
-            phenotype_path=arguments.pheno,
-            phenotype_name=arguments.pheno_name,
-            covariate_path=arguments.covar,
-            covariate_names=covariate_names,
-            chunk_size=arguments.chunk_size,
-            variant_limit=arguments.variant_limit,
-            max_iterations=arguments.max_iterations,
-            tolerance=arguments.tolerance,
-        )
+
+    frame_iterator = build_frame_iterator(arguments)
 
     # Execute with profiling
     start_time = time.perf_counter()
