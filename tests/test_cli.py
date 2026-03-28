@@ -96,6 +96,24 @@ def test_linear_command_supports_intercept_only_run() -> None:
     assert mock_run_linear_api.call_args.kwargs["covar_names"] is None
 
 
+def test_linear_subcommand_without_options_shows_help() -> None:
+    """Ensure the linear subcommand shows help instead of a usage error."""
+    result = runner.invoke(app, ["linear"])
+    assert result.exit_code == 2
+    assert "Run a linear association scan" in result.output
+    assert "--bfile" in result.output
+    assert "--pheno-name" in result.output
+
+
+def test_logistic_subcommand_without_options_shows_help() -> None:
+    """Ensure the logistic subcommand shows help instead of a usage error."""
+    result = runner.invoke(app, ["logistic"])
+    assert result.exit_code == 2
+    assert "Run a logistic association scan" in result.output
+    assert "--max-iterations" in result.output
+    assert "--firth" in result.output
+
+
 def test_logistic_command_dispatches_api_call() -> None:
     """Ensure the logistic subcommand forwards model-specific options to the public API."""
     with patch(

@@ -43,7 +43,7 @@ def print_success_message(artifacts_path: Path) -> None:
     typer.echo(f"Success. Results saved to {output_path}")
 
 
-@app.command("linear")
+@app.command("linear", no_args_is_help=True)
 def run_linear_command(
     bfile: Path = typer.Option(..., help="PLINK dataset prefix."),
     pheno: Path = typer.Option(..., help="Phenotype table path."),
@@ -74,7 +74,7 @@ def run_linear_command(
     print_success_message(artifacts.sumstats_tsv)
 
 
-@app.command("logistic")
+@app.command("logistic", no_args_is_help=True)
 def run_logistic_command(
     bfile: Path = typer.Option(..., help="PLINK dataset prefix."),
     pheno: Path = typer.Option(..., help="Phenotype table path."),
