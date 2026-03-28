@@ -463,6 +463,22 @@ def compute_firth_penalized_log_likelihood(
     information_matrix: jax.Array,
 ) -> jax.Array:
     """Compute the Firth-penalized log-likelihood for one variant."""
+    cholesky_factor = jnp.linalg.cholesky(information_matrix)
+    return compute_firth_penalized_log_likelihood_from_cholesky(
+        probability_vector=probability_vector,
+        phenotype_vector=phenotype_vector,
+        observation_mask=observation_mask,
+        information_cholesky_factor=cholesky_factor,
+    )
+
+
+def compute_firth_penalized_log_likelihood_from_cholesky(
+    probability_vector: jax.Array,
+    phenotype_vector: jax.Array,
+    observation_mask: jax.Array,
+    information_cholesky_factor: jax.Array,
+) -> jax.Array:
+    """Compute Firth-penalized log-likelihood from a Cholesky factor."""
     masked_probability_vector = jnp.where(observation_mask, probability_vector, MISSING_PROBABILITY_FILL)
     masked_phenotype_vector = jnp.where(observation_mask, phenotype_vector, 0.0)
     log_likelihood = jnp.sum(
@@ -470,9 +486,8 @@ def compute_firth_penalized_log_likelihood(
         + (observation_mask.astype(probability_vector.dtype) - masked_phenotype_vector)
         * jnp.log1p(-masked_probability_vector),
     )
-    cholesky_factor = jnp.linalg.cholesky(information_matrix)
-    log_determinant = 2.0 * jnp.sum(jnp.log(jnp.diag(cholesky_factor)))
-    cholesky_valid = jnp.all(jnp.isfinite(cholesky_factor))
+    log_determinant = 2.0 * jnp.sum(jnp.log(jnp.diag(information_cholesky_factor)))
+    cholesky_valid = jnp.all(jnp.isfinite(information_cholesky_factor))
     penalty_term = jnp.where(cholesky_valid, BINARY_CASE_THRESHOLD * log_determinant, -jnp.inf)
     return log_likelihood + penalty_term
 
@@ -1069,7 +1084,7 @@ def fit_single_variant_firth_logistic_regression(
         return full_design_matrix.T @ weighted_design_matrix
 
     def compute_hdiag_and_adjusted_weights(
-        information_matrix: jax.Array,
+        information_cholesky_factor: jax.Array,
         probability_vector: jax.Array,
     ) -> AdjustedWeightComponents:
         variance_vector = jnp.where(
@@ -1077,8 +1092,16 @@ def fit_single_variant_firth_logistic_regression(
             jnp.clip(probability_vector * (1.0 - probability_vector), MINIMUM_WEIGHT),
             0.0,
         )
-        projected_design_matrix = solve_positive_definite_system(information_matrix, full_design_matrix.T).T
-        leverage_vector = variance_vector * jnp.sum(projected_design_matrix * full_design_matrix, axis=1)
+        projected_design_transpose = jax.lax.linalg.triangular_solve(
+            information_cholesky_factor,
+            full_design_matrix.T,
+            left_side=True,
+            lower=True,
+        )
+        leverage_vector = variance_vector * jnp.sum(
+            projected_design_transpose * projected_design_transpose,
+            axis=0,
+        )
         adjusted_weight_vector = jnp.where(
             observation_mask,
             (phenotype_vector - probability_vector) + leverage_vector * (BINARY_CASE_THRESHOLD - probability_vector),
@@ -1098,11 +1121,12 @@ def fit_single_variant_firth_logistic_regression(
         probability_vector=initial_probability_vector,
         observation_mask=observation_mask,
     )
-    initial_penalized_log_likelihood = compute_firth_penalized_log_likelihood(
+    initial_information_cholesky_factor = jnp.linalg.cholesky(initial_information_components.information_matrix)
+    initial_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky(
         probability_vector=initial_probability_vector,
         phenotype_vector=phenotype_vector,
         observation_mask=observation_mask,
-        information_matrix=initial_information_components.information_matrix,
+        information_cholesky_factor=initial_information_cholesky_factor,
     )
 
     def condition_function(state: FirthState) -> jax.Array:
@@ -1116,17 +1140,18 @@ def fit_single_variant_firth_logistic_regression(
             probability_vector=probability_vector,
             observation_mask=observation_mask,
         )
-        current_penalized_log_likelihood = compute_firth_penalized_log_likelihood(
+        information_cholesky_factor = jnp.linalg.cholesky(information_components.information_matrix)
+        current_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky(
             probability_vector=probability_vector,
             phenotype_vector=phenotype_vector,
             observation_mask=observation_mask,
-            information_matrix=information_components.information_matrix,
+            information_cholesky_factor=information_cholesky_factor,
         )
         current_failed = (~jnp.isfinite(current_penalized_log_likelihood)) | (
             ~jnp.all(jnp.isfinite(state.coefficients))
         )
         adjusted_weight_components = compute_hdiag_and_adjusted_weights(
-            information_matrix=information_components.information_matrix,
+            information_cholesky_factor=information_cholesky_factor,
             probability_vector=probability_vector,
         )
         adjusted_score = full_design_matrix.T @ adjusted_weight_components.adjusted_weight_vector
@@ -1179,8 +1204,9 @@ def fit_single_variant_firth_logistic_regression(
         probability_vector=final_probability_vector,
         observation_mask=observation_mask,
     )
+    final_information_cholesky_factor = jnp.linalg.cholesky(final_information_components.information_matrix)
     final_adjusted_weight_components = compute_hdiag_and_adjusted_weights(
-        information_matrix=final_information_components.information_matrix,
+        information_cholesky_factor=final_information_cholesky_factor,
         probability_vector=final_probability_vector,
     )
     final_second_hessian = compute_hessian_from_weights(final_adjusted_weight_components.second_weight_vector)
