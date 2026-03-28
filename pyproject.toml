@@ -42,8 +42,7 @@ dev = [
 gpu = ["jax[cuda12]>=0.9.2"]
 triton-gpu = [
     "jax[cuda12]>=0.9.2",
-    "torch",
-    "triton",
+    "jax-triton>=0.3.1",
 ]
 
 [build-system]
