@@ -21,11 +21,13 @@ def test_root_command_without_arguments_shows_help() -> None:
 
 
 def test_root_help_renders_without_style_errors() -> None:
-    """Ensure Rich style overrides do not break help rendering."""
+    """Ensure help rendering stays plain and free of Rich panel boxes."""
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "MissingStyle" not in result.output
     assert "Usage:" in result.output
+    assert "╭" not in result.output
+    assert "╰" not in result.output
 
 
 def test_resolve_chunk_size_uses_linear_default() -> None:
