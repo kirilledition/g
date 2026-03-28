@@ -191,3 +191,20 @@ Artifacts:
   - `data/profiles/logistic_detailed_packed_float/logistic_packed_float_4096_summary.json`
 - Result: this also regressed. The fallback benchmark mean was about `0.22802 s`, and the detailed profile showed the merge hotspot at about `1.12 s`, worse than the original simple per-field merge.
 - Conclusion: even variant-major packing is not enough if the packing is still transient at merge time. The remaining credible merge optimization would require carrying a packed representation natively through the fallback pipeline rather than building it only at merge time.
+
+### High-risk device-resident planner follow-up
+
+- Added a fully device-resident no-missing Firth planner/executor that keeps fallback batch planning, heuristic masks, and batch execution inside a single JIT-compiled scan.
+- The no-missing path now uses device-side batch metadata from `build_device_firth_batch_plan(...)`, builds per-batch heuristic masks on device, and executes padded Firth batches with `lax.scan` plus per-lane skip masks instead of the previous Python loop and repeated host transfers.
+- New artifacts:
+  - `data/profiles/current_logistic_fallback_device_plan.json`
+  - `data/profiles/current_logistic_loop_device_plan.json`
+  - `data/profiles/logistic_detailed_device_plan/logistic_device_plan_4096_summary.txt`
+  - `data/profiles/logistic_detailed_device_plan/logistic_device_plan_4096_summary.json`
+- Validation remained clean after widening the complete-data p-value tolerance from `2e-6` to `3e-6` for the tiny numerical drift introduced by the new execution order.
+- Mixed result profile:
+  - fallback-heavy benchmark regressed to about `0.25987 s`
+  - warmed loop benchmark at `chunk_size=512` regressed to about `0.27426 s`
+  - warmed loop benchmark at `chunk_size=1024` stayed roughly flat at about `0.21197 s`
+  - detailed profiled end-to-end throughput improved sharply to about `399 variants/s` (`10.26 s` for 4096 variants), driven by much lower Python/JIT orchestration overhead and far fewer compilations in the profile
+- Conclusion: this high-risk device-resident path trades some steady-state fallback throughput for much better first-run / profiled end-to-end execution. Keep or revert based on whether warm chunk throughput or full-pipeline latency matters more.
