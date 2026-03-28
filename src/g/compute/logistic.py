@@ -1233,9 +1233,13 @@ def initialize_mixed_firth_batch_coefficients(
         phenotype_vector=phenotype_vector,
         observation_mask=heuristic_observation_mask,
     )
-    device_use_heuristic_mask = batch_heuristic_mask[:, None]
+    device_use_heuristic_mask = jnp.broadcast_to(
+        batch_heuristic_mask[:, None],
+        batch_standard_coefficients.shape
+    )
     heuristic_padded = jnp.zeros_like(batch_standard_coefficients)
-    heuristic_padded = heuristic_padded.at[heuristic_position_vector].set(heuristic_initial_coefficients)
+    if heuristic_variant_count > 0:
+        heuristic_padded = heuristic_padded.at[heuristic_position_vector].set(heuristic_initial_coefficients)
     return jnp.where(device_use_heuristic_mask, heuristic_padded, batch_standard_coefficients)
 
 
