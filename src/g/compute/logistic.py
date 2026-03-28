@@ -229,7 +229,29 @@ def compute_covariate_information_matrix(
     effective_weights: jax.Array,
 ) -> jax.Array:
     """Compute batched Fisher information matrices for covariates."""
-    return jnp.einsum("np,mn,nq->mpq", covariate_matrix, effective_weights, covariate_matrix)
+    sample_crossproduct_matrix = jnp.einsum("np,nq->npq", covariate_matrix, covariate_matrix)
+    return jnp.tensordot(effective_weights, sample_crossproduct_matrix, axes=((1,), (0,)))
+
+
+def solve_batched_positive_definite_system(
+    positive_definite_matrix: jax.Array,
+    right_hand_side: jax.Array,
+) -> jax.Array:
+    """Solve a batched positive-definite linear system using Cholesky factors."""
+    cholesky_factor = jnp.linalg.cholesky(positive_definite_matrix)
+    forward_substitution = jax.lax.linalg.triangular_solve(
+        cholesky_factor,
+        right_hand_side,
+        left_side=True,
+        lower=True,
+    )
+    return jax.lax.linalg.triangular_solve(
+        cholesky_factor,
+        forward_substitution,
+        left_side=True,
+        lower=True,
+        transpose_a=True,
+    )
 
 
 def compute_covariate_score(
@@ -690,12 +712,7 @@ def compute_standard_logistic_association_chunk_with_mask(
         cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, weighted_genotype_matrix)
         genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
         rhs = jnp.stack([covariate_score, cross_information_vector], axis=-1)
-
-        def cho_solve_single(matrix: jax.Array, right_hand_side: jax.Array) -> jax.Array:
-            factor, lower = jax.scipy.linalg.cho_factor(matrix)
-            return jax.scipy.linalg.cho_solve((factor, lower), right_hand_side)
-
-        sols = jax.vmap(cho_solve_single)(covariate_information_matrix, rhs)
+        sols = solve_batched_positive_definite_system(covariate_information_matrix, rhs)
         covariate_information_solution = sols[..., 0]
         cross_solution = sols[..., 1]
         schur_complement = genotype_information - jnp.sum(cross_information_vector * cross_solution, axis=1)
@@ -748,7 +765,7 @@ def compute_standard_logistic_association_chunk_with_mask(
         ),
     )
 
-    cross_information_solution = jnp.linalg.solve(
+    cross_information_solution = solve_batched_positive_definite_system(
         final_state.last_covariate_information_matrix,
         final_state.last_cross_information_vector[:, :, None],
     )
@@ -846,18 +863,7 @@ def compute_standard_logistic_association_chunk_without_mask(
         cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, weighted_genotype_matrix)
         genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
         combined_right_hand_sides = jnp.stack((covariate_score, cross_information_vector), axis=-1)
-
-        def solve_information_system(
-            information_matrix: jax.Array,
-            right_hand_side_matrix: jax.Array,
-        ) -> jax.Array:
-            cholesky_factor, lower_triangle_indicator = jax.scipy.linalg.cho_factor(information_matrix)
-            return jax.scipy.linalg.cho_solve(
-                (cholesky_factor, lower_triangle_indicator),
-                right_hand_side_matrix,
-            )
-
-        information_solution_matrix = jax.vmap(solve_information_system)(
+        information_solution_matrix = solve_batched_positive_definite_system(
             covariate_information_matrix,
             combined_right_hand_sides,
         )
@@ -913,7 +919,7 @@ def compute_standard_logistic_association_chunk_without_mask(
         ),
     )
 
-    cross_information_solution = jnp.linalg.solve(
+    cross_information_solution = solve_batched_positive_definite_system(
         final_state.last_covariate_information_matrix,
         final_state.last_cross_information_vector[:, :, None],
     )
