@@ -126,6 +126,13 @@ If iteration speed matters during development, use the Python scripts directly w
 - Optimized the single-variant Firth solver in `src/g/compute/logistic.py` by replacing generic solves and the final explicit matrix inverse with Cholesky-based solves.
 - Preserved parity tests after the change; one masked/unmasked tolerance check was widened from `1e-6` to `2e-6` because the new solve path changes only the last few floating-point bits.
 
+### Follow-up iteration - merge and initialization
+
+- Reduced no-missing Firth merge traffic by grouping fallback result scatters by dtype in `merge_firth_result_once`, cutting the final merge from nine scatters to three grouped scatters.
+- Added a targeted regression test for grouped Firth result merging in `tests/test_logistic_coverage.py`.
+- Prototyped selective mixed-batch heuristic initialization for the no-missing path so mixed fallback batches only compute heuristic initial coefficients for heuristic lanes.
+- Local validation remained stable when run with the benchmark XLA flags listed above; without those flags, the complete-data masked/unmasked parity test remained numerically noisy on the local GPU.
+
 ## Measured results
 
 ### Baseline
@@ -157,3 +164,9 @@ Artifacts:
 - `chunk_size=512` loop throughput improved by about `8.4%`
 - fallback-heavy chunk runtime improved by about `8.7%`
 - detailed profiled end-to-end throughput improved from `266` to `270 variants/s` (`~1.5%`), with compile and trace-export overhead still dominating the profiled wall time
+
+### Current iteration spot check
+
+- Re-ran the fallback-heavy benchmark with the stable GPU flags and captured `data/profiles/current_logistic_fallback_iter_second.json`.
+- Current result: `variant_limit=2048`, `chunk_size=256`, mean `0.21879 s`.
+- This is modestly faster than the previous final checkpoint (`0.22199 s`), though a fresh-process cold run still shows noticeable compile/warmup variance.

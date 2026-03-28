@@ -1238,6 +1238,73 @@ def initialize_mixed_firth_batch_coefficients(
     return jnp.where(device_use_heuristic_mask, heuristic_padded, batch_standard_coefficients)
 
 
+def merge_scattered_firth_result_groups(
+    current_result: LogisticAssociationChunkResult,
+    fallback_indices: jax.Array,
+    firth_result: LogisticAssociationChunkResult,
+) -> LogisticAssociationChunkResult:
+    """Merge grouped Firth result fields with one scatter per dtype group."""
+    current_float_fields = jnp.stack(
+        [
+            current_result.beta,
+            current_result.standard_error,
+            current_result.test_statistic,
+            current_result.p_value,
+        ],
+        axis=0,
+    )
+    firth_float_fields = jnp.stack(
+        [
+            firth_result.beta,
+            firth_result.standard_error,
+            firth_result.test_statistic,
+            firth_result.p_value,
+        ],
+        axis=0,
+    )
+    merged_float_fields = current_float_fields.at[:, fallback_indices].set(firth_float_fields)
+
+    current_integer_fields = jnp.stack(
+        [
+            current_result.method_code,
+            current_result.error_code,
+            current_result.iteration_count,
+        ],
+        axis=0,
+    )
+    firth_integer_fields = jnp.stack(
+        [
+            firth_result.method_code,
+            firth_result.error_code,
+            firth_result.iteration_count,
+        ],
+        axis=0,
+    )
+    merged_integer_fields = current_integer_fields.at[:, fallback_indices].set(firth_integer_fields)
+
+    current_boolean_fields = jnp.stack(
+        [current_result.converged_mask, current_result.valid_mask],
+        axis=0,
+    )
+    firth_boolean_fields = jnp.stack(
+        [firth_result.converged_mask, firth_result.valid_mask],
+        axis=0,
+    )
+    merged_boolean_fields = current_boolean_fields.at[:, fallback_indices].set(firth_boolean_fields)
+
+    return LogisticAssociationChunkResult(
+        beta=merged_float_fields[0],
+        standard_error=merged_float_fields[1],
+        test_statistic=merged_float_fields[2],
+        p_value=merged_float_fields[3],
+        method_code=merged_integer_fields[0],
+        error_code=merged_integer_fields[1],
+        converged_mask=merged_boolean_fields[0],
+        valid_mask=merged_boolean_fields[1],
+        iteration_count=merged_integer_fields[2],
+    )
+
+
 def compute_firth_association_chunk_with_mask(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
@@ -1353,21 +1420,11 @@ def merge_firth_result_once(
     fallback_indices: jax.Array,
     firth_result: LogisticAssociationChunkResult,
 ) -> LogisticAssociationChunkResult:
-    """Merge all fallback updates into the chunk result with one scatter per field."""
-
-    def merge_array(current_values: jax.Array, firth_values: jax.Array) -> jax.Array:
-        return current_values.at[fallback_indices].set(firth_values)
-
-    return LogisticAssociationChunkResult(
-        beta=merge_array(current_result.beta, firth_result.beta),
-        standard_error=merge_array(current_result.standard_error, firth_result.standard_error),
-        test_statistic=merge_array(current_result.test_statistic, firth_result.test_statistic),
-        p_value=merge_array(current_result.p_value, firth_result.p_value),
-        method_code=merge_array(current_result.method_code, firth_result.method_code),
-        error_code=merge_array(current_result.error_code, firth_result.error_code),
-        converged_mask=merge_array(current_result.converged_mask, firth_result.converged_mask),
-        valid_mask=merge_array(current_result.valid_mask, firth_result.valid_mask),
-        iteration_count=merge_array(current_result.iteration_count, firth_result.iteration_count),
+    """Merge all fallback updates into the chunk result with grouped scatters."""
+    return merge_scattered_firth_result_groups(
+        current_result=current_result,
+        fallback_indices=fallback_indices,
+        firth_result=firth_result,
     )
 
 
@@ -1436,18 +1493,23 @@ def compute_batched_firth_updates_without_mask(
             else:
                 batch_heuristic_firth_mask = jnp.take(device_heuristic_firth_mask, fallback_indices, axis=0)
                 batch_heuristic_firth_mask = batch_heuristic_firth_mask & batch_active_mask
-                heuristic_initial_coefficients = initialize_full_model_coefficients_without_mask(
-                    covariate_matrix=covariate_matrix,
-                    genotype_matrix_by_variant=batch_genotype_matrix.T,
-                    no_missing_constants=no_missing_constants,
-                )
+                host_batch_heuristic_mask = np.asarray(jax.device_get(batch_heuristic_firth_mask))
+                heuristic_position_vector = np.nonzero(host_batch_heuristic_mask)[0]
                 if heuristic_variant_count == active_variant_count:
-                    batch_initial_coefficients = heuristic_initial_coefficients
+                    batch_initial_coefficients = initialize_full_model_coefficients_without_mask(
+                        covariate_matrix=covariate_matrix,
+                        genotype_matrix_by_variant=batch_genotype_matrix.T,
+                        no_missing_constants=no_missing_constants,
+                    )
                 else:
-                    batch_initial_coefficients = jnp.where(
-                        batch_heuristic_firth_mask[:, None],
-                        heuristic_initial_coefficients,
-                        batch_standard_coefficients,
+                    heuristic_genotype_matrix = jnp.take(batch_genotype_matrix, heuristic_position_vector, axis=1)
+                    heuristic_initial_coefficients = initialize_full_model_coefficients_without_mask(
+                        covariate_matrix=covariate_matrix,
+                        genotype_matrix_by_variant=heuristic_genotype_matrix.T,
+                        no_missing_constants=no_missing_constants,
+                    )
+                    batch_initial_coefficients = batch_standard_coefficients.at[heuristic_position_vector].set(
+                        heuristic_initial_coefficients
                     )
             batch_observation_mask = jnp.ones(batch_genotype_matrix.T.shape, dtype=bool)
             firth_result = compute_firth_association_chunk_with_mask(

@@ -26,8 +26,10 @@ from g.compute.logistic import (
     initialize_full_model_coefficients,
     initialize_full_model_coefficients_without_mask,
     initialize_mixed_firth_batch_coefficients,
+    merge_firth_result_once,
     prepare_no_missing_logistic_constants,
 )
+from g.models import LogisticAssociationChunkResult
 
 
 def build_logistic_fixture() -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
@@ -275,6 +277,49 @@ def test_compute_firth_association_chunk_with_mask_marks_firth_method() -> None:
         np.full((genotype_matrix.shape[1],), LogisticMethod.FIRTH, dtype=np.int32),
     )
     assert logistic_result.beta.shape == (genotype_matrix.shape[1],)
+
+
+def test_merge_firth_result_once_updates_every_field() -> None:
+    """Ensure grouped Firth merging preserves all result fields at fallback indices."""
+    current_result = LogisticAssociationChunkResult(
+        beta=jnp.array([1.0, 2.0, 3.0]),
+        standard_error=jnp.array([0.1, 0.2, 0.3]),
+        test_statistic=jnp.array([10.0, 20.0, 30.0]),
+        p_value=jnp.array([0.01, 0.02, 0.03]),
+        method_code=jnp.array([0, 0, 0], dtype=jnp.int32),
+        error_code=jnp.array([0, 0, 0], dtype=jnp.int32),
+        converged_mask=jnp.array([True, True, False]),
+        valid_mask=jnp.array([True, True, False]),
+        iteration_count=jnp.array([1, 1, 1], dtype=jnp.int32),
+    )
+    fallback_indices = jnp.array([0, 2], dtype=jnp.int32)
+    firth_result = LogisticAssociationChunkResult(
+        beta=jnp.array([11.0, 33.0]),
+        standard_error=jnp.array([0.11, 0.33]),
+        test_statistic=jnp.array([110.0, 330.0]),
+        p_value=jnp.array([0.001, 0.003]),
+        method_code=jnp.array([1, 1], dtype=jnp.int32),
+        error_code=jnp.array([2, 3], dtype=jnp.int32),
+        converged_mask=jnp.array([False, True]),
+        valid_mask=jnp.array([False, True]),
+        iteration_count=jnp.array([5, 7], dtype=jnp.int32),
+    )
+
+    merged_result = merge_firth_result_once(
+        current_result=current_result,
+        fallback_indices=fallback_indices,
+        firth_result=firth_result,
+    )
+
+    np.testing.assert_allclose(merged_result.beta, np.array([11.0, 2.0, 33.0]), atol=0.0)
+    np.testing.assert_allclose(merged_result.standard_error, np.array([0.11, 0.2, 0.33]), atol=0.0)
+    np.testing.assert_allclose(merged_result.test_statistic, np.array([110.0, 20.0, 330.0]), atol=0.0)
+    np.testing.assert_allclose(merged_result.p_value, np.array([0.001, 0.02, 0.003]), atol=0.0)
+    np.testing.assert_array_equal(merged_result.method_code, np.array([1, 0, 1], dtype=np.int32))
+    np.testing.assert_array_equal(merged_result.error_code, np.array([2, 0, 3], dtype=np.int32))
+    np.testing.assert_array_equal(merged_result.converged_mask, np.array([False, True, True]))
+    np.testing.assert_array_equal(merged_result.valid_mask, np.array([False, True, True]))
+    np.testing.assert_array_equal(merged_result.iteration_count, np.array([5, 1, 7], dtype=np.int32))
 
 
 def test_top_level_logistic_chunk_functions_match_on_complete_data() -> None:
