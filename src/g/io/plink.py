@@ -104,11 +104,17 @@ def read_bed_chunk(
     return jnp.asarray(genotype_matrix_host, dtype=jnp.float32)
 
 
-def preprocess_genotype_matrix(genotype_matrix: jax.Array) -> PreprocessedGenotypeChunkData:
+def preprocess_genotype_matrix(
+    genotype_matrix: jax.Array,
+    *,
+    include_missing_value_flag: bool = True,
+) -> PreprocessedGenotypeChunkData:
     """Preprocess a raw genotype matrix with Phase 1 semantics.
 
     Args:
         genotype_matrix: Raw genotype matrix with NaNs for missing values.
+        include_missing_value_flag: Whether to materialize a host boolean that
+            records if the chunk contains missing values.
 
     Returns:
         Mean-imputed genotype arrays and summary values.
@@ -122,10 +128,11 @@ def preprocess_genotype_matrix(genotype_matrix: jax.Array) -> PreprocessedGenoty
     sanitized_column_means = jnp.where(observation_count > 0, column_means, 0.0)
     imputed_matrix = jnp.where(missing_mask, sanitized_column_means[None, :], genotype_matrix_float32)
     allele_one_frequency = sanitized_column_means / 2.0
+    has_missing_values = bool(jax.device_get(jnp.any(missing_mask))) if include_missing_value_flag else False
     return PreprocessedGenotypeChunkData(
         genotypes=imputed_matrix,
         missing_mask=missing_mask,
-        has_missing_values=bool(jax.device_get(jnp.any(missing_mask))),
+        has_missing_values=has_missing_values,
         allele_one_frequency=allele_one_frequency,
         observation_count=observation_count,
     )
@@ -220,6 +227,8 @@ def iter_genotype_chunks(
     expected_individual_identifiers: np.ndarray,
     chunk_size: int,
     variant_limit: int | None = None,
+    *,
+    include_missing_value_flag: bool = True,
 ) -> Iterator[GenotypeChunk]:
     """Yield mean-imputed genotype chunks from a PLINK BED file.
 
@@ -229,6 +238,8 @@ def iter_genotype_chunks(
         expected_individual_identifiers: Expected sample order after alignment.
         chunk_size: Number of variants per chunk.
         variant_limit: Optional cap on the number of variants.
+        include_missing_value_flag: Whether to materialize a host missing-value
+            flag for each chunk.
 
     Yields:
         Mean-imputed genotype chunks with metadata.
@@ -266,7 +277,10 @@ def iter_genotype_chunks(
                 variant_stop=variant_stop,
                 num_threads=num_threads,
             )
-            preprocessed_chunk_data = preprocess_genotype_matrix(jax.device_put(genotype_matrix_host))
+            preprocessed_chunk_data = preprocess_genotype_matrix(
+                jax.device_put(genotype_matrix_host),
+                include_missing_value_flag=include_missing_value_flag,
+            )
             yield build_genotype_chunk(
                 preprocessed_chunk_data=preprocessed_chunk_data,
                 chromosome_values=chromosome_values,

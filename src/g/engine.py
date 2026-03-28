@@ -392,6 +392,7 @@ def iter_linear_output_frames(
         expected_individual_identifiers=aligned_sample_data.individual_identifiers,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
+        include_missing_value_flag=False,
     )
     current_chunk = next(chunk_iterator, None)
     for chunk_index, next_chunk in enumerate(
