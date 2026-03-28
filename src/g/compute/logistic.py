@@ -848,10 +848,24 @@ def compute_standard_logistic_association_chunk_without_mask(
         covariate_information_matrix = compute_covariate_information_matrix(covariate_matrix, effective_weights)
         cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, weighted_genotype_matrix)
         genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
-        covariate_information_solution = jnp.linalg.solve(covariate_information_matrix, covariate_score[:, :, None])
-        covariate_information_solution = jnp.squeeze(covariate_information_solution, axis=-1)
-        cross_solution = jnp.linalg.solve(covariate_information_matrix, cross_information_vector[:, :, None])
-        cross_solution = jnp.squeeze(cross_solution, axis=-1)
+        combined_right_hand_sides = jnp.stack((covariate_score, cross_information_vector), axis=-1)
+
+        def solve_information_system(
+            information_matrix: jax.Array,
+            right_hand_side_matrix: jax.Array,
+        ) -> jax.Array:
+            cholesky_factor, lower_triangle_indicator = jax.scipy.linalg.cho_factor(information_matrix)
+            return jax.scipy.linalg.cho_solve(
+                (cholesky_factor, lower_triangle_indicator),
+                right_hand_side_matrix,
+            )
+
+        information_solution_matrix = jax.vmap(solve_information_system)(
+            covariate_information_matrix,
+            combined_right_hand_sides,
+        )
+        covariate_information_solution = information_solution_matrix[..., 0]
+        cross_solution = information_solution_matrix[..., 1]
         schur_complement = genotype_information - jnp.sum(cross_information_vector * cross_solution, axis=1)
         safe_schur_complement = jnp.where(schur_complement > 0.0, schur_complement, 1.0)
         adjusted_genotype_score = genotype_score - jnp.sum(
