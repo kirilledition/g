@@ -62,6 +62,7 @@
           packages = with pkgs; [
             uv
             just
+            python311
             python313
             maturin
             ruff
@@ -73,16 +74,20 @@
             pkg-config
             cacert
             openssl
+            openjdk11_headless
+            openblas
+            lapack
             plink2Package
             regeniePackage
           ];
 
           shellHook = ''
             export UV_PYTHON=python3.13
+            export JAVA_HOME=${pkgs.openjdk11_headless}
             export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             export NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             export LD_LIBRARY_PATH=/run/opengl-driver/lib:''${NIX_LD_LIBRARY_PATH:+:$NIX_LD_LIBRARY_PATH}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-            echo "GWAS Engine dev shell ready (uv, Rust, plink2, regenie)."
+            echo "GWAS Engine dev shell ready (uv, Rust, plink2, regenie, Hail runtime tools)."
           '';
         };
       });

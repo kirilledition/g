@@ -51,6 +51,7 @@ Included tools:
 - Rust toolchain
 - `plink2`
 - `regenie`
+- Java 11, BLAS/LAPACK, and Python 3.11 for local Hail baselines
 
 Enter the shell with:
 
@@ -87,6 +88,8 @@ Run baseline PLINK/Regenie commands:
 ```bash
 just benchmark-baselines
 ```
+
+`just benchmark-baselines` now also runs local Hail baselines. On the first run it bootstraps a dedicated `.venv-hail` with Python 3.11 and `hail==0.2.137`, imports the PLINK dataset once, and saves a reusable Hail `MatrixTable` cache at `data/hail/1kg_chr22_full.mt`. Later Hail runs reuse that local cache instead of re-importing PLINK every time.
 
 Run the engine directly:
 
@@ -174,6 +177,8 @@ just profile-linear-detailed
 - `src/lib.rs` - placeholder PyO3 module
 - `tests/` - correctness, parity, and behavior tests
 - `scripts/` - data prep, evaluation, benchmark, and profiling utilities
+- `.venv-hail/` - managed local Hail environment created on demand for baseline comparisons
+- `data/hail/` - local cached Hail `MatrixTable` artifacts for repeated baseline runs
 - `docs/` - plans, status notes, and project documentation
 
 ## Current Priorities
