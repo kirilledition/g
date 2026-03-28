@@ -9,7 +9,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import hail as hail_library
+import hail as hail_library  # type: ignore
 from run_hail_baseline import (
     DEFAULT_HAIL_DRIVER_MEMORY,
     DEFAULT_HAIL_MASTER,

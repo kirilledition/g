@@ -883,7 +883,8 @@ def serialize_dataclass_or_none(value: object | None) -> dict[str, object] | Non
     """Convert an optional dataclass value to a JSON-serializable dictionary."""
     if value is None:
         return None
-    return asdict(value)
+    # Type checker cannot verify dataclass protocol at runtime
+    return asdict(value)  # type: ignore
 
 
 def main() -> None:

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import argparse
 import cProfile
-import io
 import gzip
+import io
 import json
 import pstats
 import time
@@ -163,7 +163,9 @@ def run_and_materialize_frames(
     return {"total_variants": total_variants, "chunk_count": chunk_count}
 
 
-def build_frame_iterator(arguments: argparse.Namespace) -> Iterator[LinearChunkAccumulator] | Iterator[LogisticChunkAccumulator]:
+def build_frame_iterator(
+    arguments: argparse.Namespace,
+) -> Iterator[LinearChunkAccumulator] | Iterator[LogisticChunkAccumulator]:
     """Build a fresh full-run frame iterator from command-line arguments."""
     covariate_names = parse_covariate_names(arguments.covar_names)
     if arguments.glm == "linear":
@@ -266,8 +268,7 @@ def generate_cprofile_report(
     stats.print_callees(50)
 
     # Write to file
-    with open(output_path, "w") as file_handle:
-        file_handle.write(stream.getvalue())
+    output_path.open("w").write(stream.getvalue())
 
     stream.close()
 
@@ -418,14 +419,11 @@ def main() -> None:
     )
 
     summary_path = arguments.output_dir / f"{arguments.report_name}_summary.txt"
-    with open(summary_path, "w") as file_handle:
-        file_handle.write(summary_report)
+    summary_path.open("w").write(summary_report)
     print(f"Summary report saved: {summary_path}")
 
     perfetto_trace_path = find_perfetto_trace_path(jax_trace_dir) if arguments.enable_jax_trace else None
-    perfetto_event_summaries = (
-        summarize_perfetto_trace(perfetto_trace_path) if perfetto_trace_path is not None else []
-    )
+    perfetto_event_summaries = summarize_perfetto_trace(perfetto_trace_path) if perfetto_trace_path is not None else []
     json_summary_path = arguments.json_summary_path or (arguments.output_dir / f"{arguments.report_name}_summary.json")
     json_summary = DetailedProfileSummary(
         glm_mode=arguments.glm,
@@ -443,7 +441,7 @@ def main() -> None:
         perfetto_trace_path=str(perfetto_trace_path) if perfetto_trace_path is not None else None,
         perfetto_event_summaries=perfetto_event_summaries,
     )
-    with open(json_summary_path, "w") as file_handle:
+    with json_summary_path.open("w") as file_handle:
         json.dump(asdict(json_summary), file_handle, indent=2)
     print(f"JSON summary saved: {json_summary_path}")
 

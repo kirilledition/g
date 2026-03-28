@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import NamedTuple
 
-import hail as hail_library
+import hail as hail_library  # type: ignore
 
 DEFAULT_HAIL_MASTER = "local[1]"
 DEFAULT_HAIL_DRIVER_MEMORY = "8g"
