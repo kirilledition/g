@@ -69,7 +69,6 @@ def compute_linear_association_chunk(
     """
     covariate_matrix = linear_association_state.covariate_matrix
     covariate_matrix_transpose = linear_association_state.covariate_matrix_transpose
-    genotype_matrix = jnp.asarray(genotype_matrix, dtype=jnp.float32)
     sample_count = covariate_matrix.shape[0]
     covariate_parameter_count = covariate_matrix.shape[1]
     degrees_of_freedom = sample_count - covariate_parameter_count - 1
