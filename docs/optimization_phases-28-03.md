@@ -208,3 +208,79 @@ Artifacts:
   - warmed loop benchmark at `chunk_size=1024` stayed roughly flat at about `0.21197 s`
   - detailed profiled end-to-end throughput improved sharply to about `399 variants/s` (`10.26 s` for 4096 variants), driven by much lower Python/JIT orchestration overhead and far fewer compilations in the profile
 - Conclusion: this high-risk device-resident path trades some steady-state fallback throughput for much better first-run / profiled end-to-end execution. Keep or revert based on whether warm chunk throughput or full-pipeline latency matters more.
+
+## Newly discovered bottlenecks (GPU skill analysis)
+
+Applied Triton, JAX best practices, and CUDA skills to identify additional optimization opportunities in `src/g/compute/linear.py` and `src/g/compute/logistic.py`:
+
+### P0 - Memory transfer bottleneck (linear.py)
+
+**Issue:** `covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=jnp.float32)` and similar conversions run on every chunk computation. Per JAX best practices, if inputs come from CPU memory this triggers expensive host-to-device transfers per chunk.
+
+**Location:** `src/g/compute/linear.py:35-36`, `src/g/compute/logistic.py:72` and similar patterns.
+
+**Fix:** Move dtype conversion to data loading time, not compute time. Ensure inputs stay in device memory throughout the pipeline.
+
+### P0 - einsum intermediate memory blowup (logistic.py)
+
+**Issue:** `jnp.einsum("np,mn,nq->mpq", covariate_matrix, effective_weights, covariate_matrix)` creates massive intermediate tensor `(m,n,p)` before contracting to `(m,p,q)`. Per Triton/GPU patterns, large temporaries limit GPU occupancy and cause memory pressure.
+
+**Location:** `src/g/compute/logistic.py:232-233` (`compute_covariate_information_matrix`).
+
+**Fix:** Break into separate operations or use `jax.lax.dot_general` with custom contracting paths to minimize intermediate size.
+
+### P1 - While loop warp divergence (logistic.py)
+
+**Issue:** `jax.lax.while_loop` with per-variant convergence checking (`jnp.any(~state.converged_mask)`) creates warp divergence. Fast-converging variants sit idle waiting for slow variants. The reduction across all variants is expensive on GPU. Per CUDA best practices, this reduces occupancy and wastes GPU cycles.
+
+**Location:** `src/g/compute/logistic.py:539-577`, `667-735`, `828-900`, `1049-1096`.
+
+**Fix:** Consider `jax.lax.scan` with fixed iteration count and early-exit masks, or implement segmented reductions. Profile with `nsys` to measure divergence overhead.
+
+### P1 - Cholesky factorization inside vmap (logistic.py)
+
+**Issue:** Cholesky solve inside `jax.vmap` runs per-variant within IRLS loop (10-100 iterations). Cholesky is O(n³) - doing it per-variant per-iteration is extremely expensive. Per Triton matmul optimization patterns, this is a major arithmetic intensity bottleneck.
+
+**Location:** `src/g/compute/logistic.py:694-698` (`cho_solve_single` inside vmap), `850-863` (`solve_information_system` inside vmap).
+
+**Fix:** 
+- Profile with `ncu --metrics sm__warps_active.avg` to confirm occupancy is low
+- Cache factorizations if information matrix changes slowly
+- Use batched Cholesky via `jax.scipy.linalg.cholesky` with batch-level vmap
+- Consider custom Triton kernel for batched small-matrix solve if covariate_count ≤ 10
+
+### P2 - Masking overhead and branch divergence (logistic.py)
+
+**Issue:** `jnp.where(observation_mask, ...)` patterns throughout create branch divergence. Per CUDA performance traps, every warp executes both paths (valid and masked), wasting GPU cycles.
+
+**Location:** Throughout logistic.py, especially `logistic.py:385-389`, `533-536`, `543-545`, `551-555`, `673-675`, `681-685`.
+
+**Fix:** Consider padding invalid entries to neutral values (0.0 for additions, 1.0 for multiplications) instead of masking, or restructure kernels to compute valid entries only.
+
+### P2 - Firth sequential batching (logistic.py)
+
+**Issue:** Firth fallback processes batches sequentially (bucket sizes 1,2,4,8,16,32,64). Per Triton persistent kernel patterns, this leaves GPU underutilized between batches.
+
+**Location:** `src/g/compute/logistic.py:1154+` (`build_firth_padded_index_batches`).
+
+**Fix:** Consider interleaving Firth solves across batches or using `jax.pmap` for parallel execution. Profile with `nsys` to measure GPU utilization between batches.
+
+### Recommended profiling commands
+
+```bash
+# Timeline profiling to identify bottlenecks
+nsys profile -o gwas_timeline python scripts/benchmark_logistic_fallback.py
+nsys stats gwas_timeline.nsys-rep --report cuda_gpu_kern_sum
+
+# Detailed kernel analysis
+ncu --kernel-name "jit_.*" --metrics sm__warps_active.avg,sm__warps_eligible.avg,gpu__cycles_active.avg --set full -o gwas_kernels python scripts/benchmark_logistic_loop.py
+```
+
+Per CUDA/NCU skill: look for low occupancy, high `sectors_per_request` (>4), low L2 hit rate, or high cycles active but low warps active.
+
+## Next steps
+
+1. Profile with `nsys` to confirm which bottlenecks dominate in practice
+2. Implement P0 fixes (memory transfers, einsum) first for immediate impact
+3. Consider P1 fixes (while_loop, Cholesky) if profiling confirms they are hotspots
+4. Evaluate P2 fixes (masking, Firth batching) for additional gains
