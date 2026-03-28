@@ -58,6 +58,15 @@ class GenotypeChunk(NamedTuple):
     observation_count: jax.Array
 
 
+class LinearGenotypeChunk(NamedTuple):
+    """Linear-regression genotype chunk without missingness bookkeeping."""
+
+    genotypes: jax.Array
+    metadata: VariantMetadata
+    allele_one_frequency: jax.Array
+    observation_count: jax.Array
+
+
 class PreprocessedGenotypeChunkData(NamedTuple):
     """Preprocessed genotype arrays before metadata attachment."""
 

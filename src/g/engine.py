@@ -21,7 +21,7 @@ from g.compute.logistic import (
     compute_logistic_association_chunk_with_mask,
     prepare_no_missing_logistic_constants,
 )
-from g.io.plink import iter_genotype_chunks
+from g.io.plink import iter_genotype_chunks, iter_linear_genotype_chunks
 from g.io.tabular import load_aligned_sample_data
 from g.models import (
     GenotypeChunk,
@@ -386,13 +386,12 @@ def iter_linear_output_frames(
             phenotype_vector=aligned_sample_data.phenotype_vector,
         )
 
-    chunk_iterator = iter_genotype_chunks(
+    chunk_iterator = iter_linear_genotype_chunks(
         bed_prefix=bed_prefix,
         sample_indices=aligned_sample_data.sample_indices,
         expected_individual_identifiers=aligned_sample_data.individual_identifiers,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
-        include_missing_value_flag=False,
     )
     current_chunk = next(chunk_iterator, None)
     for chunk_index, next_chunk in enumerate(

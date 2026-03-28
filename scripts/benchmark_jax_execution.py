@@ -30,11 +30,11 @@ from g.engine import (
     iter_linear_output_frames,
     iter_logistic_output_frames,
 )
-from g.io.plink import iter_genotype_chunks, read_bed_chunk_host
+from g.io.plink import iter_genotype_chunks, iter_linear_genotype_chunks, read_bed_chunk_host
 from g.io.tabular import load_aligned_sample_data
 
 if TYPE_CHECKING:
-    from g.models import GenotypeChunk
+    from g.models import GenotypeChunk, LinearGenotypeChunk
 
 
 @dataclass(frozen=True)
@@ -283,8 +283,8 @@ def main() -> None:
         )
         host_chunk_read_seconds = time.perf_counter() - start_time
 
-    continuous_chunk: GenotypeChunk = next(
-        iter_genotype_chunks(
+    continuous_chunk: LinearGenotypeChunk = next(
+        iter_linear_genotype_chunks(
             bed_prefix=bed_prefix,
             sample_indices=continuous_sample_data.sample_indices,
             expected_individual_identifiers=continuous_sample_data.individual_identifiers,

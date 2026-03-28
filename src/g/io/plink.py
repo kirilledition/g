@@ -14,7 +14,7 @@ from bed_reader import open_bed, read_f32
 from bed_reader._open_bed import get_num_threads
 
 from g.io.tabular import load_family_table
-from g.models import GenotypeChunk, PreprocessedGenotypeChunkData, VariantMetadata
+from g.models import GenotypeChunk, LinearGenotypeChunk, PreprocessedGenotypeChunkData, VariantMetadata
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -238,10 +238,36 @@ def build_genotype_chunk(
         Mean-imputed genotype chunk with metadata and summary statistics.
 
     """
+    variant_metadata = VariantMetadata(
+        chromosome=chromosome_values[variant_start:variant_stop],
+        variant_identifiers=variant_identifier_values[variant_start:variant_stop],
+        position=position_values[variant_start:variant_stop],
+        allele_one=allele_one_values[variant_start:variant_stop],
+        allele_two=allele_two_values[variant_start:variant_stop],
+    )
     return GenotypeChunk(
         genotypes=preprocessed_chunk_data.genotypes,
         missing_mask=preprocessed_chunk_data.missing_mask,
         has_missing_values=preprocessed_chunk_data.has_missing_values,
+        metadata=variant_metadata,
+        allele_one_frequency=preprocessed_chunk_data.allele_one_frequency,
+        observation_count=preprocessed_chunk_data.observation_count,
+    )
+
+
+def build_linear_genotype_chunk(
+    preprocessed_genotype_arrays: PreprocessedGenotypeArrays,
+    chromosome_values: np.ndarray,
+    variant_identifier_values: np.ndarray,
+    position_values: np.ndarray,
+    allele_one_values: np.ndarray,
+    allele_two_values: np.ndarray,
+    variant_start: int,
+    variant_stop: int,
+) -> LinearGenotypeChunk:
+    """Build one linear-regression genotype chunk without missingness fields."""
+    return LinearGenotypeChunk(
+        genotypes=preprocessed_genotype_arrays.genotypes,
         metadata=VariantMetadata(
             chromosome=chromosome_values[variant_start:variant_stop],
             variant_identifiers=variant_identifier_values[variant_start:variant_stop],
@@ -249,8 +275,8 @@ def build_genotype_chunk(
             allele_one=allele_one_values[variant_start:variant_stop],
             allele_two=allele_two_values[variant_start:variant_stop],
         ),
-        allele_one_frequency=preprocessed_chunk_data.allele_one_frequency,
-        observation_count=preprocessed_chunk_data.observation_count,
+        allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,
+        observation_count=preprocessed_genotype_arrays.observation_count,
     )
 
 
@@ -316,6 +342,56 @@ def iter_genotype_chunks(
             )
             yield build_genotype_chunk(
                 preprocessed_chunk_data=preprocessed_chunk_data,
+                chromosome_values=chromosome_values,
+                variant_identifier_values=variant_identifier_values,
+                position_values=position_values,
+                allele_one_values=allele_one_values,
+                allele_two_values=allele_two_values,
+                variant_start=variant_start,
+                variant_stop=variant_stop,
+            )
+
+
+def iter_linear_genotype_chunks(
+    bed_prefix: Path,
+    sample_indices: np.ndarray,
+    expected_individual_identifiers: np.ndarray,
+    chunk_size: int,
+    variant_limit: int | None = None,
+) -> Iterator[LinearGenotypeChunk]:
+    """Yield linear-regression genotype chunks without missingness bookkeeping."""
+    variant_table = load_variant_table(bed_prefix)
+    total_variant_count = variant_table.height if variant_limit is None else min(variant_limit, variant_table.height)
+    bed_path = bed_prefix.with_suffix(".bed")
+    sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
+    chromosome_values = variant_table.get_column("chromosome").cast(pl.String).to_numpy()
+    variant_identifier_values = variant_table.get_column("variant_identifier").cast(pl.String).to_numpy()
+    position_values = variant_table.get_column("position").cast(pl.Int64).to_numpy()
+    allele_one_values = variant_table.get_column("allele_one").cast(pl.String).to_numpy()
+    allele_two_values = variant_table.get_column("allele_two").cast(pl.String).to_numpy()
+
+    validate_bed_sample_order(
+        bed_prefix=bed_prefix,
+        sample_index_array=sample_index_array,
+        expected_individual_identifiers=expected_individual_identifiers,
+    )
+
+    with open_bed(str(bed_path)) as bed_handle:
+        num_threads = get_num_threads(getattr(bed_handle, "_num_threads", None))
+
+        for variant_start in range(0, total_variant_count, chunk_size):
+            variant_stop = min(total_variant_count, variant_start + chunk_size)
+            genotype_matrix_host = read_bed_chunk_host(
+                bed_handle=bed_handle,
+                bed_path=bed_path,
+                sample_index_array=sample_index_array,
+                variant_start=variant_start,
+                variant_stop=variant_stop,
+                num_threads=num_threads,
+            )
+            preprocessed_genotype_arrays = preprocess_genotype_matrix_arrays(jax.device_put(genotype_matrix_host))
+            yield build_linear_genotype_chunk(
+                preprocessed_genotype_arrays=preprocessed_genotype_arrays,
                 chromosome_values=chromosome_values,
                 variant_identifier_values=variant_identifier_values,
                 position_values=position_values,
