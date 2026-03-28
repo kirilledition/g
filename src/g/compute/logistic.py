@@ -456,28 +456,6 @@ def compute_information_components(
     )
 
 
-def compute_information_components_without_mask(
-    covariate_matrix: jax.Array,
-    genotype_vector: jax.Array,
-    probability_vector: jax.Array,
-) -> InformationComponents:
-    """Compute information-matrix components for one no-missing variant."""
-    effective_weights = jnp.clip(probability_vector * (1.0 - probability_vector), MINIMUM_WEIGHT)
-    weighted_genotype_vector = effective_weights * genotype_vector
-    covariate_information_matrix = jnp.einsum("np,n,nq->pq", covariate_matrix, effective_weights, covariate_matrix)
-    cross_information_vector = jnp.einsum("np,n->p", covariate_matrix, weighted_genotype_vector)
-    genotype_information = jnp.sum(weighted_genotype_vector * genotype_vector)
-    top_block = jnp.concatenate([covariate_information_matrix, cross_information_vector[:, None]], axis=1)
-    bottom_block = jnp.concatenate([cross_information_vector[None, :], genotype_information[None, None]], axis=1)
-    information_matrix = jnp.concatenate([top_block, bottom_block], axis=0)
-    return InformationComponents(
-        covariate_information_matrix=covariate_information_matrix,
-        cross_information_vector=cross_information_vector,
-        genotype_information=genotype_information,
-        information_matrix=information_matrix,
-    )
-
-
 def compute_firth_penalized_log_likelihood(
     probability_vector: jax.Array,
     phenotype_vector: jax.Array,
@@ -507,21 +485,6 @@ def compute_firth_penalized_log_likelihood_from_cholesky(
         masked_phenotype_vector * jnp.log(masked_probability_vector)
         + (observation_mask.astype(probability_vector.dtype) - masked_phenotype_vector)
         * jnp.log1p(-masked_probability_vector),
-    )
-    log_determinant = 2.0 * jnp.sum(jnp.log(jnp.diag(information_cholesky_factor)))
-    cholesky_valid = jnp.all(jnp.isfinite(information_cholesky_factor))
-    penalty_term = jnp.where(cholesky_valid, BINARY_CASE_THRESHOLD * log_determinant, -jnp.inf)
-    return log_likelihood + penalty_term
-
-
-def compute_firth_penalized_log_likelihood_from_cholesky_without_mask(
-    probability_vector: jax.Array,
-    phenotype_vector: jax.Array,
-    information_cholesky_factor: jax.Array,
-) -> jax.Array:
-    """Compute Firth-penalized log-likelihood for a no-missing variant."""
-    log_likelihood = jnp.sum(
-        phenotype_vector * jnp.log(probability_vector) + (1.0 - phenotype_vector) * jnp.log1p(-probability_vector),
     )
     log_determinant = 2.0 * jnp.sum(jnp.log(jnp.diag(information_cholesky_factor)))
     cholesky_valid = jnp.all(jnp.isfinite(information_cholesky_factor))
@@ -1270,158 +1233,6 @@ def fit_single_variant_firth_logistic_regression(
     )
 
 
-def fit_single_variant_firth_logistic_regression_without_mask(
-    covariate_matrix: jax.Array,
-    phenotype_vector: jax.Array,
-    genotype_vector: jax.Array,
-    initial_coefficients: jax.Array,
-    max_iterations: int,
-    tolerance: float,
-) -> FirthVariantResult:
-    """Fit Firth logistic regression for one no-missing variant."""
-    del tolerance
-    iteration_limit = jnp.minimum(jnp.int32(max_iterations), jnp.int32(MAX_ITERATION_COUNT))
-    gradient_tolerance = jnp.asarray(FIRTH_GRADIENT_TOLERANCE, dtype=covariate_matrix.dtype)
-    coefficient_tolerance = jnp.asarray(FIRTH_COEFFICIENT_TOLERANCE, dtype=covariate_matrix.dtype)
-    likelihood_tolerance = jnp.asarray(FIRTH_LIKELIHOOD_TOLERANCE, dtype=covariate_matrix.dtype)
-    maximum_step_size = jnp.asarray(FIRTH_MAXIMUM_STEP_SIZE, dtype=covariate_matrix.dtype)
-
-    def compute_probability_vector(coefficients: jax.Array) -> jax.Array:
-        covariate_coefficients = coefficients[:-1]
-        genotype_coefficient = coefficients[-1]
-        linear_predictor = covariate_matrix @ covariate_coefficients + genotype_vector * genotype_coefficient
-        return clip_probability_matrix(jax.nn.sigmoid(linear_predictor))
-
-    full_design_matrix = jnp.concatenate([covariate_matrix, genotype_vector[:, None]], axis=1)
-    unit_genotype_vector = jnp.zeros((full_design_matrix.shape[1],), dtype=covariate_matrix.dtype).at[-1].set(1.0)
-
-    def solve_positive_definite_system(matrix: jax.Array, right_hand_side: jax.Array) -> jax.Array:
-        cholesky_factor, lower_triangle_indicator = jax.scipy.linalg.cho_factor(matrix)
-        return jax.scipy.linalg.cho_solve((cholesky_factor, lower_triangle_indicator), right_hand_side)
-
-    def compute_hessian_from_weights(weight_vector: jax.Array) -> jax.Array:
-        weighted_design_matrix = full_design_matrix * weight_vector[:, None]
-        return full_design_matrix.T @ weighted_design_matrix
-
-    def compute_hdiag_and_adjusted_weights(
-        information_cholesky_factor: jax.Array,
-        probability_vector: jax.Array,
-    ) -> AdjustedWeightComponents:
-        variance_vector = jnp.clip(probability_vector * (1.0 - probability_vector), MINIMUM_WEIGHT)
-        projected_design_matrix = jax.scipy.linalg.cho_solve(
-            (information_cholesky_factor, False),
-            full_design_matrix.T,
-        ).T
-        leverage_vector = variance_vector * jnp.sum(projected_design_matrix * full_design_matrix, axis=1)
-        adjusted_weight_vector = (phenotype_vector - probability_vector) + leverage_vector * (
-            BINARY_CASE_THRESHOLD - probability_vector
-        )
-        second_weight_vector = (1.0 + leverage_vector) * variance_vector
-        return AdjustedWeightComponents(
-            leverage_vector=leverage_vector,
-            adjusted_weight_vector=adjusted_weight_vector,
-            second_weight_vector=second_weight_vector,
-        )
-
-    initial_probability_vector = compute_probability_vector(initial_coefficients)
-    initial_information_components = compute_information_components_without_mask(
-        covariate_matrix=covariate_matrix,
-        genotype_vector=genotype_vector,
-        probability_vector=initial_probability_vector,
-    )
-    initial_information_cholesky_factor, _ = jax.scipy.linalg.cho_factor(
-        initial_information_components.information_matrix
-    )
-    initial_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky_without_mask(
-        probability_vector=initial_probability_vector,
-        phenotype_vector=phenotype_vector,
-        information_cholesky_factor=initial_information_cholesky_factor,
-    )
-
-    def condition_function(state: FirthState) -> jax.Array:
-        return (state.iteration_count < iteration_limit) & (~state.converged) & (~state.failed)
-
-    def body_function(state: FirthState) -> FirthState:
-        probability_vector = compute_probability_vector(state.coefficients)
-        information_components = compute_information_components_without_mask(
-            covariate_matrix=covariate_matrix,
-            genotype_vector=genotype_vector,
-            probability_vector=probability_vector,
-        )
-        information_cholesky_factor, _ = jax.scipy.linalg.cho_factor(information_components.information_matrix)
-        current_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky_without_mask(
-            probability_vector=probability_vector,
-            phenotype_vector=phenotype_vector,
-            information_cholesky_factor=information_cholesky_factor,
-        )
-        current_failed = (~jnp.isfinite(current_penalized_log_likelihood)) | (
-            ~jnp.all(jnp.isfinite(state.coefficients))
-        )
-        adjusted_weight_components = compute_hdiag_and_adjusted_weights(
-            information_cholesky_factor=information_cholesky_factor,
-            probability_vector=probability_vector,
-        )
-        adjusted_score = full_design_matrix.T @ adjusted_weight_components.adjusted_weight_vector
-        adjusted_score_maximum = jnp.max(jnp.abs(adjusted_score))
-        second_hessian = compute_hessian_from_weights(adjusted_weight_components.second_weight_vector)
-        coefficient_step = solve_positive_definite_system(second_hessian, adjusted_score)
-        maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
-        step_scale = jnp.minimum(1.0, maximum_step_size / jnp.maximum(maximum_coefficient_step, FIRTH_TOLERANCE_FLOOR))
-        scaled_coefficient_step = coefficient_step * step_scale
-        updated_converged = (
-            (state.iteration_count > 0)
-            & (jnp.max(jnp.abs(scaled_coefficient_step)) <= coefficient_tolerance)
-            & (adjusted_score_maximum < gradient_tolerance)
-            & ((current_penalized_log_likelihood - state.previous_penalized_log_likelihood) < likelihood_tolerance)
-            & (~current_failed)
-        )
-        updated_coefficients = jnp.where(
-            updated_converged | current_failed,
-            state.coefficients,
-            state.coefficients + scaled_coefficient_step,
-        )
-        return FirthState(
-            coefficients=updated_coefficients,
-            converged=updated_converged,
-            failed=current_failed,
-            iteration_count=state.iteration_count + jnp.asarray(1, dtype=jnp.int32),
-            previous_penalized_log_likelihood=current_penalized_log_likelihood,
-        )
-
-    final_state = jax.lax.while_loop(
-        condition_function,
-        body_function,
-        FirthState(
-            coefficients=initial_coefficients,
-            converged=jnp.zeros((), dtype=bool),
-            failed=jnp.zeros((), dtype=bool),
-            iteration_count=jnp.asarray(0, dtype=jnp.int32),
-            previous_penalized_log_likelihood=initial_penalized_log_likelihood,
-        ),
-    )
-
-    final_probability_vector = compute_probability_vector(final_state.coefficients)
-    final_information_components = compute_information_components_without_mask(
-        covariate_matrix=covariate_matrix,
-        genotype_vector=genotype_vector,
-        probability_vector=final_probability_vector,
-    )
-    final_information_cholesky_factor, _ = jax.scipy.linalg.cho_factor(final_information_components.information_matrix)
-    final_adjusted_weight_components = compute_hdiag_and_adjusted_weights(
-        information_cholesky_factor=final_information_cholesky_factor,
-        probability_vector=final_probability_vector,
-    )
-    final_second_hessian = compute_hessian_from_weights(final_adjusted_weight_components.second_weight_vector)
-    genotype_variance = solve_positive_definite_system(final_second_hessian, unit_genotype_vector)[-1]
-    return compute_firth_statistics(
-        coefficients=final_state.coefficients,
-        genotype_variance=genotype_variance,
-        converged=final_state.converged,
-        failed=final_state.failed,
-        iteration_count=final_state.iteration_count,
-    )
-
-
 def build_firth_padded_index_batches(
     fallback_index_vector: npt.NDArray[np.int64],
 ) -> list[FirthIndexBatch]:
@@ -1533,37 +1344,6 @@ def compute_firth_association_chunk_with_mask(
         observation_mask,
         initial_coefficients,
         skip_firth_mask,
-        max_iterations,
-        tolerance,
-    )
-    variant_count = genotype_matrix.shape[1]
-    return LogisticAssociationChunkResult(
-        beta=firth_result.beta,
-        standard_error=firth_result.standard_error,
-        test_statistic=firth_result.test_statistic,
-        p_value=firth_result.p_value,
-        method_code=jnp.full((variant_count,), LogisticMethod.FIRTH, dtype=jnp.int32),
-        error_code=firth_result.error_code,
-        converged_mask=firth_result.converged_mask,
-        valid_mask=firth_result.valid_mask,
-        iteration_count=firth_result.iteration_count,
-    )
-
-
-def compute_firth_association_chunk_without_mask(
-    covariate_matrix: jax.Array,
-    phenotype_vector: jax.Array,
-    genotype_matrix: jax.Array,
-    initial_coefficients: jax.Array,
-    max_iterations: int,
-    tolerance: float,
-) -> LogisticAssociationChunkResult:
-    """Compute no-missing Firth association statistics for a chunk of variants."""
-    firth_result = compute_firth_association_chunk_variantwise_without_mask(
-        covariate_matrix,
-        phenotype_vector,
-        genotype_matrix,
-        initial_coefficients,
         max_iterations,
         tolerance,
     )
@@ -1763,10 +1543,12 @@ def compute_batched_firth_updates_without_mask(
                     batch_initial_coefficients = batch_standard_coefficients.at[heuristic_position_vector].set(
                         heuristic_initial_coefficients
                     )
-            firth_result = compute_firth_association_chunk_without_mask(
+            batch_observation_mask = jnp.ones(batch_genotype_matrix.T.shape, dtype=bool)
+            firth_result = compute_firth_association_chunk_with_mask(
                 covariate_matrix=covariate_matrix,
                 phenotype_vector=phenotype_vector,
                 genotype_matrix=batch_genotype_matrix,
+                observation_mask=batch_observation_mask,
                 initial_coefficients=batch_initial_coefficients,
                 max_iterations=max_iterations,
                 tolerance=firth_tolerance,
@@ -1805,14 +1587,6 @@ compute_firth_association_chunk_variantwise = jax.jit(
     jax.vmap(
         fit_single_variant_firth_logistic_regression,
         in_axes=(None, None, 1, 0, 0, 0, None, None),
-    )
-)
-
-
-compute_firth_association_chunk_variantwise_without_mask = jax.jit(
-    jax.vmap(
-        fit_single_variant_firth_logistic_regression_without_mask,
-        in_axes=(None, None, 1, 0, None, None),
     )
 )
 
