@@ -129,6 +129,21 @@ class NoMissingLogisticConstants:
     control_sample_count: jax.Array
 
 
+@jax.tree_util.register_dataclass
+@dataclass
+class LogisticChunkPrecomputation:
+    """Chunk-invariant matrices reused across logistic IRLS iterations.
+
+    Attributes:
+        covariate_matrix: Covariate design matrix.
+        covariate_pair_matrix: Flattened per-sample covariate outer products.
+
+    """
+
+    covariate_matrix: jax.Array
+    covariate_pair_matrix: jax.Array
+
+
 class FirthIndexBatch(NamedTuple):
     """Padded and active fallback indices for one Firth batch.
 
@@ -229,12 +244,15 @@ class AdjustedWeightComponents:
 
 
 def compute_covariate_information_matrix(
-    covariate_matrix: jax.Array,
+    logistic_chunk_precomputation: LogisticChunkPrecomputation | jax.Array,
     effective_weights: jax.Array,
 ) -> jax.Array:
     """Compute batched Fisher information matrices for covariates."""
-    sample_covariate_crossproduct = jnp.einsum("np,nq->npq", covariate_matrix, covariate_matrix)
-    return jnp.tensordot(effective_weights, sample_covariate_crossproduct, axes=((1,), (0,)))
+    if isinstance(logistic_chunk_precomputation, jax.Array):
+        logistic_chunk_precomputation = prepare_logistic_chunk_precomputation(logistic_chunk_precomputation)
+    covariate_count = logistic_chunk_precomputation.covariate_matrix.shape[1]
+    flattened_information_matrix = effective_weights @ logistic_chunk_precomputation.covariate_pair_matrix
+    return flattened_information_matrix.reshape((-1, covariate_count, covariate_count))
 
 
 def solve_batched_positive_definite_system(
@@ -263,7 +281,17 @@ def compute_covariate_score(
     residual_matrix: jax.Array,
 ) -> jax.Array:
     """Compute batched covariate score vectors."""
-    return jnp.einsum("np,mn->mp", covariate_matrix, residual_matrix)
+    return residual_matrix @ covariate_matrix
+
+
+def prepare_logistic_chunk_precomputation(covariate_matrix: jax.Array) -> LogisticChunkPrecomputation:
+    """Prepare chunk-invariant matrices reused across logistic IRLS iterations."""
+    sample_covariate_pair_matrix = jnp.einsum("np,nq->npq", covariate_matrix, covariate_matrix)
+    covariate_pair_matrix = sample_covariate_pair_matrix.reshape((covariate_matrix.shape[0], -1))
+    return LogisticChunkPrecomputation(
+        covariate_matrix=covariate_matrix,
+        covariate_pair_matrix=covariate_pair_matrix,
+    )
 
 
 def assemble_full_information_matrix(
@@ -549,6 +577,7 @@ def fit_masked_covariate_only_logistic_regression(
     """
     variant_count = observation_mask.shape[0]
     coefficient_count = covariate_matrix.shape[1]
+    logistic_chunk_precomputation = prepare_logistic_chunk_precomputation(covariate_matrix)
     phenotype_matrix = jnp.broadcast_to(phenotype_vector[None, :], observation_mask.shape)
     iteration_limit = jnp.minimum(jnp.int32(max_iterations), jnp.int32(MAX_ITERATION_COUNT))
     broadcast_initial_coefficients = jnp.broadcast_to(initial_coefficients[None, :], (variant_count, coefficient_count))
@@ -581,7 +610,7 @@ def fit_masked_covariate_only_logistic_regression(
         )
         score = compute_covariate_score(covariate_matrix, masked_residual)
         information_matrix = compute_covariate_information_matrix(
-            covariate_matrix,
+            logistic_chunk_precomputation,
             effective_weights,
         )
         step = jnp.squeeze(jnp.linalg.solve(information_matrix, score[:, :, None]), axis=-1)
@@ -672,6 +701,7 @@ def compute_standard_logistic_association_chunk_with_mask(
     genotype_matrix_by_variant = genotype_matrix.T
     variant_count = genotype_matrix_by_variant.shape[0]
     covariate_count = covariate_matrix.shape[1]
+    logistic_chunk_precomputation = prepare_logistic_chunk_precomputation(covariate_matrix)
     phenotype_matrix = jnp.broadcast_to(phenotype_vector[None, :], observation_mask.shape)
     iteration_limit = jnp.minimum(jnp.int32(max_iterations), jnp.int32(MAX_ITERATION_COUNT))
     initial_coefficients = initialize_full_model_coefficients(
@@ -719,10 +749,10 @@ def compute_standard_logistic_association_chunk_with_mask(
         covariate_score = compute_covariate_score(covariate_matrix, masked_residual)
         genotype_score = jnp.sum(genotype_matrix_by_variant * masked_residual, axis=1)
         covariate_information_matrix = compute_covariate_information_matrix(
-            covariate_matrix,
+            logistic_chunk_precomputation,
             effective_weights,
         )
-        cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, weighted_genotype_matrix)
+        cross_information_vector = weighted_genotype_matrix @ covariate_matrix
         genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
         rhs = jnp.stack([covariate_score, cross_information_vector], axis=-1)
         sols = solve_batched_positive_definite_system(covariate_information_matrix, rhs)
@@ -840,6 +870,7 @@ def compute_standard_logistic_association_chunk_without_mask(
     genotype_matrix_by_variant = genotype_matrix.T
     variant_count = genotype_matrix_by_variant.shape[0]
     covariate_count = covariate_matrix.shape[1]
+    logistic_chunk_precomputation = prepare_logistic_chunk_precomputation(covariate_matrix)
     phenotype_matrix = jnp.broadcast_to(phenotype_vector[None, :], genotype_matrix_by_variant.shape)
     iteration_limit = jnp.minimum(jnp.int32(max_iterations), jnp.int32(MAX_ITERATION_COUNT))
     initial_coefficients = initialize_full_model_coefficients_without_mask(
@@ -876,10 +907,10 @@ def compute_standard_logistic_association_chunk_without_mask(
         covariate_score = compute_covariate_score(covariate_matrix, residual_matrix)
         genotype_score = jnp.sum(genotype_matrix_by_variant * residual_matrix, axis=1)
         covariate_information_matrix = compute_covariate_information_matrix(
-            covariate_matrix,
+            logistic_chunk_precomputation,
             effective_weights,
         )
-        cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, weighted_genotype_matrix)
+        cross_information_vector = weighted_genotype_matrix @ covariate_matrix
         genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
         combined_right_hand_sides = jnp.stack((covariate_score, cross_information_vector), axis=-1)
         information_solution_matrix = solve_batched_positive_definite_system(
