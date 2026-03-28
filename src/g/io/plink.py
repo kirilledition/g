@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax
@@ -27,6 +28,25 @@ VARIANT_TABLE_COLUMNS = (
     "allele_one",
     "allele_two",
 )
+
+
+@jax.tree_util.register_dataclass
+@dataclass
+class PreprocessedGenotypeArrays:
+    """Device-resident genotype preprocessing outputs.
+
+    Attributes:
+        genotypes: Mean-imputed genotype matrix.
+        missing_mask: Boolean mask of missing genotype calls.
+        allele_one_frequency: Allele-one frequency per variant.
+        observation_count: Non-missing observation count per variant.
+
+    """
+
+    genotypes: jax.Array
+    missing_mask: jax.Array
+    allele_one_frequency: jax.Array
+    observation_count: jax.Array
 
 
 def read_bed_chunk_host(
@@ -104,6 +124,24 @@ def read_bed_chunk(
     return jnp.asarray(genotype_matrix_host, dtype=jnp.float32)
 
 
+@jax.jit
+def preprocess_genotype_matrix_arrays(genotype_matrix: jax.Array) -> PreprocessedGenotypeArrays:
+    """Preprocess a raw genotype matrix into device-resident summary arrays."""
+    genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
+    missing_mask = jnp.isnan(genotype_matrix_float32)
+    observed_genotype_total = jnp.where(missing_mask, 0.0, genotype_matrix_float32).sum(axis=0)
+    observation_count = jnp.sum(~missing_mask, axis=0, dtype=jnp.int32)
+    column_means = observed_genotype_total / jnp.maximum(observation_count, 1)
+    sanitized_column_means = jnp.where(observation_count > 0, column_means, 0.0)
+    imputed_matrix = jnp.where(missing_mask, sanitized_column_means[None, :], genotype_matrix_float32)
+    return PreprocessedGenotypeArrays(
+        genotypes=imputed_matrix,
+        missing_mask=missing_mask,
+        allele_one_frequency=sanitized_column_means / 2.0,
+        observation_count=observation_count,
+    )
+
+
 def preprocess_genotype_matrix(
     genotype_matrix: jax.Array,
     *,
@@ -120,21 +158,16 @@ def preprocess_genotype_matrix(
         Mean-imputed genotype arrays and summary values.
 
     """
-    genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
-    missing_mask = jnp.isnan(genotype_matrix_float32)
-    observed_genotype_total = jnp.where(missing_mask, 0.0, genotype_matrix_float32).sum(axis=0)
-    observation_count = jnp.sum(~missing_mask, axis=0, dtype=jnp.int32)
-    column_means = observed_genotype_total / jnp.maximum(observation_count, 1)
-    sanitized_column_means = jnp.where(observation_count > 0, column_means, 0.0)
-    imputed_matrix = jnp.where(missing_mask, sanitized_column_means[None, :], genotype_matrix_float32)
-    allele_one_frequency = sanitized_column_means / 2.0
-    has_missing_values = bool(jax.device_get(jnp.any(missing_mask))) if include_missing_value_flag else False
+    preprocessed_arrays = preprocess_genotype_matrix_arrays(genotype_matrix)
+    has_missing_values = (
+        bool(jax.device_get(jnp.any(preprocessed_arrays.missing_mask))) if include_missing_value_flag else False
+    )
     return PreprocessedGenotypeChunkData(
-        genotypes=imputed_matrix,
-        missing_mask=missing_mask,
+        genotypes=preprocessed_arrays.genotypes,
+        missing_mask=preprocessed_arrays.missing_mask,
         has_missing_values=has_missing_values,
-        allele_one_frequency=allele_one_frequency,
-        observation_count=observation_count,
+        allele_one_frequency=preprocessed_arrays.allele_one_frequency,
+        observation_count=preprocessed_arrays.observation_count,
     )
 
 
