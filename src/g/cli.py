@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 DEFAULT_LINEAR_CHUNK_SIZE = 2048
-DEFAULT_LOGISTIC_CHUNK_SIZE = 512
+DEFAULT_LOGISTIC_CHUNK_SIZE = 1024
 
 
 def parse_covariate_names(raw_covariate_names: str | None) -> tuple[str, ...] | None:
