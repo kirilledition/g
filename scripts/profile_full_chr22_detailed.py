@@ -102,7 +102,7 @@ def parse_covariate_names(raw_covariate_names: str) -> tuple[str, ...] | None:
 
 def run_and_materialize_frames(
     frame_iterator: Iterator[LinearChunkAccumulator] | Iterator[LogisticChunkAccumulator],
-) -> dict[str, int]:
+) -> dict[str, int | float]:
     """Force a full iterator run and return statistics."""
     total_variants = 0
     chunk_count = 0

@@ -191,11 +191,8 @@ fn read_bed_chunk_f64(
 
     let mut packed_variant_buffer = vec![0_u8; bed_dimensions.packed_bytes_per_variant];
     let mut genotype_values = vec![0.0_f64; sample_indices.len() * variant_count];
-    let first_variant_offset =
-        compute_variant_file_offset(variant_start, bed_dimensions.packed_bytes_per_variant)?;
-    bed_file
-        .seek(SeekFrom::Start(first_variant_offset))
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let first_variant_offset = compute_variant_file_offset(variant_start, bed_dimensions.packed_bytes_per_variant)?;
+    bed_file.seek(SeekFrom::Start(first_variant_offset)).map_err(|error| PyValueError::new_err(error.to_string()))?;
     for variant_offset in 0..variant_count {
         bed_file.read_exact(&mut packed_variant_buffer).map_err(|error| PyValueError::new_err(error.to_string()))?;
 

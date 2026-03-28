@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -171,3 +172,87 @@ def test_parse_covariate_names_skips_empty() -> None:
     """Test parse_covariate_names skips empty entries."""
     result = parse_covariate_names("age,,sex,")
     assert result == ("age", "sex")
+
+
+def test_main_dispatches_linear_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure the CLI dispatches the linear path with parsed covariate names."""
+    mock_write = Mock()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "g",
+            "--bfile",
+            "dataset",
+            "--pheno",
+            "phenotype.tsv",
+            "--pheno-name",
+            "trait",
+            "--covar",
+            "covariates.tsv",
+            "--covar-names",
+            "age,sex",
+            "--glm",
+            "linear",
+            "--out",
+            "results/output",
+            "--device",
+            "gpu",
+        ],
+    )
+
+    with (
+        patch("g.jax_setup.configure_jax_device") as mock_configure_jax_device,
+        patch("g.cli.iter_linear_output_frames", return_value=iter(())) as mock_iter_linear_output_frames,
+        patch("g.cli.write_frame_iterator_to_tsv", mock_write),
+    ):
+        from g.cli import main
+
+        main()
+
+    mock_configure_jax_device.assert_called_once_with("gpu")
+    mock_iter_linear_output_frames.assert_called_once()
+    assert mock_iter_linear_output_frames.call_args.kwargs["covariate_names"] == ("age", "sex")
+    assert mock_write.call_args.args[1] == Path("results/output.linear.tsv")
+
+
+def test_main_dispatches_logistic_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure the CLI dispatches the logistic path and sets the requested numeric mode."""
+    mock_write = Mock()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "g",
+            "--bfile",
+            "dataset",
+            "--pheno",
+            "phenotype.tsv",
+            "--pheno-name",
+            "trait",
+            "--covar",
+            "covariates.tsv",
+            "--glm",
+            "logistic",
+            "--out",
+            "results/output",
+            "--max-iterations",
+            "75",
+            "--tolerance",
+            "1e-6",
+        ],
+    )
+
+    with (
+        patch("g.jax_setup.configure_jax_device") as mock_configure_jax_device,
+        patch("g.cli.iter_logistic_output_frames", return_value=iter(())) as mock_iter_logistic_output_frames,
+        patch("g.cli.write_frame_iterator_to_tsv", mock_write),
+    ):
+        from g.cli import main
+
+        main()
+
+    mock_configure_jax_device.assert_called_once_with("cpu")
+    assert mock_iter_logistic_output_frames.call_args.kwargs["max_iterations"] == 75
+    assert mock_iter_logistic_output_frames.call_args.kwargs["tolerance"] == 1.0e-6
+    assert mock_write.call_args.args[1] == Path("results/output.logistic.tsv")
