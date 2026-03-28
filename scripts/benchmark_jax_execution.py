@@ -30,7 +30,12 @@ from g.engine import (
     iter_linear_output_frames,
     iter_logistic_output_frames,
 )
-from g.io.plink import iter_genotype_chunks, iter_linear_genotype_chunks, read_bed_chunk_host
+from g.io.plink import (
+    iter_genotype_chunks,
+    iter_linear_genotype_chunks,
+    preprocess_genotype_matrix_arrays,
+    read_bed_chunk_host,
+)
 from g.io.tabular import load_aligned_sample_data
 
 if TYPE_CHECKING:
@@ -79,6 +84,7 @@ class JaxExecutionBenchmarkReport:
     repeat_count: int
     host_chunk_read_seconds: float
     device_put: TimedMeasurement
+    linear_preprocess: TimedMeasurement
     linear_compute: TimedMeasurement
     linear_format: TimedMeasurement
     linear_full_chunk_loop: TimedMeasurement
@@ -425,6 +431,13 @@ def main() -> None:
         checksum_operation=lambda genotype_matrix: float(np.asarray(jnp.sum(genotype_matrix))),
         repeat_count=repeat_count,
     )
+    linear_preprocess_measurement = time_operation(
+        operation=lambda: preprocess_genotype_matrix_arrays(jax.device_put(genotype_matrix_host)),
+        checksum_operation=lambda preprocessed_arrays: float(
+            np.asarray(jnp.sum(preprocessed_arrays.genotypes) + jnp.sum(preprocessed_arrays.allele_one_frequency))
+        ),
+        repeat_count=repeat_count,
+    )
     linear_compute_measurement = time_operation(
         operation=lambda: compute_linear_association_chunk(
             linear_association_state=linear_association_state,
@@ -488,6 +501,7 @@ def main() -> None:
         repeat_count=repeat_count,
         host_chunk_read_seconds=host_chunk_read_seconds,
         device_put=device_put_measurement,
+        linear_preprocess=linear_preprocess_measurement,
         linear_compute=linear_compute_measurement,
         linear_format=linear_format_measurement,
         linear_full_chunk_loop=linear_full_chunk_loop_measurement,

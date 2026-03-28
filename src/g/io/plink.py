@@ -309,6 +309,8 @@ def iter_genotype_chunks(
     """
     variant_table = load_variant_table(bed_prefix)
     total_variant_count = variant_table.height if variant_limit is None else min(variant_limit, variant_table.height)
+    if total_variant_count == 0:
+        return
     bed_path = bed_prefix.with_suffix(".bed")
     sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
     chromosome_values = variant_table.get_column("chromosome").cast(pl.String).to_numpy()
@@ -381,22 +383,27 @@ def iter_linear_genotype_chunks(
 
         for variant_start in range(0, total_variant_count, chunk_size):
             variant_stop = min(total_variant_count, variant_start + chunk_size)
-            genotype_matrix_host = read_bed_chunk_host(
-                bed_handle=bed_handle,
-                bed_path=bed_path,
-                sample_index_array=sample_index_array,
-                variant_start=variant_start,
-                variant_stop=variant_stop,
-                num_threads=num_threads,
-            )
-            preprocessed_genotype_arrays = preprocess_genotype_matrix_arrays(jax.device_put(genotype_matrix_host))
-            yield build_linear_genotype_chunk(
-                preprocessed_genotype_arrays=preprocessed_genotype_arrays,
-                chromosome_values=chromosome_values,
-                variant_identifier_values=variant_identifier_values,
-                position_values=position_values,
-                allele_one_values=allele_one_values,
-                allele_two_values=allele_two_values,
-                variant_start=variant_start,
-                variant_stop=variant_stop,
-            )
+            with jax.profiler.TraceAnnotation("linear.read_bed_chunk_host"):
+                genotype_matrix_host = read_bed_chunk_host(
+                    bed_handle=bed_handle,
+                    bed_path=bed_path,
+                    sample_index_array=sample_index_array,
+                    variant_start=variant_start,
+                    variant_stop=variant_stop,
+                    num_threads=num_threads,
+                )
+            with jax.profiler.TraceAnnotation("linear.device_put_genotypes"):
+                genotype_matrix_device = jax.device_put(genotype_matrix_host)
+            with jax.profiler.TraceAnnotation("linear.preprocess_genotypes"):
+                preprocessed_genotype_arrays = preprocess_genotype_matrix_arrays(genotype_matrix_device)
+            with jax.profiler.TraceAnnotation("linear.build_chunk"):
+                yield build_linear_genotype_chunk(
+                    preprocessed_genotype_arrays=preprocessed_genotype_arrays,
+                    chromosome_values=chromosome_values,
+                    variant_identifier_values=variant_identifier_values,
+                    position_values=position_values,
+                    allele_one_values=allele_one_values,
+                    allele_two_values=allele_two_values,
+                    variant_start=variant_start,
+                    variant_stop=variant_stop,
+                )
