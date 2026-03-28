@@ -5,9 +5,8 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from g.api import RunArtifacts
+from g.api import DEFAULT_LINEAR_CHUNK_SIZE, DEFAULT_LOGISTIC_CHUNK_SIZE, RunArtifacts
 from g.cli import app, resolve_chunk_size
-from g.config import DEFAULT_LINEAR_CHUNK_SIZE, DEFAULT_LOGISTIC_CHUNK_SIZE
 
 runner = CliRunner()
 

@@ -6,13 +6,14 @@ from unittest.mock import patch
 import pytest
 
 from g.api import (
+    ComputeConfig,
+    LogisticConfig,
     RunArtifacts,
     linear,
     logistic,
     parse_covariate_name_list,
     resolve_output_path,
 )
-from g.config import ComputeConfig, LogisticConfig
 
 
 def test_parse_covariate_name_list_handles_string_input() -> None:

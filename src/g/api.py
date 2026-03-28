@@ -2,15 +2,44 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import dataclasses
 from pathlib import Path
 
-from g.config import ComputeConfig, LinearConfig, LogisticConfig
 from g.engine import iter_linear_output_frames, iter_logistic_output_frames, write_frame_iterator_to_tsv
 from g.jax_setup import configure_jax_device
 
+DEFAULT_LINEAR_CHUNK_SIZE = 2048
+DEFAULT_LOGISTIC_CHUNK_SIZE = 1024
 
-@dataclass(frozen=True)
+
+@dataclasses.dataclass(frozen=True)
+class ComputeConfig:
+    """Hardware and batching settings shared across association methods.
+
+    This stays command-agnostic so future GRM and mixed-model entrypoints can
+    reuse the same execution controls without introducing another public module.
+    """
+
+    chunk_size: int = DEFAULT_LINEAR_CHUNK_SIZE
+    device: str = "cpu"
+    variant_limit: int | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class LogisticConfig:
+    """Mathematical settings for logistic regression."""
+
+    max_iterations: int = 50
+    tolerance: float = 1.0e-8
+    firth_fallback: bool = True
+
+
+@dataclasses.dataclass(frozen=True)
+class LinearConfig:
+    """Mathematical settings for linear regression."""
+
+
+@dataclasses.dataclass(frozen=True)
 class RunArtifacts:
     """Immutable pointers to generated output files."""
 
@@ -102,7 +131,7 @@ def logistic(
     solver: LogisticConfig | None = None,
 ) -> RunArtifacts:
     """Run a logistic association scan and write results to disk."""
-    compute_config = compute or ComputeConfig(chunk_size=1024)
+    compute_config = compute or ComputeConfig(chunk_size=DEFAULT_LOGISTIC_CHUNK_SIZE)
     solver_config = solver or LogisticConfig()
     validate_compute_config(compute_config)
     validate_logistic_config(solver_config)

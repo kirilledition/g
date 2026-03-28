@@ -6,15 +6,19 @@ from pathlib import Path
 
 import typer
 
-from g.api import linear as run_linear_api
-from g.api import logistic as run_logistic_api
-from g.api import parse_covariate_name_list
-from g.config import (
+from g.api import (
     DEFAULT_LINEAR_CHUNK_SIZE,
     DEFAULT_LOGISTIC_CHUNK_SIZE,
     ComputeConfig,
     LinearConfig,
     LogisticConfig,
+    parse_covariate_name_list,
+)
+from g.api import (
+    linear as run_linear_api,
+)
+from g.api import (
+    logistic as run_logistic_api,
 )
 
 app = typer.Typer(
