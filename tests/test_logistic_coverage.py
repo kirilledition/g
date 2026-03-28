@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from g.compute.logistic import LogisticErrorCode, LogisticMethod
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,8 +9,6 @@ from g.compute.logistic import (
     BINARY_CASE_THRESHOLD,
     FIRTH_BATCH_SIZE,
     INITIAL_RESPONSE_SCALE,
-    LOGISTIC_ERROR_NONE,
-    LOGISTIC_METHOD_FIRTH,
     build_firth_padded_index_batches,
     compute_covariate_only_probability_matrix,
     compute_firth_association_chunk_with_mask,
@@ -202,7 +201,7 @@ def test_fit_single_variant_firth_logistic_regression_respects_skip_flag() -> No
 
     assert bool(result.converged_mask)
     assert not bool(result.valid_mask)
-    assert int(result.error_code) == LOGISTIC_ERROR_NONE
+    assert int(result.error_code) == LogisticErrorCode.NONE
     assert int(result.iteration_count) == 0
     assert np.isnan(float(result.beta))
 
@@ -272,7 +271,6 @@ def test_compute_firth_association_chunk_with_mask_marks_firth_method() -> None:
 
     np.testing.assert_array_equal(
         logistic_result.method_code,
-        np.full((genotype_matrix.shape[1],), LOGISTIC_METHOD_FIRTH, dtype=np.int32),
     )
     assert logistic_result.beta.shape == (genotype_matrix.shape[1],)
 
