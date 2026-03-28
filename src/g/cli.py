@@ -5,6 +5,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+DEFAULT_LINEAR_CHUNK_SIZE = 2048
+DEFAULT_LOGISTIC_CHUNK_SIZE = 512
+
 
 def parse_covariate_names(raw_covariate_names: str | None) -> tuple[str, ...] | None:
     """Parse a comma-separated covariate name list."""
@@ -12,6 +15,15 @@ def parse_covariate_names(raw_covariate_names: str | None) -> tuple[str, ...] | 
         return None
     covariate_names = tuple(name.strip() for name in raw_covariate_names.split(",") if name.strip())
     return covariate_names or None
+
+
+def resolve_chunk_size(requested_chunk_size: int | None, glm_mode: str) -> int:
+    """Resolve the effective chunk size for the selected model."""
+    if requested_chunk_size is not None:
+        return requested_chunk_size
+    if glm_mode == "linear":
+        return DEFAULT_LINEAR_CHUNK_SIZE
+    return DEFAULT_LOGISTIC_CHUNK_SIZE
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -24,7 +36,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--covar-names", help="Optional comma-separated covariate column names.")
     parser.add_argument("--glm", required=True, choices=("linear", "logistic"), help="Association model.")
     parser.add_argument("--out", required=True, type=Path, help="Output prefix.")
-    parser.add_argument("--chunk-size", type=int, default=512, help="Variants per BED chunk.")
+    parser.add_argument("--chunk-size", type=int, help="Variants per BED chunk.")
     parser.add_argument("--variant-limit", type=int, help="Optional variant cap for debugging or tests.")
     parser.add_argument("--max-iterations", type=int, default=50, help="Maximum logistic IRLS iterations.")
     parser.add_argument("--tolerance", type=float, default=1.0e-8, help="Logistic convergence tolerance.")
@@ -48,6 +60,7 @@ def main() -> None:
     configure_jax_device(arguments.device)
 
     covariate_names = parse_covariate_names(arguments.covar_names)
+    chunk_size = resolve_chunk_size(arguments.chunk_size, arguments.glm)
 
     if arguments.glm == "linear":
         frame_iterator = iter_linear_output_frames(
@@ -56,7 +69,7 @@ def main() -> None:
             phenotype_name=arguments.pheno_name,
             covariate_path=arguments.covar,
             covariate_names=covariate_names,
-            chunk_size=arguments.chunk_size,
+            chunk_size=chunk_size,
             variant_limit=arguments.variant_limit,
         )
         output_path = arguments.out.with_suffix(".linear.tsv")
@@ -67,7 +80,7 @@ def main() -> None:
             phenotype_name=arguments.pheno_name,
             covariate_path=arguments.covar,
             covariate_names=covariate_names,
-            chunk_size=arguments.chunk_size,
+            chunk_size=chunk_size,
             variant_limit=arguments.variant_limit,
             max_iterations=arguments.max_iterations,
             tolerance=arguments.tolerance,

@@ -106,7 +106,7 @@ def run_phase1_linear(baseline_paths: BaselinePaths) -> tuple[pl.DataFrame, floa
         phenotype_name="phenotype_continuous",
         covariate_path=baseline_paths.covariate_path,
         covariate_names=("age", "sex"),
-        chunk_size=512,
+        chunk_size=2048,
         variant_limit=None,
     )
     duration_seconds = time.perf_counter() - start_time

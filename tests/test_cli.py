@@ -6,7 +6,13 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from g.cli import build_argument_parser, parse_covariate_names
+from g.cli import (
+    DEFAULT_LINEAR_CHUNK_SIZE,
+    DEFAULT_LOGISTIC_CHUNK_SIZE,
+    build_argument_parser,
+    parse_covariate_names,
+    resolve_chunk_size,
+)
 
 
 def test_build_argument_parser() -> None:
@@ -41,7 +47,7 @@ def test_parse_arguments_success() -> None:
     assert args.covar == Path("data/covar.tsv")
     assert args.glm == "linear"
     assert args.out == Path("output/results")
-    assert args.chunk_size == 512
+    assert args.chunk_size is None
     assert args.device == "cpu"
     assert args.max_iterations == 50
     assert args.tolerance == 1.0e-8
@@ -172,6 +178,21 @@ def test_parse_covariate_names_skips_empty() -> None:
     """Test parse_covariate_names skips empty entries."""
     result = parse_covariate_names("age,,sex,")
     assert result == ("age", "sex")
+
+
+def test_resolve_chunk_size_uses_linear_default() -> None:
+    """Test the linear path uses the tuned default chunk size."""
+    assert resolve_chunk_size(None, "linear") == DEFAULT_LINEAR_CHUNK_SIZE
+
+
+def test_resolve_chunk_size_uses_logistic_default() -> None:
+    """Test the logistic path keeps the existing default chunk size."""
+    assert resolve_chunk_size(None, "logistic") == DEFAULT_LOGISTIC_CHUNK_SIZE
+
+
+def test_resolve_chunk_size_preserves_explicit_override() -> None:
+    """Test explicit chunk sizes override model-specific defaults."""
+    assert resolve_chunk_size(1024, "linear") == 1024
 
 
 def test_main_dispatches_linear_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
