@@ -1305,7 +1305,9 @@ def initialize_mixed_firth_batch_coefficients(
     """
     padded_index_vector = firth_index_batch.padded_index_vector
     batch_standard_coefficients = jnp.take(standard_coefficients, padded_index_vector, axis=0)
-    batch_heuristic_mask = jnp.zeros((FIRTH_BATCH_SIZE,), dtype=bool).at[:len(batch_heuristic_firth_mask)].set(batch_heuristic_firth_mask)
+    batch_heuristic_mask = (
+        jnp.zeros((FIRTH_BATCH_SIZE,), dtype=bool).at[: len(batch_heuristic_firth_mask)].set(batch_heuristic_firth_mask)
+    )
     heuristic_variant_count = int(jax.device_get(jnp.sum(batch_heuristic_mask, dtype=jnp.int32)))
     heuristic_position_vector = jnp.nonzero(
         batch_heuristic_mask,

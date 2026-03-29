@@ -88,6 +88,7 @@
             maturin
             ruff
             zstd
+            zlib
             cargo
             clippy
             rustc
