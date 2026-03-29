@@ -47,8 +47,10 @@ def read_bgen_chunk_host(
     """
     variant_index_array = np.arange(variant_start, variant_stop, dtype=np.intp)
     raw = bgen_handle.read((sample_index_array, variant_index_array), dtype=np.float32)
+
     def compute(p: typing.Any) -> typing.Any:
         return p[:, :, 1] + 2.0 * p[:, :, 2]
+
     return compute(np.asarray(raw, dtype=np.float32))
 
 
