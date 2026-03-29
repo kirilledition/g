@@ -373,15 +373,18 @@ def initialize_full_model_coefficients(
     genotype_information = jnp.sum(
         observation_mask_float * genotype_matrix_by_variant * genotype_matrix_by_variant, axis=1
     )
-    full_information_matrix = assemble_full_information_matrix(
-        covariate_information_matrix=covariate_information_matrix,
-        cross_information_vector=cross_information_vector,
-        genotype_information=genotype_information,
-    )
     covariate_score = compute_covariate_score(covariate_matrix, masked_pseudo_response)
     genotype_score = jnp.sum(genotype_matrix_by_variant * masked_pseudo_response, axis=1)
-    full_score = jnp.concatenate([covariate_score, genotype_score[:, None]], axis=1)
-    return jnp.squeeze(jnp.linalg.solve(full_information_matrix, full_score[:, :, None]), axis=-1)
+    stacked_rhs = jnp.stack([covariate_score, cross_information_vector], axis=-1)
+    covariate_and_cross_solutions = solve_batched_positive_definite_system(covariate_information_matrix, stacked_rhs)
+    covariate_solution = covariate_and_cross_solutions[..., 0]
+    cross_solution = covariate_and_cross_solutions[..., 1]
+    schur_complement = genotype_information - jnp.sum(cross_information_vector * cross_solution, axis=1)
+    genotype_coefficient = (
+        genotype_score - jnp.sum(cross_information_vector * covariate_solution, axis=1)
+    ) / schur_complement
+    covariate_coefficients = covariate_solution - cross_solution * genotype_coefficient[:, None]
+    return jnp.concatenate([covariate_coefficients, genotype_coefficient[:, None]], axis=1)
 
 
 def initialize_full_model_coefficients_without_mask(
@@ -396,18 +399,21 @@ def initialize_full_model_coefficients_without_mask(
     )
     cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, genotype_matrix_by_variant)
     genotype_information = jnp.sum(genotype_matrix_by_variant * genotype_matrix_by_variant, axis=1)
-    full_information_matrix = assemble_full_information_matrix(
-        covariate_information_matrix=covariate_information_matrix,
-        cross_information_vector=cross_information_vector,
-        genotype_information=genotype_information,
-    )
     covariate_score = jnp.broadcast_to(
         no_missing_constants.covariate_pseudo_response_score[None, :],
         (genotype_matrix_by_variant.shape[0], covariate_matrix.shape[1]),
     )
     genotype_score = genotype_matrix_by_variant @ no_missing_constants.pseudo_response_vector
-    full_score = jnp.concatenate([covariate_score, genotype_score[:, None]], axis=1)
-    return jnp.squeeze(jnp.linalg.solve(full_information_matrix, full_score[:, :, None]), axis=-1)
+    stacked_rhs = jnp.stack([covariate_score, cross_information_vector], axis=-1)
+    covariate_and_cross_solutions = solve_batched_positive_definite_system(covariate_information_matrix, stacked_rhs)
+    covariate_solution = covariate_and_cross_solutions[..., 0]
+    cross_solution = covariate_and_cross_solutions[..., 1]
+    schur_complement = genotype_information - jnp.sum(cross_information_vector * cross_solution, axis=1)
+    genotype_coefficient = (
+        genotype_score - jnp.sum(cross_information_vector * covariate_solution, axis=1)
+    ) / schur_complement
+    covariate_coefficients = covariate_solution - cross_solution * genotype_coefficient[:, None]
+    return jnp.concatenate([covariate_coefficients, genotype_coefficient[:, None]], axis=1)
 
 
 def prepare_no_missing_logistic_constants(
@@ -1299,7 +1305,9 @@ def initialize_mixed_firth_batch_coefficients(
     """
     padded_index_vector = firth_index_batch.padded_index_vector
     batch_standard_coefficients = jnp.take(standard_coefficients, padded_index_vector, axis=0)
-    batch_heuristic_mask = jnp.asarray(batch_heuristic_firth_mask)
+    batch_heuristic_mask = (
+        jnp.zeros((FIRTH_BATCH_SIZE,), dtype=bool).at[: len(batch_heuristic_firth_mask)].set(batch_heuristic_firth_mask)
+    )
     heuristic_variant_count = int(jax.device_get(jnp.sum(batch_heuristic_mask, dtype=jnp.int32)))
     heuristic_position_vector = jnp.nonzero(
         batch_heuristic_mask,
