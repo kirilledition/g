@@ -1514,6 +1514,11 @@ def compute_batched_firth_updates_without_mask(
     fallback_iteration_count_chunks: list[jax.Array] = []
     max_batch_count = fallback_index_matrix.shape[0]
 
+    with jax.profiler.TraceAnnotation("logistic.firth_batch_take_all_no_missing"):
+        flat_fallback_indices = fallback_index_matrix.flatten()
+        all_batch_genotype_matrix = jnp.take(genotype_matrix, flat_fallback_indices, axis=1)
+        all_batch_standard_coefficients = jnp.take(standard_evaluation.coefficients, flat_fallback_indices, axis=0)
+
     for batch_index in range(max_batch_count):
         with jax.profiler.StepTraceAnnotation("logistic_firth_batch_no_missing", step_num=batch_index):
             active_variant_count = int(host_batch_active_count_vector[batch_index])
@@ -1523,8 +1528,10 @@ def compute_batched_firth_updates_without_mask(
             heuristic_variant_count = int(host_batch_heuristic_count_vector[batch_index])
             fallback_indices = fallback_index_matrix[batch_index][:bucket_size]
             batch_active_mask = fallback_active_mask_matrix[batch_index][:bucket_size]
-            batch_genotype_matrix = jnp.take(genotype_matrix, fallback_indices, axis=1)
-            batch_standard_coefficients = jnp.take(standard_evaluation.coefficients, fallback_indices, axis=0)
+            start_index = batch_index * FIRTH_BATCH_SIZE
+            end_index = start_index + bucket_size
+            batch_genotype_matrix = all_batch_genotype_matrix[:, start_index:end_index]
+            batch_standard_coefficients = all_batch_standard_coefficients[start_index:end_index, :]
             if heuristic_variant_count == 0:
                 batch_initial_coefficients = batch_standard_coefficients
             else:
@@ -1706,12 +1713,21 @@ def compute_logistic_association_chunk_with_mask(
     firth_tolerance = max(tolerance, FIRTH_TOLERANCE_FLOOR)
     with jax.profiler.TraceAnnotation("logistic.build_firth_batches"):
         fallback_index_batches = build_firth_padded_index_batches(fallback_mask.nonzero()[0])
+
+    if fallback_index_batches:
+        with jax.profiler.TraceAnnotation("logistic.firth_batch_take_all"):
+            all_padded_indices = jnp.concatenate([b.padded_index_vector for b in fallback_index_batches])
+            all_batch_genotype_matrix = jnp.take(genotype_matrix, all_padded_indices, axis=1)
+            all_batch_observation_mask = jnp.take(observation_mask, all_padded_indices, axis=0)
+
     for batch_index, firth_index_batch in enumerate(fallback_index_batches):
         with jax.profiler.StepTraceAnnotation("logistic_firth_batch", step_num=batch_index):
             active_variant_count = firth_index_batch.active_index_array.size
-            with jax.profiler.TraceAnnotation("logistic.firth_batch_take"):
-                batch_genotype_matrix = jnp.take(genotype_matrix, firth_index_batch.padded_index_vector, axis=1)
-                batch_observation_mask = jnp.take(observation_mask, firth_index_batch.padded_index_vector, axis=0)
+            with jax.profiler.TraceAnnotation("logistic.firth_batch_slice"):
+                start_index = batch_index * FIRTH_BATCH_SIZE
+                end_index = start_index + FIRTH_BATCH_SIZE
+                batch_genotype_matrix = all_batch_genotype_matrix[:, start_index:end_index]
+                batch_observation_mask = all_batch_observation_mask[start_index:end_index, :]
             with jax.profiler.TraceAnnotation("logistic.firth_batch_initialize"):
                 batch_fallback_mask = fallback_mask[firth_index_batch.active_index_array]
                 batch_heuristic_firth_mask = heuristic_firth_mask[firth_index_batch.active_index_array]
