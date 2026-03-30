@@ -570,7 +570,7 @@ def fit_covariate_only_logistic_regression(
             information_matrix[None, ...],
             rhs[None, :, None],
         ),
-        axis=(0, 2)
+        axis=(0, 2),
     )
     return fit_masked_covariate_only_logistic_regression(
         covariate_matrix=covariate_matrix,
@@ -645,10 +645,7 @@ def fit_masked_covariate_only_logistic_regression(
         )
         # solve_batched_positive_definite_system uses Cholesky under the hood
         # which is faster and more stable for symmetric positive-definite matrices like Fisher info
-        step = jnp.squeeze(
-            solve_batched_positive_definite_system(information_matrix, score[:, :, None]),
-            axis=-1
-        )
+        step = jnp.squeeze(solve_batched_positive_definite_system(information_matrix, score[:, :, None]), axis=-1)
         step = jnp.where(state.converged_mask[:, None], 0.0, step)
         updated_coefficients = state.coefficients - step
         updated_global_iteration_count = state.global_iteration_count + jnp.asarray(1, dtype=jnp.int32)
