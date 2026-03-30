@@ -691,12 +691,10 @@ def compute_firth_pre_dispatch_mask_without_mask(
     no_missing_constants: NoMissingLogisticConstants,
 ) -> jax.Array:
     """Identify obvious allele-count separation for chunks with no missing genotypes."""
-    case_allele_count = jnp.sum(
-        jnp.where(no_missing_constants.case_mask[None, :], genotype_matrix_by_variant, 0.0), axis=1
-    )
-    control_allele_count = jnp.sum(
-        jnp.where(no_missing_constants.control_mask[None, :], genotype_matrix_by_variant, 0.0), axis=1
-    )
+    case_mask_float = no_missing_constants.case_mask.astype(genotype_matrix_by_variant.dtype)
+    control_mask_float = no_missing_constants.control_mask.astype(genotype_matrix_by_variant.dtype)
+    case_allele_count = genotype_matrix_by_variant @ case_mask_float
+    control_allele_count = genotype_matrix_by_variant @ control_mask_float
     case_reference_allele_count = ALLELE_COUNT_MULTIPLIER * no_missing_constants.case_sample_count - case_allele_count
     control_reference_allele_count = (
         ALLELE_COUNT_MULTIPLIER * no_missing_constants.control_sample_count - control_allele_count
