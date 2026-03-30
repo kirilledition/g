@@ -559,9 +559,18 @@ def fit_covariate_only_logistic_regression(
 
     """
     observation_mask = jnp.ones((1, phenotype_vector.shape[0]), dtype=bool)
-    initial_coefficients = jnp.linalg.solve(
-        covariate_matrix.T @ covariate_matrix,
-        covariate_matrix.T @ (INITIAL_RESPONSE_SCALE * (phenotype_vector - BINARY_CASE_THRESHOLD)),
+    # The covariate precision matrix (covariate_matrix.T @ covariate_matrix) is symmetric and positive-semidefinite.
+    # It can be solved more efficiently and stably using Cholesky factor solve, similar to
+    # the rest of the logistic inner loop solve logic.
+    information_matrix = covariate_matrix.T @ covariate_matrix
+    rhs = covariate_matrix.T @ (INITIAL_RESPONSE_SCALE * (phenotype_vector - BINARY_CASE_THRESHOLD))
+    # We add a dummy batch dimension because solve_batched_positive_definite_system expects batched inputs.
+    initial_coefficients = jnp.squeeze(
+        solve_batched_positive_definite_system(
+            information_matrix[None, ...],
+            rhs[None, :, None],
+        ),
+        axis=(0, 2)
     )
     return fit_masked_covariate_only_logistic_regression(
         covariate_matrix=covariate_matrix,
@@ -634,7 +643,12 @@ def fit_masked_covariate_only_logistic_regression(
             logistic_chunk_precomputation,
             effective_weights,
         )
-        step = jnp.squeeze(jnp.linalg.solve(information_matrix, score[:, :, None]), axis=-1)
+        # solve_batched_positive_definite_system uses Cholesky under the hood
+        # which is faster and more stable for symmetric positive-definite matrices like Fisher info
+        step = jnp.squeeze(
+            solve_batched_positive_definite_system(information_matrix, score[:, :, None]),
+            axis=-1
+        )
         step = jnp.where(state.converged_mask[:, None], 0.0, step)
         updated_coefficients = state.coefficients - step
         updated_global_iteration_count = state.global_iteration_count + jnp.asarray(1, dtype=jnp.int32)
@@ -671,10 +685,20 @@ def compute_firth_pre_dispatch_mask(
     phenotype_matrix = jnp.broadcast_to(phenotype_vector[None, :], observation_mask.shape)
     case_observation_mask = observation_mask & (phenotype_matrix > BINARY_CASE_THRESHOLD)
     control_observation_mask = observation_mask & (phenotype_matrix < BINARY_CASE_THRESHOLD)
-    case_sample_count = jnp.sum(case_observation_mask, axis=1, dtype=genotype_matrix_by_variant.dtype)
-    control_sample_count = jnp.sum(control_observation_mask, axis=1, dtype=genotype_matrix_by_variant.dtype)
-    case_allele_count = jnp.sum(jnp.where(case_observation_mask, genotype_matrix_by_variant, 0.0), axis=1)
-    control_allele_count = jnp.sum(jnp.where(control_observation_mask, genotype_matrix_by_variant, 0.0), axis=1)
+
+    # Cast boolean masks to float for matrix multiplication (significant speedup over jnp.where)
+    case_mask_float = case_observation_mask.astype(genotype_matrix_by_variant.dtype)
+    control_mask_float = control_observation_mask.astype(genotype_matrix_by_variant.dtype)
+
+    case_sample_count = jnp.sum(case_mask_float, axis=1)
+    control_sample_count = jnp.sum(control_mask_float, axis=1)
+
+    # Use batched dot product (einsum) instead of jnp.where, which acts as matrix
+    # multiplication across rows. This avoids creating zero-filled arrays and
+    # utilizes optimized underlying routines, leading to a significant speedup.
+    case_allele_count = jnp.einsum("ij,ij->i", genotype_matrix_by_variant, case_mask_float)
+    control_allele_count = jnp.einsum("ij,ij->i", genotype_matrix_by_variant, control_mask_float)
+
     case_reference_allele_count = ALLELE_COUNT_MULTIPLIER * case_sample_count - case_allele_count
     control_reference_allele_count = ALLELE_COUNT_MULTIPLIER * control_sample_count - control_allele_count
     return (
