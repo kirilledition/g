@@ -370,18 +370,22 @@ def initialize_full_model_coefficients(
     cross_information_vector = jnp.einsum(
         "np,mn->mp", covariate_matrix, observation_mask_float * genotype_matrix_by_variant
     )
-    genotype_information = jnp.sum(
-        observation_mask_float * genotype_matrix_by_variant * genotype_matrix_by_variant, axis=1
+    # Speeds up JAX JIT execution by avoiding intermediate matrices
+    genotype_information = jnp.einsum(
+        "ij,ij->i", observation_mask_float * genotype_matrix_by_variant, genotype_matrix_by_variant
     )
     covariate_score = compute_covariate_score(covariate_matrix, masked_pseudo_response)
-    genotype_score = jnp.sum(genotype_matrix_by_variant * masked_pseudo_response, axis=1)
+    # Speeds up JAX JIT execution by avoiding intermediate matrices
+    genotype_score = jnp.einsum("ij,ij->i", genotype_matrix_by_variant, masked_pseudo_response)
     stacked_rhs = jnp.stack([covariate_score, cross_information_vector], axis=-1)
     covariate_and_cross_solutions = solve_batched_positive_definite_system(covariate_information_matrix, stacked_rhs)
     covariate_solution = covariate_and_cross_solutions[..., 0]
     cross_solution = covariate_and_cross_solutions[..., 1]
-    schur_complement = genotype_information - jnp.sum(cross_information_vector * cross_solution, axis=1)
+    # Speeds up JAX JIT execution by avoiding intermediate matrices
+    schur_complement = genotype_information - jnp.einsum("ij,ij->i", cross_information_vector, cross_solution)
     genotype_coefficient = (
-        genotype_score - jnp.sum(cross_information_vector * covariate_solution, axis=1)
+        # Speeds up JAX JIT execution by avoiding intermediate matrices
+        genotype_score - jnp.einsum("ij,ij->i", cross_information_vector, covariate_solution)
     ) / schur_complement
     covariate_coefficients = covariate_solution - cross_solution * genotype_coefficient[:, None]
     return jnp.concatenate([covariate_coefficients, genotype_coefficient[:, None]], axis=1)
@@ -398,7 +402,8 @@ def initialize_full_model_coefficients_without_mask(
         (genotype_matrix_by_variant.shape[0], covariate_matrix.shape[1], covariate_matrix.shape[1]),
     )
     cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, genotype_matrix_by_variant)
-    genotype_information = jnp.sum(genotype_matrix_by_variant * genotype_matrix_by_variant, axis=1)
+    # Speeds up JAX JIT execution by avoiding intermediate matrices
+    genotype_information = jnp.einsum("ij,ij->i", genotype_matrix_by_variant, genotype_matrix_by_variant)
     covariate_score = jnp.broadcast_to(
         no_missing_constants.covariate_pseudo_response_score[None, :],
         (genotype_matrix_by_variant.shape[0], covariate_matrix.shape[1]),
@@ -408,9 +413,11 @@ def initialize_full_model_coefficients_without_mask(
     covariate_and_cross_solutions = solve_batched_positive_definite_system(covariate_information_matrix, stacked_rhs)
     covariate_solution = covariate_and_cross_solutions[..., 0]
     cross_solution = covariate_and_cross_solutions[..., 1]
-    schur_complement = genotype_information - jnp.sum(cross_information_vector * cross_solution, axis=1)
+    # Speeds up JAX JIT execution by avoiding intermediate matrices
+    schur_complement = genotype_information - jnp.einsum("ij,ij->i", cross_information_vector, cross_solution)
     genotype_coefficient = (
-        genotype_score - jnp.sum(cross_information_vector * covariate_solution, axis=1)
+        # Speeds up JAX JIT execution by avoiding intermediate matrices
+        genotype_score - jnp.einsum("ij,ij->i", cross_information_vector, covariate_solution)
     ) / schur_complement
     covariate_coefficients = covariate_solution - cross_solution * genotype_coefficient[:, None]
     return jnp.concatenate([covariate_coefficients, genotype_coefficient[:, None]], axis=1)
@@ -787,21 +794,25 @@ def compute_standard_logistic_association_chunk_with_mask(
         )
         weighted_genotype_matrix = effective_weights * genotype_matrix_by_variant
         covariate_score = compute_covariate_score(covariate_matrix, masked_residual)
-        genotype_score = jnp.sum(genotype_matrix_by_variant * masked_residual, axis=1)
+        # Speeds up JAX JIT execution by avoiding intermediate matrices
+        genotype_score = jnp.einsum("ij,ij->i", genotype_matrix_by_variant, masked_residual)
         covariate_information_matrix = compute_covariate_information_matrix(
             logistic_chunk_precomputation,
             effective_weights,
         )
         cross_information_vector = weighted_genotype_matrix @ covariate_matrix
-        genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
+        # Speeds up JAX JIT execution by avoiding intermediate matrices
+        genotype_information = jnp.einsum("ij,ij->i", weighted_genotype_matrix, genotype_matrix_by_variant)
         rhs = jnp.stack([covariate_score, cross_information_vector], axis=-1)
         sols = solve_batched_positive_definite_system(covariate_information_matrix, rhs)
         covariate_information_solution = sols[..., 0]
         cross_solution = sols[..., 1]
-        schur_complement = genotype_information - jnp.sum(cross_information_vector * cross_solution, axis=1)
+        # Speeds up JAX JIT execution by avoiding intermediate matrices
+        schur_complement = genotype_information - jnp.einsum("ij,ij->i", cross_information_vector, cross_solution)
         safe_schur_complement = jnp.where(schur_complement > 0.0, schur_complement, 1.0)
-        adjusted_genotype_score = genotype_score - jnp.sum(
-            cross_information_vector * covariate_information_solution, axis=1
+        # Speeds up JAX JIT execution by avoiding intermediate matrices
+        adjusted_genotype_score = genotype_score - jnp.einsum(
+            "ij,ij->i", cross_information_vector, covariate_information_solution
         )
         genotype_step = adjusted_genotype_score / safe_schur_complement
         covariate_step = covariate_information_solution - cross_solution * genotype_step[:, None]
@@ -945,13 +956,15 @@ def compute_standard_logistic_association_chunk_without_mask(
         effective_weights = jnp.clip(probability_matrix * (1.0 - probability_matrix), MINIMUM_WEIGHT)
         weighted_genotype_matrix = effective_weights * genotype_matrix_by_variant
         covariate_score = compute_covariate_score(covariate_matrix, residual_matrix)
-        genotype_score = jnp.sum(genotype_matrix_by_variant * residual_matrix, axis=1)
+        # Speeds up JAX JIT execution by avoiding intermediate matrices
+        genotype_score = jnp.einsum("ij,ij->i", genotype_matrix_by_variant, residual_matrix)
         covariate_information_matrix = compute_covariate_information_matrix(
             logistic_chunk_precomputation,
             effective_weights,
         )
         cross_information_vector = weighted_genotype_matrix @ covariate_matrix
-        genotype_information = jnp.sum(weighted_genotype_matrix * genotype_matrix_by_variant, axis=1)
+        # Speeds up JAX JIT execution by avoiding intermediate matrices
+        genotype_information = jnp.einsum("ij,ij->i", weighted_genotype_matrix, genotype_matrix_by_variant)
         combined_right_hand_sides = jnp.stack((covariate_score, cross_information_vector), axis=-1)
         information_solution_matrix = solve_batched_positive_definite_system(
             covariate_information_matrix,
@@ -959,10 +972,12 @@ def compute_standard_logistic_association_chunk_without_mask(
         )
         covariate_information_solution = information_solution_matrix[..., 0]
         cross_solution = information_solution_matrix[..., 1]
-        schur_complement = genotype_information - jnp.sum(cross_information_vector * cross_solution, axis=1)
+        # Speeds up JAX JIT execution by avoiding intermediate matrices
+        schur_complement = genotype_information - jnp.einsum("ij,ij->i", cross_information_vector, cross_solution)
         safe_schur_complement = jnp.where(schur_complement > 0.0, schur_complement, 1.0)
-        adjusted_genotype_score = genotype_score - jnp.sum(
-            cross_information_vector * covariate_information_solution, axis=1
+        # Speeds up JAX JIT execution by avoiding intermediate matrices
+        adjusted_genotype_score = genotype_score - jnp.einsum(
+            "ij,ij->i", cross_information_vector, covariate_information_solution
         )
         genotype_step = adjusted_genotype_score / safe_schur_complement
         covariate_step = covariate_information_solution - cross_solution * genotype_step[:, None]
@@ -1121,7 +1136,8 @@ def fit_single_variant_firth_logistic_regression(
             (information_cholesky_factor, False),
             full_design_matrix.T,
         ).T
-        leverage_vector = variance_vector * jnp.sum(projected_design_matrix * full_design_matrix, axis=1)
+        # Speeds up JAX JIT execution by avoiding intermediate matrices
+        leverage_vector = variance_vector * jnp.einsum("ij,ij->i", projected_design_matrix, full_design_matrix)
         adjusted_weight_vector = jnp.where(
             observation_mask,
             (phenotype_vector - probability_vector) + leverage_vector * (BINARY_CASE_THRESHOLD - probability_vector),
