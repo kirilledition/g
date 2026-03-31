@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import polars as pl
 
@@ -17,6 +16,10 @@ from g.engine import (
 )
 from g.output.manifest import ManifestChunkRecord, OutputManifest
 from g.output.schema import SCHEMA_VERSION, cast_frame_to_schema, write_schema_file
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
 
 
 @dataclass(frozen=True)

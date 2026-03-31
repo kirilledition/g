@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import pathlib  # noqa: TC003
 
 import typer
 
@@ -54,19 +54,25 @@ def print_success_message(artifacts: RunArtifacts) -> None:
 
 @app.command("linear", no_args_is_help=True)
 def run_linear_command(
-    bfile: Path = typer.Option(..., help="PLINK dataset prefix."),
-    pheno: Path = typer.Option(..., help="Phenotype table path."),
+    bfile: pathlib.Path = typer.Option(..., help="PLINK dataset prefix."),
+    pheno: pathlib.Path = typer.Option(..., help="Phenotype table path."),
     pheno_name: str = typer.Option(..., "--pheno-name", help="Phenotype column name to analyze."),
-    out: Path = typer.Option(..., help="Output prefix or TSV path."),
-    covar: Path | None = typer.Option(None, help="Optional covariate table path."),
+    out: pathlib.Path = typer.Option(..., help="Output prefix or TSV path."),
+    covar: pathlib.Path | None = typer.Option(None, help="Optional covariate table path."),
     covar_names: str | None = typer.Option(None, "--covar-names", help="Comma-separated covariate column names."),
     chunk_size: int | None = typer.Option(None, help="Variants per BED chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
     device: str = typer.Option("cpu", help="JAX execution device. Use 'gpu' to enable GPU acceleration."),
     output_mode: str = typer.Option("tsv", help="Output mode: 'tsv' or 'arrow_chunks'."),
-    output_run_directory: Path | None = typer.Option(None, help="Run directory for chunked output mode."),
-    resume: bool = typer.Option(False, help="Resume a previous chunked run."),
-    finalize_parquet: bool = typer.Option(False, help="Compact committed Arrow chunks into Parquet."),
+    output_run_directory: pathlib.Path | None = typer.Option(None, help="Run directory for chunked output mode."),
+    resume: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Resume a previous chunked run.",
+    ),
+    finalize_parquet: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Compact committed Arrow chunks into Parquet.",
+    ),
 ) -> None:
     """Run a linear association scan."""
     compute_config = ComputeConfig(
@@ -93,11 +99,11 @@ def run_linear_command(
 
 @app.command("logistic", no_args_is_help=True)
 def run_logistic_command(
-    bfile: Path = typer.Option(..., help="PLINK dataset prefix."),
-    pheno: Path = typer.Option(..., help="Phenotype table path."),
+    bfile: pathlib.Path = typer.Option(..., help="PLINK dataset prefix."),
+    pheno: pathlib.Path = typer.Option(..., help="Phenotype table path."),
     pheno_name: str = typer.Option(..., "--pheno-name", help="Phenotype column name to analyze."),
-    out: Path = typer.Option(..., help="Output prefix or TSV path."),
-    covar: Path | None = typer.Option(None, help="Optional covariate table path."),
+    out: pathlib.Path = typer.Option(..., help="Output prefix or TSV path."),
+    covar: pathlib.Path | None = typer.Option(None, help="Optional covariate table path."),
     covar_names: str | None = typer.Option(None, "--covar-names", help="Comma-separated covariate column names."),
     chunk_size: int | None = typer.Option(None, help="Variants per BED chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
@@ -110,9 +116,15 @@ def run_logistic_command(
         help="Use Firth fallback when needed.",
     ),
     output_mode: str = typer.Option("tsv", help="Output mode: 'tsv' or 'arrow_chunks'."),
-    output_run_directory: Path | None = typer.Option(None, help="Run directory for chunked output mode."),
-    resume: bool = typer.Option(False, help="Resume a previous chunked run."),
-    finalize_parquet: bool = typer.Option(False, help="Compact committed Arrow chunks into Parquet."),
+    output_run_directory: pathlib.Path | None = typer.Option(None, help="Run directory for chunked output mode."),
+    resume: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Resume a previous chunked run.",
+    ),
+    finalize_parquet: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Compact committed Arrow chunks into Parquet.",
+    ),
 ) -> None:
     """Run a logistic association scan."""
     compute_config = ComputeConfig(

@@ -5,7 +5,10 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -24,6 +27,7 @@ class OutputManifest:
     """Append-only manifest persisted as a SQLite database."""
 
     def __init__(self, manifest_path: Path) -> None:
+        """Initialize and prepare the manifest database."""
         self.manifest_path = manifest_path
         self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(self.manifest_path)

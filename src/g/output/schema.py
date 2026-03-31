@@ -3,45 +3,47 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import polars as pl
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 SCHEMA_VERSION: Final[str] = "1"
 
 LINEAR_OUTPUT_SCHEMA: Final[dict[str, pl.DataType]] = {
-    "chromosome": pl.String,
-    "position": pl.Int64,
-    "variant_identifier": pl.String,
-    "allele_one": pl.String,
-    "allele_two": pl.String,
-    "allele_one_frequency": pl.Float32,
-    "observation_count": pl.Int32,
-    "beta": pl.Float32,
-    "standard_error": pl.Float32,
-    "t_statistic": pl.Float32,
-    "p_value": pl.Float32,
-    "is_valid": pl.Boolean,
+    "chromosome": pl.String(),
+    "position": pl.Int64(),
+    "variant_identifier": pl.String(),
+    "allele_one": pl.String(),
+    "allele_two": pl.String(),
+    "allele_one_frequency": pl.Float32(),
+    "observation_count": pl.Int32(),
+    "beta": pl.Float32(),
+    "standard_error": pl.Float32(),
+    "t_statistic": pl.Float32(),
+    "p_value": pl.Float32(),
+    "is_valid": pl.Boolean(),
 }
 
 LOGISTIC_OUTPUT_SCHEMA: Final[dict[str, pl.DataType]] = {
-    "chromosome": pl.String,
-    "position": pl.Int64,
-    "variant_identifier": pl.String,
-    "allele_one": pl.String,
-    "allele_two": pl.String,
-    "allele_one_frequency": pl.Float32,
-    "observation_count": pl.Int32,
-    "beta": pl.Float32,
-    "standard_error": pl.Float32,
-    "z_statistic": pl.Float32,
-    "p_value": pl.Float32,
-    "firth_flag": pl.String,
-    "error_code": pl.String,
-    "converged": pl.Boolean,
-    "iteration_count": pl.Int32,
-    "is_valid": pl.Boolean,
+    "chromosome": pl.String(),
+    "position": pl.Int64(),
+    "variant_identifier": pl.String(),
+    "allele_one": pl.String(),
+    "allele_two": pl.String(),
+    "allele_one_frequency": pl.Float32(),
+    "observation_count": pl.Int32(),
+    "beta": pl.Float32(),
+    "standard_error": pl.Float32(),
+    "z_statistic": pl.Float32(),
+    "p_value": pl.Float32(),
+    "firth_flag": pl.String(),
+    "error_code": pl.String(),
+    "converged": pl.Boolean(),
+    "iteration_count": pl.Int32(),
+    "is_valid": pl.Boolean(),
 }
 
 
