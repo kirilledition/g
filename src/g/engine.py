@@ -369,6 +369,7 @@ def iter_linear_output_frames(
     covariate_names: tuple[str, ...] | None,
     chunk_size: int,
     variant_limit: int | None,
+    committed_chunk_identifiers: set[int] | None = None,
 ) -> Iterator[LinearChunkAccumulator]:
     """Yield linear association chunk accumulators (JAX arrays, device memory)."""
     with jax.profiler.TraceAnnotation("linear.load_aligned_sample_data"):
@@ -394,11 +395,15 @@ def iter_linear_output_frames(
         variant_limit=variant_limit,
     )
     current_chunk = next(chunk_iterator, None)
+    committed_identifier_set = committed_chunk_identifiers or set()
     for chunk_index, next_chunk in enumerate(
         itertools.chain(chunk_iterator, [None]),
     ):
         if current_chunk is None:
             break
+        if chunk_index in committed_identifier_set:
+            current_chunk = next_chunk
+            continue
         with jax.profiler.StepTraceAnnotation("linear_chunk", step_num=chunk_index):
             with jax.profiler.TraceAnnotation("linear.compute"):
                 linear_result = compute_linear_association_chunk(
@@ -425,6 +430,7 @@ def iter_logistic_output_frames(
     variant_limit: int | None,
     max_iterations: int,
     tolerance: float,
+    committed_chunk_identifiers: set[int] | None = None,
 ) -> Iterator[LogisticChunkAccumulator]:
     """Yield logistic association chunk accumulators (JAX arrays, device memory)."""
     with jax.profiler.TraceAnnotation("logistic.load_aligned_sample_data"):
@@ -449,11 +455,15 @@ def iter_logistic_output_frames(
         variant_limit=variant_limit,
     )
     current_chunk = next(chunk_iterator, None)
+    committed_identifier_set = committed_chunk_identifiers or set()
     for chunk_index, next_chunk in enumerate(
         itertools.chain(chunk_iterator, [None]),
     ):
         if current_chunk is None:
             break
+        if chunk_index in committed_identifier_set:
+            current_chunk = next_chunk
+            continue
         with jax.profiler.StepTraceAnnotation("logistic_chunk", step_num=chunk_index):
             with jax.profiler.TraceAnnotation("logistic.compute"):
                 logistic_evaluation = compute_logistic_association_with_missing_exclusion(
