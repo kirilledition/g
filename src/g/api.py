@@ -7,6 +7,8 @@ from pathlib import Path
 
 from g.engine import iter_linear_output_frames, iter_logistic_output_frames, write_frame_iterator_to_tsv
 from g.jax_setup import configure_jax_device
+from g.output.chunked import finalize_chunks_to_parquet, persist_chunked_results, resolve_output_run_paths
+from g.output.manifest import OutputManifest
 
 DEFAULT_LINEAR_CHUNK_SIZE = 2048
 DEFAULT_LOGISTIC_CHUNK_SIZE = 1024
@@ -23,6 +25,10 @@ class ComputeConfig:
     chunk_size: int = DEFAULT_LINEAR_CHUNK_SIZE
     device: str = "cpu"
     variant_limit: int | None = None
+    output_mode: str = "tsv"
+    output_run_directory: Path | None = None
+    resume: bool = False
+    finalize_parquet: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -43,7 +49,9 @@ class LinearConfig:
 class RunArtifacts:
     """Immutable pointers to generated output files."""
 
-    sumstats_tsv: Path
+    sumstats_tsv: Path | None = None
+    output_run_directory: Path | None = None
+    final_parquet: Path | None = None
 
 
 def parse_covariate_name_list(raw_covariate_names: str | list[str] | tuple[str, ...] | None) -> tuple[str, ...] | None:
@@ -78,6 +86,9 @@ def validate_compute_config(compute_config: ComputeConfig) -> None:
     if compute_config.device not in {"cpu", "gpu"}:
         message = f"Unsupported device '{compute_config.device}'. Expected 'cpu' or 'gpu'."
         raise ValueError(message)
+    if compute_config.output_mode not in {"tsv", "arrow_chunks"}:
+        message = f"Unsupported output mode '{compute_config.output_mode}'."
+        raise ValueError(message)
 
 
 def validate_logistic_config(logistic_config: LogisticConfig) -> None:
@@ -106,6 +117,14 @@ def linear(
     validate_compute_config(compute_config)
     output_path = resolve_output_path(out, "linear")
     configure_jax_device(compute_config.device)
+    committed_chunk_identifiers: set[int] = set()
+    output_run_directory = compute_config.output_run_directory or Path(out)
+    if compute_config.output_mode == "arrow_chunks" and compute_config.resume:
+        output_run_paths = resolve_output_run_paths(output_run_directory, "linear")
+        if output_run_paths.manifest_path.exists():
+            manifest = OutputManifest(output_run_paths.manifest_path)
+            committed_chunk_identifiers = manifest.load_committed_chunk_identifiers()
+            manifest.close()
 
     frame_iterator = iter_linear_output_frames(
         bed_prefix=Path(bfile),
@@ -115,9 +134,23 @@ def linear(
         covariate_names=parse_covariate_name_list(covar_names),
         chunk_size=compute_config.chunk_size,
         variant_limit=compute_config.variant_limit,
+        committed_chunk_identifiers=committed_chunk_identifiers,
     )
-    write_frame_iterator_to_tsv(frame_iterator, output_path)
-    return RunArtifacts(sumstats_tsv=output_path)
+    if compute_config.output_mode == "tsv":
+        write_frame_iterator_to_tsv(frame_iterator, output_path)
+        return RunArtifacts(sumstats_tsv=output_path)
+
+    output_run_paths = persist_chunked_results(
+        frame_iterator=frame_iterator,
+        association_mode="linear",
+        output_root=output_run_directory,
+        resume=compute_config.resume,
+    )
+    final_parquet_path = finalize_chunks_to_parquet(output_run_paths) if compute_config.finalize_parquet else None
+    return RunArtifacts(
+        output_run_directory=output_run_paths.run_directory,
+        final_parquet=final_parquet_path,
+    )
 
 
 def logistic(
@@ -137,6 +170,14 @@ def logistic(
     validate_logistic_config(solver_config)
     output_path = resolve_output_path(out, "logistic")
     configure_jax_device(compute_config.device)
+    committed_chunk_identifiers: set[int] = set()
+    output_run_directory = compute_config.output_run_directory or Path(out)
+    if compute_config.output_mode == "arrow_chunks" and compute_config.resume:
+        output_run_paths = resolve_output_run_paths(output_run_directory, "logistic")
+        if output_run_paths.manifest_path.exists():
+            manifest = OutputManifest(output_run_paths.manifest_path)
+            committed_chunk_identifiers = manifest.load_committed_chunk_identifiers()
+            manifest.close()
 
     frame_iterator = iter_logistic_output_frames(
         bed_prefix=Path(bfile),
@@ -148,6 +189,20 @@ def logistic(
         variant_limit=compute_config.variant_limit,
         max_iterations=solver_config.max_iterations,
         tolerance=solver_config.tolerance,
+        committed_chunk_identifiers=committed_chunk_identifiers,
     )
-    write_frame_iterator_to_tsv(frame_iterator, output_path)
-    return RunArtifacts(sumstats_tsv=output_path)
+    if compute_config.output_mode == "tsv":
+        write_frame_iterator_to_tsv(frame_iterator, output_path)
+        return RunArtifacts(sumstats_tsv=output_path)
+
+    output_run_paths = persist_chunked_results(
+        frame_iterator=frame_iterator,
+        association_mode="logistic",
+        output_root=output_run_directory,
+        resume=compute_config.resume,
+    )
+    final_parquet_path = finalize_chunks_to_parquet(output_run_paths) if compute_config.finalize_parquet else None
+    return RunArtifacts(
+        output_run_directory=output_run_paths.run_directory,
+        final_parquet=final_parquet_path,
+    )
