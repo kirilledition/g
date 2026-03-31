@@ -22,7 +22,7 @@ from g.io.tabular import (
 
 
 def test_load_family_table(tmp_path: Path) -> None:
-    """Ensure load_family_table parses a valid FAM file correctly."""
+    """Ensure load_family_table parses a tab-delimited FAM file correctly."""
     fam_path = tmp_path / "test_dataset.fam"
     fam_content = "family1\tsample1\t0\t0\t1\t-9\nfamily2\tsample2\t0\t0\t2\t-9\nfamily3\tsample3\t0\t0\t1\t-9\n"
     fam_path.write_text(fam_content)
@@ -36,11 +36,35 @@ def test_load_family_table(tmp_path: Path) -> None:
     assert df.get_column("individual_identifier").to_list() == ["sample1", "sample2", "sample3"]
 
 
+def test_load_family_table_space_delimited(tmp_path: Path) -> None:
+    """Ensure load_family_table parses a space-delimited FAM file correctly."""
+    fam_path = tmp_path / "test_dataset.fam"
+    fam_content = "family1 sample1 0 0 1 -9\nfamily2 sample2 0 0 2 -9\nfamily3 sample3 0 0 1 -9\n"
+    fam_path.write_text(fam_content)
+
+    df = load_family_table(fam_path)
+
+    assert df.height == 3
+    assert "sample_index" in df.columns
+    assert list(FAMILY_TABLE_COLUMNS) == [column_name for column_name in df.columns if column_name != "sample_index"]
+    assert df.get_column("family_identifier").to_list() == ["family1", "family2", "family3"]
+    assert df.get_column("individual_identifier").to_list() == ["sample1", "sample2", "sample3"]
+
+
 def test_load_family_table_missing_file(tmp_path: Path) -> None:
     """Ensure load_family_table raises FileNotFoundError for missing files."""
     fam_path = tmp_path / "missing.fam"
 
     with pytest.raises(FileNotFoundError):
+        load_family_table(fam_path)
+
+
+def test_load_family_table_invalid_row_width(tmp_path: Path) -> None:
+    """Ensure load_family_table raises for malformed rows."""
+    fam_path = tmp_path / "malformed.fam"
+    fam_path.write_text("family1 sample1 0 0 1\n")
+
+    with pytest.raises(ValueError, match="expected 6 whitespace-delimited fields"):
         load_family_table(fam_path)
 
 
