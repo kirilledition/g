@@ -867,9 +867,9 @@ def compute_standard_logistic_association_chunk_with_mask(
         final_state.last_cross_information_vector[:, :, None],
     )
     cross_information_solution = jnp.squeeze(cross_information_solution, axis=-1)
-    schur_complement = final_state.last_genotype_information - jnp.sum(
-        final_state.last_cross_information_vector * cross_information_solution,
-        axis=1,
+    # Speeds up JAX JIT execution by avoiding intermediate matrices
+    schur_complement = final_state.last_genotype_information - jnp.einsum(
+        "ij,ij->i", final_state.last_cross_information_vector, cross_information_solution
     )
     safe_schur_complement = jnp.where(schur_complement > 0.0, schur_complement, jnp.nan)
     beta = final_state.coefficients[:, -1]
@@ -1032,9 +1032,9 @@ def compute_standard_logistic_association_chunk_without_mask(
         final_state.last_cross_information_vector[:, :, None],
     )
     cross_information_solution = jnp.squeeze(cross_information_solution, axis=-1)
-    schur_complement = final_state.last_genotype_information - jnp.sum(
-        final_state.last_cross_information_vector * cross_information_solution,
-        axis=1,
+    # Speeds up JAX JIT execution by avoiding intermediate matrices
+    schur_complement = final_state.last_genotype_information - jnp.einsum(
+        "ij,ij->i", final_state.last_cross_information_vector, cross_information_solution
     )
     safe_schur_complement = jnp.where(schur_complement > 0.0, schur_complement, jnp.nan)
     beta = final_state.coefficients[:, -1]
