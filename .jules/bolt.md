@@ -21,3 +21,7 @@
 ## 2026-03-30 - [Linear Regression Einsum Sum of Squares Optimization]
 **Learning:** In the linear regression computation, computing the column-wise sum of squares using `jnp.sum(A * B, axis=0)` is about 25% slower than using `jnp.einsum("ij,ij->j", A, B)` for large matrices (e.g., 100,000 samples by 1,000 variants). This is because the element-wise multiplication `A * B` creates a large intermediate dense matrix in memory before reducing it with `jnp.sum`. The `einsum` formulation fuses these operations into a single kernel, avoiding the materialization of the full-sized N x M product matrix, which reduces memory allocation overhead and speeds up the JAX JIT execution.
 **Action:** When computing column-wise (or row-wise) sum of element-wise products of large matrices in JAX, use `jnp.einsum("ij,ij->j", A, B)` instead of `jnp.sum(A * B, axis=0)` to avoid allocating large intermediate matrices and improve performance.
+
+## 2026-03-30 - [Optimize Masked Computations using `jnp.einsum`]
+**Learning:** In the logistic regression computation, computing the cross-information matrices using `jnp.sum(A * B, axis=1)` creates large intermediate matrices before reduction, consuming memory and taking significantly longer to compile and execute under JAX JIT than fusing the operations via a tensor contraction like `jnp.einsum("ij,ij->i", A, B)`.
+**Action:** When row-wise sums of element-wise products occur, use `jnp.einsum("ij,ij->i", A, B)` rather than `jnp.sum(A * B, axis=1)` to avoid large intermediate matrix allocation and speed up JAX JIT execution.
