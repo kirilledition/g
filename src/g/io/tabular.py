@@ -36,20 +36,43 @@ def load_family_table(family_path: Path) -> pl.DataFrame:
     Returns:
         Parsed family table.
 
+    Raises:
+        ValueError: If any row does not contain exactly six whitespace-delimited fields.
+
     """
-    return pl.read_csv(
+    raw_line_table = pl.read_csv(
         family_path,
         has_header=False,
-        new_columns=list(FAMILY_TABLE_COLUMNS),
-        separator="\t",
-        schema_overrides={
-            "family_identifier": pl.String,
-            "individual_identifier": pl.String,
-            "paternal_identifier": pl.String,
-            "maternal_identifier": pl.String,
-            "reported_sex": pl.Int64,
-            "placeholder_phenotype": pl.Float32,
-        },
+        separator="|",
+        quote_char=None,
+        new_columns=["raw_line"],
+    ).with_row_index("line_number", offset=1)
+
+    tokenized_table = (
+        raw_line_table.filter(pl.col("raw_line").str.strip_chars() != "")
+        .with_columns(pl.col("raw_line").str.extract_all(r"\S+").alias("field_values"))
+        .with_columns(pl.col("field_values").list.len().alias("field_count"))
+    )
+
+    invalid_row_table = tokenized_table.filter(pl.col("field_count") != len(FAMILY_TABLE_COLUMNS))
+    if invalid_row_table.height > 0:
+        first_invalid_row = invalid_row_table.row(0, named=True)
+        line_number = int(first_invalid_row["line_number"])
+        field_count = int(first_invalid_row["field_count"])
+        message = (
+            "Invalid .fam row at line "
+            f"{line_number}: expected {len(FAMILY_TABLE_COLUMNS)} whitespace-delimited fields, "
+            f"found {field_count}."
+        )
+        raise ValueError(message)
+
+    return tokenized_table.select(
+        pl.col("field_values").list.get(0).alias("family_identifier"),
+        pl.col("field_values").list.get(1).alias("individual_identifier"),
+        pl.col("field_values").list.get(2).alias("paternal_identifier"),
+        pl.col("field_values").list.get(3).alias("maternal_identifier"),
+        pl.col("field_values").list.get(4).cast(pl.Int64).alias("reported_sex"),
+        pl.col("field_values").list.get(5).cast(pl.Float32).alias("placeholder_phenotype"),
     ).with_row_index("sample_index")
 
 
