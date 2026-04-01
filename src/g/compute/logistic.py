@@ -332,7 +332,7 @@ def compute_covariate_only_probability_matrix(
     coefficients: jax.Array,
 ) -> jax.Array:
     """Compute batched covariate-only logistic probabilities."""
-    linear_predictor = jnp.einsum("np,mp->mn", covariate_matrix, coefficients)
+    linear_predictor = coefficients @ covariate_matrix.T
     return clip_probability_matrix(jax.nn.sigmoid(linear_predictor))
 
 
@@ -345,7 +345,7 @@ def compute_probability_matrix(
     covariate_coefficients = coefficients[:, :-1]
     genotype_coefficients = coefficients[:, -1]
     linear_predictor = (
-        jnp.einsum("np,mp->mn", covariate_matrix, covariate_coefficients)
+        covariate_coefficients @ covariate_matrix.T
         + genotype_matrix_by_variant * genotype_coefficients[:, None]
     )
     return clip_probability_matrix(jax.nn.sigmoid(linear_predictor))
@@ -361,15 +361,10 @@ def initialize_full_model_coefficients(
     pseudo_response_vector = INITIAL_RESPONSE_SCALE * (phenotype_vector - BINARY_CASE_THRESHOLD)
     masked_pseudo_response = jnp.where(observation_mask, pseudo_response_vector[None, :], 0.0)
     observation_mask_float = observation_mask.astype(covariate_matrix.dtype)
-    covariate_information_matrix = jnp.einsum(
-        "np,mn,nq->mpq",
-        covariate_matrix,
-        observation_mask_float,
-        covariate_matrix,
+    covariate_information_matrix = compute_covariate_information_matrix(
+        covariate_matrix, observation_mask_float
     )
-    cross_information_vector = jnp.einsum(
-        "np,mn->mp", covariate_matrix, observation_mask_float * genotype_matrix_by_variant
-    )
+    cross_information_vector = (observation_mask_float * genotype_matrix_by_variant) @ covariate_matrix
     # Speeds up JAX JIT execution by avoiding intermediate matrices
     genotype_information = jnp.einsum(
         "ij,ij->i", observation_mask_float * genotype_matrix_by_variant, genotype_matrix_by_variant
@@ -401,7 +396,7 @@ def initialize_full_model_coefficients_without_mask(
         no_missing_constants.covariate_information_matrix[None, :, :],
         (genotype_matrix_by_variant.shape[0], covariate_matrix.shape[1], covariate_matrix.shape[1]),
     )
-    cross_information_vector = jnp.einsum("np,mn->mp", covariate_matrix, genotype_matrix_by_variant)
+    cross_information_vector = genotype_matrix_by_variant @ covariate_matrix
     # Speeds up JAX JIT execution by avoiding intermediate matrices
     genotype_information = jnp.einsum("ij,ij->i", genotype_matrix_by_variant, genotype_matrix_by_variant)
     covariate_score = jnp.broadcast_to(
@@ -455,9 +450,9 @@ def compute_information_components(
         0.0,
     )
     weighted_genotype_vector = effective_weights * genotype_vector
-    covariate_information_matrix = jnp.einsum("np,n,nq->pq", covariate_matrix, effective_weights, covariate_matrix)
-    cross_information_vector = jnp.einsum("np,n->p", covariate_matrix, weighted_genotype_vector)
-    genotype_information = jnp.sum(weighted_genotype_vector * genotype_vector)
+    covariate_information_matrix = (covariate_matrix.T * effective_weights) @ covariate_matrix
+    cross_information_vector = weighted_genotype_vector @ covariate_matrix
+    genotype_information = jnp.dot(weighted_genotype_vector, genotype_vector)
     top_block = jnp.concatenate([covariate_information_matrix, cross_information_vector[:, None]], axis=1)
     bottom_block = jnp.concatenate([cross_information_vector[None, :], genotype_information[None, None]], axis=1)
     information_matrix = jnp.concatenate([top_block, bottom_block], axis=0)
