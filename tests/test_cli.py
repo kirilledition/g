@@ -73,7 +73,7 @@ def test_linear_command_dispatches_api_call() -> None:
         )
 
     assert result.exit_code == 0
-    assert "results/output.linear.tsv" in result.output
+    assert str(Path("results/output.linear.tsv")) in result.output
     assert mock_run_linear_api.call_args.kwargs["covar_names"] == ("age", "sex")
     compute_config = mock_run_linear_api.call_args.kwargs["compute"]
     assert compute_config.device == "gpu"
@@ -104,6 +104,32 @@ def test_linear_command_supports_intercept_only_run() -> None:
     assert result.exit_code == 0
     assert mock_run_linear_api.call_args.kwargs["covar"] is None
     assert mock_run_linear_api.call_args.kwargs["covar_names"] is None
+
+
+def test_linear_command_supports_bgen_input() -> None:
+    """Ensure the linear subcommand can dispatch a BGEN-backed run."""
+    with patch(
+        "g.cli.run_linear_api",
+        return_value=RunArtifacts(sumstats_tsv=Path("results/output.linear.tsv")),
+    ) as mock_run_linear_api:
+        result = runner.invoke(
+            app,
+            [
+                "linear",
+                "--bgen",
+                "dataset.bgen",
+                "--pheno",
+                "phenotype.tsv",
+                "--pheno-name",
+                "trait",
+                "--out",
+                "results/output",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert mock_run_linear_api.call_args.kwargs["bfile"] is None
+    assert mock_run_linear_api.call_args.kwargs["bgen"] == Path("dataset.bgen")
 
 
 def test_linear_subcommand_without_options_shows_help() -> None:

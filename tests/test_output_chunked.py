@@ -8,6 +8,7 @@ import polars as pl
 import pytest
 
 from g.engine import LinearChunkAccumulator, LinearChunkPayload
+from g.io.source import build_plink_source_config
 from g.models import LinearAssociationChunkResult, VariantMetadata
 from g.output.chunked import (
     OutputRunConfiguration,
@@ -48,7 +49,7 @@ def create_linear_output_run_configuration(
     output_root = tmp_path / "results"
     output_run_configuration = build_output_run_configuration(
         association_mode="linear",
-        bed_prefix=bed_prefix,
+        genotype_source_config=build_plink_source_config(bed_prefix),
         phenotype_path=phenotype_path,
         phenotype_name="phenotype",
         covariate_path=covariate_path,
@@ -155,7 +156,7 @@ def test_prepare_output_run_rejects_configuration_mismatch(tmp_path: Path) -> No
 
     mismatched_output_run_configuration = build_output_run_configuration(
         association_mode="linear",
-        bed_prefix=tmp_path / "study",
+        genotype_source_config=build_plink_source_config(tmp_path / "study"),
         phenotype_path=tmp_path / "phenotype.txt",
         phenotype_name="phenotype",
         covariate_path=tmp_path / "covariate.txt",
@@ -292,6 +293,34 @@ def test_finalize_chunks_to_parquet_raises_for_missing_chunks(tmp_path: Path) ->
     manifest.close()
 
     with pytest.raises(ValueError, match="incomplete or corrupted"):
+        finalize_chunks_to_parquet(prepared_output_run.output_run_paths)
+
+
+def test_finalize_chunks_to_parquet_raises_for_checksum_mismatch(tmp_path: Path) -> None:
+    output_root, output_run_configuration = create_linear_output_run_configuration(tmp_path)
+    prepared_output_run = prepare_output_run(
+        output_root=output_root,
+        output_run_configuration=output_run_configuration,
+        resume=False,
+    )
+    manifest = OutputManifest(prepared_output_run.output_run_paths.manifest_path)
+    manifest.insert_run_record(prepared_output_run.run_manifest_record)
+    manifest.close()
+
+    chunk_payload = create_linear_chunk_payload(
+        chunk_identifier=0,
+        variant_stop_index=2,
+        variant_identifier="variant0",
+    )
+    register_committed_chunk(
+        prepared_output_run.output_run_paths.run_directory,
+        chunk_payload,
+    )
+
+    chunk_file_path = prepared_output_run.output_run_paths.chunks_directory / build_chunk_file_name(chunk_payload)
+    chunk_file_path.write_bytes(b"corrupted-arrow-bytes")
+
+    with pytest.raises(ValueError, match="checksum mismatch"):
         finalize_chunks_to_parquet(prepared_output_run.output_run_paths)
 
 

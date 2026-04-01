@@ -56,6 +56,8 @@ def test_linear_uses_public_api_defaults() -> None:
     assert mock_iter_linear_output_frames.call_args.kwargs["covariate_path"] is None
     assert mock_iter_linear_output_frames.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_iter_linear_output_frames.call_args.kwargs["chunk_size"] == 2048
+    assert mock_iter_linear_output_frames.call_args.kwargs["genotype_source_config"].source_format == "plink"
+    assert mock_iter_linear_output_frames.call_args.kwargs["prefetch_chunks"] == 1
     assert mock_write_frame_iterator_to_tsv.call_args.args[1] == Path("results/output.linear.tsv")
 
 
@@ -78,6 +80,7 @@ def test_logistic_uses_mode_specific_defaults() -> None:
     assert mock_iter_logistic_output_frames.call_args.kwargs["chunk_size"] == 1024
     assert mock_iter_logistic_output_frames.call_args.kwargs["max_iterations"] == 50
     assert mock_iter_logistic_output_frames.call_args.kwargs["tolerance"] == 1.0e-8
+    assert mock_iter_logistic_output_frames.call_args.kwargs["genotype_source_config"].source_format == "plink"
     assert mock_write_frame_iterator_to_tsv.call_args.args[1] == Path("results/output.logistic.tsv")
 
 
@@ -92,3 +95,23 @@ def test_logistic_rejects_invalid_solver_configuration() -> None:
             compute=ComputeConfig(),
             solver=LogisticConfig(tolerance=0.0),
         )
+
+
+def test_linear_supports_bgen_input() -> None:
+    """Ensure the public API can dispatch a BGEN-backed run."""
+    with (
+        patch("g.api.configure_jax_device"),
+        patch("g.api.iter_linear_output_frames", return_value=iter(())) as mock_iter_linear_output_frames,
+        patch("g.api.write_frame_iterator_to_tsv"),
+    ):
+        linear(
+            bfile=None,
+            bgen="dataset.bgen",
+            pheno="phenotype.tsv",
+            pheno_name="trait",
+            out="results/output",
+        )
+
+    genotype_source_config = mock_iter_linear_output_frames.call_args.kwargs["genotype_source_config"]
+    assert genotype_source_config.source_format == "bgen"
+    assert genotype_source_config.source_path == Path("dataset.bgen")

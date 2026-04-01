@@ -54,7 +54,8 @@ def print_success_message(artifacts: RunArtifacts) -> None:
 
 @app.command("linear", no_args_is_help=True)
 def run_linear_command(
-    bfile: pathlib.Path = typer.Option(..., help="PLINK dataset prefix."),
+    bfile: pathlib.Path | None = typer.Option(None, help="PLINK dataset prefix."),
+    bgen: pathlib.Path | None = typer.Option(None, help="BGEN file path."),
     pheno: pathlib.Path = typer.Option(..., help="Phenotype table path."),
     pheno_name: str = typer.Option(..., "--pheno-name", help="Phenotype column name to analyze."),
     out: pathlib.Path = typer.Option(..., help="Output prefix or TSV path."),
@@ -62,6 +63,7 @@ def run_linear_command(
     covar_names: str | None = typer.Option(None, "--covar-names", help="Comma-separated covariate column names."),
     chunk_size: int | None = typer.Option(None, help="Variants per BED chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
+    reader_prefetch_chunks: int = typer.Option(1, help="Bounded number of genotype chunks to prefetch."),
     device: str = typer.Option("cpu", help="JAX execution device. Use 'gpu' to enable GPU acceleration."),
     output_mode: str = typer.Option("tsv", help="Output mode: 'tsv' or 'arrow_chunks'."),
     output_run_directory: pathlib.Path | None = typer.Option(None, help="Run directory for chunked output mode."),
@@ -79,6 +81,7 @@ def run_linear_command(
         chunk_size=resolve_chunk_size(chunk_size, "linear"),
         device=device,
         variant_limit=variant_limit,
+        prefetch_chunks=reader_prefetch_chunks,
         output_mode=output_mode,
         output_run_directory=output_run_directory,
         resume=resume,
@@ -86,6 +89,7 @@ def run_linear_command(
     )
     artifacts = run_linear_api(
         bfile=bfile,
+        bgen=bgen,
         pheno=pheno,
         pheno_name=pheno_name,
         out=out,
@@ -99,7 +103,8 @@ def run_linear_command(
 
 @app.command("logistic", no_args_is_help=True)
 def run_logistic_command(
-    bfile: pathlib.Path = typer.Option(..., help="PLINK dataset prefix."),
+    bfile: pathlib.Path | None = typer.Option(None, help="PLINK dataset prefix."),
+    bgen: pathlib.Path | None = typer.Option(None, help="BGEN file path."),
     pheno: pathlib.Path = typer.Option(..., help="Phenotype table path."),
     pheno_name: str = typer.Option(..., "--pheno-name", help="Phenotype column name to analyze."),
     out: pathlib.Path = typer.Option(..., help="Output prefix or TSV path."),
@@ -107,6 +112,7 @@ def run_logistic_command(
     covar_names: str | None = typer.Option(None, "--covar-names", help="Comma-separated covariate column names."),
     chunk_size: int | None = typer.Option(None, help="Variants per BED chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
+    reader_prefetch_chunks: int = typer.Option(1, help="Bounded number of genotype chunks to prefetch."),
     device: str = typer.Option("cpu", help="JAX execution device. Use 'gpu' to enable GPU acceleration."),
     max_iterations: int = typer.Option(50, help="Maximum logistic IRLS iterations."),
     tolerance: float = typer.Option(1.0e-8, help="Logistic convergence tolerance."),
@@ -131,6 +137,7 @@ def run_logistic_command(
         chunk_size=resolve_chunk_size(chunk_size, "logistic"),
         device=device,
         variant_limit=variant_limit,
+        prefetch_chunks=reader_prefetch_chunks,
         output_mode=output_mode,
         output_run_directory=output_run_directory,
         resume=resume,
@@ -143,6 +150,7 @@ def run_logistic_command(
     )
     artifacts = run_logistic_api(
         bfile=bfile,
+        bgen=bgen,
         pheno=pheno,
         pheno_name=pheno_name,
         out=out,

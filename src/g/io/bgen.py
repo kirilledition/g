@@ -26,6 +26,26 @@ if TYPE_CHECKING:
     from g.models import GenotypeChunk, LinearGenotypeChunk
 
 
+def load_bgen_sample_table(bgen_path: Path) -> pl.DataFrame:
+    """Load BGEN sample identifiers into a FAM-like sample table."""
+    with open_bgen(str(bgen_path), verbose=False) as bgen_handle:
+        try:
+            sample_identifiers = np.asarray(bgen_handle.samples, dtype=np.str_)
+        except RuntimeError as err:
+            sample_path = bgen_path.with_suffix(".sample")
+            if sample_path.exists():
+                message = "BGEN sample-file loading is not yet supported; use embedded BGEN samples."
+                raise ValueError(message) from None
+            message = "BGEN file does not contain samples and no .sample file was found."
+            raise ValueError(message) from err
+    return pl.DataFrame(
+        {
+            "family_identifier": sample_identifiers,
+            "individual_identifier": sample_identifiers,
+        }
+    ).with_row_index("sample_index")
+
+
 def read_bgen_chunk_host(
     bgen_handle: open_bgen,
     sample_index_array: np.ndarray,

@@ -15,6 +15,7 @@ from g.io.tabular import (
     convert_frame_to_float32_jax,
     infer_covariate_names,
     load_aligned_sample_data,
+    load_aligned_sample_data_from_sample_table,
     load_family_table,
     load_phenotype_or_covariate_table,
     recode_binary_phenotype,
@@ -215,6 +216,33 @@ def test_load_aligned_sample_data_binary(tmp_path: Path) -> None:
 
     np.testing.assert_array_equal(result.phenotype_vector, np.array([0.0, 1.0]))
     assert result.is_binary_trait is True
+
+
+def test_load_aligned_sample_data_from_sample_table_matches_iid_only(tmp_path: Path) -> None:
+    """Ensure non-PLINK sample tables can align on IID without matching FID."""
+    sample_table = pl.DataFrame(
+        {
+            "sample_index": [0, 1],
+            "family_identifier": ["sample1", "sample2"],
+            "individual_identifier": ["sample1", "sample2"],
+        }
+    )
+    pheno_path = tmp_path / "pheno.txt"
+    pheno_path.write_text("FID\tIID\ttrait\nfamily1\tsample1\t1.5\nfamily2\tsample2\t2.5\n")
+
+    result = load_aligned_sample_data_from_sample_table(
+        sample_table=sample_table,
+        phenotype_path=pheno_path,
+        phenotype_name="trait",
+        covariate_path=None,
+        covariate_names=None,
+        is_binary_trait=False,
+        match_family_and_individual_identifiers=False,
+    )
+
+    np.testing.assert_array_equal(result.sample_indices, np.array([0, 1]))
+    np.testing.assert_array_equal(result.individual_identifiers, np.array(["sample1", "sample2"]))
+    np.testing.assert_allclose(np.asarray(result.phenotype_vector), np.array([1.5, 2.5]), atol=0.0)
 
 
 def test_load_aligned_sample_data_missing_phenotype_column(tmp_path: Path) -> None:

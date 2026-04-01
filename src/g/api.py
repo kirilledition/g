@@ -6,6 +6,7 @@ import dataclasses
 from pathlib import Path
 
 from g.engine import iter_linear_output_frames, iter_logistic_output_frames, write_frame_iterator_to_tsv
+from g.io.source import resolve_genotype_source_config
 from g.jax_setup import configure_jax_device
 from g.output.chunked import (
     build_output_run_configuration,
@@ -29,6 +30,7 @@ class ComputeConfig:
     chunk_size: int = DEFAULT_LINEAR_CHUNK_SIZE
     device: str = "cpu"
     variant_limit: int | None = None
+    prefetch_chunks: int = 1
     output_mode: str = "tsv"
     output_run_directory: Path | None = None
     resume: bool = False
@@ -87,6 +89,9 @@ def validate_compute_config(compute_config: ComputeConfig) -> None:
     if compute_config.variant_limit is not None and compute_config.variant_limit <= 0:
         message = "Variant limit must be positive when provided."
         raise ValueError(message)
+    if compute_config.prefetch_chunks < 0:
+        message = "Prefetch chunk count must be zero or positive."
+        raise ValueError(message)
     if compute_config.device not in {"cpu", "gpu"}:
         message = f"Unsupported device '{compute_config.device}'. Expected 'cpu' or 'gpu'."
         raise ValueError(message)
@@ -106,7 +111,9 @@ def validate_logistic_config(logistic_config: LogisticConfig) -> None:
 
 
 def linear(
-    bfile: Path | str,
+    *,
+    bfile: Path | str | None,
+    bgen: Path | str | None = None,
     pheno: Path | str,
     pheno_name: str,
     out: Path | str,
@@ -122,6 +129,7 @@ def linear(
     output_path = resolve_output_path(out, "linear")
     configure_jax_device(compute_config.device)
     covariate_name_list = parse_covariate_name_list(covar_names)
+    genotype_source_config = resolve_genotype_source_config(bfile, bgen)
     output_run_directory = compute_config.output_run_directory or Path(out)
     prepared_output_run = None
     committed_chunk_identifiers: set[int] = set()
@@ -130,7 +138,7 @@ def linear(
             output_root=output_run_directory,
             output_run_configuration=build_output_run_configuration(
                 association_mode="linear",
-                bed_prefix=Path(bfile),
+                genotype_source_config=genotype_source_config,
                 phenotype_path=Path(pheno),
                 phenotype_name=pheno_name,
                 covariate_path=Path(covar) if covar is not None else None,
@@ -143,13 +151,14 @@ def linear(
         committed_chunk_identifiers = set(prepared_output_run.committed_chunk_identifiers)
 
     frame_iterator = iter_linear_output_frames(
-        bed_prefix=Path(bfile),
+        genotype_source_config=genotype_source_config,
         phenotype_path=Path(pheno),
         phenotype_name=pheno_name,
         covariate_path=Path(covar) if covar is not None else None,
         covariate_names=covariate_name_list,
         chunk_size=compute_config.chunk_size,
         variant_limit=compute_config.variant_limit,
+        prefetch_chunks=compute_config.prefetch_chunks,
         committed_chunk_identifiers=committed_chunk_identifiers,
     )
     if compute_config.output_mode == "tsv":
@@ -172,7 +181,9 @@ def linear(
 
 
 def logistic(
-    bfile: Path | str,
+    *,
+    bfile: Path | str | None,
+    bgen: Path | str | None = None,
     pheno: Path | str,
     pheno_name: str,
     out: Path | str,
@@ -189,6 +200,7 @@ def logistic(
     output_path = resolve_output_path(out, "logistic")
     configure_jax_device(compute_config.device)
     covariate_name_list = parse_covariate_name_list(covar_names)
+    genotype_source_config = resolve_genotype_source_config(bfile, bgen)
     output_run_directory = compute_config.output_run_directory or Path(out)
     prepared_output_run = None
     committed_chunk_identifiers: set[int] = set()
@@ -197,7 +209,7 @@ def logistic(
             output_root=output_run_directory,
             output_run_configuration=build_output_run_configuration(
                 association_mode="logistic",
-                bed_prefix=Path(bfile),
+                genotype_source_config=genotype_source_config,
                 phenotype_path=Path(pheno),
                 phenotype_name=pheno_name,
                 covariate_path=Path(covar) if covar is not None else None,
@@ -213,7 +225,7 @@ def logistic(
         committed_chunk_identifiers = set(prepared_output_run.committed_chunk_identifiers)
 
     frame_iterator = iter_logistic_output_frames(
-        bed_prefix=Path(bfile),
+        genotype_source_config=genotype_source_config,
         phenotype_path=Path(pheno),
         phenotype_name=pheno_name,
         covariate_path=Path(covar) if covar is not None else None,
@@ -222,6 +234,7 @@ def logistic(
         variant_limit=compute_config.variant_limit,
         max_iterations=solver_config.max_iterations,
         tolerance=solver_config.tolerance,
+        prefetch_chunks=compute_config.prefetch_chunks,
         committed_chunk_identifiers=committed_chunk_identifiers,
     )
     if compute_config.output_mode == "tsv":

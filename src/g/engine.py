@@ -20,8 +20,13 @@ from g.compute.logistic import (
     compute_logistic_association_chunk_with_mask,
     prepare_no_missing_logistic_constants,
 )
-from g.io.plink import iter_genotype_chunks, iter_linear_genotype_chunks
-from g.io.tabular import load_aligned_sample_data
+from g.io.source import (
+    GenotypeSourceConfig,
+    build_plink_source_config,
+    iter_genotype_chunks_from_source,
+    iter_linear_genotype_chunks_from_source,
+    load_aligned_sample_data_from_source,
+)
 from g.models import (
     GenotypeChunk,
     LinearAssociationChunkResult,
@@ -513,19 +518,28 @@ def compute_logistic_association_with_missing_exclusion(
 
 
 def iter_linear_output_frames(
-    bed_prefix: Path,
+    *,
+    genotype_source_config: GenotypeSourceConfig | None = None,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
     covariate_names: tuple[str, ...] | None,
     chunk_size: int,
     variant_limit: int | None,
+    prefetch_chunks: int = 0,
     committed_chunk_identifiers: set[int] | None = None,
+    bed_prefix: Path | None = None,
 ) -> Iterator[LinearChunkAccumulator]:
     """Yield linear association chunk accumulators (JAX arrays, device memory)."""
+    resolved_genotype_source_config = genotype_source_config
+    if resolved_genotype_source_config is None:
+        if bed_prefix is None:
+            message = "Either genotype_source_config or bed_prefix must be provided."
+            raise ValueError(message)
+        resolved_genotype_source_config = build_plink_source_config(bed_prefix)
     with jax.profiler.TraceAnnotation("linear.load_aligned_sample_data"):
-        aligned_sample_data = load_aligned_sample_data(
-            bed_prefix=bed_prefix,
+        aligned_sample_data = load_aligned_sample_data_from_source(
+            genotype_source_config=resolved_genotype_source_config,
             phenotype_path=phenotype_path,
             phenotype_name=phenotype_name,
             covariate_path=covariate_path,
@@ -538,12 +552,13 @@ def iter_linear_output_frames(
             phenotype_vector=aligned_sample_data.phenotype_vector,
         )
 
-    chunk_iterator = iter_linear_genotype_chunks(
-        bed_prefix=bed_prefix,
+    chunk_iterator = iter_linear_genotype_chunks_from_source(
+        genotype_source_config=resolved_genotype_source_config,
         sample_indices=aligned_sample_data.sample_indices,
         expected_individual_identifiers=aligned_sample_data.individual_identifiers,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
+        prefetch_chunks=prefetch_chunks,
     )
     committed_identifier_set = committed_chunk_identifiers or set()
     for chunk_number, current_chunk in enumerate(chunk_iterator):
@@ -566,7 +581,8 @@ def iter_linear_output_frames(
 
 
 def iter_logistic_output_frames(
-    bed_prefix: Path,
+    *,
+    genotype_source_config: GenotypeSourceConfig | None = None,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
@@ -575,12 +591,20 @@ def iter_logistic_output_frames(
     variant_limit: int | None,
     max_iterations: int,
     tolerance: float,
+    prefetch_chunks: int = 0,
     committed_chunk_identifiers: set[int] | None = None,
+    bed_prefix: Path | None = None,
 ) -> Iterator[LogisticChunkAccumulator]:
     """Yield logistic association chunk accumulators (JAX arrays, device memory)."""
+    resolved_genotype_source_config = genotype_source_config
+    if resolved_genotype_source_config is None:
+        if bed_prefix is None:
+            message = "Either genotype_source_config or bed_prefix must be provided."
+            raise ValueError(message)
+        resolved_genotype_source_config = build_plink_source_config(bed_prefix)
     with jax.profiler.TraceAnnotation("logistic.load_aligned_sample_data"):
-        aligned_sample_data = load_aligned_sample_data(
-            bed_prefix=bed_prefix,
+        aligned_sample_data = load_aligned_sample_data_from_source(
+            genotype_source_config=resolved_genotype_source_config,
             phenotype_path=phenotype_path,
             phenotype_name=phenotype_name,
             covariate_path=covariate_path,
@@ -592,12 +616,13 @@ def iter_logistic_output_frames(
             covariate_matrix=aligned_sample_data.covariate_matrix,
             phenotype_vector=aligned_sample_data.phenotype_vector,
         )
-    chunk_iterator = iter_genotype_chunks(
-        bed_prefix=bed_prefix,
+    chunk_iterator = iter_genotype_chunks_from_source(
+        genotype_source_config=resolved_genotype_source_config,
         sample_indices=aligned_sample_data.sample_indices,
         expected_individual_identifiers=aligned_sample_data.individual_identifiers,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
+        prefetch_chunks=prefetch_chunks,
     )
     committed_identifier_set = committed_chunk_identifiers or set()
     for chunk_number, current_chunk in enumerate(chunk_iterator):
@@ -624,13 +649,15 @@ def iter_logistic_output_frames(
 
 
 def run_linear_association(
-    bed_prefix: Path,
+    *,
+    genotype_source_config: GenotypeSourceConfig | None = None,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
     covariate_names: tuple[str, ...] | None,
     chunk_size: int,
     variant_limit: int | None,
+    bed_prefix: Path | None = None,
 ) -> pl.DataFrame:
     """Run additive linear regression for all requested variants.
 
@@ -640,20 +667,22 @@ def run_linear_association(
     """
     accumulators = list(
         iter_linear_output_frames(
-            bed_prefix=bed_prefix,
+            genotype_source_config=genotype_source_config,
             phenotype_path=phenotype_path,
             phenotype_name=phenotype_name,
             covariate_path=covariate_path,
             covariate_names=covariate_names,
             chunk_size=chunk_size,
             variant_limit=variant_limit,
+            bed_prefix=bed_prefix,
         )
     )
     return concatenate_linear_results(accumulators)
 
 
 def run_logistic_association(
-    bed_prefix: Path,
+    *,
+    genotype_source_config: GenotypeSourceConfig | None = None,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
@@ -662,6 +691,7 @@ def run_logistic_association(
     variant_limit: int | None,
     max_iterations: int,
     tolerance: float,
+    bed_prefix: Path | None = None,
 ) -> pl.DataFrame:
     """Run additive logistic regression for all requested variants.
 
@@ -671,7 +701,7 @@ def run_logistic_association(
     """
     accumulators = list(
         iter_logistic_output_frames(
-            bed_prefix=bed_prefix,
+            genotype_source_config=genotype_source_config,
             phenotype_path=phenotype_path,
             phenotype_name=phenotype_name,
             covariate_path=covariate_path,
@@ -680,6 +710,7 @@ def run_logistic_association(
             variant_limit=variant_limit,
             max_iterations=max_iterations,
             tolerance=tolerance,
+            bed_prefix=bed_prefix,
         )
     )
     return concatenate_logistic_results(accumulators)

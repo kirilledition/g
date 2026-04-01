@@ -20,6 +20,7 @@ from g.engine import (
     LogisticChunkAccumulator,
     build_chunk_payload,
 )
+from g.io.source import GenotypeSourceConfig, build_genotype_source_signature_paths
 from g.output.manifest import ManifestChunkRecord, OutputManifest, RunManifestRecord
 from g.output.schema import SCHEMA_VERSION, cast_frame_to_schema, get_output_schema, write_schema_file
 
@@ -51,7 +52,8 @@ class OutputRunConfiguration:
     """Configuration that must remain stable for deterministic resume."""
 
     association_mode: str
-    bed_file_signatures: tuple[str, str, str]
+    genotype_source_format: str
+    genotype_file_signatures: tuple[str, ...]
     phenotype_file_signature: str
     phenotype_name: str
     covariate_file_signature: str | None
@@ -116,7 +118,7 @@ def build_path_signature(path: Path) -> str:
 def build_output_run_configuration(
     *,
     association_mode: str,
-    bed_prefix: Path,
+    genotype_source_config: GenotypeSourceConfig,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
@@ -130,10 +132,10 @@ def build_output_run_configuration(
     """Build the reproducibility configuration for one output run."""
     return OutputRunConfiguration(
         association_mode=association_mode,
-        bed_file_signatures=(
-            build_path_signature(bed_prefix.with_suffix(".bed")),
-            build_path_signature(bed_prefix.with_suffix(".bim")),
-            build_path_signature(bed_prefix.with_suffix(".fam")),
+        genotype_source_format=genotype_source_config.source_format,
+        genotype_file_signatures=tuple(
+            build_path_signature(input_path)
+            for input_path in build_genotype_source_signature_paths(genotype_source_config)
         ),
         phenotype_file_signature=build_path_signature(phenotype_path),
         phenotype_name=phenotype_name,

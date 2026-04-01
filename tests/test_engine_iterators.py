@@ -13,6 +13,7 @@ from g.engine import (
     run_linear_association,
     run_logistic_association,
 )
+from g.io.source import build_plink_source_config
 from g.models import (
     AlignedSampleData,
     GenotypeChunk,
@@ -44,6 +45,8 @@ def build_genotype_chunk(variant_identifier: str) -> GenotypeChunk:
         missing_mask=jnp.array([[False], [False]]),
         has_missing_values=False,
         metadata=VariantMetadata(
+            variant_start_index=0,
+            variant_stop_index=1,
             chromosome=np.array(["1"]),
             variant_identifiers=np.array([variant_identifier]),
             position=np.array([123], dtype=np.int64),
@@ -68,14 +71,18 @@ def test_iter_linear_output_frames_yields_one_accumulator_per_chunk() -> None:
     )
 
     with (
-        patch("g.engine.load_aligned_sample_data", return_value=aligned_sample_data) as mock_load_aligned_sample_data,
+        patch("g.engine.load_aligned_sample_data_from_source", return_value=aligned_sample_data)
+        as mock_load_aligned_sample_data,
         patch("g.engine.prepare_linear_association_state", return_value="linear-state") as mock_prepare_state,
-        patch("g.engine.iter_linear_genotype_chunks", return_value=iter(genotype_chunks)) as mock_iter_genotype_chunks,
+        patch(
+            "g.engine.iter_linear_genotype_chunks_from_source",
+            return_value=iter(genotype_chunks),
+        ) as mock_iter_genotype_chunks,
         patch("g.engine.compute_linear_association_chunk", return_value=linear_result) as mock_compute_chunk,
     ):
         accumulators = list(
             iter_linear_output_frames(
-                bed_prefix=Path("dataset"),
+                genotype_source_config=build_plink_source_config(Path("dataset")),
                 phenotype_path=Path("phenotype.tsv"),
                 phenotype_name="trait",
                 covariate_path=Path("covariates.tsv"),
@@ -117,11 +124,11 @@ def test_iter_logistic_output_frames_passes_no_missing_constants() -> None:
     no_missing_constants = object()
 
     with (
-        patch("g.engine.load_aligned_sample_data", return_value=aligned_sample_data),
+        patch("g.engine.load_aligned_sample_data_from_source", return_value=aligned_sample_data),
         patch(
             "g.engine.prepare_no_missing_logistic_constants", return_value=no_missing_constants
         ) as mock_prepare_constants,
-        patch("g.engine.iter_genotype_chunks", return_value=iter(genotype_chunks)),
+        patch("g.engine.iter_genotype_chunks_from_source", return_value=iter(genotype_chunks)),
         patch(
             "g.engine.compute_logistic_association_with_missing_exclusion",
             return_value=logistic_evaluation,
@@ -129,7 +136,7 @@ def test_iter_logistic_output_frames_passes_no_missing_constants() -> None:
     ):
         accumulators = list(
             iter_logistic_output_frames(
-                bed_prefix=Path("dataset"),
+                genotype_source_config=build_plink_source_config(Path("dataset")),
                 phenotype_path=Path("phenotype.tsv"),
                 phenotype_name="trait",
                 covariate_path=Path("covariates.tsv"),
@@ -159,7 +166,7 @@ def test_run_linear_association_concatenates_iterator_results() -> None:
         patch("g.engine.concatenate_linear_results", return_value=expected_frame) as mock_concatenate,
     ):
         result_frame = run_linear_association(
-            bed_prefix=Path("dataset"),
+            genotype_source_config=build_plink_source_config(Path("dataset")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",
             covariate_path=Path("covariates.tsv"),
@@ -185,7 +192,7 @@ def test_run_logistic_association_concatenates_iterator_results() -> None:
         patch("g.engine.concatenate_logistic_results", return_value=expected_frame) as mock_concatenate,
     ):
         result_frame = run_logistic_association(
-            bed_prefix=Path("dataset"),
+            genotype_source_config=build_plink_source_config(Path("dataset")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",
             covariate_path=Path("covariates.tsv"),

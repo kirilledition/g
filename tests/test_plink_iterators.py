@@ -60,6 +60,8 @@ def build_output_chunk(variant_start: int, variant_stop: int) -> GenotypeChunk:
         missing_mask=jnp.zeros((2, variant_stop - variant_start), dtype=bool),
         has_missing_values=False,
         metadata=VariantMetadata(
+            variant_start_index=variant_start,
+            variant_stop_index=variant_stop,
             chromosome=np.array(["1"] * (variant_stop - variant_start)),
             variant_identifiers=variant_identifiers,
             position=np.array([10, 20, 30], dtype=np.int64)[variant_start:variant_stop],
