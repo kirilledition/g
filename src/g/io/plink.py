@@ -239,6 +239,8 @@ def build_genotype_chunk(
 
     """
     variant_metadata = VariantMetadata(
+        variant_start_index=variant_start,
+        variant_stop_index=variant_stop,
         chromosome=chromosome_values[variant_start:variant_stop],
         variant_identifiers=variant_identifier_values[variant_start:variant_stop],
         position=position_values[variant_start:variant_stop],
@@ -269,6 +271,8 @@ def build_linear_genotype_chunk(
     return LinearGenotypeChunk(
         genotypes=preprocessed_genotype_arrays.genotypes,
         metadata=VariantMetadata(
+            variant_start_index=variant_start,
+            variant_stop_index=variant_stop,
             chromosome=chromosome_values[variant_start:variant_stop],
             variant_identifiers=variant_identifier_values[variant_start:variant_stop],
             position=position_values[variant_start:variant_stop],

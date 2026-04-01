@@ -13,6 +13,9 @@ if TYPE_CHECKING:
 SCHEMA_VERSION: Final[str] = "1"
 
 LINEAR_OUTPUT_SCHEMA: Final[dict[str, pl.DataType]] = {
+    "chunk_identifier": pl.Int64(),
+    "variant_start_index": pl.Int64(),
+    "variant_stop_index": pl.Int64(),
     "chromosome": pl.String(),
     "position": pl.Int64(),
     "variant_identifier": pl.String(),
@@ -28,6 +31,9 @@ LINEAR_OUTPUT_SCHEMA: Final[dict[str, pl.DataType]] = {
 }
 
 LOGISTIC_OUTPUT_SCHEMA: Final[dict[str, pl.DataType]] = {
+    "chunk_identifier": pl.Int64(),
+    "variant_start_index": pl.Int64(),
+    "variant_stop_index": pl.Int64(),
     "chromosome": pl.String(),
     "position": pl.Int64(),
     "variant_identifier": pl.String(),

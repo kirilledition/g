@@ -40,6 +40,8 @@ class AlignedSampleData(NamedTuple):
 class VariantMetadata(NamedTuple):
     """Metadata describing a contiguous block of variants."""
 
+    variant_start_index: int
+    variant_stop_index: int
     chromosome: npt.NDArray[np.str_]
     variant_identifiers: npt.NDArray[np.str_]
     position: npt.NDArray[np.int64]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -34,6 +33,8 @@ from g.models import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    import numpy.typing as npt
 
 
 @dataclass
@@ -70,6 +71,55 @@ class LogisticChunkAccumulator:
     allele_one_frequency: jax.Array
     observation_count: jax.Array
     logistic_result: LogisticAssociationChunkResult
+
+
+@dataclass(frozen=True)
+class LinearChunkPayload:
+    """Host-side linear association payload ready for persistence."""
+
+    chunk_identifier: int
+    variant_start_index: int
+    variant_stop_index: int
+    chromosome: npt.NDArray[np.str_]
+    position: npt.NDArray[np.int64]
+    variant_identifier: npt.NDArray[np.str_]
+    allele_one: npt.NDArray[np.str_]
+    allele_two: npt.NDArray[np.str_]
+    allele_one_frequency: npt.NDArray[np.float32]
+    observation_count: npt.NDArray[np.int32]
+    beta: npt.NDArray[np.float32]
+    standard_error: npt.NDArray[np.float32]
+    t_statistic: npt.NDArray[np.float32]
+    p_value: npt.NDArray[np.float32]
+    is_valid: npt.NDArray[np.bool_]
+
+
+@dataclass(frozen=True)
+class LogisticChunkPayload:
+    """Host-side logistic association payload ready for persistence."""
+
+    chunk_identifier: int
+    variant_start_index: int
+    variant_stop_index: int
+    chromosome: npt.NDArray[np.str_]
+    position: npt.NDArray[np.int64]
+    variant_identifier: npt.NDArray[np.str_]
+    allele_one: npt.NDArray[np.str_]
+    allele_two: npt.NDArray[np.str_]
+    allele_one_frequency: npt.NDArray[np.float32]
+    observation_count: npt.NDArray[np.int32]
+    beta: npt.NDArray[np.float32]
+    standard_error: npt.NDArray[np.float32]
+    z_statistic: npt.NDArray[np.float32]
+    p_value: npt.NDArray[np.float32]
+    firth_flag: npt.NDArray[np.str_]
+    error_code: npt.NDArray[np.str_]
+    converged: npt.NDArray[np.bool_]
+    iteration_count: npt.NDArray[np.int32]
+    is_valid: npt.NDArray[np.bool_]
+
+
+ChunkPayload = LinearChunkPayload | LogisticChunkPayload
 
 
 def format_logistic_method_codes(method_code_values: np.ndarray) -> np.ndarray:
@@ -130,6 +180,43 @@ def build_linear_output_frame(
     )
 
 
+def build_linear_chunk_payload(
+    metadata: VariantMetadata,
+    allele_one_frequency: jax.Array,
+    observation_count: jax.Array,
+    linear_result: LinearAssociationChunkResult,
+) -> LinearChunkPayload:
+    """Build a host-side linear payload for background persistence."""
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": allele_one_frequency,
+            "observation_count": observation_count,
+            "beta": linear_result.beta,
+            "standard_error": linear_result.standard_error,
+            "test_statistic": linear_result.test_statistic,
+            "p_value": linear_result.p_value,
+            "valid_mask": linear_result.valid_mask,
+        }
+    )
+    return LinearChunkPayload(
+        chunk_identifier=metadata.variant_start_index,
+        variant_start_index=metadata.variant_start_index,
+        variant_stop_index=metadata.variant_stop_index,
+        chromosome=metadata.chromosome,
+        position=metadata.position,
+        variant_identifier=metadata.variant_identifiers,
+        allele_one=metadata.allele_one,
+        allele_two=metadata.allele_two,
+        allele_one_frequency=host_values["allele_one_frequency"],
+        observation_count=host_values["observation_count"],
+        beta=host_values["beta"],
+        standard_error=host_values["standard_error"],
+        t_statistic=host_values["test_statistic"],
+        p_value=host_values["p_value"],
+        is_valid=host_values["valid_mask"],
+    )
+
+
 def build_logistic_output_frame(
     metadata: VariantMetadata,
     allele_one_frequency: jax.Array,
@@ -171,6 +258,70 @@ def build_logistic_output_frame(
             "iteration_count": host_values["iteration_count"],
             "is_valid": host_values["valid_mask"],
         }
+    )
+
+
+def build_logistic_chunk_payload(
+    metadata: VariantMetadata,
+    allele_one_frequency: jax.Array,
+    observation_count: jax.Array,
+    logistic_result: LogisticAssociationChunkResult,
+) -> LogisticChunkPayload:
+    """Build a host-side logistic payload for background persistence."""
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": allele_one_frequency,
+            "observation_count": observation_count,
+            "beta": logistic_result.beta,
+            "standard_error": logistic_result.standard_error,
+            "test_statistic": logistic_result.test_statistic,
+            "p_value": logistic_result.p_value,
+            "method_code": logistic_result.method_code,
+            "error_code": logistic_result.error_code,
+            "converged_mask": logistic_result.converged_mask,
+            "iteration_count": logistic_result.iteration_count,
+            "valid_mask": logistic_result.valid_mask,
+        }
+    )
+    return LogisticChunkPayload(
+        chunk_identifier=metadata.variant_start_index,
+        variant_start_index=metadata.variant_start_index,
+        variant_stop_index=metadata.variant_stop_index,
+        chromosome=metadata.chromosome,
+        position=metadata.position,
+        variant_identifier=metadata.variant_identifiers,
+        allele_one=metadata.allele_one,
+        allele_two=metadata.allele_two,
+        allele_one_frequency=host_values["allele_one_frequency"],
+        observation_count=host_values["observation_count"],
+        beta=host_values["beta"],
+        standard_error=host_values["standard_error"],
+        z_statistic=host_values["test_statistic"],
+        p_value=host_values["p_value"],
+        firth_flag=format_logistic_method_codes(host_values["method_code"]),
+        error_code=format_logistic_error_codes(host_values["error_code"]),
+        converged=host_values["converged_mask"],
+        iteration_count=host_values["iteration_count"],
+        is_valid=host_values["valid_mask"],
+    )
+
+
+def build_chunk_payload(
+    chunk_accumulator: LinearChunkAccumulator | LogisticChunkAccumulator,
+) -> ChunkPayload:
+    """Build a host-side chunk payload from a device-resident accumulator."""
+    if isinstance(chunk_accumulator, LinearChunkAccumulator):
+        return build_linear_chunk_payload(
+            metadata=chunk_accumulator.metadata,
+            allele_one_frequency=chunk_accumulator.allele_one_frequency,
+            observation_count=chunk_accumulator.observation_count,
+            linear_result=chunk_accumulator.linear_result,
+        )
+    return build_logistic_chunk_payload(
+        metadata=chunk_accumulator.metadata,
+        allele_one_frequency=chunk_accumulator.allele_one_frequency,
+        observation_count=chunk_accumulator.observation_count,
+        logistic_result=chunk_accumulator.logistic_result,
     )
 
 
@@ -394,17 +545,12 @@ def iter_linear_output_frames(
         chunk_size=chunk_size,
         variant_limit=variant_limit,
     )
-    current_chunk = next(chunk_iterator, None)
     committed_identifier_set = committed_chunk_identifiers or set()
-    for chunk_index, next_chunk in enumerate(
-        itertools.chain(chunk_iterator, [None]),
-    ):
-        if current_chunk is None:
-            break
-        if chunk_index in committed_identifier_set:
-            current_chunk = next_chunk
+    for chunk_number, current_chunk in enumerate(chunk_iterator):
+        chunk_identifier = current_chunk.metadata.variant_start_index
+        if chunk_identifier in committed_identifier_set:
             continue
-        with jax.profiler.StepTraceAnnotation("linear_chunk", step_num=chunk_index):
+        with jax.profiler.StepTraceAnnotation("linear_chunk", step_num=chunk_number):
             with jax.profiler.TraceAnnotation("linear.compute"):
                 linear_result = compute_linear_association_chunk(
                     linear_association_state=linear_association_state,
@@ -417,7 +563,6 @@ def iter_linear_output_frames(
                     observation_count=current_chunk.observation_count,
                     linear_result=linear_result,
                 )
-        current_chunk = next_chunk
 
 
 def iter_logistic_output_frames(
@@ -454,17 +599,12 @@ def iter_logistic_output_frames(
         chunk_size=chunk_size,
         variant_limit=variant_limit,
     )
-    current_chunk = next(chunk_iterator, None)
     committed_identifier_set = committed_chunk_identifiers or set()
-    for chunk_index, next_chunk in enumerate(
-        itertools.chain(chunk_iterator, [None]),
-    ):
-        if current_chunk is None:
-            break
-        if chunk_index in committed_identifier_set:
-            current_chunk = next_chunk
+    for chunk_number, current_chunk in enumerate(chunk_iterator):
+        chunk_identifier = current_chunk.metadata.variant_start_index
+        if chunk_identifier in committed_identifier_set:
             continue
-        with jax.profiler.StepTraceAnnotation("logistic_chunk", step_num=chunk_index):
+        with jax.profiler.StepTraceAnnotation("logistic_chunk", step_num=chunk_number):
             with jax.profiler.TraceAnnotation("logistic.compute"):
                 logistic_evaluation = compute_logistic_association_with_missing_exclusion(
                     covariate_matrix=aligned_sample_data.covariate_matrix,
@@ -481,7 +621,6 @@ def iter_logistic_output_frames(
                     observation_count=logistic_evaluation.observation_count,
                     logistic_result=logistic_evaluation.logistic_result,
                 )
-        current_chunk = next_chunk
 
 
 def run_linear_association(

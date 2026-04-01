@@ -7,8 +7,12 @@ from pathlib import Path
 
 from g.engine import iter_linear_output_frames, iter_logistic_output_frames, write_frame_iterator_to_tsv
 from g.jax_setup import configure_jax_device
-from g.output.chunked import finalize_chunks_to_parquet, persist_chunked_results, resolve_output_run_paths
-from g.output.manifest import OutputManifest
+from g.output.chunked import (
+    build_output_run_configuration,
+    finalize_chunks_to_parquet,
+    persist_chunked_results,
+    prepare_output_run,
+)
 
 DEFAULT_LINEAR_CHUNK_SIZE = 2048
 DEFAULT_LOGISTIC_CHUNK_SIZE = 1024
@@ -117,21 +121,33 @@ def linear(
     validate_compute_config(compute_config)
     output_path = resolve_output_path(out, "linear")
     configure_jax_device(compute_config.device)
-    committed_chunk_identifiers: set[int] = set()
+    covariate_name_list = parse_covariate_name_list(covar_names)
     output_run_directory = compute_config.output_run_directory or Path(out)
-    if compute_config.output_mode == "arrow_chunks" and compute_config.resume:
-        output_run_paths = resolve_output_run_paths(output_run_directory, "linear")
-        if output_run_paths.manifest_path.exists():
-            manifest = OutputManifest(output_run_paths.manifest_path)
-            committed_chunk_identifiers = manifest.load_committed_chunk_identifiers()
-            manifest.close()
+    prepared_output_run = None
+    committed_chunk_identifiers: set[int] = set()
+    if compute_config.output_mode == "arrow_chunks":
+        prepared_output_run = prepare_output_run(
+            output_root=output_run_directory,
+            output_run_configuration=build_output_run_configuration(
+                association_mode="linear",
+                bed_prefix=Path(bfile),
+                phenotype_path=Path(pheno),
+                phenotype_name=pheno_name,
+                covariate_path=Path(covar) if covar is not None else None,
+                covariate_names=covariate_name_list,
+                chunk_size=compute_config.chunk_size,
+                variant_limit=compute_config.variant_limit,
+            ),
+            resume=compute_config.resume,
+        )
+        committed_chunk_identifiers = set(prepared_output_run.committed_chunk_identifiers)
 
     frame_iterator = iter_linear_output_frames(
         bed_prefix=Path(bfile),
         phenotype_path=Path(pheno),
         phenotype_name=pheno_name,
         covariate_path=Path(covar) if covar is not None else None,
-        covariate_names=parse_covariate_name_list(covar_names),
+        covariate_names=covariate_name_list,
         chunk_size=compute_config.chunk_size,
         variant_limit=compute_config.variant_limit,
         committed_chunk_identifiers=committed_chunk_identifiers,
@@ -139,11 +155,13 @@ def linear(
     if compute_config.output_mode == "tsv":
         write_frame_iterator_to_tsv(frame_iterator, output_path)
         return RunArtifacts(sumstats_tsv=output_path)
+    if prepared_output_run is None:
+        message = "Chunked output was requested without prepared output metadata."
+        raise RuntimeError(message)
 
     output_run_paths = persist_chunked_results(
         frame_iterator=frame_iterator,
-        association_mode="linear",
-        output_root=output_run_directory,
+        prepared_output_run=prepared_output_run,
         resume=compute_config.resume,
     )
     final_parquet_path = finalize_chunks_to_parquet(output_run_paths) if compute_config.finalize_parquet else None
@@ -170,21 +188,36 @@ def logistic(
     validate_logistic_config(solver_config)
     output_path = resolve_output_path(out, "logistic")
     configure_jax_device(compute_config.device)
-    committed_chunk_identifiers: set[int] = set()
+    covariate_name_list = parse_covariate_name_list(covar_names)
     output_run_directory = compute_config.output_run_directory or Path(out)
-    if compute_config.output_mode == "arrow_chunks" and compute_config.resume:
-        output_run_paths = resolve_output_run_paths(output_run_directory, "logistic")
-        if output_run_paths.manifest_path.exists():
-            manifest = OutputManifest(output_run_paths.manifest_path)
-            committed_chunk_identifiers = manifest.load_committed_chunk_identifiers()
-            manifest.close()
+    prepared_output_run = None
+    committed_chunk_identifiers: set[int] = set()
+    if compute_config.output_mode == "arrow_chunks":
+        prepared_output_run = prepare_output_run(
+            output_root=output_run_directory,
+            output_run_configuration=build_output_run_configuration(
+                association_mode="logistic",
+                bed_prefix=Path(bfile),
+                phenotype_path=Path(pheno),
+                phenotype_name=pheno_name,
+                covariate_path=Path(covar) if covar is not None else None,
+                covariate_names=covariate_name_list,
+                chunk_size=compute_config.chunk_size,
+                variant_limit=compute_config.variant_limit,
+                max_iterations=solver_config.max_iterations,
+                tolerance=solver_config.tolerance,
+                firth_fallback=solver_config.firth_fallback,
+            ),
+            resume=compute_config.resume,
+        )
+        committed_chunk_identifiers = set(prepared_output_run.committed_chunk_identifiers)
 
     frame_iterator = iter_logistic_output_frames(
         bed_prefix=Path(bfile),
         phenotype_path=Path(pheno),
         phenotype_name=pheno_name,
         covariate_path=Path(covar) if covar is not None else None,
-        covariate_names=parse_covariate_name_list(covar_names),
+        covariate_names=covariate_name_list,
         chunk_size=compute_config.chunk_size,
         variant_limit=compute_config.variant_limit,
         max_iterations=solver_config.max_iterations,
@@ -194,11 +227,13 @@ def logistic(
     if compute_config.output_mode == "tsv":
         write_frame_iterator_to_tsv(frame_iterator, output_path)
         return RunArtifacts(sumstats_tsv=output_path)
+    if prepared_output_run is None:
+        message = "Chunked output was requested without prepared output metadata."
+        raise RuntimeError(message)
 
     output_run_paths = persist_chunked_results(
         frame_iterator=frame_iterator,
-        association_mode="logistic",
-        output_root=output_run_directory,
+        prepared_output_run=prepared_output_run,
         resume=compute_config.resume,
     )
     final_parquet_path = finalize_chunks_to_parquet(output_run_paths) if compute_config.finalize_parquet else None
