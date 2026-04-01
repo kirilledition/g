@@ -153,18 +153,17 @@ def load_aligned_sample_data(
     is_binary_trait: bool,
 ) -> AlignedSampleData:
     """Load and align FAM, phenotype, and covariate tables."""
-    return load_aligned_sample_data_from_sample_table(
+    return load_aligned_sample_data_from_family_identifier_table(
         sample_table=load_family_table(bed_prefix.with_suffix(".fam")),
         phenotype_path=phenotype_path,
         phenotype_name=phenotype_name,
         covariate_path=covariate_path,
         covariate_names=covariate_names,
         is_binary_trait=is_binary_trait,
-        match_family_and_individual_identifiers=True,
     )
 
 
-def load_aligned_sample_data_from_sample_table(
+def load_aligned_sample_data_from_family_identifier_table(
     sample_table: pl.DataFrame,
     phenotype_path: Path,
     phenotype_name: str,
@@ -172,9 +171,8 @@ def load_aligned_sample_data_from_sample_table(
     covariate_names: tuple[str, ...] | None,
     *,
     is_binary_trait: bool,
-    match_family_and_individual_identifiers: bool,
 ) -> AlignedSampleData:
-    """Load and align a sample table, phenotype table, and covariate table.
+    """Load and align a family-aware sample table, phenotype table, and covariate table.
 
     Args:
         sample_table: Sample table with `sample_index`, `family_identifier`, and
@@ -184,10 +182,6 @@ def load_aligned_sample_data_from_sample_table(
         covariate_path: Covariate table path.
         covariate_names: Optional explicit covariate names.
         is_binary_trait: Whether the selected phenotype is binary.
-        match_family_and_individual_identifiers: Whether phenotype and covariate
-            rows must match both family and individual identifiers. BGEN sources
-            currently align by individual identifier only because the format
-            does not expose PLINK-style family identifiers.
 
     Returns:
         Aligned sample data ready for computation.
@@ -204,20 +198,12 @@ def load_aligned_sample_data_from_sample_table(
         message = f"Phenotype column '{phenotype_name}' was not found in {phenotype_path}."
         raise ValueError(message)
 
-    if match_family_and_individual_identifiers:
-        aligned_table = sample_table.join(
-            phenotype_table.select("FID", "IID", phenotype_name),
-            left_on=["family_identifier", "individual_identifier"],
-            right_on=["FID", "IID"],
-            how="inner",
-        )
-    else:
-        aligned_table = sample_table.join(
-            phenotype_table.select("FID", "IID", phenotype_name),
-            left_on=["individual_identifier"],
-            right_on=["IID"],
-            how="inner",
-        )
+    aligned_table = sample_table.join(
+        phenotype_table.select("FID", "IID", phenotype_name),
+        left_on=["family_identifier", "individual_identifier"],
+        right_on=["FID", "IID"],
+        how="inner",
+    )
 
     selected_covariate_names: tuple[str, ...]
     if covariate_path is None:
@@ -235,21 +221,85 @@ def load_aligned_sample_data_from_sample_table(
         if missing_covariates:
             message = f"Covariate columns are missing from {covariate_path}: {missing_covariates}."
             raise ValueError(message)
-        if match_family_and_individual_identifiers:
-            aligned_table = aligned_table.join(
-                covariate_table.select("FID", "IID", *selected_covariate_names),
-                left_on=["family_identifier", "individual_identifier"],
-                right_on=["FID", "IID"],
-                how="inner",
-            )
-        else:
-            aligned_table = aligned_table.join(
-                covariate_table.select("FID", "IID", *selected_covariate_names),
-                left_on=["individual_identifier"],
-                right_on=["IID"],
-                how="inner",
-            )
+        aligned_table = aligned_table.join(
+            covariate_table.select("FID", "IID", *selected_covariate_names),
+            left_on=["family_identifier", "individual_identifier"],
+            right_on=["FID", "IID"],
+            how="inner",
+        )
 
+    return build_aligned_sample_data(
+        aligned_table=aligned_table,
+        phenotype_name=phenotype_name,
+        selected_covariate_names=selected_covariate_names,
+        is_binary_trait=is_binary_trait,
+    )
+
+
+def load_aligned_sample_data_from_individual_identifier_table(
+    sample_table: pl.DataFrame,
+    phenotype_path: Path,
+    phenotype_name: str,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    *,
+    is_binary_trait: bool,
+) -> AlignedSampleData:
+    """Load and align a sample table by individual identifier only."""
+    phenotype_table = load_phenotype_or_covariate_table(phenotype_path).with_columns(
+        pl.col("FID").cast(pl.String),
+        pl.col("IID").cast(pl.String),
+    )
+    if phenotype_name not in phenotype_table.columns:
+        message = f"Phenotype column '{phenotype_name}' was not found in {phenotype_path}."
+        raise ValueError(message)
+
+    aligned_table = sample_table.join(
+        phenotype_table.select("FID", "IID", phenotype_name),
+        left_on=["individual_identifier"],
+        right_on=["IID"],
+        how="inner",
+    )
+
+    selected_covariate_names: tuple[str, ...]
+    if covariate_path is None:
+        if covariate_names is not None:
+            message = "Covariate names cannot be provided without a covariate table."
+            raise ValueError(message)
+        selected_covariate_names = ()
+    else:
+        covariate_table = load_phenotype_or_covariate_table(covariate_path).with_columns(
+            pl.col("FID").cast(pl.String),
+            pl.col("IID").cast(pl.String),
+        )
+        selected_covariate_names = covariate_names or infer_covariate_names(covariate_table)
+        missing_covariates = [name for name in selected_covariate_names if name not in covariate_table.columns]
+        if missing_covariates:
+            message = f"Covariate columns are missing from {covariate_path}: {missing_covariates}."
+            raise ValueError(message)
+        aligned_table = aligned_table.join(
+            covariate_table.select("FID", "IID", *selected_covariate_names),
+            left_on=["individual_identifier"],
+            right_on=["IID"],
+            how="inner",
+        )
+
+    return build_aligned_sample_data(
+        aligned_table=aligned_table,
+        phenotype_name=phenotype_name,
+        selected_covariate_names=selected_covariate_names,
+        is_binary_trait=is_binary_trait,
+    )
+
+
+def build_aligned_sample_data(
+    aligned_table: pl.DataFrame,
+    phenotype_name: str,
+    selected_covariate_names: tuple[str, ...],
+    *,
+    is_binary_trait: bool,
+) -> AlignedSampleData:
+    """Build aligned sample outputs from an already-joined table."""
     aligned_table = aligned_table.drop_nulls(subset=[phenotype_name, *selected_covariate_names]).sort("sample_index")
 
     if aligned_table.height == 0:

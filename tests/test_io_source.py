@@ -12,7 +12,6 @@ from g.io.source import (
     build_genotype_source_signature_paths,
     build_plink_source_config,
     iter_genotype_chunks_from_source,
-    prefetch_iterator_values,
     resolve_genotype_source_config,
 )
 from g.models import GenotypeChunk, VariantMetadata
@@ -53,25 +52,6 @@ def test_build_genotype_source_signature_paths_supports_both_formats() -> None:
 
     assert plink_paths == (Path("dataset.bed"), Path("dataset.bim"), Path("dataset.fam"))
     assert bgen_paths == (Path("dataset.bgen"),)
-
-
-def test_prefetch_iterator_values_preserves_order() -> None:
-    """Ensure the background prefetch wrapper yields items in source order."""
-    prefetched_chunks = list(prefetch_iterator_values(iter([build_chunk(0), build_chunk(1)]), prefetch_chunks=2))
-
-    assert [chunk.metadata.variant_start_index for chunk in prefetched_chunks] == [0, 1]
-
-
-def test_prefetch_iterator_values_surfaces_worker_errors() -> None:
-    """Ensure iterator failures on the worker thread propagate to the consumer."""
-
-    def failing_iterator() -> GenotypeChunk:
-        raise ValueError("broken iterator")
-        yield build_chunk(0)
-
-    with pytest.raises(RuntimeError, match="broken iterator"):
-        list(prefetch_iterator_values(failing_iterator(), prefetch_chunks=1))
-
 
 def test_iter_genotype_chunks_from_source_dispatches_to_bgen_reader() -> None:
     """Ensure the shared source iterator dispatches through the BGEN backend."""

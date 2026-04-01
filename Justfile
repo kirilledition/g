@@ -118,6 +118,27 @@ typecheck:
 # Run all checks (format, lint, typecheck)
 check: format lint typecheck
 
+# Run CI lint checks without installing the project package
+ci-lint:
+    uv sync --group dev --frozen --no-install-project
+    uv run --no-sync ruff check .
+
+# Run CI type checks without installing the project package
+ci-typecheck:
+    uv sync --group dev --frozen --no-install-project
+    uv run --no-sync ty check .
+
+# Run CI tests that exclude heavy data- and parity-dependent suites
+ci-test:
+    uv sync --group dev --frozen
+    uv run --no-sync pytest tests/ -m "not phase0_data and not phase1_parity"
+
+# Run the monthly science validation pipeline
+ci-science:
+    just setup-data
+    just benchmark-baselines
+    just phase1-evaluate
+
 # Run tests
 test:
     uv run pytest tests/

@@ -132,12 +132,37 @@ def test_linear_command_supports_bgen_input() -> None:
     assert mock_run_linear_api.call_args.kwargs["bgen"] == Path("dataset.bgen")
 
 
+def test_linear_command_rejects_ambiguous_sources() -> None:
+    """Ensure the CLI rejects runs that specify both PLINK and BGEN inputs."""
+    result = runner.invoke(
+        app,
+        [
+            "linear",
+            "--bfile",
+            "dataset",
+            "--bgen",
+            "dataset.bgen",
+            "--pheno",
+            "phenotype.tsv",
+            "--pheno-name",
+            "trait",
+            "--out",
+            "results/output",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValueError)
+    assert "Exactly one genotype source" in str(result.exception)
+
+
 def test_linear_subcommand_without_options_shows_help() -> None:
     """Ensure the linear subcommand shows help instead of a usage error."""
     result = runner.invoke(app, ["linear"])
     assert result.exit_code == 2
     assert "Run a linear association scan" in result.output
     assert "--bfile" in result.output
+    assert "--reader-prefetch-chunks" not in result.output
     assert "--pheno-name" in result.output
 
 

@@ -26,6 +26,8 @@ BED_PREFIX = DATA_DIRECTORY / "1kg_chr22_full"
 CONTINUOUS_BASELINE_PATH = DATA_DIRECTORY / "baselines" / "plink_cont.phenotype_continuous.glm.linear"
 BINARY_BASELINE_PATH = DATA_DIRECTORY / "baselines" / "plink_bin.phenotype_binary.glm.logistic.hybrid"
 
+pytestmark = pytest.mark.phase1_parity
+
 
 BETA_MAX_ABSOLUTE_ERROR = 1.0e-3
 P_VALUE_MAX_LOG10_ERROR = 1.0e-2

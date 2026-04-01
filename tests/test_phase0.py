@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIRECTORY = Path(os.environ.get("GWAS_ENGINE_DATA_DIR", str(REPOSITORY_ROOT / "data")))
 
+pytestmark = pytest.mark.phase0_data
+
 
 def load_module(module_name: str, relative_path: str) -> ModuleType:
     """Load a Python module directly from a repository-relative path.

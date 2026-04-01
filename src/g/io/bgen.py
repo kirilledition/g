@@ -12,7 +12,7 @@ import numpy.typing as npt
 import polars as pl
 from bgen_reader import open_bgen
 
-from g.io.plink import (
+from g.io.genotype_processing import (
     build_genotype_chunk,
     build_linear_genotype_chunk,
     preprocess_genotype_matrix,

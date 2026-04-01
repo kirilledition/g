@@ -96,3 +96,9 @@ ignore = [
     "D",    # docstrings
     "T201", # allow print() in scripts
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "phase0_data: requires local Phase 0 data or generated baseline artifacts.",
+    "phase1_parity: exercises Phase 1 parity and benchmark evaluation flows against external baselines.",
+]

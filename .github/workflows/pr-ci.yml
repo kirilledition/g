@@ -1,0 +1,126 @@
+name: PR CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Rust toolchain for source-built Python dependencies
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install lint dependencies without the project package
+        env:
+          RUSTFLAGS: "--allow=non-local-definitions"
+        run: uv sync --group dev --frozen --no-install-project
+
+      - name: Run Ruff lint
+        run: uv run --no-sync ruff check .
+
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Rust toolchain for source-built Python dependencies
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install typecheck dependencies without the project package
+        env:
+          RUSTFLAGS: "--allow=non-local-definitions"
+        run: uv sync --group dev --frozen --no-install-project
+
+      - name: Run Python type checks
+        run: uv run --no-sync ty check .
+
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Rust toolchain for mixed-package test installs
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install project and test dependencies
+        env:
+          RUSTFLAGS: "--allow=non-local-definitions"
+        run: uv sync --group dev --frozen
+
+      - name: Run fast test suite
+        run: uv run --no-sync pytest tests/ -m "not phase0_data and not phase1_parity" -v
+
+  required-pr-ci:
+    name: required-pr-ci
+    if: ${{ always() }}
+    needs:
+      - lint
+      - typecheck
+      - tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all PR jobs to pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "lint: ${{ needs.lint.result }}"
+          echo "typecheck: ${{ needs.typecheck.result }}"
+          echo "tests: ${{ needs.tests.result }}"
+          test "${{ needs.lint.result }}" = "success"
+          test "${{ needs.typecheck.result }}" = "success"
+          test "${{ needs.tests.result }}" = "success"

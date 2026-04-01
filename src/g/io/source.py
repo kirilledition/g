@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import queue as queue_module
-import threading
-import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,7 +21,8 @@ from g.io.plink import (
 from g.io.plink import (
     iter_linear_genotype_chunks as iter_plink_linear_genotype_chunks,
 )
-from g.io.tabular import load_aligned_sample_data, load_aligned_sample_data_from_sample_table
+from g.io.prefetch import prefetch_iterator_values
+from g.io.tabular import load_aligned_sample_data, load_aligned_sample_data_from_individual_identifier_table
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -40,16 +38,6 @@ class GenotypeSourceConfig:
 
     source_format: str
     source_path: Path
-
-
-@dataclass(frozen=True)
-class PrefetchEnvelope:
-    """One prefetched iterator item or terminal signal."""
-
-    value: object | None = None
-    error: Exception | None = None
-    traceback_text: str | None = None
-    is_finished: bool = False
 
 
 SUPPORTED_SOURCE_FORMATS = frozenset({"plink", "bgen"})
@@ -120,72 +108,14 @@ def load_aligned_sample_data_from_source(
             covariate_names=covariate_names,
             is_binary_trait=is_binary_trait,
         )
-    return load_aligned_sample_data_from_sample_table(
+    return load_aligned_sample_data_from_individual_identifier_table(
         sample_table=load_bgen_sample_table(genotype_source_config.source_path),
         phenotype_path=phenotype_path,
         phenotype_name=phenotype_name,
         covariate_path=covariate_path,
         covariate_names=covariate_names,
         is_binary_trait=is_binary_trait,
-        match_family_and_individual_identifiers=False,
     )
-
-
-def prefetch_iterator_values(
-    value_iterator: Iterator[GenotypeChunk] | Iterator[LinearGenotypeChunk],
-    prefetch_chunks: int,
-) -> Iterator[GenotypeChunk] | Iterator[LinearGenotypeChunk]:
-    """Prefetch a bounded number of iterator values on a background thread."""
-    if prefetch_chunks <= 0:
-        return value_iterator
-
-    delivery_queue: queue_module.Queue[PrefetchEnvelope] = queue_module.Queue(maxsize=prefetch_chunks)
-    stop_event = threading.Event()
-
-    def worker() -> None:
-        try:
-            for value in value_iterator:
-                if stop_event.is_set():
-                    return
-                while True:
-                    try:
-                        delivery_queue.put(PrefetchEnvelope(value=value), timeout=0.1)
-                        break
-                    except queue_module.Full:
-                        if stop_event.is_set():
-                            return
-            delivery_queue.put(PrefetchEnvelope(is_finished=True))
-        except Exception as error:  # noqa: BLE001
-            delivery_queue.put(
-                PrefetchEnvelope(
-                    error=error,
-                    traceback_text=traceback.format_exc(),
-                )
-            )
-
-    prefetch_thread = threading.Thread(target=worker, name="genotype-source-prefetch", daemon=True)
-    prefetch_thread.start()
-
-    def consume_prefetched_values() -> Iterator[GenotypeChunk] | Iterator[LinearGenotypeChunk]:
-        try:
-            while True:
-                envelope = delivery_queue.get()
-                if envelope.error is not None:
-                    message = f"Genotype prefetch failed: {envelope.error}"
-                    if envelope.traceback_text is not None:
-                        message = f"{message}\n{envelope.traceback_text}"
-                    raise RuntimeError(message) from envelope.error
-                if envelope.is_finished:
-                    return
-                if envelope.value is None:
-                    message = "Genotype prefetch returned an empty envelope without finishing."
-                    raise RuntimeError(message)
-                yield envelope.value  # type: ignore[misc]
-        finally:
-            stop_event.set()
-            prefetch_thread.join(timeout=0.5)
-
-    return consume_prefetched_values()
 
 
 def iter_genotype_chunks_from_source(

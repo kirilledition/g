@@ -1,0 +1,99 @@
+name: Science Monthly
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 1 1 * *"
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  science-monthly:
+    name: science-monthly
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Rust toolchain for mixed-package science runs
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Restore science data cache
+        id: science-data-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: science-data-${{ runner.os }}-${{ hashFiles('scripts/fetch_1kg.py', 'scripts/simulate_phenos.py', 'scripts/benchmark.py', 'scripts/evaluate_phase1.py', 'pyproject.toml', 'Cargo.lock', 'uv.lock') }}
+
+      - name: Install external scientific tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y unzip zstd
+
+          TOOL_ROOT="$RUNNER_TEMP/gwas-tools"
+          BIN_DIR="$TOOL_ROOT/bin"
+          mkdir -p "$BIN_DIR"
+
+          curl -L --retry 3 --output "$RUNNER_TEMP/plink.zip" "https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20250819.zip"
+          unzip -q "$RUNNER_TEMP/plink.zip" -d "$RUNNER_TEMP/plink"
+          install -m 755 "$RUNNER_TEMP/plink/plink" "$BIN_DIR/plink"
+
+          curl -L --retry 3 --output "$RUNNER_TEMP/plink2.zip" "https://s3.amazonaws.com/plink2-assets/alpha6/plink2_linux_amd_avx2_20260228.zip"
+          unzip -q "$RUNNER_TEMP/plink2.zip" -d "$RUNNER_TEMP/plink2"
+          install -m 755 "$RUNNER_TEMP/plink2/plink2" "$BIN_DIR/plink2"
+
+          curl -L --retry 3 --output "$RUNNER_TEMP/regenie.zip" "https://github.com/rgcgithub/regenie/releases/download/v4.1/regenie_v4.1.gz_x86_64_Linux.zip"
+          unzip -q "$RUNNER_TEMP/regenie.zip" -d "$RUNNER_TEMP/regenie"
+          install -m 755 "$RUNNER_TEMP/regenie/regenie_v4.1.gz_x86_64_Linux" "$BIN_DIR/regenie"
+
+          echo "$BIN_DIR" >> "$GITHUB_PATH"
+
+      - name: Install project and science dependencies
+        env:
+          RUSTFLAGS: "--allow=non-local-definitions"
+        run: uv sync --group dev --frozen
+
+      - name: Run monthly science validation
+        env:
+          RUSTFLAGS: "--allow=non-local-definitions"
+        run: |
+          uv run --no-sync python scripts/fetch_1kg.py
+          uv run --no-sync python scripts/simulate_phenos.py
+          uv run --no-sync python scripts/benchmark.py
+          uv run --no-sync python scripts/evaluate_phase1.py
+
+      - name: Save science data cache
+        if: ${{ always() && steps.science-data-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: ${{ steps.science-data-cache.outputs.cache-primary-key }}
+
+      - name: Upload science artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: science-monthly-artifacts
+          if-no-files-found: warn
+          path: |
+            data/benchmark_report.json
+            data/phase1_evaluation_report.json
+            data/baselines/**
+            data/phase1_*
