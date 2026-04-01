@@ -345,8 +345,7 @@ def compute_probability_matrix(
     covariate_coefficients = coefficients[:, :-1]
     genotype_coefficients = coefficients[:, -1]
     linear_predictor = (
-        covariate_coefficients @ covariate_matrix.T
-        + genotype_matrix_by_variant * genotype_coefficients[:, None]
+        covariate_coefficients @ covariate_matrix.T + genotype_matrix_by_variant * genotype_coefficients[:, None]
     )
     return clip_probability_matrix(jax.nn.sigmoid(linear_predictor))
 
@@ -361,9 +360,7 @@ def initialize_full_model_coefficients(
     pseudo_response_vector = INITIAL_RESPONSE_SCALE * (phenotype_vector - BINARY_CASE_THRESHOLD)
     masked_pseudo_response = jnp.where(observation_mask, pseudo_response_vector[None, :], 0.0)
     observation_mask_float = observation_mask.astype(covariate_matrix.dtype)
-    covariate_information_matrix = compute_covariate_information_matrix(
-        covariate_matrix, observation_mask_float
-    )
+    covariate_information_matrix = compute_covariate_information_matrix(covariate_matrix, observation_mask_float)
     cross_information_vector = (observation_mask_float * genotype_matrix_by_variant) @ covariate_matrix
     # Speeds up JAX JIT execution by avoiding intermediate matrices
     genotype_information = jnp.einsum(
