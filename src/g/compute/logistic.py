@@ -457,7 +457,9 @@ def compute_information_components(
     weighted_genotype_vector = effective_weights * genotype_vector
     covariate_information_matrix = jnp.einsum("np,n,nq->pq", covariate_matrix, effective_weights, covariate_matrix)
     cross_information_vector = jnp.einsum("np,n->p", covariate_matrix, weighted_genotype_vector)
-    genotype_information = jnp.sum(weighted_genotype_vector * genotype_vector)
+    # Performance optimization: jnp.dot uses highly optimized underlying BLAS routines
+    # and is significantly faster than jnp.sum(A * B) which materializes intermediate arrays.
+    genotype_information = jnp.dot(weighted_genotype_vector, genotype_vector)
     top_block = jnp.concatenate([covariate_information_matrix, cross_information_vector[:, None]], axis=1)
     bottom_block = jnp.concatenate([cross_information_vector[None, :], genotype_information[None, None]], axis=1)
     information_matrix = jnp.concatenate([top_block, bottom_block], axis=0)

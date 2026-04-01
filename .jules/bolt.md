@@ -25,3 +25,7 @@
 ## 2026-03-30 - [Optimize Masked Computations using `jnp.einsum`]
 **Learning:** In the logistic regression computation, computing the cross-information matrices using `jnp.sum(A * B, axis=1)` creates large intermediate matrices before reduction, consuming memory and taking significantly longer to compile and execute under JAX JIT than fusing the operations via a tensor contraction like `jnp.einsum("ij,ij->i", A, B)`.
 **Action:** When row-wise sums of element-wise products occur, use `jnp.einsum("ij,ij->i", A, B)` rather than `jnp.sum(A * B, axis=1)` to avoid large intermediate matrix allocation and speed up JAX JIT execution.
+
+## 2026-04-01 - [Genotype Information Dot Product Optimization]
+**Learning:** In `compute_information_components`, computing the scalar `genotype_information` via `jnp.sum(weighted_genotype_vector * genotype_vector)` materializes a large intermediate array. Benchmarks show that `jnp.dot(weighted_genotype_vector, genotype_vector)` is around 1.5x-2x faster because it uses highly optimized underlying BLAS routines to compute the dot product directly.
+**Action:** Replace `jnp.sum(A * B)` with `jnp.dot(A, B)` when computing the dot product of two vectors to avoid memory materialization and increase execution speed.
