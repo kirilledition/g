@@ -36,6 +36,8 @@ def test_build_linear_output_frame() -> None:
         position=np.array([100, 200]),
         allele_one=np.array(["A", "C"]),
         allele_two=np.array(["G", "T"]),
+        variant_start_index=0,
+        variant_stop_index=2,
     )
     allele_one_frequency = jnp.array([0.25, 0.5])
     observation_count = jnp.array([100, 100])
@@ -64,6 +66,8 @@ def test_build_logistic_output_frame() -> None:
         position=np.array([100, 200]),
         allele_one=np.array(["A", "C"]),
         allele_two=np.array(["G", "T"]),
+        variant_start_index=0,
+        variant_stop_index=2,
     )
     allele_one_frequency = jnp.array([0.25, 0.5])
     observation_count = jnp.array([100, 100])
@@ -105,6 +109,8 @@ def test_concatenate_linear_results_single_chunk() -> None:
         position=np.array([100]),
         allele_one=np.array(["A"]),
         allele_two=np.array(["G"]),
+        variant_start_index=0,
+        variant_stop_index=1,
     )
     accumulator = LinearChunkAccumulator(
         metadata=metadata,
@@ -134,6 +140,8 @@ def test_concatenate_linear_results_multiple_chunks() -> None:
             position=np.array([100]),
             allele_one=np.array(["A"]),
             allele_two=np.array(["G"]),
+            variant_start_index=0,
+            variant_stop_index=1,
         ),
         allele_one_frequency=jnp.array([0.25]),
         observation_count=jnp.array([100]),
@@ -152,6 +160,8 @@ def test_concatenate_linear_results_multiple_chunks() -> None:
             position=np.array([200]),
             allele_one=np.array(["C"]),
             allele_two=np.array(["T"]),
+            variant_start_index=1,
+            variant_stop_index=2,
         ),
         allele_one_frequency=jnp.array([0.5]),
         observation_count=jnp.array([100]),
@@ -185,6 +195,8 @@ def test_concatenate_logistic_results_single_chunk() -> None:
         position=np.array([100]),
         allele_one=np.array(["A"]),
         allele_two=np.array(["G"]),
+        variant_start_index=0,
+        variant_stop_index=1,
     )
     accumulator = LogisticChunkAccumulator(
         metadata=metadata,
@@ -218,6 +230,8 @@ def test_concatenate_logistic_results_multiple_chunks() -> None:
             position=np.array([100]),
             allele_one=np.array(["A"]),
             allele_two=np.array(["G"]),
+            variant_start_index=0,
+            variant_stop_index=1,
         ),
         allele_one_frequency=jnp.array([0.25]),
         observation_count=jnp.array([100]),
@@ -240,6 +254,8 @@ def test_concatenate_logistic_results_multiple_chunks() -> None:
             position=np.array([200]),
             allele_one=np.array(["C"]),
             allele_two=np.array(["T"]),
+            variant_start_index=1,
+            variant_stop_index=2,
         ),
         allele_one_frequency=jnp.array([0.5]),
         observation_count=jnp.array([100]),
@@ -272,6 +288,8 @@ def test_write_frame_iterator_to_tsv_linear(tmp_path: Path) -> None:
             position=np.array([100]),
             allele_one=np.array(["A"]),
             allele_two=np.array(["G"]),
+            variant_start_index=0,
+            variant_stop_index=1,
         ),
         allele_one_frequency=jnp.array([0.25]),
         observation_count=jnp.array([100]),
@@ -302,6 +320,8 @@ def test_write_frame_iterator_to_tsv_logistic(tmp_path: Path) -> None:
             position=np.array([100]),
             allele_one=np.array(["A"]),
             allele_two=np.array(["G"]),
+            variant_start_index=0,
+            variant_stop_index=1,
         ),
         allele_one_frequency=jnp.array([0.25]),
         observation_count=jnp.array([100]),
@@ -355,6 +375,8 @@ def test_compute_logistic_association_with_missing_exclusion_no_missing() -> Non
             position=np.array([100, 200]),
             allele_one=np.array(["A", "C"]),
             allele_two=np.array(["G", "T"]),
+            variant_start_index=0,
+            variant_stop_index=2,
         ),
         allele_one_frequency=jnp.array([0.25, 0.5]),
         observation_count=jnp.array([3, 3]),
@@ -393,6 +415,8 @@ def test_compute_logistic_association_with_missing_exclusion_with_missing() -> N
             position=np.array([100, 200]),
             allele_one=np.array(["A", "C"]),
             allele_two=np.array(["G", "T"]),
+            variant_start_index=0,
+            variant_stop_index=2,
         ),
         allele_one_frequency=jnp.array([0.25, 0.5]),
         observation_count=jnp.array([3, 3]),

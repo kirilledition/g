@@ -63,7 +63,9 @@ def resolve_genotype_source_config(
         raise ValueError(message)
     if bfile is not None:
         return build_plink_source_config(bfile)
-    return build_bgen_source_config(bgen)  # type: ignore[arg-type]
+    if bgen is not None:
+        return build_bgen_source_config(bgen)
+    raise ValueError("Impossible state.")
 
 
 def validate_genotype_source_config(genotype_source_config: GenotypeSourceConfig) -> None:

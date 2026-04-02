@@ -160,6 +160,8 @@ def test_logistic_missing_rows_are_excluded_per_variant() -> None:
             position=np.asarray([1, 2]),
             allele_one=np.asarray(["A", "C"]),
             allele_two=np.asarray(["G", "T"]),
+            variant_start_index=0,
+            variant_stop_index=2,
         ),
         allele_one_frequency=jnp.zeros((2,), dtype=jnp.float32),
         observation_count=jnp.asarray([4, 4]),
