@@ -71,9 +71,8 @@ def test_iter_linear_output_frames_yields_one_accumulator_per_chunk() -> None:
     )
 
     with (
-        patch(
-            "g.engine.load_aligned_sample_data_from_source", return_value=aligned_sample_data
-        ) as mock_load_aligned_sample_data,
+        patch("g.engine.load_aligned_sample_data_from_source", return_value=aligned_sample_data)
+        as mock_load_aligned_sample_data,
         patch("g.engine.prepare_linear_association_state", return_value="linear-state") as mock_prepare_state,
         patch(
             "g.engine.iter_linear_genotype_chunks_from_source",
