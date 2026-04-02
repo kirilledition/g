@@ -38,8 +38,15 @@ def preprocess_genotype_matrix_arrays(genotype_matrix: jax.Array) -> Preprocesse
     """Preprocess a raw genotype matrix into device-resident summary arrays."""
     genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
     missing_mask = jnp.isnan(genotype_matrix_float32)
-    observed_genotype_total = jnp.where(missing_mask, 0.0, genotype_matrix_float32).sum(axis=0)
-    observation_count = jnp.sum(~missing_mask, axis=0, dtype=jnp.int32)
+    masked_genotype = jnp.where(missing_mask, 0.0, genotype_matrix_float32)
+    ones_vec = jnp.ones((missing_mask.shape[0],), dtype=jnp.float32)
+    # Memory & compute optimization: Using jnp.dot(ones, matrix) instead of matrix.sum(axis=0)
+    # forces JAX/XLA to use optimized BLAS GEMV primitives rather than slower generic reduction kernels.
+    observed_genotype_total = jnp.dot(ones_vec, masked_genotype)
+    observation_mask_float = (~missing_mask).astype(jnp.float32)
+    # Compute optimization: Matrix-vector multiplication for computing valid allele counts
+    # is significantly faster than using jnp.sum(~missing_mask, axis=0)
+    observation_count = jnp.dot(ones_vec, observation_mask_float).astype(jnp.int32)
     column_means = observed_genotype_total / jnp.maximum(observation_count, 1)
     sanitized_column_means = jnp.where(observation_count > 0, column_means, 0.0)
     imputed_matrix = jnp.where(missing_mask, sanitized_column_means[None, :], genotype_matrix_float32)
