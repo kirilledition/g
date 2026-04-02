@@ -345,8 +345,7 @@ def compute_probability_matrix(
     covariate_coefficients = coefficients[:, :-1]
     genotype_coefficients = coefficients[:, -1]
     linear_predictor = (
-        covariate_coefficients @ covariate_matrix.T
-        + genotype_matrix_by_variant * genotype_coefficients[:, None]
+        covariate_coefficients @ covariate_matrix.T + genotype_matrix_by_variant * genotype_coefficients[:, None]
     )
     return clip_probability_matrix(jax.nn.sigmoid(linear_predictor))
 
