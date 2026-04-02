@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-
 @dataclass(frozen=True)
 class PrefetchEnvelope[ValueType]:
     """One prefetched iterator item or terminal signal."""
@@ -20,7 +19,6 @@ class PrefetchEnvelope[ValueType]:
     error: Exception | None = None
     traceback_text: str | None = None
     is_finished: bool = False
-
 
 def prefetch_iterator_values[ValueType](
     value_iterator: Iterator[ValueType],

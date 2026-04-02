@@ -53,7 +53,6 @@ def test_build_genotype_source_signature_paths_supports_both_formats() -> None:
     assert plink_paths == (Path("dataset.bed"), Path("dataset.bim"), Path("dataset.fam"))
     assert bgen_paths == (Path("dataset.bgen"),)
 
-
 def test_iter_genotype_chunks_from_source_dispatches_to_bgen_reader() -> None:
     """Ensure the shared source iterator dispatches through the BGEN backend."""
     bgen_source_config = build_bgen_source_config(Path("study.bgen"))
