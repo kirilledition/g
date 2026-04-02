@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import typing
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -38,7 +40,7 @@ def test_prefetch_iterator_values_preserves_order() -> None:
 def test_prefetch_iterator_values_surfaces_worker_errors() -> None:
     """Ensure iterator failures on the worker thread propagate to the consumer."""
 
-    def failing_iterator() -> GenotypeChunk:
+    def failing_iterator() -> typing.Iterator[GenotypeChunk]:
         raise ValueError("broken iterator")
         yield build_chunk(0)
 
