@@ -30,7 +30,7 @@ from g.models import (
 
 def test_build_linear_output_frame() -> None:
     """Test building a linear output DataFrame from results."""
-    metadata = VariantMetadata(
+    metadata = VariantMetadata(variant_start_index=0, variant_stop_index=1,
         chromosome=np.array(["1", "1"]),
         variant_identifiers=np.array(["var1", "var2"]),
         position=np.array([100, 200]),
@@ -58,7 +58,7 @@ def test_build_linear_output_frame() -> None:
 
 def test_build_logistic_output_frame() -> None:
     """Test building a logistic output DataFrame from results."""
-    metadata = VariantMetadata(
+    metadata = VariantMetadata(variant_start_index=0, variant_stop_index=1,
         chromosome=np.array(["1", "1"]),
         variant_identifiers=np.array(["var1", "var2"]),
         position=np.array([100, 200]),
@@ -99,7 +99,7 @@ def test_concatenate_linear_results_empty() -> None:
 
 def test_concatenate_linear_results_single_chunk() -> None:
     """Test concatenating single linear chunk."""
-    metadata = VariantMetadata(
+    metadata = VariantMetadata(variant_start_index=0, variant_stop_index=1,
         chromosome=np.array(["1"]),
         variant_identifiers=np.array(["var1"]),
         position=np.array([100]),
@@ -179,7 +179,7 @@ def test_concatenate_logistic_results_empty() -> None:
 
 def test_concatenate_logistic_results_single_chunk() -> None:
     """Test concatenating single logistic chunk."""
-    metadata = VariantMetadata(
+    metadata = VariantMetadata(variant_start_index=0, variant_stop_index=1,
         chromosome=np.array(["1"]),
         variant_identifiers=np.array(["var1"]),
         position=np.array([100]),

@@ -38,7 +38,8 @@ def test_prefetch_iterator_values_preserves_order() -> None:
 def test_prefetch_iterator_values_surfaces_worker_errors() -> None:
     """Ensure iterator failures on the worker thread propagate to the consumer."""
 
-    def failing_iterator() -> GenotypeChunk:
+    from collections.abc import Iterator
+    def failing_iterator() -> Iterator[GenotypeChunk]:
         raise ValueError("broken iterator")
         yield build_chunk(0)
 
