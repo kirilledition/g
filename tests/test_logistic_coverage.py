@@ -26,6 +26,7 @@ from g.compute.logistic import (
     initialize_full_model_coefficients,
     initialize_full_model_coefficients_without_mask,
     initialize_mixed_firth_batch_coefficients,
+    prepare_logistic_chunk_precomputation,
     prepare_no_missing_logistic_constants,
 )
 
@@ -84,12 +85,14 @@ def test_initialize_full_model_coefficients_without_mask_matches_all_true_mask()
     covariate_matrix, phenotype_vector, genotype_matrix, observation_mask = build_logistic_fixture()
     genotype_matrix_by_variant = genotype_matrix.T
     no_missing_constants = prepare_no_missing_logistic_constants(covariate_matrix, phenotype_vector)
+    logistic_chunk_precomputation = prepare_logistic_chunk_precomputation(covariate_matrix)
 
     masked_coefficients = initialize_full_model_coefficients(
         covariate_matrix,
         genotype_matrix_by_variant,
         phenotype_vector,
         observation_mask,
+        logistic_chunk_precomputation,
     )
     no_missing_coefficients = initialize_full_model_coefficients_without_mask(
         covariate_matrix,
@@ -241,12 +244,14 @@ def test_initialize_mixed_firth_batch_coefficients_preserves_standard_rows_when_
         ]
     )
     firth_index_batch = build_firth_padded_index_batches(np.array([0, 1], dtype=np.int64))[0]
+    logistic_chunk_precomputation = prepare_logistic_chunk_precomputation(covariate_matrix)
 
     batch_coefficients = initialize_mixed_firth_batch_coefficients(
         covariate_matrix,
         phenotype_vector,
         genotype_matrix,
         observation_mask,
+        logistic_chunk_precomputation,
         firth_index_batch,
         np.array([False, False]),
         standard_coefficients,

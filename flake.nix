@@ -106,6 +106,8 @@
 
           shellHook = ''
             export UV_PYTHON=python3.13
+            export CFLAGS="-D_DEFAULT_SOURCE ''${CFLAGS:+$CFLAGS}"
+            export CXXFLAGS="-D_DEFAULT_SOURCE ''${CXXFLAGS:+$CXXFLAGS}"
             export JAVA_HOME=${pkgs.openjdk11_headless}
             export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             export NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt

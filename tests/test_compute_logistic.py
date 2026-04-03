@@ -11,6 +11,7 @@ from g.compute.logistic import (
     compute_information_components,
     compute_log_likelihood,
     initialize_full_model_coefficients,
+    prepare_logistic_chunk_precomputation,
     prepare_no_missing_logistic_constants,
 )
 
@@ -271,9 +272,14 @@ def test_initialize_full_model_coefficients() -> None:
             [True, True, True],
         ]
     )
+    logistic_chunk_precomputation = prepare_logistic_chunk_precomputation(covariate_matrix)
 
     result = initialize_full_model_coefficients(
-        covariate_matrix, genotype_matrix_by_variant, phenotype_vector, observation_mask
+        covariate_matrix,
+        genotype_matrix_by_variant,
+        phenotype_vector,
+        observation_mask,
+        logistic_chunk_precomputation,
     )
 
     assert result.shape == (2, 3)
