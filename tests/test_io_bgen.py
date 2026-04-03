@@ -27,7 +27,6 @@ from g.io.bgen import (  # noqa: E402
     read_bgen_chunk_host,
     validate_bgen_sample_order,
 )
-from g.types import ArrayMemoryOrder, SampleIdentifierSource
 
 
 def write_sample_file(sample_path: Path, sample_identifiers: list[str]) -> None:
@@ -50,7 +49,7 @@ def test_convert_probability_tensor_to_dosage_for_unphased_layout() -> None:
         combination_count=3,
         is_phased=False,
         dtype=np.float32,
-        order=ArrayMemoryOrder.C_CONTIGUOUS,
+        order="C",
     )
 
     expected_dosage_matrix = np.array([[0.0, 1.0], [2.0, np.nan]], dtype=np.float32)
@@ -71,7 +70,7 @@ def test_convert_probability_tensor_to_dosage_for_phased_layout() -> None:
         combination_count=4,
         is_phased=True,
         dtype=np.float32,
-        order=ArrayMemoryOrder.C_CONTIGUOUS,
+        order="C",
     )
 
     expected_dosage_matrix = np.array([[0.0, 1.0], [1.0, 2.0]], dtype=np.float32)
@@ -87,7 +86,7 @@ def test_convert_probability_tensor_to_dosage_rejects_unsupported_layout() -> No
             combination_count=5,
             is_phased=False,
             dtype=np.float32,
-            order=ArrayMemoryOrder.C_CONTIGUOUS,
+            order="C",
         )
 
 
@@ -125,7 +124,7 @@ def test_open_bgen_reads_phased_haplotype_example_as_dosage() -> None:
     with open_bgen(bgen_path) as bgen_reader:
         assert bgen_reader.sample_count == 4
         assert bgen_reader.variant_count == 4
-        genotype_matrix = bgen_reader.read(dtype=np.float32, order=ArrayMemoryOrder.C_CONTIGUOUS)
+        genotype_matrix = bgen_reader.read(dtype=np.float32, order="C")
 
     expected_genotype_matrix = np.array(
         [
@@ -171,7 +170,7 @@ def test_open_bgen_uses_external_sample_file(tmp_path: Path) -> None:
     write_sample_file(sample_path, custom_identifiers)
 
     with open_bgen(bgen_path, sample_path=sample_path) as bgen_reader:
-        assert bgen_reader.sample_identifier_source == SampleIdentifierSource.EXTERNAL
+        assert bgen_reader.sample_identifier_source == "external"
         assert bgen_reader.samples.tolist() == custom_identifiers
 
 
@@ -247,7 +246,7 @@ def test_validate_bgen_sample_order_requires_real_identifiers() -> None:
             match=r"does not contain samples and no \.sample file was found",
         ),
     ):
-        bgen_reader.sample_identifier_source = SampleIdentifierSource.GENERATED
+        bgen_reader.sample_identifier_source = "generated"
         validate_bgen_sample_order(
             bgen_reader,
             np.arange(2, dtype=np.intp),
@@ -307,7 +306,7 @@ def test_bgen_reader_rejects_non_biallelic_layout() -> None:
 class FakeGeneratedSampleReader:
     """Context manager returning a reader without real sample identifiers."""
 
-    sample_identifier_source = SampleIdentifierSource.GENERATED
+    sample_identifier_source = "generated"
 
     def __enter__(self) -> FakeGeneratedSampleReader:
         return self

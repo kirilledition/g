@@ -8,8 +8,6 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 
-from g.types import Device
-
 FLOAT_DTYPE = jnp.float32
 JAX_ENABLE_X64 = False
 DEFAULT_MATMUL_PRECISION = os.environ.get(
@@ -42,14 +40,15 @@ if ENABLE_PERSISTENT_COMPILATION_CACHE:
     jax.config.update("jax_persistent_cache_min_compile_time_secs", PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS)
 
 
-def configure_jax_device(device: Device) -> None:
+def configure_jax_device(device: str) -> None:
     """Configure the JAX execution device.
 
     Args:
-        device: Device enum specifying CPU or GPU execution.
+        device: Either 'cpu' to restrict execution to CPU, or 'gpu' to prefer
+            GPU acceleration with CPU fallback.
 
     """
-    if device == Device.GPU:
+    if device == "gpu":
         # Let JAX auto-detect GPU (CUDA or ROCm) with CPU fallback
         # Don't force platform order to avoid ROCm initialization errors on NVIDIA systems
         jax.config.update("jax_platforms", "")

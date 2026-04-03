@@ -22,7 +22,6 @@ from g.io.output import (
     write_chunk_to_disk,
 )
 from g.models import LinearAssociationChunkResult, VariantMetadata
-from g.types import AssociationMode
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -90,9 +89,14 @@ def create_linear_chunk_accumulator(
 class TestOutputSchema:
     """Tests for output schema helpers."""
 
+    def test_get_output_schema_rejects_unknown_mode(self) -> None:
+        """Ensure schema lookup fails fast for unsupported association modes."""
+        with pytest.raises(ValueError, match="Unsupported association mode 'poisson'"):
+            get_output_schema("poisson")
+
     def test_get_output_schema_returns_logistic_columns(self) -> None:
         """Ensure schema lookup returns the logistic output schema."""
-        logistic_schema = get_output_schema(AssociationMode.LOGISTIC)
+        logistic_schema = get_output_schema("logistic")
 
         assert "firth_flag" in logistic_schema
         assert "iteration_count" in logistic_schema
@@ -119,10 +123,10 @@ class TestOutputSchema:
             }
         )
 
-        cast_data_frame = cast_frame_to_schema(data_frame, AssociationMode.LINEAR)
+        cast_data_frame = cast_frame_to_schema(data_frame, "linear")
 
-        assert cast_data_frame.schema == get_output_schema(AssociationMode.LINEAR)
-        assert cast_data_frame.columns == list(get_output_schema(AssociationMode.LINEAR))
+        assert cast_data_frame.schema == get_output_schema("linear")
+        assert cast_data_frame.columns == list(get_output_schema("linear"))
         assert cast_data_frame.get_column("chromosome").to_list() == ["1"]
 
 
@@ -131,13 +135,13 @@ class TestResolveOutputRunPaths:
 
     def test_appends_mode_suffix(self, tmp_path: Path) -> None:
         """Ensure run directory gets association mode in its suffix."""
-        output_run_paths = resolve_output_run_paths(tmp_path / "results/output", AssociationMode.LINEAR)
+        output_run_paths = resolve_output_run_paths(tmp_path / "results/output", "linear")
         assert output_run_paths.run_directory == tmp_path / "results/output.linear.run"
         assert output_run_paths.chunks_directory == tmp_path / "results/output.linear.run/chunks"
 
     def test_preserves_explicit_run_suffix(self, tmp_path: Path) -> None:
         """Ensure a .run suffix is kept as-is."""
-        output_run_paths = resolve_output_run_paths(tmp_path / "my_output.run", AssociationMode.LOGISTIC)
+        output_run_paths = resolve_output_run_paths(tmp_path / "my_output.run", "logistic")
         assert output_run_paths.run_directory == tmp_path / "my_output.run"
 
 
@@ -168,7 +172,7 @@ class TestPrepareOutputRun:
         """Ensure fresh run creates the chunks directory."""
         prepared_output_run = prepare_output_run(
             output_root=tmp_path / "output",
-            association_mode=AssociationMode.LINEAR,
+            association_mode="linear",
             resume=False,
         )
         assert prepared_output_run.output_run_paths.chunks_directory.exists()
@@ -182,7 +186,7 @@ class TestPrepareOutputRun:
         with pytest.raises(ValueError, match="already exists and is not empty"):
             prepare_output_run(
                 output_root=tmp_path / "output",
-                association_mode=AssociationMode.LINEAR,
+                association_mode="linear",
                 resume=False,
             )
 
@@ -196,11 +200,11 @@ class TestPrepareOutputRun:
             variant_stop_index=2,
             variant_identifier="v0",
         )
-        write_chunk_to_disk(payload, chunks_dir, AssociationMode.LINEAR)
+        write_chunk_to_disk(payload, chunks_dir, "linear")
 
         prepared_output_run = prepare_output_run(
             output_root=tmp_path / "output",
-            association_mode=AssociationMode.LINEAR,
+            association_mode="linear",
             resume=True,
         )
         assert prepared_output_run.committed_chunk_identifiers == frozenset({0})
@@ -216,12 +220,12 @@ class TestWriteChunkToDisk:
             variant_stop_index=2,
             variant_identifier="v0",
         )
-        write_chunk_to_disk(payload, tmp_path, AssociationMode.LINEAR)
+        write_chunk_to_disk(payload, tmp_path, "linear")
         chunk_path = tmp_path / build_chunk_file_name(0)
         assert chunk_path.exists()
         frame = pl.read_ipc(chunk_path)
         assert frame.height == 1
-        assert frame.schema == get_output_schema(AssociationMode.LINEAR)
+        assert frame.schema == get_output_schema("linear")
         assert frame.get_column("chunk_identifier").to_list() == [0]
 
     def test_atomic_write_leaves_no_tmp_files(self, tmp_path: Path) -> None:
@@ -231,7 +235,7 @@ class TestWriteChunkToDisk:
             variant_stop_index=2,
             variant_identifier="v0",
         )
-        write_chunk_to_disk(payload, tmp_path, AssociationMode.LINEAR)
+        write_chunk_to_disk(payload, tmp_path, "linear")
         tmp_files = list(tmp_path.glob("*.tmp"))
         assert tmp_files == []
 
@@ -243,7 +247,7 @@ class TestPersistChunkedResults:
         """Ensure all chunks from an iterator are written to disk."""
         prepared_output_run = prepare_output_run(
             output_root=tmp_path / "output",
-            association_mode=AssociationMode.LINEAR,
+            association_mode="linear",
             resume=False,
         )
         accumulators = [
@@ -261,7 +265,7 @@ class TestPersistChunkedResults:
         persist_chunked_results(
             frame_iterator=iter(accumulators),
             output_run_paths=prepared_output_run.output_run_paths,
-            association_mode=AssociationMode.LINEAR,
+            association_mode="linear",
         )
         committed = scan_committed_chunk_identifiers(prepared_output_run.output_run_paths.chunks_directory)
         assert committed == frozenset({0, 2})
@@ -270,7 +274,7 @@ class TestPersistChunkedResults:
         """Ensure resume correctly skips already-committed chunks."""
         prepared_output_run = prepare_output_run(
             output_root=tmp_path / "output",
-            association_mode=AssociationMode.LINEAR,
+            association_mode="linear",
             resume=False,
         )
         first_payload = create_linear_chunk_payload(
@@ -278,15 +282,11 @@ class TestPersistChunkedResults:
             variant_stop_index=2,
             variant_identifier="v0",
         )
-        write_chunk_to_disk(
-            first_payload,
-            prepared_output_run.output_run_paths.chunks_directory,
-            AssociationMode.LINEAR,
-        )
+        write_chunk_to_disk(first_payload, prepared_output_run.output_run_paths.chunks_directory, "linear")
 
         resumed_output_run = prepare_output_run(
             output_root=tmp_path / "output",
-            association_mode=AssociationMode.LINEAR,
+            association_mode="linear",
             resume=True,
         )
         assert resumed_output_run.committed_chunk_identifiers == frozenset({0})
@@ -301,7 +301,7 @@ class TestPersistChunkedResults:
         persist_chunked_results(
             frame_iterator=iter(accumulators),
             output_run_paths=prepared_output_run.output_run_paths,
-            association_mode=AssociationMode.LINEAR,
+            association_mode="linear",
         )
         final_committed = scan_committed_chunk_identifiers(prepared_output_run.output_run_paths.chunks_directory)
         assert final_committed == frozenset({0, 2})
@@ -314,7 +314,7 @@ class TestFinalizeChunksToParquet:
         """Ensure finalization creates a valid Parquet file."""
         prepared_output_run = prepare_output_run(
             output_root=tmp_path / "output",
-            association_mode=AssociationMode.LINEAR,
+            association_mode="linear",
             resume=False,
         )
         for chunk_identifier, variant_identifier in [(0, "v0"), (2, "v2")]:
@@ -323,25 +323,21 @@ class TestFinalizeChunksToParquet:
                 variant_stop_index=chunk_identifier + 2,
                 variant_identifier=variant_identifier,
             )
-            write_chunk_to_disk(
-                payload,
-                prepared_output_run.output_run_paths.chunks_directory,
-                AssociationMode.LINEAR,
-            )
+            write_chunk_to_disk(payload, prepared_output_run.output_run_paths.chunks_directory, "linear")
 
-        parquet_path = finalize_chunks_to_parquet(prepared_output_run.output_run_paths, AssociationMode.LINEAR)
+        parquet_path = finalize_chunks_to_parquet(prepared_output_run.output_run_paths, "linear")
         frame = pl.read_parquet(parquet_path)
         assert frame.height == 2
-        assert frame.schema == get_output_schema(AssociationMode.LINEAR)
+        assert frame.schema == get_output_schema("linear")
 
     def test_produces_empty_parquet_with_no_chunks(self, tmp_path: Path) -> None:
         """Ensure finalization handles empty chunk directories gracefully."""
         prepared_output_run = prepare_output_run(
             output_root=tmp_path / "output",
-            association_mode=AssociationMode.LINEAR,
+            association_mode="linear",
             resume=False,
         )
-        parquet_path = finalize_chunks_to_parquet(prepared_output_run.output_run_paths, AssociationMode.LINEAR)
+        parquet_path = finalize_chunks_to_parquet(prepared_output_run.output_run_paths, "linear")
         frame = pl.read_parquet(parquet_path)
         assert frame.height == 0
-        assert frame.schema == get_output_schema(AssociationMode.LINEAR)
+        assert frame.schema == get_output_schema("linear")

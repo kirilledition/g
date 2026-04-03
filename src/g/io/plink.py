@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -75,15 +74,8 @@ FAMILY_TABLE_COLUMNS = (
 TABULAR_NULL_VALUES = ["NA", "NaN", "nan", "-9"]
 
 
-@dataclass(frozen=True)
-class VariantSliceBounds:
-    """Normalized start and stop indices for one variant slice.
-
-    Attributes:
-        start: Start index of the variant slice.
-        stop: Stop index of the variant slice.
-
-    """
+class VariantSliceBounds(NamedTuple):
+    """Normalized start and stop indices for one variant slice."""
 
     start: int
     stop: int
@@ -460,12 +452,12 @@ class PlinkReader:
         self,
         index: object = None,
         dtype: type[np.float32] | type[np.float64] = np.float32,
-        order: ArrayMemoryOrder = ArrayMemoryOrder.C_CONTIGUOUS,
+        order: ArrayMemoryOrder = "C",
     ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
         """Read PLINK genotypes with the same calling convention as `bed_handle.read`."""
         if (
             dtype is np.float32
-            and order == ArrayMemoryOrder.C_CONTIGUOUS
+            and order == "C"
             and isinstance(index, tuple)
             and len(index) == 2
             and isinstance(index[0], np.ndarray)
@@ -481,8 +473,8 @@ class PlinkReader:
                 variant_stop=variant_slice_bounds.stop,
                 num_threads=self.num_threads,
             )
-        genotype_matrix = self.bed_handle.read(index=index, dtype=dtype, order=order.value)
-        return np.asarray(genotype_matrix, dtype=dtype, order=order.value)
+        genotype_matrix = self.bed_handle.read(index=index, dtype=dtype, order=order)
+        return np.asarray(genotype_matrix, dtype=dtype, order=order)
 
     def close(self) -> None:
         """Release the underlying BED handle."""
@@ -524,7 +516,7 @@ def read_bed_chunk_host(
     genotype_matrix_host = np.zeros(
         (sample_index_array.shape[0], variant_index_array.shape[0]),
         dtype=np.float32,
-        order=ArrayMemoryOrder.C_CONTIGUOUS.value,
+        order="C",
     )
     read_f32(
         str(bed_path),

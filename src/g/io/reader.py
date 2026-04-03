@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, NamedTuple, Protocol, runtime_checkable
 
 import jax
 import numpy as np
@@ -11,25 +10,18 @@ import numpy.typing as npt
 import polars as pl
 
 from g.io.genotype_processing import preprocess_genotype_matrix, preprocess_genotype_matrix_arrays
-from g.types import ArrayMemoryOrder
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from g.models import GenotypeChunk, LinearGenotypeChunk, VariantMetadata
 
-@dataclass(frozen=True)
-class VariantTableArrays:
-    """Numpy views of variant metadata columns used during chunk construction.
 
-    Attributes:
-        chromosome_values: Chromosome identifiers per variant.
-        variant_identifier_values: Variant identifiers per variant.
-        position_values: Genomic positions per variant.
-        allele_one_values: First allele per variant.
-        allele_two_values: Second allele per variant.
+ArrayMemoryOrder = Literal["K", "A", "C", "F"]
 
-    """
+
+class VariantTableArrays(NamedTuple):
+    """Numpy views of variant metadata columns used during chunk construction."""
 
     chromosome_values: npt.NDArray[np.str_]
     variant_identifier_values: npt.NDArray[np.str_]
@@ -65,7 +57,7 @@ class GenotypeReader(Protocol):
         self,
         index: object = None,
         dtype: type[np.float32] | type[np.float64] = np.float32,
-        order: ArrayMemoryOrder = ArrayMemoryOrder.C_CONTIGUOUS,
+        order: ArrayMemoryOrder = "C",
     ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
         """Read a genotype matrix subset as dosages with NaN for missing values."""
 
@@ -163,7 +155,7 @@ def iter_genotype_chunks_from_reader(
         genotype_matrix_host = genotype_reader.read(
             index=(sample_index_array, slice(variant_start, variant_stop)),
             dtype=np.float32,
-            order=ArrayMemoryOrder.C_CONTIGUOUS,
+            order="C",
         )
         preprocessed_chunk_data = preprocess_genotype_matrix(
             jax.device_put(genotype_matrix_host),
@@ -213,7 +205,7 @@ def iter_linear_genotype_chunks_from_reader(
             genotype_matrix_host = genotype_reader.read(
                 index=(sample_index_array, slice(variant_start, variant_stop)),
                 dtype=np.float32,
-                order=ArrayMemoryOrder.C_CONTIGUOUS,
+                order="C",
             )
         with jax.profiler.TraceAnnotation("linear.device_put_genotypes"):
             genotype_matrix_device = jax.device_put(genotype_matrix_host)

@@ -9,7 +9,6 @@ from g.engine import iter_linear_output_frames, iter_logistic_output_frames, wri
 from g.io.output import finalize_chunks_to_parquet, persist_chunked_results, prepare_output_run
 from g.io.source import resolve_genotype_source_config
 from g.jax_setup import configure_jax_device
-from g.types import AssociationMode, Device, OutputMode
 
 DEFAULT_LINEAR_CHUNK_SIZE = 2048
 DEFAULT_LOGISTIC_CHUNK_SIZE = 1024
@@ -24,10 +23,10 @@ class ComputeConfig:
     """
 
     chunk_size: int = DEFAULT_LINEAR_CHUNK_SIZE
-    device: Device = Device.CPU
+    device: str = "cpu"
     variant_limit: int | None = None
     prefetch_chunks: int = 1
-    output_mode: OutputMode = OutputMode.TSV
+    output_mode: str = "tsv"
     output_run_directory: Path | None = None
     resume: bool = False
     finalize_parquet: bool = False
@@ -69,7 +68,7 @@ def parse_covariate_name_list(raw_covariate_names: str | list[str] | tuple[str, 
     return covariate_names or None
 
 
-def resolve_output_path(output_path_or_prefix: Path | str, association_mode: AssociationMode) -> Path:
+def resolve_output_path(output_path_or_prefix: Path | str, association_mode: str) -> Path:
     """Resolve the final TSV path for an association run."""
     output_path = Path(output_path_or_prefix)
     if output_path.suffix == ".tsv":
@@ -87,6 +86,12 @@ def validate_compute_config(compute_config: ComputeConfig) -> None:
         raise ValueError(message)
     if compute_config.prefetch_chunks < 0:
         message = "Prefetch chunk count must be zero or positive."
+        raise ValueError(message)
+    if compute_config.device not in {"cpu", "gpu"}:
+        message = f"Unsupported device '{compute_config.device}'. Expected 'cpu' or 'gpu'."
+        raise ValueError(message)
+    if compute_config.output_mode not in {"tsv", "arrow_chunks"}:
+        message = f"Unsupported output mode '{compute_config.output_mode}'."
         raise ValueError(message)
 
 
@@ -117,17 +122,17 @@ def linear(
     del solver
     compute_config = compute or ComputeConfig()
     validate_compute_config(compute_config)
-    output_path = resolve_output_path(out, AssociationMode.LINEAR)
+    output_path = resolve_output_path(out, "linear")
     configure_jax_device(compute_config.device)
     covariate_name_list = parse_covariate_name_list(covar_names)
     genotype_source_config = resolve_genotype_source_config(bfile, bgen, sample)
     output_run_directory = compute_config.output_run_directory or Path(out)
     committed_chunk_identifiers: set[int] = set()
     output_run_paths = None
-    if compute_config.output_mode == OutputMode.ARROW_CHUNKS:
+    if compute_config.output_mode == "arrow_chunks":
         prepared_output_run = prepare_output_run(
             output_root=output_run_directory,
-            association_mode=AssociationMode.LINEAR,
+            association_mode="linear",
             resume=compute_config.resume,
         )
         output_run_paths = prepared_output_run.output_run_paths
@@ -144,7 +149,7 @@ def linear(
         prefetch_chunks=compute_config.prefetch_chunks,
         committed_chunk_identifiers=committed_chunk_identifiers,
     )
-    if compute_config.output_mode == OutputMode.TSV:
+    if compute_config.output_mode == "tsv":
         write_frame_iterator_to_tsv(frame_iterator, output_path)
         return RunArtifacts(sumstats_tsv=output_path)
     assert output_run_paths is not None
@@ -152,12 +157,10 @@ def linear(
     persist_chunked_results(
         frame_iterator=frame_iterator,
         output_run_paths=output_run_paths,
-        association_mode=AssociationMode.LINEAR,
+        association_mode="linear",
     )
     final_parquet_path = (
-        finalize_chunks_to_parquet(output_run_paths, AssociationMode.LINEAR)
-        if compute_config.finalize_parquet
-        else None
+        finalize_chunks_to_parquet(output_run_paths, "linear") if compute_config.finalize_parquet else None
     )
     return RunArtifacts(
         output_run_directory=output_run_paths.run_directory,
@@ -183,17 +186,17 @@ def logistic(
     solver_config = solver or LogisticConfig()
     validate_compute_config(compute_config)
     validate_logistic_config(solver_config)
-    output_path = resolve_output_path(out, AssociationMode.LOGISTIC)
+    output_path = resolve_output_path(out, "logistic")
     configure_jax_device(compute_config.device)
     covariate_name_list = parse_covariate_name_list(covar_names)
     genotype_source_config = resolve_genotype_source_config(bfile, bgen, sample)
     output_run_directory = compute_config.output_run_directory or Path(out)
     committed_chunk_identifiers: set[int] = set()
     output_run_paths = None
-    if compute_config.output_mode == OutputMode.ARROW_CHUNKS:
+    if compute_config.output_mode == "arrow_chunks":
         prepared_output_run = prepare_output_run(
             output_root=output_run_directory,
-            association_mode=AssociationMode.LOGISTIC,
+            association_mode="logistic",
             resume=compute_config.resume,
         )
         output_run_paths = prepared_output_run.output_run_paths
@@ -212,7 +215,7 @@ def logistic(
         prefetch_chunks=compute_config.prefetch_chunks,
         committed_chunk_identifiers=committed_chunk_identifiers,
     )
-    if compute_config.output_mode == OutputMode.TSV:
+    if compute_config.output_mode == "tsv":
         write_frame_iterator_to_tsv(frame_iterator, output_path)
         return RunArtifacts(sumstats_tsv=output_path)
     assert output_run_paths is not None
@@ -220,12 +223,10 @@ def logistic(
     persist_chunked_results(
         frame_iterator=frame_iterator,
         output_run_paths=output_run_paths,
-        association_mode=AssociationMode.LOGISTIC,
+        association_mode="logistic",
     )
     final_parquet_path = (
-        finalize_chunks_to_parquet(output_run_paths, AssociationMode.LOGISTIC)
-        if compute_config.finalize_parquet
-        else None
+        finalize_chunks_to_parquet(output_run_paths, "logistic") if compute_config.finalize_parquet else None
     )
     return RunArtifacts(
         output_run_directory=output_run_paths.run_directory,

@@ -7,8 +7,7 @@ import queue
 import re
 import threading
 from dataclasses import dataclass
-from enum import StrEnum
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple
 
 import polars as pl
 
@@ -18,7 +17,6 @@ from g.engine import (
     LogisticChunkAccumulator,
     build_chunk_payload,
 )
-from g.types import AssociationMode
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -28,13 +26,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-class OutputCompressionCodec(StrEnum):
-    """Compression codecs used for persisted output artifacts."""
-
-    ZSTD = "zstd"
-
-OUTPUT_COMPRESSION_CODEC: Final[OutputCompressionCodec] = OutputCompressionCodec.ZSTD
+OUTPUT_COMPRESSION_CODEC: Final[Literal["zstd"]] = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)\.arrow$")
 DEFAULT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_WRITER_TIMEOUT_SECONDS = 120.0
@@ -94,28 +86,24 @@ class OutputRunPaths:
     chunks_directory: Path
 
 
-@dataclass(frozen=True)
-class PreparedOutputRun:
-    """Prepared output run state for chunk persistence.
-
-    Attributes:
-        output_run_paths: Resolved output run paths.
-        committed_chunk_identifiers: Identifiers of already-committed chunks.
-
-    """
+class PreparedOutputRun(NamedTuple):
+    """Prepared output run state for chunk persistence."""
 
     output_run_paths: OutputRunPaths
     committed_chunk_identifiers: frozenset[int]
 
 
-def get_output_schema(association_mode: AssociationMode) -> dict[str, pl.DataType]:
+def get_output_schema(association_mode: str) -> dict[str, pl.DataType]:
     """Return the fixed output schema for the requested mode."""
-    if association_mode == AssociationMode.LINEAR:
+    if association_mode == "linear":
         return LINEAR_OUTPUT_SCHEMA
-    return LOGISTIC_OUTPUT_SCHEMA
+    if association_mode == "logistic":
+        return LOGISTIC_OUTPUT_SCHEMA
+    message = f"Unsupported association mode '{association_mode}'."
+    raise ValueError(message)
 
 
-def cast_frame_to_schema(data_frame: pl.DataFrame, association_mode: AssociationMode) -> pl.DataFrame:
+def cast_frame_to_schema(data_frame: pl.DataFrame, association_mode: str) -> pl.DataFrame:
     """Cast an output frame to the fixed mode-specific schema."""
     output_schema = get_output_schema(association_mode)
     return data_frame.select(
@@ -123,12 +111,12 @@ def cast_frame_to_schema(data_frame: pl.DataFrame, association_mode: Association
     )
 
 
-def resolve_output_run_paths(output_root: Path, association_mode: AssociationMode) -> OutputRunPaths:
+def resolve_output_run_paths(output_root: Path, association_mode: str) -> OutputRunPaths:
     """Derive run paths from an output root and association mode.
 
     Args:
         output_root: User-specified output directory or prefix.
-        association_mode: Association mode enum value.
+        association_mode: Either ``"linear"`` or ``"logistic"``.
 
     Returns:
         Resolved run and chunk directory paths.
@@ -174,7 +162,7 @@ def scan_committed_chunk_identifiers(chunks_directory: Path) -> frozenset[int]:
 def prepare_output_run(
     *,
     output_root: Path,
-    association_mode: AssociationMode,
+    association_mode: str,
     resume: bool,
 ) -> PreparedOutputRun:
     """Prepare a chunked output run directory and discover resumable state.
@@ -184,7 +172,7 @@ def prepare_output_run(
 
     Args:
         output_root: User-specified output directory or prefix.
-        association_mode: Association mode enum value.
+        association_mode: Either ``"linear"`` or ``"logistic"``.
         resume: Whether to resume from previously written chunks.
 
     Raises:
@@ -259,7 +247,7 @@ def build_output_frame_from_payload(chunk_payload: ChunkPayload) -> pl.DataFrame
 def write_chunk_to_disk(
     chunk_payload: ChunkPayload,
     chunks_directory: Path,
-    association_mode: AssociationMode,
+    association_mode: str,
 ) -> None:
     """Atomically persist one chunk as an Arrow IPC file.
 
@@ -269,7 +257,7 @@ def write_chunk_to_disk(
     Args:
         chunk_payload: Host-side payload to persist.
         chunks_directory: Directory to write the chunk into.
-        association_mode: Association mode enum value.
+        association_mode: Either ``"linear"`` or ``"logistic"``.
 
     """
     chunk_file_name = build_chunk_file_name(chunk_payload.chunk_identifier)
@@ -277,14 +265,14 @@ def write_chunk_to_disk(
     temporary_path = chunk_file_path.with_suffix(".arrow.tmp")
     output_frame = build_output_frame_from_payload(chunk_payload)
     cast_output_frame = cast_frame_to_schema(output_frame, association_mode)
-    cast_output_frame.write_ipc(temporary_path, compression=OUTPUT_COMPRESSION_CODEC.value)
+    cast_output_frame.write_ipc(temporary_path, compression=OUTPUT_COMPRESSION_CODEC)
     temporary_path.replace(chunk_file_path)
 
 
 def run_background_writer(
     work_queue: queue.Queue[ChunkPayload | None],
     chunks_directory: Path,
-    association_mode: AssociationMode,
+    association_mode: str,
     error_container: list[BaseException],
 ) -> None:
     """Background thread loop that drains the work queue and writes chunks.
@@ -296,7 +284,7 @@ def run_background_writer(
     Args:
         work_queue: Bounded queue of chunk payloads (``None`` = shutdown).
         chunks_directory: Target directory for Arrow IPC files.
-        association_mode: Association mode enum value.
+        association_mode: Either ``"linear"`` or ``"logistic"``.
         error_container: Mutable list where a caught exception is appended.
 
     """
@@ -313,7 +301,7 @@ def run_background_writer(
 def persist_chunked_results(
     frame_iterator: Iterator[LinearChunkAccumulator] | Iterator[LogisticChunkAccumulator],
     output_run_paths: OutputRunPaths,
-    association_mode: AssociationMode,
+    association_mode: str,
     *,
     writer_queue_depth: int = DEFAULT_WRITER_QUEUE_DEPTH,
     writer_timeout_seconds: float = DEFAULT_WRITER_TIMEOUT_SECONDS,
@@ -327,7 +315,7 @@ def persist_chunked_results(
     Args:
         frame_iterator: Iterator yielding chunk accumulators from the engine.
         output_run_paths: Resolved output run paths.
-        association_mode: Association mode enum value.
+        association_mode: Either ``"linear"`` or ``"logistic"``.
         writer_queue_depth: Maximum queued chunks before backpressure.
         writer_timeout_seconds: Maximum wait when placing a chunk on the queue.
 
@@ -375,13 +363,13 @@ def persist_chunked_results(
 
 def finalize_chunks_to_parquet(
     output_run_paths: OutputRunPaths,
-    association_mode: AssociationMode,
+    association_mode: str,
 ) -> Path:
     """Compact committed Arrow chunk files into a single compressed Parquet file.
 
     Args:
         output_run_paths: Run paths containing the chunks directory.
-        association_mode: Association mode enum value.
+        association_mode: Either ``"linear"`` or ``"logistic"``.
 
     Returns:
         Path to the finalized Parquet file.
@@ -393,12 +381,12 @@ def finalize_chunks_to_parquet(
     if chunk_file_paths:
         pl.scan_ipc(chunk_file_paths, cache=False, rechunk=False).sink_parquet(
             temporary_parquet_path,
-            compression=OUTPUT_COMPRESSION_CODEC.value,
+            compression=OUTPUT_COMPRESSION_CODEC,
         )
     else:
         pl.DataFrame(schema=get_output_schema(association_mode)).write_parquet(
             temporary_parquet_path,
-            compression=OUTPUT_COMPRESSION_CODEC.value,
+            compression=OUTPUT_COMPRESSION_CODEC,
         )
     temporary_parquet_path.replace(final_parquet_path)
     return final_parquet_path

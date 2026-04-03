@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -18,8 +18,7 @@ AGE_STANDARD_DEVIATION_YEARS = 10
 MINIMUM_AGE_YEARS = 18
 
 
-@dataclass(frozen=True)
-class PhenotypeTables:
+class PhenotypeTables(NamedTuple):
     """Generated continuous, binary, and covariate tables."""
 
     continuous_table: pd.DataFrame

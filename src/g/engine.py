@@ -29,7 +29,6 @@ from g.io.source import (
     load_aligned_sample_data_from_source,
     open_genotype_reader,
 )
-from g.types import GenotypeSourceFormat
 from g.models import (
     GenotypeChunk,
     LinearAssociationChunkResult,
@@ -45,7 +44,7 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
 
-@dataclass(frozen=True)
+@dataclass
 class LinearChunkAccumulator:
     """Accumulator for linear regression chunk results (JAX arrays, device memory).
 
@@ -63,7 +62,7 @@ class LinearChunkAccumulator:
     linear_result: LinearAssociationChunkResult
 
 
-@dataclass(frozen=True)
+@dataclass
 class LogisticChunkAccumulator:
     """Accumulator for logistic regression chunk results (JAX arrays, device memory).
 
@@ -541,7 +540,7 @@ def iter_linear_output_frames(
             raise ValueError(message)
         resolved_genotype_source_config = build_plink_source_config(bed_prefix)
     genotype_reader = None
-    if resolved_genotype_source_config.source_format == GenotypeSourceFormat.BGEN:
+    if resolved_genotype_source_config.source_format == "bgen":
         genotype_reader = open_genotype_reader(resolved_genotype_source_config)
     reader_context = genotype_reader if genotype_reader is not None else nullcontext()
 
@@ -614,7 +613,7 @@ def iter_logistic_output_frames(
             raise ValueError(message)
         resolved_genotype_source_config = build_plink_source_config(bed_prefix)
     genotype_reader = None
-    if resolved_genotype_source_config.source_format == GenotypeSourceFormat.BGEN:
+    if resolved_genotype_source_config.source_format == "bgen":
         genotype_reader = open_genotype_reader(resolved_genotype_source_config)
     reader_context = genotype_reader if genotype_reader is not None else nullcontext()
 

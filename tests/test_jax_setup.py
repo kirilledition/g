@@ -14,7 +14,6 @@ from g.jax_setup import (
     configure_jax_device,
     resolve_jax_compilation_cache_directory,
 )
-from g.types import Device
 
 
 def test_resolve_jax_cache_uses_jax_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -73,14 +72,21 @@ def test_resolve_jax_cache_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_configure_jax_device_gpu() -> None:
     """Ensure configuring for GPU sets an empty platforms string for auto-detection."""
     with patch("g.jax_setup.jax.config.update") as mock_update:
-        configure_jax_device(Device.GPU)
+        configure_jax_device("gpu")
         mock_update.assert_called_once_with("jax_platforms", "")
 
 
 def test_configure_jax_device_cpu() -> None:
     """Ensure configuring for CPU explicitly sets the CPU platform."""
     with patch("g.jax_setup.jax.config.update") as mock_update:
-        configure_jax_device(Device.CPU)
+        configure_jax_device("cpu")
+        mock_update.assert_called_once_with("jax_platforms", "cpu")
+
+
+def test_configure_jax_device_unknown_fallback() -> None:
+    """Ensure configuring for an unknown device falls back to CPU."""
+    with patch("g.jax_setup.jax.config.update") as mock_update:
+        configure_jax_device("tpu")
         mock_update.assert_called_once_with("jax_platforms", "cpu")
 
 
