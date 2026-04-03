@@ -39,12 +39,6 @@ class SampleIdentifierSource(StrEnum):
     GENERATED = "generated"
 
 
-class OutputCompressionCodec(StrEnum):
-    """Compression codecs used for persisted output artifacts."""
-
-    ZSTD = "zstd"
-
-
 class ArrayMemoryOrder(StrEnum):
     """NumPy array memory layout selector."""
 

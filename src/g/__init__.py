@@ -11,7 +11,6 @@ if TYPE_CHECKING:
         AssociationMode,
         Device,
         GenotypeSourceFormat,
-        OutputCompressionCodec,
         OutputMode,
         SampleIdentifierSource,
     )
@@ -32,7 +31,6 @@ def __getattr__(name: str) -> Any:
         "AssociationMode",
         "Device",
         "GenotypeSourceFormat",
-        "OutputCompressionCodec",
         "OutputMode",
         "SampleIdentifierSource",
     }:
@@ -51,7 +49,6 @@ __all__ = [
     "GenotypeSourceFormat",
     "LinearConfig",
     "LogisticConfig",
-    "OutputCompressionCodec",
     "OutputMode",
     "RunArtifacts",
     "SampleIdentifierSource",

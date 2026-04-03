@@ -25,6 +25,8 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 * **Rule:** 100% Type Annotation Coverage.  
 * Types must pass the **ty** type checker without implicit Any fallbacks. Use exact types (e.g., jax.Array, pl.DataFrame).
 * **Rule:** Finite sets of string values must use `enum.StrEnum`, not `str` annotations, `Literal[...]`, or ad-hoc validation sets. This applies to configuration values, modes, formats, codecs, CLI choices, and any other closed choice domain.
+* **Rule:** Define an enum in the narrowest valid scope. If it is used in exactly one production file, define it in that file. If it is used in more than one production file, define it in `src/g/types.py`.
+* **Rule:** Test-only enums should not live in production modules. If a test-only enum is used in one test file, define it in that test file. If it is shared across multiple test files, define it in `tests/types.py`.
 
 ### **Return Types & Structured Data**
 

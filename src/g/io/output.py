@@ -7,6 +7,7 @@ import queue
 import re
 import threading
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
 import polars as pl
@@ -17,7 +18,7 @@ from g.engine import (
     LogisticChunkAccumulator,
     build_chunk_payload,
 )
-from g.types import AssociationMode, OutputCompressionCodec
+from g.types import AssociationMode
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -26,6 +27,12 @@ if TYPE_CHECKING:
     from g.engine import ChunkPayload
 
 logger = logging.getLogger(__name__)
+
+
+class OutputCompressionCodec(StrEnum):
+    """Compression codecs used for persisted output artifacts."""
+
+    ZSTD = "zstd"
 
 OUTPUT_COMPRESSION_CODEC: Final[OutputCompressionCodec] = OutputCompressionCodec.ZSTD
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)\.arrow$")
