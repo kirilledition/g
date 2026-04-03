@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import jax
@@ -12,17 +13,16 @@ import polars as pl
 from bed_reader import open_bed, read_f32
 from bed_reader._open_bed import get_num_threads
 
-from g.io.genotype_processing import (
-    build_genotype_chunk,
-    build_linear_genotype_chunk,
-    preprocess_genotype_matrix,
-    preprocess_genotype_matrix_arrays,
+from g.io.genotype_processing import build_genotype_chunk, preprocess_genotype_matrix
+from g.io.reader import (
+    iter_genotype_chunks_from_reader,
+    iter_linear_genotype_chunks_from_reader,
+    validate_sample_order,
 )
 from g.io.tabular import load_family_table
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from g.models import GenotypeChunk, LinearGenotypeChunk
 
@@ -34,6 +34,87 @@ VARIANT_TABLE_COLUMNS = (
     "allele_one",
     "allele_two",
 )
+
+__all__ = (
+    "PlinkReader",
+    "build_genotype_chunk",
+    "iter_genotype_chunks",
+    "iter_linear_genotype_chunks",
+    "load_variant_table",
+    "preprocess_genotype_matrix",
+    "read_bed_chunk",
+    "read_bed_chunk_host",
+    "validate_bed_sample_order",
+)
+
+
+class PlinkReader:
+    """PLINK reader exposing a bed-reader-like public API."""
+
+    def __init__(self, bed_prefix: Path | str) -> None:
+        """Open one PLINK BED dataset."""
+        self.bed_prefix = Path(bed_prefix)
+        self.bed_path = self.bed_prefix.with_suffix(".bed")
+        self.bed_handle = open_bed(str(self.bed_path))
+        self.variant_table = load_variant_table(self.bed_prefix)
+        self.num_threads = get_num_threads(getattr(self.bed_handle, "_num_threads", None))
+
+    @property
+    def sample_count(self) -> int:
+        """Return the number of samples."""
+        return int(self.bed_handle.iid_count)
+
+    @property
+    def variant_count(self) -> int:
+        """Return the number of variants."""
+        return int(self.bed_handle.sid_count)
+
+    @property
+    def samples(self) -> npt.NDArray[np.str_]:
+        """Return sample identifiers in file order."""
+        return np.asarray(self.bed_handle.iid, dtype=np.str_)
+
+    def read(
+        self,
+        index: object = None,
+        dtype: type[np.float32] | type[np.float64] = np.float32,
+        order: str = "C",
+    ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
+        """Read PLINK genotypes with the same calling convention as `bed_handle.read`."""
+        if (
+            dtype is np.float32
+            and order == "C"
+            and isinstance(index, tuple)
+            and len(index) == 2
+            and isinstance(index[0], np.ndarray)
+            and isinstance(index[1], slice)
+            and (index[1].step is None or index[1].step == 1)
+        ):
+            variant_start = 0 if index[1].start is None else index[1].start
+            variant_stop = self.variant_count if index[1].stop is None else index[1].stop
+            return read_bed_chunk_host(
+                bed_handle=self.bed_handle,
+                bed_path=self.bed_path,
+                sample_index_array=np.ascontiguousarray(index[0], dtype=np.intp),
+                variant_start=variant_start,
+                variant_stop=variant_stop,
+                num_threads=self.num_threads,
+            )
+        genotype_matrix = self.bed_handle.read(index=index, dtype=dtype, order=order)
+        return np.asarray(genotype_matrix, dtype=dtype, order=order)
+
+    def close(self) -> None:
+        """Release the underlying BED handle."""
+        self.bed_handle.__exit__(None, None, None)
+
+    def __enter__(self) -> PlinkReader:
+        """Return the open reader in a context manager."""
+        return self
+
+    def __exit__(self, exception_type: object, exception_value: object, traceback: object) -> None:
+        """Close the reader when leaving a context manager."""
+        del exception_type, exception_value, traceback
+        self.close()
 
 
 def read_bed_chunk_host(
@@ -146,10 +227,15 @@ def validate_bed_sample_order(
 
     """
     family_table = load_family_table(bed_prefix.with_suffix(".fam"))
-    observed_individual_identifiers = family_table.get_column("individual_identifier").to_numpy()[sample_index_array]
-    if not np.array_equal(observed_individual_identifiers, expected_individual_identifiers):
-        message = "BED sample order does not match the aligned phenotype/covariate order."
-        raise ValueError(message)
+    validate_sample_order(
+        observed_individual_identifiers=np.asarray(
+            family_table.get_column("individual_identifier").cast(pl.String).to_numpy(),
+            dtype=np.str_,
+        ),
+        sample_index_array=np.asarray(sample_index_array, dtype=np.intp),
+        expected_individual_identifiers=np.asarray(expected_individual_identifiers, dtype=np.str_),
+        source_name="BED",
+    )
 
 
 def iter_genotype_chunks(
@@ -179,51 +265,16 @@ def iter_genotype_chunks(
         ValueError: If BED sample order does not match the aligned sample order.
 
     """
-    variant_table = load_variant_table(bed_prefix)
-    total_variant_count = variant_table.height if variant_limit is None else min(variant_limit, variant_table.height)
-    if total_variant_count == 0:
-        return
-    bed_path = bed_prefix.with_suffix(".bed")
-    sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
-    chromosome_values = variant_table.get_column("chromosome").cast(pl.String).to_numpy()
-    variant_identifier_values = variant_table.get_column("variant_identifier").cast(pl.String).to_numpy()
-    position_values = variant_table.get_column("position").cast(pl.Int64).to_numpy()
-    allele_one_values = variant_table.get_column("allele_one").cast(pl.String).to_numpy()
-    allele_two_values = variant_table.get_column("allele_two").cast(pl.String).to_numpy()
-
-    validate_bed_sample_order(
-        bed_prefix=bed_prefix,
-        sample_index_array=sample_index_array,
-        expected_individual_identifiers=expected_individual_identifiers,
-    )
-
-    with open_bed(str(bed_path)) as bed_handle:
-        num_threads = get_num_threads(getattr(bed_handle, "_num_threads", None))
-
-        for variant_start in range(0, total_variant_count, chunk_size):
-            variant_stop = min(total_variant_count, variant_start + chunk_size)
-            genotype_matrix_host = read_bed_chunk_host(
-                bed_handle=bed_handle,
-                bed_path=bed_path,
-                sample_index_array=sample_index_array,
-                variant_start=variant_start,
-                variant_stop=variant_stop,
-                num_threads=num_threads,
-            )
-            preprocessed_chunk_data = preprocess_genotype_matrix(
-                jax.device_put(genotype_matrix_host),
-                include_missing_value_flag=include_missing_value_flag,
-            )
-            yield build_genotype_chunk(
-                preprocessed_chunk_data=preprocessed_chunk_data,
-                chromosome_values=chromosome_values,
-                variant_identifier_values=variant_identifier_values,
-                position_values=position_values,
-                allele_one_values=allele_one_values,
-                allele_two_values=allele_two_values,
-                variant_start=variant_start,
-                variant_stop=variant_stop,
-            )
+    with PlinkReader(bed_prefix) as plink_reader:
+        yield from iter_genotype_chunks_from_reader(
+            genotype_reader=plink_reader,
+            source_name="BED",
+            sample_indices=sample_indices,
+            expected_individual_identifiers=expected_individual_identifiers,
+            chunk_size=chunk_size,
+            variant_limit=variant_limit,
+            include_missing_value_flag=include_missing_value_flag,
+        )
 
 
 def iter_linear_genotype_chunks(
@@ -234,48 +285,12 @@ def iter_linear_genotype_chunks(
     variant_limit: int | None = None,
 ) -> Iterator[LinearGenotypeChunk]:
     """Yield linear-regression genotype chunks without missingness bookkeeping."""
-    variant_table = load_variant_table(bed_prefix)
-    total_variant_count = variant_table.height if variant_limit is None else min(variant_limit, variant_table.height)
-    bed_path = bed_prefix.with_suffix(".bed")
-    sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
-    chromosome_values = variant_table.get_column("chromosome").cast(pl.String).to_numpy()
-    variant_identifier_values = variant_table.get_column("variant_identifier").cast(pl.String).to_numpy()
-    position_values = variant_table.get_column("position").cast(pl.Int64).to_numpy()
-    allele_one_values = variant_table.get_column("allele_one").cast(pl.String).to_numpy()
-    allele_two_values = variant_table.get_column("allele_two").cast(pl.String).to_numpy()
-
-    validate_bed_sample_order(
-        bed_prefix=bed_prefix,
-        sample_index_array=sample_index_array,
-        expected_individual_identifiers=expected_individual_identifiers,
-    )
-
-    with open_bed(str(bed_path)) as bed_handle:
-        num_threads = get_num_threads(getattr(bed_handle, "_num_threads", None))
-
-        for variant_start in range(0, total_variant_count, chunk_size):
-            variant_stop = min(total_variant_count, variant_start + chunk_size)
-            with jax.profiler.TraceAnnotation("linear.read_bed_chunk_host"):
-                genotype_matrix_host = read_bed_chunk_host(
-                    bed_handle=bed_handle,
-                    bed_path=bed_path,
-                    sample_index_array=sample_index_array,
-                    variant_start=variant_start,
-                    variant_stop=variant_stop,
-                    num_threads=num_threads,
-                )
-            with jax.profiler.TraceAnnotation("linear.device_put_genotypes"):
-                genotype_matrix_device = jax.device_put(genotype_matrix_host)
-            with jax.profiler.TraceAnnotation("linear.preprocess_genotypes"):
-                preprocessed_genotype_arrays = preprocess_genotype_matrix_arrays(genotype_matrix_device)
-            with jax.profiler.TraceAnnotation("linear.build_chunk"):
-                yield build_linear_genotype_chunk(
-                    preprocessed_genotype_arrays=preprocessed_genotype_arrays,
-                    chromosome_values=chromosome_values,
-                    variant_identifier_values=variant_identifier_values,
-                    position_values=position_values,
-                    allele_one_values=allele_one_values,
-                    allele_two_values=allele_two_values,
-                    variant_start=variant_start,
-                    variant_stop=variant_stop,
-                )
+    with PlinkReader(bed_prefix) as plink_reader:
+        yield from iter_linear_genotype_chunks_from_reader(
+            genotype_reader=plink_reader,
+            source_name="BED",
+            sample_indices=sample_indices,
+            expected_individual_identifiers=expected_individual_identifiers,
+            chunk_size=chunk_size,
+            variant_limit=variant_limit,
+        )

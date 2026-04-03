@@ -1,19 +1,181 @@
+from __future__ import annotations
+
+import importlib
+import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from cbgen import example
 
-from g.io.bgen import iter_genotype_chunks, iter_linear_genotype_chunks, validate_bgen_sample_order
+if importlib.util.find_spec("cbgen") is None or importlib.util.find_spec("bgen_reader") is None:
+    pytest.skip("BGEN dependencies are unavailable in this environment.", allow_module_level=True)
+
+example = importlib.import_module("cbgen").example
+
+from g.io.bgen import (  # noqa: E402
+    build_bgen_variant_table,
+    convert_probability_tensor_to_dosage,
+    iter_genotype_chunks,
+    iter_linear_genotype_chunks,
+    load_bgen_sample_table,
+    open_bgen,
+    validate_bgen_sample_order,
+)
 
 
-def test_iter_genotype_chunks():
+def write_sample_file(sample_path: Path, sample_identifiers: list[str]) -> None:
+    sample_lines = ["ID", "0"]
+    sample_lines.extend(sample_identifier for sample_identifier in sample_identifiers)
+    sample_path.write_text("\n".join(sample_lines) + "\n", encoding="utf-8")
+
+
+def test_convert_probability_tensor_to_dosage_for_unphased_layout() -> None:
+    probability_tensor = np.array(
+        [
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [[0.0, 0.0, 1.0], [np.nan, np.nan, np.nan]],
+        ],
+        dtype=np.float32,
+    )
+
+    dosage_matrix = convert_probability_tensor_to_dosage(
+        probability_tensor=probability_tensor,
+        combination_count=3,
+        is_phased=False,
+        dtype=np.float32,
+        order="C",
+    )
+
+    expected_dosage_matrix = np.array([[0.0, 1.0], [2.0, np.nan]], dtype=np.float32)
+    np.testing.assert_allclose(dosage_matrix, expected_dosage_matrix, equal_nan=True)
+
+
+def test_convert_probability_tensor_to_dosage_for_phased_layout() -> None:
+    probability_tensor = np.array(
+        [
+            [[1.0, 0.0, 1.0, 0.0], [0.0, 1.0, 1.0, 0.0]],
+            [[1.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0]],
+        ],
+        dtype=np.float32,
+    )
+
+    dosage_matrix = convert_probability_tensor_to_dosage(
+        probability_tensor=probability_tensor,
+        combination_count=4,
+        is_phased=True,
+        dtype=np.float32,
+        order="C",
+    )
+
+    expected_dosage_matrix = np.array([[0.0, 1.0], [1.0, 2.0]], dtype=np.float32)
+    np.testing.assert_allclose(dosage_matrix, expected_dosage_matrix)
+
+
+def test_convert_probability_tensor_to_dosage_rejects_unsupported_layout() -> None:
+    probability_tensor = np.zeros((2, 2, 5), dtype=np.float32)
+
+    with pytest.raises(ValueError, match="Unsupported BGEN probability layout"):
+        convert_probability_tensor_to_dosage(
+            probability_tensor=probability_tensor,
+            combination_count=5,
+            is_phased=False,
+            dtype=np.float32,
+            order="C",
+        )
+
+
+def test_build_bgen_variant_table_counts_last_allele() -> None:
+    mock_bgen_handle = SimpleNamespace(
+        allele_ids=np.array(["A,G", "C,T"], dtype=np.str_),
+        ids=np.array(["variant_1", "variant_2"], dtype=np.str_),
+        rsids=np.array(["rs1", ""], dtype=np.str_),
+        chromosomes=np.array(["1", "2"], dtype=np.str_),
+        positions=np.array([123, 456], dtype=np.int64),
+        nvariants=2,
+    )
+
+    variant_table = build_bgen_variant_table(mock_bgen_handle)
+
+    assert variant_table.get_column("variant_identifier").to_list() == ["rs1", "variant_2"]
+    assert variant_table.get_column("allele_one").to_list() == ["G", "T"]
+    assert variant_table.get_column("allele_two").to_list() == ["A", "C"]
+
+
+def test_open_bgen_reads_phased_haplotype_example_as_dosage() -> None:
     bgen_path = Path(example.get("haplotypes.bgen"))
 
-    # haplotypes.bgen has 4 samples
-    sample_indices = np.arange(4)
-    # The sample names are sample_0, sample_1, ...
-    expected_ids = np.array([f"sample_{i}" for i in range(4)], dtype=object)
+    with open_bgen(bgen_path) as bgen_reader:
+        genotype_matrix = bgen_reader.read(dtype=np.float32, order="C")
+
+    expected_genotype_matrix = np.array(
+        [
+            [0.0, 1.0, 1.0, 2.0],
+            [1.0, 1.0, 2.0, 0.0],
+            [1.0, 2.0, 0.0, 1.0],
+            [2.0, 0.0, 1.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    np.testing.assert_allclose(genotype_matrix, expected_genotype_matrix)
+
+
+def test_open_bgen_uses_external_sample_file(tmp_path: Path) -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+    sample_path = tmp_path / "custom_ids.sample"
+    custom_identifiers = ["person_a", "person_b", "person_c", "person_d"]
+    write_sample_file(sample_path, custom_identifiers)
+
+    with open_bgen(bgen_path, sample_path=sample_path) as bgen_reader:
+        assert bgen_reader.sample_identifier_source == "external"
+        assert bgen_reader.samples.tolist() == custom_identifiers
+
+
+def test_load_bgen_sample_table_uses_embedded_samples() -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+
+    sample_table = load_bgen_sample_table(bgen_path)
+
+    assert sample_table.get_column("individual_identifier").to_list() == [
+        "sample_0",
+        "sample_1",
+        "sample_2",
+        "sample_3",
+    ]
+
+
+def test_load_bgen_sample_table_uses_external_sample_file(tmp_path: Path) -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+    sample_path = tmp_path / "custom_ids.sample"
+    custom_identifiers = ["person_a", "person_b", "person_c", "person_d"]
+    write_sample_file(sample_path, custom_identifiers)
+
+    sample_table = load_bgen_sample_table(bgen_path, sample_path)
+
+    assert sample_table.get_column("family_identifier").to_list() == custom_identifiers
+    assert sample_table.get_column("individual_identifier").to_list() == custom_identifiers
+
+
+def test_load_bgen_sample_table_requires_sample_file_when_identifiers_are_missing() -> None:
+    bgen_path = Path(example.get("complex.23bits.no.samples.bgen"))
+
+    with pytest.raises(ValueError, match=r"does not contain samples and no \.sample file was found"):
+        load_bgen_sample_table(bgen_path)
+
+
+def test_validate_bgen_sample_order_failure() -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+    sample_indices = np.arange(4, dtype=np.intp)
+    expected_identifiers = np.array(["wrong1", "wrong2", "wrong3", "wrong4"], dtype=np.str_)
+
+    with pytest.raises(ValueError, match="BGEN sample order does not match"), open_bgen(bgen_path) as bgen_reader:
+        validate_bgen_sample_order(bgen_reader, sample_indices, expected_identifiers, bgen_path)
+
+
+def test_iter_genotype_chunks() -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+    sample_indices = np.arange(4, dtype=np.int64)
+    expected_ids = np.array([f"sample_{sample_index}" for sample_index in range(4)], dtype=np.str_)
 
     chunks = list(
         iter_genotype_chunks(
@@ -21,23 +183,21 @@ def test_iter_genotype_chunks():
             sample_indices=sample_indices,
             expected_individual_identifiers=expected_ids,
             chunk_size=2,
-            variant_limit=10,
+            variant_limit=4,
         )
     )
 
-    # 4 variants total, chunk size 2 -> 2 chunks
     assert len(chunks) == 2
-    for chunk in chunks:
-        # shape is (num_samples, chunk_size) -> (4, 2)
-        assert chunk.genotypes.shape == (4, 2)
-        assert chunk.metadata.chromosome.shape == (2,)
+    assert chunks[0].genotypes.shape == (4, 2)
+    assert chunks[0].metadata.allele_one.tolist() == ["G", "G"]
+    assert chunks[0].metadata.allele_two.tolist() == ["A", "A"]
+    np.testing.assert_allclose(chunks[0].allele_one_frequency, np.array([0.5, 0.5], dtype=np.float32))
 
 
-def test_iter_linear_genotype_chunks():
+def test_iter_linear_genotype_chunks() -> None:
     bgen_path = Path(example.get("haplotypes.bgen"))
-
-    sample_indices = np.arange(4)
-    expected_ids = np.array([f"sample_{i}" for i in range(4)], dtype=object)
+    sample_indices = np.arange(4, dtype=np.int64)
+    expected_ids = np.array([f"sample_{sample_index}" for sample_index in range(4)], dtype=np.str_)
 
     chunks = list(
         iter_linear_genotype_chunks(
@@ -45,24 +205,10 @@ def test_iter_linear_genotype_chunks():
             sample_indices=sample_indices,
             expected_individual_identifiers=expected_ids,
             chunk_size=3,
-            variant_limit=7,
+            variant_limit=4,
         )
     )
 
     assert len(chunks) == 2
     assert chunks[0].genotypes.shape == (4, 3)
     assert chunks[1].genotypes.shape == (4, 1)
-
-
-def test_validate_bgen_sample_order_failure():
-    bgen_path = Path(example.get("haplotypes.bgen"))
-    sample_indices = np.arange(4)
-    # Give wrong IDs to test validation error
-    expected_ids = np.array(["wrong1", "wrong2", "wrong3", "wrong4"], dtype=object)
-
-    with pytest.raises(ValueError, match="BGEN sample order does not match"):
-        # We need to call it inside a context that opens the bgen file
-        from bgen_reader import open_bgen
-
-        with open_bgen(str(bgen_path), verbose=False) as bgen_handle:
-            validate_bgen_sample_order(bgen_handle, sample_indices, expected_ids, bgen_path)

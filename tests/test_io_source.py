@@ -8,11 +8,15 @@ import numpy as np
 import pytest
 
 from g.io.source import (
+    GenotypeSourceConfig,
     build_bgen_source_config,
     build_genotype_source_signature_paths,
     build_plink_source_config,
     iter_genotype_chunks_from_source,
+    iter_linear_genotype_chunks_from_source,
+    load_aligned_sample_data_from_source,
     resolve_genotype_source_config,
+    validate_genotype_source_config,
 )
 from g.models import GenotypeChunk, VariantMetadata
 
@@ -53,6 +57,7 @@ def test_build_genotype_source_signature_paths_supports_both_formats() -> None:
     assert plink_paths == (Path("dataset.bed"), Path("dataset.bim"), Path("dataset.fam"))
     assert bgen_paths == (Path("dataset.bgen"),)
 
+
 def test_iter_genotype_chunks_from_source_dispatches_to_bgen_reader() -> None:
     """Ensure the shared source iterator dispatches through the BGEN backend."""
     bgen_source_config = build_bgen_source_config(Path("study.bgen"))
@@ -70,4 +75,127 @@ def test_iter_genotype_chunks_from_source_dispatches_to_bgen_reader() -> None:
         )
 
     assert [chunk.metadata.variant_identifiers.tolist() for chunk in chunks] == [["variant0"]]
+    mock_iter_bgen.assert_called_once()
+
+
+def test_iter_genotype_chunks_from_source_dispatches_to_plink_reader() -> None:
+    """Ensure the shared source iterator dispatches through the PLINK backend."""
+    plink_source_config = build_plink_source_config(Path("study"))
+    expected_chunk = build_chunk(0)
+
+    with patch("g.io.source.iter_plink_genotype_chunks", return_value=iter([expected_chunk])) as mock_iter_plink:
+        chunks = list(
+            iter_genotype_chunks_from_source(
+                genotype_source_config=plink_source_config,
+                sample_indices=np.array([0, 1], dtype=np.int64),
+                expected_individual_identifiers=np.array(["sample0", "sample1"]),
+                chunk_size=64,
+                variant_limit=1,
+            )
+        )
+
+    assert [chunk.metadata.variant_identifiers.tolist() for chunk in chunks] == [["variant0"]]
+    mock_iter_plink.assert_called_once()
+
+
+def test_validate_genotype_source_config_rejects_unknown_format() -> None:
+    """Ensure unsupported source formats fail fast."""
+    with pytest.raises(ValueError, match="Unsupported genotype source format"):
+        validate_genotype_source_config(GenotypeSourceConfig(source_format="vcf", source_path=Path("study.vcf")))
+
+
+def test_load_aligned_sample_data_from_source_dispatches_to_plink_loader() -> None:
+    """Ensure sample loading uses the PLINK backend for PLINK configs."""
+    plink_source_config = build_plink_source_config(Path("study"))
+    expected_aligned_sample_data = object()
+
+    with patch("g.io.source.load_aligned_sample_data", return_value=expected_aligned_sample_data) as mock_load:
+        aligned_sample_data = load_aligned_sample_data_from_source(
+            genotype_source_config=plink_source_config,
+            phenotype_path=Path("pheno.tsv"),
+            phenotype_name="trait",
+            covariate_path=Path("covar.tsv"),
+            covariate_names=("age",),
+            is_binary_trait=False,
+        )
+
+    assert aligned_sample_data is expected_aligned_sample_data
+    mock_load.assert_called_once()
+
+
+def test_load_aligned_sample_data_from_source_dispatches_to_bgen_loader() -> None:
+    """Ensure sample loading uses embedded BGEN sample identifiers for BGEN configs."""
+    bgen_source_config = build_bgen_source_config(Path("study.bgen"))
+    sample_table = object()
+    expected_aligned_sample_data = object()
+
+    with (
+        patch("g.io.source.load_bgen_sample_table", return_value=sample_table) as mock_load_bgen_sample_table,
+        patch(
+            "g.io.source.load_aligned_sample_data_from_individual_identifier_table",
+            return_value=expected_aligned_sample_data,
+        ) as mock_load_from_sample_table,
+    ):
+        aligned_sample_data = load_aligned_sample_data_from_source(
+            genotype_source_config=bgen_source_config,
+            phenotype_path=Path("pheno.tsv"),
+            phenotype_name="trait",
+            covariate_path=None,
+            covariate_names=None,
+            is_binary_trait=True,
+        )
+
+    assert aligned_sample_data is expected_aligned_sample_data
+    mock_load_bgen_sample_table.assert_called_once_with(Path("study.bgen"), None)
+    mock_load_from_sample_table.assert_called_once()
+
+
+def test_build_bgen_source_config_preserves_sample_path() -> None:
+    """Ensure BGEN source configs keep the optional sample-file path."""
+    genotype_source_config = build_bgen_source_config(Path("study.bgen"), sample_path=Path("study.sample"))
+
+    assert genotype_source_config.sample_path == Path("study.sample")
+
+
+def test_resolve_genotype_source_config_rejects_sample_for_plink() -> None:
+    """Ensure explicit sample files are only accepted for BGEN configs."""
+    with pytest.raises(ValueError, match="can only be provided together with `bgen`"):
+        resolve_genotype_source_config("dataset", None, "dataset.sample")
+
+
+def test_iter_linear_genotype_chunks_from_source_dispatches_to_plink_reader() -> None:
+    """Ensure the linear source iterator dispatches through the PLINK backend."""
+    plink_source_config = build_plink_source_config(Path("study"))
+
+    with patch("g.io.source.iter_plink_linear_genotype_chunks", return_value=iter(())) as mock_iter_plink:
+        linear_chunks = list(
+            iter_linear_genotype_chunks_from_source(
+                genotype_source_config=plink_source_config,
+                sample_indices=np.array([0, 1], dtype=np.int64),
+                expected_individual_identifiers=np.array(["sample0", "sample1"]),
+                chunk_size=64,
+                variant_limit=1,
+            )
+        )
+
+    assert linear_chunks == []
+    mock_iter_plink.assert_called_once()
+
+
+def test_iter_linear_genotype_chunks_from_source_dispatches_to_bgen_reader() -> None:
+    """Ensure the linear source iterator dispatches through the BGEN backend."""
+    bgen_source_config = build_bgen_source_config(Path("study.bgen"))
+
+    with patch("g.io.source.iter_bgen_linear_genotype_chunks", return_value=iter(())) as mock_iter_bgen:
+        linear_chunks = list(
+            iter_linear_genotype_chunks_from_source(
+                genotype_source_config=bgen_source_config,
+                sample_indices=np.array([0, 1], dtype=np.int64),
+                expected_individual_identifiers=np.array(["sample0", "sample1"]),
+                chunk_size=64,
+                variant_limit=1,
+            )
+        )
+
+    assert linear_chunks == []
     mock_iter_bgen.assert_called_once()
