@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from collections.abc import Iterator
+
 from g.io.prefetch import prefetch_iterator_values
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
 from g.models import GenotypeChunk, VariantMetadata
 
 

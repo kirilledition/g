@@ -25,7 +25,3 @@
 ## 2026-03-30 - [Optimize Masked Computations using `jnp.einsum`]
 **Learning:** In the logistic regression computation, computing the cross-information matrices using `jnp.sum(A * B, axis=1)` creates large intermediate matrices before reduction, consuming memory and taking significantly longer to compile and execute under JAX JIT than fusing the operations via a tensor contraction like `jnp.einsum("ij,ij->i", A, B)`.
 **Action:** When row-wise sums of element-wise products occur, use `jnp.einsum("ij,ij->i", A, B)` rather than `jnp.sum(A * B, axis=1)` to avoid large intermediate matrix allocation and speed up JAX JIT execution.
-
-## 2026-04-03 - JAX XLA Reduction Performance Optimization
-**Learning:** In JAX/XLA, boolean or integer reductions along an axis (e.g., `jnp.sum(bool_matrix, axis=1, dtype=jnp.int32)`) are significantly slower than expected because they map to generic reduction kernels. Casting to `float32` and using a matrix-vector multiplication (`jnp.dot` with `jnp.ones`) can yield up to a 4-5x speedup by forcing XLA to use highly optimized BLAS GEMV primitives.
-**Action:** When performing row-wise or column-wise summations (like counting elements or applying boolean masks) in performance-critical code, replace `jnp.sum(..., axis=1)` with dot products using float arrays, then cast back to the desired dtype if needed.

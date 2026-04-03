@@ -1419,13 +1419,11 @@ def build_device_firth_batch_plan(
         constant_values=0,
     )
     active_mask_vector = jnp.arange(padded_variant_count, dtype=jnp.int32) < fallback_count
-    reshaped_mask = active_mask_vector.reshape((max_batch_count, FIRTH_BATCH_SIZE))
-
-    # Speeds up XLA execution by leveraging BLAS GEMV primitives instead of slower generic reduction kernels.
-    mask_float = reshaped_mask.astype(jnp.float32)
-    ones = jnp.ones(FIRTH_BATCH_SIZE, dtype=jnp.float32)
-    batch_active_count_vector = jnp.dot(mask_float, ones).astype(jnp.int32)
-
+    batch_active_count_vector = jnp.sum(
+        active_mask_vector.reshape((max_batch_count, FIRTH_BATCH_SIZE)),
+        axis=1,
+        dtype=jnp.int32,
+    )
     return (
         padded_index_vector.reshape((max_batch_count, FIRTH_BATCH_SIZE)),
         active_mask_vector.reshape((max_batch_count, FIRTH_BATCH_SIZE)),
@@ -1441,11 +1439,7 @@ def compute_batch_heuristic_count_vector(
     """Count heuristic-initialized lanes for each fallback batch."""
     batch_heuristic_mask_matrix = jnp.take(heuristic_firth_mask, fallback_index_matrix, axis=0)
     batch_heuristic_mask_matrix = batch_heuristic_mask_matrix & fallback_active_mask_matrix
-
-    # Speeds up XLA execution by leveraging BLAS GEMV primitives instead of slower generic reduction kernels.
-    mask_float = batch_heuristic_mask_matrix.astype(jnp.float32)
-    ones = jnp.ones(batch_heuristic_mask_matrix.shape[1], dtype=jnp.float32)
-    return jnp.dot(mask_float, ones).astype(jnp.int32)
+    return jnp.sum(batch_heuristic_mask_matrix, axis=1, dtype=jnp.int32)
 
 
 def resolve_firth_bucket_size(active_variant_count: int) -> int:

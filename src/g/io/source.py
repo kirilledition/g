@@ -63,7 +63,7 @@ def resolve_genotype_source_config(
         raise ValueError(message)
     if bfile is not None:
         return build_plink_source_config(bfile)
-    assert bgen is not None
+    assert bgen is not None, "Either bfile or bgen must be provided."
     return build_bgen_source_config(bgen)
 
 
