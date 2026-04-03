@@ -128,7 +128,7 @@ def test_concatenate_linear_results_single_chunk() -> None:
 def test_concatenate_linear_results_multiple_chunks() -> None:
     """Test concatenating multiple linear chunks."""
     acc1 = LinearChunkAccumulator(
-        metadata=VariantMetadata(
+        metadata=VariantMetadata(variant_start_index=0, variant_stop_index=1,
             chromosome=np.array(["1"]),
             variant_identifiers=np.array(["var1"]),
             position=np.array([100]),
@@ -146,7 +146,7 @@ def test_concatenate_linear_results_multiple_chunks() -> None:
         ),
     )
     acc2 = LinearChunkAccumulator(
-        metadata=VariantMetadata(
+        metadata=VariantMetadata(variant_start_index=0, variant_stop_index=1,
             chromosome=np.array(["2"]),
             variant_identifiers=np.array(["var2"]),
             position=np.array([200]),
@@ -212,7 +212,7 @@ def test_concatenate_logistic_results_single_chunk() -> None:
 def test_concatenate_logistic_results_multiple_chunks() -> None:
     """Test concatenating multiple logistic chunks."""
     acc1 = LogisticChunkAccumulator(
-        metadata=VariantMetadata(
+        metadata=VariantMetadata(variant_start_index=0, variant_stop_index=1,
             chromosome=np.array(["1"]),
             variant_identifiers=np.array(["var1"]),
             position=np.array([100]),
@@ -234,7 +234,7 @@ def test_concatenate_logistic_results_multiple_chunks() -> None:
         ),
     )
     acc2 = LogisticChunkAccumulator(
-        metadata=VariantMetadata(
+        metadata=VariantMetadata(variant_start_index=0, variant_stop_index=1,
             chromosome=np.array(["2"]),
             variant_identifiers=np.array(["var2"]),
             position=np.array([200]),
@@ -266,7 +266,7 @@ def test_concatenate_logistic_results_multiple_chunks() -> None:
 def test_write_frame_iterator_to_tsv_linear(tmp_path: Path) -> None:
     """Test writing linear results to TSV."""
     accumulator = LinearChunkAccumulator(
-        metadata=VariantMetadata(
+        metadata=VariantMetadata(variant_start_index=0, variant_stop_index=1,
             chromosome=np.array(["1"]),
             variant_identifiers=np.array(["var1"]),
             position=np.array([100]),
@@ -296,7 +296,7 @@ def test_write_frame_iterator_to_tsv_linear(tmp_path: Path) -> None:
 def test_write_frame_iterator_to_tsv_logistic(tmp_path: Path) -> None:
     """Test writing logistic results to TSV."""
     accumulator = LogisticChunkAccumulator(
-        metadata=VariantMetadata(
+        metadata=VariantMetadata(variant_start_index=0, variant_stop_index=1,
             chromosome=np.array(["1"]),
             variant_identifiers=np.array(["var1"]),
             position=np.array([100]),
@@ -349,7 +349,7 @@ def test_compute_logistic_association_with_missing_exclusion_no_missing() -> Non
         genotypes=jnp.array([[0.0, 1.0, 2.0], [1.0, 0.0, 1.0]]).T,
         missing_mask=jnp.array([[False, False], [False, False], [False, False]]),
         has_missing_values=False,
-        metadata=VariantMetadata(
+        metadata=VariantMetadata(variant_start_index=0, variant_stop_index=1,
             chromosome=np.array(["1", "2"]),
             variant_identifiers=np.array(["var1", "var2"]),
             position=np.array([100, 200]),
@@ -387,7 +387,7 @@ def test_compute_logistic_association_with_missing_exclusion_with_missing() -> N
         genotypes=jnp.array([[0.0, 1.0], [jnp.nan, 0.0], [2.0, 1.0]]),
         missing_mask=jnp.array([[False, False], [True, False], [False, False]]),
         has_missing_values=True,
-        metadata=VariantMetadata(
+        metadata=VariantMetadata(variant_start_index=0, variant_stop_index=1,
             chromosome=np.array(["1", "2"]),
             variant_identifiers=np.array(["var1", "var2"]),
             position=np.array([100, 200]),
