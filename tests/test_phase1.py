@@ -16,8 +16,7 @@ from g.engine import (
     run_linear_association,
     run_logistic_association,
 )
-from g.io.plink import iter_genotype_chunks
-from g.io.tabular import load_aligned_sample_data
+from g.io.plink import iter_genotype_chunks, load_aligned_sample_data
 from g.models import GenotypeChunk, VariantMetadata
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent

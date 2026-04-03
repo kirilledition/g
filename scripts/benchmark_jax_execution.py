@@ -33,10 +33,10 @@ from g.engine import (
 from g.io.plink import (
     iter_genotype_chunks,
     iter_linear_genotype_chunks,
+    load_aligned_sample_data,
     preprocess_genotype_matrix_arrays,
     read_bed_chunk_host,
 )
-from g.io.tabular import load_aligned_sample_data
 
 if TYPE_CHECKING:
     from g.models import GenotypeChunk, LinearGenotypeChunk

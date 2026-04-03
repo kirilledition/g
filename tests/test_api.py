@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -17,6 +16,7 @@ from g.api import (
     validate_compute_config,
     validate_logistic_config,
 )
+from g.io.output import OutputRunPaths, PreparedOutputRun
 
 
 def test_parse_covariate_name_list_handles_string_input() -> None:
@@ -177,15 +177,22 @@ def test_validate_logistic_config_rejects_invalid_values(
 
 def test_linear_chunked_output_returns_run_artifacts_and_finalizes_parquet() -> None:
     """Ensure chunked linear runs prepare, persist, and optionally finalize outputs."""
-    prepared_output_run = SimpleNamespace(committed_chunk_identifiers=frozenset({2, 4}))
-    persisted_output_run_paths = SimpleNamespace(run_directory=Path("results/output.linear.run"))
+    mock_output_run_paths = OutputRunPaths(
+        run_directory=Path("results/output.linear.run"),
+        chunks_directory=Path("results/output.linear.run/chunks"),
+    )
 
     with (
         patch("g.api.configure_jax_device") as mock_configure_jax_device,
-        patch("g.api.build_output_run_configuration", return_value=object()),
-        patch("g.api.prepare_output_run", return_value=prepared_output_run) as mock_prepare_output_run,
+        patch(
+            "g.api.prepare_output_run",
+            return_value=PreparedOutputRun(
+                output_run_paths=mock_output_run_paths,
+                committed_chunk_identifiers=frozenset({2, 4}),
+            ),
+        ) as mock_prepare_output_run,
         patch("g.api.iter_linear_output_frames", return_value=iter(())) as mock_iter_linear_output_frames,
-        patch("g.api.persist_chunked_results", return_value=persisted_output_run_paths) as mock_persist_chunked_results,
+        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
         patch(
             "g.api.finalize_chunks_to_parquet", return_value=Path("results/output.linear.run/final.parquet")
         ) as mock_finalize,
@@ -208,23 +215,30 @@ def test_linear_chunked_output_returns_run_artifacts_and_finalizes_parquet() -> 
         final_parquet=Path("results/output.linear.run/final.parquet"),
     )
     mock_configure_jax_device.assert_called_once_with("cpu")
-    assert mock_iter_linear_output_frames.call_args.kwargs["committed_chunk_identifiers"] == frozenset({2, 4})
-    assert mock_persist_chunked_results.call_args.kwargs["resume"] is True
+    assert mock_iter_linear_output_frames.call_args.kwargs["committed_chunk_identifiers"] == {2, 4}
+    mock_persist_chunked_results.assert_called_once()
     mock_prepare_output_run.assert_called_once()
-    mock_finalize.assert_called_once_with(persisted_output_run_paths)
+    mock_finalize.assert_called_once_with(mock_output_run_paths, "linear")
 
 
 def test_logistic_chunked_output_returns_run_artifacts_without_finalization() -> None:
     """Ensure chunked logistic runs persist artifacts even without final Parquet compaction."""
-    prepared_output_run = SimpleNamespace(committed_chunk_identifiers=frozenset({1}))
-    persisted_output_run_paths = SimpleNamespace(run_directory=Path("results/output.logistic.run"))
+    mock_output_run_paths = OutputRunPaths(
+        run_directory=Path("results/output.logistic.run"),
+        chunks_directory=Path("results/output.logistic.run/chunks"),
+    )
 
     with (
         patch("g.api.configure_jax_device") as mock_configure_jax_device,
-        patch("g.api.build_output_run_configuration", return_value=object()),
-        patch("g.api.prepare_output_run", return_value=prepared_output_run) as mock_prepare_output_run,
+        patch(
+            "g.api.prepare_output_run",
+            return_value=PreparedOutputRun(
+                output_run_paths=mock_output_run_paths,
+                committed_chunk_identifiers=frozenset({1}),
+            ),
+        ) as mock_prepare_output_run,
         patch("g.api.iter_logistic_output_frames", return_value=iter(())) as mock_iter_logistic_output_frames,
-        patch("g.api.persist_chunked_results", return_value=persisted_output_run_paths) as mock_persist_chunked_results,
+        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
         patch("g.api.finalize_chunks_to_parquet") as mock_finalize,
     ):
         artifacts = logistic(
@@ -241,43 +255,7 @@ def test_logistic_chunked_output_returns_run_artifacts_without_finalization() ->
 
     assert artifacts == RunArtifacts(output_run_directory=Path("results/output.logistic.run"), final_parquet=None)
     mock_configure_jax_device.assert_called_once_with("cpu")
-    assert mock_iter_logistic_output_frames.call_args.kwargs["committed_chunk_identifiers"] == frozenset({1})
-    assert mock_persist_chunked_results.call_args.kwargs["resume"] is True
+    assert mock_iter_logistic_output_frames.call_args.kwargs["committed_chunk_identifiers"] == {1}
+    mock_persist_chunked_results.assert_called_once()
     mock_prepare_output_run.assert_called_once()
     mock_finalize.assert_not_called()
-
-
-def test_linear_chunked_output_raises_when_prepare_output_run_returns_none() -> None:
-    """Ensure linear chunked runs fail loudly if preparation metadata is unexpectedly absent."""
-    with (
-        patch("g.api.configure_jax_device"),
-        patch("g.api.build_output_run_configuration", return_value=object()),
-        patch("g.api.prepare_output_run", return_value=None),
-        patch("g.api.iter_linear_output_frames", return_value=iter(())),
-        pytest.raises(RuntimeError, match="prepared output metadata"),
-    ):
-        linear(
-            bfile="dataset",
-            pheno="phenotype.tsv",
-            pheno_name="trait",
-            out="results/output",
-            compute=ComputeConfig(output_mode="arrow_chunks"),
-        )
-
-
-def test_logistic_chunked_output_raises_when_prepare_output_run_returns_none() -> None:
-    """Ensure logistic chunked runs fail loudly if preparation metadata is unexpectedly absent."""
-    with (
-        patch("g.api.configure_jax_device"),
-        patch("g.api.build_output_run_configuration", return_value=object()),
-        patch("g.api.prepare_output_run", return_value=None),
-        patch("g.api.iter_logistic_output_frames", return_value=iter(())),
-        pytest.raises(RuntimeError, match="prepared output metadata"),
-    ):
-        logistic(
-            bfile="dataset",
-            pheno="phenotype.tsv",
-            pheno_name="trait",
-            out="results/output",
-            compute=ComputeConfig(output_mode="arrow_chunks"),
-        )

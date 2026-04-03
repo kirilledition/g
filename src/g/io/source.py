@@ -6,16 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from g.io.bgen import BgenReader, load_bgen_sample_table
+from g.io.bgen import BgenReader, build_sample_identifier_table, load_bgen_sample_table, resolve_bgen_sample_path
 from g.io.bgen import iter_genotype_chunks as iter_bgen_genotype_chunks
 from g.io.bgen import iter_linear_genotype_chunks as iter_bgen_linear_genotype_chunks
-from g.io.plink import PlinkReader
+from g.io.plink import PlinkReader, load_aligned_sample_data, load_aligned_sample_data_from_individual_identifier_table
 from g.io.plink import iter_genotype_chunks as iter_plink_genotype_chunks
 from g.io.plink import iter_linear_genotype_chunks as iter_plink_linear_genotype_chunks
 from g.io.prefetch import prefetch_iterator_values
 from g.io.reader import iter_genotype_chunks_from_reader, iter_linear_genotype_chunks_from_reader
-from g.io.sample import build_sample_identifier_table, resolve_bgen_sample_path
-from g.io.tabular import load_aligned_sample_data, load_aligned_sample_data_from_individual_identifier_table
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

@@ -15,8 +15,7 @@ import numpy as np
 import polars as pl
 
 from g.engine import build_logistic_output_frame, compute_logistic_association_with_missing_exclusion
-from g.io.plink import iter_genotype_chunks
-from g.io.tabular import load_aligned_sample_data
+from g.io.plink import iter_genotype_chunks, load_aligned_sample_data
 
 
 @dataclass(frozen=True)

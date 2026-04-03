@@ -16,8 +16,7 @@ import numpy as np
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
 from g.compute.logistic import LogisticMethod, compute_logistic_association_chunk
 from g.engine import compute_logistic_association_with_missing_exclusion
-from g.io.plink import iter_genotype_chunks
-from g.io.tabular import load_aligned_sample_data
+from g.io.plink import iter_genotype_chunks, load_aligned_sample_data
 
 if TYPE_CHECKING:
     from g.models import GenotypeChunk

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from g.io.sample import load_sample_identifier_table, resolve_bgen_sample_path
+from g.io.bgen import load_sample_identifier_table, resolve_bgen_sample_path
 
 if TYPE_CHECKING:
     from pathlib import Path

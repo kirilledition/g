@@ -10,7 +10,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from g.io.tabular import (
+from g.io.plink import (
     FAMILY_TABLE_COLUMNS,
     convert_frame_to_float32_jax,
     infer_covariate_names,
