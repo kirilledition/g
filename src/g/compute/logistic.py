@@ -320,10 +320,10 @@ def clip_probability_matrix(probability_matrix: jax.Array) -> jax.Array:
 def compute_log_likelihood(probability_matrix: jax.Array, phenotype_matrix: jax.Array) -> jax.Array:
     """Compute batched logistic log-likelihood values."""
     clipped_probability_matrix = clip_probability_matrix(probability_matrix)
-    return jnp.sum(
-        phenotype_matrix * jnp.log(clipped_probability_matrix)
-        + (1.0 - phenotype_matrix) * jnp.log1p(-clipped_probability_matrix),
-        axis=1,
+    return (
+        # Speeds up JAX JIT execution by avoiding intermediate matrices
+        jnp.einsum("ij,ij->i", phenotype_matrix, jnp.log(clipped_probability_matrix))
+        + jnp.einsum("ij,ij->i", 1.0 - phenotype_matrix, jnp.log1p(-clipped_probability_matrix))
     )
 
 
@@ -451,8 +451,9 @@ def compute_information_components(
         0.0,
     )
     weighted_genotype_vector = effective_weights * genotype_vector
-    covariate_information_matrix = (covariate_matrix.T * effective_weights[None, :]) @ covariate_matrix
-    cross_information_vector = weighted_genotype_vector @ covariate_matrix
+    # Speeds up JAX JIT execution by using optimized BLAS GEMV via einsum instead of allocating intermediate arrays
+    covariate_information_matrix = jnp.einsum("ij,i,ik->jk", covariate_matrix, effective_weights, covariate_matrix)
+    cross_information_vector = jnp.dot(weighted_genotype_vector, covariate_matrix)
     genotype_information = jnp.dot(weighted_genotype_vector, genotype_vector)
     top_block = jnp.concatenate([covariate_information_matrix, cross_information_vector[:, None]], axis=1)
     bottom_block = jnp.concatenate([cross_information_vector[None, :], genotype_information[None, None]], axis=1)
@@ -490,10 +491,10 @@ def compute_firth_penalized_log_likelihood_from_cholesky(
     """Compute Firth-penalized log-likelihood from a Cholesky factor."""
     masked_probability_vector = jnp.where(observation_mask, probability_vector, MISSING_PROBABILITY_FILL)
     masked_phenotype_vector = jnp.where(observation_mask, phenotype_vector, 0.0)
-    log_likelihood = jnp.sum(
-        masked_phenotype_vector * jnp.log(masked_probability_vector)
-        + (observation_mask.astype(probability_vector.dtype) - masked_phenotype_vector)
-        * jnp.log1p(-masked_probability_vector),
+    # Speeds up JAX JIT execution by avoiding intermediate matrices
+    log_likelihood = jnp.dot(masked_phenotype_vector, jnp.log(masked_probability_vector)) + jnp.dot(
+        (observation_mask.astype(probability_vector.dtype) - masked_phenotype_vector),
+        jnp.log1p(-masked_probability_vector),
     )
     log_determinant = 2.0 * jnp.sum(jnp.log(jnp.diag(information_cholesky_factor)))
     cholesky_valid = jnp.all(jnp.isfinite(information_cholesky_factor))
