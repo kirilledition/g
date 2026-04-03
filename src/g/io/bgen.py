@@ -142,6 +142,7 @@ class BgenReader:
             verbose=False,
         )
         self.sample_identifier_source = resolve_sample_identifier_source(self.backend_handle, self.sample_path)
+        self.sample_identifier_array = self.resolve_sample_identifier_array()
         self.combination_count = int(np.asarray(self.backend_handle.ncombinations, dtype=np.int32)[0])
         self.is_phased = bool(np.asarray(self.backend_handle.phased, dtype=np.bool_)[0])
         self.variant_table = build_bgen_variant_table(self.backend_handle)
@@ -160,6 +161,14 @@ class BgenReader:
     @property
     def samples(self) -> npt.NDArray[np.str_]:
         """Return sample identifiers in file order."""
+        return self.sample_identifier_array
+
+    def resolve_sample_identifier_array(self) -> npt.NDArray[np.str_]:
+        """Resolve normalized individual identifiers for the open BGEN reader."""
+        if self.sample_identifier_source == "external":
+            assert self.sample_path is not None
+            sample_table = load_sample_identifier_table(self.sample_path)
+            return np.asarray(sample_table.get_column("individual_identifier").to_numpy(), dtype=np.str_)
         return np.asarray(self.backend_handle.samples, dtype=np.str_)
 
     def validate_supported_layout(self) -> None:

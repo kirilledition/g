@@ -148,6 +148,18 @@ def test_open_bgen_uses_external_sample_file(tmp_path: Path) -> None:
         assert bgen_reader.samples.tolist() == custom_identifiers
 
 
+def test_open_bgen_uses_id_2_values_from_oxford_sample_file(tmp_path: Path) -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+    sample_path = tmp_path / "oxford.sample"
+    sample_path.write_text(
+        "ID_1 ID_2 missing sex\n0 0 0 D\n0 person_a 0 1\n0 person_b 0 2\n0 person_c 0 1\n0 person_d 0 2\n",
+        encoding="utf-8",
+    )
+
+    with open_bgen(bgen_path, sample_path=sample_path) as bgen_reader:
+        assert bgen_reader.samples.tolist() == ["person_a", "person_b", "person_c", "person_d"]
+
+
 def test_load_bgen_sample_table_uses_embedded_samples() -> None:
     bgen_path = Path(example.get("haplotypes.bgen"))
 
