@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import typing
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -20,6 +20,7 @@ from g.io.reader import (
     iter_linear_genotype_chunks_from_reader,
     validate_sample_order,
 )
+from g.types import SampleIdentifierSource
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -28,7 +29,6 @@ if TYPE_CHECKING:
 
 
 OpenBgenHandle = typing.Any
-SampleIdentifierSource = Literal["embedded", "external", "generated"]
 
 
 def split_sample_file_line(raw_line: str) -> list[str]:
@@ -160,10 +160,10 @@ def convert_probability_tensor_to_dosage(
     """
     if combination_count == 3 and not is_phased:
         dosage_matrix = probability_tensor[:, :, 1] + (2.0 * probability_tensor[:, :, 2])
-        return np.asarray(dosage_matrix, dtype=dtype, order=order)
+        return np.asarray(dosage_matrix, dtype=dtype, order=order.value)
     if combination_count == 4 and is_phased:
         dosage_matrix = probability_tensor[:, :, 1] + probability_tensor[:, :, 3]
-        return np.asarray(dosage_matrix, dtype=dtype, order=order)
+        return np.asarray(dosage_matrix, dtype=dtype, order=order.value)
     message = "Unsupported BGEN probability layout. Only diploid biallelic phased or unphased variants are supported."
     raise ValueError(message)
 
@@ -191,10 +191,10 @@ def build_bgen_variant_table(bgen_handle: OpenBgenHandle) -> pl.DataFrame:
 def resolve_sample_identifier_source(bgen_handle: OpenBgenHandle, sample_path: Path | None) -> SampleIdentifierSource:
     """Resolve where sample identifiers originated for one open BGEN handle."""
     if sample_path is not None:
-        return "external"
+        return SampleIdentifierSource.EXTERNAL
     if bool(bgen_handle._cbgen.contain_samples):
-        return "embedded"
-    return "generated"
+        return SampleIdentifierSource.EMBEDDED
+    return SampleIdentifierSource.GENERATED
 
 
 class BgenReader:
@@ -277,7 +277,7 @@ class BgenReader:
 
     def resolve_sample_identifier_array(self) -> npt.NDArray[np.str_]:
         """Resolve normalized individual identifiers for the open BGEN reader."""
-        if self.sample_identifier_source == "external":
+        if self.sample_identifier_source == SampleIdentifierSource.EXTERNAL:
             assert self.sample_path is not None
             sample_table = load_sample_identifier_table(self.sample_path)
             return np.asarray(sample_table.get_column("individual_identifier").to_numpy(), dtype=np.str_)
@@ -302,12 +302,12 @@ class BgenReader:
         self,
         index: object = None,
         dtype: type[np.float32] | type[np.float64] = np.float32,
-        order: ArrayMemoryOrder = "C",
+        order: ArrayMemoryOrder = ArrayMemoryOrder.C_CONTIGUOUS,
     ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
         """Read BGEN dosages with the same calling convention as `bed_handle.read`."""
-        probability_tensor = self.backend_handle.read(index=index, dtype=dtype, order=order)
+        probability_tensor = self.backend_handle.read(index=index, dtype=dtype, order=order.value)
         return convert_probability_tensor_to_dosage(
-            probability_tensor=np.asarray(probability_tensor, dtype=dtype, order=order),
+            probability_tensor=np.asarray(probability_tensor, dtype=dtype, order=order.value),
             combination_count=self.combination_count,
             is_phased=self.is_phased,
             dtype=dtype,
@@ -359,7 +359,7 @@ def load_bgen_sample_table(bgen_path: Path, sample_path: Path | None = None) -> 
         return sample_table
 
     with backend_open_bgen(bgen_path, allow_complex=True, verbose=False) as bgen_handle:
-        if resolve_sample_identifier_source(bgen_handle, None) == "generated":
+        if resolve_sample_identifier_source(bgen_handle, None) == SampleIdentifierSource.GENERATED:
             message = "BGEN file does not contain samples and no .sample file was found."
             raise ValueError(message)
         return build_sample_identifier_table(np.asarray(bgen_handle.samples, dtype=np.str_))
@@ -375,9 +375,9 @@ def read_bgen_chunk_host(
     genotype_matrix_host = bgen_reader.read(
         index=(sample_index_array, slice(variant_start, variant_stop)),
         dtype=np.float32,
-        order="C",
+        order=ArrayMemoryOrder.C_CONTIGUOUS,
     )
-    return np.asarray(genotype_matrix_host, dtype=np.float32, order="C")
+    return np.asarray(genotype_matrix_host, dtype=np.float32, order=ArrayMemoryOrder.C_CONTIGUOUS.value)
 
 
 def read_bgen_chunk(
@@ -406,7 +406,7 @@ def validate_bgen_sample_order(
 ) -> None:
     """Validate that BGEN sample order matches the aligned sample order."""
     del bgen_path
-    if bgen_reader.sample_identifier_source == "generated":
+    if bgen_reader.sample_identifier_source == SampleIdentifierSource.GENERATED:
         message = "BGEN file does not contain samples and no .sample file was found."
         raise ValueError(message)
     validate_sample_order(
@@ -429,7 +429,7 @@ def iter_genotype_chunks(
 ) -> Iterator[GenotypeChunk]:
     """Yield mean-imputed genotype chunks from a BGEN file."""
     with open_bgen(bgen_path, sample_path=sample_path) as bgen_reader:
-        if bgen_reader.sample_identifier_source == "generated":
+        if bgen_reader.sample_identifier_source == SampleIdentifierSource.GENERATED:
             message = "BGEN file does not contain samples and no .sample file was found."
             raise ValueError(message)
         yield from iter_genotype_chunks_from_reader(
@@ -454,7 +454,7 @@ def iter_linear_genotype_chunks(
 ) -> Iterator[LinearGenotypeChunk]:
     """Yield linear-regression genotype chunks without missingness bookkeeping."""
     with open_bgen(bgen_path, sample_path=sample_path) as bgen_reader:
-        if bgen_reader.sample_identifier_source == "generated":
+        if bgen_reader.sample_identifier_source == SampleIdentifierSource.GENERATED:
             message = "BGEN file does not contain samples and no .sample file was found."
             raise ValueError(message)
         yield from iter_linear_genotype_chunks_from_reader(

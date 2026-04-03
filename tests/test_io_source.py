@@ -20,6 +20,7 @@ from g.io.source import (
     validate_genotype_source_config,
 )
 from g.models import GenotypeChunk, VariantMetadata
+from g.types import ArrayMemoryOrder, GenotypeSourceFormat, SampleIdentifierSource
 
 if TYPE_CHECKING:
     import polars as pl
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 class FakeSourceReader:
     """Minimal protocol-compatible reader used in source tests."""
 
-    sample_identifier_source = "external"
+    sample_identifier_source = SampleIdentifierSource.EXTERNAL
 
     @property
     def sample_count(self) -> int:
@@ -55,7 +56,7 @@ class FakeSourceReader:
         self,
         index: object = None,
         dtype: type[np.float32] | type[np.float64] = np.float32,
-        order: str = "C",
+        order: ArrayMemoryOrder = ArrayMemoryOrder.C_CONTIGUOUS,
     ) -> np.ndarray:
         raise AssertionError
 
@@ -149,7 +150,12 @@ def test_iter_genotype_chunks_from_source_dispatches_to_plink_reader() -> None:
 def test_validate_genotype_source_config_rejects_unknown_format() -> None:
     """Ensure unsupported source formats fail fast."""
     with pytest.raises(ValueError, match="Unsupported genotype source format"):
-        validate_genotype_source_config(GenotypeSourceConfig(source_format="vcf", source_path=Path("study.vcf")))
+        validate_genotype_source_config(
+            GenotypeSourceConfig(
+                source_format=cast(GenotypeSourceFormat, "vcf"),
+                source_path=Path("study.vcf"),
+            )
+        )
 
 
 def test_load_aligned_sample_data_from_source_dispatches_to_plink_loader() -> None:

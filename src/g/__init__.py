@@ -6,6 +6,15 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from g.api import ComputeConfig, LinearConfig, LogisticConfig, RunArtifacts
+    from g.types import (
+        ArrayMemoryOrder,
+        AssociationMode,
+        Device,
+        GenotypeSourceFormat,
+        OutputCompressionCodec,
+        OutputMode,
+        SampleIdentifierSource,
+    )
 
 
 def __getattr__(name: str) -> Any:
@@ -18,15 +27,34 @@ def __getattr__(name: str) -> Any:
         from g import api
 
         return getattr(api, name)
+    if name in {
+        "ArrayMemoryOrder",
+        "AssociationMode",
+        "Device",
+        "GenotypeSourceFormat",
+        "OutputCompressionCodec",
+        "OutputMode",
+        "SampleIdentifierSource",
+    }:
+        from g import types
+
+        return getattr(types, name)
     message = f"module 'g' has no attribute {name!r}"
     raise AttributeError(message)
 
 
 __all__ = [
+    "ArrayMemoryOrder",
+    "AssociationMode",
     "ComputeConfig",
+    "Device",
+    "GenotypeSourceFormat",
     "LinearConfig",
     "LogisticConfig",
+    "OutputCompressionCodec",
+    "OutputMode",
     "RunArtifacts",
+    "SampleIdentifierSource",
     "linear",
     "logistic",
     "main",

@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from g.api import DEFAULT_LINEAR_CHUNK_SIZE, DEFAULT_LOGISTIC_CHUNK_SIZE, RunArtifacts
 from g.cli import app, main, print_success_message, resolve_chunk_size
+from g.types import AssociationMode, Device
 
 runner = CliRunner()
 
@@ -32,17 +33,17 @@ def test_root_help_renders_without_style_errors() -> None:
 
 def test_resolve_chunk_size_uses_linear_default() -> None:
     """Ensure the linear path uses the tuned default chunk size."""
-    assert resolve_chunk_size(None, "linear") == DEFAULT_LINEAR_CHUNK_SIZE
+    assert resolve_chunk_size(None, AssociationMode.LINEAR) == DEFAULT_LINEAR_CHUNK_SIZE
 
 
 def test_resolve_chunk_size_uses_logistic_default() -> None:
     """Ensure the logistic path keeps the tuned default chunk size."""
-    assert resolve_chunk_size(None, "logistic") == DEFAULT_LOGISTIC_CHUNK_SIZE
+    assert resolve_chunk_size(None, AssociationMode.LOGISTIC) == DEFAULT_LOGISTIC_CHUNK_SIZE
 
 
 def test_resolve_chunk_size_preserves_explicit_override() -> None:
     """Ensure explicit chunk sizes override model-specific defaults."""
-    assert resolve_chunk_size(1024, "linear") == 1024
+    assert resolve_chunk_size(1024, AssociationMode.LINEAR) == 1024
 
 
 def test_linear_command_dispatches_api_call() -> None:
@@ -76,7 +77,7 @@ def test_linear_command_dispatches_api_call() -> None:
     assert str(Path("results/output.linear.tsv")) in result.output
     assert mock_run_linear_api.call_args.kwargs["covar_names"] == ("age", "sex")
     compute_config = mock_run_linear_api.call_args.kwargs["compute"]
-    assert compute_config.device == "gpu"
+    assert compute_config.device == Device.GPU
     assert compute_config.chunk_size == DEFAULT_LINEAR_CHUNK_SIZE
 
 
