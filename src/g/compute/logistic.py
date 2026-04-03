@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -50,7 +49,7 @@ class LogisticErrorCode(IntEnum):
 
 
 @jax.tree_util.register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class LogisticState:
     """State container for batched association IRLS.
 
@@ -77,7 +76,7 @@ class LogisticState:
 
 
 @jax.tree_util.register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class CovariateOnlyLogisticState:
     """State container for masked covariate-only IRLS.
 
@@ -97,15 +96,23 @@ class CovariateOnlyLogisticState:
     previous_log_likelihood: jax.Array
 
 
-class StandardLogisticChunkEvaluation(NamedTuple):
-    """Standard-logistic outputs plus coefficient estimates."""
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class StandardLogisticChunkEvaluation:
+    """Standard-logistic outputs plus coefficient estimates.
+
+    Attributes:
+        logistic_result: Logistic regression results.
+        coefficients: Final coefficient estimates.
+
+    """
 
     logistic_result: LogisticAssociationChunkResult
     coefficients: jax.Array
 
 
 @jax.tree_util.register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class NoMissingLogisticConstants:
     """Chunk-invariant constants for no-missing logistic paths.
 
@@ -130,7 +137,7 @@ class NoMissingLogisticConstants:
 
 
 @jax.tree_util.register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class LogisticChunkPrecomputation:
     """Chunk-invariant matrices reused across logistic IRLS iterations.
 
@@ -144,7 +151,8 @@ class LogisticChunkPrecomputation:
     covariate_pair_matrix: jax.Array
 
 
-class FirthIndexBatch(NamedTuple):
+@dataclass(frozen=True)
+class FirthIndexBatch:
     """Padded and active fallback indices for one Firth batch.
 
     Attributes:
@@ -160,7 +168,7 @@ class FirthIndexBatch(NamedTuple):
 
 
 @jax.tree_util.register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class FirthState:
     """State container for single-variant Firth regression.
 
@@ -181,7 +189,7 @@ class FirthState:
 
 
 @jax.tree_util.register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class InformationComponents:
     """Per-variant information-matrix components.
 
@@ -200,7 +208,7 @@ class InformationComponents:
 
 
 @jax.tree_util.register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class FirthVariantResult:
     """Single-variant Firth fit outputs.
 
@@ -227,7 +235,7 @@ class FirthVariantResult:
 
 
 @jax.tree_util.register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class AdjustedWeightComponents:
     """Intermediate leverage and weight vectors for Firth updates.
 

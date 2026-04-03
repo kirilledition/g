@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import jax
 
@@ -12,7 +12,8 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
 
-class AlignedSampleData(NamedTuple):
+@dataclass(frozen=True)
+class AlignedSampleData:
     """Aligned sample, phenotype, and covariate inputs.
 
     Attributes:
@@ -37,8 +38,20 @@ class AlignedSampleData(NamedTuple):
     is_binary_trait: bool
 
 
-class VariantMetadata(NamedTuple):
-    """Metadata describing a contiguous block of variants."""
+@dataclass(frozen=True)
+class VariantMetadata:
+    """Metadata describing a contiguous block of variants.
+
+    Attributes:
+        variant_start_index: Start index of the variant slice.
+        variant_stop_index: Stop index of the variant slice.
+        chromosome: Chromosome identifiers per variant.
+        variant_identifiers: Variant identifiers per variant.
+        position: Genomic positions per variant.
+        allele_one: First allele per variant.
+        allele_two: Second allele per variant.
+
+    """
 
     variant_start_index: int
     variant_stop_index: int
@@ -49,8 +62,19 @@ class VariantMetadata(NamedTuple):
     allele_two: npt.NDArray[np.str_]
 
 
-class GenotypeChunk(NamedTuple):
-    """Genotype matrix and metadata for a chunk of variants."""
+@dataclass(frozen=True)
+class GenotypeChunk:
+    """Genotype matrix and metadata for a chunk of variants.
+
+    Attributes:
+        genotypes: Mean-imputed genotype matrix.
+        missing_mask: Boolean mask indicating missing values.
+        has_missing_values: Whether the chunk contains any missing values.
+        metadata: Variant metadata for the chunk.
+        allele_one_frequency: Allele frequencies per variant.
+        observation_count: Observation counts per variant.
+
+    """
 
     genotypes: jax.Array
     missing_mask: jax.Array
@@ -60,8 +84,17 @@ class GenotypeChunk(NamedTuple):
     observation_count: jax.Array
 
 
-class LinearGenotypeChunk(NamedTuple):
-    """Linear-regression genotype chunk without missingness bookkeeping."""
+@dataclass(frozen=True)
+class LinearGenotypeChunk:
+    """Linear-regression genotype chunk without missingness bookkeeping.
+
+    Attributes:
+        genotypes: Mean-imputed genotype matrix.
+        metadata: Variant metadata for the chunk.
+        allele_one_frequency: Allele frequencies per variant.
+        observation_count: Observation counts per variant.
+
+    """
 
     genotypes: jax.Array
     metadata: VariantMetadata
@@ -69,8 +102,18 @@ class LinearGenotypeChunk(NamedTuple):
     observation_count: jax.Array
 
 
-class PreprocessedGenotypeChunkData(NamedTuple):
-    """Preprocessed genotype arrays before metadata attachment."""
+@dataclass(frozen=True)
+class PreprocessedGenotypeChunkData:
+    """Preprocessed genotype arrays before metadata attachment.
+
+    Attributes:
+        genotypes: Mean-imputed genotype matrix.
+        missing_mask: Boolean mask indicating missing values.
+        has_missing_values: Whether the chunk contains any missing values.
+        allele_one_frequency: Allele frequencies per variant.
+        observation_count: Observation counts per variant.
+
+    """
 
     genotypes: jax.Array
     missing_mask: jax.Array
@@ -80,7 +123,7 @@ class PreprocessedGenotypeChunkData(NamedTuple):
 
 
 @jax.tree_util.register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class LinearAssociationChunkResult:
     """Association outputs for a linear-regression chunk.
 
@@ -101,7 +144,7 @@ class LinearAssociationChunkResult:
 
 
 @jax.tree_util.register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class LinearAssociationState:
     """Precomputed covariate-only state for linear association chunks.
 
@@ -122,7 +165,7 @@ class LinearAssociationState:
 
 
 @jax.tree_util.register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class LogisticAssociationChunkResult:
     """Association outputs for a logistic-regression chunk.
 
@@ -151,7 +194,7 @@ class LogisticAssociationChunkResult:
 
 
 @jax.tree_util.register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class LogisticAssociationEvaluation:
     """Logistic association result and per-variant summary values."""
 

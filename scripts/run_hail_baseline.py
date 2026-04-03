@@ -8,7 +8,6 @@ import json
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import NamedTuple
 
 import hail as hail_library  # type: ignore
 
@@ -36,8 +35,17 @@ class HailRunReport:
     hail_version: str
 
 
-class MatrixTableLoadResult(NamedTuple):
-    """Result of loading or preparing a base MatrixTable cache."""
+@dataclass(frozen=True)
+class MatrixTableLoadResult:
+    """Result of loading or preparing a base MatrixTable cache.
+
+    Attributes:
+        matrix_table: The loaded Hail MatrixTable.
+        cache_used: Whether an existing cache was used.
+        cache_refreshed: Whether the cache was refreshed.
+        cache_prepare_seconds: Time spent preparing the cache.
+
+    """
 
     matrix_table: hail_library.MatrixTable
     cache_used: bool

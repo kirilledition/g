@@ -41,3 +41,8 @@ For software like this there can actually be breaking changes. breaking change c
 ## Negative log p-value
 
 I want app to compute p values in negative log10, i believe that only this makes sense. it will be easier for plotting and will allow to change dtype to bfloat16 for even faster code.
+
+## Parallelization 
+
+Examples and easy code on how to parallelize across aws machines, slurm nodes, or maybe multiple gpus on the same machine.
+
