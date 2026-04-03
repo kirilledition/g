@@ -60,6 +60,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     argument_parser = argparse.ArgumentParser(description="Benchmark genotype reader paths.")
     argument_parser.add_argument("--bfile", type=Path, default=Path("data/1kg_chr22_full"))
     argument_parser.add_argument("--bgen", type=Path, default=None)
+    argument_parser.add_argument("--sample", type=Path, default=None)
     argument_parser.add_argument("--pheno", type=Path, default=Path("data/pheno_cont.txt"))
     argument_parser.add_argument("--pheno-name", default="phenotype_continuous")
     argument_parser.add_argument("--covar", type=Path, default=Path("data/covariates.txt"))
@@ -222,7 +223,7 @@ def validate_checksums(
 def main() -> None:
     """Run raw-reader and chunk-iterator benchmarks on the requested dataset."""
     arguments = build_argument_parser().parse_args()
-    genotype_source_config = resolve_genotype_source_config(arguments.bfile, arguments.bgen)
+    genotype_source_config = resolve_genotype_source_config(arguments.bfile, arguments.bgen, arguments.sample)
     covariate_names = parse_covariate_names(arguments.covar_names)
     aligned_sample_data = load_aligned_sample_data_from_source(
         genotype_source_config=genotype_source_config,

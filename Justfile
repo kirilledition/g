@@ -57,6 +57,10 @@ benchmark-logistic-fallback:
 benchmark-plink-reader:
     uv run python scripts/benchmark_plink_reader.py
 
+# Benchmark matched BED and BGEN ingestion/runtime paths
+benchmark-bgen-vs-bed:
+    uv run python scripts/benchmark_bgen_vs_bed.py
+
 # Capture a full-chromosome logistic JAX trace and memory profile
 profile-logistic-chr22:
     mkdir -p {{data_dir}}/profiles/jax_logistic_full_chr22

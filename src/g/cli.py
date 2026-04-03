@@ -56,6 +56,10 @@ def print_success_message(artifacts: RunArtifacts) -> None:
 def run_linear_command(
     bfile: pathlib.Path | None = typer.Option(None, help="PLINK dataset prefix."),
     bgen: pathlib.Path | None = typer.Option(None, help="BGEN file path."),
+    sample: pathlib.Path | None = typer.Option(
+        None,
+        help="Optional BGEN sample-file path. Defaults to embedded samples or an adjacent .sample file.",
+    ),
     pheno: pathlib.Path = typer.Option(..., help="Phenotype table path."),
     pheno_name: str = typer.Option(..., "--pheno-name", help="Phenotype column name to analyze."),
     out: pathlib.Path = typer.Option(..., help="Output prefix or TSV path."),
@@ -88,6 +92,7 @@ def run_linear_command(
     artifacts = run_linear_api(
         bfile=bfile,
         bgen=bgen,
+        sample=sample,
         pheno=pheno,
         pheno_name=pheno_name,
         out=out,
@@ -103,6 +108,10 @@ def run_linear_command(
 def run_logistic_command(
     bfile: pathlib.Path | None = typer.Option(None, help="PLINK dataset prefix."),
     bgen: pathlib.Path | None = typer.Option(None, help="BGEN file path."),
+    sample: pathlib.Path | None = typer.Option(
+        None,
+        help="Optional BGEN sample-file path. Defaults to embedded samples or an adjacent .sample file.",
+    ),
     pheno: pathlib.Path = typer.Option(..., help="Phenotype table path."),
     pheno_name: str = typer.Option(..., "--pheno-name", help="Phenotype column name to analyze."),
     out: pathlib.Path = typer.Option(..., help="Output prefix or TSV path."),
@@ -147,6 +156,7 @@ def run_logistic_command(
     artifacts = run_logistic_api(
         bfile=bfile,
         bgen=bgen,
+        sample=sample,
         pheno=pheno,
         pheno_name=pheno_name,
         out=out,

@@ -14,6 +14,7 @@ import numpy.typing as npt
 import polars as pl
 
 from g.io.reader import (
+    ArrayMemoryOrder,
     iter_genotype_chunks_from_reader,
     iter_linear_genotype_chunks_from_reader,
     validate_sample_order,
@@ -57,7 +58,7 @@ def convert_probability_tensor_to_dosage(
     *,
     is_phased: bool,
     dtype: type[np.float32] | type[np.float64],
-    order: str,
+    order: ArrayMemoryOrder,
 ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
     """Convert a BGEN probability tensor into additive dosages.
 
@@ -74,9 +75,7 @@ def convert_probability_tensor_to_dosage(
     if combination_count == 4 and is_phased:
         dosage_matrix = probability_tensor[:, :, 1] + probability_tensor[:, :, 3]
         return np.asarray(dosage_matrix, dtype=dtype, order=order)
-    message = (
-        "Unsupported BGEN probability layout. Only diploid biallelic phased or unphased variants are supported."
-    )
+    message = "Unsupported BGEN probability layout. Only diploid biallelic phased or unphased variants are supported."
     raise ValueError(message)
 
 
@@ -182,7 +181,7 @@ class BgenReader:
         self,
         index: object = None,
         dtype: type[np.float32] | type[np.float64] = np.float32,
-        order: str = "C",
+        order: ArrayMemoryOrder = "C",
     ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
         """Read BGEN dosages with the same calling convention as `bed_handle.read`."""
         probability_tensor = self.backend_handle.read(index=index, dtype=dtype, order=order)

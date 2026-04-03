@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -13,8 +13,13 @@ import polars as pl
 from bed_reader import open_bed, read_f32
 from bed_reader._open_bed import get_num_threads
 
-from g.io.genotype_processing import build_genotype_chunk, preprocess_genotype_matrix
+from g.io.genotype_processing import (
+    build_genotype_chunk,
+    preprocess_genotype_matrix,
+    preprocess_genotype_matrix_arrays,
+)
 from g.io.reader import (
+    ArrayMemoryOrder,
     iter_genotype_chunks_from_reader,
     iter_linear_genotype_chunks_from_reader,
     validate_sample_order,
@@ -42,10 +47,26 @@ __all__ = (
     "iter_linear_genotype_chunks",
     "load_variant_table",
     "preprocess_genotype_matrix",
+    "preprocess_genotype_matrix_arrays",
     "read_bed_chunk",
     "read_bed_chunk_host",
     "validate_bed_sample_order",
 )
+
+
+class VariantSliceBounds(NamedTuple):
+    """Normalized start and stop indices for one variant slice."""
+
+    start: int
+    stop: int
+
+
+def normalize_variant_slice_bounds(variant_slice: slice, variant_count: int) -> VariantSliceBounds:
+    """Resolve concrete start and stop indices for one variant slice."""
+    return VariantSliceBounds(
+        start=0 if variant_slice.start is None else int(variant_slice.start),
+        stop=variant_count if variant_slice.stop is None else int(variant_slice.stop),
+    )
 
 
 class PlinkReader:
@@ -62,23 +83,32 @@ class PlinkReader:
     @property
     def sample_count(self) -> int:
         """Return the number of samples."""
-        return int(self.bed_handle.iid_count)
+        if hasattr(self.bed_handle, "iid_count"):
+            return int(self.bed_handle.iid_count)
+        if hasattr(self.bed_handle, "iid"):
+            return len(self.bed_handle.iid)
+        return 0
 
     @property
     def variant_count(self) -> int:
         """Return the number of variants."""
-        return int(self.bed_handle.sid_count)
+        if hasattr(self.bed_handle, "sid_count"):
+            return int(self.bed_handle.sid_count)
+        return int(self.variant_table.height)
 
     @property
     def samples(self) -> npt.NDArray[np.str_]:
         """Return sample identifiers in file order."""
+        if not hasattr(self.bed_handle, "iid"):
+            message = "PLINK reader handle does not expose sample identifiers."
+            raise AttributeError(message)
         return np.asarray(self.bed_handle.iid, dtype=np.str_)
 
     def read(
         self,
         index: object = None,
         dtype: type[np.float32] | type[np.float64] = np.float32,
-        order: str = "C",
+        order: ArrayMemoryOrder = "C",
     ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
         """Read PLINK genotypes with the same calling convention as `bed_handle.read`."""
         if (
@@ -90,14 +120,13 @@ class PlinkReader:
             and isinstance(index[1], slice)
             and (index[1].step is None or index[1].step == 1)
         ):
-            variant_start = 0 if index[1].start is None else index[1].start
-            variant_stop = self.variant_count if index[1].stop is None else index[1].stop
+            variant_slice_bounds = normalize_variant_slice_bounds(index[1], self.variant_count)
             return read_bed_chunk_host(
                 bed_handle=self.bed_handle,
                 bed_path=self.bed_path,
                 sample_index_array=np.ascontiguousarray(index[0], dtype=np.intp),
-                variant_start=variant_start,
-                variant_stop=variant_stop,
+                variant_start=variant_slice_bounds.start,
+                variant_stop=variant_slice_bounds.stop,
                 num_threads=self.num_threads,
             )
         genotype_matrix = self.bed_handle.read(index=index, dtype=dtype, order=order)
@@ -265,6 +294,12 @@ def iter_genotype_chunks(
         ValueError: If BED sample order does not match the aligned sample order.
 
     """
+    sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
+    validate_bed_sample_order(
+        bed_prefix=bed_prefix,
+        sample_index_array=sample_index_array,
+        expected_individual_identifiers=expected_individual_identifiers,
+    )
     with PlinkReader(bed_prefix) as plink_reader:
         yield from iter_genotype_chunks_from_reader(
             genotype_reader=plink_reader,
@@ -274,6 +309,7 @@ def iter_genotype_chunks(
             chunk_size=chunk_size,
             variant_limit=variant_limit,
             include_missing_value_flag=include_missing_value_flag,
+            validate_sample_order_flag=False,
         )
 
 
@@ -285,6 +321,12 @@ def iter_linear_genotype_chunks(
     variant_limit: int | None = None,
 ) -> Iterator[LinearGenotypeChunk]:
     """Yield linear-regression genotype chunks without missingness bookkeeping."""
+    sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
+    validate_bed_sample_order(
+        bed_prefix=bed_prefix,
+        sample_index_array=sample_index_array,
+        expected_individual_identifiers=expected_individual_identifiers,
+    )
     with PlinkReader(bed_prefix) as plink_reader:
         yield from iter_linear_genotype_chunks_from_reader(
             genotype_reader=plink_reader,
@@ -293,4 +335,5 @@ def iter_linear_genotype_chunks(
             expected_individual_identifiers=expected_individual_identifiers,
             chunk_size=chunk_size,
             variant_limit=variant_limit,
+            validate_sample_order_flag=False,
         )

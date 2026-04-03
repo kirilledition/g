@@ -6,7 +6,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from g.api import DEFAULT_LINEAR_CHUNK_SIZE, DEFAULT_LOGISTIC_CHUNK_SIZE, RunArtifacts
-from g.cli import app, resolve_chunk_size
+from g.cli import app, main, print_success_message, resolve_chunk_size
 
 runner = CliRunner()
 
@@ -132,6 +132,33 @@ def test_linear_command_supports_bgen_input() -> None:
     assert mock_run_linear_api.call_args.kwargs["bgen"] == Path("dataset.bgen")
 
 
+def test_linear_command_supports_explicit_bgen_sample_file() -> None:
+    """Ensure the CLI forwards an explicit BGEN sample-file path."""
+    with patch(
+        "g.cli.run_linear_api",
+        return_value=RunArtifacts(sumstats_tsv=Path("results/output.linear.tsv")),
+    ) as mock_run_linear_api:
+        result = runner.invoke(
+            app,
+            [
+                "linear",
+                "--bgen",
+                "dataset.bgen",
+                "--sample",
+                "dataset.sample",
+                "--pheno",
+                "phenotype.tsv",
+                "--pheno-name",
+                "trait",
+                "--out",
+                "results/output",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert mock_run_linear_api.call_args.kwargs["sample"] == Path("dataset.sample")
+
+
 def test_linear_command_rejects_ambiguous_sources() -> None:
     """Ensure the CLI rejects runs that specify both PLINK and BGEN inputs."""
     result = runner.invoke(
@@ -217,3 +244,41 @@ def test_subcommand_requires_known_name() -> None:
     result = runner.invoke(app, ["poisson"])
     assert result.exit_code != 0
     assert "No such command 'poisson'" in result.output
+
+
+def test_print_success_message_reports_chunked_output_and_final_parquet(capsys) -> None:
+    """Ensure chunked-output success messages include both run and Parquet paths."""
+    print_success_message(
+        RunArtifacts(
+            output_run_directory=Path("results/output.linear.run"),
+            final_parquet=Path("results/output.linear.run/final.parquet"),
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert "Chunked run saved to results/output.linear.run" in captured.out
+    assert "Finalized Parquet saved to results/output.linear.run/final.parquet" in captured.out
+
+
+def test_print_success_message_reports_chunked_output_without_parquet(capsys) -> None:
+    """Ensure chunked-output success messages still work when Parquet finalization is disabled."""
+    print_success_message(RunArtifacts(output_run_directory=Path("results/output.linear.run")))
+
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Success. Chunked run saved to results/output.linear.run"
+
+
+def test_print_success_message_reports_generic_completion(capsys) -> None:
+    """Ensure runs without file artifacts still emit a completion message."""
+    print_success_message(RunArtifacts())
+
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Success. Run completed."
+
+
+def test_main_invokes_typer_application() -> None:
+    """Ensure the top-level module entrypoint delegates to the Typer app."""
+    with patch("g.cli.app") as mock_app:
+        main()
+
+    mock_app.assert_called_once_with()

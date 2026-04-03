@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, NamedTuple, Protocol, runtime_checkable
 
 import jax
 import numpy as np
@@ -20,6 +20,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from g.models import GenotypeChunk, LinearGenotypeChunk
+
+
+ArrayMemoryOrder = Literal["K", "A", "C", "F"]
 
 
 class VariantTableArrays(NamedTuple):
@@ -56,7 +59,7 @@ class GenotypeReader(Protocol):
         self,
         index: object = None,
         dtype: type[np.float32] | type[np.float64] = np.float32,
-        order: str = "C",
+        order: ArrayMemoryOrder = "C",
     ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
         """Read a genotype matrix subset as dosages with NaN for missing values."""
 
@@ -113,6 +116,7 @@ def iter_genotype_chunks_from_reader(
     variant_limit: int | None = None,
     *,
     include_missing_value_flag: bool = True,
+    validate_sample_order_flag: bool = True,
 ) -> Iterator[GenotypeChunk]:
     """Yield mean-imputed genotype chunks from any compatible reader."""
     total_variant_count = resolve_total_variant_count(genotype_reader.variant_count, variant_limit)
@@ -121,12 +125,13 @@ def iter_genotype_chunks_from_reader(
 
     sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
     variant_table_arrays = build_variant_table_arrays(genotype_reader.variant_table)
-    validate_sample_order(
-        observed_individual_identifiers=genotype_reader.samples,
-        sample_index_array=sample_index_array,
-        expected_individual_identifiers=expected_individual_identifiers,
-        source_name=source_name,
-    )
+    if validate_sample_order_flag:
+        validate_sample_order(
+            observed_individual_identifiers=genotype_reader.samples,
+            sample_index_array=sample_index_array,
+            expected_individual_identifiers=expected_individual_identifiers,
+            source_name=source_name,
+        )
 
     for variant_start in range(0, total_variant_count, chunk_size):
         variant_stop = min(total_variant_count, variant_start + chunk_size)
@@ -158,6 +163,8 @@ def iter_linear_genotype_chunks_from_reader(
     expected_individual_identifiers: npt.NDArray[np.str_],
     chunk_size: int,
     variant_limit: int | None = None,
+    *,
+    validate_sample_order_flag: bool = True,
 ) -> Iterator[LinearGenotypeChunk]:
     """Yield linear-regression genotype chunks from any compatible reader."""
     total_variant_count = resolve_total_variant_count(genotype_reader.variant_count, variant_limit)
@@ -166,12 +173,13 @@ def iter_linear_genotype_chunks_from_reader(
 
     sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
     variant_table_arrays = build_variant_table_arrays(genotype_reader.variant_table)
-    validate_sample_order(
-        observed_individual_identifiers=genotype_reader.samples,
-        sample_index_array=sample_index_array,
-        expected_individual_identifiers=expected_individual_identifiers,
-        source_name=source_name,
-    )
+    if validate_sample_order_flag:
+        validate_sample_order(
+            observed_individual_identifiers=genotype_reader.samples,
+            sample_index_array=sample_index_array,
+            expected_individual_identifiers=expected_individual_identifiers,
+            source_name=source_name,
+        )
 
     trace_prefix = source_name.lower()
     for variant_start in range(0, total_variant_count, chunk_size):

@@ -114,6 +114,7 @@ def linear(
     *,
     bfile: Path | str | None,
     bgen: Path | str | None = None,
+    sample: Path | str | None = None,
     pheno: Path | str,
     pheno_name: str,
     out: Path | str,
@@ -129,7 +130,7 @@ def linear(
     output_path = resolve_output_path(out, "linear")
     configure_jax_device(compute_config.device)
     covariate_name_list = parse_covariate_name_list(covar_names)
-    genotype_source_config = resolve_genotype_source_config(bfile, bgen)
+    genotype_source_config = resolve_genotype_source_config(bfile, bgen, sample)
     output_run_directory = compute_config.output_run_directory or Path(out)
     prepared_output_run = None
     committed_chunk_identifiers: set[int] = set()
@@ -148,6 +149,9 @@ def linear(
             ),
             resume=compute_config.resume,
         )
+        if prepared_output_run is None:
+            message = "Chunked output was requested without prepared output metadata."
+            raise RuntimeError(message)
         committed_chunk_identifiers = set(prepared_output_run.committed_chunk_identifiers)
 
     frame_iterator = iter_linear_output_frames(
@@ -164,9 +168,7 @@ def linear(
     if compute_config.output_mode == "tsv":
         write_frame_iterator_to_tsv(frame_iterator, output_path)
         return RunArtifacts(sumstats_tsv=output_path)
-    if prepared_output_run is None:
-        message = "Chunked output was requested without prepared output metadata."
-        raise RuntimeError(message)
+    assert prepared_output_run is not None
 
     output_run_paths = persist_chunked_results(
         frame_iterator=frame_iterator,
@@ -184,6 +186,7 @@ def logistic(
     *,
     bfile: Path | str | None,
     bgen: Path | str | None = None,
+    sample: Path | str | None = None,
     pheno: Path | str,
     pheno_name: str,
     out: Path | str,
@@ -200,7 +203,7 @@ def logistic(
     output_path = resolve_output_path(out, "logistic")
     configure_jax_device(compute_config.device)
     covariate_name_list = parse_covariate_name_list(covar_names)
-    genotype_source_config = resolve_genotype_source_config(bfile, bgen)
+    genotype_source_config = resolve_genotype_source_config(bfile, bgen, sample)
     output_run_directory = compute_config.output_run_directory or Path(out)
     prepared_output_run = None
     committed_chunk_identifiers: set[int] = set()
@@ -222,6 +225,9 @@ def logistic(
             ),
             resume=compute_config.resume,
         )
+        if prepared_output_run is None:
+            message = "Chunked output was requested without prepared output metadata."
+            raise RuntimeError(message)
         committed_chunk_identifiers = set(prepared_output_run.committed_chunk_identifiers)
 
     frame_iterator = iter_logistic_output_frames(
@@ -240,9 +246,7 @@ def logistic(
     if compute_config.output_mode == "tsv":
         write_frame_iterator_to_tsv(frame_iterator, output_path)
         return RunArtifacts(sumstats_tsv=output_path)
-    if prepared_output_run is None:
-        message = "Chunked output was requested without prepared output metadata."
-        raise RuntimeError(message)
+    assert prepared_output_run is not None
 
     output_run_paths = persist_chunked_results(
         frame_iterator=frame_iterator,

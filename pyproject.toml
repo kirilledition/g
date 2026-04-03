@@ -23,6 +23,7 @@ dev = [
     "psutil>=7.2.2",
     "py-cpuinfo>=9.0.0",
     "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
     "ty>=0.0.1a19",
 ]
 gpu = ["jax[cuda12]>=0.9.2"]
@@ -102,3 +103,15 @@ markers = [
     "phase0_data: requires local Phase 0 data or generated baseline artifacts.",
     "phase1_parity: exercises Phase 1 parity and benchmark evaluation flows against external baselines.",
 ]
+
+[tool.coverage.run]
+branch = true
+source = ["src/g"]
+
+[tool.coverage.report]
+fail_under = 90
+omit = [
+    "src/g/__init__.py",
+]
+show_missing = true
+skip_covered = false

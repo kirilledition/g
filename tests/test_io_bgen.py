@@ -4,6 +4,7 @@ import importlib
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -18,8 +19,11 @@ from g.io.bgen import (  # noqa: E402
     convert_probability_tensor_to_dosage,
     iter_genotype_chunks,
     iter_linear_genotype_chunks,
+    load_backend_open_bgen,
     load_bgen_sample_table,
     open_bgen,
+    read_bgen_chunk,
+    read_bgen_chunk_host,
     validate_bgen_sample_order,
 )
 
@@ -85,6 +89,17 @@ def test_convert_probability_tensor_to_dosage_rejects_unsupported_layout() -> No
         )
 
 
+def test_load_backend_open_bgen_reports_missing_dependency() -> None:
+    with (
+        patch(
+            "g.io.bgen.importlib.import_module",
+            side_effect=ModuleNotFoundError("missing"),
+        ),
+        pytest.raises(ModuleNotFoundError, match="requires the `bgen-reader` stack"),
+    ):
+        load_backend_open_bgen()
+
+
 def test_build_bgen_variant_table_counts_last_allele() -> None:
     mock_bgen_handle = SimpleNamespace(
         allele_ids=np.array(["A,G", "C,T"], dtype=np.str_),
@@ -106,6 +121,8 @@ def test_open_bgen_reads_phased_haplotype_example_as_dosage() -> None:
     bgen_path = Path(example.get("haplotypes.bgen"))
 
     with open_bgen(bgen_path) as bgen_reader:
+        assert bgen_reader.sample_count == 4
+        assert bgen_reader.variant_count == 4
         genotype_matrix = bgen_reader.read(dtype=np.float32, order="C")
 
     expected_genotype_matrix = np.array(
@@ -156,6 +173,15 @@ def test_load_bgen_sample_table_uses_external_sample_file(tmp_path: Path) -> Non
     assert sample_table.get_column("individual_identifier").to_list() == custom_identifiers
 
 
+def test_load_bgen_sample_table_rejects_sample_count_mismatch(tmp_path: Path) -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+    sample_path = tmp_path / "mismatch.sample"
+    write_sample_file(sample_path, ["person_a", "person_b", "person_c"])
+
+    with pytest.raises(ValueError, match="Expect number of samples in file to match"):
+        load_bgen_sample_table(bgen_path, sample_path)
+
+
 def test_load_bgen_sample_table_requires_sample_file_when_identifiers_are_missing() -> None:
     bgen_path = Path(example.get("complex.23bits.no.samples.bgen"))
 
@@ -170,6 +196,121 @@ def test_validate_bgen_sample_order_failure() -> None:
 
     with pytest.raises(ValueError, match="BGEN sample order does not match"), open_bgen(bgen_path) as bgen_reader:
         validate_bgen_sample_order(bgen_reader, sample_indices, expected_identifiers, bgen_path)
+
+
+def test_validate_bgen_sample_order_requires_real_identifiers() -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+
+    with (
+        open_bgen(bgen_path) as bgen_reader,
+        pytest.raises(
+            ValueError,
+            match=r"does not contain samples and no \.sample file was found",
+        ),
+    ):
+        bgen_reader.sample_identifier_source = "generated"
+        validate_bgen_sample_order(
+            bgen_reader,
+            np.arange(2, dtype=np.intp),
+            np.array(["sample_1", "sample_2"], dtype=np.str_),
+            Path("study.bgen"),
+        )
+
+
+def test_read_bgen_chunk_helpers_return_expected_shapes() -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+
+    with open_bgen(bgen_path) as bgen_reader:
+        host_chunk = read_bgen_chunk_host(
+            bgen_reader=bgen_reader,
+            sample_index_array=np.arange(4, dtype=np.intp),
+            variant_start=0,
+            variant_stop=2,
+        )
+        device_chunk = read_bgen_chunk(
+            bgen_reader=bgen_reader,
+            sample_index_array=np.arange(4, dtype=np.intp),
+            variant_start=0,
+            variant_stop=2,
+        )
+
+    assert host_chunk.shape == (4, 2)
+    assert device_chunk.shape == (4, 2)
+
+
+def test_bgen_reader_rejects_non_biallelic_layout() -> None:
+    fake_bgen_handle = SimpleNamespace(
+        allele_ids=np.array(["A,C,G"], dtype=np.str_),
+        ids=np.array(["variant_1"], dtype=np.str_),
+        rsids=np.array(["rs1"], dtype=np.str_),
+        chromosomes=np.array(["1"], dtype=np.str_),
+        positions=np.array([123], dtype=np.int64),
+        nvariants=1,
+        nsamples=2,
+        nalleles=np.array([3], dtype=np.int32),
+        ncombinations=np.array([3], dtype=np.int32),
+        phased=np.array([False]),
+        samples=np.array(["sample_1", "sample_2"], dtype=np.str_),
+        _cbgen=SimpleNamespace(contain_samples=True),
+        close=lambda: None,
+    )
+
+    with (
+        patch(
+            "g.io.bgen.load_backend_open_bgen",
+            return_value=lambda *args, **kwargs: fake_bgen_handle,
+        ),
+        pytest.raises(ValueError, match="Only diploid biallelic BGEN variants are supported"),
+    ):
+        open_bgen("study.bgen")
+
+
+class FakeGeneratedSampleReader:
+    """Context manager returning a reader without real sample identifiers."""
+
+    sample_identifier_source = "generated"
+
+    def __enter__(self) -> FakeGeneratedSampleReader:
+        return self
+
+    def __exit__(self, exception_type: object, exception: object, traceback: object) -> None:
+        return
+
+
+def test_iter_genotype_chunks_requires_real_sample_identifiers() -> None:
+    with (
+        patch(
+            "g.io.bgen.open_bgen",
+            return_value=FakeGeneratedSampleReader(),
+        ),
+        pytest.raises(ValueError, match=r"does not contain samples and no \.sample file was found"),
+    ):
+        list(
+            iter_genotype_chunks(
+                bgen_path=Path("study.bgen"),
+                sample_indices=np.arange(2, dtype=np.int64),
+                expected_individual_identifiers=np.array(["sample_1", "sample_2"], dtype=np.str_),
+                chunk_size=1,
+            )
+        )
+
+
+def test_iter_linear_genotype_chunks_requires_real_sample_identifiers() -> None:
+    with (
+        patch(
+            "g.io.bgen.open_bgen",
+            return_value=FakeGeneratedSampleReader(),
+        ),
+        pytest.raises(ValueError, match=r"does not contain samples and no \.sample file was found"),
+    ):
+        list(
+            iter_linear_genotype_chunks(
+                bgen_path=Path("study.bgen"),
+                sample_indices=np.arange(2, dtype=np.int64),
+                expected_individual_identifiers=np.array(["sample_1", "sample_2"], dtype=np.str_),
+                chunk_size=1,
+            )
+        )
 
 
 def test_iter_genotype_chunks() -> None:
