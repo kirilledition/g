@@ -17,6 +17,7 @@ from g.api import (
     validate_logistic_config,
 )
 from g.io.output import OutputRunPaths, PreparedOutputRun
+from g.types import AssociationMode, Device, GenotypeSourceFormat, OutputMode
 
 
 def test_parse_covariate_name_list_handles_string_input() -> None:
@@ -31,12 +32,12 @@ def test_parse_covariate_name_list_handles_iterable_input() -> None:
 
 def test_resolve_output_path_appends_mode_suffix_for_prefix() -> None:
     """Ensure output prefixes receive the expected mode-specific suffix."""
-    assert resolve_output_path("results/output", "linear") == Path("results/output.linear.tsv")
+    assert resolve_output_path("results/output", AssociationMode.LINEAR) == Path("results/output.linear.tsv")
 
 
 def test_resolve_output_path_preserves_tsv_suffix() -> None:
     """Ensure explicit TSV paths are preserved."""
-    assert resolve_output_path("results/output.tsv", "logistic") == Path("results/output.tsv")
+    assert resolve_output_path("results/output.tsv", AssociationMode.LOGISTIC) == Path("results/output.tsv")
 
 
 def test_linear_uses_public_api_defaults() -> None:
@@ -55,11 +56,14 @@ def test_linear_uses_public_api_defaults() -> None:
         )
 
     assert artifacts == RunArtifacts(sumstats_tsv=Path("results/output.linear.tsv"))
-    mock_configure_jax_device.assert_called_once_with("cpu")
+    mock_configure_jax_device.assert_called_once_with(Device.CPU)
     assert mock_iter_linear_output_frames.call_args.kwargs["covariate_path"] is None
     assert mock_iter_linear_output_frames.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_iter_linear_output_frames.call_args.kwargs["chunk_size"] == 2048
-    assert mock_iter_linear_output_frames.call_args.kwargs["genotype_source_config"].source_format == "plink"
+    assert (
+        mock_iter_linear_output_frames.call_args.kwargs["genotype_source_config"].source_format
+        == GenotypeSourceFormat.PLINK
+    )
     assert mock_iter_linear_output_frames.call_args.kwargs["prefetch_chunks"] == 1
     assert mock_write_frame_iterator_to_tsv.call_args.args[1] == Path("results/output.linear.tsv")
 
@@ -79,11 +83,14 @@ def test_logistic_uses_mode_specific_defaults() -> None:
         )
 
     assert artifacts == RunArtifacts(sumstats_tsv=Path("results/output.logistic.tsv"))
-    mock_configure_jax_device.assert_called_once_with("cpu")
+    mock_configure_jax_device.assert_called_once_with(Device.CPU)
     assert mock_iter_logistic_output_frames.call_args.kwargs["chunk_size"] == 1024
     assert mock_iter_logistic_output_frames.call_args.kwargs["max_iterations"] == 50
     assert mock_iter_logistic_output_frames.call_args.kwargs["tolerance"] == 1.0e-8
-    assert mock_iter_logistic_output_frames.call_args.kwargs["genotype_source_config"].source_format == "plink"
+    assert (
+        mock_iter_logistic_output_frames.call_args.kwargs["genotype_source_config"].source_format
+        == GenotypeSourceFormat.PLINK
+    )
     assert mock_write_frame_iterator_to_tsv.call_args.args[1] == Path("results/output.logistic.tsv")
 
 
@@ -116,7 +123,7 @@ def test_linear_supports_bgen_input() -> None:
         )
 
     genotype_source_config = mock_iter_linear_output_frames.call_args.kwargs["genotype_source_config"]
-    assert genotype_source_config.source_format == "bgen"
+    assert genotype_source_config.source_format == GenotypeSourceFormat.BGEN
     assert genotype_source_config.source_path == Path("dataset.bgen")
 
 
@@ -146,8 +153,6 @@ def test_linear_supports_explicit_bgen_sample_file() -> None:
         (ComputeConfig(chunk_size=0), "Chunk size must be positive"),
         (ComputeConfig(variant_limit=0), "Variant limit must be positive"),
         (ComputeConfig(prefetch_chunks=-1), "Prefetch chunk count must be zero or positive"),
-        (ComputeConfig(device="tpu"), "Unsupported device 'tpu'"),
-        (ComputeConfig(output_mode="parquet"), "Unsupported output mode 'parquet'"),
     ],
 )
 def test_validate_compute_config_rejects_invalid_values(
@@ -203,7 +208,7 @@ def test_linear_chunked_output_returns_run_artifacts_and_finalizes_parquet() -> 
             pheno_name="trait",
             out="results/output",
             compute=ComputeConfig(
-                output_mode="arrow_chunks",
+                output_mode=OutputMode.ARROW_CHUNKS,
                 output_run_directory=Path("results/output"),
                 resume=True,
                 finalize_parquet=True,
@@ -214,11 +219,11 @@ def test_linear_chunked_output_returns_run_artifacts_and_finalizes_parquet() -> 
         output_run_directory=Path("results/output.linear.run"),
         final_parquet=Path("results/output.linear.run/final.parquet"),
     )
-    mock_configure_jax_device.assert_called_once_with("cpu")
+    mock_configure_jax_device.assert_called_once_with(Device.CPU)
     assert mock_iter_linear_output_frames.call_args.kwargs["committed_chunk_identifiers"] == {2, 4}
     mock_persist_chunked_results.assert_called_once()
     mock_prepare_output_run.assert_called_once()
-    mock_finalize.assert_called_once_with(mock_output_run_paths, "linear")
+    mock_finalize.assert_called_once_with(mock_output_run_paths, AssociationMode.LINEAR)
 
 
 def test_logistic_chunked_output_returns_run_artifacts_without_finalization() -> None:
@@ -247,14 +252,14 @@ def test_logistic_chunked_output_returns_run_artifacts_without_finalization() ->
             pheno_name="trait",
             out="results/output",
             compute=ComputeConfig(
-                output_mode="arrow_chunks",
+                output_mode=OutputMode.ARROW_CHUNKS,
                 output_run_directory=Path("results/output"),
                 resume=True,
             ),
         )
 
     assert artifacts == RunArtifacts(output_run_directory=Path("results/output.logistic.run"), final_parquet=None)
-    mock_configure_jax_device.assert_called_once_with("cpu")
+    mock_configure_jax_device.assert_called_once_with(Device.CPU)
     assert mock_iter_logistic_output_frames.call_args.kwargs["committed_chunk_identifiers"] == {1}
     mock_persist_chunked_results.assert_called_once()
     mock_prepare_output_run.assert_called_once()

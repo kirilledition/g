@@ -24,45 +24,46 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 
 * **Rule:** 100% Type Annotation Coverage.  
 * Types must pass the **ty** type checker without implicit Any fallbacks. Use exact types (e.g., jax.Array, pl.DataFrame).
+* **Rule:** Finite sets of string values must use `enum.StrEnum`, not `str` annotations, `Literal[...]`, or ad-hoc validation sets. This applies to configuration values, modes, formats, codecs, CLI choices, and any other closed choice domain.
+* **Rule:** Define an enum in the narrowest valid scope. If it is used in exactly one production file, define it in that file. If it is used in more than one production file, define it in `src/g/types.py`.
+* **Rule:** Test-only enums should not live in production modules. If a test-only enum is used in one test file, define it in that test file. If it is shared across multiple test files, define it in `tests/types.py`.
 
-### **Return Types**
+### **Return Types & Structured Data**
 
-* **Rule:** Never return bare tuples for multiple values. Use a typing.NamedTuple.  
+* **Rule:** Never return bare tuples for multiple values. Use `@dataclass(frozen=True)`.  
   **Bad:**  
   def compute\_regression(features: jax.Array, targets: jax.Array) \-\> tuple\[jax.Array, jax.Array\]:  
       return betas, standard\_errors
 
   **Good:**  
-  from typing import NamedTuple  
+  from dataclasses import dataclass  
   import jax
 
-  class RegressionResult(NamedTuple):  
+  @dataclass(frozen=True)  
+  class RegressionResult:  
+      """Result of regression computation.
+
+      Attributes:
+          betas: Coefficient estimates.
+          standard\_errors: Standard errors of estimates.
+
+      """  
       betas: jax.Array  
       standard\_errors: jax.Array
 
   def compute\_regression(features: jax.Array, targets: jax.Array) \-\> RegressionResult:  
       return RegressionResult(betas=betas, standard\_errors=standard\_errors)
 
-### **JAX Array Containers**
+### **JAX Pytree Containers**
 
-* **Rule:** For containers consisting exclusively of JAX arrays (all fields are `jax.Array`), use `@dataclass` with `jax.tree_util.register_dataclass`.  
-  JAX provides optimized C++ pytree handling for dataclasses, resulting in ~25-35x faster tree operations (flatten/unflatten) compared to NamedTuple. This matters because JAX performs tree flattening/unflattening on every JIT compilation and transformation.
+* **Rule:** For containers used inside JAX JIT boundaries (state containers, loop carriers), use `@dataclass(frozen=True)` with `@jax.tree_util.register_dataclass`.  
 
-  **Bad (for pure JAX array containers):**  
-  from typing import NamedTuple  
-  import jax
-
-  class LogisticState(NamedTuple):  
-      coefficients: jax.Array  
-      converged\_mask: jax.Array  
-      iteration\_count: jax.Array
-
-  **Good (for pure JAX array containers):**  
+  **Good (for JIT-internal state):**  
   from dataclasses import dataclass  
   import jax
 
   @jax.tree\_util.register\_dataclass  
-  @dataclass  
+  @dataclass(frozen=True)  
   class LogisticState:  
       """State for batched logistic IRLS.
 
@@ -76,15 +77,16 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
       converged\_mask: jax.Array  
       iteration\_count: jax.Array
 
-* **Rule:** Continue using NamedTuple for containers with mixed types (strings, booleans, numpy arrays alongside JAX arrays). NamedTuple automatically handles non-array metadata without requiring explicit `meta_fields` registration.  
+* **Rule:** For containers with mixed types (strings, booleans, numpy arrays alongside JAX arrays) that are NOT passed through JIT boundaries, use `@dataclass(frozen=True)` without JAX registration.  
 
-  **Good (for mixed types):**  
-  from typing import NamedTuple  
+  **Good (for I/O and metadata containers):**  
+  from dataclasses import dataclass  
   import jax  
   import numpy.typing as npt  
   import numpy as np
 
-  class GenotypeChunk(NamedTuple):  
+  @dataclass(frozen=True)  
+  class GenotypeChunk:  
       """Genotype matrix with mixed metadata.
 
       Attributes:
@@ -96,6 +98,8 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
       genotypes: jax.Array  
       has\_missing\_values: bool  
       allele\_frequency: jax.Array
+
+* **Note on NamedTuple:** Avoid `typing.NamedTuple`. While it supports unpacking and indexing, `@dataclass(frozen=True)` provides better consistency, IDE support, and explicit immutability. The codebase standardizes on dataclasses for all structured return types
 
 ### **Documentation**
 

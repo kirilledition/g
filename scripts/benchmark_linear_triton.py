@@ -5,7 +5,7 @@ import importlib
 import json
 import time
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -35,30 +35,33 @@ if TYPE_CHECKING:
         ) -> LinearAssociationChunkResult: ...
 
 
-class CompiledTiming(NamedTuple):
+@dataclass(frozen=True)
+class CompiledTiming:
     compiled_callable: CompiledCallable
     compile_seconds: float
 
 
-class TritonTiming(NamedTuple):
+@dataclass(frozen=True)
+class TritonTiming:
     triton_state: TritonLinearAssociationState
     compile_seconds: float
 
 
-class JaxTiming(NamedTuple):
+@dataclass(frozen=True)
+class JaxTiming:
     compiled_callable: CompiledCallable
     linear_association_state: object
     compile_seconds: float
 
 
-@dataclass
+@dataclass(frozen=True)
 class TimingSummary:
     compile_seconds: float
     mean_execution_seconds: float
     minimum_execution_seconds: float
 
 
-@dataclass
+@dataclass(frozen=True)
 class BenchmarkSummary:
     device_kind: str
     sample_count: int

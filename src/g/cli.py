@@ -21,6 +21,7 @@ from g.api import (
 from g.api import (
     logistic as run_logistic_api,
 )
+from g.types import AssociationMode, Device, OutputMode
 
 app = typer.Typer(
     name="g",
@@ -30,11 +31,11 @@ app = typer.Typer(
 )
 
 
-def resolve_chunk_size(requested_chunk_size: int | None, association_mode: str) -> int:
+def resolve_chunk_size(requested_chunk_size: int | None, association_mode: AssociationMode) -> int:
     """Resolve the effective chunk size for an association mode."""
     if requested_chunk_size is not None:
         return requested_chunk_size
-    if association_mode == "linear":
+    if association_mode == AssociationMode.LINEAR:
         return DEFAULT_LINEAR_CHUNK_SIZE
     return DEFAULT_LOGISTIC_CHUNK_SIZE
 
@@ -67,8 +68,8 @@ def run_linear_command(
     covar_names: str | None = typer.Option(None, "--covar-names", help="Comma-separated covariate column names."),
     chunk_size: int | None = typer.Option(None, help="Variants per BED chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
-    device: str = typer.Option("cpu", help="JAX execution device. Use 'gpu' to enable GPU acceleration."),
-    output_mode: str = typer.Option("tsv", help="Output mode: 'tsv' or 'arrow_chunks'."),
+    device: Device = typer.Option(Device.CPU, help="JAX execution device."),
+    output_mode: OutputMode = typer.Option(OutputMode.TSV, help="Output format mode."),
     output_run_directory: pathlib.Path | None = typer.Option(None, help="Run directory for chunked output mode."),
     resume: bool = typer.Option(  # noqa: FBT001
         default=False,
@@ -81,7 +82,7 @@ def run_linear_command(
 ) -> None:
     """Run a linear association scan."""
     compute_config = ComputeConfig(
-        chunk_size=resolve_chunk_size(chunk_size, "linear"),
+        chunk_size=resolve_chunk_size(chunk_size, AssociationMode.LINEAR),
         device=device,
         variant_limit=variant_limit,
         output_mode=output_mode,
@@ -119,7 +120,7 @@ def run_logistic_command(
     covar_names: str | None = typer.Option(None, "--covar-names", help="Comma-separated covariate column names."),
     chunk_size: int | None = typer.Option(None, help="Variants per BED chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
-    device: str = typer.Option("cpu", help="JAX execution device. Use 'gpu' to enable GPU acceleration."),
+    device: Device = typer.Option(Device.CPU, help="JAX execution device."),
     max_iterations: int = typer.Option(50, help="Maximum logistic IRLS iterations."),
     tolerance: float = typer.Option(1.0e-8, help="Logistic convergence tolerance."),
     firth_fallback: bool = typer.Option(  # noqa: FBT001
@@ -127,7 +128,7 @@ def run_logistic_command(
         "--firth/--no-firth",
         help="Use Firth fallback when needed.",
     ),
-    output_mode: str = typer.Option("tsv", help="Output mode: 'tsv' or 'arrow_chunks'."),
+    output_mode: OutputMode = typer.Option(OutputMode.TSV, help="Output format mode."),
     output_run_directory: pathlib.Path | None = typer.Option(None, help="Run directory for chunked output mode."),
     resume: bool = typer.Option(  # noqa: FBT001
         default=False,
@@ -140,7 +141,7 @@ def run_logistic_command(
 ) -> None:
     """Run a logistic association scan."""
     compute_config = ComputeConfig(
-        chunk_size=resolve_chunk_size(chunk_size, "logistic"),
+        chunk_size=resolve_chunk_size(chunk_size, AssociationMode.LOGISTIC),
         device=device,
         variant_limit=variant_limit,
         output_mode=output_mode,

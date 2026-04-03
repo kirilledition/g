@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import polars as pl
 
@@ -103,8 +103,18 @@ class Plink1LogisticParitySummary:
     max_abs_abs_z_statistic_difference: float
 
 
-class Phase1CommandResult(NamedTuple):
-    """Output table and runtime for one subprocess Phase 1 execution."""
+@dataclass(frozen=True)
+class Phase1CommandResult:
+    """Output table and runtime for one subprocess Phase 1 execution.
+
+    Attributes:
+        success: Whether the command succeeded.
+        result_frame: The result DataFrame if successful.
+        duration_seconds: Runtime in seconds if successful.
+        output_path: Path to the output file.
+        error_message: Error message if the command failed.
+
+    """
 
     success: bool
     result_frame: pl.DataFrame | None
