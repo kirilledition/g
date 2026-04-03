@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -26,6 +27,7 @@ from g.io.source import (
     iter_genotype_chunks_from_source,
     iter_linear_genotype_chunks_from_source,
     load_aligned_sample_data_from_source,
+    open_genotype_reader,
 )
 from g.models import (
     GenotypeChunk,
@@ -537,47 +539,55 @@ def iter_linear_output_frames(
             message = "Either genotype_source_config or bed_prefix must be provided."
             raise ValueError(message)
         resolved_genotype_source_config = build_plink_source_config(bed_prefix)
-    with jax.profiler.TraceAnnotation("linear.load_aligned_sample_data"):
-        aligned_sample_data = load_aligned_sample_data_from_source(
-            genotype_source_config=resolved_genotype_source_config,
-            phenotype_path=phenotype_path,
-            phenotype_name=phenotype_name,
-            covariate_path=covariate_path,
-            covariate_names=covariate_names,
-            is_binary_trait=False,
-        )
-    with jax.profiler.TraceAnnotation("linear.prepare_state"):
-        linear_association_state = prepare_linear_association_state(
-            covariate_matrix=aligned_sample_data.covariate_matrix,
-            phenotype_vector=aligned_sample_data.phenotype_vector,
-        )
+    genotype_reader = None
+    if resolved_genotype_source_config.source_format == "bgen":
+        genotype_reader = open_genotype_reader(resolved_genotype_source_config)
+    reader_context = genotype_reader if genotype_reader is not None else nullcontext()
 
-    chunk_iterator = iter_linear_genotype_chunks_from_source(
-        genotype_source_config=resolved_genotype_source_config,
-        sample_indices=aligned_sample_data.sample_indices,
-        expected_individual_identifiers=aligned_sample_data.individual_identifiers,
-        chunk_size=chunk_size,
-        variant_limit=variant_limit,
-        prefetch_chunks=prefetch_chunks,
-    )
-    committed_identifier_set = committed_chunk_identifiers or set()
-    for chunk_number, current_chunk in enumerate(chunk_iterator):
-        chunk_identifier = current_chunk.metadata.variant_start_index
-        if chunk_identifier in committed_identifier_set:
-            continue
-        with jax.profiler.StepTraceAnnotation("linear_chunk", step_num=chunk_number):
-            with jax.profiler.TraceAnnotation("linear.compute"):
-                linear_result = compute_linear_association_chunk(
-                    linear_association_state=linear_association_state,
-                    genotype_matrix=current_chunk.genotypes,
-                )
-            with jax.profiler.TraceAnnotation("linear.accumulate"):
-                yield LinearChunkAccumulator(
-                    metadata=current_chunk.metadata,
-                    allele_one_frequency=current_chunk.allele_one_frequency,
-                    observation_count=current_chunk.observation_count,
-                    linear_result=linear_result,
-                )
+    with reader_context:
+        with jax.profiler.TraceAnnotation("linear.load_aligned_sample_data"):
+            aligned_sample_data = load_aligned_sample_data_from_source(
+                genotype_source_config=resolved_genotype_source_config,
+                phenotype_path=phenotype_path,
+                phenotype_name=phenotype_name,
+                covariate_path=covariate_path,
+                covariate_names=covariate_names,
+                is_binary_trait=False,
+                genotype_reader=genotype_reader,
+            )
+        with jax.profiler.TraceAnnotation("linear.prepare_state"):
+            linear_association_state = prepare_linear_association_state(
+                covariate_matrix=aligned_sample_data.covariate_matrix,
+                phenotype_vector=aligned_sample_data.phenotype_vector,
+            )
+
+        chunk_iterator = iter_linear_genotype_chunks_from_source(
+            genotype_source_config=resolved_genotype_source_config,
+            sample_indices=aligned_sample_data.sample_indices,
+            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
+            chunk_size=chunk_size,
+            variant_limit=variant_limit,
+            prefetch_chunks=prefetch_chunks,
+            genotype_reader=genotype_reader,
+        )
+        committed_identifier_set = committed_chunk_identifiers or set()
+        for chunk_number, current_chunk in enumerate(chunk_iterator):
+            chunk_identifier = current_chunk.metadata.variant_start_index
+            if chunk_identifier in committed_identifier_set:
+                continue
+            with jax.profiler.StepTraceAnnotation("linear_chunk", step_num=chunk_number):
+                with jax.profiler.TraceAnnotation("linear.compute"):
+                    linear_result = compute_linear_association_chunk(
+                        linear_association_state=linear_association_state,
+                        genotype_matrix=current_chunk.genotypes,
+                    )
+                with jax.profiler.TraceAnnotation("linear.accumulate"):
+                    yield LinearChunkAccumulator(
+                        metadata=current_chunk.metadata,
+                        allele_one_frequency=current_chunk.allele_one_frequency,
+                        observation_count=current_chunk.observation_count,
+                        linear_result=linear_result,
+                    )
 
 
 def iter_logistic_output_frames(
@@ -602,50 +612,58 @@ def iter_logistic_output_frames(
             message = "Either genotype_source_config or bed_prefix must be provided."
             raise ValueError(message)
         resolved_genotype_source_config = build_plink_source_config(bed_prefix)
-    with jax.profiler.TraceAnnotation("logistic.load_aligned_sample_data"):
-        aligned_sample_data = load_aligned_sample_data_from_source(
+    genotype_reader = None
+    if resolved_genotype_source_config.source_format == "bgen":
+        genotype_reader = open_genotype_reader(resolved_genotype_source_config)
+    reader_context = genotype_reader if genotype_reader is not None else nullcontext()
+
+    with reader_context:
+        with jax.profiler.TraceAnnotation("logistic.load_aligned_sample_data"):
+            aligned_sample_data = load_aligned_sample_data_from_source(
+                genotype_source_config=resolved_genotype_source_config,
+                phenotype_path=phenotype_path,
+                phenotype_name=phenotype_name,
+                covariate_path=covariate_path,
+                covariate_names=covariate_names,
+                is_binary_trait=True,
+                genotype_reader=genotype_reader,
+            )
+        with jax.profiler.TraceAnnotation("logistic.prepare_no_missing_constants"):
+            no_missing_constants = prepare_no_missing_logistic_constants(
+                covariate_matrix=aligned_sample_data.covariate_matrix,
+                phenotype_vector=aligned_sample_data.phenotype_vector,
+            )
+        chunk_iterator = iter_genotype_chunks_from_source(
             genotype_source_config=resolved_genotype_source_config,
-            phenotype_path=phenotype_path,
-            phenotype_name=phenotype_name,
-            covariate_path=covariate_path,
-            covariate_names=covariate_names,
-            is_binary_trait=True,
+            sample_indices=aligned_sample_data.sample_indices,
+            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
+            chunk_size=chunk_size,
+            variant_limit=variant_limit,
+            prefetch_chunks=prefetch_chunks,
+            genotype_reader=genotype_reader,
         )
-    with jax.profiler.TraceAnnotation("logistic.prepare_no_missing_constants"):
-        no_missing_constants = prepare_no_missing_logistic_constants(
-            covariate_matrix=aligned_sample_data.covariate_matrix,
-            phenotype_vector=aligned_sample_data.phenotype_vector,
-        )
-    chunk_iterator = iter_genotype_chunks_from_source(
-        genotype_source_config=resolved_genotype_source_config,
-        sample_indices=aligned_sample_data.sample_indices,
-        expected_individual_identifiers=aligned_sample_data.individual_identifiers,
-        chunk_size=chunk_size,
-        variant_limit=variant_limit,
-        prefetch_chunks=prefetch_chunks,
-    )
-    committed_identifier_set = committed_chunk_identifiers or set()
-    for chunk_number, current_chunk in enumerate(chunk_iterator):
-        chunk_identifier = current_chunk.metadata.variant_start_index
-        if chunk_identifier in committed_identifier_set:
-            continue
-        with jax.profiler.StepTraceAnnotation("logistic_chunk", step_num=chunk_number):
-            with jax.profiler.TraceAnnotation("logistic.compute"):
-                logistic_evaluation = compute_logistic_association_with_missing_exclusion(
-                    covariate_matrix=aligned_sample_data.covariate_matrix,
-                    phenotype_vector=aligned_sample_data.phenotype_vector,
-                    genotype_chunk=current_chunk,
-                    max_iterations=max_iterations,
-                    tolerance=tolerance,
-                    no_missing_constants=no_missing_constants,
-                )
-            with jax.profiler.TraceAnnotation("logistic.accumulate"):
-                yield LogisticChunkAccumulator(
-                    metadata=current_chunk.metadata,
-                    allele_one_frequency=logistic_evaluation.allele_one_frequency,
-                    observation_count=logistic_evaluation.observation_count,
-                    logistic_result=logistic_evaluation.logistic_result,
-                )
+        committed_identifier_set = committed_chunk_identifiers or set()
+        for chunk_number, current_chunk in enumerate(chunk_iterator):
+            chunk_identifier = current_chunk.metadata.variant_start_index
+            if chunk_identifier in committed_identifier_set:
+                continue
+            with jax.profiler.StepTraceAnnotation("logistic_chunk", step_num=chunk_number):
+                with jax.profiler.TraceAnnotation("logistic.compute"):
+                    logistic_evaluation = compute_logistic_association_with_missing_exclusion(
+                        covariate_matrix=aligned_sample_data.covariate_matrix,
+                        phenotype_vector=aligned_sample_data.phenotype_vector,
+                        genotype_chunk=current_chunk,
+                        max_iterations=max_iterations,
+                        tolerance=tolerance,
+                        no_missing_constants=no_missing_constants,
+                    )
+                with jax.profiler.TraceAnnotation("logistic.accumulate"):
+                    yield LogisticChunkAccumulator(
+                        metadata=current_chunk.metadata,
+                        allele_one_frequency=logistic_evaluation.allele_one_frequency,
+                        observation_count=logistic_evaluation.observation_count,
+                        logistic_result=logistic_evaluation.logistic_result,
+                    )
 
 
 def run_linear_association(

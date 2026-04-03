@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+import polars as pl
 import pytest
 
 if importlib.util.find_spec("cbgen") is None or importlib.util.find_spec("bgen_reader") is None:
@@ -135,6 +136,31 @@ def test_open_bgen_reads_phased_haplotype_example_as_dosage() -> None:
         dtype=np.float32,
     )
     np.testing.assert_allclose(genotype_matrix, expected_genotype_matrix)
+
+
+def test_open_bgen_defers_variant_table_materialization() -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+
+    with (
+        patch("g.io.bgen.build_bgen_variant_table", return_value=pl.DataFrame()) as mock_build_variant_table,
+        open_bgen(bgen_path) as bgen_reader,
+    ):
+        assert mock_build_variant_table.call_count == 0
+        _ = bgen_reader.variant_table
+        assert mock_build_variant_table.call_count == 1
+
+
+def test_bgen_variant_slice_metadata_does_not_materialize_full_variant_table() -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+
+    with (
+        patch("g.io.bgen.build_bgen_variant_table", return_value=pl.DataFrame()) as mock_build_variant_table,
+        open_bgen(bgen_path) as bgen_reader,
+    ):
+        variant_table_arrays = bgen_reader.get_variant_table_arrays(0, 2)
+
+    assert mock_build_variant_table.call_count == 0
+    assert variant_table_arrays.variant_identifier_values.shape == (2,)
 
 
 def test_open_bgen_uses_external_sample_file(tmp_path: Path) -> None:

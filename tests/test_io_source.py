@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import jax.numpy as jnp
@@ -19,6 +20,53 @@ from g.io.source import (
     validate_genotype_source_config,
 )
 from g.models import GenotypeChunk, VariantMetadata
+
+if TYPE_CHECKING:
+    import polars as pl
+
+    from g.io.reader import GenotypeReader, VariantTableArrays
+
+
+class FakeSourceReader:
+    """Minimal protocol-compatible reader used in source tests."""
+
+    sample_identifier_source = "external"
+
+    @property
+    def sample_count(self) -> int:
+        return 2
+
+    @property
+    def variant_count(self) -> int:
+        return 1
+
+    @property
+    def samples(self) -> np.ndarray:
+        return np.array(["sample0", "sample1"], dtype=np.str_)
+
+    @property
+    def variant_table(self) -> pl.DataFrame:
+        raise AssertionError
+
+    def get_variant_table_arrays(self, variant_start: int, variant_stop: int) -> VariantTableArrays:
+        raise AssertionError
+
+    def read(
+        self,
+        index: object = None,
+        dtype: type[np.float32] | type[np.float64] = np.float32,
+        order: str = "C",
+    ) -> np.ndarray:
+        raise AssertionError
+
+    def close(self) -> None:
+        return
+
+    def __enter__(self) -> FakeSourceReader:
+        return self
+
+    def __exit__(self, exception_type: object, exception: object, traceback: object) -> None:
+        return
 
 
 def build_chunk(variant_start_index: int) -> GenotypeChunk:
@@ -150,6 +198,35 @@ def test_load_aligned_sample_data_from_source_dispatches_to_bgen_loader() -> Non
     mock_load_from_sample_table.assert_called_once()
 
 
+def test_load_aligned_sample_data_from_source_reuses_open_bgen_reader() -> None:
+    """Ensure BGEN sample alignment can reuse an already-open reader."""
+    bgen_source_config = build_bgen_source_config(Path("study.bgen"))
+    genotype_reader = cast("GenotypeReader", FakeSourceReader())
+    expected_aligned_sample_data = object()
+
+    with (
+        patch("g.io.source.load_bgen_sample_table") as mock_load_bgen_sample_table,
+        patch(
+            "g.io.source.load_aligned_sample_data_from_individual_identifier_table",
+            return_value=expected_aligned_sample_data,
+        ) as mock_load_from_sample_table,
+    ):
+        aligned_sample_data = load_aligned_sample_data_from_source(
+            genotype_source_config=bgen_source_config,
+            phenotype_path=Path("pheno.tsv"),
+            phenotype_name="trait",
+            covariate_path=None,
+            covariate_names=None,
+            is_binary_trait=True,
+            genotype_reader=genotype_reader,
+        )
+
+    assert aligned_sample_data is expected_aligned_sample_data
+    mock_load_bgen_sample_table.assert_not_called()
+    sample_table = mock_load_from_sample_table.call_args.kwargs["sample_table"]
+    assert sample_table.get_column("individual_identifier").to_list() == ["sample0", "sample1"]
+
+
 def test_build_bgen_source_config_preserves_sample_path() -> None:
     """Ensure BGEN source configs keep the optional sample-file path."""
     genotype_source_config = build_bgen_source_config(Path("study.bgen"), sample_path=Path("study.sample"))
@@ -199,3 +276,34 @@ def test_iter_linear_genotype_chunks_from_source_dispatches_to_bgen_reader() -> 
 
     assert linear_chunks == []
     mock_iter_bgen.assert_called_once()
+
+
+def test_iter_linear_genotype_chunks_from_source_reuses_open_reader() -> None:
+    """Ensure source iteration can reuse one already-open genotype reader."""
+    bgen_source_config = build_bgen_source_config(Path("study.bgen"))
+    genotype_reader = cast("GenotypeReader", FakeSourceReader())
+
+    with patch("g.io.source.iter_linear_genotype_chunks_from_reader", return_value=iter(())) as mock_iter_reader:
+        linear_chunks = list(
+            iter_linear_genotype_chunks_from_source(
+                genotype_source_config=bgen_source_config,
+                sample_indices=np.array([0, 1], dtype=np.int64),
+                expected_individual_identifiers=np.array(["sample0", "sample1"]),
+                chunk_size=64,
+                variant_limit=1,
+                genotype_reader=genotype_reader,
+            )
+        )
+
+    assert linear_chunks == []
+    mock_iter_reader.assert_called_once()
+    assert mock_iter_reader.call_args.kwargs["genotype_reader"] is genotype_reader
+    assert mock_iter_reader.call_args.kwargs["source_name"] == "BGEN"
+    np.testing.assert_array_equal(mock_iter_reader.call_args.kwargs["sample_indices"], np.array([0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(
+        mock_iter_reader.call_args.kwargs["expected_individual_identifiers"],
+        np.array(["sample0", "sample1"]),
+    )
+    assert mock_iter_reader.call_args.kwargs["chunk_size"] == 64
+    assert mock_iter_reader.call_args.kwargs["variant_limit"] == 1
+    assert mock_iter_reader.call_args.kwargs["validate_sample_order_flag"] is True

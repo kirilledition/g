@@ -15,6 +15,7 @@ import polars as pl
 
 from g.io.reader import (
     ArrayMemoryOrder,
+    VariantTableArrays,
     iter_genotype_chunks_from_reader,
     iter_linear_genotype_chunks_from_reader,
     validate_sample_order,
@@ -145,7 +146,7 @@ class BgenReader:
         self.sample_identifier_array = self.resolve_sample_identifier_array()
         self.combination_count = int(np.asarray(self.backend_handle.ncombinations, dtype=np.int32)[0])
         self.is_phased = bool(np.asarray(self.backend_handle.phased, dtype=np.bool_)[0])
-        self.variant_table = build_bgen_variant_table(self.backend_handle)
+        self._variant_table: pl.DataFrame | None = None
         self.validate_supported_layout()
 
     @property
@@ -162,6 +163,29 @@ class BgenReader:
     def samples(self) -> npt.NDArray[np.str_]:
         """Return sample identifiers in file order."""
         return self.sample_identifier_array
+
+    @property
+    def variant_table(self) -> pl.DataFrame:
+        """Return normalized BGEN variant metadata."""
+        if self._variant_table is None:
+            self._variant_table = build_bgen_variant_table(self.backend_handle)
+        return self._variant_table
+
+    def get_variant_table_arrays(self, variant_start: int, variant_stop: int) -> VariantTableArrays:
+        """Return normalized metadata arrays for one BGEN variant slice."""
+        allele_identifier_values = np.asarray(self.backend_handle.allele_ids[variant_start:variant_stop], dtype=np.str_)
+        allele_pairs = [allele_identifier_value.split(",") for allele_identifier_value in allele_identifier_values]
+        counted_allele_values = [allele_pair[-1] if allele_pair else "" for allele_pair in allele_pairs]
+        reference_allele_values = [allele_pair[0] if allele_pair else "" for allele_pair in allele_pairs]
+        variant_identifier_values = np.asarray(self.backend_handle.ids[variant_start:variant_stop], dtype=np.str_)
+        rsid_values = np.asarray(self.backend_handle.rsids[variant_start:variant_stop], dtype=np.str_)
+        return VariantTableArrays(
+            chromosome_values=np.asarray(self.backend_handle.chromosomes[variant_start:variant_stop], dtype=np.str_),
+            variant_identifier_values=resolve_variant_identifier_values(variant_identifier_values, rsid_values),
+            position_values=np.asarray(self.backend_handle.positions[variant_start:variant_stop], dtype=np.int64),
+            allele_one_values=np.asarray(counted_allele_values, dtype=np.str_),
+            allele_two_values=np.asarray(reference_allele_values, dtype=np.str_),
+        )
 
     def resolve_sample_identifier_array(self) -> npt.NDArray[np.str_]:
         """Resolve normalized individual identifiers for the open BGEN reader."""

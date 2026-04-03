@@ -84,10 +84,6 @@ def test_iter_genotype_chunks_uses_python_reader_chunk_boundaries() -> None:
         patch("g.io.plink.get_num_threads", return_value=3),
         patch("g.io.plink.read_bed_chunk_host", return_value=np.ones((2, 2), dtype=np.float64)) as mock_read_chunk_host,
         patch("g.io.reader.preprocess_genotype_matrix", return_value=preprocessed_chunk) as mock_preprocess,
-        patch(
-            "g.io.reader.build_genotype_chunk",
-            side_effect=lambda **kwargs: build_output_chunk(kwargs["variant_start"], kwargs["variant_stop"]),
-        ) as mock_build_chunk,
     ):
         chunks = list(
             iter_genotype_chunks(
@@ -103,4 +99,3 @@ def test_iter_genotype_chunks_uses_python_reader_chunk_boundaries() -> None:
     mock_validate_sample_order.assert_called_once()
     assert mock_read_chunk_host.call_count == 2
     assert mock_preprocess.call_count == 2
-    assert mock_build_chunk.call_count == 2

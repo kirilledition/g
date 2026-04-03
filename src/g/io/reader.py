@@ -9,17 +9,12 @@ import numpy as np
 import numpy.typing as npt
 import polars as pl
 
-from g.io.genotype_processing import (
-    build_genotype_chunk,
-    build_linear_genotype_chunk,
-    preprocess_genotype_matrix,
-    preprocess_genotype_matrix_arrays,
-)
+from g.io.genotype_processing import preprocess_genotype_matrix, preprocess_genotype_matrix_arrays
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from g.models import GenotypeChunk, LinearGenotypeChunk
+    from g.models import GenotypeChunk, LinearGenotypeChunk, VariantMetadata
 
 
 ArrayMemoryOrder = Literal["K", "A", "C", "F"]
@@ -54,6 +49,9 @@ class GenotypeReader(Protocol):
     @property
     def variant_table(self) -> pl.DataFrame:
         """Return normalized variant metadata."""
+
+    def get_variant_table_arrays(self, variant_start: int, variant_stop: int) -> VariantTableArrays:
+        """Return normalized metadata arrays for one variant slice."""
 
     def read(
         self,
@@ -107,6 +105,25 @@ def validate_sample_order(
         raise ValueError(message)
 
 
+def build_variant_metadata(
+    variant_table_arrays: VariantTableArrays,
+    variant_start: int,
+    variant_stop: int,
+) -> VariantMetadata:
+    """Build one variant-metadata object from already-sliced arrays."""
+    from g.models import VariantMetadata
+
+    return VariantMetadata(
+        variant_start_index=variant_start,
+        variant_stop_index=variant_stop,
+        chromosome=variant_table_arrays.chromosome_values,
+        variant_identifiers=variant_table_arrays.variant_identifier_values,
+        position=variant_table_arrays.position_values,
+        allele_one=variant_table_arrays.allele_one_values,
+        allele_two=variant_table_arrays.allele_two_values,
+    )
+
+
 def iter_genotype_chunks_from_reader(
     genotype_reader: GenotypeReader,
     source_name: str,
@@ -124,7 +141,6 @@ def iter_genotype_chunks_from_reader(
         return
 
     sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
-    variant_table_arrays = build_variant_table_arrays(genotype_reader.variant_table)
     if validate_sample_order_flag:
         validate_sample_order(
             observed_individual_identifiers=genotype_reader.samples,
@@ -135,6 +151,7 @@ def iter_genotype_chunks_from_reader(
 
     for variant_start in range(0, total_variant_count, chunk_size):
         variant_stop = min(total_variant_count, variant_start + chunk_size)
+        variant_table_arrays = genotype_reader.get_variant_table_arrays(variant_start, variant_stop)
         genotype_matrix_host = genotype_reader.read(
             index=(sample_index_array, slice(variant_start, variant_stop)),
             dtype=np.float32,
@@ -144,15 +161,15 @@ def iter_genotype_chunks_from_reader(
             jax.device_put(genotype_matrix_host),
             include_missing_value_flag=include_missing_value_flag,
         )
-        yield build_genotype_chunk(
-            preprocessed_chunk_data=preprocessed_chunk_data,
-            chromosome_values=variant_table_arrays.chromosome_values,
-            variant_identifier_values=variant_table_arrays.variant_identifier_values,
-            position_values=variant_table_arrays.position_values,
-            allele_one_values=variant_table_arrays.allele_one_values,
-            allele_two_values=variant_table_arrays.allele_two_values,
-            variant_start=variant_start,
-            variant_stop=variant_stop,
+        from g.models import GenotypeChunk
+
+        yield GenotypeChunk(
+            genotypes=preprocessed_chunk_data.genotypes,
+            missing_mask=preprocessed_chunk_data.missing_mask,
+            has_missing_values=preprocessed_chunk_data.has_missing_values,
+            metadata=build_variant_metadata(variant_table_arrays, variant_start, variant_stop),
+            allele_one_frequency=preprocessed_chunk_data.allele_one_frequency,
+            observation_count=preprocessed_chunk_data.observation_count,
         )
 
 
@@ -172,7 +189,6 @@ def iter_linear_genotype_chunks_from_reader(
         return
 
     sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
-    variant_table_arrays = build_variant_table_arrays(genotype_reader.variant_table)
     if validate_sample_order_flag:
         validate_sample_order(
             observed_individual_identifiers=genotype_reader.samples,
@@ -184,6 +200,7 @@ def iter_linear_genotype_chunks_from_reader(
     trace_prefix = source_name.lower()
     for variant_start in range(0, total_variant_count, chunk_size):
         variant_stop = min(total_variant_count, variant_start + chunk_size)
+        variant_table_arrays = genotype_reader.get_variant_table_arrays(variant_start, variant_stop)
         with jax.profiler.TraceAnnotation(f"linear.read_{trace_prefix}_chunk"):
             genotype_matrix_host = genotype_reader.read(
                 index=(sample_index_array, slice(variant_start, variant_stop)),
@@ -195,13 +212,11 @@ def iter_linear_genotype_chunks_from_reader(
         with jax.profiler.TraceAnnotation("linear.preprocess_genotypes"):
             preprocessed_genotype_arrays = preprocess_genotype_matrix_arrays(genotype_matrix_device)
         with jax.profiler.TraceAnnotation("linear.build_chunk"):
-            yield build_linear_genotype_chunk(
-                preprocessed_genotype_arrays=preprocessed_genotype_arrays,
-                chromosome_values=variant_table_arrays.chromosome_values,
-                variant_identifier_values=variant_table_arrays.variant_identifier_values,
-                position_values=variant_table_arrays.position_values,
-                allele_one_values=variant_table_arrays.allele_one_values,
-                allele_two_values=variant_table_arrays.allele_two_values,
-                variant_start=variant_start,
-                variant_stop=variant_stop,
+            from g.models import LinearGenotypeChunk
+
+            yield LinearGenotypeChunk(
+                genotypes=preprocessed_genotype_arrays.genotypes,
+                metadata=build_variant_metadata(variant_table_arrays, variant_start, variant_stop),
+                allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,
+                observation_count=preprocessed_genotype_arrays.observation_count,
             )

@@ -13,7 +13,7 @@ from g.engine import (
     run_linear_association,
     run_logistic_association,
 )
-from g.io.source import build_plink_source_config
+from g.io.source import build_bgen_source_config, build_plink_source_config
 from g.models import (
     AlignedSampleData,
     GenotypeChunk,
@@ -22,6 +22,16 @@ from g.models import (
     LogisticAssociationEvaluation,
     VariantMetadata,
 )
+
+
+class FakeContextReader:
+    """Minimal context manager used to verify reader reuse wiring."""
+
+    def __enter__(self) -> FakeContextReader:
+        return self
+
+    def __exit__(self, exception_type: object, exception: object, traceback: object) -> None:
+        return
 
 
 def build_aligned_sample_data(*, is_binary_trait: bool) -> AlignedSampleData:
@@ -155,6 +165,44 @@ def test_iter_logistic_output_frames_passes_no_missing_constants() -> None:
     assert mock_compute_chunk.call_count == 2
     for call in mock_compute_chunk.call_args_list:
         assert call.kwargs["no_missing_constants"] is no_missing_constants
+
+
+def test_iter_linear_output_frames_reuses_open_bgen_reader() -> None:
+    """Ensure BGEN runs open one reader for alignment and chunk iteration."""
+    aligned_sample_data = build_aligned_sample_data(is_binary_trait=False)
+    genotype_chunk = build_genotype_chunk("variant1")
+    linear_result = LinearAssociationChunkResult(
+        beta=jnp.array([0.5]),
+        standard_error=jnp.array([0.1]),
+        test_statistic=jnp.array([5.0]),
+        p_value=jnp.array([0.01]),
+        valid_mask=jnp.array([True]),
+    )
+    genotype_reader = FakeContextReader()
+
+    with (
+        patch("g.engine.open_genotype_reader", return_value=genotype_reader) as mock_open_genotype_reader,
+        patch("g.engine.load_aligned_sample_data_from_source", return_value=aligned_sample_data) as mock_load,
+        patch("g.engine.prepare_linear_association_state", return_value="linear-state"),
+        patch("g.engine.iter_linear_genotype_chunks_from_source", return_value=iter([genotype_chunk])) as mock_iter,
+        patch("g.engine.compute_linear_association_chunk", return_value=linear_result),
+    ):
+        accumulators = list(
+            iter_linear_output_frames(
+                genotype_source_config=build_bgen_source_config(Path("study.bgen")),
+                phenotype_path=Path("phenotype.tsv"),
+                phenotype_name="trait",
+                covariate_path=Path("covariates.tsv"),
+                covariate_names=("age",),
+                chunk_size=32,
+                variant_limit=1,
+            )
+        )
+
+    assert len(accumulators) == 1
+    mock_open_genotype_reader.assert_called_once()
+    assert mock_load.call_args.kwargs["genotype_reader"] is genotype_reader
+    assert mock_iter.call_args.kwargs["genotype_reader"] is genotype_reader
 
 
 def test_run_linear_association_concatenates_iterator_results() -> None:

@@ -20,6 +20,8 @@ from g.io.genotype_processing import (
 )
 from g.io.reader import (
     ArrayMemoryOrder,
+    VariantTableArrays,
+    build_variant_table_arrays,
     iter_genotype_chunks_from_reader,
     iter_linear_genotype_chunks_from_reader,
     validate_sample_order,
@@ -77,7 +79,8 @@ class PlinkReader:
         self.bed_prefix = Path(bed_prefix)
         self.bed_path = self.bed_prefix.with_suffix(".bed")
         self.bed_handle = open_bed(str(self.bed_path))
-        self.variant_table = load_variant_table(self.bed_prefix)
+        self._variant_table = load_variant_table(self.bed_prefix)
+        self._variant_table_arrays: VariantTableArrays | None = None
         self.num_threads = get_num_threads(getattr(self.bed_handle, "_num_threads", None))
 
     @property
@@ -103,6 +106,23 @@ class PlinkReader:
             message = "PLINK reader handle does not expose sample identifiers."
             raise AttributeError(message)
         return np.asarray(self.bed_handle.iid, dtype=np.str_)
+
+    @property
+    def variant_table(self) -> pl.DataFrame:
+        """Return normalized PLINK variant metadata."""
+        return self._variant_table
+
+    def get_variant_table_arrays(self, variant_start: int, variant_stop: int) -> VariantTableArrays:
+        """Return normalized metadata arrays for one variant slice."""
+        if self._variant_table_arrays is None:
+            self._variant_table_arrays = build_variant_table_arrays(self.variant_table)
+        return VariantTableArrays(
+            chromosome_values=self._variant_table_arrays.chromosome_values[variant_start:variant_stop],
+            variant_identifier_values=self._variant_table_arrays.variant_identifier_values[variant_start:variant_stop],
+            position_values=self._variant_table_arrays.position_values[variant_start:variant_stop],
+            allele_one_values=self._variant_table_arrays.allele_one_values[variant_start:variant_stop],
+            allele_two_values=self._variant_table_arrays.allele_two_values[variant_start:variant_stop],
+        )
 
     def read(
         self,
