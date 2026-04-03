@@ -46,3 +46,10 @@ I want app to compute p values in negative log10, i believe that only this makes
 
 Examples and easy code on how to parallelize across aws machines, slurm nodes, or maybe multiple gpus on the same machine.
 
+## Style dreams
+
+- no imports inside function, only at the top of the file
+- import all internal modules as absolute. from g import io.plink, from g import types
+- for typing always import full typing namespace. import typing; typing.TYPE_CHECKING 
+- for pathlib always import Path from pathlib
+- have separate file for computationally important constants, or keep them in some separate namespace.
