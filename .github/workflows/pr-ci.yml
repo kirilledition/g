@@ -44,7 +44,7 @@ jobs:
         run: uv sync --group dev --frozen --no-install-project
 
       - name: Run Ruff lint
-        run: uv run --no-sync ruff check .
+        run: uvx ruff check .
 
   typecheck:
     name: typecheck

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import time
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-import torch
 from g.compute.linear_triton import (  # type: ignore
     TritonLinearAssociationState,
     compute_linear_association_statistics_with_triton,
@@ -17,6 +17,8 @@ from g.compute.linear_triton import (  # type: ignore
 )
 
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
+
+torch: Any = importlib.import_module("torch")
 
 if TYPE_CHECKING:
     from typing import Protocol
