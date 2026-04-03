@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import jax
 import jax.numpy as jnp
 import numpy as np
-import torch
+import torch  # type: ignore
 from g.compute.linear_triton import (  # type: ignore
     TritonLinearAssociationState,
     compute_linear_association_statistics_with_triton,

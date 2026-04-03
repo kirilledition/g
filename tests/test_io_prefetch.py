@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from g.io.prefetch import prefetch_iterator_values
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 from g.models import GenotypeChunk, VariantMetadata
 
 
@@ -38,7 +44,7 @@ def test_prefetch_iterator_values_preserves_order() -> None:
 def test_prefetch_iterator_values_surfaces_worker_errors() -> None:
     """Ensure iterator failures on the worker thread propagate to the consumer."""
 
-    def failing_iterator() -> GenotypeChunk:
+    def failing_iterator() -> Iterator[GenotypeChunk]:
         raise ValueError("broken iterator")
         yield build_chunk(0)
 
