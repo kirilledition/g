@@ -17,6 +17,9 @@ if typing.TYPE_CHECKING:
     import collections.abc
 
 
+preprocess_genotype_matrix = genotype_processing.preprocess_genotype_matrix
+
+
 @dataclass(frozen=True)
 class VariantTableArrays:
     """Numpy views of variant metadata columns used during chunk construction.
@@ -162,7 +165,7 @@ def iter_genotype_chunks_from_reader(
             dtype=np.float32,
             order=types.ArrayMemoryOrder.C_CONTIGUOUS,
         )
-        preprocessed_chunk_data = genotype_processing.preprocess_genotype_matrix(
+        preprocessed_chunk_data = preprocess_genotype_matrix(
             jax.device_put(genotype_matrix_host),
             include_missing_value_flag=include_missing_value_flag,
         )

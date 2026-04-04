@@ -18,6 +18,7 @@ example = importlib.import_module("cbgen").example
 from g.io.bgen import (  # noqa: E402
     build_bgen_variant_table,
     build_bgen_variant_table_arrays,
+    convert_probability_matrix_to_dosage,
     convert_probability_tensor_to_dosage,
     iter_genotype_chunks,
     iter_linear_genotype_chunks,
@@ -77,6 +78,44 @@ def test_convert_probability_tensor_to_dosage_for_phased_layout() -> None:
 
     expected_dosage_matrix = np.array([[0.0, 1.0], [1.0, 2.0]], dtype=np.float32)
     np.testing.assert_allclose(dosage_matrix, expected_dosage_matrix)
+
+
+def test_convert_probability_matrix_to_dosage_for_unphased_layout() -> None:
+    probability_matrix = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+
+    dosage_vector = convert_probability_matrix_to_dosage(
+        probability_matrix,
+        combination_count=3,
+        is_phased=False,
+    )
+
+    np.testing.assert_allclose(dosage_vector, np.array([0.0, 1.0, 2.0], dtype=np.float32))
+
+
+def test_convert_probability_matrix_to_dosage_for_phased_layout() -> None:
+    probability_matrix = np.array(
+        [
+            [1.0, 0.0, 1.0, 0.0],
+            [0.0, 1.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+
+    dosage_vector = convert_probability_matrix_to_dosage(
+        probability_matrix,
+        combination_count=4,
+        is_phased=True,
+    )
+
+    np.testing.assert_allclose(dosage_vector, np.array([0.0, 1.0, 1.0], dtype=np.float32))
 
 
 def test_convert_probability_tensor_to_dosage_rejects_unsupported_layout() -> None:
@@ -154,6 +193,55 @@ def test_open_bgen_reads_phased_haplotype_example_as_dosage() -> None:
         dtype=np.float32,
     )
     np.testing.assert_allclose(genotype_matrix, expected_genotype_matrix)
+
+
+def test_open_bgen_direct_subset_read_matches_probability_tensor_conversion() -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+    sample_indices = np.array([0, 2], dtype=np.intp)
+    variant_slice = slice(1, 4)
+
+    with open_bgen(bgen_path) as bgen_reader:
+        direct_dosage_matrix = bgen_reader.read(
+            index=(sample_indices, variant_slice),
+            dtype=np.float32,
+            order=ArrayMemoryOrder.C_CONTIGUOUS,
+        )
+        combination_count = bgen_reader.combination_count
+        is_phased = bgen_reader.is_phased
+        probability_tensor = bgen_reader.backend_handle.read(
+            index=(sample_indices, variant_slice),
+            dtype=np.float32,
+            order=ArrayMemoryOrder.C_CONTIGUOUS.value,
+        )
+
+    expected_dosage_matrix = convert_probability_tensor_to_dosage(
+        probability_tensor=np.asarray(probability_tensor, dtype=np.float32, order="C"),
+        combination_count=combination_count,
+        is_phased=is_phased,
+        dtype=np.float32,
+        order=ArrayMemoryOrder.C_CONTIGUOUS,
+    )
+    np.testing.assert_allclose(direct_dosage_matrix, expected_dosage_matrix)
+
+
+def test_open_bgen_direct_read_bypasses_backend_probability_tensor() -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+
+    with (
+        open_bgen(bgen_path) as bgen_reader,
+        patch.object(
+            bgen_reader.backend_handle,
+            "read",
+            side_effect=AssertionError("backend probability tensor path should not be used"),
+        ),
+    ):
+        dosage_matrix = bgen_reader.read(
+            index=(np.array([0, 1], dtype=np.intp), slice(0, 2)),
+            dtype=np.float32,
+            order=ArrayMemoryOrder.C_CONTIGUOUS,
+        )
+
+    assert dosage_matrix.shape == (2, 2)
 
 
 def test_open_bgen_defers_variant_table_materialization() -> None:

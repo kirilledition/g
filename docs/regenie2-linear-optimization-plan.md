@@ -8,182 +8,289 @@ Reduce end-to-end runtime for `g regenie2-linear`, with emphasis on:
 - fewer host-device transfers
 - fewer Python-managed per-chunk operations
 
+## Current State
+
+Implemented so far:
+
+1. Cached normalized BGEN metadata arrays in `BgenReader`
+2. Added a fast path for already chromosome-homogeneous chunks
+3. Replaced the chunk-wide probability-tensor read path with a direct host-side dosage reader
+4. Inlined dosage conversion inside the direct BGEN worker loop
+5. Added batched payload materialization to reduce per-chunk `jax.device_get(...)` frequency
+
+Validated with focused quality checks:
+
+- `ruff check`
+- `ty check`
+- focused test suites for BGEN, engine iterators, and output persistence
+
 ## Profiling Basis
 
-Primary saved profiling artifacts live locally under:
+Primary local profiling artifacts:
 
-- `data/profiles/regenie2_linear/full_chr22_gpu_chunk1024_summary.json`
-- `data/profiles/regenie2_linear/full_chr22_gpu_chunk1024_summary.txt`
-- `data/profiles/regenie2_linear/full_chr22_gpu_chunk1024_cprofile.txt`
-- `data/profiles/regenie2_linear/full_chr22_gpu_chunk1024_jax_trace/`
+- baseline path:
+  - `data/profiles/regenie2_linear/full_chr22_gpu_chunk1024_summary.json`
+  - `data/profiles/regenie2_linear/full_chr22_gpu_chunk1024_summary.txt`
+- optimized direct-reader path:
+  - `data/profiles/regenie2_linear/full_chr22_gpu_chunk1024_direct_summary.json`
+  - `data/profiles/regenie2_linear/full_chr22_gpu_chunk1024_direct_summary.txt`
 
-These are not committed because `data/` is repository-local and git-ignored.
+These are local-only and remain under `data/`.
 
-## Main Findings
+## Measured Progress
 
-The full chr22 GPU profile shows the pipeline is dominated by host-side BGEN work rather than JAX compute.
+### Warmed GPU Runtime
 
-Top stage timings from the profiled run:
+Best verified warmed GPU benchmark at `chunk_size=1024`:
+
+- before direct BGEN dosage reader: `8.761s`
+- after direct BGEN dosage reader: `7.754s`
+
+Verified improvement:
+
+- `1.007s` faster
+- about `11.5%` improvement
+
+### Profiled GPU Runtime
+
+Full-chromosome profiled wall time:
+
+- before read-path optimization: `23.416s`
+- after direct BGEN dosage reader: `18.103s`
+
+Verified improvement:
+
+- `5.313s` faster
+- about `22.7%` improvement
+
+### Stage-Level Improvement
+
+`bgen_read_host`:
+
+- before: `12.325s`
+- after: `9.216s`
+
+Verified improvement:
+
+- `3.109s` faster
+- about `25.2%` improvement
+
+`get_variant_table_arrays`:
+
+- before: `0.925s`
+- after: `0.662s`
+
+Verified improvement:
+
+- `0.263s` faster
+- about `28.4%` improvement
+
+## Current Bottlenecks
+
+The pipeline is still dominated by host-side BGEN work.
+
+Latest profiled stage ranking from `full_chr22_gpu_chunk1024_direct_summary.json`:
 
 | Stage | Total | Share of wall |
 |---|---:|---:|
-| `bgen_read_host` | 12.325s | 52.64% |
-| `write_chunk_to_disk` | 1.006s | 4.30% |
-| `get_variant_table_arrays` | 0.925s | 3.95% |
-| `device_put_genotypes` | 0.373s | 1.59% |
-| `preprocess_genotypes` | 0.083s | 0.36% |
-| `compute_regenie2_linear_chunk` | 0.079s | 0.34% |
+| `bgen_read_host` | 9.216s | 50.91% |
+| `write_chunk_to_disk` | 1.264s | 6.98% |
+| `get_variant_table_arrays` | 0.662s | 3.66% |
+| `device_put_genotypes` | 0.355s | 1.96% |
+| `build_chunk_payload` | 0.118s | 0.65% |
+| `preprocess_genotypes` | 0.080s | 0.44% |
+| `compute_regenie2_linear_chunk` | 0.071s | 0.39% |
 
 Important interpretation:
 
-- `persist_chunked_results_total` encloses the writer lifetime and overlaps other stages. It should not be added to the totals above.
-- Absolute profiled runtime is slower than benchmark runtime because `cProfile`, JAX tracing, and explicit synchronization add overhead.
-- The stage ranking is still useful.
+- `persist_chunked_results_total` is an enclosing lifetime metric and overlaps other stages
+- JAX compute remains very small relative to ingestion
+- the kernel is still not the place to optimize first
 
-## Bottlenecks
+## What We Learned
 
-### 1. BGEN decode and host reads
+### Confirmed
 
-This is the dominant bottleneck.
+1. BGEN ingestion was the right first target
+2. Metadata caching helped, but only as a secondary win
+3. Direct host-side dosage construction was the first optimization that materially improved end-to-end speed
+4. The code is still mostly read-bound, not compute-bound
 
-Evidence from `cProfile`:
+### Still True After Optimization
 
-- `cbgen._ffi.bgen_file_open_genotype`
-- `cbgen._ffi.bgen_genotype_read32`
-- `_bgen_file.py:211(read_probability)`
+Evidence from the optimized profile still points to the same underlying backend costs:
 
-These appear once per variant at very high frequency, which strongly suggests expensive per-variant backend overhead inside the chunk reads.
+- `cbgen._ffi bgen_genotype_read32`
+- `cbgen._ffi bgen_file_open_genotype`
+- repeated per-variant probability reads inside the BGEN stack
 
-### 2. Repeated metadata extraction per chunk
+That means our in-repo optimization headroom is now smaller than it was before the direct reader work.
 
-`get_variant_table_arrays` is a meaningful secondary cost. The current path repeatedly rebuilds per-chunk metadata arrays and repeatedly splits allele strings.
-
-### 3. Per-chunk host materialization and Arrow writes
-
-The actual disk write time is modest, but per-chunk result packaging still forces:
-
-- `jax.device_get(...)`
-- payload dataclass construction
-- Polars `DataFrame` construction
-- schema casting
-- one Arrow IPC write per chunk
-
-### 4. Host-device transfers exist but are not yet dominant
-
-Current transfer points:
-
-- host to device in `src/g/io/reader.py` after BGEN decode
-- device to host in `src/g/engine.py` when building persistence payloads
-
-The transfer costs are real, but the profile says BGEN ingestion should be fixed first.
-
-## Optimization Priorities
-
-### Priority 1: Reduce BGEN metadata overhead
-
-Low risk, immediate.
-
-Plan:
-
-- cache normalized metadata arrays once in `BgenReader`
-- make `get_variant_table_arrays()` slice cached arrays rather than rebuilding arrays from backend fields each chunk
-
-Expected benefit:
-
-- saves repeated string splitting and array construction
-- should reduce `get_variant_table_arrays` materially
-
-### Priority 2: Investigate a faster BGEN read path
-
-Highest potential impact.
-
-Plan:
-
-- verify whether the current `bgen-reader` stack exposes a chunk-oriented dosage path that avoids repeated per-variant open/read/close behavior
-- if not, evaluate either:
-  - a different backend path for BGEN dosage reads
-  - a native reader path in Rust/C++
-  - a cached intermediate dosage format for repeated step 2 development and profiling
-
-Expected benefit:
-
-- this is the only area likely to produce large end-to-end wins
-
-### Priority 3: Batch result materialization
-
-Medium risk, likely worthwhile after ingestion improves.
-
-Plan:
-
-- accumulate several output chunks before `jax.device_get(...)`
-- write fewer, larger Arrow files
-- reduce per-chunk DataFrame/schema/write overhead
-
-Expected benefit:
-
-- fewer device-to-host synchronizations
-- less Python and Polars overhead
-
-### Priority 4: Re-tune chunk size after ingestion changes
-
-The best observed warmed GPU chunk size today is `1024`, but that may shift once read overhead changes.
-
-Plan:
-
-- re-sweep `1024`, `2048`, `4096`, and `8192` after each major I/O optimization
-
-### Priority 5: Revisit read prefetching
-
-Current profiles used `prefetch_chunks=0` for stability.
-
-Plan:
-
-- retry bounded prefetching once the loader path is cleaner
-- measure whether host read latency can overlap with downstream work
-
-### Priority 6: Small control-flow cleanup
-
-Low priority.
-
-Plan:
-
-- skip chromosome splitting when a chunk is already chromosome-homogeneous
-- keep LOCO fetch frequency minimal
-
-## Host-Device Transfer Reduction Plan
+## Host-Device Transfer Status
 
 ### Current transfers
 
 Host to device:
 
-- decoded BGEN dosage chunk -> `jax.device_put(...)`
+- one dosage chunk per chunk via `jax.device_put(...)`
 
 Device to host:
 
-- per-chunk `jax.device_get(...)` in `build_regenie2_linear_chunk_payload()`
+- result materialization for chunk persistence
 
-### Transfer reduction strategy
+### Reduction work done
 
-1. Reduce the number of chunks that cross the boundary.
-2. Batch result extraction so device-to-host synchronization happens less often.
-3. Avoid new sync points in Python loops.
-4. Keep profiling-only `block_until_ready()` logic out of production paths.
+- batched payload materialization has been implemented so multiple REGENIE2 chunks can share one `device_get(...)`
 
-## Recommended Implementation Order
+### Current assessment
 
-1. Cache BGEN metadata arrays in `BgenReader`.
-2. Benchmark again.
-3. Investigate or redesign the BGEN dosage read path.
-4. Batch result materialization and Arrow writes.
-5. Re-sweep chunk size.
-6. Try read prefetching.
-7. Only then consider kernel-level changes.
+- transfer overhead is still not the dominant bottleneck
+- the next large win is more likely to come from reducing BGEN backend overhead than from kernel or transfer tuning
+
+## Optimization Status By Item
+
+### Done
+
+#### 1. Cache BGEN metadata arrays
+
+Status: complete
+
+Files:
+
+- `src/g/io/bgen.py`
+
+Outcome:
+
+- reduced repeated string splitting and metadata reconstruction
+- measurable but secondary improvement
+
+#### 2. Direct BGEN dosage reader
+
+Status: complete
+
+Files:
+
+- `src/g/io/bgen.py`
+
+Outcome:
+
+- removes chunk-wide probability tensor construction
+- constructs dosages directly in host buffers
+- produced the first meaningful end-to-end speedup
+
+#### 3. Small chunk-splitting cleanup
+
+Status: complete
+
+Files:
+
+- `src/g/engine.py`
+
+Outcome:
+
+- avoids needless subchunk rebuilding for homogeneous chunks
+
+#### 4. Batched payload materialization
+
+Status: implemented
+
+Files:
+
+- `src/g/engine.py`
+- `src/g/io/output.py`
+
+Outcome:
+
+- reduces per-chunk `device_get(...)` frequency in the persistence path
+- correctness is covered by tests
+- end-to-end gain has not yet been isolated cleanly with a dedicated benchmark/profile snapshot
+
+### Not Done Yet
+
+#### 5. Re-sweep chunk size after the new reader path
+
+Status: incomplete
+
+Notes:
+
+- the old best verified chunk size was `1024`
+- the optimal size may shift after the direct reader change
+
+#### 6. Revisit prefetching
+
+Status: not started
+
+Notes:
+
+- profiles so far used `prefetch_chunks=0`
+- worth retrying once the benchmarking path is stable again
+
+#### 7. Backend-level BGEN redesign or replacement
+
+Status: not started
+
+This is now the main remaining high-impact path.
+
+## Next Priorities
+
+### Priority 1: Re-benchmark the current batched-payload path cleanly
+
+Need:
+
+- one clean warmed GPU benchmark for the current code
+- one updated profile snapshot for the batched materialization path
+
+Reason:
+
+- the batching logic is implemented, but its isolated impact is not yet verified as cleanly as the direct reader path
+
+### Priority 2: Re-sweep chunk size on the optimized reader path
+
+Need:
+
+- fresh warmed GPU sweep for `256`, `512`, `1024`, `2048`, `4096`, `8192`
+
+Reason:
+
+- optimal chunk size likely changed after read-path improvements
+
+### Priority 3: Investigate backend-level BGEN overhead
+
+Need:
+
+- determine whether `cbgen`/`bgen-reader` can expose a lower-overhead chunk dosage path
+- if not, evaluate:
+  - lower-level direct FFI integration
+  - a native Rust/C++ reader
+  - a cached intermediate dosage format for repeated development/profiling
+
+Reason:
+
+- the remaining top bottleneck is still per-variant BGEN backend work
+
+### Priority 4: Revisit read prefetching
+
+Need:
+
+- benchmark `prefetch_chunks=1`, `2`, and `4`
+
+Reason:
+
+- once the read path is faster, overlap may become more useful
+
+## Recommended Implementation Order From Here
+
+1. Verify current batched-payload performance with a clean benchmark and profile
+2. Re-sweep chunk size on the optimized reader path
+3. Investigate lower-level BGEN backend overhead
+4. Try prefetching
+5. Only then consider larger architectural changes such as cached intermediate genotype storage
 
 ## Success Metrics
 
-After each optimization step, re-measure:
+Continue measuring after each step:
 
-- end-to-end warmed runtime
+- warmed end-to-end runtime
 - `bgen_read_host`
 - `get_variant_table_arrays`
 - `device_put_genotypes`
@@ -197,4 +304,4 @@ After each optimization step, re-measure:
 - micro-optimizing JAX linear algebra
 - changing statistical outputs or formulas
 
-The profile does not justify those yet.
+The current optimized profile still does not justify those.

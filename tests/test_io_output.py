@@ -9,7 +9,8 @@ import numpy as np
 import polars as pl
 import pytest
 
-from g.engine import LinearChunkAccumulator
+from g import engine
+from g.engine import LinearChunkAccumulator, Regenie2LinearChunkAccumulator
 from g.io.output import (
     build_chunk_file_name,
     cast_frame_to_schema,
@@ -21,7 +22,7 @@ from g.io.output import (
     scan_committed_chunk_identifiers,
     write_chunk_to_disk,
 )
-from g.models import LinearAssociationChunkResult, VariantMetadata
+from g.models import LinearAssociationChunkResult, Regenie2LinearChunkResult, VariantMetadata
 from g.types import AssociationMode
 
 if typing.TYPE_CHECKING:
@@ -82,6 +83,35 @@ def create_linear_chunk_accumulator(
             standard_error=jnp.asarray([0.01], dtype=jnp.float32),
             test_statistic=jnp.asarray([10.0], dtype=jnp.float32),
             p_value=jnp.asarray([1.0e-5], dtype=jnp.float32),
+            valid_mask=jnp.asarray([True], dtype=jnp.bool_),
+        ),
+    )
+
+
+def create_regenie2_linear_chunk_accumulator(
+    *,
+    chunk_identifier: int,
+    variant_stop_index: int,
+    variant_identifier: str,
+) -> Regenie2LinearChunkAccumulator:
+    """Build a minimal REGENIE2 linear chunk accumulator for testing."""
+    return Regenie2LinearChunkAccumulator(
+        metadata=VariantMetadata(
+            variant_start_index=chunk_identifier,
+            variant_stop_index=variant_stop_index,
+            chromosome=np.asarray(["1"]),
+            variant_identifiers=np.asarray([variant_identifier]),
+            position=np.asarray([123 + chunk_identifier], dtype=np.int64),
+            allele_one=np.asarray(["A"]),
+            allele_two=np.asarray(["C"]),
+        ),
+        allele_one_frequency=jnp.asarray([0.5], dtype=jnp.float32),
+        observation_count=jnp.asarray([100], dtype=jnp.int32),
+        regenie2_linear_result=Regenie2LinearChunkResult(
+            beta=jnp.asarray([0.1], dtype=jnp.float32),
+            standard_error=jnp.asarray([0.01], dtype=jnp.float32),
+            chi_squared=jnp.asarray([10.0], dtype=jnp.float32),
+            log10_p_value=jnp.asarray([5.0], dtype=jnp.float32),
             valid_mask=jnp.asarray([True], dtype=jnp.bool_),
         ),
     )
@@ -266,6 +296,34 @@ class TestPersistChunkedResults:
         committed = scan_committed_chunk_identifiers(prepared_output_run.output_run_paths.chunks_directory)
         assert committed == frozenset({0, 2})
 
+    def test_persists_multiple_chunks_with_payload_batching(self, tmp_path: Path) -> None:
+        """Ensure batched payload extraction still writes all chunks."""
+        prepared_output_run = prepare_output_run(
+            output_root=tmp_path / "output_batch",
+            association_mode=AssociationMode.LINEAR,
+            resume=False,
+        )
+        accumulators = [
+            create_linear_chunk_accumulator(
+                chunk_identifier=0,
+                variant_stop_index=2,
+                variant_identifier="v0",
+            ),
+            create_linear_chunk_accumulator(
+                chunk_identifier=2,
+                variant_stop_index=4,
+                variant_identifier="v2",
+            ),
+        ]
+        persist_chunked_results(
+            frame_iterator=iter(accumulators),
+            output_run_paths=prepared_output_run.output_run_paths,
+            association_mode=AssociationMode.LINEAR,
+            payload_batch_size=2,
+        )
+        committed = scan_committed_chunk_identifiers(prepared_output_run.output_run_paths.chunks_directory)
+        assert committed == frozenset({0, 2})
+
     def test_resume_skips_committed_chunks(self, tmp_path: Path) -> None:
         """Ensure resume correctly skips already-committed chunks."""
         prepared_output_run = prepare_output_run(
@@ -345,3 +403,38 @@ class TestFinalizeChunksToParquet:
         frame = pl.read_parquet(parquet_path)
         assert frame.height == 0
         assert frame.schema == get_output_schema(AssociationMode.LINEAR)
+
+
+def test_regenie2_payload_batch_matches_individual_payloads() -> None:
+    """Ensure batched REGENIE2 payload extraction matches per-chunk extraction."""
+    chunk_accumulators = [
+        create_regenie2_linear_chunk_accumulator(
+            chunk_identifier=0,
+            variant_stop_index=1,
+            variant_identifier="v0",
+        ),
+        create_regenie2_linear_chunk_accumulator(
+            chunk_identifier=1,
+            variant_stop_index=2,
+            variant_identifier="v1",
+        ),
+    ]
+
+    individual_payloads = [engine.build_chunk_payload(chunk_accumulator) for chunk_accumulator in chunk_accumulators]
+    batched_payloads = engine.build_chunk_payload_batch(chunk_accumulators)
+
+    assert len(batched_payloads) == len(individual_payloads)
+    for individual_payload, batched_payload in zip(individual_payloads, batched_payloads, strict=True):
+        assert individual_payload.chunk_identifier == batched_payload.chunk_identifier
+        np.testing.assert_allclose(individual_payload.beta, batched_payload.beta, atol=0.0)
+        np.testing.assert_allclose(
+            individual_payload.standard_error,
+            batched_payload.standard_error,
+            atol=0.0,
+        )
+        np.testing.assert_allclose(
+            individual_payload.allele_one_frequency,
+            batched_payload.allele_one_frequency,
+            atol=0.0,
+        )
+        np.testing.assert_allclose(individual_payload.log10_p_value, batched_payload.log10_p_value, atol=0.0)

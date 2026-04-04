@@ -419,6 +419,72 @@ def build_regenie2_linear_chunk_payload(
     )
 
 
+def build_regenie2_linear_chunk_payload_batch(
+    chunk_accumulators: collections.abc.Sequence[Regenie2LinearChunkAccumulator],
+) -> list[Regenie2LinearChunkPayload]:
+    """Build host-side REGENIE step 2 payloads with one device transfer for the batch."""
+    if not chunk_accumulators:
+        return []
+
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": jnp.concatenate(
+                [chunk_accumulator.allele_one_frequency for chunk_accumulator in chunk_accumulators]
+            ),
+            "observation_count": jnp.concatenate(
+                [chunk_accumulator.observation_count for chunk_accumulator in chunk_accumulators]
+            ),
+            "beta": jnp.concatenate(
+                [chunk_accumulator.regenie2_linear_result.beta for chunk_accumulator in chunk_accumulators]
+            ),
+            "standard_error": jnp.concatenate(
+                [chunk_accumulator.regenie2_linear_result.standard_error for chunk_accumulator in chunk_accumulators]
+            ),
+            "chi_squared": jnp.concatenate(
+                [chunk_accumulator.regenie2_linear_result.chi_squared for chunk_accumulator in chunk_accumulators]
+            ),
+            "log10_p_value": jnp.concatenate(
+                [chunk_accumulator.regenie2_linear_result.log10_p_value for chunk_accumulator in chunk_accumulators]
+            ),
+            "valid_mask": jnp.concatenate(
+                [chunk_accumulator.regenie2_linear_result.valid_mask for chunk_accumulator in chunk_accumulators]
+            ),
+        }
+    )
+
+    payloads: list[Regenie2LinearChunkPayload] = []
+    variant_offset = 0
+    for chunk_accumulator in chunk_accumulators:
+        metadata = chunk_accumulator.metadata
+        variant_count = len(metadata.position)
+        next_variant_offset = variant_offset + variant_count
+        payloads.append(
+            Regenie2LinearChunkPayload(
+                chunk_identifier=metadata.variant_start_index,
+                variant_start_index=metadata.variant_start_index,
+                variant_stop_index=metadata.variant_stop_index,
+                chromosome=metadata.chromosome,
+                position=metadata.position,
+                variant_identifier=metadata.variant_identifiers,
+                allele_one=metadata.allele_one,
+                allele_two=metadata.allele_two,
+                allele_one_frequency=np.ascontiguousarray(
+                    host_values["allele_one_frequency"][variant_offset:next_variant_offset]
+                ),
+                observation_count=np.ascontiguousarray(
+                    host_values["observation_count"][variant_offset:next_variant_offset]
+                ),
+                beta=np.ascontiguousarray(host_values["beta"][variant_offset:next_variant_offset]),
+                standard_error=np.ascontiguousarray(host_values["standard_error"][variant_offset:next_variant_offset]),
+                chi_squared=np.ascontiguousarray(host_values["chi_squared"][variant_offset:next_variant_offset]),
+                log10_p_value=np.ascontiguousarray(host_values["log10_p_value"][variant_offset:next_variant_offset]),
+                is_valid=np.ascontiguousarray(host_values["valid_mask"][variant_offset:next_variant_offset]),
+            )
+        )
+        variant_offset = next_variant_offset
+    return payloads
+
+
 def build_chunk_payload(
     chunk_accumulator: LinearChunkAccumulator | LogisticChunkAccumulator | Regenie2LinearChunkAccumulator,
 ) -> ChunkPayload:
@@ -443,6 +509,30 @@ def build_chunk_payload(
         observation_count=chunk_accumulator.observation_count,
         logistic_result=chunk_accumulator.logistic_result,
     )
+
+
+def build_chunk_payload_batch(
+    chunk_accumulators: collections.abc.Sequence[
+        LinearChunkAccumulator | LogisticChunkAccumulator | Regenie2LinearChunkAccumulator
+    ],
+) -> list[ChunkPayload]:
+    """Build host-side payloads from a same-mode accumulator batch."""
+    if not chunk_accumulators:
+        return []
+    first_chunk_accumulator = chunk_accumulators[0]
+    if isinstance(first_chunk_accumulator, Regenie2LinearChunkAccumulator):
+        assert all(
+            isinstance(chunk_accumulator, Regenie2LinearChunkAccumulator) for chunk_accumulator in chunk_accumulators
+        )
+        regenie_chunk_accumulators = typing.cast(
+            "collections.abc.Sequence[Regenie2LinearChunkAccumulator]",
+            chunk_accumulators,
+        )
+        return typing.cast(
+            "list[ChunkPayload]",
+            build_regenie2_linear_chunk_payload_batch(regenie_chunk_accumulators),
+        )
+    return [build_chunk_payload(chunk_accumulator) for chunk_accumulator in chunk_accumulators]
 
 
 def concatenate_linear_results(

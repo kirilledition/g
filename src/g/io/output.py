@@ -24,6 +24,7 @@ OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)\.arrow$")
 DEFAULT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_WRITER_TIMEOUT_SECONDS = 120.0
+DEFAULT_PAYLOAD_BATCH_SIZE = 1
 
 LINEAR_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
     "chunk_identifier": pl.Int64(),
@@ -339,6 +340,7 @@ def persist_chunked_results(
     *,
     writer_queue_depth: int = DEFAULT_WRITER_QUEUE_DEPTH,
     writer_timeout_seconds: float = DEFAULT_WRITER_TIMEOUT_SECONDS,
+    payload_batch_size: int = DEFAULT_PAYLOAD_BATCH_SIZE,
 ) -> None:
     """Persist chunked results through a non-blocking background writer.
 
@@ -352,6 +354,7 @@ def persist_chunked_results(
         association_mode: Association mode enum value.
         writer_queue_depth: Maximum queued chunks before backpressure.
         writer_timeout_seconds: Maximum wait when placing a chunk on the queue.
+        payload_batch_size: Number of chunk accumulators to materialize together.
 
     Raises:
         RuntimeError: If the background writer thread dies.
@@ -366,12 +369,9 @@ def persist_chunked_results(
         daemon=True,
     )
     writer_thread.start()
-    try:
-        for chunk_accumulator in frame_iterator:
-            if writer_errors:
-                message = f"Background writer failed: {writer_errors[0]}"
-                raise RuntimeError(message) from writer_errors[0]
-            chunk_payload = engine.build_chunk_payload(chunk_accumulator)
+
+    def enqueue_chunk_payloads(chunk_payloads: list[engine.ChunkPayload]) -> None:
+        for chunk_payload in chunk_payloads:
             try:
                 work_queue.put(chunk_payload, timeout=writer_timeout_seconds)
             except queue.Full as error:
@@ -379,6 +379,21 @@ def persist_chunked_results(
                     "Background writer queue remained full for too long. Storage throughput is bottlenecking compute."
                 )
                 raise TimeoutError(message) from error
+
+    try:
+        chunk_accumulator_batch: list[
+            engine.LinearChunkAccumulator | engine.LogisticChunkAccumulator | engine.Regenie2LinearChunkAccumulator
+        ] = []
+        for chunk_accumulator in frame_iterator:
+            if writer_errors:
+                message = f"Background writer failed: {writer_errors[0]}"
+                raise RuntimeError(message) from writer_errors[0]
+            chunk_accumulator_batch.append(chunk_accumulator)
+            if len(chunk_accumulator_batch) >= payload_batch_size:
+                enqueue_chunk_payloads(engine.build_chunk_payload_batch(chunk_accumulator_batch))
+                chunk_accumulator_batch.clear()
+        if chunk_accumulator_batch:
+            enqueue_chunk_payloads(engine.build_chunk_payload_batch(chunk_accumulator_batch))
         work_queue.put(None, timeout=writer_timeout_seconds)
         writer_thread.join(timeout=writer_timeout_seconds)
         if writer_errors:

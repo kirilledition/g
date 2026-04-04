@@ -24,6 +24,9 @@ if typing.TYPE_CHECKING:
 build_genotype_chunk = genotype_processing.build_genotype_chunk
 preprocess_genotype_matrix = genotype_processing.preprocess_genotype_matrix
 preprocess_genotype_matrix_arrays = genotype_processing.preprocess_genotype_matrix_arrays
+open_bed = bed_reader.open_bed
+read_f32 = bed_reader.read_f32
+get_num_threads = bed_reader._open_bed.get_num_threads
 
 VARIANT_TABLE_COLUMNS = (
     "chromosome",
@@ -401,10 +404,10 @@ class PlinkReader:
         """Open one PLINK BED dataset."""
         self.bed_prefix = Path(bed_prefix)
         self.bed_path = self.bed_prefix.with_suffix(".bed")
-        self.bed_handle = bed_reader.open_bed(str(self.bed_path))
+        self.bed_handle = open_bed(str(self.bed_path))
         self._variant_table = load_variant_table(self.bed_prefix)
         self._variant_table_arrays: reader.VariantTableArrays | None = None
-        self.num_threads = bed_reader._open_bed.get_num_threads(getattr(self.bed_handle, "_num_threads", None))
+        self.num_threads = get_num_threads(getattr(self.bed_handle, "_num_threads", None))
 
     @property
     def sample_count(self) -> int:
@@ -517,7 +520,7 @@ def read_bed_chunk_host(
         dtype=np.float32,
         order=types.ArrayMemoryOrder.C_CONTIGUOUS.value,
     )
-    bed_reader.read_f32(
+    read_f32(
         str(bed_path),
         bed_handle.cloud_options,
         iid_count=bed_handle.iid_count,

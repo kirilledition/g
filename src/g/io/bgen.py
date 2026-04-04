@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import threading
 import typing
 from pathlib import Path
 
@@ -123,6 +124,30 @@ def load_backend_open_bgen() -> typing.Any:
         raise ModuleNotFoundError(message) from error
 
 
+def load_backend_cbgen_file() -> typing.Any:
+    """Import the low-level cbgen file wrapper lazily."""
+    try:
+        return importlib.import_module("cbgen").bgen_file
+    except ModuleNotFoundError as error:
+        message = (
+            "BGEN support requires the `bgen-reader` stack. "
+            "Run the command inside `nix develop` and sync dependencies again."
+        )
+        raise ModuleNotFoundError(message) from error
+
+
+def load_backend_cbgen_ffi() -> typing.Any:
+    """Import the low-level cbgen FFI module lazily."""
+    try:
+        return importlib.import_module("cbgen._ffi")
+    except ModuleNotFoundError as error:
+        message = (
+            "BGEN support requires the `bgen-reader` stack. "
+            "Run the command inside `nix develop` and sync dependencies again."
+        )
+        raise ModuleNotFoundError(message) from error
+
+
 def resolve_variant_identifier_values(
     variant_identifier_values: npt.NDArray[np.str_],
     rsid_values: npt.NDArray[np.str_],
@@ -157,6 +182,122 @@ def convert_probability_tensor_to_dosage(
         return np.asarray(dosage_matrix, dtype=dtype, order=order.value)
     message = "Unsupported BGEN probability layout. Only diploid biallelic phased or unphased variants are supported."
     raise ValueError(message)
+
+
+def convert_probability_matrix_to_dosage(
+    probability_matrix: npt.NDArray[np.float32] | npt.NDArray[np.float64],
+    combination_count: int,
+    *,
+    is_phased: bool,
+) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
+    """Convert one variant's probability matrix into additive dosages."""
+    if combination_count == 3 and not is_phased:
+        return probability_matrix[:, 1] + (2.0 * probability_matrix[:, 2])
+    if combination_count == 4 and is_phased:
+        return probability_matrix[:, 1] + probability_matrix[:, 3]
+    message = "Unsupported BGEN probability layout. Only diploid biallelic phased or unphased variants are supported."
+    raise ValueError(message)
+
+
+def read_bgen_direct_dosage_matrix(
+    *,
+    bgen_path: Path,
+    variant_offsets: npt.NDArray[np.uint64],
+    sample_index_array: npt.NDArray[np.intp],
+    total_sample_count: int,
+    combination_count: int,
+    is_phased: bool,
+    dtype: type[np.float32] | type[np.float64],
+    order: types.ArrayMemoryOrder,
+    num_threads: int,
+) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
+    """Read a BGEN slice directly into a dosage matrix without a chunk probability tensor."""
+    variant_count = len(variant_offsets)
+    selected_sample_count = len(sample_index_array)
+    numpy_order = "F" if order == types.ArrayMemoryOrder.FORTRAN_CONTIGUOUS else "C"
+    if variant_count == 0:
+        return np.empty((selected_sample_count, 0), dtype=dtype, order=numpy_order)
+
+    cbgen_file = load_backend_cbgen_file()
+    cbgen_ffi = load_backend_cbgen_ffi()
+    direct_dosage_by_variant = np.empty((variant_count, selected_sample_count), dtype=dtype, order="C")
+    full_sample_index_array = np.arange(total_sample_count, dtype=np.intp)
+    use_full_sample_range = selected_sample_count == total_sample_count and np.array_equal(
+        sample_index_array,
+        full_sample_index_array,
+    )
+    worker_errors: list[BaseException] = []
+    worker_error_lock = threading.Lock()
+
+    def read_probability_matrix(
+        file_handle: typing.Any,
+        variant_offset: int,
+        probability_matrix: npt.NDArray[np.float32] | npt.NDArray[np.float64],
+    ) -> None:
+        genotype_handle = cbgen_ffi.lib.bgen_file_open_genotype(file_handle._bgen_file, int(variant_offset))
+        if genotype_handle == cbgen_ffi.ffi.NULL:
+            message = f"Could not open genotype (offset {variant_offset})."
+            raise RuntimeError(message)
+        try:
+            if dtype == np.float32:
+                error_code = cbgen_ffi.lib.bgen_genotype_read32(
+                    genotype_handle,
+                    cbgen_ffi.ffi.cast("float *", probability_matrix.ctypes.data),
+                )
+            else:
+                error_code = cbgen_ffi.lib.bgen_genotype_read64(
+                    genotype_handle,
+                    cbgen_ffi.ffi.cast("double *", probability_matrix.ctypes.data),
+                )
+        finally:
+            cbgen_ffi.lib.bgen_genotype_close(genotype_handle)
+        if error_code != 0:
+            message = f"Could not read genotype probabilities (offset {variant_offset})."
+            raise RuntimeError(message)
+
+    def worker(variant_start_index: int, variant_stop_index: int) -> None:
+        probability_matrix = np.empty((total_sample_count, combination_count), dtype=dtype, order="C")
+        try:
+            with cbgen_file(bgen_path) as file_handle:
+                for variant_index in range(variant_start_index, variant_stop_index):
+                    read_probability_matrix(file_handle, int(variant_offsets[variant_index]), probability_matrix)
+                    target_dosage_vector = direct_dosage_by_variant[variant_index, :]
+                    if use_full_sample_range:
+                        if combination_count == 3 and not is_phased:
+                            np.copyto(target_dosage_vector, probability_matrix[:, 2])
+                            target_dosage_vector *= 2.0
+                            target_dosage_vector += probability_matrix[:, 1]
+                        else:
+                            np.copyto(target_dosage_vector, probability_matrix[:, 1])
+                            target_dosage_vector += probability_matrix[:, 3]
+                    else:
+                        if combination_count == 3 and not is_phased:
+                            np.copyto(target_dosage_vector, probability_matrix[sample_index_array, 2])
+                            target_dosage_vector *= 2.0
+                            target_dosage_vector += probability_matrix[sample_index_array, 1]
+                        else:
+                            np.copyto(target_dosage_vector, probability_matrix[sample_index_array, 1])
+                            target_dosage_vector += probability_matrix[sample_index_array, 3]
+        except BaseException as error:  # noqa: BLE001
+            with worker_error_lock:
+                worker_errors.append(error)
+
+    variants_per_thread = -(-variant_count // max(num_threads, 1))
+    worker_threads: list[threading.Thread] = []
+    variant_start_index = 0
+    for _ in range(max(num_threads, 1)):
+        variant_stop_index = min(variant_start_index + variants_per_thread, variant_count)
+        if variant_start_index >= variant_stop_index:
+            break
+        worker_thread = threading.Thread(target=worker, args=(variant_start_index, variant_stop_index))
+        worker_threads.append(worker_thread)
+        worker_thread.start()
+        variant_start_index = variant_stop_index
+    for worker_thread in worker_threads:
+        worker_thread.join()
+    if worker_errors:
+        raise worker_errors[0]
+    return np.asarray(direct_dosage_by_variant.T, dtype=dtype, order=numpy_order)
 
 
 def build_bgen_variant_table(bgen_handle: OpenBgenHandle) -> pl.DataFrame:
@@ -307,6 +448,25 @@ class BgenReader:
         order: types.ArrayMemoryOrder = types.ArrayMemoryOrder.C_CONTIGUOUS,
     ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
         """Read BGEN dosages with the same calling convention as `bed_handle.read`."""
+        if dtype in {np.float32, np.float64} and order in {
+            types.ArrayMemoryOrder.C_CONTIGUOUS,
+            types.ArrayMemoryOrder.FORTRAN_CONTIGUOUS,
+        }:
+            sample_index_selector, variant_index_selector = self.backend_handle._split_index(index)
+            sample_index_array = np.asarray(self.backend_handle._sample_range[sample_index_selector], dtype=np.intp)
+            variant_offsets = np.asarray(self.backend_handle._vaddr[variant_index_selector], dtype=np.uint64)
+            num_threads = int(self.backend_handle._get_num_threads(None, len(variant_offsets)))
+            return read_bgen_direct_dosage_matrix(
+                bgen_path=self.bgen_path,
+                variant_offsets=variant_offsets,
+                sample_index_array=sample_index_array,
+                total_sample_count=self.sample_count,
+                combination_count=self.combination_count,
+                is_phased=self.is_phased,
+                dtype=dtype,
+                order=order,
+                num_threads=num_threads,
+            )
         probability_tensor = self.backend_handle.read(index=index, dtype=dtype, order=order.value)
         return convert_probability_tensor_to_dosage(
             probability_tensor=np.asarray(probability_tensor, dtype=dtype, order=order.value),

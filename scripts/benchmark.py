@@ -81,7 +81,7 @@ class BaselinePaths:
     hail_matrix_table_path: Path
     hail_suite_report_path: Path
     regenie_prediction_list_path: Path
-    regenie_qt_prediction_list_path: Path
+    regenie_qt_prediction_list_path: Path | None = None
 
 
 def resolve_required_executable(environment_name: str, default_command: str) -> str:
@@ -777,7 +777,11 @@ def main() -> None:
         baseline_paths.baseline_directory / "regenie_step1_qt",
     )
 
-    if results_by_name["regenie_step1_qt"].success and baseline_paths.regenie_qt_prediction_list_path.exists():
+    if (
+        results_by_name["regenie_step1_qt"].success
+        and baseline_paths.regenie_qt_prediction_list_path is not None
+        and baseline_paths.regenie_qt_prediction_list_path.exists()
+    ):
         results_by_name["regenie_step2_qt"] = run_command(
             "Regenie Step 2 Continuous",
             build_regenie_step2_continuous_command(regenie_executable, baseline_paths),
