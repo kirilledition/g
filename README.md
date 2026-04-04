@@ -1,3 +1,5 @@
+## guys im gonna be real this only cpu terrible ux/ui gwas tool game is unreal, we gotta fix it 
+
 # GWAS Engine (`g`)
 
 `g` is a GWAS engine under active development.
