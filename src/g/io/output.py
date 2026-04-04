@@ -34,6 +34,7 @@ class OutputCompressionCodec(StrEnum):
 
     ZSTD = "zstd"
 
+
 OUTPUT_COMPRESSION_CODEC: Final[OutputCompressionCodec] = OutputCompressionCodec.ZSTD
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)\.arrow$")
 DEFAULT_WRITER_QUEUE_DEPTH = 4

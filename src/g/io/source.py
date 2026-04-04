@@ -74,7 +74,10 @@ def validate_genotype_source_config(genotype_source_config: GenotypeSourceConfig
             f"Expected one of {[source_format.value for source_format in GenotypeSourceFormat]}."
         )
         raise ValueError(message)
-    if genotype_source_config.source_format != GenotypeSourceFormat.BGEN and genotype_source_config.sample_path is not None:
+    if (
+        genotype_source_config.source_format != GenotypeSourceFormat.BGEN
+        and genotype_source_config.sample_path is not None
+    ):
         message = "Only BGEN source configs may include an explicit sample file."
         raise ValueError(message)
 

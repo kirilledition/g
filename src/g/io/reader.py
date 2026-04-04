@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from g.models import GenotypeChunk, LinearGenotypeChunk, VariantMetadata
 
+
 @dataclass(frozen=True)
 class VariantTableArrays:
     """Numpy views of variant metadata columns used during chunk construction.

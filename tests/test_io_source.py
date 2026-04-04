@@ -152,7 +152,7 @@ def test_validate_genotype_source_config_rejects_unknown_format() -> None:
     with pytest.raises(ValueError, match="Unsupported genotype source format"):
         validate_genotype_source_config(
             GenotypeSourceConfig(
-                source_format=cast(GenotypeSourceFormat, "vcf"),
+                source_format=cast("GenotypeSourceFormat", "vcf"),
                 source_path=Path("study.vcf"),
             )
         )

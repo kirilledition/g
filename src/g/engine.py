@@ -29,7 +29,6 @@ from g.io.source import (
     load_aligned_sample_data_from_source,
     open_genotype_reader,
 )
-from g.types import GenotypeSourceFormat
 from g.models import (
     GenotypeChunk,
     LinearAssociationChunkResult,
@@ -37,6 +36,7 @@ from g.models import (
     LogisticAssociationEvaluation,
     VariantMetadata,
 )
+from g.types import GenotypeSourceFormat
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
