@@ -65,6 +65,24 @@ LOGISTIC_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
     "is_valid": pl.Boolean(),
 }
 
+REGENIE2_LINEAR_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
+    "chunk_identifier": pl.Int64(),
+    "variant_start_index": pl.Int64(),
+    "variant_stop_index": pl.Int64(),
+    "chromosome": pl.String(),
+    "position": pl.Int64(),
+    "variant_identifier": pl.String(),
+    "allele_one": pl.String(),
+    "allele_two": pl.String(),
+    "allele_one_frequency": pl.Float32(),
+    "observation_count": pl.Int32(),
+    "beta": pl.Float32(),
+    "standard_error": pl.Float32(),
+    "chi_squared": pl.Float32(),
+    "log10_p_value": pl.Float32(),
+    "is_valid": pl.Boolean(),
+}
+
 
 @dataclass(frozen=True)
 class OutputRunPaths:
@@ -98,6 +116,8 @@ def get_output_schema(association_mode: types.AssociationMode) -> dict[str, pl.D
     """Return the fixed output schema for the requested mode."""
     if association_mode == types.AssociationMode.LINEAR:
         return LINEAR_OUTPUT_SCHEMA
+    if association_mode == types.AssociationMode.REGENIE2_LINEAR:
+        return REGENIE2_LINEAR_OUTPUT_SCHEMA
     return LOGISTIC_OUTPUT_SCHEMA
 
 
@@ -223,16 +243,30 @@ def build_output_frame_from_payload(chunk_payload: engine.ChunkPayload) -> pl.Da
         "observation_count": chunk_payload.observation_count,
         "beta": chunk_payload.beta,
         "standard_error": chunk_payload.standard_error,
-        "p_value": chunk_payload.p_value,
         "is_valid": chunk_payload.is_valid,
     }
     if isinstance(chunk_payload, engine.LinearChunkPayload):
-        output_frame = pl.DataFrame({**shared_columns, "t_statistic": chunk_payload.t_statistic})
+        output_frame = pl.DataFrame(
+            {
+                **shared_columns,
+                "t_statistic": chunk_payload.t_statistic,
+                "p_value": chunk_payload.p_value,
+            }
+        )
+    elif isinstance(chunk_payload, engine.Regenie2LinearChunkPayload):
+        output_frame = pl.DataFrame(
+            {
+                **shared_columns,
+                "chi_squared": chunk_payload.chi_squared,
+                "log10_p_value": chunk_payload.log10_p_value,
+            }
+        )
     else:
         output_frame = pl.DataFrame(
             {
                 **shared_columns,
                 "z_statistic": chunk_payload.z_statistic,
+                "p_value": chunk_payload.p_value,
                 "firth_flag": chunk_payload.firth_flag,
                 "error_code": chunk_payload.error_code,
                 "converged": chunk_payload.converged,
@@ -298,7 +332,8 @@ def run_background_writer(
 
 def persist_chunked_results(
     frame_iterator: collections.abc.Iterator[engine.LinearChunkAccumulator]
-    | collections.abc.Iterator[engine.LogisticChunkAccumulator],
+    | collections.abc.Iterator[engine.LogisticChunkAccumulator]
+    | collections.abc.Iterator[engine.Regenie2LinearChunkAccumulator],
     output_run_paths: OutputRunPaths,
     association_mode: types.AssociationMode,
     *,

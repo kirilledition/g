@@ -41,6 +41,11 @@ def test_resolve_chunk_size_uses_logistic_default() -> None:
     assert resolve_chunk_size(None, AssociationMode.LOGISTIC) == DEFAULT_LOGISTIC_CHUNK_SIZE
 
 
+def test_resolve_chunk_size_uses_regenie2_linear_default() -> None:
+    """Ensure the REGENIE step 2 linear path uses the linear default chunk size."""
+    assert resolve_chunk_size(None, AssociationMode.REGENIE2_LINEAR) == DEFAULT_LINEAR_CHUNK_SIZE
+
+
 def test_resolve_chunk_size_preserves_explicit_override() -> None:
     """Ensure explicit chunk sizes override model-specific defaults."""
     assert resolve_chunk_size(1024, AssociationMode.LINEAR) == 1024
@@ -238,6 +243,55 @@ def test_logistic_command_dispatches_api_call() -> None:
     assert solver_config.firth_fallback is False
     compute_config = mock_run_logistic_api.call_args.kwargs["compute"]
     assert compute_config.chunk_size == DEFAULT_LOGISTIC_CHUNK_SIZE
+
+
+def test_regenie2_linear_subcommand_without_options_shows_help() -> None:
+    """Ensure the REGENIE step 2 linear subcommand shows help instead of a usage error."""
+    result = runner.invoke(app, ["regenie2-linear"])
+    assert result.exit_code == 2
+    assert "Run a REGENIE step 2 linear association scan" in result.output
+    assert "--pred" in result.output
+    assert "--bgen" in result.output
+
+
+def test_regenie2_linear_command_dispatches_api_call() -> None:
+    """Ensure the REGENIE step 2 linear subcommand forwards arguments to the public API."""
+    with patch(
+        "g.cli.run_regenie2_linear_api",
+        return_value=RunArtifacts(sumstats_tsv=Path("results/output.regenie2_linear.tsv")),
+    ) as mock_run_regenie2_linear_api:
+        result = runner.invoke(
+            app,
+            [
+                "regenie2-linear",
+                "--bgen",
+                "dataset.bgen",
+                "--sample",
+                "dataset.sample",
+                "--pheno",
+                "phenotype.tsv",
+                "--pheno-name",
+                "trait",
+                "--covar-names",
+                "age,sex",
+                "--pred",
+                "predictions.list",
+                "--out",
+                "results/output",
+                "--device",
+                "gpu",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert str(Path("results/output.regenie2_linear.tsv")) in result.output
+    assert mock_run_regenie2_linear_api.call_args.kwargs["bgen"] == Path("dataset.bgen")
+    assert mock_run_regenie2_linear_api.call_args.kwargs["sample"] == Path("dataset.sample")
+    assert mock_run_regenie2_linear_api.call_args.kwargs["covar_names"] == ("age", "sex")
+    assert mock_run_regenie2_linear_api.call_args.kwargs["pred"] == Path("predictions.list")
+    compute_config = mock_run_regenie2_linear_api.call_args.kwargs["compute"]
+    assert compute_config.device == Device.GPU
+    assert compute_config.chunk_size == DEFAULT_LINEAR_CHUNK_SIZE
 
 
 def test_subcommand_requires_known_name() -> None:

@@ -233,6 +233,42 @@ def test_load_aligned_sample_data_from_source_reuses_open_bgen_reader() -> None:
     assert sample_table.get_column("individual_identifier").to_list() == ["sample0", "sample1"]
 
 
+def test_load_aligned_sample_data_from_source_uses_explicit_sample_file_with_open_reader() -> None:
+    """Ensure explicit BGEN sample files are still honored when a reader is already open."""
+    bgen_source_config = build_bgen_source_config(Path("study.bgen"), sample_path=Path("study.sample"))
+    genotype_reader = typing.cast("GenotypeReader", FakeSourceReader())
+    sample_table = object()
+    expected_aligned_sample_data = object()
+
+    with (
+        patch("g.io.source.load_bgen_sample_table", return_value=sample_table) as mock_load_bgen_sample_table,
+        patch(
+            "g.io.source.load_aligned_sample_data_from_individual_identifier_table",
+            return_value=expected_aligned_sample_data,
+        ) as mock_load_from_sample_table,
+    ):
+        aligned_sample_data = load_aligned_sample_data_from_source(
+            genotype_source_config=bgen_source_config,
+            phenotype_path=Path("pheno.tsv"),
+            phenotype_name="trait",
+            covariate_path=None,
+            covariate_names=None,
+            is_binary_trait=True,
+            genotype_reader=genotype_reader,
+        )
+
+    assert aligned_sample_data is expected_aligned_sample_data
+    mock_load_bgen_sample_table.assert_called_once_with(Path("study.bgen"), Path("study.sample"))
+    mock_load_from_sample_table.assert_called_once_with(
+        sample_table=sample_table,
+        phenotype_path=Path("pheno.tsv"),
+        phenotype_name="trait",
+        covariate_path=None,
+        covariate_names=None,
+        is_binary_trait=True,
+    )
+
+
 def test_build_bgen_source_config_preserves_sample_path() -> None:
     """Ensure BGEN source configs keep the optional sample-file path."""
     genotype_source_config = build_bgen_source_config(Path("study.bgen"), sample_path=Path("study.sample"))

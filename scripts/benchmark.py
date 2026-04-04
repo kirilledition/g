@@ -81,6 +81,7 @@ class BaselinePaths:
     hail_matrix_table_path: Path
     hail_suite_report_path: Path
     regenie_prediction_list_path: Path
+    regenie_qt_prediction_list_path: Path
 
 
 def resolve_required_executable(environment_name: str, default_command: str) -> str:
@@ -203,6 +204,7 @@ def build_baseline_paths() -> BaselinePaths:
         hail_matrix_table_path=data_directory / "hail" / "1kg_chr22_full.mt",
         hail_suite_report_path=baseline_directory / "hail_suite_report.json",
         regenie_prediction_list_path=baseline_directory / "regenie_step1_pred.list",
+        regenie_qt_prediction_list_path=baseline_directory / "regenie_step1_qt_pred.list",
     )
 
 
@@ -444,6 +446,52 @@ def build_regenie_step2_command(regenie_executable: str, baseline_paths: Baselin
         str(baseline_paths.regenie_prediction_list_path),
         "--out",
         str(baseline_paths.baseline_directory / "regenie_step2"),
+    ]
+
+
+def build_regenie_step1_continuous_command(regenie_executable: str, baseline_paths: BaselinePaths) -> list[str]:
+    """Build the Regenie step 1 continuous trait command."""
+    return [
+        regenie_executable,
+        "--step",
+        "1",
+        "--bed",
+        str(baseline_paths.bed_prefix),
+        "--phenoFile",
+        str(baseline_paths.continuous_phenotype_path),
+        "--covarFile",
+        str(baseline_paths.covariate_path),
+        "--qt",
+        "--force-step1",
+        "--bsize",
+        "1000",
+        "--out",
+        str(baseline_paths.baseline_directory / "regenie_step1_qt"),
+    ]
+
+
+def build_regenie_step2_continuous_command(regenie_executable: str, baseline_paths: BaselinePaths) -> list[str]:
+    """Build the Regenie step 2 continuous trait command."""
+    return [
+        regenie_executable,
+        "--step",
+        "2",
+        "--bgen",
+        str(baseline_paths.bgen_path),
+        "--sample",
+        str(baseline_paths.sample_path),
+        "--ref-first",
+        "--phenoFile",
+        str(baseline_paths.continuous_phenotype_path),
+        "--covarFile",
+        str(baseline_paths.covariate_path),
+        "--qt",
+        "--bsize",
+        "400",
+        "--pred",
+        str(baseline_paths.regenie_qt_prediction_list_path),
+        "--out",
+        str(baseline_paths.baseline_directory / "regenie_step2_qt"),
     ]
 
 
@@ -719,6 +767,36 @@ def main() -> None:
             stdout="",
             stderr=error_message,
             output_prefix=str(baseline_paths.baseline_directory / "regenie_step2"),
+            error=error_message,
+        )
+
+    # REGENIE continuous (quantitative) trait baselines
+    results_by_name["regenie_step1_qt"] = run_command(
+        "Regenie Step 1 Continuous",
+        build_regenie_step1_continuous_command(regenie_executable, baseline_paths),
+        baseline_paths.baseline_directory / "regenie_step1_qt",
+    )
+
+    if results_by_name["regenie_step1_qt"].success and baseline_paths.regenie_qt_prediction_list_path.exists():
+        results_by_name["regenie_step2_qt"] = run_command(
+            "Regenie Step 2 Continuous",
+            build_regenie_step2_continuous_command(regenie_executable, baseline_paths),
+            baseline_paths.baseline_directory / "regenie_step2_qt",
+        )
+    else:
+        error_message = (
+            f"Missing Regenie QT prediction list: {baseline_paths.regenie_qt_prediction_list_path}"
+            if results_by_name["regenie_step1_qt"].success
+            else "Regenie step 1 continuous failed."
+        )
+        print(f"\nSkipping Regenie Step 2 Continuous: {error_message}")
+        results_by_name["regenie_step2_qt"] = CommandResult(
+            success=False,
+            command="",
+            duration_seconds=0.0,
+            stdout="",
+            stderr=error_message,
+            output_prefix=str(baseline_paths.baseline_directory / "regenie_step2_qt"),
             error=error_message,
         )
 

@@ -22,6 +22,7 @@ class AssociationMode(enum.StrEnum):
 
     LINEAR = "linear"
     LOGISTIC = "logistic"
+    REGENIE2_LINEAR = "regenie2_linear"
 
 
 class GenotypeSourceFormat(enum.StrEnum):

@@ -12,6 +12,7 @@ from g.api import (
     linear,
     logistic,
     parse_covariate_name_list,
+    regenie2_linear,
     resolve_output_path,
     validate_compute_config,
     validate_logistic_config,
@@ -147,6 +148,35 @@ def test_linear_supports_explicit_bgen_sample_file() -> None:
     assert genotype_source_config.sample_path == Path("dataset.sample")
 
 
+def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
+    """Ensure the REGENIE step 2 API dispatches through the BGEN-backed iterator."""
+    with (
+        patch("g.api.configure_jax_device") as mock_configure_jax_device,
+        patch("g.api.iter_regenie2_linear_output_frames", return_value=iter(())) as mock_iterator,
+        patch("g.api.write_frame_iterator_to_tsv") as mock_write_frame_iterator_to_tsv,
+    ):
+        artifacts = regenie2_linear(
+            bgen="dataset.bgen",
+            sample="dataset.sample",
+            pheno="phenotype.tsv",
+            pheno_name="trait",
+            out="results/output",
+            covar_names="age,sex",
+            pred="predictions.list",
+        )
+
+    assert artifacts == RunArtifacts(sumstats_tsv=Path("results/output.regenie2_linear.tsv"))
+    mock_configure_jax_device.assert_called_once_with(Device.CPU)
+    assert mock_iterator.call_args.kwargs["covariate_names"] == ("age", "sex")
+    assert mock_iterator.call_args.kwargs["prediction_list_path"] == Path("predictions.list")
+    assert mock_iterator.call_args.kwargs["chunk_size"] == 2048
+    genotype_source_config = mock_iterator.call_args.kwargs["genotype_source_config"]
+    assert genotype_source_config.source_format == GenotypeSourceFormat.BGEN
+    assert genotype_source_config.source_path == Path("dataset.bgen")
+    assert genotype_source_config.sample_path == Path("dataset.sample")
+    assert mock_write_frame_iterator_to_tsv.call_args.args[1] == Path("results/output.regenie2_linear.tsv")
+
+
 @pytest.mark.parametrize(
     ("compute_config", "expected_message"),
     [
@@ -261,6 +291,50 @@ def test_logistic_chunked_output_returns_run_artifacts_without_finalization() ->
     assert artifacts == RunArtifacts(output_run_directory=Path("results/output.logistic.run"), final_parquet=None)
     mock_configure_jax_device.assert_called_once_with(Device.CPU)
     assert mock_iter_logistic_output_frames.call_args.kwargs["committed_chunk_identifiers"] == {1}
+    mock_persist_chunked_results.assert_called_once()
+    mock_prepare_output_run.assert_called_once()
+    mock_finalize.assert_not_called()
+
+
+def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalization() -> None:
+    """Ensure chunked REGENIE step 2 runs persist artifacts with the correct mode."""
+    mock_output_run_paths = OutputRunPaths(
+        run_directory=Path("results/output.regenie2_linear.run"),
+        chunks_directory=Path("results/output.regenie2_linear.run/chunks"),
+    )
+
+    with (
+        patch("g.api.configure_jax_device") as mock_configure_jax_device,
+        patch(
+            "g.api.prepare_output_run",
+            return_value=PreparedOutputRun(
+                output_run_paths=mock_output_run_paths,
+                committed_chunk_identifiers=frozenset({3}),
+            ),
+        ) as mock_prepare_output_run,
+        patch("g.api.iter_regenie2_linear_output_frames", return_value=iter(())) as mock_iterator,
+        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
+        patch("g.api.finalize_chunks_to_parquet") as mock_finalize,
+    ):
+        artifacts = regenie2_linear(
+            bgen="dataset.bgen",
+            pheno="phenotype.tsv",
+            pheno_name="trait",
+            out="results/output",
+            pred="predictions.list",
+            compute=ComputeConfig(
+                output_mode=OutputMode.ARROW_CHUNKS,
+                output_run_directory=Path("results/output"),
+                resume=True,
+            ),
+        )
+
+    assert artifacts == RunArtifacts(
+        output_run_directory=Path("results/output.regenie2_linear.run"),
+        final_parquet=None,
+    )
+    mock_configure_jax_device.assert_called_once_with(Device.CPU)
+    assert mock_iterator.call_args.kwargs["committed_chunk_identifiers"] == {3}
     mock_persist_chunked_results.assert_called_once()
     mock_prepare_output_run.assert_called_once()
     mock_finalize.assert_not_called()

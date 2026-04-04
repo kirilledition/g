@@ -201,3 +201,49 @@ class LogisticAssociationEvaluation:
     logistic_result: LogisticAssociationChunkResult
     allele_one_frequency: jax.Array
     observation_count: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2LinearState:
+    """Precomputed state for REGENIE step 2 linear association.
+
+    This state is computed once before processing genotype chunks and contains
+    the covariate projection matrix and covariate-residualized phenotype.
+    The LOCO predictions are applied per-chromosome during chunk processing.
+
+    Attributes:
+        covariate_matrix: Covariate design matrix including intercept.
+        covariate_matrix_transpose: Transpose of the covariate design matrix.
+        covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
+        phenotype_residual: Phenotype residualized against covariates (before LOCO adjustment).
+        sample_count: Number of samples.
+
+    """
+
+    covariate_matrix: jax.Array
+    covariate_matrix_transpose: jax.Array
+    covariate_crossproduct_cholesky_factor: jax.Array
+    phenotype_residual: jax.Array
+    sample_count: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2LinearChunkResult:
+    """Association outputs for a REGENIE step 2 linear chunk.
+
+    Attributes:
+        beta: Estimated effect sizes.
+        standard_error: Standard errors of estimates.
+        chi_squared: Chi-squared statistics (1 df).
+        log10_p_value: Negative log10 p-values.
+        valid_mask: Boolean mask for valid statistics.
+
+    """
+
+    beta: jax.Array
+    standard_error: jax.Array
+    chi_squared: jax.Array
+    log10_p_value: jax.Array
+    valid_mask: jax.Array
