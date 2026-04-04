@@ -21,6 +21,11 @@
       "sourceType": "github",
       "computedHash": "71a86fb53bf232f5fe55b2194bf45e115a4cc573c7db496fdcff653c6ccf8e97"
     },
+    "pdf": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "cfbc539377088ca7e44a813b30c306327385bbd973cd7a721e1743f60837dd62"
+    },
     "triton-skill": {
       "source": "slowlyc/cursor-gpu-skills",
       "sourceType": "github",

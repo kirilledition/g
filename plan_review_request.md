@@ -1,2 +1,0 @@
-The pre-commit hooks require code review and recording learnings. I have hoisted multiple `jnp.take` operations from `fallback_index_batches` loop loops in `src/g/compute/logistic.py` to a single `jnp.take` over flattened indices followed by standard Python array slicing inside the loop. This change has passed the rigorous tests in `uv run pytest tests/` and showed a measurable performance gain (roughly 30% reduction in multiple `jnp.take` overheads inside the benchmark).
-Do you approve these changes?

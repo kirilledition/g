@@ -99,6 +99,7 @@
             openjdk11_headless
             openblas
             lapack
+            poppler-utils
             plink1Package
             plink2Package
             regeniePackage

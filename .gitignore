@@ -9,3 +9,5 @@ __pycache__/
 src/g/_core*.so
 
 .coverage
+
+*.ruff_cache
