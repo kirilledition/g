@@ -12,12 +12,14 @@ from g.engine import (
     iter_logistic_output_frames,
     run_linear_association,
     run_logistic_association,
+    split_linear_genotype_chunk_by_chromosome,
 )
 from g.io.source import build_bgen_source_config, build_plink_source_config
 from g.models import (
     AlignedSampleData,
     GenotypeChunk,
     LinearAssociationChunkResult,
+    LinearGenotypeChunk,
     LogisticAssociationChunkResult,
     LogisticAssociationEvaluation,
     VariantMetadata,
@@ -68,6 +70,25 @@ def build_genotype_chunk(variant_identifier: str) -> GenotypeChunk:
     )
 
 
+def build_linear_genotype_chunk(*, chromosome_values: list[str]) -> LinearGenotypeChunk:
+    """Build a small linear genotype chunk fixture."""
+    variant_count = len(chromosome_values)
+    return LinearGenotypeChunk(
+        genotypes=jnp.arange(variant_count * 2, dtype=jnp.float32).reshape(2, variant_count),
+        metadata=VariantMetadata(
+            variant_start_index=10,
+            variant_stop_index=10 + variant_count,
+            chromosome=np.asarray(chromosome_values, dtype=np.str_),
+            variant_identifiers=np.asarray([f"variant{variant_index}" for variant_index in range(variant_count)]),
+            position=np.asarray([100 + variant_index for variant_index in range(variant_count)], dtype=np.int64),
+            allele_one=np.asarray(["A"] * variant_count),
+            allele_two=np.asarray(["G"] * variant_count),
+        ),
+        allele_one_frequency=jnp.linspace(0.1, 0.4, num=variant_count, dtype=jnp.float32),
+        observation_count=jnp.full((variant_count,), 2, dtype=jnp.int32),
+    )
+
+
 def test_iter_linear_output_frames_yields_one_accumulator_per_chunk() -> None:
     """Ensure linear iteration preserves chunk order and propagated summary fields."""
     aligned_sample_data = build_aligned_sample_data(is_binary_trait=False)
@@ -111,6 +132,15 @@ def test_iter_linear_output_frames_yields_one_accumulator_per_chunk() -> None:
     mock_prepare_state.assert_called_once()
     mock_iter_genotype_chunks.assert_called_once()
     assert mock_compute_chunk.call_count == 2
+
+
+def test_split_linear_genotype_chunk_by_chromosome_returns_original_for_homogeneous_chunk() -> None:
+    """Ensure homogeneous chunks skip rebuilding subchunks."""
+    genotype_chunk = build_linear_genotype_chunk(chromosome_values=["22", "22", "22"])
+
+    chromosome_subchunks = split_linear_genotype_chunk_by_chromosome(genotype_chunk)
+
+    assert chromosome_subchunks == (genotype_chunk,)
 
 
 def test_iter_logistic_output_frames_passes_no_missing_constants() -> None:

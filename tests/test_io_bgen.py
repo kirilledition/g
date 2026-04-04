@@ -17,6 +17,7 @@ example = importlib.import_module("cbgen").example
 
 from g.io.bgen import (  # noqa: E402
     build_bgen_variant_table,
+    build_bgen_variant_table_arrays,
     convert_probability_tensor_to_dosage,
     iter_genotype_chunks,
     iter_linear_genotype_chunks,
@@ -119,6 +120,22 @@ def test_build_bgen_variant_table_counts_last_allele() -> None:
     assert variant_table.get_column("allele_two").to_list() == ["A", "C"]
 
 
+def test_build_bgen_variant_table_arrays_counts_last_allele() -> None:
+    mock_bgen_handle = SimpleNamespace(
+        allele_ids=np.array(["A,G", "C,T"], dtype=np.str_),
+        ids=np.array(["variant_1", "variant_2"], dtype=np.str_),
+        rsids=np.array(["rs1", ""], dtype=np.str_),
+        chromosomes=np.array(["1", "2"], dtype=np.str_),
+        positions=np.array([123, 456], dtype=np.int64),
+    )
+
+    variant_table_arrays = build_bgen_variant_table_arrays(mock_bgen_handle)
+
+    assert variant_table_arrays.variant_identifier_values.tolist() == ["rs1", "variant_2"]
+    assert variant_table_arrays.allele_one_values.tolist() == ["G", "T"]
+    assert variant_table_arrays.allele_two_values.tolist() == ["A", "C"]
+
+
 def test_open_bgen_reads_phased_haplotype_example_as_dosage() -> None:
     bgen_path = Path(example.get("haplotypes.bgen"))
 
@@ -162,6 +179,24 @@ def test_bgen_variant_slice_metadata_does_not_materialize_full_variant_table() -
 
     assert mock_build_variant_table.call_count == 0
     assert variant_table_arrays.variant_identifier_values.shape == (2,)
+
+
+def test_bgen_variant_slice_metadata_caches_full_array_build() -> None:
+    bgen_path = Path(example.get("haplotypes.bgen"))
+
+    with (
+        patch(
+            "g.io.bgen.build_bgen_variant_table_arrays",
+            wraps=build_bgen_variant_table_arrays,
+        ) as mock_build_variant_table_arrays,
+        open_bgen(bgen_path) as bgen_reader,
+    ):
+        first_slice = bgen_reader.get_variant_table_arrays(0, 2)
+        second_slice = bgen_reader.get_variant_table_arrays(2, 4)
+
+    assert mock_build_variant_table_arrays.call_count == 1
+    assert first_slice.variant_identifier_values.shape == (2,)
+    assert second_slice.variant_identifier_values.shape == (2,)
 
 
 def test_open_bgen_uses_external_sample_file(tmp_path: Path) -> None:

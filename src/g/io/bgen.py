@@ -161,21 +161,33 @@ def convert_probability_tensor_to_dosage(
 
 def build_bgen_variant_table(bgen_handle: OpenBgenHandle) -> pl.DataFrame:
     """Build normalized variant metadata from an open BGEN handle."""
+    variant_table_arrays = build_bgen_variant_table_arrays(bgen_handle)
+    return pl.DataFrame(
+        {
+            "chromosome": variant_table_arrays.chromosome_values,
+            "variant_identifier": variant_table_arrays.variant_identifier_values,
+            "genetic_distance": np.zeros(int(bgen_handle.nvariants), dtype=np.float32),
+            "position": variant_table_arrays.position_values,
+            "allele_one": variant_table_arrays.allele_one_values,
+            "allele_two": variant_table_arrays.allele_two_values,
+        }
+    )
+
+
+def build_bgen_variant_table_arrays(bgen_handle: OpenBgenHandle) -> reader.VariantTableArrays:
+    """Build normalized variant metadata arrays from an open BGEN handle."""
     allele_identifier_values = np.asarray(bgen_handle.allele_ids, dtype=np.str_)
     allele_pairs = [allele_identifier_value.split(",") for allele_identifier_value in allele_identifier_values]
     counted_allele_values = [allele_pair[-1] if allele_pair else "" for allele_pair in allele_pairs]
     reference_allele_values = [allele_pair[0] if allele_pair else "" for allele_pair in allele_pairs]
     variant_identifier_values = np.asarray(bgen_handle.ids, dtype=np.str_)
     rsid_values = np.asarray(bgen_handle.rsids, dtype=np.str_)
-    return pl.DataFrame(
-        {
-            "chromosome": np.asarray(bgen_handle.chromosomes, dtype=np.str_),
-            "variant_identifier": resolve_variant_identifier_values(variant_identifier_values, rsid_values),
-            "genetic_distance": np.zeros(int(bgen_handle.nvariants), dtype=np.float32),
-            "position": np.asarray(bgen_handle.positions, dtype=np.int64),
-            "allele_one": np.asarray(counted_allele_values, dtype=np.str_),
-            "allele_two": np.asarray(reference_allele_values, dtype=np.str_),
-        }
+    return reader.VariantTableArrays(
+        chromosome_values=np.asarray(bgen_handle.chromosomes, dtype=np.str_),
+        variant_identifier_values=resolve_variant_identifier_values(variant_identifier_values, rsid_values),
+        position_values=np.asarray(bgen_handle.positions, dtype=np.int64),
+        allele_one_values=np.asarray(counted_allele_values, dtype=np.str_),
+        allele_two_values=np.asarray(reference_allele_values, dtype=np.str_),
     )
 
 
@@ -228,6 +240,7 @@ class BgenReader:
         self.combination_count = int(np.asarray(self.backend_handle.ncombinations, dtype=np.int32)[0])
         self.is_phased = bool(np.asarray(self.backend_handle.phased, dtype=np.bool_)[0])
         self._variant_table: pl.DataFrame | None = None
+        self._variant_table_arrays: reader.VariantTableArrays | None = None
         self.validate_supported_layout()
 
     @property
@@ -254,18 +267,14 @@ class BgenReader:
 
     def get_variant_table_arrays(self, variant_start: int, variant_stop: int) -> reader.VariantTableArrays:
         """Return normalized metadata arrays for one BGEN variant slice."""
-        allele_identifier_values = np.asarray(self.backend_handle.allele_ids[variant_start:variant_stop], dtype=np.str_)
-        allele_pairs = [allele_identifier_value.split(",") for allele_identifier_value in allele_identifier_values]
-        counted_allele_values = [allele_pair[-1] if allele_pair else "" for allele_pair in allele_pairs]
-        reference_allele_values = [allele_pair[0] if allele_pair else "" for allele_pair in allele_pairs]
-        variant_identifier_values = np.asarray(self.backend_handle.ids[variant_start:variant_stop], dtype=np.str_)
-        rsid_values = np.asarray(self.backend_handle.rsids[variant_start:variant_stop], dtype=np.str_)
+        if self._variant_table_arrays is None:
+            self._variant_table_arrays = build_bgen_variant_table_arrays(self.backend_handle)
         return reader.VariantTableArrays(
-            chromosome_values=np.asarray(self.backend_handle.chromosomes[variant_start:variant_stop], dtype=np.str_),
-            variant_identifier_values=resolve_variant_identifier_values(variant_identifier_values, rsid_values),
-            position_values=np.asarray(self.backend_handle.positions[variant_start:variant_stop], dtype=np.int64),
-            allele_one_values=np.asarray(counted_allele_values, dtype=np.str_),
-            allele_two_values=np.asarray(reference_allele_values, dtype=np.str_),
+            chromosome_values=self._variant_table_arrays.chromosome_values[variant_start:variant_stop],
+            variant_identifier_values=self._variant_table_arrays.variant_identifier_values[variant_start:variant_stop],
+            position_values=self._variant_table_arrays.position_values[variant_start:variant_stop],
+            allele_one_values=self._variant_table_arrays.allele_one_values[variant_start:variant_stop],
+            allele_two_values=self._variant_table_arrays.allele_two_values[variant_start:variant_stop],
         )
 
     def resolve_sample_identifier_array(self) -> npt.NDArray[np.str_]:

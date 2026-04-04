@@ -168,6 +168,8 @@ def split_linear_genotype_chunk_by_chromosome(
     chromosome_values = genotype_chunk.metadata.chromosome
     if chromosome_values.size == 0:
         return (genotype_chunk,)
+    if np.all(chromosome_values == chromosome_values[0]):
+        return (genotype_chunk,)
 
     chromosome_start_indices = [0]
     for variant_index in range(1, len(chromosome_values)):
