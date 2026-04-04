@@ -99,7 +99,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.flake8-import-conventions]
-banned-from = ["typing", "enum", "collections", "collections.abc"]
+banned-from = ["typing"]
 
 [tool.ruff.lint.flake8-import-conventions.extend-aliases]
 "jax.numpy" = "jnp"
@@ -121,8 +121,6 @@ source = ["src/g"]
 
 [tool.coverage.report]
 fail_under = 90
-omit = [
-    "src/g/__init__.py",
-]
+omit = ["src/g/__init__.py"]
 show_missing = true
 skip_covered = false
