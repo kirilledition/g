@@ -48,7 +48,7 @@ def build_preprocessed_chunk() -> PreprocessedGenotypeChunkData:
         missing_mask=jnp.array([[False, False], [False, False]]),
         has_missing_values=False,
         allele_one_frequency=jnp.array([0.25, 0.75]),
-        observation_count=jnp.array([2, 2], dtype=jnp.int64),
+        observation_count=jnp.array([2, 2], dtype=jnp.int32),
     )
 
 
@@ -69,7 +69,7 @@ def build_output_chunk(variant_start: int, variant_stop: int) -> GenotypeChunk:
             allele_two=np.array(["G", "T", "A"])[variant_start:variant_stop],
         ),
         allele_one_frequency=jnp.full((variant_stop - variant_start,), 0.5),
-        observation_count=jnp.full((variant_stop - variant_start,), 2, dtype=jnp.int64),
+        observation_count=jnp.full((variant_stop - variant_start,), 2, dtype=jnp.int32),
     )
 
 

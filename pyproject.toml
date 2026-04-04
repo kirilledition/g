@@ -24,6 +24,7 @@ dev = [
     "py-cpuinfo>=9.0.0",
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
+    "ruff>=0.15.9",
     "ty>=0.0.1a19",
 ]
 gpu = ["jax[cuda12]>=0.9.2"]
@@ -51,7 +52,7 @@ cache-keys = [
 [tool.ruff]
 line-length = 120
 target-version = "py313"
-# exclude = ["scripts/"]
+exclude = ["scripts/"]
 
 [tool.ruff.lint]
 fixable = ["ALL"]

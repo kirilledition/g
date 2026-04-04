@@ -146,3 +146,7 @@ ci-science:
 # Run tests
 test:
     uv run pytest tests/
+
+upgrade-deps:
+    uv sync -U --group dev --group gpu
+    nix flake update

@@ -83,10 +83,6 @@
           packages = with pkgs; [
             uv
             just
-            python311
-            python313
-            maturin
-            ruff
             zstd
             zlib
             cargo

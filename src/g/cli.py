@@ -8,13 +8,10 @@ import typer
 
 from g import api, types
 
-run_linear_api = api.linear
-run_logistic_api = api.logistic
-run_regenie2_linear_api = api.regenie2_linear
 
 app = typer.Typer(
     name="g",
-    help="Blazing fast GWAS engine.",
+    help="the GWAS engine.",
     no_args_is_help=True,
     rich_markup_mode=None,
 )
@@ -79,7 +76,7 @@ def run_linear_command(
         resume=resume,
         finalize_parquet=finalize_parquet,
     )
-    artifacts = run_linear_api(
+    artifacts = api.linear(
         bfile=bfile,
         bgen=bgen,
         sample=sample,
@@ -143,7 +140,7 @@ def run_logistic_command(
         tolerance=tolerance,
         firth_fallback=firth_fallback,
     )
-    artifacts = run_logistic_api(
+    artifacts = api.logistic(
         bfile=bfile,
         bgen=bgen,
         sample=sample,
@@ -195,7 +192,7 @@ def run_regenie2_linear_command(
         resume=resume,
         finalize_parquet=finalize_parquet,
     )
-    artifacts = run_regenie2_linear_api(
+    artifacts = api.regenie2_linear(
         bgen=bgen,
         sample=sample,
         pheno=pheno,

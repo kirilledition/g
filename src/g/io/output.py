@@ -9,6 +9,7 @@ import threading
 import typing
 from dataclasses import dataclass
 
+import numpy as np
 import polars as pl
 
 from g import engine, types
@@ -231,47 +232,53 @@ def build_output_frame_from_payload(chunk_payload: engine.ChunkPayload) -> pl.Da
 
     """
     row_count = len(chunk_payload.position)
+
+    def materialize_host_array(value: object) -> object:
+        if isinstance(value, np.ndarray):
+            return np.ascontiguousarray(value).copy()
+        return value
+
     shared_columns = {
         "chunk_identifier": [chunk_payload.chunk_identifier] * row_count,
         "variant_start_index": [chunk_payload.variant_start_index] * row_count,
         "variant_stop_index": [chunk_payload.variant_stop_index] * row_count,
-        "chromosome": chunk_payload.chromosome,
-        "position": chunk_payload.position,
-        "variant_identifier": chunk_payload.variant_identifier,
-        "allele_one": chunk_payload.allele_one,
-        "allele_two": chunk_payload.allele_two,
-        "allele_one_frequency": chunk_payload.allele_one_frequency,
-        "observation_count": chunk_payload.observation_count,
-        "beta": chunk_payload.beta,
-        "standard_error": chunk_payload.standard_error,
-        "is_valid": chunk_payload.is_valid,
+        "chromosome": materialize_host_array(chunk_payload.chromosome),
+        "position": materialize_host_array(chunk_payload.position),
+        "variant_identifier": materialize_host_array(chunk_payload.variant_identifier),
+        "allele_one": materialize_host_array(chunk_payload.allele_one),
+        "allele_two": materialize_host_array(chunk_payload.allele_two),
+        "allele_one_frequency": materialize_host_array(chunk_payload.allele_one_frequency),
+        "observation_count": materialize_host_array(chunk_payload.observation_count),
+        "beta": materialize_host_array(chunk_payload.beta),
+        "standard_error": materialize_host_array(chunk_payload.standard_error),
+        "is_valid": materialize_host_array(chunk_payload.is_valid),
     }
     if isinstance(chunk_payload, engine.LinearChunkPayload):
         output_frame = pl.DataFrame(
             {
                 **shared_columns,
-                "t_statistic": chunk_payload.t_statistic,
-                "p_value": chunk_payload.p_value,
+                "t_statistic": materialize_host_array(chunk_payload.t_statistic),
+                "p_value": materialize_host_array(chunk_payload.p_value),
             }
         )
     elif isinstance(chunk_payload, engine.Regenie2LinearChunkPayload):
         output_frame = pl.DataFrame(
             {
                 **shared_columns,
-                "chi_squared": chunk_payload.chi_squared,
-                "log10_p_value": chunk_payload.log10_p_value,
+                "chi_squared": materialize_host_array(chunk_payload.chi_squared),
+                "log10_p_value": materialize_host_array(chunk_payload.log10_p_value),
             }
         )
     else:
         output_frame = pl.DataFrame(
             {
                 **shared_columns,
-                "z_statistic": chunk_payload.z_statistic,
-                "p_value": chunk_payload.p_value,
-                "firth_flag": chunk_payload.firth_flag,
-                "error_code": chunk_payload.error_code,
-                "converged": chunk_payload.converged,
-                "iteration_count": chunk_payload.iteration_count,
+                "z_statistic": materialize_host_array(chunk_payload.z_statistic),
+                "p_value": materialize_host_array(chunk_payload.p_value),
+                "firth_flag": materialize_host_array(chunk_payload.firth_flag),
+                "error_code": materialize_host_array(chunk_payload.error_code),
+                "converged": materialize_host_array(chunk_payload.converged),
+                "iteration_count": materialize_host_array(chunk_payload.iteration_count),
             }
         )
     return output_frame

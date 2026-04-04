@@ -1,10 +1,10 @@
 # **AI Agent Instructions for GWAS Engine**
 
-You are an AI coding assistant operating within a high-performance, mixed-language (Python \+ Rust) scientific computing repository building a GPU-accelerated GWAS engine. Read these instructions before proposing changes or running commands.
+You are an AI coding assistant working on high-performance GPU-accelerated GWAS engine with JAX
 
 ## **Environment & Tooling**
 
-* **Package Management:** uv (Python) and cargo (Rust). Run Python and project tooling via `nix develop --command ...`, using the repo-local `.venv` managed by `uv`.  
+* **Package Management:** uv (Python). Run tooling via `nix develop --command ...`
 * **Task Runner:** just. Always check the Justfile for available project-specific commands.  
 * **Linting & Formatting:** Ensure code passes before committing (use nix develop):  
   * just check
@@ -12,8 +12,7 @@ You are an AI coding assistant operating within a high-performance, mixed-langua
    
 ## **Repository Structure**
 
-* pyproject.toml / Cargo.toml: Maturin mixed-layout configuration.  
-* src/: Unified source directory containing both Rust FFI entry points (lib.rs) and Python package code (g/).  
+* src/: Unified source directory.  
 * tests/: Pytest suite for mathematical regressions and correctness.  
 * scripts/: Dev-ops and preparation scripts (fetch\_1kg.py, benchmark.py).  
 * data/: Local git-ignored directory for 1KG variants and simulated phenotypes. **Never commit files in this directory.**  
@@ -24,31 +23,7 @@ You are an AI coding assistant operating within a high-performance, mixed-langua
 **You must strictly adhere to the rules defined in [styleguide](docs/STYLEGUIDE.md).** Do not write code without reading it. Key highlights include:
 
 * 100% strict type coverage.  
-* Full-word variable names only (no abbreviations or single-letter math variables).  
-* No bare tuples for multiple return values (NamedTuple or struct required).  
+* Full-word variable names only.  
+* No bare tuples for multiple return values (dataclass required).  
 * Docstrings must be in Google format without type duplication.
-* Default to module-qualified imports. The only approved direct-import exceptions are `from pathlib import Path` and `from dataclasses import dataclass`.
-* Import `typing`, `enum`, and `collections.abc` as modules and qualify names (`typing.Any`, `enum.StrEnum`, `collections.abc.Iterator`).
-* Use conventional aliases only for established cases like `np`, `npt`, `jnp`, `pl`, and `pd`.
-* Keep imports out of functions, methods, and classes in `src/g`. `if typing.TYPE_CHECKING:` blocks are allowed for annotation-only imports.
-* In `src/g`, prefer first-party module imports such as `from g import api` and `from g.io import bgen` over member imports.
-* Relative imports are not allowed.
-
-## **Testing Standards**
-
-* Validate mathematical correctness by asserting floating-point parity against the Phase 0 baselines located in data/baselines/.  
-* Use jax.numpy.allclose or numpy.testing.assert\_allclose (e.g., atol=1e-6) for comparing matrix outputs. Never use exact equality (==) for floating-point math.
-
-## **Git & PR Workflow**
-
-* **Conventional Commits:** Use standard prefixes (feat:, fix:, perf:, docs:, test:). Focus on *what* and *why*.  
-* **Pre-commit:** Code must pass ruff, ty, and cargo clippy hooks before committing.
-
-## **Boundaries & Constraints**
-
-* **Ask First Before:**  
-  * Adding new dependencies.  
-  * Changing mathematical formulations of the regression solvers.  
-* **Never Do This:**  
-  * Commit credentials, API keys, or genomic data files.  
-  * Bypass the type-checker (\# type: ignore) without explicit permission and a detailed explanatory comment. 
+* Default to module-qualified imports.
