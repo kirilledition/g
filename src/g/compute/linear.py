@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jax.scipy.special import betainc
+import jax.scipy.special
 
-from g.models import LinearAssociationChunkResult, LinearAssociationState
+from g import models
 
 
 def solve_positive_definite_system(
@@ -32,7 +32,7 @@ def solve_positive_definite_system(
 def prepare_linear_association_state(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
-) -> LinearAssociationState:
+) -> models.LinearAssociationState:
     """Precompute covariate-only linear regression terms.
 
     Args:
@@ -54,7 +54,7 @@ def prepare_linear_association_state(
     )
     phenotype_residual = phenotype_vector_float32 - covariate_matrix_float32 @ phenotype_projection
     phenotype_residual_sum_squares = jnp.dot(phenotype_residual, phenotype_residual)
-    return LinearAssociationState(
+    return models.LinearAssociationState(
         covariate_matrix=covariate_matrix_float32,
         covariate_matrix_transpose=covariate_matrix_transpose,
         covariate_crossproduct_cholesky_factor=covariate_crossproduct_cholesky_factor,
@@ -65,9 +65,9 @@ def prepare_linear_association_state(
 
 @jax.jit
 def compute_linear_association_chunk(
-    linear_association_state: LinearAssociationState,
+    linear_association_state: models.LinearAssociationState,
     genotype_matrix: jax.Array,
-) -> LinearAssociationChunkResult:
+) -> models.LinearAssociationChunkResult:
     """Compute linear association statistics for a chunk of variants.
 
     Args:
@@ -114,10 +114,10 @@ def compute_linear_association_chunk(
     beta_inc_argument = degrees_of_freedom_value / (
         degrees_of_freedom_value + absolute_test_statistic * absolute_test_statistic
     )
-    p_value = betainc(0.5 * degrees_of_freedom_value, 0.5, beta_inc_argument)
+    p_value = jax.scipy.special.betainc(0.5 * degrees_of_freedom_value, 0.5, beta_inc_argument)
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
 
-    return LinearAssociationChunkResult(
+    return models.LinearAssociationChunkResult(
         beta=beta,
         standard_error=standard_error,
         test_statistic=test_statistic,

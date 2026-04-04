@@ -6,9 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import typing
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -23,8 +23,8 @@ from g.io.source import (
     resolve_genotype_source_config,
 )
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
+if typing.TYPE_CHECKING:
+    import collections.abc
 
     from g.io.source import GenotypeSourceConfig
 
@@ -178,7 +178,10 @@ def iterate_supported_genotype_chunks(
     return checksum
 
 
-def time_operation(read_operation: Callable[[], float], repeat_count: int) -> BenchmarkPathResult:
+def time_operation(
+    read_operation: collections.abc.Callable[[], float],
+    repeat_count: int,
+) -> BenchmarkPathResult:
     """Warm and repeatedly time one benchmark operation."""
     warmup_checksum = read_operation()
     duration_seconds: list[float] = []

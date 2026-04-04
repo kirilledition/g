@@ -2,37 +2,28 @@
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import bed_reader
+import bed_reader._open_bed
 import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 import polars as pl
-from bed_reader import open_bed, read_f32
-from bed_reader._open_bed import get_num_threads
 
-from g.io.genotype_processing import (
-    build_genotype_chunk,
-    preprocess_genotype_matrix,
-    preprocess_genotype_matrix_arrays,
-)
-from g.io.reader import (
-    ArrayMemoryOrder,
-    VariantTableArrays,
-    build_variant_table_arrays,
-    iter_genotype_chunks_from_reader,
-    iter_linear_genotype_chunks_from_reader,
-    validate_sample_order,
-)
-from g.models import AlignedSampleData
+from g import models, types
+from g.io import genotype_processing, reader
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
+if typing.TYPE_CHECKING:
+    import collections.abc
 
-    from g.models import GenotypeChunk, LinearGenotypeChunk
+
+build_genotype_chunk = genotype_processing.build_genotype_chunk
+preprocess_genotype_matrix = genotype_processing.preprocess_genotype_matrix
+preprocess_genotype_matrix_arrays = genotype_processing.preprocess_genotype_matrix_arrays
 
 VARIANT_TABLE_COLUMNS = (
     "chromosome",
@@ -213,7 +204,7 @@ def load_aligned_sample_data(
     covariate_names: tuple[str, ...] | None,
     *,
     is_binary_trait: bool,
-) -> AlignedSampleData:
+) -> models.AlignedSampleData:
     """Load and align FAM, phenotype, and covariate tables."""
     return load_aligned_sample_data_from_family_identifier_table(
         sample_table=load_family_table(bed_prefix.with_suffix(".fam")),
@@ -233,7 +224,7 @@ def load_aligned_sample_data_from_family_identifier_table(
     covariate_names: tuple[str, ...] | None,
     *,
     is_binary_trait: bool,
-) -> AlignedSampleData:
+) -> models.AlignedSampleData:
     """Load and align a family-aware sample table, phenotype table, and covariate table.
 
     Args:
@@ -306,7 +297,7 @@ def load_aligned_sample_data_from_individual_identifier_table(
     covariate_names: tuple[str, ...] | None,
     *,
     is_binary_trait: bool,
-) -> AlignedSampleData:
+) -> models.AlignedSampleData:
     """Load and align a sample table by individual identifier only."""
     phenotype_table = load_phenotype_or_covariate_table(phenotype_path).with_columns(
         pl.col("FID").cast(pl.String),
@@ -360,7 +351,7 @@ def build_aligned_sample_data(
     selected_covariate_names: tuple[str, ...],
     *,
     is_binary_trait: bool,
-) -> AlignedSampleData:
+) -> models.AlignedSampleData:
     """Build aligned sample outputs from an already-joined table."""
     aligned_table = aligned_table.drop_nulls(subset=[phenotype_name, *selected_covariate_names]).sort("sample_index")
 
@@ -383,7 +374,7 @@ def build_aligned_sample_data(
         )
     phenotype_frame = pl.DataFrame({phenotype_name: phenotype_array}, schema={phenotype_name: pl.Float32})
 
-    return AlignedSampleData(
+    return models.AlignedSampleData(
         sample_indices=aligned_table.get_column("sample_index").cast(pl.Int64).to_numpy(),
         family_identifiers=aligned_table.get_column("family_identifier").cast(pl.String).to_numpy(),
         individual_identifiers=aligned_table.get_column("individual_identifier").cast(pl.String).to_numpy(),
@@ -410,10 +401,10 @@ class PlinkReader:
         """Open one PLINK BED dataset."""
         self.bed_prefix = Path(bed_prefix)
         self.bed_path = self.bed_prefix.with_suffix(".bed")
-        self.bed_handle = open_bed(str(self.bed_path))
+        self.bed_handle = bed_reader.open_bed(str(self.bed_path))
         self._variant_table = load_variant_table(self.bed_prefix)
-        self._variant_table_arrays: VariantTableArrays | None = None
-        self.num_threads = get_num_threads(getattr(self.bed_handle, "_num_threads", None))
+        self._variant_table_arrays: reader.VariantTableArrays | None = None
+        self.num_threads = bed_reader._open_bed.get_num_threads(getattr(self.bed_handle, "_num_threads", None))
 
     @property
     def sample_count(self) -> int:
@@ -444,11 +435,11 @@ class PlinkReader:
         """Return normalized PLINK variant metadata."""
         return self._variant_table
 
-    def get_variant_table_arrays(self, variant_start: int, variant_stop: int) -> VariantTableArrays:
+    def get_variant_table_arrays(self, variant_start: int, variant_stop: int) -> reader.VariantTableArrays:
         """Return normalized metadata arrays for one variant slice."""
         if self._variant_table_arrays is None:
-            self._variant_table_arrays = build_variant_table_arrays(self.variant_table)
-        return VariantTableArrays(
+            self._variant_table_arrays = reader.build_variant_table_arrays(self.variant_table)
+        return reader.VariantTableArrays(
             chromosome_values=self._variant_table_arrays.chromosome_values[variant_start:variant_stop],
             variant_identifier_values=self._variant_table_arrays.variant_identifier_values[variant_start:variant_stop],
             position_values=self._variant_table_arrays.position_values[variant_start:variant_stop],
@@ -460,12 +451,12 @@ class PlinkReader:
         self,
         index: object = None,
         dtype: type[np.float32] | type[np.float64] = np.float32,
-        order: ArrayMemoryOrder = ArrayMemoryOrder.C_CONTIGUOUS,
+        order: types.ArrayMemoryOrder = types.ArrayMemoryOrder.C_CONTIGUOUS,
     ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
         """Read PLINK genotypes with the same calling convention as `bed_handle.read`."""
         if (
             dtype is np.float32
-            and order == ArrayMemoryOrder.C_CONTIGUOUS
+            and order == types.ArrayMemoryOrder.C_CONTIGUOUS
             and isinstance(index, tuple)
             and len(index) == 2
             and isinstance(index[0], np.ndarray)
@@ -499,7 +490,7 @@ class PlinkReader:
 
 
 def read_bed_chunk_host(
-    bed_handle: open_bed,
+    bed_handle: typing.Any,
     bed_path: Path,
     sample_index_array: np.ndarray,
     variant_start: int,
@@ -524,9 +515,9 @@ def read_bed_chunk_host(
     genotype_matrix_host = np.zeros(
         (sample_index_array.shape[0], variant_index_array.shape[0]),
         dtype=np.float32,
-        order=ArrayMemoryOrder.C_CONTIGUOUS.value,
+        order=types.ArrayMemoryOrder.C_CONTIGUOUS.value,
     )
-    read_f32(
+    bed_reader.read_f32(
         str(bed_path),
         bed_handle.cloud_options,
         iid_count=bed_handle.iid_count,
@@ -541,7 +532,7 @@ def read_bed_chunk_host(
 
 
 def read_bed_chunk(
-    bed_handle: open_bed,
+    bed_handle: typing.Any,
     bed_path: Path,
     sample_index_array: np.ndarray,
     variant_start: int,
@@ -608,7 +599,7 @@ def validate_bed_sample_order(
 
     """
     family_table = load_family_table(bed_prefix.with_suffix(".fam"))
-    validate_sample_order(
+    reader.validate_sample_order(
         observed_individual_identifiers=np.asarray(
             family_table.get_column("individual_identifier").cast(pl.String).to_numpy(),
             dtype=np.str_,
@@ -627,7 +618,7 @@ def iter_genotype_chunks(
     variant_limit: int | None = None,
     *,
     include_missing_value_flag: bool = True,
-) -> Iterator[GenotypeChunk]:
+) -> collections.abc.Iterator[models.GenotypeChunk]:
     """Yield mean-imputed genotype chunks from a PLINK BED file.
 
     Args:
@@ -653,7 +644,7 @@ def iter_genotype_chunks(
         expected_individual_identifiers=expected_individual_identifiers,
     )
     with PlinkReader(bed_prefix) as plink_reader:
-        yield from iter_genotype_chunks_from_reader(
+        yield from reader.iter_genotype_chunks_from_reader(
             genotype_reader=plink_reader,
             source_name="BED",
             sample_indices=sample_indices,
@@ -671,7 +662,7 @@ def iter_linear_genotype_chunks(
     expected_individual_identifiers: np.ndarray,
     chunk_size: int,
     variant_limit: int | None = None,
-) -> Iterator[LinearGenotypeChunk]:
+) -> collections.abc.Iterator[models.LinearGenotypeChunk]:
     """Yield linear-regression genotype chunks without missingness bookkeeping."""
     sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
     validate_bed_sample_order(
@@ -680,7 +671,7 @@ def iter_linear_genotype_chunks(
         expected_individual_identifiers=expected_individual_identifiers,
     )
     with PlinkReader(bed_prefix) as plink_reader:
-        yield from iter_linear_genotype_chunks_from_reader(
+        yield from reader.iter_linear_genotype_chunks_from_reader(
             genotype_reader=plink_reader,
             source_name="BED",
             sample_indices=sample_indices,

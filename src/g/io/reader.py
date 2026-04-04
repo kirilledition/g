@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import jax
 import numpy as np
 import numpy.typing as npt
 import polars as pl
 
-from g.io.genotype_processing import preprocess_genotype_matrix, preprocess_genotype_matrix_arrays
-from g.types import ArrayMemoryOrder
+from g import models, types
+from g.io import genotype_processing
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
+if typing.TYPE_CHECKING:
+    import collections.abc
 
-    from g.models import GenotypeChunk, LinearGenotypeChunk, VariantMetadata
 
 @dataclass(frozen=True)
 class VariantTableArrays:
@@ -38,8 +37,8 @@ class VariantTableArrays:
     allele_two_values: npt.NDArray[np.str_]
 
 
-@runtime_checkable
-class GenotypeReader(Protocol):
+@typing.runtime_checkable
+class GenotypeReader(typing.Protocol):
     """Protocol implemented by concrete genotype readers."""
 
     @property
@@ -65,7 +64,7 @@ class GenotypeReader(Protocol):
         self,
         index: object = None,
         dtype: type[np.float32] | type[np.float64] = np.float32,
-        order: ArrayMemoryOrder = ArrayMemoryOrder.C_CONTIGUOUS,
+        order: types.ArrayMemoryOrder = types.ArrayMemoryOrder.C_CONTIGUOUS,
     ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
         """Read a genotype matrix subset as dosages with NaN for missing values."""
 
@@ -117,11 +116,9 @@ def build_variant_metadata(
     variant_table_arrays: VariantTableArrays,
     variant_start: int,
     variant_stop: int,
-) -> VariantMetadata:
+) -> models.VariantMetadata:
     """Build one variant-metadata object from already-sliced arrays."""
-    from g.models import VariantMetadata
-
-    return VariantMetadata(
+    return models.VariantMetadata(
         variant_start_index=variant_start,
         variant_stop_index=variant_stop,
         chromosome=variant_table_arrays.chromosome_values,
@@ -142,7 +139,7 @@ def iter_genotype_chunks_from_reader(
     *,
     include_missing_value_flag: bool = True,
     validate_sample_order_flag: bool = True,
-) -> Iterator[GenotypeChunk]:
+) -> collections.abc.Iterator[models.GenotypeChunk]:
     """Yield mean-imputed genotype chunks from any compatible reader."""
     total_variant_count = resolve_total_variant_count(genotype_reader.variant_count, variant_limit)
     if total_variant_count == 0:
@@ -163,15 +160,13 @@ def iter_genotype_chunks_from_reader(
         genotype_matrix_host = genotype_reader.read(
             index=(sample_index_array, slice(variant_start, variant_stop)),
             dtype=np.float32,
-            order=ArrayMemoryOrder.C_CONTIGUOUS,
+            order=types.ArrayMemoryOrder.C_CONTIGUOUS,
         )
-        preprocessed_chunk_data = preprocess_genotype_matrix(
+        preprocessed_chunk_data = genotype_processing.preprocess_genotype_matrix(
             jax.device_put(genotype_matrix_host),
             include_missing_value_flag=include_missing_value_flag,
         )
-        from g.models import GenotypeChunk
-
-        yield GenotypeChunk(
+        yield models.GenotypeChunk(
             genotypes=preprocessed_chunk_data.genotypes,
             missing_mask=preprocessed_chunk_data.missing_mask,
             has_missing_values=preprocessed_chunk_data.has_missing_values,
@@ -190,7 +185,7 @@ def iter_linear_genotype_chunks_from_reader(
     variant_limit: int | None = None,
     *,
     validate_sample_order_flag: bool = True,
-) -> Iterator[LinearGenotypeChunk]:
+) -> collections.abc.Iterator[models.LinearGenotypeChunk]:
     """Yield linear-regression genotype chunks from any compatible reader."""
     total_variant_count = resolve_total_variant_count(genotype_reader.variant_count, variant_limit)
     if total_variant_count == 0:
@@ -213,16 +208,14 @@ def iter_linear_genotype_chunks_from_reader(
             genotype_matrix_host = genotype_reader.read(
                 index=(sample_index_array, slice(variant_start, variant_stop)),
                 dtype=np.float32,
-                order=ArrayMemoryOrder.C_CONTIGUOUS,
+                order=types.ArrayMemoryOrder.C_CONTIGUOUS,
             )
         with jax.profiler.TraceAnnotation("linear.device_put_genotypes"):
             genotype_matrix_device = jax.device_put(genotype_matrix_host)
         with jax.profiler.TraceAnnotation("linear.preprocess_genotypes"):
-            preprocessed_genotype_arrays = preprocess_genotype_matrix_arrays(genotype_matrix_device)
+            preprocessed_genotype_arrays = genotype_processing.preprocess_genotype_matrix_arrays(genotype_matrix_device)
         with jax.profiler.TraceAnnotation("linear.build_chunk"):
-            from g.models import LinearGenotypeChunk
-
-            yield LinearGenotypeChunk(
+            yield models.LinearGenotypeChunk(
                 genotypes=preprocessed_genotype_arrays.genotypes,
                 metadata=build_variant_metadata(variant_table_arrays, variant_start, variant_stop),
                 allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,

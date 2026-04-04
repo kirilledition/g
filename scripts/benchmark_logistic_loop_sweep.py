@@ -6,9 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import typing
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
 
 import jax
 import numpy as np
@@ -60,7 +60,7 @@ def parse_chunk_sizes(raw_chunk_sizes: str) -> list[int]:
     return [int(chunk_size.strip()) for chunk_size in raw_chunk_sizes.split(",") if chunk_size.strip()]
 
 
-def block_tree_until_ready(value: Any) -> Any:
+def block_tree_until_ready(value: typing.Any) -> typing.Any:
     """Synchronize a JAX pytree and return it unchanged."""
     return jax.block_until_ready(value)
 
@@ -70,7 +70,7 @@ def checksum_frame(output_frame: pl.DataFrame) -> float:
     return float(output_frame.select(pl.col("p_value").sum()).item())
 
 
-def time_operation(operation: Any, repeat_count: int) -> tuple[list[float], float]:
+def time_operation(operation: typing.Any, repeat_count: int) -> tuple[list[float], float]:
     """Warm and measure one benchmark operation."""
     operation()
     warmed_durations_seconds: list[float] = []

@@ -27,7 +27,7 @@ from g.io.bgen import (  # noqa: E402
     read_bgen_chunk_host,
     validate_bgen_sample_order,
 )
-from g.types import ArrayMemoryOrder, SampleIdentifierSource
+from g.types import ArrayMemoryOrder, SampleIdentifierSource  # noqa: E402
 
 
 def write_sample_file(sample_path: Path, sample_identifiers: list[str]) -> None:

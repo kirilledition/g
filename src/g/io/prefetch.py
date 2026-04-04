@@ -5,11 +5,11 @@ from __future__ import annotations
 import queue as queue_module
 import threading
 import traceback
+import typing
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
+if typing.TYPE_CHECKING:
+    import collections.abc
 
 
 @dataclass(frozen=True)
@@ -23,9 +23,9 @@ class PrefetchEnvelope[ValueType]:
 
 
 def prefetch_iterator_values[ValueType](
-    value_iterator: Iterator[ValueType],
+    value_iterator: collections.abc.Iterator[ValueType],
     prefetch_chunks: int,
-) -> Iterator[ValueType]:
+) -> collections.abc.Iterator[ValueType]:
     """Prefetch a bounded number of iterator values on a background thread."""
     if prefetch_chunks <= 0:
         return value_iterator
@@ -57,7 +57,7 @@ def prefetch_iterator_values[ValueType](
     prefetch_thread = threading.Thread(target=worker, name="genotype-source-prefetch", daemon=True)
     prefetch_thread.start()
 
-    def consume_prefetched_values() -> Iterator[ValueType]:
+    def consume_prefetched_values() -> collections.abc.Iterator[ValueType]:
         try:
             while True:
                 envelope = delivery_queue.get()

@@ -8,12 +8,12 @@ import os
 import subprocess
 import sys
 import time
+import typing
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING
 
 import polars as pl
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from benchmark import BaselinePaths

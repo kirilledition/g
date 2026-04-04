@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import typing
 
 import pytest
 
 from g.io.bgen import load_sample_identifier_table, resolve_bgen_sample_path
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     from pathlib import Path
 
 

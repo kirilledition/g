@@ -8,9 +8,9 @@ import json
 import shutil
 import subprocess
 import time
+import typing
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -38,7 +38,7 @@ from g.io.plink import (
     read_bed_chunk_host,
 )
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     from g.models import GenotypeChunk, LinearGenotypeChunk
 
 
@@ -152,12 +152,16 @@ def collect_runtime_summary() -> RuntimeSummary:
     )
 
 
-def block_tree_until_ready(value: Any) -> Any:
+def block_tree_until_ready(value: typing.Any) -> typing.Any:
     """Synchronize a JAX pytree and return it unchanged."""
     return jax.block_until_ready(value)
 
 
-def time_operation(operation: Any, checksum_operation: Any, repeat_count: int) -> TimedMeasurement:
+def time_operation(
+    operation: typing.Any,
+    checksum_operation: typing.Any,
+    repeat_count: int,
+) -> TimedMeasurement:
     """Measure first-run and warmed timings for one operation."""
     start_time = time.perf_counter()
     first_value = operation()
@@ -181,24 +185,24 @@ def time_operation(operation: Any, checksum_operation: Any, repeat_count: int) -
     )
 
 
-def checksum_linear_result(linear_result: Any) -> float:
+def checksum_linear_result(linear_result: typing.Any) -> float:
     """Build a stable checksum from a linear result tree."""
     return float(np.asarray(jnp.sum(linear_result.beta) + jnp.sum(linear_result.p_value)))
 
 
-def checksum_logistic_result(logistic_evaluation: Any) -> float:
+def checksum_logistic_result(logistic_evaluation: typing.Any) -> float:
     """Build a stable checksum from a logistic evaluation tree."""
     logistic_result = logistic_evaluation.logistic_result
     return float(np.asarray(jnp.sum(logistic_result.beta) + jnp.sum(logistic_result.p_value)))
 
 
-def count_firth_variants(logistic_evaluation: Any) -> int:
+def count_firth_variants(logistic_evaluation: typing.Any) -> int:
     """Count Firth-fallback variants in one logistic evaluation."""
     method_code = np.asarray(logistic_evaluation.logistic_result.method_code)
     return int(np.count_nonzero(method_code == LogisticMethod.FIRTH))
 
 
-def checksum_frame(output_frame: Any) -> float:
+def checksum_frame(output_frame: typing.Any) -> float:
     """Build a stable checksum from a formatted Polars frame."""
     return float(output_frame.select(pl.col("p_value").sum()).item())
 

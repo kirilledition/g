@@ -17,9 +17,9 @@ import io
 import json
 import pstats
 import time
+import typing
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import jax
 import jax.profiler
@@ -31,8 +31,8 @@ from g.engine import (
     iter_logistic_output_frames,
 )
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
+if typing.TYPE_CHECKING:
+    import collections.abc
 
 
 @dataclass(frozen=True)
@@ -150,7 +150,8 @@ def parse_covariate_names(raw_covariate_names: str) -> tuple[str, ...] | None:
 
 
 def run_and_materialize_frames(
-    frame_iterator: Iterator[LinearChunkAccumulator] | Iterator[LogisticChunkAccumulator],
+    frame_iterator: collections.abc.Iterator[LinearChunkAccumulator]
+    | collections.abc.Iterator[LogisticChunkAccumulator],
 ) -> dict[str, int | float]:
     """Force a full iterator run and return statistics."""
     total_variants = 0
@@ -165,7 +166,7 @@ def run_and_materialize_frames(
 
 def build_frame_iterator(
     arguments: argparse.Namespace,
-) -> Iterator[LinearChunkAccumulator] | Iterator[LogisticChunkAccumulator]:
+) -> collections.abc.Iterator[LinearChunkAccumulator] | collections.abc.Iterator[LogisticChunkAccumulator]:
     """Build a fresh full-run frame iterator from command-line arguments."""
     covariate_names = parse_covariate_names(arguments.covar_names)
     if arguments.glm == "linear":

@@ -2,29 +2,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import typing
 
-if TYPE_CHECKING:
-    from g.api import ComputeConfig, LinearConfig, LogisticConfig, RunArtifacts
-    from g.types import (
-        ArrayMemoryOrder,
-        AssociationMode,
-        Device,
-        GenotypeSourceFormat,
-        OutputMode,
-        SampleIdentifierSource,
-    )
+from g import api, cli, types
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> typing.Any:
     """Resolve public package attributes lazily to avoid eager heavy imports."""
     if name == "main":
-        from g.cli import main
-
-        return main
+        return cli.main
     if name in {"ComputeConfig", "LinearConfig", "LogisticConfig", "RunArtifacts", "linear", "logistic"}:
-        from g import api
-
         return getattr(api, name)
     if name in {
         "ArrayMemoryOrder",
@@ -34,8 +21,6 @@ def __getattr__(name: str) -> Any:
         "OutputMode",
         "SampleIdentifierSource",
     }:
-        from g import types
-
         return getattr(types, name)
     message = f"module 'g' has no attribute {name!r}"
     raise AttributeError(message)

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import jax
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 

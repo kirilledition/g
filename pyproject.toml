@@ -98,6 +98,17 @@ ignore = [
     "T201", # allow print() in scripts
 ]
 
+[tool.ruff.lint.flake8-import-conventions]
+banned-from = ["typing", "enum", "collections", "collections.abc"]
+
+[tool.ruff.lint.flake8-import-conventions.extend-aliases]
+"jax.numpy" = "jnp"
+"numpy.typing" = "npt"
+"polars" = "pl"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
 [tool.pytest.ini_options]
 markers = [
     "phase0_data: requires local Phase 0 data or generated baseline artifacts.",

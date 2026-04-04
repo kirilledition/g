@@ -4,8 +4,8 @@ import argparse
 import importlib
 import json
 import time
+import typing
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -18,16 +18,14 @@ from g.compute.linear_triton import (  # type: ignore
 
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
 
-torch: Any = importlib.import_module("torch")
+torch: typing.Any = importlib.import_module("torch")
 
-if TYPE_CHECKING:
-    from typing import Protocol
-
+if typing.TYPE_CHECKING:
     from g.compute.linear_triton import TritonLinearAssociationStatistics  # type: ignore
 
     from g.models import LinearAssociationChunkResult
 
-    class CompiledCallable(Protocol):
+    class CompiledCallable(typing.Protocol):
         def __call__(
             self,
             linear_association_state: object,

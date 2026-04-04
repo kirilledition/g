@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 
-from g.models import GenotypeChunk, LinearGenotypeChunk, PreprocessedGenotypeChunkData, VariantMetadata
+from g import models
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     import numpy as np
 
 
@@ -55,7 +55,7 @@ def preprocess_genotype_matrix(
     genotype_matrix: jax.Array,
     *,
     include_missing_value_flag: bool = True,
-) -> PreprocessedGenotypeChunkData:
+) -> models.PreprocessedGenotypeChunkData:
     """Preprocess a raw genotype matrix with Phase 1 semantics.
 
     Args:
@@ -71,7 +71,7 @@ def preprocess_genotype_matrix(
     has_missing_values = (
         bool(jax.device_get(jnp.any(preprocessed_arrays.missing_mask))) if include_missing_value_flag else False
     )
-    return PreprocessedGenotypeChunkData(
+    return models.PreprocessedGenotypeChunkData(
         genotypes=preprocessed_arrays.genotypes,
         missing_mask=preprocessed_arrays.missing_mask,
         has_missing_values=has_missing_values,
@@ -81,7 +81,7 @@ def preprocess_genotype_matrix(
 
 
 def build_genotype_chunk(
-    preprocessed_chunk_data: PreprocessedGenotypeChunkData,
+    preprocessed_chunk_data: models.PreprocessedGenotypeChunkData,
     chromosome_values: np.ndarray,
     variant_identifier_values: np.ndarray,
     position_values: np.ndarray,
@@ -89,7 +89,7 @@ def build_genotype_chunk(
     allele_two_values: np.ndarray,
     variant_start: int,
     variant_stop: int,
-) -> GenotypeChunk:
+) -> models.GenotypeChunk:
     """Build one genotype chunk from preprocessed arrays and metadata.
 
     Args:
@@ -106,7 +106,7 @@ def build_genotype_chunk(
         Mean-imputed genotype chunk with metadata and summary statistics.
 
     """
-    variant_metadata = VariantMetadata(
+    variant_metadata = models.VariantMetadata(
         variant_start_index=variant_start,
         variant_stop_index=variant_stop,
         chromosome=chromosome_values[variant_start:variant_stop],
@@ -115,7 +115,7 @@ def build_genotype_chunk(
         allele_one=allele_one_values[variant_start:variant_stop],
         allele_two=allele_two_values[variant_start:variant_stop],
     )
-    return GenotypeChunk(
+    return models.GenotypeChunk(
         genotypes=preprocessed_chunk_data.genotypes,
         missing_mask=preprocessed_chunk_data.missing_mask,
         has_missing_values=preprocessed_chunk_data.has_missing_values,
@@ -134,11 +134,11 @@ def build_linear_genotype_chunk(
     allele_two_values: np.ndarray,
     variant_start: int,
     variant_stop: int,
-) -> LinearGenotypeChunk:
+) -> models.LinearGenotypeChunk:
     """Build one linear-regression genotype chunk without missingness fields."""
-    return LinearGenotypeChunk(
+    return models.LinearGenotypeChunk(
         genotypes=preprocessed_genotype_arrays.genotypes,
-        metadata=VariantMetadata(
+        metadata=models.VariantMetadata(
             variant_start_index=variant_start,
             variant_stop_index=variant_stop,
             chromosome=chromosome_values[variant_start:variant_stop],

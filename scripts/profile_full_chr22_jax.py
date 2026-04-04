@@ -4,16 +4,16 @@
 from __future__ import annotations
 
 import argparse
+import typing
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import jax
 import jax.profiler
 
 from g.engine import iter_linear_output_frames, iter_logistic_output_frames
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
+if typing.TYPE_CHECKING:
+    import collections.abc
 
     from g.engine import LinearChunkAccumulator, LogisticChunkAccumulator
 
@@ -47,7 +47,8 @@ def parse_covariate_names(raw_covariate_names: str) -> tuple[str, ...] | None:
 
 
 def run_and_materialize_frames(
-    frame_iterator: Iterator[LinearChunkAccumulator] | Iterator[LogisticChunkAccumulator],
+    frame_iterator: collections.abc.Iterator[LinearChunkAccumulator]
+    | collections.abc.Iterator[LogisticChunkAccumulator],
 ) -> None:
     """Force a full iterator run so the trace captures compute and formatting work."""
     for accumulator in frame_iterator:

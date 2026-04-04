@@ -8,15 +8,15 @@ import os
 import shutil
 import subprocess
 import time
+import typing
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import cpuinfo
 import psutil
 
-GPUtilModule: Any | None
+GPUtilModule: typing.Any | None
 try:
     import GPUtil as GPUtilModuleImport
 except ImportError:  # pragma: no cover - optional dependency branch
@@ -584,14 +584,14 @@ def build_hail_suite_command(
     ]
 
 
-def load_hail_suite_report(report_path: Path) -> dict[str, Any]:
+def load_hail_suite_report(report_path: Path) -> dict[str, typing.Any]:
     """Load the JSON report emitted by the Hail benchmark suite."""
     return json.loads(report_path.read_text())
 
 
 def build_hail_step_result(
     suite_command_result: CommandResult,
-    step_report: dict[str, Any],
+    step_report: dict[str, typing.Any],
 ) -> CommandResult:
     """Convert one suite step report into a benchmark command result."""
     return CommandResult(
@@ -605,7 +605,7 @@ def build_hail_step_result(
     )
 
 
-def serialize_results(results_by_name: dict[str, CommandResult]) -> dict[str, dict[str, Any]]:
+def serialize_results(results_by_name: dict[str, CommandResult]) -> dict[str, dict[str, typing.Any]]:
     """Convert command results into JSON-serializable dictionaries."""
     return {result_name: asdict(command_result) for result_name, command_result in results_by_name.items()}
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import typing
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import jax.numpy as jnp
@@ -22,7 +22,7 @@ from g.io.source import (
 from g.models import GenotypeChunk, VariantMetadata
 from g.types import ArrayMemoryOrder, GenotypeSourceFormat, SampleIdentifierSource
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     import polars as pl
 
     from g.io.reader import GenotypeReader, VariantTableArrays
@@ -152,7 +152,7 @@ def test_validate_genotype_source_config_rejects_unknown_format() -> None:
     with pytest.raises(ValueError, match="Unsupported genotype source format"):
         validate_genotype_source_config(
             GenotypeSourceConfig(
-                source_format=cast(GenotypeSourceFormat, "vcf"),
+                source_format=typing.cast("GenotypeSourceFormat", "vcf"),
                 source_path=Path("study.vcf"),
             )
         )
@@ -207,7 +207,7 @@ def test_load_aligned_sample_data_from_source_dispatches_to_bgen_loader() -> Non
 def test_load_aligned_sample_data_from_source_reuses_open_bgen_reader() -> None:
     """Ensure BGEN sample alignment can reuse an already-open reader."""
     bgen_source_config = build_bgen_source_config(Path("study.bgen"))
-    genotype_reader = cast("GenotypeReader", FakeSourceReader())
+    genotype_reader = typing.cast("GenotypeReader", FakeSourceReader())
     expected_aligned_sample_data = object()
 
     with (
@@ -287,7 +287,7 @@ def test_iter_linear_genotype_chunks_from_source_dispatches_to_bgen_reader() -> 
 def test_iter_linear_genotype_chunks_from_source_reuses_open_reader() -> None:
     """Ensure source iteration can reuse one already-open genotype reader."""
     bgen_source_config = build_bgen_source_config(Path("study.bgen"))
-    genotype_reader = cast("GenotypeReader", FakeSourceReader())
+    genotype_reader = typing.cast("GenotypeReader", FakeSourceReader())
 
     with patch("g.io.source.iter_linear_genotype_chunks_from_reader", return_value=iter(())) as mock_iter_reader:
         linear_chunks = list(

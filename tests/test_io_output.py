@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import typing
 
 import jax.numpy as jnp
 import numpy as np
@@ -24,7 +24,7 @@ from g.io.output import (
 from g.models import LinearAssociationChunkResult, VariantMetadata
 from g.types import AssociationMode
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g.engine import LinearChunkPayload

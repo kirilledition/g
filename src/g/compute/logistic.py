@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import enum
 import math
 from dataclasses import dataclass
-from enum import IntEnum
 
 import jax
 import jax.numpy as jnp
 import jax.profiler
+import jax.scipy.stats
 import numpy as np
 import numpy.typing as npt
-from jax.scipy.stats import norm
 
-from g.models import LogisticAssociationChunkResult
+from g import models
 
 MINIMUM_PROBABILITY = 1.0e-12
 MINIMUM_WEIGHT = 1.0e-12
@@ -32,14 +32,14 @@ FIRTH_BATCH_BUCKET_SIZES = (1, 2, 4, 8, 16, 32, 64)
 MAX_ITERATION_COUNT = 100
 
 
-class LogisticMethod(IntEnum):
+class LogisticMethod(enum.IntEnum):
     """Method codes emitted by logistic association kernels."""
 
     STANDARD = 0
     FIRTH = 1
 
 
-class LogisticErrorCode(IntEnum):
+class LogisticErrorCode(enum.IntEnum):
     """Error codes emitted by logistic association kernels."""
 
     NONE = 0
@@ -107,7 +107,7 @@ class StandardLogisticChunkEvaluation:
 
     """
 
-    logistic_result: LogisticAssociationChunkResult
+    logistic_result: models.LogisticAssociationChunkResult
     coefficients: jax.Array
 
 
@@ -520,7 +520,7 @@ def compute_firth_statistics(
     beta = coefficients[-1]
     standard_error = jnp.sqrt(jnp.where(genotype_variance > 0.0, genotype_variance, jnp.nan))
     test_statistic = beta / standard_error
-    p_value = 2.0 * norm.sf(jnp.abs(test_statistic))
+    p_value = 2.0 * jax.scipy.stats.norm.sf(jnp.abs(test_statistic))
     valid_mask = (
         jnp.isfinite(beta)
         & jnp.isfinite(standard_error)
@@ -880,7 +880,7 @@ def compute_standard_logistic_association_chunk_with_mask(
     beta = final_state.coefficients[:, -1]
     standard_error = jnp.sqrt(1.0 / safe_schur_complement)
     test_statistic = beta / standard_error
-    p_value = 2.0 * norm.sf(jnp.abs(test_statistic))
+    p_value = 2.0 * jax.scipy.stats.norm.sf(jnp.abs(test_statistic))
     valid_mask = (
         jnp.isfinite(beta)
         & jnp.isfinite(standard_error)
@@ -898,7 +898,7 @@ def compute_standard_logistic_association_chunk_with_mask(
         ),
     )
     return StandardLogisticChunkEvaluation(
-        logistic_result=LogisticAssociationChunkResult(
+        logistic_result=models.LogisticAssociationChunkResult(
             beta=beta,
             standard_error=standard_error,
             test_statistic=test_statistic,
@@ -1045,7 +1045,7 @@ def compute_standard_logistic_association_chunk_without_mask(
     beta = final_state.coefficients[:, -1]
     standard_error = jnp.sqrt(1.0 / safe_schur_complement)
     test_statistic = beta / standard_error
-    p_value = 2.0 * norm.sf(jnp.abs(test_statistic))
+    p_value = 2.0 * jax.scipy.stats.norm.sf(jnp.abs(test_statistic))
     valid_mask = (
         jnp.isfinite(beta)
         & jnp.isfinite(standard_error)
@@ -1063,7 +1063,7 @@ def compute_standard_logistic_association_chunk_without_mask(
         ),
     )
     return StandardLogisticChunkEvaluation(
-        logistic_result=LogisticAssociationChunkResult(
+        logistic_result=models.LogisticAssociationChunkResult(
             beta=beta,
             standard_error=standard_error,
             test_statistic=test_statistic,
@@ -1383,7 +1383,7 @@ def compute_firth_association_chunk_with_mask(
     initial_coefficients: jax.Array,
     max_iterations: int,
     tolerance: float,
-) -> LogisticAssociationChunkResult:
+) -> models.LogisticAssociationChunkResult:
     """Compute Firth association statistics for a chunk of variants."""
     # Create skip_firth mask (all False since these variants need Firth)
     skip_firth_mask = jnp.zeros(genotype_matrix.shape[1], dtype=bool)
@@ -1399,7 +1399,7 @@ def compute_firth_association_chunk_with_mask(
         tolerance,
     )
     variant_count = genotype_matrix.shape[1]
-    return LogisticAssociationChunkResult(
+    return models.LogisticAssociationChunkResult(
         beta=firth_result.beta,
         standard_error=firth_result.standard_error,
         test_statistic=firth_result.test_statistic,
@@ -1460,11 +1460,11 @@ def resolve_firth_bucket_size(active_variant_count: int) -> int:
 
 
 def merge_firth_batch_result(
-    current_result: LogisticAssociationChunkResult,
+    current_result: models.LogisticAssociationChunkResult,
     fallback_indices: jax.Array,
     batch_active_mask: jax.Array,
-    firth_result: LogisticAssociationChunkResult,
-) -> LogisticAssociationChunkResult:
+    firth_result: models.LogisticAssociationChunkResult,
+) -> models.LogisticAssociationChunkResult:
     """Merge one fixed-size Firth batch into the running chunk result."""
 
     def merge_array(current_values: jax.Array, firth_values: jax.Array) -> jax.Array:
@@ -1472,7 +1472,7 @@ def merge_firth_batch_result(
         merged_batch_values = jnp.where(batch_active_mask, firth_values, current_batch_values)
         return current_values.at[fallback_indices].set(merged_batch_values)
 
-    return LogisticAssociationChunkResult(
+    return models.LogisticAssociationChunkResult(
         beta=merge_array(current_result.beta, firth_result.beta),
         standard_error=merge_array(current_result.standard_error, firth_result.standard_error),
         test_statistic=merge_array(current_result.test_statistic, firth_result.test_statistic),
@@ -1486,16 +1486,16 @@ def merge_firth_batch_result(
 
 
 def merge_firth_result_once(
-    current_result: LogisticAssociationChunkResult,
+    current_result: models.LogisticAssociationChunkResult,
     fallback_indices: jax.Array,
-    firth_result: LogisticAssociationChunkResult,
-) -> LogisticAssociationChunkResult:
+    firth_result: models.LogisticAssociationChunkResult,
+) -> models.LogisticAssociationChunkResult:
     """Merge all fallback updates into the chunk result with one scatter per field."""
 
     def merge_array(current_values: jax.Array, firth_values: jax.Array) -> jax.Array:
         return current_values.at[fallback_indices].set(firth_values)
 
-    return LogisticAssociationChunkResult(
+    return models.LogisticAssociationChunkResult(
         beta=merge_array(current_result.beta, firth_result.beta),
         standard_error=merge_array(current_result.standard_error, firth_result.standard_error),
         test_statistic=merge_array(current_result.test_statistic, firth_result.test_statistic),
@@ -1516,7 +1516,7 @@ def compute_batched_firth_updates_without_mask(
     standard_evaluation: StandardLogisticChunkEvaluation,
     max_iterations: int,
     tolerance: float,
-) -> LogisticAssociationChunkResult:
+) -> models.LogisticAssociationChunkResult:
     """Apply Firth fallback only to no-missing variants that need it."""
     genotype_matrix_by_variant = genotype_matrix.T
     variant_count = genotype_matrix_by_variant.shape[0]
@@ -1623,7 +1623,7 @@ def compute_batched_firth_updates_without_mask(
             fallback_iteration_count_chunks.append(firth_result.iteration_count[:active_variant_count])
 
     fallback_indices = jnp.concatenate(fallback_index_chunks, axis=0)
-    fallback_result = LogisticAssociationChunkResult(
+    fallback_result = models.LogisticAssociationChunkResult(
         beta=jnp.concatenate(fallback_beta_chunks, axis=0),
         standard_error=jnp.concatenate(fallback_standard_error_chunks, axis=0),
         test_statistic=jnp.concatenate(fallback_test_statistic_chunks, axis=0),
@@ -1656,7 +1656,7 @@ def compute_logistic_association_chunk(
     max_iterations: int,
     tolerance: float,
     no_missing_constants: NoMissingLogisticConstants | None = None,
-) -> LogisticAssociationChunkResult:
+) -> models.LogisticAssociationChunkResult:
     """Compute batched logistic association statistics for a chunk of variants.
 
     Args:
@@ -1703,7 +1703,7 @@ def compute_logistic_association_chunk_with_mask(
     observation_mask: jax.Array,
     max_iterations: int,
     tolerance: float,
-) -> LogisticAssociationChunkResult:
+) -> models.LogisticAssociationChunkResult:
     """Compute batched logistic association statistics with per-variant masks.
 
     Uses batched Firth fallback for better performance. Only runs Firth on
@@ -1820,7 +1820,7 @@ def compute_logistic_association_chunk_with_mask(
                 active_converged_mask = firth_result.converged_mask[:active_variant_count]
                 active_valid_mask = firth_result.valid_mask[:active_variant_count]
                 active_iteration_count = firth_result.iteration_count[:active_variant_count]
-                result = LogisticAssociationChunkResult(
+                result = models.LogisticAssociationChunkResult(
                     beta=result.beta.at[fallback_indices].set(active_beta),
                     standard_error=result.standard_error.at[fallback_indices].set(active_standard_error),
                     test_statistic=result.test_statistic.at[fallback_indices].set(active_test_statistic),

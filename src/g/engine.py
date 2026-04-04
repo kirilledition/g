@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+import contextlib
+import typing
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -12,34 +12,12 @@ import jax.profiler
 import numpy as np
 import polars as pl
 
-from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
-from g.compute.logistic import (
-    LogisticErrorCode,
-    LogisticMethod,
-    NoMissingLogisticConstants,
-    compute_logistic_association_chunk,
-    compute_logistic_association_chunk_with_mask,
-    prepare_no_missing_logistic_constants,
-)
-from g.io.source import (
-    GenotypeSourceConfig,
-    build_plink_source_config,
-    iter_genotype_chunks_from_source,
-    iter_linear_genotype_chunks_from_source,
-    load_aligned_sample_data_from_source,
-    open_genotype_reader,
-)
-from g.types import GenotypeSourceFormat
-from g.models import (
-    GenotypeChunk,
-    LinearAssociationChunkResult,
-    LogisticAssociationChunkResult,
-    LogisticAssociationEvaluation,
-    VariantMetadata,
-)
+from g import models, types
+from g.compute import linear, logistic
+from g.io import source
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
+if typing.TYPE_CHECKING:
+    import collections.abc
     from pathlib import Path
 
     import numpy.typing as npt
@@ -57,10 +35,10 @@ class LinearChunkAccumulator:
 
     """
 
-    metadata: VariantMetadata
+    metadata: models.VariantMetadata
     allele_one_frequency: jax.Array
     observation_count: jax.Array
-    linear_result: LinearAssociationChunkResult
+    linear_result: models.LinearAssociationChunkResult
 
 
 @dataclass(frozen=True)
@@ -75,10 +53,10 @@ class LogisticChunkAccumulator:
 
     """
 
-    metadata: VariantMetadata
+    metadata: models.VariantMetadata
     allele_one_frequency: jax.Array
     observation_count: jax.Array
-    logistic_result: LogisticAssociationChunkResult
+    logistic_result: models.LogisticAssociationChunkResult
 
 
 @dataclass(frozen=True)
@@ -132,19 +110,19 @@ ChunkPayload = LinearChunkPayload | LogisticChunkPayload
 
 def format_logistic_method_codes(method_code_values: np.ndarray) -> np.ndarray:
     """Convert logistic method codes to PLINK-style FIRTH flags."""
-    return np.where(method_code_values == LogisticMethod.FIRTH, "Y", "N")
+    return np.where(method_code_values == logistic.LogisticMethod.FIRTH, "Y", "N")
 
 
 def format_logistic_error_codes(error_code_values: np.ndarray) -> np.ndarray:
     """Convert logistic error codes to PLINK-style error labels."""
     return np.where(
-        error_code_values == LogisticErrorCode.FIRTH_CONVERGE_FAIL,
+        error_code_values == logistic.LogisticErrorCode.FIRTH_CONVERGE_FAIL,
         "FIRTH_CONVERGE_FAIL",
         np.where(
-            error_code_values == LogisticErrorCode.LOGISTIC_CONVERGE_FAIL,
+            error_code_values == logistic.LogisticErrorCode.LOGISTIC_CONVERGE_FAIL,
             "LOGISTIC_CONVERGE_FAIL",
             np.where(
-                error_code_values == LogisticErrorCode.UNFINISHED,
+                error_code_values == logistic.LogisticErrorCode.UNFINISHED,
                 "UNFINISHED",
                 ".",
             ),
@@ -153,10 +131,10 @@ def format_logistic_error_codes(error_code_values: np.ndarray) -> np.ndarray:
 
 
 def build_linear_output_frame(
-    metadata: VariantMetadata,
+    metadata: models.VariantMetadata,
     allele_one_frequency: jax.Array,
     observation_count: jax.Array,
-    linear_result: LinearAssociationChunkResult,
+    linear_result: models.LinearAssociationChunkResult,
 ) -> pl.DataFrame:
     """Build a tabular linear association result frame."""
     host_values = jax.device_get(
@@ -189,10 +167,10 @@ def build_linear_output_frame(
 
 
 def build_linear_chunk_payload(
-    metadata: VariantMetadata,
+    metadata: models.VariantMetadata,
     allele_one_frequency: jax.Array,
     observation_count: jax.Array,
-    linear_result: LinearAssociationChunkResult,
+    linear_result: models.LinearAssociationChunkResult,
 ) -> LinearChunkPayload:
     """Build a host-side linear payload for background persistence."""
     host_values = jax.device_get(
@@ -226,10 +204,10 @@ def build_linear_chunk_payload(
 
 
 def build_logistic_output_frame(
-    metadata: VariantMetadata,
+    metadata: models.VariantMetadata,
     allele_one_frequency: jax.Array,
     observation_count: jax.Array,
-    logistic_result: LogisticAssociationChunkResult,
+    logistic_result: models.LogisticAssociationChunkResult,
 ) -> pl.DataFrame:
     """Build a tabular logistic association result frame."""
     host_values = jax.device_get(
@@ -270,10 +248,10 @@ def build_logistic_output_frame(
 
 
 def build_logistic_chunk_payload(
-    metadata: VariantMetadata,
+    metadata: models.VariantMetadata,
     allele_one_frequency: jax.Array,
     observation_count: jax.Array,
-    logistic_result: LogisticAssociationChunkResult,
+    logistic_result: models.LogisticAssociationChunkResult,
 ) -> LogisticChunkPayload:
     """Build a host-side logistic payload for background persistence."""
     host_values = jax.device_get(
@@ -472,16 +450,16 @@ def concatenate_logistic_results(
 def compute_logistic_association_with_missing_exclusion(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
-    genotype_chunk: GenotypeChunk,
+    genotype_chunk: models.GenotypeChunk,
     max_iterations: int,
     tolerance: float,
-    no_missing_constants: NoMissingLogisticConstants | None = None,
-) -> LogisticAssociationEvaluation:
+    no_missing_constants: logistic.NoMissingLogisticConstants | None = None,
+) -> models.LogisticAssociationEvaluation:
     """Compute logistic regression while excluding missing genotype rows per variant."""
     if not genotype_chunk.has_missing_values:
         with jax.profiler.TraceAnnotation("logistic.standard_no_missing"):
-            return LogisticAssociationEvaluation(
-                logistic_result=compute_logistic_association_chunk(
+            return models.LogisticAssociationEvaluation(
+                logistic_result=logistic.compute_logistic_association_chunk(
                     covariate_matrix=covariate_matrix,
                     phenotype_vector=phenotype_vector,
                     genotype_matrix=genotype_chunk.genotypes,
@@ -506,8 +484,8 @@ def compute_logistic_association_with_missing_exclusion(
             0.0,
         )
     with jax.profiler.TraceAnnotation("logistic.compute_missing_exclusion"):
-        return LogisticAssociationEvaluation(
-            logistic_result=compute_logistic_association_chunk_with_mask(
+        return models.LogisticAssociationEvaluation(
+            logistic_result=logistic.compute_logistic_association_chunk_with_mask(
                 covariate_matrix=covariate_matrix,
                 phenotype_vector=phenotype_vector,
                 genotype_matrix=genotype_chunk.genotypes,
@@ -522,7 +500,7 @@ def compute_logistic_association_with_missing_exclusion(
 
 def iter_linear_output_frames(
     *,
-    genotype_source_config: GenotypeSourceConfig | None = None,
+    genotype_source_config: source.GenotypeSourceConfig | None = None,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
@@ -532,22 +510,22 @@ def iter_linear_output_frames(
     prefetch_chunks: int = 0,
     committed_chunk_identifiers: set[int] | None = None,
     bed_prefix: Path | None = None,
-) -> Iterator[LinearChunkAccumulator]:
+) -> collections.abc.Iterator[LinearChunkAccumulator]:
     """Yield linear association chunk accumulators (JAX arrays, device memory)."""
     resolved_genotype_source_config = genotype_source_config
     if resolved_genotype_source_config is None:
         if bed_prefix is None:
             message = "Either genotype_source_config or bed_prefix must be provided."
             raise ValueError(message)
-        resolved_genotype_source_config = build_plink_source_config(bed_prefix)
+        resolved_genotype_source_config = source.build_plink_source_config(bed_prefix)
     genotype_reader = None
-    if resolved_genotype_source_config.source_format == GenotypeSourceFormat.BGEN:
-        genotype_reader = open_genotype_reader(resolved_genotype_source_config)
-    reader_context = genotype_reader if genotype_reader is not None else nullcontext()
+    if resolved_genotype_source_config.source_format == types.GenotypeSourceFormat.BGEN:
+        genotype_reader = source.open_genotype_reader(resolved_genotype_source_config)
+    reader_context = genotype_reader if genotype_reader is not None else contextlib.nullcontext()
 
     with reader_context:
         with jax.profiler.TraceAnnotation("linear.load_aligned_sample_data"):
-            aligned_sample_data = load_aligned_sample_data_from_source(
+            aligned_sample_data = source.load_aligned_sample_data_from_source(
                 genotype_source_config=resolved_genotype_source_config,
                 phenotype_path=phenotype_path,
                 phenotype_name=phenotype_name,
@@ -557,12 +535,12 @@ def iter_linear_output_frames(
                 genotype_reader=genotype_reader,
             )
         with jax.profiler.TraceAnnotation("linear.prepare_state"):
-            linear_association_state = prepare_linear_association_state(
+            linear_association_state = linear.prepare_linear_association_state(
                 covariate_matrix=aligned_sample_data.covariate_matrix,
                 phenotype_vector=aligned_sample_data.phenotype_vector,
             )
 
-        chunk_iterator = iter_linear_genotype_chunks_from_source(
+        chunk_iterator = source.iter_linear_genotype_chunks_from_source(
             genotype_source_config=resolved_genotype_source_config,
             sample_indices=aligned_sample_data.sample_indices,
             expected_individual_identifiers=aligned_sample_data.individual_identifiers,
@@ -578,7 +556,7 @@ def iter_linear_output_frames(
                 continue
             with jax.profiler.StepTraceAnnotation("linear_chunk", step_num=chunk_number):
                 with jax.profiler.TraceAnnotation("linear.compute"):
-                    linear_result = compute_linear_association_chunk(
+                    linear_result = linear.compute_linear_association_chunk(
                         linear_association_state=linear_association_state,
                         genotype_matrix=current_chunk.genotypes,
                     )
@@ -593,7 +571,7 @@ def iter_linear_output_frames(
 
 def iter_logistic_output_frames(
     *,
-    genotype_source_config: GenotypeSourceConfig | None = None,
+    genotype_source_config: source.GenotypeSourceConfig | None = None,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
@@ -605,22 +583,22 @@ def iter_logistic_output_frames(
     prefetch_chunks: int = 0,
     committed_chunk_identifiers: set[int] | None = None,
     bed_prefix: Path | None = None,
-) -> Iterator[LogisticChunkAccumulator]:
+) -> collections.abc.Iterator[LogisticChunkAccumulator]:
     """Yield logistic association chunk accumulators (JAX arrays, device memory)."""
     resolved_genotype_source_config = genotype_source_config
     if resolved_genotype_source_config is None:
         if bed_prefix is None:
             message = "Either genotype_source_config or bed_prefix must be provided."
             raise ValueError(message)
-        resolved_genotype_source_config = build_plink_source_config(bed_prefix)
+        resolved_genotype_source_config = source.build_plink_source_config(bed_prefix)
     genotype_reader = None
-    if resolved_genotype_source_config.source_format == GenotypeSourceFormat.BGEN:
-        genotype_reader = open_genotype_reader(resolved_genotype_source_config)
-    reader_context = genotype_reader if genotype_reader is not None else nullcontext()
+    if resolved_genotype_source_config.source_format == types.GenotypeSourceFormat.BGEN:
+        genotype_reader = source.open_genotype_reader(resolved_genotype_source_config)
+    reader_context = genotype_reader if genotype_reader is not None else contextlib.nullcontext()
 
     with reader_context:
         with jax.profiler.TraceAnnotation("logistic.load_aligned_sample_data"):
-            aligned_sample_data = load_aligned_sample_data_from_source(
+            aligned_sample_data = source.load_aligned_sample_data_from_source(
                 genotype_source_config=resolved_genotype_source_config,
                 phenotype_path=phenotype_path,
                 phenotype_name=phenotype_name,
@@ -630,11 +608,11 @@ def iter_logistic_output_frames(
                 genotype_reader=genotype_reader,
             )
         with jax.profiler.TraceAnnotation("logistic.prepare_no_missing_constants"):
-            no_missing_constants = prepare_no_missing_logistic_constants(
+            no_missing_constants = logistic.prepare_no_missing_logistic_constants(
                 covariate_matrix=aligned_sample_data.covariate_matrix,
                 phenotype_vector=aligned_sample_data.phenotype_vector,
             )
-        chunk_iterator = iter_genotype_chunks_from_source(
+        chunk_iterator = source.iter_genotype_chunks_from_source(
             genotype_source_config=resolved_genotype_source_config,
             sample_indices=aligned_sample_data.sample_indices,
             expected_individual_identifiers=aligned_sample_data.individual_identifiers,
@@ -669,7 +647,7 @@ def iter_logistic_output_frames(
 
 def run_linear_association(
     *,
-    genotype_source_config: GenotypeSourceConfig | None = None,
+    genotype_source_config: source.GenotypeSourceConfig | None = None,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
@@ -701,7 +679,7 @@ def run_linear_association(
 
 def run_logistic_association(
     *,
-    genotype_source_config: GenotypeSourceConfig | None = None,
+    genotype_source_config: source.GenotypeSourceConfig | None = None,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
@@ -736,7 +714,8 @@ def run_logistic_association(
 
 
 def write_frame_iterator_to_tsv(
-    frame_iterator: Iterator[LinearChunkAccumulator] | Iterator[LogisticChunkAccumulator],
+    frame_iterator: collections.abc.Iterator[LinearChunkAccumulator]
+    | collections.abc.Iterator[LogisticChunkAccumulator],
     output_path: Path,
 ) -> None:
     """Write accumulated chunk results to a TSV file.

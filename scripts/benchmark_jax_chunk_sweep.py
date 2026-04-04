@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import json
 import time
+import typing
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +18,7 @@ from g.compute.logistic import LogisticMethod, compute_logistic_association_chun
 from g.engine import compute_logistic_association_with_missing_exclusion
 from g.io.plink import iter_genotype_chunks, load_aligned_sample_data
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     from g.models import GenotypeChunk
 
 
@@ -44,12 +44,16 @@ class ChunkSweepReport:
     logistic_fallback_compute: list[ChunkSizeMeasurement]
 
 
-def block_tree_until_ready(value: Any) -> Any:
+def block_tree_until_ready(value: typing.Any) -> typing.Any:
     """Synchronize a JAX pytree and return it unchanged."""
     return jax.block_until_ready(value)
 
 
-def time_operation(operation: Any, checksum_operation: Any, repeat_count: int) -> ChunkSizeMeasurement:
+def time_operation(
+    operation: typing.Any,
+    checksum_operation: typing.Any,
+    repeat_count: int,
+) -> ChunkSizeMeasurement:
     """Measure warmed runtime for one operation."""
     operation()
     warmed_durations_seconds: list[float] = []
@@ -78,12 +82,12 @@ def attach_chunk_size(measurement: ChunkSizeMeasurement, chunk_size: int) -> Chu
     )
 
 
-def checksum_linear_result(linear_result: Any) -> float:
+def checksum_linear_result(linear_result: typing.Any) -> float:
     """Build a stable checksum from a linear result tree."""
     return float(np.asarray(jnp.sum(linear_result.beta) + jnp.sum(linear_result.p_value)))
 
 
-def checksum_logistic_result(logistic_result: Any) -> float:
+def checksum_logistic_result(logistic_result: typing.Any) -> float:
     """Build a stable checksum from a logistic result tree."""
     return float(np.asarray(jnp.sum(logistic_result.beta) + jnp.sum(logistic_result.p_value)))
 

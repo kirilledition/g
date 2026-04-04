@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib
 import typing
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -13,19 +12,11 @@ import numpy as np
 import numpy.typing as npt
 import polars as pl
 
-from g.io.reader import (
-    ArrayMemoryOrder,
-    VariantTableArrays,
-    iter_genotype_chunks_from_reader,
-    iter_linear_genotype_chunks_from_reader,
-    validate_sample_order,
-)
-from g.types import SampleIdentifierSource
+from g import models, types
+from g.io import reader
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
-    from g.models import GenotypeChunk, LinearGenotypeChunk
+if typing.TYPE_CHECKING:
+    import collections.abc
 
 
 OpenBgenHandle = typing.Any
@@ -147,7 +138,7 @@ def convert_probability_tensor_to_dosage(
     *,
     is_phased: bool,
     dtype: type[np.float32] | type[np.float64],
-    order: ArrayMemoryOrder,
+    order: types.ArrayMemoryOrder,
 ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
     """Convert a BGEN probability tensor into additive dosages.
 
@@ -188,13 +179,15 @@ def build_bgen_variant_table(bgen_handle: OpenBgenHandle) -> pl.DataFrame:
     )
 
 
-def resolve_sample_identifier_source(bgen_handle: OpenBgenHandle, sample_path: Path | None) -> SampleIdentifierSource:
+def resolve_sample_identifier_source(
+    bgen_handle: OpenBgenHandle, sample_path: Path | None
+) -> types.SampleIdentifierSource:
     """Resolve where sample identifiers originated for one open BGEN handle."""
     if sample_path is not None:
-        return SampleIdentifierSource.EXTERNAL
+        return types.SampleIdentifierSource.EXTERNAL
     if bool(bgen_handle._cbgen.contain_samples):
-        return SampleIdentifierSource.EMBEDDED
-    return SampleIdentifierSource.GENERATED
+        return types.SampleIdentifierSource.EMBEDDED
+    return types.SampleIdentifierSource.GENERATED
 
 
 class BgenReader:
@@ -259,7 +252,7 @@ class BgenReader:
             self._variant_table = build_bgen_variant_table(self.backend_handle)
         return self._variant_table
 
-    def get_variant_table_arrays(self, variant_start: int, variant_stop: int) -> VariantTableArrays:
+    def get_variant_table_arrays(self, variant_start: int, variant_stop: int) -> reader.VariantTableArrays:
         """Return normalized metadata arrays for one BGEN variant slice."""
         allele_identifier_values = np.asarray(self.backend_handle.allele_ids[variant_start:variant_stop], dtype=np.str_)
         allele_pairs = [allele_identifier_value.split(",") for allele_identifier_value in allele_identifier_values]
@@ -267,7 +260,7 @@ class BgenReader:
         reference_allele_values = [allele_pair[0] if allele_pair else "" for allele_pair in allele_pairs]
         variant_identifier_values = np.asarray(self.backend_handle.ids[variant_start:variant_stop], dtype=np.str_)
         rsid_values = np.asarray(self.backend_handle.rsids[variant_start:variant_stop], dtype=np.str_)
-        return VariantTableArrays(
+        return reader.VariantTableArrays(
             chromosome_values=np.asarray(self.backend_handle.chromosomes[variant_start:variant_stop], dtype=np.str_),
             variant_identifier_values=resolve_variant_identifier_values(variant_identifier_values, rsid_values),
             position_values=np.asarray(self.backend_handle.positions[variant_start:variant_stop], dtype=np.int64),
@@ -277,7 +270,7 @@ class BgenReader:
 
     def resolve_sample_identifier_array(self) -> npt.NDArray[np.str_]:
         """Resolve normalized individual identifiers for the open BGEN reader."""
-        if self.sample_identifier_source == SampleIdentifierSource.EXTERNAL:
+        if self.sample_identifier_source == types.SampleIdentifierSource.EXTERNAL:
             assert self.sample_path is not None
             sample_table = load_sample_identifier_table(self.sample_path)
             return np.asarray(sample_table.get_column("individual_identifier").to_numpy(), dtype=np.str_)
@@ -302,7 +295,7 @@ class BgenReader:
         self,
         index: object = None,
         dtype: type[np.float32] | type[np.float64] = np.float32,
-        order: ArrayMemoryOrder = ArrayMemoryOrder.C_CONTIGUOUS,
+        order: types.ArrayMemoryOrder = types.ArrayMemoryOrder.C_CONTIGUOUS,
     ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
         """Read BGEN dosages with the same calling convention as `bed_handle.read`."""
         probability_tensor = self.backend_handle.read(index=index, dtype=dtype, order=order.value)
@@ -359,7 +352,7 @@ def load_bgen_sample_table(bgen_path: Path, sample_path: Path | None = None) -> 
         return sample_table
 
     with backend_open_bgen(bgen_path, allow_complex=True, verbose=False) as bgen_handle:
-        if resolve_sample_identifier_source(bgen_handle, None) == SampleIdentifierSource.GENERATED:
+        if resolve_sample_identifier_source(bgen_handle, None) == types.SampleIdentifierSource.GENERATED:
             message = "BGEN file does not contain samples and no .sample file was found."
             raise ValueError(message)
         return build_sample_identifier_table(np.asarray(bgen_handle.samples, dtype=np.str_))
@@ -375,9 +368,9 @@ def read_bgen_chunk_host(
     genotype_matrix_host = bgen_reader.read(
         index=(sample_index_array, slice(variant_start, variant_stop)),
         dtype=np.float32,
-        order=ArrayMemoryOrder.C_CONTIGUOUS,
+        order=types.ArrayMemoryOrder.C_CONTIGUOUS,
     )
-    return np.asarray(genotype_matrix_host, dtype=np.float32, order=ArrayMemoryOrder.C_CONTIGUOUS.value)
+    return np.asarray(genotype_matrix_host, dtype=np.float32, order=types.ArrayMemoryOrder.C_CONTIGUOUS.value)
 
 
 def read_bgen_chunk(
@@ -406,10 +399,10 @@ def validate_bgen_sample_order(
 ) -> None:
     """Validate that BGEN sample order matches the aligned sample order."""
     del bgen_path
-    if bgen_reader.sample_identifier_source == SampleIdentifierSource.GENERATED:
+    if bgen_reader.sample_identifier_source == types.SampleIdentifierSource.GENERATED:
         message = "BGEN file does not contain samples and no .sample file was found."
         raise ValueError(message)
-    validate_sample_order(
+    reader.validate_sample_order(
         observed_individual_identifiers=bgen_reader.samples,
         sample_index_array=sample_index_array,
         expected_individual_identifiers=expected_individual_identifiers,
@@ -426,13 +419,13 @@ def iter_genotype_chunks(
     *,
     include_missing_value_flag: bool = True,
     sample_path: Path | None = None,
-) -> Iterator[GenotypeChunk]:
+) -> collections.abc.Iterator[models.GenotypeChunk]:
     """Yield mean-imputed genotype chunks from a BGEN file."""
     with open_bgen(bgen_path, sample_path=sample_path) as bgen_reader:
-        if bgen_reader.sample_identifier_source == SampleIdentifierSource.GENERATED:
+        if bgen_reader.sample_identifier_source == types.SampleIdentifierSource.GENERATED:
             message = "BGEN file does not contain samples and no .sample file was found."
             raise ValueError(message)
-        yield from iter_genotype_chunks_from_reader(
+        yield from reader.iter_genotype_chunks_from_reader(
             genotype_reader=bgen_reader,
             source_name="BGEN",
             sample_indices=sample_indices,
@@ -451,13 +444,13 @@ def iter_linear_genotype_chunks(
     variant_limit: int | None = None,
     *,
     sample_path: Path | None = None,
-) -> Iterator[LinearGenotypeChunk]:
+) -> collections.abc.Iterator[models.LinearGenotypeChunk]:
     """Yield linear-regression genotype chunks without missingness bookkeeping."""
     with open_bgen(bgen_path, sample_path=sample_path) as bgen_reader:
-        if bgen_reader.sample_identifier_source == SampleIdentifierSource.GENERATED:
+        if bgen_reader.sample_identifier_source == types.SampleIdentifierSource.GENERATED:
             message = "BGEN file does not contain samples and no .sample file was found."
             raise ValueError(message)
-        yield from iter_linear_genotype_chunks_from_reader(
+        yield from reader.iter_linear_genotype_chunks_from_reader(
             genotype_reader=bgen_reader,
             source_name="BGEN",
             sample_indices=sample_indices,

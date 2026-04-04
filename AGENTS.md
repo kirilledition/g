@@ -27,6 +27,12 @@ You are an AI coding assistant operating within a high-performance, mixed-langua
 * Full-word variable names only (no abbreviations or single-letter math variables).  
 * No bare tuples for multiple return values (NamedTuple or struct required).  
 * Docstrings must be in Google format without type duplication.
+* Default to module-qualified imports. The only approved direct-import exceptions are `from pathlib import Path` and `from dataclasses import dataclass`.
+* Import `typing`, `enum`, and `collections.abc` as modules and qualify names (`typing.Any`, `enum.StrEnum`, `collections.abc.Iterator`).
+* Use conventional aliases only for established cases like `np`, `npt`, `jnp`, `pl`, and `pd`.
+* Keep imports out of functions, methods, and classes in `src/g`. `if typing.TYPE_CHECKING:` blocks are allowed for annotation-only imports.
+* In `src/g`, prefer first-party module imports such as `from g import api` and `from g.io import bgen` over member imports.
+* Relative imports are not allowed.
 
 ## **Testing Standards**
 

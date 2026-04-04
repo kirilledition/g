@@ -6,9 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import typing
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import jax
 import numpy as np
@@ -22,8 +22,8 @@ from g.io.source import (
     load_aligned_sample_data_from_source,
 )
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
+if typing.TYPE_CHECKING:
+    import collections.abc
 
 
 @dataclass(frozen=True)
@@ -148,7 +148,7 @@ def benchmark_linear_association(
     return checksum
 
 
-def time_operation(operation: Callable[[], float], repeat_count: int) -> BenchmarkPathResult:
+def time_operation(operation: collections.abc.Callable[[], float], repeat_count: int) -> BenchmarkPathResult:
     """Warm and repeatedly time one benchmark operation."""
     warmup_checksum = operation()
     duration_seconds: list[float] = []

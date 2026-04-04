@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import typing
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     import pytest
 
 import jax.numpy as jnp

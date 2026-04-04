@@ -11,6 +11,35 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 * **Package Management:** Strictly managed by **uv**.  
 * **Linting & Formatting:** Managed entirely by **ruff** (ruff format is the source of truth).
 
+### **Imports**
+
+* **Rule:** Default to module-qualified imports. Import the module, then access members through its namespace.  
+  * Good: `import scipy.stats`; `scipy.stats.norm(...)`  
+  * Good: `import sklearn.linear_model`; `sklearn.linear_model.LinearRegression(...)`  
+  * Bad: `from scipy.stats import norm`  
+  * Bad: `from sklearn.linear_model import LinearRegression`
+* **Rule:** The only approved direct-import exceptions are `from pathlib import Path` and `from dataclasses import dataclass`.
+* **Rule:** Import `typing` as a module and qualify all names. Never import from `typing`.  
+  * Good: `import typing`; `typing.TYPE_CHECKING`; `typing.Any`  
+  * Bad: `from typing import TYPE_CHECKING, Any`
+* **Rule:** Import `enum` and `collections.abc` as modules and qualify all names.  
+  * Good: `import enum`; `enum.StrEnum`  
+  * Good: `import collections.abc`; `collections.abc.Iterator`  
+  * Bad: `from enum import StrEnum`  
+  * Bad: `from collections.abc import Iterator`
+* **Rule:** Use conventional aliases only where they are already standard and improve readability.  
+  * Approved examples: `import numpy as np`, `import numpy.typing as npt`, `import jax.numpy as jnp`, `import polars as pl`, `import pandas as pd`
+* **Rule:** Keep imports out of functions, methods, and classes in production code under `src/g`.
+  * Module-scope imports are the default.
+  * `if typing.TYPE_CHECKING:` blocks are allowed for annotation-only imports.
+  * Tests may use local imports when there is a concrete reason, such as optional dependencies or fixture isolation.
+* **Rule:** Relative imports are not allowed.
+* **Rule:** In production Python code under `src/g`, import first-party modules rather than first-party members.  
+  * Good: `from g import api`; `api.ComputeConfig`  
+  * Good: `from g.io import bgen`; `bgen.split_sample_file_line()`  
+  * Bad: `from g.api import ComputeConfig`  
+  * Bad: `from g.io.bgen import split_sample_file_line`
+
 ### **Naming Conventions**
 
 * **Rule:** No abbreviations. No single-letter math variables. Use full, descriptive words.  
@@ -106,37 +135,3 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 * Use the **Google Python Style Guide** format for docstrings.  
 * **Rule: Omit types in docstrings.** Since types are strictly enforced in the function signature, duplicating them in the docstring creates maintenance overhead.  
 * Detail Args:, Returns:, and Raises: with descriptions only.
-
-## **3\. Rust Guidelines**
-
-Apply the same core philosophy, naming, and return-type rules as Python to ensure a seamless mental model.
-
-### **Tooling**
-
-* **Formatting:** Managed strictly by rustfmt (cargo fmt).  
-* **Linting:** Compile with \#\!\[warn(clippy::pedantic)\] to enforce idiomatic Rust.
-
-### **Naming Conventions**
-
-* **Rule:** Full words with standard Rust casing (snake\_case for variables, CamelCase for structs).  
-  * Bad: let g \= read\_bed();  
-  * Good: let genotype\_matrix \= read\_bed();
-
-### **Return Types & Structs**
-
-* **Rule:** No bare tuples for complex returns. Define a struct.  
-  **Bad:**  
-  fn compute\_regression(features: \&Array2\<f32\>, targets: \&Array1\<f32\>) \-\> (Array1\<f32\>, Array1\<f32\>) { ... }
-
-  **Good:**  
-  pub struct RegressionResult {  
-      pub betas: Array1\<f32\>,  
-      pub standard\_errors: Array1\<f32\>,  
-  }
-
-  fn compute\_regression(features: \&Array2\<f32\>, targets: \&Array1\<f32\>) \-\> RegressionResult { ... }
-
-### **Memory & FFI (The Boundary)**
-
-* When crossing the FFI boundary (via PyO3), explicitly name memory ownership if copying (e.g., cloned\_matrix vs matrix\_view).  
-* Use rustdoc (///) to explicitly document any memory allocations happening during the call.

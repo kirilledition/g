@@ -2,47 +2,37 @@
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from g.io.bgen import BgenReader, build_sample_identifier_table, load_bgen_sample_table, resolve_bgen_sample_path
-from g.io.bgen import iter_genotype_chunks as iter_bgen_genotype_chunks
-from g.io.bgen import iter_linear_genotype_chunks as iter_bgen_linear_genotype_chunks
-from g.io.plink import PlinkReader, load_aligned_sample_data, load_aligned_sample_data_from_individual_identifier_table
-from g.io.plink import iter_genotype_chunks as iter_plink_genotype_chunks
-from g.io.plink import iter_linear_genotype_chunks as iter_plink_linear_genotype_chunks
-from g.io.prefetch import prefetch_iterator_values
-from g.io.reader import iter_genotype_chunks_from_reader, iter_linear_genotype_chunks_from_reader
-from g.types import GenotypeSourceFormat, SampleIdentifierSource
+from g import models, types
+from g.io import bgen, plink, prefetch, reader
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
+if typing.TYPE_CHECKING:
+    import collections.abc
 
     import numpy as np
-
-    from g.io.reader import GenotypeReader
-    from g.models import AlignedSampleData, GenotypeChunk, LinearGenotypeChunk
 
 
 @dataclass(frozen=True)
 class GenotypeSourceConfig:
     """Configuration describing one genotype input source."""
 
-    source_format: GenotypeSourceFormat
+    source_format: types.GenotypeSourceFormat
     source_path: Path
     sample_path: Path | None = None
 
 
 def build_plink_source_config(bed_prefix: Path | str) -> GenotypeSourceConfig:
     """Build a genotype source config for a PLINK dataset prefix."""
-    return GenotypeSourceConfig(source_format=GenotypeSourceFormat.PLINK, source_path=Path(bed_prefix))
+    return GenotypeSourceConfig(source_format=types.GenotypeSourceFormat.PLINK, source_path=Path(bed_prefix))
 
 
 def build_bgen_source_config(bgen_path: Path | str, sample_path: Path | str | None = None) -> GenotypeSourceConfig:
     """Build a genotype source config for a BGEN file."""
     return GenotypeSourceConfig(
-        source_format=GenotypeSourceFormat.BGEN,
+        source_format=types.GenotypeSourceFormat.BGEN,
         source_path=Path(bgen_path),
         sample_path=Path(sample_path) if sample_path is not None else None,
     )
@@ -68,13 +58,16 @@ def resolve_genotype_source_config(
 
 def validate_genotype_source_config(genotype_source_config: GenotypeSourceConfig) -> None:
     """Validate that a genotype source config uses a supported format."""
-    if not isinstance(genotype_source_config.source_format, GenotypeSourceFormat):
+    if not isinstance(genotype_source_config.source_format, types.GenotypeSourceFormat):
         message = (
             f"Unsupported genotype source format '{genotype_source_config.source_format}'. "
-            f"Expected one of {[source_format.value for source_format in GenotypeSourceFormat]}."
+            f"Expected one of {[source_format.value for source_format in types.GenotypeSourceFormat]}."
         )
         raise ValueError(message)
-    if genotype_source_config.source_format != GenotypeSourceFormat.BGEN and genotype_source_config.sample_path is not None:
+    if (
+        genotype_source_config.source_format != types.GenotypeSourceFormat.BGEN
+        and genotype_source_config.sample_path is not None
+    ):
         message = "Only BGEN source configs may include an explicit sample file."
         raise ValueError(message)
 
@@ -82,13 +75,13 @@ def validate_genotype_source_config(genotype_source_config: GenotypeSourceConfig
 def build_genotype_source_signature_paths(genotype_source_config: GenotypeSourceConfig) -> tuple[Path, ...]:
     """Return the input files that define reproducibility for one source."""
     validate_genotype_source_config(genotype_source_config)
-    if genotype_source_config.source_format == GenotypeSourceFormat.PLINK:
+    if genotype_source_config.source_format == types.GenotypeSourceFormat.PLINK:
         return (
             genotype_source_config.source_path.with_suffix(".bed"),
             genotype_source_config.source_path.with_suffix(".bim"),
             genotype_source_config.source_path.with_suffix(".fam"),
         )
-    resolved_sample_path = resolve_bgen_sample_path(
+    resolved_sample_path = bgen.resolve_bgen_sample_path(
         genotype_source_config.source_path,
         genotype_source_config.sample_path,
     )
@@ -97,12 +90,12 @@ def build_genotype_source_signature_paths(genotype_source_config: GenotypeSource
     return (genotype_source_config.source_path, resolved_sample_path)
 
 
-def open_genotype_reader(genotype_source_config: GenotypeSourceConfig) -> GenotypeReader:
+def open_genotype_reader(genotype_source_config: GenotypeSourceConfig) -> reader.GenotypeReader:
     """Open a concrete reader for one genotype source config."""
     validate_genotype_source_config(genotype_source_config)
-    if genotype_source_config.source_format == GenotypeSourceFormat.PLINK:
-        return PlinkReader(genotype_source_config.source_path)
-    return BgenReader(
+    if genotype_source_config.source_format == types.GenotypeSourceFormat.PLINK:
+        return plink.PlinkReader(genotype_source_config.source_path)
+    return bgen.BgenReader(
         genotype_source_config.source_path,
         sample_path=genotype_source_config.sample_path,
     )
@@ -116,12 +109,12 @@ def load_aligned_sample_data_from_source(
     covariate_names: tuple[str, ...] | None,
     *,
     is_binary_trait: bool,
-    genotype_reader: GenotypeReader | None = None,
-) -> AlignedSampleData:
+    genotype_reader: reader.GenotypeReader | None = None,
+) -> models.AlignedSampleData:
     """Load aligned sample data for any supported genotype source."""
     validate_genotype_source_config(genotype_source_config)
-    if genotype_source_config.source_format == GenotypeSourceFormat.PLINK:
-        return load_aligned_sample_data(
+    if genotype_source_config.source_format == types.GenotypeSourceFormat.PLINK:
+        return plink.load_aligned_sample_data(
             bed_prefix=genotype_source_config.source_path,
             phenotype_path=phenotype_path,
             phenotype_name=phenotype_name,
@@ -133,18 +126,18 @@ def load_aligned_sample_data_from_source(
         sample_identifier_source = getattr(
             genotype_reader,
             "sample_identifier_source",
-            SampleIdentifierSource.EMBEDDED,
+            types.SampleIdentifierSource.EMBEDDED,
         )
-        if sample_identifier_source == SampleIdentifierSource.GENERATED:
+        if sample_identifier_source == types.SampleIdentifierSource.GENERATED:
             message = "BGEN file does not contain samples and no .sample file was found."
             raise ValueError(message)
-        sample_table = build_sample_identifier_table(genotype_reader.samples)
+        sample_table = bgen.build_sample_identifier_table(genotype_reader.samples)
     else:
-        sample_table = load_bgen_sample_table(
+        sample_table = bgen.load_bgen_sample_table(
             genotype_source_config.source_path,
             genotype_source_config.sample_path,
         )
-    return load_aligned_sample_data_from_individual_identifier_table(
+    return plink.load_aligned_sample_data_from_individual_identifier_table(
         sample_table=sample_table,
         phenotype_path=phenotype_path,
         phenotype_name=phenotype_name,
@@ -163,23 +156,23 @@ def iter_genotype_chunks_from_source(
     *,
     include_missing_value_flag: bool = True,
     prefetch_chunks: int = 0,
-    genotype_reader: GenotypeReader | None = None,
-) -> Iterator[GenotypeChunk]:
+    genotype_reader: reader.GenotypeReader | None = None,
+) -> collections.abc.Iterator[models.GenotypeChunk]:
     """Yield genotype chunks for any supported source format."""
     validate_genotype_source_config(genotype_source_config)
     if genotype_reader is not None:
-        base_iterator = iter_genotype_chunks_from_reader(
+        base_iterator = reader.iter_genotype_chunks_from_reader(
             genotype_reader=genotype_reader,
-            source_name="BED" if genotype_source_config.source_format == GenotypeSourceFormat.PLINK else "BGEN",
+            source_name="BED" if genotype_source_config.source_format == types.GenotypeSourceFormat.PLINK else "BGEN",
             sample_indices=sample_indices,
             expected_individual_identifiers=expected_individual_identifiers,
             chunk_size=chunk_size,
             variant_limit=variant_limit,
             include_missing_value_flag=include_missing_value_flag,
-            validate_sample_order_flag=genotype_source_config.source_format != GenotypeSourceFormat.PLINK,
+            validate_sample_order_flag=genotype_source_config.source_format != types.GenotypeSourceFormat.PLINK,
         )
-    elif genotype_source_config.source_format == GenotypeSourceFormat.PLINK:
-        base_iterator = iter_plink_genotype_chunks(
+    elif genotype_source_config.source_format == types.GenotypeSourceFormat.PLINK:
+        base_iterator = plink.iter_genotype_chunks(
             bed_prefix=genotype_source_config.source_path,
             sample_indices=sample_indices,
             expected_individual_identifiers=expected_individual_identifiers,
@@ -188,7 +181,7 @@ def iter_genotype_chunks_from_source(
             include_missing_value_flag=include_missing_value_flag,
         )
     else:
-        base_iterator = iter_bgen_genotype_chunks(
+        base_iterator = bgen.iter_genotype_chunks(
             bgen_path=genotype_source_config.source_path,
             sample_indices=sample_indices,
             expected_individual_identifiers=expected_individual_identifiers,
@@ -197,7 +190,7 @@ def iter_genotype_chunks_from_source(
             include_missing_value_flag=include_missing_value_flag,
             sample_path=genotype_source_config.sample_path,
         )
-    return prefetch_iterator_values(base_iterator, prefetch_chunks)
+    return prefetch.prefetch_iterator_values(base_iterator, prefetch_chunks)
 
 
 def iter_linear_genotype_chunks_from_source(
@@ -208,22 +201,22 @@ def iter_linear_genotype_chunks_from_source(
     variant_limit: int | None = None,
     *,
     prefetch_chunks: int = 0,
-    genotype_reader: GenotypeReader | None = None,
-) -> Iterator[LinearGenotypeChunk]:
+    genotype_reader: reader.GenotypeReader | None = None,
+) -> collections.abc.Iterator[models.LinearGenotypeChunk]:
     """Yield linear-regression genotype chunks for any supported source format."""
     validate_genotype_source_config(genotype_source_config)
     if genotype_reader is not None:
-        base_iterator = iter_linear_genotype_chunks_from_reader(
+        base_iterator = reader.iter_linear_genotype_chunks_from_reader(
             genotype_reader=genotype_reader,
-            source_name="BED" if genotype_source_config.source_format == GenotypeSourceFormat.PLINK else "BGEN",
+            source_name="BED" if genotype_source_config.source_format == types.GenotypeSourceFormat.PLINK else "BGEN",
             sample_indices=sample_indices,
             expected_individual_identifiers=expected_individual_identifiers,
             chunk_size=chunk_size,
             variant_limit=variant_limit,
-            validate_sample_order_flag=genotype_source_config.source_format != GenotypeSourceFormat.PLINK,
+            validate_sample_order_flag=genotype_source_config.source_format != types.GenotypeSourceFormat.PLINK,
         )
-    elif genotype_source_config.source_format == GenotypeSourceFormat.PLINK:
-        base_iterator = iter_plink_linear_genotype_chunks(
+    elif genotype_source_config.source_format == types.GenotypeSourceFormat.PLINK:
+        base_iterator = plink.iter_linear_genotype_chunks(
             bed_prefix=genotype_source_config.source_path,
             sample_indices=sample_indices,
             expected_individual_identifiers=expected_individual_identifiers,
@@ -231,7 +224,7 @@ def iter_linear_genotype_chunks_from_source(
             variant_limit=variant_limit,
         )
     else:
-        base_iterator = iter_bgen_linear_genotype_chunks(
+        base_iterator = bgen.iter_linear_genotype_chunks(
             bgen_path=genotype_source_config.source_path,
             sample_indices=sample_indices,
             expected_individual_identifiers=expected_individual_identifiers,
@@ -239,4 +232,4 @@ def iter_linear_genotype_chunks_from_source(
             variant_limit=variant_limit,
             sample_path=genotype_source_config.sample_path,
         )
-    return prefetch_iterator_values(base_iterator, prefetch_chunks)
+    return prefetch.prefetch_iterator_values(base_iterator, prefetch_chunks)

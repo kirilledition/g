@@ -1,37 +1,37 @@
 """Enumerated types for configuration and mode selection."""
 
-from enum import StrEnum
+import enum
 
 
-class Device(StrEnum):
+class Device(enum.StrEnum):
     """JAX execution device."""
 
     CPU = "cpu"
     GPU = "gpu"
 
 
-class OutputMode(StrEnum):
+class OutputMode(enum.StrEnum):
     """Output format mode."""
 
     TSV = "tsv"
     ARROW_CHUNKS = "arrow_chunks"
 
 
-class AssociationMode(StrEnum):
+class AssociationMode(enum.StrEnum):
     """Statistical association model."""
 
     LINEAR = "linear"
     LOGISTIC = "logistic"
 
 
-class GenotypeSourceFormat(StrEnum):
+class GenotypeSourceFormat(enum.StrEnum):
     """Supported genotype file formats."""
 
     PLINK = "plink"
     BGEN = "bgen"
 
 
-class SampleIdentifierSource(StrEnum):
+class SampleIdentifierSource(enum.StrEnum):
     """Origin of BGEN sample identifiers."""
 
     EMBEDDED = "embedded"
@@ -39,7 +39,7 @@ class SampleIdentifierSource(StrEnum):
     GENERATED = "generated"
 
 
-class ArrayMemoryOrder(StrEnum):
+class ArrayMemoryOrder(enum.StrEnum):
     """NumPy array memory layout selector."""
 
     KEEP = "K"
