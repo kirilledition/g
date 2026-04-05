@@ -294,8 +294,12 @@ def compute_covariate_score(
 
 def prepare_logistic_chunk_precomputation(covariate_matrix: jax.Array) -> LogisticChunkPrecomputation:
     """Prepare chunk-invariant matrices reused across logistic IRLS iterations."""
-    sample_covariate_pair_matrix = jnp.einsum("np,nq->npq", covariate_matrix, covariate_matrix)
-    covariate_pair_matrix = sample_covariate_pair_matrix.reshape((covariate_matrix.shape[0], -1))
+    # Memory and compute optimization: replace slow einsum with fast reshaped explicit multiplication
+    sample_count, param_count = covariate_matrix.shape
+    covariate_pair_matrix = (covariate_matrix[:, :, None] * covariate_matrix[:, None, :]).reshape(
+        (sample_count, param_count * param_count)
+    )
+
     return LogisticChunkPrecomputation(
         covariate_matrix=covariate_matrix,
         covariate_pair_matrix=covariate_pair_matrix,
