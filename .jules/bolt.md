@@ -1,0 +1,3 @@
+## 2025-04-07 - [JAX einsum vs sum optimization learning]
+**Learning:** In the JAX-based computations for linear association tests, an `einsum("ij,ij->j")` was used to fuse element-wise multiplication and sum. While this may have been an optimization previously or on CPU, on GPU with XLA compilation `jnp.sum(A * B, axis=0)` is 3x faster than `jnp.einsum("ij,ij->j", A, B)` for characteristic shapes like `(200000, 1024)`. XLA fuses the sum and product correctly anyway, but `einsum` induces a more expensive kernel.
+**Action:** Replace `einsum("ij,ij->j")` with `jnp.sum(A * B, axis=0)` in `src/g/compute/linear.py` and `src/g/compute/regenie2_linear.py` for significant performance gains.

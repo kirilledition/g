@@ -146,8 +146,10 @@ def compute_regenie2_linear_chunk(
         covariate_genotype_crossproduct,
     )
 
-    genotype_sum_squares = jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix)
-    projection_sum_squares = jnp.einsum("ij,ij->j", covariate_genotype_crossproduct, genotype_projection)
+    # Performance optimization: `jnp.sum(A * B, axis=0)` is used instead of einsum
+    # because XLA compiles it to a faster kernel on GPU, correctly fusing operations.
+    genotype_sum_squares = jnp.sum(genotype_matrix * genotype_matrix, axis=0)
+    projection_sum_squares = jnp.sum(covariate_genotype_crossproduct * genotype_projection, axis=0)
     genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares - projection_sum_squares, 0.0)
 
     covariance_with_phenotype = genotype_matrix.T @ adjusted_residual
