@@ -250,7 +250,8 @@ def load_aligned_sample_data_from_family_identifier_table(
         pl.col("FID").cast(pl.String),
         pl.col("IID").cast(pl.String),
     )
-    if phenotype_name not in phenotype_table.columns:
+    available_columns = set(phenotype_table.columns)
+    if phenotype_name not in available_columns:
         message = f"Phenotype column '{phenotype_name}' was not found in {phenotype_path}."
         raise ValueError(message)
 
@@ -273,7 +274,8 @@ def load_aligned_sample_data_from_family_identifier_table(
             pl.col("IID").cast(pl.String),
         )
         selected_covariate_names = covariate_names or infer_covariate_names(covariate_table)
-        missing_covariates = [name for name in selected_covariate_names if name not in covariate_table.columns]
+        available_columns = set(covariate_table.columns)
+        missing_covariates = [name for name in selected_covariate_names if name not in available_columns]
         if missing_covariates:
             message = f"Covariate columns are missing from {covariate_path}: {missing_covariates}."
             raise ValueError(message)
@@ -306,7 +308,8 @@ def load_aligned_sample_data_from_individual_identifier_table(
         pl.col("FID").cast(pl.String),
         pl.col("IID").cast(pl.String),
     )
-    if phenotype_name not in phenotype_table.columns:
+    available_columns = set(phenotype_table.columns)
+    if phenotype_name not in available_columns:
         message = f"Phenotype column '{phenotype_name}' was not found in {phenotype_path}."
         raise ValueError(message)
 
@@ -329,7 +332,8 @@ def load_aligned_sample_data_from_individual_identifier_table(
             pl.col("IID").cast(pl.String),
         )
         selected_covariate_names = covariate_names or infer_covariate_names(covariate_table)
-        missing_covariates = [name for name in selected_covariate_names if name not in covariate_table.columns]
+        available_columns = set(covariate_table.columns)
+        missing_covariates = [name for name in selected_covariate_names if name not in available_columns]
         if missing_covariates:
             message = f"Covariate columns are missing from {covariate_path}: {missing_covariates}."
             raise ValueError(message)
