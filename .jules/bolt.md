@@ -1,0 +1,3 @@
+## 2026-04-08 - Optimizing JAX Device array transfers
+**Learning:** Passing a dictionary of lists of dynamically sized arrays directly to `jax.device_get()` instead of manually concatenating them first with `jnp.concatenate()` on the device reduces JAX tracing/JIT overhead and peak device memory usage significantly for lists of arrays with variable sizes.
+**Action:** When transferring multiple arrays from the device, prefer passing the list/dict of lists directly to `jax.device_get()` and then concatenating on the CPU with `numpy.concatenate()` rather than using `jnp.concatenate()` prior to the transfer.
