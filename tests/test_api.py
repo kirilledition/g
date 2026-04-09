@@ -44,9 +44,9 @@ def test_resolve_output_path_preserves_tsv_suffix() -> None:
 def test_linear_uses_public_api_defaults() -> None:
     """Ensure the linear API configures JAX and writes the expected output path."""
     with (
-        patch("g.api.configure_jax_device") as mock_configure_jax_device,
-        patch("g.api.iter_linear_output_frames", return_value=iter(())) as mock_iter_linear_output_frames,
-        patch("g.api.write_frame_iterator_to_tsv") as mock_write_frame_iterator_to_tsv,
+        patch("g.jax_setup.configure_jax_device") as mock_configure_jax_device,
+        patch("g.engine.iter_linear_output_frames", return_value=iter(())) as mock_iter_linear_output_frames,
+        patch("g.engine.write_frame_iterator_to_tsv") as mock_write_frame_iterator_to_tsv,
     ):
         artifacts = linear(
             bfile="dataset",
@@ -72,9 +72,9 @@ def test_linear_uses_public_api_defaults() -> None:
 def test_logistic_uses_mode_specific_defaults() -> None:
     """Ensure the logistic API uses the tuned logistic chunk size."""
     with (
-        patch("g.api.configure_jax_device") as mock_configure_jax_device,
-        patch("g.api.iter_logistic_output_frames", return_value=iter(())) as mock_iter_logistic_output_frames,
-        patch("g.api.write_frame_iterator_to_tsv") as mock_write_frame_iterator_to_tsv,
+        patch("g.jax_setup.configure_jax_device") as mock_configure_jax_device,
+        patch("g.engine.iter_logistic_output_frames", return_value=iter(())) as mock_iter_logistic_output_frames,
+        patch("g.engine.write_frame_iterator_to_tsv") as mock_write_frame_iterator_to_tsv,
     ):
         artifacts = logistic(
             bfile="dataset",
@@ -111,9 +111,9 @@ def test_logistic_rejects_invalid_solver_configuration() -> None:
 def test_linear_supports_bgen_input() -> None:
     """Ensure the public API can dispatch a BGEN-backed run."""
     with (
-        patch("g.api.configure_jax_device"),
-        patch("g.api.iter_linear_output_frames", return_value=iter(())) as mock_iter_linear_output_frames,
-        patch("g.api.write_frame_iterator_to_tsv"),
+        patch("g.jax_setup.configure_jax_device"),
+        patch("g.engine.iter_linear_output_frames", return_value=iter(())) as mock_iter_linear_output_frames,
+        patch("g.engine.write_frame_iterator_to_tsv"),
     ):
         linear(
             bfile=None,
@@ -131,9 +131,9 @@ def test_linear_supports_bgen_input() -> None:
 def test_linear_supports_explicit_bgen_sample_file() -> None:
     """Ensure the public API preserves an explicit BGEN sample path."""
     with (
-        patch("g.api.configure_jax_device"),
-        patch("g.api.iter_linear_output_frames", return_value=iter(())) as mock_iter_linear_output_frames,
-        patch("g.api.write_frame_iterator_to_tsv"),
+        patch("g.jax_setup.configure_jax_device"),
+        patch("g.engine.iter_linear_output_frames", return_value=iter(())) as mock_iter_linear_output_frames,
+        patch("g.engine.write_frame_iterator_to_tsv"),
     ):
         linear(
             bfile=None,
@@ -151,9 +151,9 @@ def test_linear_supports_explicit_bgen_sample_file() -> None:
 def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
     """Ensure the REGENIE step 2 API dispatches through the BGEN-backed iterator."""
     with (
-        patch("g.api.configure_jax_device") as mock_configure_jax_device,
-        patch("g.api.iter_regenie2_linear_output_frames", return_value=iter(())) as mock_iterator,
-        patch("g.api.write_frame_iterator_to_tsv") as mock_write_frame_iterator_to_tsv,
+        patch("g.jax_setup.configure_jax_device") as mock_configure_jax_device,
+        patch("g.engine.iter_regenie2_linear_output_frames", return_value=iter(())) as mock_iterator,
+        patch("g.engine.write_frame_iterator_to_tsv") as mock_write_frame_iterator_to_tsv,
     ):
         artifacts = regenie2_linear(
             bgen="dataset.bgen",
@@ -218,18 +218,18 @@ def test_linear_chunked_output_returns_run_artifacts_and_finalizes_parquet() -> 
     )
 
     with (
-        patch("g.api.configure_jax_device") as mock_configure_jax_device,
+        patch("g.jax_setup.configure_jax_device") as mock_configure_jax_device,
         patch(
-            "g.api.prepare_output_run",
+            "g.api.output.prepare_output_run",
             return_value=PreparedOutputRun(
                 output_run_paths=mock_output_run_paths,
                 committed_chunk_identifiers=frozenset({2, 4}),
             ),
         ) as mock_prepare_output_run,
-        patch("g.api.iter_linear_output_frames", return_value=iter(())) as mock_iter_linear_output_frames,
-        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
+        patch("g.engine.iter_linear_output_frames", return_value=iter(())) as mock_iter_linear_output_frames,
+        patch("g.api.output.persist_chunked_results") as mock_persist_chunked_results,
         patch(
-            "g.api.finalize_chunks_to_parquet", return_value=Path("results/output.linear.run/final.parquet")
+            "g.api.output.finalize_chunks_to_parquet", return_value=Path("results/output.linear.run/final.parquet")
         ) as mock_finalize,
     ):
         artifacts = linear(
@@ -264,17 +264,17 @@ def test_logistic_chunked_output_returns_run_artifacts_without_finalization() ->
     )
 
     with (
-        patch("g.api.configure_jax_device") as mock_configure_jax_device,
+        patch("g.jax_setup.configure_jax_device") as mock_configure_jax_device,
         patch(
-            "g.api.prepare_output_run",
+            "g.api.output.prepare_output_run",
             return_value=PreparedOutputRun(
                 output_run_paths=mock_output_run_paths,
                 committed_chunk_identifiers=frozenset({1}),
             ),
         ) as mock_prepare_output_run,
-        patch("g.api.iter_logistic_output_frames", return_value=iter(())) as mock_iter_logistic_output_frames,
-        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
-        patch("g.api.finalize_chunks_to_parquet") as mock_finalize,
+        patch("g.engine.iter_logistic_output_frames", return_value=iter(())) as mock_iter_logistic_output_frames,
+        patch("g.api.output.persist_chunked_results") as mock_persist_chunked_results,
+        patch("g.api.output.finalize_chunks_to_parquet") as mock_finalize,
     ):
         artifacts = logistic(
             bfile="dataset",
@@ -304,17 +304,17 @@ def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalizati
     )
 
     with (
-        patch("g.api.configure_jax_device") as mock_configure_jax_device,
+        patch("g.jax_setup.configure_jax_device") as mock_configure_jax_device,
         patch(
-            "g.api.prepare_output_run",
+            "g.api.output.prepare_output_run",
             return_value=PreparedOutputRun(
                 output_run_paths=mock_output_run_paths,
                 committed_chunk_identifiers=frozenset({3}),
             ),
         ) as mock_prepare_output_run,
-        patch("g.api.iter_regenie2_linear_output_frames", return_value=iter(())) as mock_iterator,
-        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
-        patch("g.api.finalize_chunks_to_parquet") as mock_finalize,
+        patch("g.engine.iter_regenie2_linear_output_frames", return_value=iter(())) as mock_iterator,
+        patch("g.api.output.persist_chunked_results") as mock_persist_chunked_results,
+        patch("g.api.output.finalize_chunks_to_parquet") as mock_finalize,
     ):
         artifacts = regenie2_linear(
             bgen="dataset.bgen",
