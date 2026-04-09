@@ -1,0 +1,3 @@
+## 2024-04-09 - [JAX Device Fetch Optimization]
+ **Learning:** Calling `jnp.concatenate` on a list of JAX arrays and then pulling them down to host memory via `jax.device_get` causes a large device memory allocation and copy. The process of gathering elements prior to the move across PCIe is significantly slower than moving the individual arrays via `jax.device_get` and using `np.concatenate` to fuse them in CPU host memory.
+ **Action:** Prefer passing sequences or nested structures directly into `jax.device_get` instead of concatenating them on-device, unless the concatenated shape is required internally by a subsequent device operation before fetch.
