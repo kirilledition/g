@@ -8,10 +8,9 @@ import typer
 
 from g import api, types
 
-
 app = typer.Typer(
     name="g",
-    help="the GWAS engine.",
+    help="Blazing fast GWAS engine.",
     no_args_is_help=True,
     rich_markup_mode=None,
 )
