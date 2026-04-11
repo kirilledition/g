@@ -16,7 +16,7 @@ def test_root_command_without_arguments_shows_help() -> None:
     """Ensure the CLI shows help when invoked without arguments."""
     result = runner.invoke(app, [])
     assert result.exit_code == 2
-    assert "Blazing fast GWAS engine" in result.output
+    assert "the GWAS engine" in result.output
     assert "linear" in result.output
     assert "logistic" in result.output
 
