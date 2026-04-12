@@ -1,0 +1,3 @@
+## 2026-04-12 - [JAX Device Transfer Optimization]
+**Learning:** When moving multiple JAX arrays from device to host, it is significantly faster to pass the list (or dictionary of lists) of arrays directly to `jax.device_get()` and then concatenate them on the CPU using `numpy.concatenate`. Avoid concatenating them on the device using `jnp.concatenate` prior to transfer, as this introduces unnecessary JAX tracing/JIT overhead for variable-sized array lists and increases peak device memory usage.
+**Action:** Replace `jnp.concatenate([arr for arr in list])` + `jax.device_get()` with `jax.device_get([arr for arr in list])` + `np.concatenate()` on the host to avoid overhead and memory spikes.
