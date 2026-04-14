@@ -22,7 +22,7 @@ import jax
 import numpy as np
 import polars as pl
 
-from g import api, models, types
+from g import api, jax_setup, models, types
 from g import engine as engine_module
 from g.io import genotype_processing, reader, regenie, source
 from g.io import output as output_module

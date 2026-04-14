@@ -426,20 +426,31 @@ def build_regenie2_linear_chunk_payload_batch(
     if not chunk_accumulators:
         return []
 
-    # Get arrays directly from device and concatenate on host
-    # This avoids tracing jnp.concatenate and lowers peak device memory.
-    device_arrays = {
-        "allele_one_frequency": [acc.allele_one_frequency for acc in chunk_accumulators],
-        "observation_count": [acc.observation_count for acc in chunk_accumulators],
-        "beta": [acc.regenie2_linear_result.beta for acc in chunk_accumulators],
-        "standard_error": [acc.regenie2_linear_result.standard_error for acc in chunk_accumulators],
-        "chi_squared": [acc.regenie2_linear_result.chi_squared for acc in chunk_accumulators],
-        "log10_p_value": [acc.regenie2_linear_result.log10_p_value for acc in chunk_accumulators],
-        "valid_mask": [acc.regenie2_linear_result.valid_mask for acc in chunk_accumulators],
-    }
-
-    host_arrays = jax.device_get(device_arrays)
-    host_values = {k: np.concatenate(v) for k, v in host_arrays.items()}
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": jnp.concatenate(
+                [chunk_accumulator.allele_one_frequency for chunk_accumulator in chunk_accumulators]
+            ),
+            "observation_count": jnp.concatenate(
+                [chunk_accumulator.observation_count for chunk_accumulator in chunk_accumulators]
+            ),
+            "beta": jnp.concatenate(
+                [chunk_accumulator.regenie2_linear_result.beta for chunk_accumulator in chunk_accumulators]
+            ),
+            "standard_error": jnp.concatenate(
+                [chunk_accumulator.regenie2_linear_result.standard_error for chunk_accumulator in chunk_accumulators]
+            ),
+            "chi_squared": jnp.concatenate(
+                [chunk_accumulator.regenie2_linear_result.chi_squared for chunk_accumulator in chunk_accumulators]
+            ),
+            "log10_p_value": jnp.concatenate(
+                [chunk_accumulator.regenie2_linear_result.log10_p_value for chunk_accumulator in chunk_accumulators]
+            ),
+            "valid_mask": jnp.concatenate(
+                [chunk_accumulator.regenie2_linear_result.valid_mask for chunk_accumulator in chunk_accumulators]
+            ),
+        }
+    )
 
     payloads: list[Regenie2LinearChunkPayload] = []
     variant_offset = 0
@@ -546,20 +557,27 @@ def concatenate_linear_results(
     all_allele_one = np.concatenate([acc.metadata.allele_one for acc in accumulators])
     all_allele_two = np.concatenate([acc.metadata.allele_two for acc in accumulators])
 
-    # Get arrays directly from device and concatenate on host
-    # This avoids tracing jnp.concatenate and lowers peak device memory.
-    device_arrays = {
-        "allele_one_frequency": [acc.allele_one_frequency for acc in accumulators],
-        "observation_count": [acc.observation_count for acc in accumulators],
-        "beta": [acc.linear_result.beta for acc in accumulators],
-        "standard_error": [acc.linear_result.standard_error for acc in accumulators],
-        "test_statistic": [acc.linear_result.test_statistic for acc in accumulators],
-        "p_value": [acc.linear_result.p_value for acc in accumulators],
-        "valid_mask": [acc.linear_result.valid_mask for acc in accumulators],
-    }
+    # Concatenate JAX arrays on device, then do ONE device_get
+    all_allele_one_frequency = jnp.concatenate([acc.allele_one_frequency for acc in accumulators])
+    all_observation_count = jnp.concatenate([acc.observation_count for acc in accumulators])
+    all_beta = jnp.concatenate([acc.linear_result.beta for acc in accumulators])
+    all_standard_error = jnp.concatenate([acc.linear_result.standard_error for acc in accumulators])
+    all_test_statistic = jnp.concatenate([acc.linear_result.test_statistic for acc in accumulators])
+    all_p_value = jnp.concatenate([acc.linear_result.p_value for acc in accumulators])
+    all_valid_mask = jnp.concatenate([acc.linear_result.valid_mask for acc in accumulators])
 
-    host_arrays = jax.device_get(device_arrays)
-    host_values = {k: np.concatenate(v) for k, v in host_arrays.items()}
+    # Single host synchronization
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": all_allele_one_frequency,
+            "observation_count": all_observation_count,
+            "beta": all_beta,
+            "standard_error": all_standard_error,
+            "test_statistic": all_test_statistic,
+            "p_value": all_p_value,
+            "valid_mask": all_valid_mask,
+        }
+    )
 
     return pl.DataFrame(
         {
@@ -601,24 +619,35 @@ def concatenate_logistic_results(
     all_allele_one = np.concatenate([acc.metadata.allele_one for acc in accumulators])
     all_allele_two = np.concatenate([acc.metadata.allele_two for acc in accumulators])
 
-    # Get arrays directly from device and concatenate on host
-    # This avoids tracing jnp.concatenate and lowers peak device memory.
-    device_arrays = {
-        "allele_one_frequency": [acc.allele_one_frequency for acc in accumulators],
-        "observation_count": [acc.observation_count for acc in accumulators],
-        "beta": [acc.logistic_result.beta for acc in accumulators],
-        "standard_error": [acc.logistic_result.standard_error for acc in accumulators],
-        "test_statistic": [acc.logistic_result.test_statistic for acc in accumulators],
-        "p_value": [acc.logistic_result.p_value for acc in accumulators],
-        "method_code": [acc.logistic_result.method_code for acc in accumulators],
-        "error_code": [acc.logistic_result.error_code for acc in accumulators],
-        "converged_mask": [acc.logistic_result.converged_mask for acc in accumulators],
-        "iteration_count": [acc.logistic_result.iteration_count for acc in accumulators],
-        "valid_mask": [acc.logistic_result.valid_mask for acc in accumulators],
-    }
+    # Concatenate JAX arrays on device, then do ONE device_get
+    all_allele_one_frequency = jnp.concatenate([acc.allele_one_frequency for acc in accumulators])
+    all_observation_count = jnp.concatenate([acc.observation_count for acc in accumulators])
+    all_beta = jnp.concatenate([acc.logistic_result.beta for acc in accumulators])
+    all_standard_error = jnp.concatenate([acc.logistic_result.standard_error for acc in accumulators])
+    all_test_statistic = jnp.concatenate([acc.logistic_result.test_statistic for acc in accumulators])
+    all_p_value = jnp.concatenate([acc.logistic_result.p_value for acc in accumulators])
+    all_method_code = jnp.concatenate([acc.logistic_result.method_code for acc in accumulators])
+    all_error_code = jnp.concatenate([acc.logistic_result.error_code for acc in accumulators])
+    all_converged_mask = jnp.concatenate([acc.logistic_result.converged_mask for acc in accumulators])
+    all_iteration_count = jnp.concatenate([acc.logistic_result.iteration_count for acc in accumulators])
+    all_valid_mask = jnp.concatenate([acc.logistic_result.valid_mask for acc in accumulators])
 
-    host_arrays = jax.device_get(device_arrays)
-    host_values = {k: np.concatenate(v) for k, v in host_arrays.items()}
+    # Single host synchronization
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": all_allele_one_frequency,
+            "observation_count": all_observation_count,
+            "beta": all_beta,
+            "standard_error": all_standard_error,
+            "test_statistic": all_test_statistic,
+            "p_value": all_p_value,
+            "method_code": all_method_code,
+            "error_code": all_error_code,
+            "converged_mask": all_converged_mask,
+            "iteration_count": all_iteration_count,
+            "valid_mask": all_valid_mask,
+        }
+    )
 
     return pl.DataFrame(
         {
@@ -655,20 +684,29 @@ def concatenate_regenie2_linear_results(
     all_allele_one = np.concatenate([accumulator.metadata.allele_one for accumulator in accumulators])
     all_allele_two = np.concatenate([accumulator.metadata.allele_two for accumulator in accumulators])
 
-    # Get arrays directly from device and concatenate on host
-    # This avoids tracing jnp.concatenate and lowers peak device memory.
-    device_arrays = {
-        "allele_one_frequency": [acc.allele_one_frequency for acc in accumulators],
-        "observation_count": [acc.observation_count for acc in accumulators],
-        "beta": [acc.regenie2_linear_result.beta for acc in accumulators],
-        "standard_error": [acc.regenie2_linear_result.standard_error for acc in accumulators],
-        "chi_squared": [acc.regenie2_linear_result.chi_squared for acc in accumulators],
-        "log10_p_value": [acc.regenie2_linear_result.log10_p_value for acc in accumulators],
-        "valid_mask": [acc.regenie2_linear_result.valid_mask for acc in accumulators],
-    }
+    all_allele_one_frequency = jnp.concatenate([accumulator.allele_one_frequency for accumulator in accumulators])
+    all_observation_count = jnp.concatenate([accumulator.observation_count for accumulator in accumulators])
+    all_beta = jnp.concatenate([accumulator.regenie2_linear_result.beta for accumulator in accumulators])
+    all_standard_error = jnp.concatenate(
+        [accumulator.regenie2_linear_result.standard_error for accumulator in accumulators]
+    )
+    all_chi_squared = jnp.concatenate([accumulator.regenie2_linear_result.chi_squared for accumulator in accumulators])
+    all_log10_p_value = jnp.concatenate(
+        [accumulator.regenie2_linear_result.log10_p_value for accumulator in accumulators]
+    )
+    all_valid_mask = jnp.concatenate([accumulator.regenie2_linear_result.valid_mask for accumulator in accumulators])
 
-    host_arrays = jax.device_get(device_arrays)
-    host_values = {k: np.concatenate(v) for k, v in host_arrays.items()}
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": all_allele_one_frequency,
+            "observation_count": all_observation_count,
+            "beta": all_beta,
+            "standard_error": all_standard_error,
+            "chi_squared": all_chi_squared,
+            "log10_p_value": all_log10_p_value,
+            "valid_mask": all_valid_mask,
+        }
+    )
 
     return pl.DataFrame(
         {
