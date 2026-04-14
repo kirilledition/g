@@ -16,7 +16,7 @@ def test_root_command_without_arguments_shows_help() -> None:
     """Ensure the CLI shows help when invoked without arguments."""
     result = runner.invoke(app, [])
     assert result.exit_code == 2
-    assert "Blazing fast GWAS engine" in result.output
+    assert "the GWAS engine." in result.output
     assert "linear" in result.output
     assert "logistic" in result.output
 
@@ -54,9 +54,9 @@ def test_resolve_chunk_size_preserves_explicit_override() -> None:
 def test_linear_command_dispatches_api_call() -> None:
     """Ensure the linear subcommand forwards arguments to the public API."""
     with patch(
-        "g.cli.run_linear_api",
+        "g.api.linear",
         return_value=RunArtifacts(sumstats_tsv=Path("results/output.linear.tsv")),
-    ) as mock_run_linear_api:
+    ) as mock_linear:
         result = runner.invoke(
             app,
             [
@@ -80,8 +80,8 @@ def test_linear_command_dispatches_api_call() -> None:
 
     assert result.exit_code == 0
     assert str(Path("results/output.linear.tsv")) in result.output
-    assert mock_run_linear_api.call_args.kwargs["covar_names"] == ("age", "sex")
-    compute_config = mock_run_linear_api.call_args.kwargs["compute"]
+    assert mock_linear.call_args.kwargs["covar_names"] == ("age", "sex")
+    compute_config = mock_linear.call_args.kwargs["compute"]
     assert compute_config.device == Device.GPU
     assert compute_config.chunk_size == DEFAULT_LINEAR_CHUNK_SIZE
 
@@ -89,9 +89,9 @@ def test_linear_command_dispatches_api_call() -> None:
 def test_linear_command_supports_intercept_only_run() -> None:
     """Ensure the linear subcommand allows runs without a covariate table."""
     with patch(
-        "g.cli.run_linear_api",
+        "g.api.linear",
         return_value=RunArtifacts(sumstats_tsv=Path("results/output.linear.tsv")),
-    ) as mock_run_linear_api:
+    ) as mock_linear:
         result = runner.invoke(
             app,
             [
@@ -108,16 +108,16 @@ def test_linear_command_supports_intercept_only_run() -> None:
         )
 
     assert result.exit_code == 0
-    assert mock_run_linear_api.call_args.kwargs["covar"] is None
-    assert mock_run_linear_api.call_args.kwargs["covar_names"] is None
+    assert mock_linear.call_args.kwargs["covar"] is None
+    assert mock_linear.call_args.kwargs["covar_names"] is None
 
 
 def test_linear_command_supports_bgen_input() -> None:
     """Ensure the linear subcommand can dispatch a BGEN-backed run."""
     with patch(
-        "g.cli.run_linear_api",
+        "g.api.linear",
         return_value=RunArtifacts(sumstats_tsv=Path("results/output.linear.tsv")),
-    ) as mock_run_linear_api:
+    ) as mock_linear:
         result = runner.invoke(
             app,
             [
@@ -134,16 +134,16 @@ def test_linear_command_supports_bgen_input() -> None:
         )
 
     assert result.exit_code == 0
-    assert mock_run_linear_api.call_args.kwargs["bfile"] is None
-    assert mock_run_linear_api.call_args.kwargs["bgen"] == Path("dataset.bgen")
+    assert mock_linear.call_args.kwargs["bfile"] is None
+    assert mock_linear.call_args.kwargs["bgen"] == Path("dataset.bgen")
 
 
 def test_linear_command_supports_explicit_bgen_sample_file() -> None:
     """Ensure the CLI forwards an explicit BGEN sample-file path."""
     with patch(
-        "g.cli.run_linear_api",
+        "g.api.linear",
         return_value=RunArtifacts(sumstats_tsv=Path("results/output.linear.tsv")),
-    ) as mock_run_linear_api:
+    ) as mock_linear:
         result = runner.invoke(
             app,
             [
@@ -162,7 +162,7 @@ def test_linear_command_supports_explicit_bgen_sample_file() -> None:
         )
 
     assert result.exit_code == 0
-    assert mock_run_linear_api.call_args.kwargs["sample"] == Path("dataset.sample")
+    assert mock_linear.call_args.kwargs["sample"] == Path("dataset.sample")
 
 
 def test_linear_command_rejects_ambiguous_sources() -> None:
@@ -211,9 +211,9 @@ def test_logistic_subcommand_without_options_shows_help() -> None:
 def test_logistic_command_dispatches_api_call() -> None:
     """Ensure the logistic subcommand forwards model-specific options to the public API."""
     with patch(
-        "g.cli.run_logistic_api",
+        "g.api.logistic",
         return_value=RunArtifacts(sumstats_tsv=Path("results/output.logistic.tsv")),
-    ) as mock_run_logistic_api:
+    ) as mock_logistic:
         result = runner.invoke(
             app,
             [
@@ -237,11 +237,11 @@ def test_logistic_command_dispatches_api_call() -> None:
         )
 
     assert result.exit_code == 0
-    solver_config = mock_run_logistic_api.call_args.kwargs["solver"]
+    solver_config = mock_logistic.call_args.kwargs["solver"]
     assert solver_config.max_iterations == 75
     assert solver_config.tolerance == 1.0e-6
     assert solver_config.firth_fallback is False
-    compute_config = mock_run_logistic_api.call_args.kwargs["compute"]
+    compute_config = mock_logistic.call_args.kwargs["compute"]
     assert compute_config.chunk_size == DEFAULT_LOGISTIC_CHUNK_SIZE
 
 
@@ -257,9 +257,9 @@ def test_regenie2_linear_subcommand_without_options_shows_help() -> None:
 def test_regenie2_linear_command_dispatches_api_call() -> None:
     """Ensure the REGENIE step 2 linear subcommand forwards arguments to the public API."""
     with patch(
-        "g.cli.run_regenie2_linear_api",
+        "g.api.regenie2_linear",
         return_value=RunArtifacts(sumstats_tsv=Path("results/output.regenie2_linear.tsv")),
-    ) as mock_run_regenie2_linear_api:
+    ) as mock_regenie2_linear:
         result = runner.invoke(
             app,
             [
@@ -285,11 +285,11 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
 
     assert result.exit_code == 0
     assert str(Path("results/output.regenie2_linear.tsv")) in result.output
-    assert mock_run_regenie2_linear_api.call_args.kwargs["bgen"] == Path("dataset.bgen")
-    assert mock_run_regenie2_linear_api.call_args.kwargs["sample"] == Path("dataset.sample")
-    assert mock_run_regenie2_linear_api.call_args.kwargs["covar_names"] == ("age", "sex")
-    assert mock_run_regenie2_linear_api.call_args.kwargs["pred"] == Path("predictions.list")
-    compute_config = mock_run_regenie2_linear_api.call_args.kwargs["compute"]
+    assert mock_regenie2_linear.call_args.kwargs["bgen"] == Path("dataset.bgen")
+    assert mock_regenie2_linear.call_args.kwargs["sample"] == Path("dataset.sample")
+    assert mock_regenie2_linear.call_args.kwargs["covar_names"] == ("age", "sex")
+    assert mock_regenie2_linear.call_args.kwargs["pred"] == Path("predictions.list")
+    compute_config = mock_regenie2_linear.call_args.kwargs["compute"]
     assert compute_config.device == Device.GPU
     assert compute_config.chunk_size == DEFAULT_LINEAR_CHUNK_SIZE
 

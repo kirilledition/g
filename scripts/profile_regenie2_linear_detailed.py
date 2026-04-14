@@ -753,7 +753,7 @@ def main() -> None:
     print(f"Chunk size: {arguments.chunk_size}")
     print("-" * 80)
 
-    api.configure_jax_device(arguments.device)
+    jax_setup.configure_jax_device(arguments.device)
     run_warmup_passes(arguments)
 
     wall_time_seconds, profiler, stage_timing_summaries, run_artifacts = run_profiled_regenie2_linear(
