@@ -1,0 +1,3 @@
+## 2024-05-19 - Host Transfer Optimization for Multiple JAX Arrays
+**Learning:** Concatenating variable-sized lists of JAX arrays on the device (`jnp.concatenate`) before pulling to the host (`jax.device_get`) adds significant JAX tracing overhead. It's approximately 15x faster to transfer the list of JAX arrays to the host directly via `jax.device_get`, and then use `np.concatenate` on the host side.
+**Action:** When pulling multiple JAX arrays from the device, pass the list/dictionary of lists to `jax.device_get()` directly and `np.concatenate` them on the CPU, instead of concatenating them on the device first.
