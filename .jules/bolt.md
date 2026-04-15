@@ -1,0 +1,3 @@
+## 2026-04-15 - JAX device_get memory/performance optimization
+**Learning:** When moving multiple JAX arrays from device to host, concatenating them first on the device (e.g. `jnp.concatenate`) then using `jax.device_get()` incurs significant trace/JIT and peak memory overhead. It is approximately 4x faster (and much more memory-efficient) to pass a list (or dict of lists) of the individual arrays directly into `jax.device_get()` and then concatenate the resulting numpy arrays on the CPU (using `np.concatenate`).
+**Action:** Always fetch lists of arrays natively via `jax.device_get()` and perform subsequent concatenation with NumPy on the host instead of using JAX's `concatenate` on the device prior to fetch.
