@@ -39,6 +39,7 @@ DEFAULT_PREDICTION_LIST_PATH = Path("data/baselines/regenie_step1_qt_pred.list")
 DEFAULT_OUTPUT_DIRECTORY = Path("data/profiles/regenie2_linear")
 DEFAULT_REPORT_NAME = "regenie2_linear_profile"
 
+from g import jax_setup
 
 @dataclass(frozen=True)
 class ProfileEventSummary:
@@ -753,7 +754,7 @@ def main() -> None:
     print(f"Chunk size: {arguments.chunk_size}")
     print("-" * 80)
 
-    api.configure_jax_device(arguments.device)
+    jax_setup.configure_jax_device(arguments.device)
     run_warmup_passes(arguments)
 
     wall_time_seconds, profiler, stage_timing_summaries, run_artifacts = run_profiled_regenie2_linear(
