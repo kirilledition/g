@@ -1,3 +1,0 @@
-## 2026-04-17 - JAX Einsum Tracing Overhead vs Explicit Broadcasting
-**Learning:** For simple element-wise cross-products like computing pair matrices (e.g., `jnp.einsum("np,nq->npq", A, A)`), using JAX explicit broadcasting (`A[:, :, None] * A[:, None, :]`) is slightly faster during both eager execution and JIT tracing because it bypasses `einsum` string parsing and overhead, while yielding identical XLA primitives.
-**Action:** When working with JAX on straightforward operations where explicit dimension expansion is clean, prefer broadcasting over `einsum` to shave off minor tracing/eager latencies.
