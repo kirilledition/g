@@ -1,0 +1,3 @@
+## 2026-04-18 - Optimize JAX array list transfers to host
+**Learning:** In a JAX codebase, it is highly inefficient to call `jnp.concatenate` on a Python list of variable-sized device arrays before transferring them to the host with `jax.device_get()`. This introduces massive JIT tracing overhead (due to variable array shapes in the lists) and triggers a redundant memory allocation on the constrained device (GPU).
+**Action:** When transferring sequences of arrays, always pass the native Python sequence (like a list or dict of lists) directly to `jax.device_get()`. This moves the memory over as a sequence of host-side arrays, which can then be concatenated efficiently on the CPU using `numpy.concatenate`.
