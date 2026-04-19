@@ -1,0 +1,3 @@
+## 2025-02-18 - JAX to Host Array Accumulation Overheads
+**Learning:** Calling `jnp.concatenate` on a list of arrays explicitly traced/JITed by JAX on the device incurs significant overhead for variable-sized data chunks, dramatically increasing peak device memory right before transferring data back to the host via `jax.device_get`.
+**Action:** When transferring multiple arrays/chunks from device back to host, pass the list/dictionary of arrays directly into `jax.device_get()`. Then concatenate the resulting NumPy arrays on the host CPU (e.g., using `np.concatenate`). This avoids the high on-device JAX compilation/allocation costs for variably shaped data list aggregations.
