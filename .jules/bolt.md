@@ -1,0 +1,3 @@
+## 2024-04-20 - [Performance] Efficient Host Synchronization of JAX Arrays
+**Learning:** In a codebase heavily relying on JAX and XLA, concatenating variable-sized JAX arrays on the device before retrieving them (e.g., using `jnp.concatenate` then `jax.device_get`) creates massive execution overhead because JAX jit-compiles for the specific total array size, leading to constant tracing for chunks of different sizes and increasing peak device memory.
+**Action:** When gathering chunks or lists of arrays from device to host, always pass the raw list of JAX arrays directly into `jax.device_get()` and perform the concatenation sequentially on the CPU (e.g., using `np.concatenate()`). This avoids device-side compilation overhead and keeps peak device memory low.
