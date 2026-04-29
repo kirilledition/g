@@ -294,8 +294,10 @@ def compute_covariate_score(
 
 def prepare_logistic_chunk_precomputation(covariate_matrix: jax.Array) -> LogisticChunkPrecomputation:
     """Prepare chunk-invariant matrices reused across logistic IRLS iterations."""
-    sample_covariate_pair_matrix = jnp.einsum("np,nq->npq", covariate_matrix, covariate_matrix)
-    covariate_pair_matrix = sample_covariate_pair_matrix.reshape((covariate_matrix.shape[0], -1))
+    sample_count, parameter_count = covariate_matrix.shape
+    covariate_pair_matrix = (covariate_matrix[:, :, None] * covariate_matrix[:, None, :]).reshape(
+        (sample_count, parameter_count * parameter_count)
+    )
     return LogisticChunkPrecomputation(
         covariate_matrix=covariate_matrix,
         covariate_pair_matrix=covariate_pair_matrix,
@@ -328,11 +330,12 @@ def clip_probability_matrix(probability_matrix: jax.Array) -> jax.Array:
 def compute_log_likelihood(probability_matrix: jax.Array, phenotype_matrix: jax.Array) -> jax.Array:
     """Compute batched logistic log-likelihood values."""
     clipped_probability_matrix = clip_probability_matrix(probability_matrix)
-    return jnp.sum(
-        phenotype_matrix * jnp.log(clipped_probability_matrix)
-        + (1.0 - phenotype_matrix) * jnp.log1p(-clipped_probability_matrix),
-        axis=1,
+    true_class_probability_matrix = jnp.where(
+        phenotype_matrix == 1.0,
+        clipped_probability_matrix,
+        1.0 - clipped_probability_matrix,
     )
+    return jnp.sum(jnp.log(true_class_probability_matrix), axis=1)
 
 
 def compute_covariate_only_probability_matrix(
@@ -497,12 +500,12 @@ def compute_firth_penalized_log_likelihood_from_cholesky(
 ) -> jax.Array:
     """Compute Firth-penalized log-likelihood from a Cholesky factor."""
     masked_probability_vector = jnp.where(observation_mask, probability_vector, MISSING_PROBABILITY_FILL)
-    masked_phenotype_vector = jnp.where(observation_mask, phenotype_vector, 0.0)
-    log_likelihood = jnp.sum(
-        masked_phenotype_vector * jnp.log(masked_probability_vector)
-        + (observation_mask.astype(probability_vector.dtype) - masked_phenotype_vector)
-        * jnp.log1p(-masked_probability_vector),
+    true_class_probability_vector = jnp.where(
+        phenotype_vector == 1.0,
+        masked_probability_vector,
+        1.0 - masked_probability_vector,
     )
+    log_likelihood = jnp.sum(jnp.where(observation_mask, jnp.log(true_class_probability_vector), 0.0))
     log_determinant = 2.0 * jnp.sum(jnp.log(jnp.diag(information_cholesky_factor)))
     cholesky_valid = jnp.all(jnp.isfinite(information_cholesky_factor))
     penalty_term = jnp.where(cholesky_valid, BINARY_CASE_THRESHOLD * log_determinant, -jnp.inf)

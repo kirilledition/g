@@ -425,6 +425,8 @@ def test_regenie2_payload_batch_matches_individual_payloads() -> None:
 
     assert len(batched_payloads) == len(individual_payloads)
     for individual_payload, batched_payload in zip(individual_payloads, batched_payloads, strict=True):
+        assert isinstance(individual_payload, engine.Regenie2LinearChunkPayload)
+        assert isinstance(batched_payload, engine.Regenie2LinearChunkPayload)
         assert individual_payload.chunk_identifier == batched_payload.chunk_identifier
         np.testing.assert_allclose(individual_payload.beta, batched_payload.beta, atol=0.0)
         np.testing.assert_allclose(
