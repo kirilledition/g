@@ -13,6 +13,7 @@ import polars as pl
 
 from g import models, types
 from g.compute import regenie2_linear
+from g.io import reader as genotype_reader_protocols
 from g.io import regenie, source
 
 if typing.TYPE_CHECKING:
@@ -63,6 +64,8 @@ load_prediction_source = regenie.load_prediction_source
 prepare_regenie2_linear_state = regenie2_linear.prepare_regenie2_linear_state
 compute_regenie2_linear_chunk = regenie2_linear.compute_regenie2_linear_chunk
 
+DEFAULT_TSV_FRAME_BATCH_SIZE = 2
+
 
 def split_dosage_genotype_chunk_by_chromosome(
     genotype_chunk: models.DosageGenotypeChunk,
@@ -99,6 +102,60 @@ def split_dosage_genotype_chunk_by_chromosome(
             )
         )
     return tuple(chromosome_subchunks)
+
+
+def split_dosage_genotype_chunk_by_absolute_variant_slices(
+    genotype_chunk: models.DosageGenotypeChunk,
+    variant_slices: tuple[tuple[int, int], ...],
+) -> tuple[models.DosageGenotypeChunk, ...]:
+    """Split one dosage chunk using absolute variant slice boundaries."""
+    if not variant_slices:
+        return ()
+    if len(variant_slices) == 1:
+        only_variant_start, only_variant_stop = variant_slices[0]
+        if (
+            only_variant_start == genotype_chunk.metadata.variant_start_index
+            and only_variant_stop == genotype_chunk.metadata.variant_stop_index
+        ):
+            return (genotype_chunk,)
+
+    chromosome_subchunks: list[models.DosageGenotypeChunk] = []
+    for variant_start, variant_stop in variant_slices:
+        relative_variant_start = variant_start - genotype_chunk.metadata.variant_start_index
+        relative_variant_stop = variant_stop - genotype_chunk.metadata.variant_start_index
+        chromosome_subchunks.append(
+            models.DosageGenotypeChunk(
+                genotypes=genotype_chunk.genotypes[:, relative_variant_start:relative_variant_stop],
+                metadata=models.VariantMetadata(
+                    variant_start_index=variant_start,
+                    variant_stop_index=variant_stop,
+                    chromosome=genotype_chunk.metadata.chromosome[relative_variant_start:relative_variant_stop],
+                    variant_identifiers=genotype_chunk.metadata.variant_identifiers[
+                        relative_variant_start:relative_variant_stop
+                    ],
+                    position=genotype_chunk.metadata.position[relative_variant_start:relative_variant_stop],
+                    allele_one=genotype_chunk.metadata.allele_one[relative_variant_start:relative_variant_stop],
+                    allele_two=genotype_chunk.metadata.allele_two[relative_variant_start:relative_variant_stop],
+                ),
+                allele_one_frequency=genotype_chunk.allele_one_frequency[relative_variant_start:relative_variant_stop],
+                observation_count=genotype_chunk.observation_count[relative_variant_start:relative_variant_stop],
+            )
+        )
+    return tuple(chromosome_subchunks)
+
+
+def split_dosage_genotype_chunk_with_reader_metadata(
+    genotype_chunk: models.DosageGenotypeChunk,
+    genotype_reader: object,
+) -> tuple[models.DosageGenotypeChunk, ...]:
+    """Split one dosage chunk by chromosome, using reader metadata when available."""
+    if isinstance(genotype_reader, genotype_reader_protocols.ChromosomePartitionReader):
+        chromosome_variant_slices = genotype_reader.split_variant_slice_by_chromosome(
+            genotype_chunk.metadata.variant_start_index,
+            genotype_chunk.metadata.variant_stop_index,
+        )
+        return split_dosage_genotype_chunk_by_absolute_variant_slices(genotype_chunk, chromosome_variant_slices)
+    return split_dosage_genotype_chunk_by_chromosome(genotype_chunk)
 
 
 def build_regenie2_linear_output_frame(
@@ -351,7 +408,7 @@ def iter_regenie2_linear_output_frames(
         current_loco_predictions: jax.Array | None = None
         chunk_number = 0
         for source_chunk in chunk_iterator:
-            for current_chunk in split_dosage_genotype_chunk_by_chromosome(source_chunk):
+            for current_chunk in split_dosage_genotype_chunk_with_reader_metadata(source_chunk, genotype_reader):
                 chunk_identifier = current_chunk.metadata.variant_start_index
                 if chunk_identifier in committed_identifier_set:
                     continue
@@ -386,11 +443,48 @@ def iter_regenie2_linear_output_frames(
 def write_frame_iterator_to_tsv(
     frame_iterator: collections.abc.Iterator[Regenie2LinearChunkAccumulator],
     output_path: Path,
+    *,
+    frame_batch_size: int = DEFAULT_TSV_FRAME_BATCH_SIZE,
 ) -> None:
     """Write accumulated REGENIE chunk results to a TSV file."""
-    accumulators = list(frame_iterator)
-    if not accumulators:
+    if frame_batch_size <= 0:
+        message = "TSV frame batch size must be positive."
+        raise ValueError(message)
+
+    def flush_accumulator_batch(
+        accumulator_batch: list[Regenie2LinearChunkAccumulator],
+        output_file: typing.TextIO,
+        *,
+        include_header: bool,
+    ) -> bool:
+        if not accumulator_batch:
+            return False
+        output_frame = concatenate_regenie2_linear_results(accumulator_batch)
+        output_frame.write_csv(
+            output_file,
+            separator="\t",
+            include_header=include_header,
+        )
+        accumulator_batch.clear()
+        return True
+
+    first_chunk_written = False
+    accumulator_batch: list[Regenie2LinearChunkAccumulator] = []
+    with output_path.open("w", encoding="utf-8") as output_file:
+        for accumulator in frame_iterator:
+            accumulator_batch.append(accumulator)
+            if len(accumulator_batch) >= frame_batch_size:
+                batch_was_written = flush_accumulator_batch(
+                    accumulator_batch,
+                    output_file,
+                    include_header=not first_chunk_written,
+                )
+                first_chunk_written = first_chunk_written or batch_was_written
+        batch_was_written = flush_accumulator_batch(
+            accumulator_batch,
+            output_file,
+            include_header=not first_chunk_written,
+        )
+        first_chunk_written = first_chunk_written or batch_was_written
+    if not first_chunk_written:
         pl.DataFrame().write_csv(output_path, separator="\t")
-        return
-    result_frame = concatenate_regenie2_linear_results(accumulators)
-    result_frame.write_csv(output_path, separator="\t")

@@ -39,6 +39,10 @@ These are local-only and remain under `data/`.
 
 ## Measured Progress
 
+Current active default batch size:
+
+- `8192`
+
 ### Warmed GPU Runtime
 
 Best verified warmed GPU benchmark at `chunk_size=1024`:

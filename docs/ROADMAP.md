@@ -18,3 +18,7 @@ Direct PLINK-style linear/logistic association in `g` is intentionally deferred.
 1. REGENIE step 2 profiling-driven performance improvements.
 2. CI hardening for active REGENIE and shared I/O paths.
 3. Architecture cleanup to keep active modules free of direct-regression branches.
+4. Keep `data/benchmarks/regenie_comparison/` and `data/profiles/regenie_comparison/` up to date with:
+   - original regenie step 1/2 binary + quantitative benchmarks
+   - g quantitative step 2 CPU/GPU comparisons
+   - explicit `not_implemented` placeholders for unsupported g REGENIE programs

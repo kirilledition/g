@@ -6,18 +6,40 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import typing
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import hail as hail_library  # type: ignore
-from run_hail_baseline import (
-    DEFAULT_HAIL_DRIVER_MEMORY,
-    DEFAULT_HAIL_MASTER,
-    load_or_prepare_matrix_table,
-    prepare_matrix_table,
-    run_linear_baseline,
-    run_logistic_baseline,
-)
+
+if typing.TYPE_CHECKING:
+    from scripts.run_hail_baseline import (
+        DEFAULT_HAIL_DRIVER_MEMORY,
+        DEFAULT_HAIL_MASTER,
+        load_or_prepare_matrix_table,
+        prepare_matrix_table,
+        run_linear_baseline,
+        run_logistic_baseline,
+    )
+else:
+    try:
+        from scripts.run_hail_baseline import (
+            DEFAULT_HAIL_DRIVER_MEMORY,
+            DEFAULT_HAIL_MASTER,
+            load_or_prepare_matrix_table,
+            prepare_matrix_table,
+            run_linear_baseline,
+            run_logistic_baseline,
+        )
+    except ModuleNotFoundError:
+        from run_hail_baseline import (
+            DEFAULT_HAIL_DRIVER_MEMORY,
+            DEFAULT_HAIL_MASTER,
+            load_or_prepare_matrix_table,
+            prepare_matrix_table,
+            run_linear_baseline,
+            run_logistic_baseline,
+        )
 
 
 @dataclass(frozen=True)

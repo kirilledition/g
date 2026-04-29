@@ -81,6 +81,31 @@ class GenotypeReader(typing.Protocol):
         """Exit a context manager and release resources."""
 
 
+@typing.runtime_checkable
+class Float32BlockReader(typing.Protocol):
+    """Protocol for readers with a strict float32 contiguous block API."""
+
+    def read_float32(
+        self,
+        sample_index_array: npt.NDArray[np.intp],
+        variant_start: int,
+        variant_stop: int,
+    ) -> npt.NDArray[np.float32]:
+        """Read one float32 dosage block for contiguous variant slices."""
+
+
+@typing.runtime_checkable
+class ChromosomePartitionReader(typing.Protocol):
+    """Protocol for readers that can split contiguous variant slices by chromosome."""
+
+    def split_variant_slice_by_chromosome(
+        self,
+        variant_start: int,
+        variant_stop: int,
+    ) -> tuple[tuple[int, int], ...]:
+        """Return chromosome-homogeneous absolute variant slices within one contiguous request."""
+
+
 def build_variant_table_arrays(variant_table: pl.DataFrame) -> VariantTableArrays:
     """Convert normalized variant metadata into numpy arrays."""
     return VariantTableArrays(
@@ -132,6 +157,23 @@ def build_variant_metadata(
     )
 
 
+def read_float32_block_from_reader(
+    genotype_reader: GenotypeReader,
+    sample_index_array: npt.NDArray[np.intp],
+    variant_start: int,
+    variant_stop: int,
+) -> npt.NDArray[np.float32]:
+    """Read one float32 dosage block using the strict fast path when available."""
+    if isinstance(genotype_reader, Float32BlockReader):
+        return genotype_reader.read_float32(sample_index_array, variant_start, variant_stop)
+    genotype_matrix_host = genotype_reader.read(
+        index=(sample_index_array, slice(variant_start, variant_stop)),
+        dtype=np.float32,
+        order=types.ArrayMemoryOrder.C_CONTIGUOUS,
+    )
+    return np.asarray(genotype_matrix_host, dtype=np.float32, order=types.ArrayMemoryOrder.C_CONTIGUOUS.value)
+
+
 def iter_genotype_chunks_from_reader(
     genotype_reader: GenotypeReader,
     source_name: str,
@@ -160,10 +202,11 @@ def iter_genotype_chunks_from_reader(
     for variant_start in range(0, total_variant_count, chunk_size):
         variant_stop = min(total_variant_count, variant_start + chunk_size)
         variant_table_arrays = genotype_reader.get_variant_table_arrays(variant_start, variant_stop)
-        genotype_matrix_host = genotype_reader.read(
-            index=(sample_index_array, slice(variant_start, variant_stop)),
-            dtype=np.float32,
-            order=types.ArrayMemoryOrder.C_CONTIGUOUS,
+        genotype_matrix_host = read_float32_block_from_reader(
+            genotype_reader=genotype_reader,
+            sample_index_array=sample_index_array,
+            variant_start=variant_start,
+            variant_stop=variant_stop,
         )
         preprocessed_chunk_data = preprocess_genotype_matrix(
             jax.device_put(genotype_matrix_host),
@@ -208,10 +251,11 @@ def iter_dosage_genotype_chunks_from_reader(
         variant_stop = min(total_variant_count, variant_start + chunk_size)
         variant_table_arrays = genotype_reader.get_variant_table_arrays(variant_start, variant_stop)
         with jax.profiler.TraceAnnotation(f"dosage.read_{trace_prefix}_chunk"):
-            genotype_matrix_host = genotype_reader.read(
-                index=(sample_index_array, slice(variant_start, variant_stop)),
-                dtype=np.float32,
-                order=types.ArrayMemoryOrder.C_CONTIGUOUS,
+            genotype_matrix_host = read_float32_block_from_reader(
+                genotype_reader=genotype_reader,
+                sample_index_array=sample_index_array,
+                variant_start=variant_start,
+                variant_stop=variant_stop,
             )
         with jax.profiler.TraceAnnotation("dosage.device_put_genotypes"):
             genotype_matrix_device = jax.device_put(genotype_matrix_host)

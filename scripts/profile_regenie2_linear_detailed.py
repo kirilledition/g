@@ -173,7 +173,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=types.Device.GPU,
         help="JAX execution device.",
     )
-    argument_parser.add_argument("--chunk-size", type=int, default=1024, help="Variants per chunk.")
+    argument_parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=api.DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE,
+        help="Variants per chunk.",
+    )
     argument_parser.add_argument("--variant-limit", type=int, help="Optional variant cap.")
     argument_parser.add_argument("--prefetch-chunks", type=int, default=0, help="Prefetched genotype chunks.")
     argument_parser.add_argument(
@@ -576,10 +581,11 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
             )
 
             host_read_start_time = time.perf_counter()
-            genotype_matrix_host = genotype_reader.read(
-                index=(sample_index_array, slice(variant_start, variant_stop)),
-                dtype=np.float32,
-                order=types.ArrayMemoryOrder.C_CONTIGUOUS,
+            genotype_matrix_host = reader.read_float32_block_from_reader(
+                genotype_reader=genotype_reader,
+                sample_index_array=sample_index_array,
+                variant_start=variant_start,
+                variant_stop=variant_stop,
             )
             record_stage_duration(
                 stage_timing_accumulators,

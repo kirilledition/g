@@ -21,7 +21,7 @@ nix develop
 Install dependencies:
 
 ```bash
-uv sync --group dev
+uv sync -U --group dev --group gpu
 ```
 
 Prepare local data:
@@ -56,7 +56,35 @@ just check
 just test
 just regenie2-linear
 just profile-regenie2-linear-detailed
+just benchmark-regenie-comparison
+just benchmark-regenie-comparison-gpu
+just profile-regenie-comparison
+just profile-regenie-comparison-gpu
 ```
+
+## REGENIE Comparison Suite
+
+The comparison suite benchmarks and profiles:
+
+- Original `regenie`:
+  - step 1 binary (BED input)
+  - step 2 binary (BGEN input)
+  - step 1 quantitative (BED input)
+  - step 2 quantitative (BGEN input)
+- `g`:
+  - REGENIE step 2 quantitative on CPU
+  - REGENIE step 2 quantitative on GPU (optional)
+
+Explicitly unimplemented in `g` and reported as `not_implemented`:
+
+- binary step 1
+- binary step 2
+- quantitative step 1
+
+Reports are written to:
+
+- Benchmarks: `data/benchmarks/regenie_comparison/`
+- Profiles: `data/profiles/regenie_comparison/`
 
 ## Repository Layout
 
@@ -69,3 +97,5 @@ just profile-regenie2-linear-detailed
 ## Status
 
 Active development targets biobank-scale REGENIE workflows. PLINK-style direct regression will remain archived until explicitly resumed.
+
+The active REGENIE step 2 default chunk size is `8192`.

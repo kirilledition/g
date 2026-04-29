@@ -14,6 +14,17 @@ setup-data:
 benchmark-baselines: setup-data
     uv run python scripts/benchmark.py
 
+# Compare original regenie (all 4 programs) vs g quantitative step2 CPU
+benchmark-regenie-comparison-cpu: setup-data
+    uv run python scripts/benchmark_regenie_comparison.py --cpu-only
+
+# Compare original regenie (all 4 programs) vs g quantitative step2 CPU+GPU
+benchmark-regenie-comparison-gpu: setup-data
+    uv run python scripts/benchmark_regenie_comparison.py --include-gpu
+
+# Alias for comparison benchmark (CPU-only default)
+benchmark-regenie-comparison: benchmark-regenie-comparison-cpu
+
 # Run full baselines including Hail (slow - requires cached MatrixTable)
 benchmark-baselines-full: setup-data
     HAIL_INCLUDE=1 uv run python scripts/benchmark.py
@@ -32,10 +43,25 @@ probe-jax:
 benchmark-plink-reader:
     uv run python scripts/benchmark_plink_reader.py
 
+# Benchmark BGEN float32 read paths
+benchmark-bgen-reader:
+    uv run python scripts/benchmark_bgen_reader.py
+
 # Profile full REGENIE step 2 execution
 profile-regenie2-linear-detailed:
     mkdir -p {{data_dir}}/profiles/regenie2_linear_detailed
     XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_PYTHON_CLIENT_MEM_FRACTION=.50 uv run python scripts/profile_regenie2_linear_detailed.py --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_cont.txt --pheno-name phenotype_continuous --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_qt_pred.list --output-dir {{data_dir}}/profiles/regenie2_linear_detailed --report-name regenie2_linear_chr22_full --enable-jax-trace --enable-memory-profile --cprofile-sort cumulative
+
+# Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU
+profile-regenie-comparison-cpu: setup-data
+    uv run python scripts/profile_regenie_comparison.py --cpu-only
+
+# Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU+GPU
+profile-regenie-comparison-gpu: setup-data
+    uv run python scripts/profile_regenie_comparison.py --include-gpu
+
+# Alias for unified profiling comparison (CPU-only default)
+profile-regenie-comparison: profile-regenie-comparison-cpu
 
 # Format code
 format:

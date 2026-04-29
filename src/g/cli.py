@@ -8,14 +8,14 @@ import typer
 
 from g import api, types
 
+run_regenie2_linear_api = api.regenie2_linear
+
 app = typer.Typer(
     name="g",
     help="Blazing fast REGENIE step 2 GWAS engine.",
     no_args_is_help=True,
     rich_markup_mode=None,
 )
-
-run_regenie2_linear_api = api.regenie2_linear
 
 
 @app.callback()

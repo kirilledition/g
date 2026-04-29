@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import importlib
-import threading
 import typing
+from dataclasses import dataclass
 from pathlib import Path
 
 import jax
@@ -21,6 +21,44 @@ if typing.TYPE_CHECKING:
 
 
 OpenBgenHandle = typing.Any
+CoreBgenHandle = typing.Any
+
+
+@dataclass(frozen=True)
+class CoreVariantMetadata:
+    """Raw normalized variant metadata returned by the Rust core reader."""
+
+    chromosome_values: list[str]
+    variant_identifier_values: list[str]
+    position_values: list[int]
+    allele_one_values: list[str]
+    allele_two_values: list[str]
+
+
+@dataclass(frozen=True)
+class ContiguousVariantSlice:
+    """One contiguous variant span."""
+
+    variant_start: int
+    variant_stop: int
+
+
+@dataclass(frozen=True)
+class ReadSelection:
+    """Normalized read selectors for one compatibility read."""
+
+    sample_index_array: npt.NDArray[np.int64]
+    variant_index_array: npt.NDArray[np.int64]
+
+
+@dataclass(frozen=True)
+class VariantReadRun:
+    """One contiguous run inside a possibly non-contiguous variant request."""
+
+    variant_start: int
+    variant_stop: int
+    output_start: int
+    output_stop: int
 
 
 def split_sample_file_line(raw_line: str) -> list[str]:
@@ -112,39 +150,12 @@ def load_sample_identifier_table(sample_path: Path) -> pl.DataFrame:
     ).with_row_index("sample_index")
 
 
-def load_backend_open_bgen() -> typing.Any:
-    """Import the optional BGEN backend lazily."""
+def load_backend_core() -> typing.Any:
+    """Import Rust core helpers lazily."""
     try:
-        return importlib.import_module("bgen_reader").open_bgen
+        return importlib.import_module("g._core")
     except ModuleNotFoundError as error:
-        message = (
-            "BGEN support requires the `bgen-reader` stack. "
-            "Run the command inside `nix develop` and sync dependencies again."
-        )
-        raise ModuleNotFoundError(message) from error
-
-
-def load_backend_cbgen_file() -> typing.Any:
-    """Import the low-level cbgen file wrapper lazily."""
-    try:
-        return importlib.import_module("cbgen").bgen_file
-    except ModuleNotFoundError as error:
-        message = (
-            "BGEN support requires the `bgen-reader` stack. "
-            "Run the command inside `nix develop` and sync dependencies again."
-        )
-        raise ModuleNotFoundError(message) from error
-
-
-def load_backend_cbgen_ffi() -> typing.Any:
-    """Import the low-level cbgen FFI module lazily."""
-    try:
-        return importlib.import_module("cbgen._ffi")
-    except ModuleNotFoundError as error:
-        message = (
-            "BGEN support requires the `bgen-reader` stack. "
-            "Run the command inside `nix develop` and sync dependencies again."
-        )
+        message = "Rust core helpers are unavailable. Ensure the extension module is built."
         raise ModuleNotFoundError(message) from error
 
 
@@ -165,15 +176,15 @@ def convert_probability_tensor_to_dosage(
     dtype: type[np.float32] | type[np.float64],
     order: types.ArrayMemoryOrder,
 ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
-    """Convert a BGEN probability tensor into additive dosages.
-
-    For diploid unphased biallelic data the tensor stores three genotype
-    probabilities ordered by alternative-allele count: 0, 1, 2.
-
-    For diploid phased biallelic data the tensor stores two one-hot haplotype
-    distributions: [haplotype_1_ref, haplotype_1_alt, haplotype_2_ref,
-    haplotype_2_alt].
-    """
+    """Convert a BGEN probability tensor into additive dosages."""
+    if dtype is np.float32:
+        core_module = load_backend_core()
+        dosage_matrix = core_module.convert_probability_tensor_to_dosage_f32(
+            np.asarray(probability_tensor, dtype=np.float32, order="C"),
+            int(combination_count),
+            bool(is_phased),
+        )
+        return np.asarray(dosage_matrix, dtype=np.float32, order=order.value)
     if combination_count == 3 and not is_phased:
         dosage_matrix = probability_tensor[:, :, 1] + (2.0 * probability_tensor[:, :, 2])
         return np.asarray(dosage_matrix, dtype=dtype, order=order.value)
@@ -191,6 +202,14 @@ def convert_probability_matrix_to_dosage(
     is_phased: bool,
 ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
     """Convert one variant's probability matrix into additive dosages."""
+    if probability_matrix.dtype == np.float32:
+        core_module = load_backend_core()
+        dosage_vector = core_module.convert_probability_matrix_to_dosage_f32(
+            np.asarray(probability_matrix, dtype=np.float32, order="C"),
+            int(combination_count),
+            bool(is_phased),
+        )
+        return np.asarray(dosage_vector, dtype=np.float32, order="C")
     if combination_count == 3 and not is_phased:
         return probability_matrix[:, 1] + (2.0 * probability_matrix[:, 2])
     if combination_count == 4 and is_phased:
@@ -199,115 +218,14 @@ def convert_probability_matrix_to_dosage(
     raise ValueError(message)
 
 
-def read_bgen_direct_dosage_matrix(
-    *,
-    bgen_path: Path,
-    variant_offsets: npt.NDArray[np.uint64],
-    sample_index_array: npt.NDArray[np.intp],
-    total_sample_count: int,
-    combination_count: int,
-    is_phased: bool,
-    dtype: type[np.float32] | type[np.float64],
-    order: types.ArrayMemoryOrder,
-    num_threads: int,
-) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
-    """Read a BGEN slice directly into a dosage matrix without a chunk probability tensor."""
-    variant_count = len(variant_offsets)
-    selected_sample_count = len(sample_index_array)
-    numpy_order = "F" if order == types.ArrayMemoryOrder.FORTRAN_CONTIGUOUS else "C"
-    if variant_count == 0:
-        return np.empty((selected_sample_count, 0), dtype=dtype, order=numpy_order)
-
-    cbgen_file = load_backend_cbgen_file()
-    cbgen_ffi = load_backend_cbgen_ffi()
-    direct_dosage_by_variant = np.empty((variant_count, selected_sample_count), dtype=dtype, order="C")
-    full_sample_index_array = np.arange(total_sample_count, dtype=np.intp)
-    use_full_sample_range = selected_sample_count == total_sample_count and np.array_equal(
-        sample_index_array,
-        full_sample_index_array,
-    )
-    worker_errors: list[BaseException] = []
-    worker_error_lock = threading.Lock()
-
-    def read_probability_matrix(
-        file_handle: typing.Any,
-        variant_offset: int,
-        probability_matrix: npt.NDArray[np.float32] | npt.NDArray[np.float64],
-    ) -> None:
-        genotype_handle = cbgen_ffi.lib.bgen_file_open_genotype(file_handle._bgen_file, int(variant_offset))
-        if genotype_handle == cbgen_ffi.ffi.NULL:
-            message = f"Could not open genotype (offset {variant_offset})."
-            raise RuntimeError(message)
-        try:
-            if dtype == np.float32:
-                error_code = cbgen_ffi.lib.bgen_genotype_read32(
-                    genotype_handle,
-                    cbgen_ffi.ffi.cast("float *", probability_matrix.ctypes.data),
-                )
-            else:
-                error_code = cbgen_ffi.lib.bgen_genotype_read64(
-                    genotype_handle,
-                    cbgen_ffi.ffi.cast("double *", probability_matrix.ctypes.data),
-                )
-        finally:
-            cbgen_ffi.lib.bgen_genotype_close(genotype_handle)
-        if error_code != 0:
-            message = f"Could not read genotype probabilities (offset {variant_offset})."
-            raise RuntimeError(message)
-
-    def worker(variant_start_index: int, variant_stop_index: int) -> None:
-        probability_matrix = np.empty((total_sample_count, combination_count), dtype=dtype, order="C")
-        try:
-            with cbgen_file(bgen_path) as file_handle:
-                for variant_index in range(variant_start_index, variant_stop_index):
-                    read_probability_matrix(file_handle, int(variant_offsets[variant_index]), probability_matrix)
-                    target_dosage_vector = direct_dosage_by_variant[variant_index, :]
-                    if use_full_sample_range:
-                        if combination_count == 3 and not is_phased:
-                            np.copyto(target_dosage_vector, probability_matrix[:, 2])
-                            target_dosage_vector *= 2.0
-                            target_dosage_vector += probability_matrix[:, 1]
-                        else:
-                            np.copyto(target_dosage_vector, probability_matrix[:, 1])
-                            target_dosage_vector += probability_matrix[:, 3]
-                    else:
-                        if combination_count == 3 and not is_phased:
-                            np.copyto(target_dosage_vector, probability_matrix[sample_index_array, 2])
-                            target_dosage_vector *= 2.0
-                            target_dosage_vector += probability_matrix[sample_index_array, 1]
-                        else:
-                            np.copyto(target_dosage_vector, probability_matrix[sample_index_array, 1])
-                            target_dosage_vector += probability_matrix[sample_index_array, 3]
-        except BaseException as error:  # noqa: BLE001
-            with worker_error_lock:
-                worker_errors.append(error)
-
-    variants_per_thread = -(-variant_count // max(num_threads, 1))
-    worker_threads: list[threading.Thread] = []
-    variant_start_index = 0
-    for _ in range(max(num_threads, 1)):
-        variant_stop_index = min(variant_start_index + variants_per_thread, variant_count)
-        if variant_start_index >= variant_stop_index:
-            break
-        worker_thread = threading.Thread(target=worker, args=(variant_start_index, variant_stop_index))
-        worker_threads.append(worker_thread)
-        worker_thread.start()
-        variant_start_index = variant_stop_index
-    for worker_thread in worker_threads:
-        worker_thread.join()
-    if worker_errors:
-        raise worker_errors[0]
-    return np.asarray(direct_dosage_by_variant.T, dtype=dtype, order=numpy_order)
-
-
 def build_bgen_variant_table(bgen_handle: OpenBgenHandle) -> pl.DataFrame:
-    """Build normalized variant metadata from an open BGEN handle."""
+    """Build normalized variant metadata from an open BGEN-like handle."""
     variant_table_arrays = build_bgen_variant_table_arrays(bgen_handle)
     return pl.DataFrame(
         {
             "chromosome": variant_table_arrays.chromosome_values,
             "variant_identifier": variant_table_arrays.variant_identifier_values,
-            "genetic_distance": np.zeros(int(bgen_handle.nvariants), dtype=np.float32),
+            "genetic_distance": np.zeros(len(variant_table_arrays.position_values), dtype=np.float32),
             "position": variant_table_arrays.position_values,
             "allele_one": variant_table_arrays.allele_one_values,
             "allele_two": variant_table_arrays.allele_two_values,
@@ -316,7 +234,7 @@ def build_bgen_variant_table(bgen_handle: OpenBgenHandle) -> pl.DataFrame:
 
 
 def build_bgen_variant_table_arrays(bgen_handle: OpenBgenHandle) -> reader.VariantTableArrays:
-    """Build normalized variant metadata arrays from an open BGEN handle."""
+    """Build normalized variant metadata arrays from a BGEN-like handle."""
     allele_identifier_values = np.asarray(bgen_handle.allele_ids, dtype=np.str_)
     allele_pairs = [allele_identifier_value.split(",") for allele_identifier_value in allele_identifier_values]
     counted_allele_values = [allele_pair[-1] if allele_pair else "" for allele_pair in allele_pairs]
@@ -332,19 +250,194 @@ def build_bgen_variant_table_arrays(bgen_handle: OpenBgenHandle) -> reader.Varia
     )
 
 
+def build_variant_table_arrays_from_core_metadata(
+    variant_metadata: CoreVariantMetadata,
+) -> reader.VariantTableArrays:
+    """Build normalized metadata arrays from Rust core metadata lists."""
+    return reader.VariantTableArrays(
+        chromosome_values=np.asarray(variant_metadata.chromosome_values, dtype=np.str_),
+        variant_identifier_values=np.asarray(variant_metadata.variant_identifier_values, dtype=np.str_),
+        position_values=np.asarray(variant_metadata.position_values, dtype=np.int64),
+        allele_one_values=np.asarray(variant_metadata.allele_one_values, dtype=np.str_),
+        allele_two_values=np.asarray(variant_metadata.allele_two_values, dtype=np.str_),
+    )
+
+
+def build_variant_table_from_core_metadata(variant_metadata: CoreVariantMetadata) -> pl.DataFrame:
+    """Build normalized metadata table from Rust core metadata lists."""
+    variant_table_arrays = build_variant_table_arrays_from_core_metadata(variant_metadata)
+    return pl.DataFrame(
+        {
+            "chromosome": variant_table_arrays.chromosome_values,
+            "variant_identifier": variant_table_arrays.variant_identifier_values,
+            "genetic_distance": np.zeros(len(variant_table_arrays.position_values), dtype=np.float32),
+            "position": variant_table_arrays.position_values,
+            "allele_one": variant_table_arrays.allele_one_values,
+            "allele_two": variant_table_arrays.allele_two_values,
+        }
+    )
+
+
+def build_core_variant_metadata(
+    core_reader: CoreBgenHandle,
+    variant_start: int,
+    variant_stop: int,
+) -> CoreVariantMetadata:
+    """Read one normalized metadata slice from the Rust core reader."""
+    (
+        chromosome_values,
+        variant_identifier_values,
+        position_values,
+        allele_one_values,
+        allele_two_values,
+    ) = core_reader.variant_metadata_slice(variant_start, variant_stop)
+    return CoreVariantMetadata(
+        chromosome_values=list(chromosome_values),
+        variant_identifier_values=list(variant_identifier_values),
+        position_values=list(position_values),
+        allele_one_values=list(allele_one_values),
+        allele_two_values=list(allele_two_values),
+    )
+
+
 def resolve_sample_identifier_source(
-    bgen_handle: OpenBgenHandle, sample_path: Path | None
+    core_reader: CoreBgenHandle,
+    sample_path: Path | None,
 ) -> types.SampleIdentifierSource:
     """Resolve where sample identifiers originated for one open BGEN handle."""
     if sample_path is not None:
         return types.SampleIdentifierSource.EXTERNAL
-    if bool(bgen_handle._cbgen.contain_samples):
+    if bool(core_reader.contains_embedded_samples):
         return types.SampleIdentifierSource.EMBEDDED
     return types.SampleIdentifierSource.GENERATED
 
 
+def build_generated_sample_identifier_array(sample_count: int) -> npt.NDArray[np.str_]:
+    """Build deterministic fallback sample identifiers when the file stores none."""
+    return np.asarray([f"sample_{sample_index}" for sample_index in range(sample_count)], dtype=np.str_)
+
+
+def normalize_axis_index(axis_index: int, axis_size: int, axis_name: str) -> int:
+    """Normalize one possibly-negative axis index."""
+    normalized_axis_index = axis_index + axis_size if axis_index < 0 else axis_index
+    if normalized_axis_index < 0 or normalized_axis_index >= axis_size:
+        message = f"{axis_name} index {axis_index} is out of bounds for axis size {axis_size}."
+        raise IndexError(message)
+    return normalized_axis_index
+
+
+def normalize_axis_selector(
+    axis_selector: object,
+    axis_size: int,
+    axis_name: str,
+) -> npt.NDArray[np.int64]:
+    """Normalize one row or column selector into explicit int64 indices."""
+    if axis_selector is None:
+        return np.arange(axis_size, dtype=np.int64)
+    if isinstance(axis_selector, slice):
+        normalized_slice = axis_selector.indices(axis_size)
+        return np.arange(*normalized_slice, dtype=np.int64)
+    if isinstance(axis_selector, (int, np.integer)):
+        return np.asarray([normalize_axis_index(int(axis_selector), axis_size, axis_name)], dtype=np.int64)
+
+    selector_array = np.asarray(axis_selector)
+    if selector_array.dtype == np.bool_:
+        if selector_array.ndim != 1 or selector_array.shape[0] != axis_size:
+            message = (
+                f"{axis_name} boolean selector must be one-dimensional with length {axis_size}. "
+                f"Observed shape {selector_array.shape}."
+            )
+            raise ValueError(message)
+        return np.flatnonzero(selector_array).astype(np.int64, copy=False)
+
+    if selector_array.ndim != 1:
+        message = f"{axis_name} selector must be one-dimensional. Observed shape {selector_array.shape}."
+        raise ValueError(message)
+
+    normalized_values = [
+        normalize_axis_index(int(raw_axis_index), axis_size, axis_name)
+        for raw_axis_index in selector_array.astype(np.int64, copy=False)
+    ]
+    return np.asarray(normalized_values, dtype=np.int64)
+
+
+def normalize_read_selection(index: object, sample_count: int, variant_count: int) -> ReadSelection:
+    """Normalize a bed-reader-like read selector."""
+    sample_selector: object
+    variant_selector: object
+    if index is None:
+        sample_selector = slice(None)
+        variant_selector = slice(None)
+    elif isinstance(index, tuple):
+        if len(index) != 2:
+            message = "BGEN read index tuples must contain exactly two selectors: samples and variants."
+            raise ValueError(message)
+        sample_selector, variant_selector = index
+    else:
+        sample_selector = index
+        variant_selector = slice(None)
+
+    return ReadSelection(
+        sample_index_array=normalize_axis_selector(sample_selector, sample_count, "Sample"),
+        variant_index_array=normalize_axis_selector(variant_selector, variant_count, "Variant"),
+    )
+
+
+def resolve_contiguous_variant_slice(
+    variant_index_array: npt.NDArray[np.int64],
+) -> ContiguousVariantSlice | None:
+    """Resolve a contiguous variant slice when possible."""
+    if variant_index_array.size == 0:
+        return ContiguousVariantSlice(variant_start=0, variant_stop=0)
+    if variant_index_array.size == 1:
+        variant_start = int(variant_index_array[0])
+        return ContiguousVariantSlice(variant_start=variant_start, variant_stop=variant_start + 1)
+    consecutive_differences = np.diff(variant_index_array)
+    if np.all(consecutive_differences == 1):
+        return ContiguousVariantSlice(
+            variant_start=int(variant_index_array[0]),
+            variant_stop=int(variant_index_array[-1]) + 1,
+        )
+    return None
+
+
+def build_variant_read_runs(variant_index_array: npt.NDArray[np.int64]) -> list[VariantReadRun]:
+    """Split a possibly non-contiguous variant request into contiguous runs."""
+    if variant_index_array.size == 0:
+        return []
+
+    variant_read_runs: list[VariantReadRun] = []
+    run_variant_start = int(variant_index_array[0])
+    run_output_start = 0
+
+    for output_index in range(1, int(variant_index_array.size)):
+        previous_variant_index = int(variant_index_array[output_index - 1])
+        current_variant_index = int(variant_index_array[output_index])
+        if current_variant_index != previous_variant_index + 1:
+            variant_read_runs.append(
+                VariantReadRun(
+                    variant_start=run_variant_start,
+                    variant_stop=previous_variant_index + 1,
+                    output_start=run_output_start,
+                    output_stop=output_index,
+                )
+            )
+            run_variant_start = current_variant_index
+            run_output_start = output_index
+
+    variant_read_runs.append(
+        VariantReadRun(
+            variant_start=run_variant_start,
+            variant_stop=int(variant_index_array[-1]) + 1,
+            output_start=run_output_start,
+            output_stop=int(variant_index_array.size),
+        )
+    )
+    return variant_read_runs
+
+
 class BgenReader:
-    """BGEN reader exposing a bed-reader-like public API."""
+    """Native Rust BGEN reader with a bed-reader-like compatibility surface."""
 
     def __init__(
         self,
@@ -358,41 +451,36 @@ class BgenReader:
         Args:
             bgen_path: Path to the `.bgen` file.
             sample_path: Optional explicit `.sample` file path.
-            allow_complex: Forwarded to the backend for complex BGEN metadata.
+            allow_complex: Present for compatibility. Native Rust BGEN reads
+                currently reject unsupported layouts regardless of this flag.
 
         Raises:
             ValueError: The file uses an unsupported genotype layout.
 
         """
+        del allow_complex
         self.bgen_path = Path(bgen_path)
         self.sample_path = resolve_bgen_sample_path(
             self.bgen_path,
             Path(sample_path) if sample_path is not None else None,
         )
-        backend_open_bgen = load_backend_open_bgen()
-        self.backend_handle = backend_open_bgen(
-            self.bgen_path,
-            samples_filepath=self.sample_path,
-            allow_complex=allow_complex,
-            verbose=False,
-        )
-        self.sample_identifier_source = resolve_sample_identifier_source(self.backend_handle, self.sample_path)
+        core_module = load_backend_core()
+        self.core_reader = core_module.PyBgenReader(str(self.bgen_path))
+        self.sample_identifier_source = resolve_sample_identifier_source(self.core_reader, self.sample_path)
         self.sample_identifier_array = self.resolve_sample_identifier_array()
-        self.combination_count = int(np.asarray(self.backend_handle.ncombinations, dtype=np.int32)[0])
-        self.is_phased = bool(np.asarray(self.backend_handle.phased, dtype=np.bool_)[0])
         self._variant_table: pl.DataFrame | None = None
         self._variant_table_arrays: reader.VariantTableArrays | None = None
-        self.validate_supported_layout()
+        self._chromosome_boundary_indices: npt.NDArray[np.int64] | None = None
 
     @property
     def sample_count(self) -> int:
         """Return the number of samples."""
-        return int(self.backend_handle.nsamples)
+        return int(self.core_reader.sample_count)
 
     @property
     def variant_count(self) -> int:
         """Return the number of variants."""
-        return int(self.backend_handle.nvariants)
+        return int(self.core_reader.variant_count)
 
     @property
     def samples(self) -> npt.NDArray[np.str_]:
@@ -403,13 +491,21 @@ class BgenReader:
     def variant_table(self) -> pl.DataFrame:
         """Return normalized BGEN variant metadata."""
         if self._variant_table is None:
-            self._variant_table = build_bgen_variant_table(self.backend_handle)
+            variant_metadata = build_core_variant_metadata(self.core_reader, 0, self.variant_count)
+            self._variant_table = build_variant_table_from_core_metadata(variant_metadata)
         return self._variant_table
 
     def get_variant_table_arrays(self, variant_start: int, variant_stop: int) -> reader.VariantTableArrays:
         """Return normalized metadata arrays for one BGEN variant slice."""
+        if variant_start < 0 or variant_stop < variant_start or variant_stop > self.variant_count:
+            message = (
+                f"Variant bounds must satisfy 0 <= start <= stop <= {self.variant_count}. "
+                f"Received start={variant_start}, stop={variant_stop}."
+            )
+            raise ValueError(message)
         if self._variant_table_arrays is None:
-            self._variant_table_arrays = build_bgen_variant_table_arrays(self.backend_handle)
+            full_variant_metadata = build_core_variant_metadata(self.core_reader, 0, self.variant_count)
+            self._variant_table_arrays = build_variant_table_arrays_from_core_metadata(full_variant_metadata)
         return reader.VariantTableArrays(
             chromosome_values=self._variant_table_arrays.chromosome_values[variant_start:variant_stop],
             variant_identifier_values=self._variant_table_arrays.variant_identifier_values[variant_start:variant_stop],
@@ -418,28 +514,51 @@ class BgenReader:
             allele_two_values=self._variant_table_arrays.allele_two_values[variant_start:variant_stop],
         )
 
+    def split_variant_slice_by_chromosome(
+        self,
+        variant_start: int,
+        variant_stop: int,
+    ) -> tuple[tuple[int, int], ...]:
+        """Return chromosome-homogeneous absolute variant slices within one contiguous request."""
+        if variant_start < 0 or variant_stop < variant_start or variant_stop > self.variant_count:
+            message = (
+                f"Variant bounds must satisfy 0 <= start <= stop <= {self.variant_count}. "
+                f"Received start={variant_start}, stop={variant_stop}."
+            )
+            raise ValueError(message)
+        if variant_start == variant_stop:
+            return ((variant_start, variant_stop),)
+        chromosome_boundary_indices = self.resolve_chromosome_boundary_indices()
+        boundary_start_index = int(np.searchsorted(chromosome_boundary_indices, variant_start, side="right") - 1)
+        boundary_stop_index = int(np.searchsorted(chromosome_boundary_indices, variant_stop, side="left"))
+        chromosome_slices: list[tuple[int, int]] = []
+        for boundary_index in range(boundary_start_index, boundary_stop_index):
+            chromosome_slices.append(
+                (
+                    max(variant_start, int(chromosome_boundary_indices[boundary_index])),
+                    min(variant_stop, int(chromosome_boundary_indices[boundary_index + 1])),
+                )
+            )
+        return tuple(chromosome_slices)
+
     def resolve_sample_identifier_array(self) -> npt.NDArray[np.str_]:
         """Resolve normalized individual identifiers for the open BGEN reader."""
         if self.sample_identifier_source == types.SampleIdentifierSource.EXTERNAL:
             assert self.sample_path is not None
             sample_table = load_sample_identifier_table(self.sample_path)
             return np.asarray(sample_table.get_column("individual_identifier").to_numpy(), dtype=np.str_)
-        return np.asarray(self.backend_handle.samples, dtype=np.str_)
+        if self.sample_identifier_source == types.SampleIdentifierSource.EMBEDDED:
+            return np.asarray(self.core_reader.sample_identifiers(), dtype=np.str_)
+        return build_generated_sample_identifier_array(self.sample_count)
 
-    def validate_supported_layout(self) -> None:
-        """Validate that the file layout can be converted into additive dosages."""
-        allele_count_values = np.asarray(self.backend_handle.nalleles, dtype=np.int32)
-        if not np.all(allele_count_values == 2):
-            message = "Only diploid biallelic BGEN variants are supported. This matches the UK Biobank release format."
-            raise ValueError(message)
-        if self.combination_count == 3 and not self.is_phased:
-            return
-        if self.combination_count == 4 and self.is_phased:
-            return
-        message = (
-            "Unsupported BGEN probability layout. Only diploid biallelic phased or unphased variants are supported."
-        )
-        raise ValueError(message)
+    def resolve_chromosome_boundary_indices(self) -> npt.NDArray[np.int64]:
+        """Resolve absolute variant indices where chromosome runs start and stop."""
+        if self._chromosome_boundary_indices is None:
+            self._chromosome_boundary_indices = np.asarray(
+                self.core_reader.chromosome_boundary_indices(),
+                dtype=np.int64,
+            )
+        return self._chromosome_boundary_indices
 
     def read(
         self,
@@ -448,37 +567,53 @@ class BgenReader:
         order: types.ArrayMemoryOrder = types.ArrayMemoryOrder.C_CONTIGUOUS,
     ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
         """Read BGEN dosages with the same calling convention as `bed_handle.read`."""
-        if dtype in {np.float32, np.float64} and order in {
-            types.ArrayMemoryOrder.C_CONTIGUOUS,
-            types.ArrayMemoryOrder.FORTRAN_CONTIGUOUS,
-        }:
-            sample_index_selector, variant_index_selector = self.backend_handle._split_index(index)
-            sample_index_array = np.asarray(self.backend_handle._sample_range[sample_index_selector], dtype=np.intp)
-            variant_offsets = np.asarray(self.backend_handle._vaddr[variant_index_selector], dtype=np.uint64)
-            num_threads = int(self.backend_handle._get_num_threads(None, len(variant_offsets)))
-            return read_bgen_direct_dosage_matrix(
-                bgen_path=self.bgen_path,
-                variant_offsets=variant_offsets,
-                sample_index_array=sample_index_array,
-                total_sample_count=self.sample_count,
-                combination_count=self.combination_count,
-                is_phased=self.is_phased,
-                dtype=dtype,
-                order=order,
-                num_threads=num_threads,
+        read_selection = normalize_read_selection(index, self.sample_count, self.variant_count)
+        sample_index_array = np.ascontiguousarray(read_selection.sample_index_array, dtype=np.int64)
+        variant_index_array = np.ascontiguousarray(read_selection.variant_index_array, dtype=np.int64)
+        contiguous_variant_slice = resolve_contiguous_variant_slice(variant_index_array)
+
+        if contiguous_variant_slice is not None:
+            dosage_matrix = self.read_float32(
+                sample_index_array,
+                contiguous_variant_slice.variant_start,
+                contiguous_variant_slice.variant_stop,
             )
-        probability_tensor = self.backend_handle.read(index=index, dtype=dtype, order=order.value)
-        return convert_probability_tensor_to_dosage(
-            probability_tensor=np.asarray(probability_tensor, dtype=dtype, order=order.value),
-            combination_count=self.combination_count,
-            is_phased=self.is_phased,
-            dtype=dtype,
-            order=order,
+        else:
+            dosage_matrix = np.empty((sample_index_array.size, variant_index_array.size), dtype=np.float32, order="C")
+            for variant_read_run in build_variant_read_runs(variant_index_array):
+                dosage_matrix[:, variant_read_run.output_start : variant_read_run.output_stop] = self.read_float32(
+                    sample_index_array,
+                    variant_read_run.variant_start,
+                    variant_read_run.variant_stop,
+                )
+
+        return np.asarray(dosage_matrix, dtype=dtype, order=order.value)
+
+    def read_float32(
+        self,
+        sample_index_array: npt.NDArray[np.int64] | npt.NDArray[np.intp],
+        variant_start: int,
+        variant_stop: int,
+    ) -> npt.NDArray[np.float32]:
+        """Read one strict float32 dosage block for the BGEN hot path."""
+        if variant_start < 0 or variant_stop < variant_start or variant_stop > self.variant_count:
+            message = (
+                f"Variant bounds must satisfy 0 <= start <= stop <= {self.variant_count}. "
+                f"Received start={variant_start}, stop={variant_stop}."
+            )
+            raise ValueError(message)
+        if variant_stop == variant_start:
+            return np.empty((len(sample_index_array), 0), dtype=np.float32, order="C")
+        dosage_matrix = self.core_reader.read_dosage_f32(
+            np.ascontiguousarray(sample_index_array, dtype=np.int64),
+            int(variant_start),
+            int(variant_stop),
         )
+        return np.asarray(dosage_matrix, dtype=np.float32, order="C")
 
     def close(self) -> None:
         """Close the underlying BGEN handle."""
-        self.backend_handle.close()
+        self.core_reader.close()
 
     def __enter__(self) -> BgenReader:
         """Return the open reader in a context manager."""
@@ -503,28 +638,23 @@ def open_bgen(
 def load_bgen_sample_table(bgen_path: Path, sample_path: Path | None = None) -> pl.DataFrame:
     """Load BGEN sample identifiers into a normalized identifier table."""
     resolved_sample_path = resolve_bgen_sample_path(bgen_path, sample_path)
-    backend_open_bgen = load_backend_open_bgen()
     if resolved_sample_path is not None:
         sample_table = load_sample_identifier_table(resolved_sample_path)
-        with backend_open_bgen(
-            bgen_path,
-            samples_filepath=resolved_sample_path,
-            allow_complex=True,
-            verbose=False,
-        ) as bgen_handle:
-            if sample_table.height != int(bgen_handle.nsamples):
+        with open_bgen(bgen_path, sample_path=resolved_sample_path) as bgen_reader:
+            if sample_table.height != bgen_reader.sample_count:
                 message = (
+                    f"Expect number of samples in file to match BGEN sample count. "
                     f"Sample file '{resolved_sample_path}' contains {sample_table.height} rows, "
-                    f"but '{bgen_path}' contains {int(bgen_handle.nsamples)} samples."
+                    f"but '{bgen_path}' contains {bgen_reader.sample_count} samples."
                 )
                 raise ValueError(message)
         return sample_table
 
-    with backend_open_bgen(bgen_path, allow_complex=True, verbose=False) as bgen_handle:
-        if resolve_sample_identifier_source(bgen_handle, None) == types.SampleIdentifierSource.GENERATED:
+    with open_bgen(bgen_path) as bgen_reader:
+        if bgen_reader.sample_identifier_source == types.SampleIdentifierSource.GENERATED:
             message = "BGEN file does not contain samples and no .sample file was found."
             raise ValueError(message)
-        return build_sample_identifier_table(np.asarray(bgen_handle.samples, dtype=np.str_))
+        return build_sample_identifier_table(np.asarray(bgen_reader.samples, dtype=np.str_))
 
 
 def read_bgen_chunk_host(
@@ -534,10 +664,10 @@ def read_bgen_chunk_host(
     variant_stop: int,
 ) -> npt.NDArray[np.float32]:
     """Read one BGEN chunk into a host NumPy array of dosages."""
-    genotype_matrix_host = bgen_reader.read(
-        index=(sample_index_array, slice(variant_start, variant_stop)),
-        dtype=np.float32,
-        order=types.ArrayMemoryOrder.C_CONTIGUOUS,
+    genotype_matrix_host = bgen_reader.read_float32(
+        np.ascontiguousarray(sample_index_array, dtype=np.int64),
+        variant_start,
+        variant_stop,
     )
     return np.asarray(genotype_matrix_host, dtype=np.float32, order=types.ArrayMemoryOrder.C_CONTIGUOUS.value)
 

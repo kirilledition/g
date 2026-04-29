@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import importlib
-import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -10,26 +8,26 @@ import numpy as np
 import polars as pl
 import pytest
 
-if importlib.util.find_spec("cbgen") is None or importlib.util.find_spec("bgen_reader") is None:
-    pytest.skip("BGEN dependencies are unavailable in this environment.", allow_module_level=True)
-
-example = importlib.import_module("cbgen").example
-
-from g.io.bgen import (  # noqa: E402
+from g.io.bgen import (
     build_bgen_variant_table,
     build_bgen_variant_table_arrays,
+    build_core_variant_metadata,
     convert_probability_matrix_to_dosage,
     convert_probability_tensor_to_dosage,
     iter_dosage_genotype_chunks,
     iter_genotype_chunks,
-    load_backend_open_bgen,
+    load_backend_core,
     load_bgen_sample_table,
     open_bgen,
     read_bgen_chunk,
     read_bgen_chunk_host,
     validate_bgen_sample_order,
 )
-from g.types import ArrayMemoryOrder, SampleIdentifierSource  # noqa: E402
+from g.types import ArrayMemoryOrder, SampleIdentifierSource
+
+TEST_DATA_DIRECTORY = Path(__file__).resolve().parent / "data" / "bgen"
+HAPLOTYPES_BGEN_PATH = TEST_DATA_DIRECTORY / "haplotypes.bgen"
+COMPLEX_BGEN_PATH = TEST_DATA_DIRECTORY / "complex.23bits.no.samples.bgen"
 
 
 def write_sample_file(sample_path: Path, sample_identifiers: list[str]) -> None:
@@ -131,15 +129,15 @@ def test_convert_probability_tensor_to_dosage_rejects_unsupported_layout() -> No
         )
 
 
-def test_load_backend_open_bgen_reports_missing_dependency() -> None:
+def test_load_backend_core_reports_missing_dependency() -> None:
     with (
         patch(
             "g.io.bgen.importlib.import_module",
             side_effect=ModuleNotFoundError("missing"),
         ),
-        pytest.raises(ModuleNotFoundError, match="requires the `bgen-reader` stack"),
+        pytest.raises(ModuleNotFoundError, match="Rust core helpers are unavailable"),
     ):
-        load_backend_open_bgen()
+        load_backend_core()
 
 
 def test_build_bgen_variant_table_counts_last_allele() -> None:
@@ -176,7 +174,7 @@ def test_build_bgen_variant_table_arrays_counts_last_allele() -> None:
 
 
 def test_open_bgen_reads_phased_haplotype_example_as_dosage() -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
 
     with open_bgen(bgen_path) as bgen_reader:
         assert bgen_reader.sample_count == 4
@@ -196,7 +194,7 @@ def test_open_bgen_reads_phased_haplotype_example_as_dosage() -> None:
 
 
 def test_open_bgen_direct_subset_read_matches_probability_tensor_conversion() -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
     sample_indices = np.array([0, 2], dtype=np.intp)
     variant_slice = slice(1, 4)
 
@@ -206,34 +204,57 @@ def test_open_bgen_direct_subset_read_matches_probability_tensor_conversion() ->
             dtype=np.float32,
             order=ArrayMemoryOrder.C_CONTIGUOUS,
         )
-        combination_count = bgen_reader.combination_count
-        is_phased = bgen_reader.is_phased
-        probability_tensor = bgen_reader.backend_handle.read(
-            index=(sample_indices, variant_slice),
-            dtype=np.float32,
-            order=ArrayMemoryOrder.C_CONTIGUOUS.value,
-        )
-
-    expected_dosage_matrix = convert_probability_tensor_to_dosage(
-        probability_tensor=np.asarray(probability_tensor, dtype=np.float32, order="C"),
-        combination_count=combination_count,
-        is_phased=is_phased,
+    expected_dosage_matrix = np.array(
+        [
+            [1.0, 1.0, 2.0],
+            [2.0, 0.0, 1.0],
+        ],
         dtype=np.float32,
-        order=ArrayMemoryOrder.C_CONTIGUOUS,
     )
     np.testing.assert_allclose(direct_dosage_matrix, expected_dosage_matrix)
 
 
-def test_open_bgen_direct_read_bypasses_backend_probability_tensor() -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+def test_open_bgen_read_float32_matches_read() -> None:
+    bgen_path = HAPLOTYPES_BGEN_PATH
+    sample_indices = np.array([0, 2, 3], dtype=np.intp)
+    variant_start = 1
+    variant_stop = 4
+
+    with open_bgen(bgen_path) as bgen_reader:
+        strict_dosage_matrix = bgen_reader.read_float32(sample_indices, variant_start, variant_stop)
+        compatibility_dosage_matrix = bgen_reader.read(
+            index=(sample_indices, slice(variant_start, variant_stop)),
+            dtype=np.float32,
+            order=ArrayMemoryOrder.C_CONTIGUOUS,
+        )
+
+    np.testing.assert_allclose(strict_dosage_matrix, compatibility_dosage_matrix)
+
+
+def test_open_bgen_read_float32_rejects_invalid_variant_bounds() -> None:
+    bgen_path = HAPLOTYPES_BGEN_PATH
+
+    with open_bgen(bgen_path) as bgen_reader, pytest.raises(ValueError, match="Variant bounds must satisfy"):
+        _ = bgen_reader.read_float32(np.array([0, 1], dtype=np.intp), 3, 2)
+
+
+def test_open_bgen_split_variant_slice_by_chromosome_returns_whole_chunk_for_single_chromosome() -> None:
+    with open_bgen(HAPLOTYPES_BGEN_PATH) as bgen_reader:
+        chromosome_slices = bgen_reader.split_variant_slice_by_chromosome(0, bgen_reader.variant_count)
+
+    assert chromosome_slices == ((0, 4),)
+
+
+def test_open_bgen_float32_read_uses_native_core_reader_for_contiguous_variant_slice() -> None:
+    bgen_path = HAPLOTYPES_BGEN_PATH
 
     with (
         open_bgen(bgen_path) as bgen_reader,
         patch.object(
-            bgen_reader.backend_handle,
-            "read",
-            side_effect=AssertionError("backend probability tensor path should not be used"),
-        ),
+            bgen_reader,
+            "read_float32",
+            wraps=bgen_reader.read_float32,
+        ) as mock_read_float32,
     ):
         dosage_matrix = bgen_reader.read(
             index=(np.array([0, 1], dtype=np.intp), slice(0, 2)),
@@ -242,13 +263,17 @@ def test_open_bgen_direct_read_bypasses_backend_probability_tensor() -> None:
         )
 
     assert dosage_matrix.shape == (2, 2)
+    assert mock_read_float32.call_count == 1
 
 
 def test_open_bgen_defers_variant_table_materialization() -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
 
     with (
-        patch("g.io.bgen.build_bgen_variant_table", return_value=pl.DataFrame()) as mock_build_variant_table,
+        patch(
+            "g.io.bgen.build_variant_table_from_core_metadata",
+            return_value=pl.DataFrame(),
+        ) as mock_build_variant_table,
         open_bgen(bgen_path) as bgen_reader,
     ):
         assert mock_build_variant_table.call_count == 0
@@ -257,10 +282,13 @@ def test_open_bgen_defers_variant_table_materialization() -> None:
 
 
 def test_bgen_variant_slice_metadata_does_not_materialize_full_variant_table() -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
 
     with (
-        patch("g.io.bgen.build_bgen_variant_table", return_value=pl.DataFrame()) as mock_build_variant_table,
+        patch(
+            "g.io.bgen.build_variant_table_from_core_metadata",
+            return_value=pl.DataFrame(),
+        ) as mock_build_variant_table,
         open_bgen(bgen_path) as bgen_reader,
     ):
         variant_table_arrays = bgen_reader.get_variant_table_arrays(0, 2)
@@ -270,25 +298,25 @@ def test_bgen_variant_slice_metadata_does_not_materialize_full_variant_table() -
 
 
 def test_bgen_variant_slice_metadata_caches_full_array_build() -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
 
     with (
         patch(
-            "g.io.bgen.build_bgen_variant_table_arrays",
-            wraps=build_bgen_variant_table_arrays,
-        ) as mock_build_variant_table_arrays,
+            "g.io.bgen.build_core_variant_metadata",
+            wraps=build_core_variant_metadata,
+        ) as mock_build_core_variant_metadata,
         open_bgen(bgen_path) as bgen_reader,
     ):
         first_slice = bgen_reader.get_variant_table_arrays(0, 2)
         second_slice = bgen_reader.get_variant_table_arrays(2, 4)
 
-    assert mock_build_variant_table_arrays.call_count == 1
+    assert mock_build_core_variant_metadata.call_count == 1
     assert first_slice.variant_identifier_values.shape == (2,)
     assert second_slice.variant_identifier_values.shape == (2,)
 
 
 def test_open_bgen_uses_external_sample_file(tmp_path: Path) -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
     sample_path = tmp_path / "custom_ids.sample"
     custom_identifiers = ["person_a", "person_b", "person_c", "person_d"]
     write_sample_file(sample_path, custom_identifiers)
@@ -299,7 +327,7 @@ def test_open_bgen_uses_external_sample_file(tmp_path: Path) -> None:
 
 
 def test_open_bgen_uses_id_2_values_from_oxford_sample_file(tmp_path: Path) -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
     sample_path = tmp_path / "oxford.sample"
     sample_path.write_text(
         "ID_1 ID_2 missing sex\n0 0 0 D\n0 person_a 0 1\n0 person_b 0 2\n0 person_c 0 1\n0 person_d 0 2\n",
@@ -311,7 +339,7 @@ def test_open_bgen_uses_id_2_values_from_oxford_sample_file(tmp_path: Path) -> N
 
 
 def test_load_bgen_sample_table_uses_embedded_samples() -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
 
     sample_table = load_bgen_sample_table(bgen_path)
 
@@ -324,7 +352,7 @@ def test_load_bgen_sample_table_uses_embedded_samples() -> None:
 
 
 def test_load_bgen_sample_table_uses_external_sample_file(tmp_path: Path) -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
     sample_path = tmp_path / "custom_ids.sample"
     custom_identifiers = ["person_a", "person_b", "person_c", "person_d"]
     write_sample_file(sample_path, custom_identifiers)
@@ -336,7 +364,7 @@ def test_load_bgen_sample_table_uses_external_sample_file(tmp_path: Path) -> Non
 
 
 def test_load_bgen_sample_table_rejects_sample_count_mismatch(tmp_path: Path) -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
     sample_path = tmp_path / "mismatch.sample"
     write_sample_file(sample_path, ["person_a", "person_b", "person_c"])
 
@@ -345,14 +373,14 @@ def test_load_bgen_sample_table_rejects_sample_count_mismatch(tmp_path: Path) ->
 
 
 def test_load_bgen_sample_table_requires_sample_file_when_identifiers_are_missing() -> None:
-    bgen_path = Path(example.get("complex.23bits.no.samples.bgen"))
+    bgen_path = COMPLEX_BGEN_PATH
 
-    with pytest.raises(ValueError, match=r"does not contain samples and no \.sample file was found"):
+    with pytest.raises(ValueError, match="Only diploid biallelic BGEN variants are supported"):
         load_bgen_sample_table(bgen_path)
 
 
 def test_validate_bgen_sample_order_failure() -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
     sample_indices = np.arange(4, dtype=np.intp)
     expected_identifiers = np.array(["wrong1", "wrong2", "wrong3", "wrong4"], dtype=np.str_)
 
@@ -361,7 +389,7 @@ def test_validate_bgen_sample_order_failure() -> None:
 
 
 def test_validate_bgen_sample_order_requires_real_identifiers() -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
 
     with (
         open_bgen(bgen_path) as bgen_reader,
@@ -380,7 +408,7 @@ def test_validate_bgen_sample_order_requires_real_identifiers() -> None:
 
 
 def test_read_bgen_chunk_helpers_return_expected_shapes() -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
 
     with open_bgen(bgen_path) as bgen_reader:
         host_chunk = read_bgen_chunk_host(
@@ -400,31 +428,11 @@ def test_read_bgen_chunk_helpers_return_expected_shapes() -> None:
     assert device_chunk.shape == (4, 2)
 
 
-def test_bgen_reader_rejects_non_biallelic_layout() -> None:
-    fake_bgen_handle = SimpleNamespace(
-        allele_ids=np.array(["A,C,G"], dtype=np.str_),
-        ids=np.array(["variant_1"], dtype=np.str_),
-        rsids=np.array(["rs1"], dtype=np.str_),
-        chromosomes=np.array(["1"], dtype=np.str_),
-        positions=np.array([123], dtype=np.int64),
-        nvariants=1,
-        nsamples=2,
-        nalleles=np.array([3], dtype=np.int32),
-        ncombinations=np.array([3], dtype=np.int32),
-        phased=np.array([False]),
-        samples=np.array(["sample_1", "sample_2"], dtype=np.str_),
-        _cbgen=SimpleNamespace(contain_samples=True),
-        close=lambda: None,
-    )
+def test_bgen_reader_rejects_unsupported_complex_layout() -> None:
+    bgen_path = COMPLEX_BGEN_PATH
 
-    with (
-        patch(
-            "g.io.bgen.load_backend_open_bgen",
-            return_value=lambda *args, **kwargs: fake_bgen_handle,
-        ),
-        pytest.raises(ValueError, match="Only diploid biallelic BGEN variants are supported"),
-    ):
-        open_bgen("study.bgen")
+    with pytest.raises(ValueError, match="Only diploid biallelic BGEN variants are supported"):
+        open_bgen(bgen_path)
 
 
 class FakeGeneratedSampleReader:
@@ -476,7 +484,7 @@ def test_iter_dosage_genotype_chunks_requires_real_sample_identifiers() -> None:
 
 
 def test_iter_genotype_chunks() -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
     sample_indices = np.arange(4, dtype=np.int64)
     expected_ids = np.array([f"sample_{sample_index}" for sample_index in range(4)], dtype=np.str_)
 
@@ -498,7 +506,7 @@ def test_iter_genotype_chunks() -> None:
 
 
 def test_iter_dosage_genotype_chunks() -> None:
-    bgen_path = Path(example.get("haplotypes.bgen"))
+    bgen_path = HAPLOTYPES_BGEN_PATH
     sample_indices = np.arange(4, dtype=np.int64)
     expected_ids = np.array([f"sample_{sample_index}" for sample_index in range(4)], dtype=np.str_)
 

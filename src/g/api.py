@@ -15,7 +15,7 @@ prepare_output_run = output.prepare_output_run
 persist_chunked_results = output.persist_chunked_results
 finalize_chunks_to_parquet = output.finalize_chunks_to_parquet
 
-DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE = 2048
+DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE = 8192
 
 
 @dataclasses.dataclass(frozen=True)
