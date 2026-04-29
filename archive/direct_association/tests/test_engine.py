@@ -1,9 +1,9 @@
 import numpy as np
-
 from g.compute.logistic import (
     LogisticErrorCode,
     LogisticMethod,
 )
+
 from g.engine import format_logistic_error_codes, format_logistic_method_codes
 
 

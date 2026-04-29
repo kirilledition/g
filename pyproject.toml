@@ -52,7 +52,7 @@ cache-keys = [
 [tool.ruff]
 line-length = 120
 target-version = "py313"
-exclude = ["scripts/"]
+exclude = ["archive/", "scripts/"]
 
 [tool.ruff.lint]
 fixable = ["ALL"]

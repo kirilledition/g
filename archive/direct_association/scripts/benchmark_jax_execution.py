@@ -18,9 +18,9 @@ import numpy as np
 import polars as pl
 from bed_reader import open_bed
 from bed_reader._open_bed import get_num_threads
-
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
 from g.compute.logistic import LogisticMethod, compute_logistic_association_chunk
+
 from g.engine import (
     LinearChunkAccumulator,
     LogisticChunkAccumulator,

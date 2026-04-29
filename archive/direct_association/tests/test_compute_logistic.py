@@ -1,6 +1,5 @@
 import jax.numpy as jnp
 import numpy as np
-
 from g.compute.logistic import (
     InformationComponents,
     assemble_full_information_matrix,

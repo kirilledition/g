@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 import numpy as np
-
 from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
 
 

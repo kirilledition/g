@@ -13,8 +13,8 @@ from g.io.source import (
     build_bgen_source_config,
     build_genotype_source_signature_paths,
     build_plink_source_config,
+    iter_dosage_genotype_chunks_from_source,
     iter_genotype_chunks_from_source,
-    iter_linear_genotype_chunks_from_source,
     load_aligned_sample_data_from_source,
     resolve_genotype_source_config,
     validate_genotype_source_config,
@@ -282,13 +282,13 @@ def test_resolve_genotype_source_config_rejects_sample_for_plink() -> None:
         resolve_genotype_source_config("dataset", None, "dataset.sample")
 
 
-def test_iter_linear_genotype_chunks_from_source_dispatches_to_plink_reader() -> None:
-    """Ensure the linear source iterator dispatches through the PLINK backend."""
+def test_iter_dosage_genotype_chunks_from_source_dispatches_to_plink_reader() -> None:
+    """Ensure the dosage source iterator dispatches through the PLINK backend."""
     plink_source_config = build_plink_source_config(Path("study"))
 
-    with patch("g.io.source.iter_plink_linear_genotype_chunks", return_value=iter(())) as mock_iter_plink:
-        linear_chunks = list(
-            iter_linear_genotype_chunks_from_source(
+    with patch("g.io.source.iter_plink_dosage_genotype_chunks", return_value=iter(())) as mock_iter_plink:
+        dosage_chunks = list(
+            iter_dosage_genotype_chunks_from_source(
                 genotype_source_config=plink_source_config,
                 sample_indices=np.array([0, 1], dtype=np.int64),
                 expected_individual_identifiers=np.array(["sample0", "sample1"]),
@@ -297,17 +297,17 @@ def test_iter_linear_genotype_chunks_from_source_dispatches_to_plink_reader() ->
             )
         )
 
-    assert linear_chunks == []
+    assert dosage_chunks == []
     mock_iter_plink.assert_called_once()
 
 
-def test_iter_linear_genotype_chunks_from_source_dispatches_to_bgen_reader() -> None:
-    """Ensure the linear source iterator dispatches through the BGEN backend."""
+def test_iter_dosage_genotype_chunks_from_source_dispatches_to_bgen_reader() -> None:
+    """Ensure the dosage source iterator dispatches through the BGEN backend."""
     bgen_source_config = build_bgen_source_config(Path("study.bgen"))
 
-    with patch("g.io.source.iter_bgen_linear_genotype_chunks", return_value=iter(())) as mock_iter_bgen:
-        linear_chunks = list(
-            iter_linear_genotype_chunks_from_source(
+    with patch("g.io.source.iter_bgen_dosage_genotype_chunks", return_value=iter(())) as mock_iter_bgen:
+        dosage_chunks = list(
+            iter_dosage_genotype_chunks_from_source(
                 genotype_source_config=bgen_source_config,
                 sample_indices=np.array([0, 1], dtype=np.int64),
                 expected_individual_identifiers=np.array(["sample0", "sample1"]),
@@ -316,18 +316,18 @@ def test_iter_linear_genotype_chunks_from_source_dispatches_to_bgen_reader() -> 
             )
         )
 
-    assert linear_chunks == []
+    assert dosage_chunks == []
     mock_iter_bgen.assert_called_once()
 
 
-def test_iter_linear_genotype_chunks_from_source_reuses_open_reader() -> None:
+def test_iter_dosage_genotype_chunks_from_source_reuses_open_reader() -> None:
     """Ensure source iteration can reuse one already-open genotype reader."""
     bgen_source_config = build_bgen_source_config(Path("study.bgen"))
     genotype_reader = typing.cast("GenotypeReader", FakeSourceReader())
 
-    with patch("g.io.source.iter_linear_genotype_chunks_from_reader", return_value=iter(())) as mock_iter_reader:
+    with patch("g.io.source.iter_dosage_genotype_chunks_from_reader", return_value=iter(())) as mock_iter_reader:
         linear_chunks = list(
-            iter_linear_genotype_chunks_from_source(
+            iter_dosage_genotype_chunks_from_source(
                 genotype_source_config=bgen_source_config,
                 sample_indices=np.array([0, 1], dtype=np.int64),
                 expected_individual_identifiers=np.array(["sample0", "sample1"]),

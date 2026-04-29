@@ -10,8 +10,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
-
 from g.compute.logistic import LogisticMethod
+
 from g.engine import compute_logistic_association_with_missing_exclusion
 from g.io.plink import iter_genotype_chunks, load_aligned_sample_data
 

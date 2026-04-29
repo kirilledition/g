@@ -27,6 +27,46 @@ DEFAULT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_WRITER_TIMEOUT_SECONDS = 120.0
 DEFAULT_PAYLOAD_BATCH_SIZE = 1
 
+LINEAR_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
+    "chunk_identifier": pl.Int64(),
+    "variant_start_index": pl.Int64(),
+    "variant_stop_index": pl.Int64(),
+    "chromosome": pl.String(),
+    "position": pl.Int64(),
+    "variant_identifier": pl.String(),
+    "allele_one": pl.String(),
+    "allele_two": pl.String(),
+    "allele_one_frequency": pl.Float32(),
+    "observation_count": pl.Int32(),
+    "beta": pl.Float32(),
+    "standard_error": pl.Float32(),
+    "t_statistic": pl.Float32(),
+    "p_value": pl.Float32(),
+    "is_valid": pl.Boolean(),
+}
+
+LOGISTIC_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
+    "chunk_identifier": pl.Int64(),
+    "variant_start_index": pl.Int64(),
+    "variant_stop_index": pl.Int64(),
+    "chromosome": pl.String(),
+    "position": pl.Int64(),
+    "variant_identifier": pl.String(),
+    "allele_one": pl.String(),
+    "allele_two": pl.String(),
+    "allele_one_frequency": pl.Float32(),
+    "observation_count": pl.Int32(),
+    "beta": pl.Float32(),
+    "standard_error": pl.Float32(),
+    "z_statistic": pl.Float32(),
+    "p_value": pl.Float32(),
+    "firth_flag": pl.String(),
+    "error_code": pl.String(),
+    "converged": pl.Boolean(),
+    "iteration_count": pl.Int32(),
+    "is_valid": pl.Boolean(),
+}
+
 REGENIE2_LINEAR_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
     "chunk_identifier": pl.Int64(),
     "variant_start_index": pl.Int64(),
@@ -48,7 +88,13 @@ REGENIE2_LINEAR_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
 
 @dataclass(frozen=True)
 class OutputRunPaths:
-    """Filesystem paths for one chunked output run."""
+    """Filesystem paths for one chunked output run.
+
+    Attributes:
+        run_directory: Root directory for the run.
+        chunks_directory: Directory containing Arrow IPC chunk files.
+
+    """
 
     run_directory: Path
     chunks_directory: Path
@@ -56,7 +102,13 @@ class OutputRunPaths:
 
 @dataclass(frozen=True)
 class PreparedOutputRun:
-    """Prepared output run state for chunk persistence."""
+    """Prepared output run state for chunk persistence.
+
+    Attributes:
+        output_run_paths: Resolved output run paths.
+        committed_chunk_identifiers: Identifiers of already-committed chunks.
+
+    """
 
     output_run_paths: OutputRunPaths
     committed_chunk_identifiers: frozenset[int]
@@ -64,10 +116,11 @@ class PreparedOutputRun:
 
 def get_output_schema(association_mode: types.AssociationMode) -> dict[str, pl.DataType]:
     """Return the fixed output schema for the requested mode."""
-    if association_mode != types.AssociationMode.REGENIE2_LINEAR:
-        message = f"Unsupported association mode for active output schema: {association_mode}"
-        raise ValueError(message)
-    return REGENIE2_LINEAR_OUTPUT_SCHEMA
+    if association_mode == types.AssociationMode.LINEAR:
+        return LINEAR_OUTPUT_SCHEMA
+    if association_mode == types.AssociationMode.REGENIE2_LINEAR:
+        return REGENIE2_LINEAR_OUTPUT_SCHEMA
+    return LOGISTIC_OUTPUT_SCHEMA
 
 
 def cast_frame_to_schema(data_frame: pl.DataFrame, association_mode: types.AssociationMode) -> pl.DataFrame:
@@ -79,7 +132,16 @@ def cast_frame_to_schema(data_frame: pl.DataFrame, association_mode: types.Assoc
 
 
 def resolve_output_run_paths(output_root: Path, association_mode: types.AssociationMode) -> OutputRunPaths:
-    """Derive run paths from an output root and association mode."""
+    """Derive run paths from an output root and association mode.
+
+    Args:
+        output_root: User-specified output directory or prefix.
+        association_mode: Association mode enum value.
+
+    Returns:
+        Resolved run and chunk directory paths.
+
+    """
     run_directory = output_root if output_root.suffix == ".run" else output_root.with_suffix(f".{association_mode}.run")
     return OutputRunPaths(
         run_directory=run_directory,
@@ -88,12 +150,25 @@ def resolve_output_run_paths(output_root: Path, association_mode: types.Associat
 
 
 def build_chunk_file_name(chunk_identifier: int) -> str:
-    """Build a deterministic chunk file name from a chunk identifier."""
+    """Build a deterministic chunk file name from a chunk identifier.
+
+    Args:
+        chunk_identifier: Variant start index for this chunk.
+
+    """
     return f"chunk_{chunk_identifier:09d}.arrow"
 
 
 def scan_committed_chunk_identifiers(chunks_directory: Path) -> frozenset[int]:
-    """Scan a chunks directory and return identifiers of completed chunks."""
+    """Scan a chunks directory and return identifiers of completed chunks.
+
+    Only files matching the ``chunk_NNNNNNNNN.arrow`` pattern are considered.
+    Temporary ``.arrow.tmp`` files left by interrupted writes are ignored.
+
+    Args:
+        chunks_directory: Directory to scan.
+
+    """
     if not chunks_directory.exists():
         return frozenset()
     committed_identifiers: set[int] = set()
@@ -110,7 +185,24 @@ def prepare_output_run(
     association_mode: types.AssociationMode,
     resume: bool,
 ) -> PreparedOutputRun:
-    """Prepare a chunked output run directory and discover resumable state."""
+    """Prepare a chunked output run directory and discover resumable state.
+
+    When ``resume`` is ``True``, existing chunk files are scanned and their
+    identifiers returned so the compute pipeline can skip them.
+
+    Args:
+        output_root: User-specified output directory or prefix.
+        association_mode: Association mode enum value.
+        resume: Whether to resume from previously written chunks.
+
+    Raises:
+        ValueError: If the run directory is non-empty and resume is not set.
+
+    Returns:
+        Prepared output paths and a frozenset of already-committed chunk
+        identifiers.
+
+    """
     output_run_paths = resolve_output_run_paths(output_root, association_mode)
     if not resume and output_run_paths.run_directory.exists() and any(output_run_paths.run_directory.iterdir()):
         message = (
@@ -133,7 +225,12 @@ def prepare_output_run(
 
 
 def build_output_frame_from_payload(chunk_payload: engine.ChunkPayload) -> pl.DataFrame:
-    """Build a Polars DataFrame from a host-side chunk payload."""
+    """Build a Polars DataFrame from a host-side chunk payload.
+
+    Args:
+        chunk_payload: Payload containing numpy arrays ready for persistence.
+
+    """
     row_count = len(chunk_payload.position)
 
     def materialize_host_array(value: object) -> object:
@@ -141,25 +238,50 @@ def build_output_frame_from_payload(chunk_payload: engine.ChunkPayload) -> pl.Da
             return np.ascontiguousarray(value).copy()
         return value
 
-    return pl.DataFrame(
-        {
-            "chunk_identifier": [chunk_payload.chunk_identifier] * row_count,
-            "variant_start_index": [chunk_payload.variant_start_index] * row_count,
-            "variant_stop_index": [chunk_payload.variant_stop_index] * row_count,
-            "chromosome": materialize_host_array(chunk_payload.chromosome),
-            "position": materialize_host_array(chunk_payload.position),
-            "variant_identifier": materialize_host_array(chunk_payload.variant_identifier),
-            "allele_one": materialize_host_array(chunk_payload.allele_one),
-            "allele_two": materialize_host_array(chunk_payload.allele_two),
-            "allele_one_frequency": materialize_host_array(chunk_payload.allele_one_frequency),
-            "observation_count": materialize_host_array(chunk_payload.observation_count),
-            "beta": materialize_host_array(chunk_payload.beta),
-            "standard_error": materialize_host_array(chunk_payload.standard_error),
-            "chi_squared": materialize_host_array(chunk_payload.chi_squared),
-            "log10_p_value": materialize_host_array(chunk_payload.log10_p_value),
-            "is_valid": materialize_host_array(chunk_payload.is_valid),
-        }
-    )
+    shared_columns = {
+        "chunk_identifier": [chunk_payload.chunk_identifier] * row_count,
+        "variant_start_index": [chunk_payload.variant_start_index] * row_count,
+        "variant_stop_index": [chunk_payload.variant_stop_index] * row_count,
+        "chromosome": materialize_host_array(chunk_payload.chromosome),
+        "position": materialize_host_array(chunk_payload.position),
+        "variant_identifier": materialize_host_array(chunk_payload.variant_identifier),
+        "allele_one": materialize_host_array(chunk_payload.allele_one),
+        "allele_two": materialize_host_array(chunk_payload.allele_two),
+        "allele_one_frequency": materialize_host_array(chunk_payload.allele_one_frequency),
+        "observation_count": materialize_host_array(chunk_payload.observation_count),
+        "beta": materialize_host_array(chunk_payload.beta),
+        "standard_error": materialize_host_array(chunk_payload.standard_error),
+        "is_valid": materialize_host_array(chunk_payload.is_valid),
+    }
+    if isinstance(chunk_payload, engine.LinearChunkPayload):
+        output_frame = pl.DataFrame(
+            {
+                **shared_columns,
+                "t_statistic": materialize_host_array(chunk_payload.t_statistic),
+                "p_value": materialize_host_array(chunk_payload.p_value),
+            }
+        )
+    elif isinstance(chunk_payload, engine.Regenie2LinearChunkPayload):
+        output_frame = pl.DataFrame(
+            {
+                **shared_columns,
+                "chi_squared": materialize_host_array(chunk_payload.chi_squared),
+                "log10_p_value": materialize_host_array(chunk_payload.log10_p_value),
+            }
+        )
+    else:
+        output_frame = pl.DataFrame(
+            {
+                **shared_columns,
+                "z_statistic": materialize_host_array(chunk_payload.z_statistic),
+                "p_value": materialize_host_array(chunk_payload.p_value),
+                "firth_flag": materialize_host_array(chunk_payload.firth_flag),
+                "error_code": materialize_host_array(chunk_payload.error_code),
+                "converged": materialize_host_array(chunk_payload.converged),
+                "iteration_count": materialize_host_array(chunk_payload.iteration_count),
+            }
+        )
+    return output_frame
 
 
 def write_chunk_to_disk(
@@ -167,7 +289,17 @@ def write_chunk_to_disk(
     chunks_directory: Path,
     association_mode: types.AssociationMode,
 ) -> None:
-    """Atomically persist one chunk as an Arrow IPC file."""
+    """Atomically persist one chunk as an Arrow IPC file.
+
+    Writes to a temporary file first, then renames. This guarantees that
+    the chunk file is either fully written or absent, never partial.
+
+    Args:
+        chunk_payload: Host-side payload to persist.
+        chunks_directory: Directory to write the chunk into.
+        association_mode: Association mode enum value.
+
+    """
     chunk_file_name = build_chunk_file_name(chunk_payload.chunk_identifier)
     chunk_file_path = chunks_directory / chunk_file_name
     temporary_path = chunk_file_path.with_suffix(".arrow.tmp")
@@ -183,7 +315,19 @@ def run_background_writer(
     association_mode: types.AssociationMode,
     error_container: list[BaseException],
 ) -> None:
-    """Background thread loop that drains the work queue and writes chunks."""
+    """Background thread loop that drains the work queue and writes chunks.
+
+    Reads payloads from ``work_queue`` until a ``None`` sentinel is received.
+    If an exception occurs, it is stored in ``error_container`` so the main
+    thread can re-raise it.
+
+    Args:
+        work_queue: Bounded queue of chunk payloads (``None`` = shutdown).
+        chunks_directory: Target directory for Arrow IPC files.
+        association_mode: Association mode enum value.
+        error_container: Mutable list where a caught exception is appended.
+
+    """
     try:
         while True:
             chunk_payload = work_queue.get()
@@ -195,7 +339,9 @@ def run_background_writer(
 
 
 def persist_chunked_results(
-    frame_iterator: collections.abc.Iterator[engine.Regenie2LinearChunkAccumulator],
+    frame_iterator: collections.abc.Iterator[engine.LinearChunkAccumulator]
+    | collections.abc.Iterator[engine.LogisticChunkAccumulator]
+    | collections.abc.Iterator[engine.Regenie2LinearChunkAccumulator],
     output_run_paths: OutputRunPaths,
     association_mode: types.AssociationMode,
     *,
@@ -203,7 +349,25 @@ def persist_chunked_results(
     writer_timeout_seconds: float = DEFAULT_WRITER_TIMEOUT_SECONDS,
     payload_batch_size: int = DEFAULT_PAYLOAD_BATCH_SIZE,
 ) -> None:
-    """Persist chunked results through a non-blocking background writer."""
+    """Persist chunked results through a non-blocking background writer.
+
+    A bounded queue feeds a single background thread. When the queue is full,
+    the compute thread blocks until the writer drains a slot, providing
+    natural backpressure without unbounded memory growth.
+
+    Args:
+        frame_iterator: Iterator yielding chunk accumulators from the engine.
+        output_run_paths: Resolved output run paths.
+        association_mode: Association mode enum value.
+        writer_queue_depth: Maximum queued chunks before backpressure.
+        writer_timeout_seconds: Maximum wait when placing a chunk on the queue.
+        payload_batch_size: Number of chunk accumulators to materialize together.
+
+    Raises:
+        RuntimeError: If the background writer thread dies.
+        TimeoutError: If the queue remains full beyond the timeout.
+
+    """
     work_queue: queue.Queue[engine.ChunkPayload | None] = queue.Queue(maxsize=writer_queue_depth)
     writer_errors: list[BaseException] = []
     writer_thread = threading.Thread(
@@ -224,7 +388,9 @@ def persist_chunked_results(
                 raise TimeoutError(message) from error
 
     try:
-        chunk_accumulator_batch: list[engine.Regenie2LinearChunkAccumulator] = []
+        chunk_accumulator_batch: list[
+            engine.LinearChunkAccumulator | engine.LogisticChunkAccumulator | engine.Regenie2LinearChunkAccumulator
+        ] = []
         for chunk_accumulator in frame_iterator:
             if writer_errors:
                 message = f"Background writer failed: {writer_errors[0]}"
@@ -255,7 +421,16 @@ def finalize_chunks_to_parquet(
     output_run_paths: OutputRunPaths,
     association_mode: types.AssociationMode,
 ) -> Path:
-    """Compact committed Arrow chunk files into a single compressed Parquet file."""
+    """Compact committed Arrow chunk files into a single compressed Parquet file.
+
+    Args:
+        output_run_paths: Run paths containing the chunks directory.
+        association_mode: Association mode enum value.
+
+    Returns:
+        Path to the finalized Parquet file.
+
+    """
     chunk_file_paths = sorted(output_run_paths.chunks_directory.glob("chunk_*.arrow"))
     final_parquet_path = output_run_paths.run_directory / "final.parquet"
     temporary_parquet_path = final_parquet_path.with_suffix(".parquet.tmp")

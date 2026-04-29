@@ -1,6 +1,5 @@
 import jax.numpy as jnp
 import numpy as np
-
 from g.compute.logistic import (
     MINIMUM_PROBABILITY,
     compute_covariate_only_probability_matrix,

@@ -1,4 +1,4 @@
-"""Typed data models for Phase 1 GWAS execution."""
+"""Typed data models for GWAS execution."""
 
 from __future__ import annotations
 
@@ -85,11 +85,11 @@ class GenotypeChunk:
 
 
 @dataclass(frozen=True)
-class LinearGenotypeChunk:
-    """Linear-regression genotype chunk without missingness bookkeeping.
+class DosageGenotypeChunk:
+    """Dosage genotype chunk without missingness bookkeeping.
 
     Attributes:
-        genotypes: Mean-imputed genotype matrix.
+        genotypes: Mean-imputed dosage matrix.
         metadata: Variant metadata for the chunk.
         allele_one_frequency: Allele frequencies per variant.
         observation_count: Observation counts per variant.
@@ -118,87 +118,6 @@ class PreprocessedGenotypeChunkData:
     genotypes: jax.Array
     missing_mask: jax.Array
     has_missing_values: bool
-    allele_one_frequency: jax.Array
-    observation_count: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class LinearAssociationChunkResult:
-    """Association outputs for a linear-regression chunk.
-
-    Attributes:
-        beta: Estimated effect sizes.
-        standard_error: Standard errors of estimates.
-        test_statistic: t-statistics.
-        p_value: Two-tailed p-values.
-        valid_mask: Boolean mask for valid statistics.
-
-    """
-
-    beta: jax.Array
-    standard_error: jax.Array
-    test_statistic: jax.Array
-    p_value: jax.Array
-    valid_mask: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class LinearAssociationState:
-    """Precomputed covariate-only state for linear association chunks.
-
-    Attributes:
-        covariate_matrix: Covariate design matrix.
-        covariate_matrix_transpose: Transpose of the covariate design matrix.
-        covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
-        phenotype_residual: Residuals after covariate adjustment.
-        phenotype_residual_sum_squares: Sum of squared residuals.
-
-    """
-
-    covariate_matrix: jax.Array
-    covariate_matrix_transpose: jax.Array
-    covariate_crossproduct_cholesky_factor: jax.Array
-    phenotype_residual: jax.Array
-    phenotype_residual_sum_squares: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class LogisticAssociationChunkResult:
-    """Association outputs for a logistic-regression chunk.
-
-    Attributes:
-        beta: Estimated effect sizes.
-        standard_error: Standard errors of estimates.
-        test_statistic: Z-statistics (Wald tests).
-        p_value: Two-tailed p-values.
-        method_code: Method indicator encoded by `g.compute.logistic.LogisticMethod`.
-        error_code: Error status code encoded by `g.compute.logistic.LogisticErrorCode`.
-        converged_mask: Boolean mask for convergence.
-        valid_mask: Boolean mask for valid statistics.
-        iteration_count: IRLS iterations performed.
-
-    """
-
-    beta: jax.Array
-    standard_error: jax.Array
-    test_statistic: jax.Array
-    p_value: jax.Array
-    method_code: jax.Array
-    error_code: jax.Array
-    converged_mask: jax.Array
-    valid_mask: jax.Array
-    iteration_count: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class LogisticAssociationEvaluation:
-    """Logistic association result and per-variant summary values."""
-
-    logistic_result: LogisticAssociationChunkResult
     allele_one_frequency: jax.Array
     observation_count: jax.Array
 

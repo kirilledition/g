@@ -605,7 +605,7 @@ def iter_genotype_chunks(
         )
 
 
-def iter_linear_genotype_chunks(
+def iter_dosage_genotype_chunks(
     bgen_path: Path,
     sample_indices: npt.NDArray[np.int64],
     expected_individual_identifiers: npt.NDArray[np.str_],
@@ -613,13 +613,13 @@ def iter_linear_genotype_chunks(
     variant_limit: int | None = None,
     *,
     sample_path: Path | None = None,
-) -> collections.abc.Iterator[models.LinearGenotypeChunk]:
-    """Yield linear-regression genotype chunks without missingness bookkeeping."""
+) -> collections.abc.Iterator[models.DosageGenotypeChunk]:
+    """Yield dosage genotype chunks without missingness bookkeeping."""
     with open_bgen(bgen_path, sample_path=sample_path) as bgen_reader:
         if bgen_reader.sample_identifier_source == types.SampleIdentifierSource.GENERATED:
             message = "BGEN file does not contain samples and no .sample file was found."
             raise ValueError(message)
-        yield from reader.iter_linear_genotype_chunks_from_reader(
+        yield from reader.iter_dosage_genotype_chunks_from_reader(
             genotype_reader=bgen_reader,
             source_name="BGEN",
             sample_indices=sample_indices,

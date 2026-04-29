@@ -43,8 +43,8 @@ __all__ = (
     "build_genotype_chunk",
     "convert_frame_to_float32_jax",
     "infer_covariate_names",
+    "iter_dosage_genotype_chunks",
     "iter_genotype_chunks",
-    "iter_linear_genotype_chunks",
     "load_aligned_sample_data",
     "load_aligned_sample_data_from_individual_identifier_table",
     "load_family_table",
@@ -661,14 +661,14 @@ def iter_genotype_chunks(
         )
 
 
-def iter_linear_genotype_chunks(
+def iter_dosage_genotype_chunks(
     bed_prefix: Path,
     sample_indices: np.ndarray,
     expected_individual_identifiers: np.ndarray,
     chunk_size: int,
     variant_limit: int | None = None,
-) -> collections.abc.Iterator[models.LinearGenotypeChunk]:
-    """Yield linear-regression genotype chunks without missingness bookkeeping."""
+) -> collections.abc.Iterator[models.DosageGenotypeChunk]:
+    """Yield dosage genotype chunks without missingness bookkeeping."""
     sample_index_array = np.ascontiguousarray(sample_indices, dtype=np.intp)
     validate_bed_sample_order(
         bed_prefix=bed_prefix,
@@ -676,7 +676,7 @@ def iter_linear_genotype_chunks(
         expected_individual_identifiers=expected_individual_identifiers,
     )
     with PlinkReader(bed_prefix) as plink_reader:
-        yield from reader.iter_linear_genotype_chunks_from_reader(
+        yield from reader.iter_dosage_genotype_chunks_from_reader(
             genotype_reader=plink_reader,
             source_name="BED",
             sample_indices=sample_indices,

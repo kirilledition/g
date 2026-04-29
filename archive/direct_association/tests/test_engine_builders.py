@@ -8,8 +8,8 @@ if typing.TYPE_CHECKING:
 import jax.numpy as jnp
 import numpy as np
 import polars as pl
-
 from g.compute.logistic import LogisticErrorCode, LogisticMethod
+
 from g.engine import (
     LinearChunkAccumulator,
     LogisticChunkAccumulator,

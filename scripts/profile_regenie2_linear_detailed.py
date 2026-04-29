@@ -487,7 +487,7 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
     )
     wrap_module_function(
         engine_module,
-        "split_linear_genotype_chunk_by_chromosome",
+        "split_dosage_genotype_chunk_by_chromosome",
         build_timed_function("split_chunk_by_chromosome"),
     )
     wrap_module_function(
@@ -527,9 +527,9 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
 
     wrap_module_function(engine_module, "load_prediction_source", prediction_source_wrapper_builder)
 
-    original_iter_linear_genotype_chunks_from_source = engine_module.iter_linear_genotype_chunks_from_source
+    original_iter_dosage_genotype_chunks_from_source = engine_module.iter_dosage_genotype_chunks_from_source
 
-    def profiled_iter_linear_genotype_chunks_from_source(
+    def profiled_iter_dosage_genotype_chunks_from_source(
         genotype_source_config: source.GenotypeSourceConfig,
         sample_indices: np.ndarray,
         expected_individual_identifiers: np.ndarray,
@@ -538,9 +538,9 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
         *,
         prefetch_chunks: int = 0,
         genotype_reader: reader.GenotypeReader | None = None,
-    ) -> collections.abc.Iterator[models.LinearGenotypeChunk]:
+    ) -> collections.abc.Iterator[models.DosageGenotypeChunk]:
         if genotype_reader is None or genotype_source_config.source_format != types.GenotypeSourceFormat.BGEN:
-            yield from original_iter_linear_genotype_chunks_from_source(
+            yield from original_iter_dosage_genotype_chunks_from_source(
                 genotype_source_config=genotype_source_config,
                 sample_indices=sample_indices,
                 expected_individual_identifiers=expected_individual_identifiers,
@@ -606,7 +606,7 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
             )
 
             build_chunk_start_time = time.perf_counter()
-            linear_genotype_chunk = models.LinearGenotypeChunk(
+            dosage_genotype_chunk = models.DosageGenotypeChunk(
                 genotypes=preprocessed_genotype_arrays.genotypes,
                 metadata=reader.build_variant_metadata(variant_table_arrays, variant_start, variant_stop),
                 allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,
@@ -614,25 +614,25 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
             )
             record_stage_duration(
                 stage_timing_accumulators,
-                "build_linear_chunk",
+                "build_dosage_chunk",
                 time.perf_counter() - build_chunk_start_time,
             )
-            yield linear_genotype_chunk
+            yield dosage_genotype_chunk
 
     setattr(
         engine_module,
-        "iter_linear_genotype_chunks_from_source",
-        profiled_iter_linear_genotype_chunks_from_source,
+        "iter_dosage_genotype_chunks_from_source",
+        profiled_iter_dosage_genotype_chunks_from_source,
     )
 
-    def restore_iter_linear() -> None:
+    def restore_iter_dosage() -> None:
         setattr(
             engine_module,
-            "iter_linear_genotype_chunks_from_source",
-            original_iter_linear_genotype_chunks_from_source,
+            "iter_dosage_genotype_chunks_from_source",
+            original_iter_dosage_genotype_chunks_from_source,
         )
 
-    restore_callbacks.append(restore_iter_linear)
+    restore_callbacks.append(restore_iter_dosage)
 
     return TimingInstrumentationHandle(
         stage_timing_accumulators=stage_timing_accumulators,

@@ -13,12 +13,8 @@ def __getattr__(name: str) -> typing.Any:
         return cli.main
     if name in {
         "ComputeConfig",
-        "LinearConfig",
-        "LogisticConfig",
         "Regenie2LinearConfig",
         "RunArtifacts",
-        "linear",
-        "logistic",
         "regenie2_linear",
     }:
         return getattr(api, name)
@@ -41,14 +37,10 @@ __all__ = [
     "ComputeConfig",
     "Device",
     "GenotypeSourceFormat",
-    "LinearConfig",
-    "LogisticConfig",
     "OutputMode",
     "Regenie2LinearConfig",
     "RunArtifacts",
     "SampleIdentifierSource",
-    "linear",
-    "logistic",
     "main",
     "regenie2_linear",
 ]

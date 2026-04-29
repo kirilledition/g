@@ -10,13 +10,12 @@ from dataclasses import asdict, dataclass
 import jax
 import jax.numpy as jnp
 import numpy as np
+from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
 from g.compute.linear_triton import (  # type: ignore
     TritonLinearAssociationState,
     compute_linear_association_statistics_with_triton,
     prepare_triton_linear_association_state,
 )
-
-from g.compute.linear import compute_linear_association_chunk, prepare_linear_association_state
 
 torch: typing.Any = importlib.import_module("torch")
 

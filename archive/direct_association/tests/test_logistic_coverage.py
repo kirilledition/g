@@ -3,7 +3,6 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
-
 from g.compute.logistic import (
     BINARY_CASE_THRESHOLD,
     FIRTH_BATCH_SIZE,

@@ -20,8 +20,8 @@ from g.io.bgen import (  # noqa: E402
     build_bgen_variant_table_arrays,
     convert_probability_matrix_to_dosage,
     convert_probability_tensor_to_dosage,
+    iter_dosage_genotype_chunks,
     iter_genotype_chunks,
-    iter_linear_genotype_chunks,
     load_backend_open_bgen,
     load_bgen_sample_table,
     open_bgen,
@@ -457,7 +457,7 @@ def test_iter_genotype_chunks_requires_real_sample_identifiers() -> None:
         )
 
 
-def test_iter_linear_genotype_chunks_requires_real_sample_identifiers() -> None:
+def test_iter_dosage_genotype_chunks_requires_real_sample_identifiers() -> None:
     with (
         patch(
             "g.io.bgen.open_bgen",
@@ -466,7 +466,7 @@ def test_iter_linear_genotype_chunks_requires_real_sample_identifiers() -> None:
         pytest.raises(ValueError, match=r"does not contain samples and no \.sample file was found"),
     ):
         list(
-            iter_linear_genotype_chunks(
+            iter_dosage_genotype_chunks(
                 bgen_path=Path("study.bgen"),
                 sample_indices=np.arange(2, dtype=np.int64),
                 expected_individual_identifiers=np.array(["sample_1", "sample_2"], dtype=np.str_),
@@ -497,13 +497,13 @@ def test_iter_genotype_chunks() -> None:
     np.testing.assert_allclose(chunks[0].allele_one_frequency, np.array([0.5, 0.5], dtype=np.float32))
 
 
-def test_iter_linear_genotype_chunks() -> None:
+def test_iter_dosage_genotype_chunks() -> None:
     bgen_path = Path(example.get("haplotypes.bgen"))
     sample_indices = np.arange(4, dtype=np.int64)
     expected_ids = np.array([f"sample_{sample_index}" for sample_index in range(4)], dtype=np.str_)
 
     chunks = list(
-        iter_linear_genotype_chunks(
+        iter_dosage_genotype_chunks(
             bgen_path=bgen_path,
             sample_indices=sample_indices,
             expected_individual_identifiers=expected_ids,

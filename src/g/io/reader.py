@@ -179,7 +179,7 @@ def iter_genotype_chunks_from_reader(
         )
 
 
-def iter_linear_genotype_chunks_from_reader(
+def iter_dosage_genotype_chunks_from_reader(
     genotype_reader: GenotypeReader,
     source_name: str,
     sample_indices: npt.NDArray[np.int64],
@@ -188,8 +188,8 @@ def iter_linear_genotype_chunks_from_reader(
     variant_limit: int | None = None,
     *,
     validate_sample_order_flag: bool = True,
-) -> collections.abc.Iterator[models.LinearGenotypeChunk]:
-    """Yield linear-regression genotype chunks from any compatible reader."""
+) -> collections.abc.Iterator[models.DosageGenotypeChunk]:
+    """Yield dosage genotype chunks from any compatible reader."""
     total_variant_count = resolve_total_variant_count(genotype_reader.variant_count, variant_limit)
     if total_variant_count == 0:
         return
@@ -207,18 +207,18 @@ def iter_linear_genotype_chunks_from_reader(
     for variant_start in range(0, total_variant_count, chunk_size):
         variant_stop = min(total_variant_count, variant_start + chunk_size)
         variant_table_arrays = genotype_reader.get_variant_table_arrays(variant_start, variant_stop)
-        with jax.profiler.TraceAnnotation(f"linear.read_{trace_prefix}_chunk"):
+        with jax.profiler.TraceAnnotation(f"dosage.read_{trace_prefix}_chunk"):
             genotype_matrix_host = genotype_reader.read(
                 index=(sample_index_array, slice(variant_start, variant_stop)),
                 dtype=np.float32,
                 order=types.ArrayMemoryOrder.C_CONTIGUOUS,
             )
-        with jax.profiler.TraceAnnotation("linear.device_put_genotypes"):
+        with jax.profiler.TraceAnnotation("dosage.device_put_genotypes"):
             genotype_matrix_device = jax.device_put(genotype_matrix_host)
-        with jax.profiler.TraceAnnotation("linear.preprocess_genotypes"):
+        with jax.profiler.TraceAnnotation("dosage.preprocess_genotypes"):
             preprocessed_genotype_arrays = genotype_processing.preprocess_genotype_matrix_arrays(genotype_matrix_device)
-        with jax.profiler.TraceAnnotation("linear.build_chunk"):
-            yield models.LinearGenotypeChunk(
+        with jax.profiler.TraceAnnotation("dosage.build_chunk"):
+            yield models.DosageGenotypeChunk(
                 genotypes=preprocessed_genotype_arrays.genotypes,
                 metadata=build_variant_metadata(variant_table_arrays, variant_start, variant_stop),
                 allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,

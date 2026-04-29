@@ -1,1 +1,1 @@
-"""Numerical kernels for GWAS association testing."""
+"""Numerical kernels for active GWAS association testing."""

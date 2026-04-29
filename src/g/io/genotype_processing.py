@@ -125,7 +125,7 @@ def build_genotype_chunk(
     )
 
 
-def build_linear_genotype_chunk(
+def build_dosage_genotype_chunk(
     preprocessed_genotype_arrays: PreprocessedGenotypeArrays,
     chromosome_values: np.ndarray,
     variant_identifier_values: np.ndarray,
@@ -134,9 +134,9 @@ def build_linear_genotype_chunk(
     allele_two_values: np.ndarray,
     variant_start: int,
     variant_stop: int,
-) -> models.LinearGenotypeChunk:
-    """Build one linear-regression genotype chunk without missingness fields."""
-    return models.LinearGenotypeChunk(
+) -> models.DosageGenotypeChunk:
+    """Build one dosage genotype chunk without missingness fields."""
+    return models.DosageGenotypeChunk(
         genotypes=preprocessed_genotype_arrays.genotypes,
         metadata=models.VariantMetadata(
             variant_start_index=variant_start,

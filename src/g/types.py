@@ -20,8 +20,6 @@ class OutputMode(enum.StrEnum):
 class AssociationMode(enum.StrEnum):
     """Statistical association model."""
 
-    LINEAR = "linear"
-    LOGISTIC = "logistic"
     REGENIE2_LINEAR = "regenie2_linear"
 
 

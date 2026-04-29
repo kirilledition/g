@@ -28,16 +28,16 @@ resolve_bgen_sample_path = bgen.resolve_bgen_sample_path
 load_bgen_sample_table = bgen.load_bgen_sample_table
 build_sample_identifier_table = bgen.build_sample_identifier_table
 iter_bgen_genotype_chunks = bgen.iter_genotype_chunks
-iter_bgen_linear_genotype_chunks = bgen.iter_linear_genotype_chunks
+iter_bgen_dosage_genotype_chunks = bgen.iter_dosage_genotype_chunks
 load_aligned_sample_data = plink.load_aligned_sample_data
 load_aligned_sample_data_from_individual_identifier_table = (
     plink.load_aligned_sample_data_from_individual_identifier_table
 )
 iter_plink_genotype_chunks = plink.iter_genotype_chunks
-iter_plink_linear_genotype_chunks = plink.iter_linear_genotype_chunks
+iter_plink_dosage_genotype_chunks = plink.iter_dosage_genotype_chunks
 prefetch_iterator_values = prefetch.prefetch_iterator_values
 iter_genotype_chunks_from_reader = reader.iter_genotype_chunks_from_reader
-iter_linear_genotype_chunks_from_reader = reader.iter_linear_genotype_chunks_from_reader
+iter_dosage_genotype_chunks_from_reader = reader.iter_dosage_genotype_chunks_from_reader
 
 
 def build_plink_source_config(bed_prefix: Path | str) -> GenotypeSourceConfig:
@@ -222,7 +222,7 @@ def iter_genotype_chunks_from_source(
     return prefetch_iterator_values(base_iterator, prefetch_chunks)
 
 
-def iter_linear_genotype_chunks_from_source(
+def iter_dosage_genotype_chunks_from_source(
     genotype_source_config: GenotypeSourceConfig,
     sample_indices: np.ndarray,
     expected_individual_identifiers: np.ndarray,
@@ -231,11 +231,11 @@ def iter_linear_genotype_chunks_from_source(
     *,
     prefetch_chunks: int = 0,
     genotype_reader: reader.GenotypeReader | None = None,
-) -> collections.abc.Iterator[models.LinearGenotypeChunk]:
-    """Yield linear-regression genotype chunks for any supported source format."""
+) -> collections.abc.Iterator[models.DosageGenotypeChunk]:
+    """Yield dosage genotype chunks for any supported source format."""
     validate_genotype_source_config(genotype_source_config)
     if genotype_reader is not None:
-        base_iterator = iter_linear_genotype_chunks_from_reader(
+        base_iterator = iter_dosage_genotype_chunks_from_reader(
             genotype_reader=genotype_reader,
             source_name="BED" if genotype_source_config.source_format == types.GenotypeSourceFormat.PLINK else "BGEN",
             sample_indices=sample_indices,
@@ -245,7 +245,7 @@ def iter_linear_genotype_chunks_from_source(
             validate_sample_order_flag=genotype_source_config.source_format != types.GenotypeSourceFormat.PLINK,
         )
     elif genotype_source_config.source_format == types.GenotypeSourceFormat.PLINK:
-        base_iterator = iter_plink_linear_genotype_chunks(
+        base_iterator = iter_plink_dosage_genotype_chunks(
             bed_prefix=genotype_source_config.source_path,
             sample_indices=sample_indices,
             expected_individual_identifiers=expected_individual_identifiers,
@@ -253,7 +253,7 @@ def iter_linear_genotype_chunks_from_source(
             variant_limit=variant_limit,
         )
     else:
-        base_iterator = iter_bgen_linear_genotype_chunks(
+        base_iterator = iter_bgen_dosage_genotype_chunks(
             bgen_path=genotype_source_config.source_path,
             sample_indices=sample_indices,
             expected_individual_identifiers=expected_individual_identifiers,
