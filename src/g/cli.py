@@ -10,10 +10,14 @@ from g import api, types
 
 app = typer.Typer(
     name="g",
-    help="the GWAS engine.",
+    help="Blazing fast GWAS engine.",
     no_args_is_help=True,
     rich_markup_mode=None,
 )
+
+run_linear_api = api.linear
+run_logistic_api = api.logistic
+run_regenie2_linear_api = api.regenie2_linear
 
 
 def resolve_chunk_size(requested_chunk_size: int | None, association_mode: types.AssociationMode) -> int:
@@ -75,7 +79,7 @@ def run_linear_command(
         resume=resume,
         finalize_parquet=finalize_parquet,
     )
-    artifacts = api.linear(
+    artifacts = run_linear_api(
         bfile=bfile,
         bgen=bgen,
         sample=sample,
@@ -139,7 +143,7 @@ def run_logistic_command(
         tolerance=tolerance,
         firth_fallback=firth_fallback,
     )
-    artifacts = api.logistic(
+    artifacts = run_logistic_api(
         bfile=bfile,
         bgen=bgen,
         sample=sample,
@@ -191,7 +195,7 @@ def run_regenie2_linear_command(
         resume=resume,
         finalize_parquet=finalize_parquet,
     )
-    artifacts = api.regenie2_linear(
+    artifacts = run_regenie2_linear_api(
         bgen=bgen,
         sample=sample,
         pheno=pheno,
