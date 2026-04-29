@@ -273,9 +273,7 @@ def load_aligned_sample_data_from_family_identifier_table(
             pl.col("IID").cast(pl.String),
         )
         selected_covariate_names = covariate_names or infer_covariate_names(covariate_table)
-        # Speeds up missing covariate checks from O(N * M) to O(N + M) by converting the column list to a set.
-        covariate_columns = set(covariate_table.columns)
-        missing_covariates = [name for name in selected_covariate_names if name not in covariate_columns]
+        missing_covariates = [name for name in selected_covariate_names if name not in covariate_table.columns]
         if missing_covariates:
             message = f"Covariate columns are missing from {covariate_path}: {missing_covariates}."
             raise ValueError(message)
@@ -331,9 +329,7 @@ def load_aligned_sample_data_from_individual_identifier_table(
             pl.col("IID").cast(pl.String),
         )
         selected_covariate_names = covariate_names or infer_covariate_names(covariate_table)
-        # Speeds up missing covariate checks from O(N * M) to O(N + M) by converting the column list to a set.
-        covariate_columns = set(covariate_table.columns)
-        missing_covariates = [name for name in selected_covariate_names if name not in covariate_columns]
+        missing_covariates = [name for name in selected_covariate_names if name not in covariate_table.columns]
         if missing_covariates:
             message = f"Covariate columns are missing from {covariate_path}: {missing_covariates}."
             raise ValueError(message)

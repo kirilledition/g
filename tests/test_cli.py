@@ -16,7 +16,7 @@ def test_root_command_without_arguments_shows_help() -> None:
     """Ensure the CLI shows help when invoked without arguments."""
     result = runner.invoke(app, [])
     assert result.exit_code == 2
-    assert "the GWAS engine" in result.output
+    assert "Blazing fast GWAS engine" in result.output
     assert "linear" in result.output
     assert "logistic" in result.output
 
@@ -54,7 +54,7 @@ def test_resolve_chunk_size_preserves_explicit_override() -> None:
 def test_linear_command_dispatches_api_call() -> None:
     """Ensure the linear subcommand forwards arguments to the public API."""
     with patch(
-        "g.cli.api.linear",
+        "g.cli.run_linear_api",
         return_value=RunArtifacts(sumstats_tsv=Path("results/output.linear.tsv")),
     ) as mock_run_linear_api:
         result = runner.invoke(
@@ -89,7 +89,7 @@ def test_linear_command_dispatches_api_call() -> None:
 def test_linear_command_supports_intercept_only_run() -> None:
     """Ensure the linear subcommand allows runs without a covariate table."""
     with patch(
-        "g.cli.api.linear",
+        "g.cli.run_linear_api",
         return_value=RunArtifacts(sumstats_tsv=Path("results/output.linear.tsv")),
     ) as mock_run_linear_api:
         result = runner.invoke(
@@ -115,7 +115,7 @@ def test_linear_command_supports_intercept_only_run() -> None:
 def test_linear_command_supports_bgen_input() -> None:
     """Ensure the linear subcommand can dispatch a BGEN-backed run."""
     with patch(
-        "g.cli.api.linear",
+        "g.cli.run_linear_api",
         return_value=RunArtifacts(sumstats_tsv=Path("results/output.linear.tsv")),
     ) as mock_run_linear_api:
         result = runner.invoke(
@@ -141,7 +141,7 @@ def test_linear_command_supports_bgen_input() -> None:
 def test_linear_command_supports_explicit_bgen_sample_file() -> None:
     """Ensure the CLI forwards an explicit BGEN sample-file path."""
     with patch(
-        "g.cli.api.linear",
+        "g.cli.run_linear_api",
         return_value=RunArtifacts(sumstats_tsv=Path("results/output.linear.tsv")),
     ) as mock_run_linear_api:
         result = runner.invoke(
@@ -211,7 +211,7 @@ def test_logistic_subcommand_without_options_shows_help() -> None:
 def test_logistic_command_dispatches_api_call() -> None:
     """Ensure the logistic subcommand forwards model-specific options to the public API."""
     with patch(
-        "g.cli.api.logistic",
+        "g.cli.run_logistic_api",
         return_value=RunArtifacts(sumstats_tsv=Path("results/output.logistic.tsv")),
     ) as mock_run_logistic_api:
         result = runner.invoke(
@@ -257,7 +257,7 @@ def test_regenie2_linear_subcommand_without_options_shows_help() -> None:
 def test_regenie2_linear_command_dispatches_api_call() -> None:
     """Ensure the REGENIE step 2 linear subcommand forwards arguments to the public API."""
     with patch(
-        "g.cli.api.regenie2_linear",
+        "g.cli.run_regenie2_linear_api",
         return_value=RunArtifacts(sumstats_tsv=Path("results/output.regenie2_linear.tsv")),
     ) as mock_run_regenie2_linear_api:
         result = runner.invoke(
