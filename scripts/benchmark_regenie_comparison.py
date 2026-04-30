@@ -25,6 +25,7 @@ else:
 
 PARITY_BETA_ATOL = 1.0e-3
 PARITY_LOG10P_ATOL = 1.5e-2
+G_FINALIZE_PARQUET = True
 
 
 @dataclass(frozen=True)
@@ -218,6 +219,8 @@ def build_g_step2_command(
         "--device",
         device,
     ]
+    if G_FINALIZE_PARQUET:
+        command_arguments.append("--finalize-parquet")
     if variant_limit is not None:
         command_arguments.extend(["--variant-limit", str(variant_limit)])
     return command_arguments
@@ -294,7 +297,8 @@ def run_g_quantitative_step2(
         stdout_log_path=stdout_log_path,
         stderr_log_path=stderr_log_path,
     )
-    output_path = output_prefix.with_suffix(".regenie2_linear.tsv")
+    output_run_directory = output_prefix.with_suffix(".regenie2_linear.run")
+    output_path = output_run_directory / "final.parquet"
     output_row_count = count_table_rows(output_path)
     variants_per_second = None
     if output_row_count is not None and duration_seconds > 0:
@@ -319,6 +323,11 @@ def run_g_quantitative_step2(
     )
 
 
+def load_g_output_frame(g_output_path: Path) -> pd.DataFrame:
+    """Load one g quantitative step 2 Parquet output table."""
+    return pd.read_parquet(g_output_path)
+
+
 def summarize_quantitative_step2_agreement(
     *,
     regenie_output_path: Path | None,
@@ -338,7 +347,7 @@ def summarize_quantitative_step2_agreement(
             notes="One or both outputs are missing.",
         )
     baseline_frame = pd.read_csv(regenie_output_path, sep=r"\s+")
-    observed_frame = pd.read_csv(g_output_path, sep="\t")
+    observed_frame = load_g_output_frame(g_output_path)
 
     required_observed_columns = {"chromosome", "position", "variant_identifier", "allele_one", "allele_two"}
     required_baseline_columns = {"CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"}

@@ -2,7 +2,12 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::time::Instant;
 
+use flate2::{Decompress, FlushDecompress, Status};
 use flate2::read::ZlibDecoder;
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
@@ -46,6 +51,8 @@ pub struct BgenReaderCore {
     compression_type: CompressionType,
     variant_records: Vec<VariantRecord>,
     chromosome_boundary_indices: Vec<usize>,
+    prepared_sample_selection: Mutex<Option<Arc<SampleSelection>>>,
+    profiling: ReaderProfiling,
 }
 
 #[derive(Debug)]
@@ -56,6 +63,51 @@ struct VariantRecord {
     position: i64,
     counted_allele: String,
     reference_allele: String,
+}
+
+#[derive(Debug, Default)]
+pub struct ReaderProfileSnapshot {
+    pub sample_selection_prepare_ns: u64,
+    pub sample_selection_prepare_count: u64,
+    pub compressed_block_fetch_ns: u64,
+    pub compressed_block_fetch_count: u64,
+    pub decompression_ns: u64,
+    pub decompression_count: u64,
+    pub probability_decode_ns: u64,
+    pub probability_decode_count: u64,
+    pub output_write_ns: u64,
+    pub output_write_count: u64,
+    pub metadata_slice_ns: u64,
+    pub metadata_slice_count: u64,
+}
+
+#[derive(Debug, Default)]
+struct ThreadLocalProfileSnapshot {
+    compressed_block_fetch_ns: u64,
+    compressed_block_fetch_count: u64,
+    decompression_ns: u64,
+    decompression_count: u64,
+    probability_decode_ns: u64,
+    probability_decode_count: u64,
+    output_write_ns: u64,
+    output_write_count: u64,
+}
+
+#[derive(Debug, Default)]
+struct ReaderProfiling {
+    enabled: AtomicBool,
+    sample_selection_prepare_ns: AtomicU64,
+    sample_selection_prepare_count: AtomicU64,
+    compressed_block_fetch_ns: AtomicU64,
+    compressed_block_fetch_count: AtomicU64,
+    decompression_ns: AtomicU64,
+    decompression_count: AtomicU64,
+    probability_decode_ns: AtomicU64,
+    probability_decode_count: AtomicU64,
+    output_write_ns: AtomicU64,
+    output_write_count: AtomicU64,
+    metadata_slice_ns: AtomicU64,
+    metadata_slice_count: AtomicU64,
 }
 
 #[derive(Error, Debug)]
@@ -71,6 +123,84 @@ pub enum BgenError {
 }
 
 pub type VariantMetadataLists = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
+
+impl ReaderProfiling {
+    fn reset(&self) {
+        self.enabled.store(true, Ordering::Relaxed);
+        self.sample_selection_prepare_ns.store(0, Ordering::Relaxed);
+        self.sample_selection_prepare_count.store(0, Ordering::Relaxed);
+        self.compressed_block_fetch_ns.store(0, Ordering::Relaxed);
+        self.compressed_block_fetch_count.store(0, Ordering::Relaxed);
+        self.decompression_ns.store(0, Ordering::Relaxed);
+        self.decompression_count.store(0, Ordering::Relaxed);
+        self.probability_decode_ns.store(0, Ordering::Relaxed);
+        self.probability_decode_count.store(0, Ordering::Relaxed);
+        self.output_write_ns.store(0, Ordering::Relaxed);
+        self.output_write_count.store(0, Ordering::Relaxed);
+        self.metadata_slice_ns.store(0, Ordering::Relaxed);
+        self.metadata_slice_count.store(0, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> ReaderProfileSnapshot {
+        ReaderProfileSnapshot {
+            sample_selection_prepare_ns: self.sample_selection_prepare_ns.load(Ordering::Relaxed),
+            sample_selection_prepare_count: self.sample_selection_prepare_count.load(Ordering::Relaxed),
+            compressed_block_fetch_ns: self.compressed_block_fetch_ns.load(Ordering::Relaxed),
+            compressed_block_fetch_count: self.compressed_block_fetch_count.load(Ordering::Relaxed),
+            decompression_ns: self.decompression_ns.load(Ordering::Relaxed),
+            decompression_count: self.decompression_count.load(Ordering::Relaxed),
+            probability_decode_ns: self.probability_decode_ns.load(Ordering::Relaxed),
+            probability_decode_count: self.probability_decode_count.load(Ordering::Relaxed),
+            output_write_ns: self.output_write_ns.load(Ordering::Relaxed),
+            output_write_count: self.output_write_count.load(Ordering::Relaxed),
+            metadata_slice_ns: self.metadata_slice_ns.load(Ordering::Relaxed),
+            metadata_slice_count: self.metadata_slice_count.load(Ordering::Relaxed),
+        }
+    }
+
+    fn merge_thread_local_snapshot(&self, thread_local_snapshot: ThreadLocalProfileSnapshot) {
+        if !self.enabled.load(Ordering::Relaxed) {
+            return;
+        }
+        self.compressed_block_fetch_ns
+            .fetch_add(thread_local_snapshot.compressed_block_fetch_ns, Ordering::Relaxed);
+        self.compressed_block_fetch_count
+            .fetch_add(thread_local_snapshot.compressed_block_fetch_count, Ordering::Relaxed);
+        self.decompression_ns
+            .fetch_add(thread_local_snapshot.decompression_ns, Ordering::Relaxed);
+        self.decompression_count
+            .fetch_add(thread_local_snapshot.decompression_count, Ordering::Relaxed);
+        self.probability_decode_ns
+            .fetch_add(thread_local_snapshot.probability_decode_ns, Ordering::Relaxed);
+        self.probability_decode_count
+            .fetch_add(thread_local_snapshot.probability_decode_count, Ordering::Relaxed);
+        self.output_write_ns
+            .fetch_add(thread_local_snapshot.output_write_ns, Ordering::Relaxed);
+        self.output_write_count
+            .fetch_add(thread_local_snapshot.output_write_count, Ordering::Relaxed);
+    }
+
+    fn record_sample_selection_prepare(&self, duration_nanoseconds: u64) {
+        if !self.enabled.load(Ordering::Relaxed) {
+            return;
+        }
+        self.sample_selection_prepare_ns
+            .fetch_add(duration_nanoseconds, Ordering::Relaxed);
+        self.sample_selection_prepare_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_metadata_slice(&self, duration_nanoseconds: u64) {
+        if !self.enabled.load(Ordering::Relaxed) {
+            return;
+        }
+        self.metadata_slice_ns.fetch_add(duration_nanoseconds, Ordering::Relaxed);
+        self.metadata_slice_count.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn elapsed_nanoseconds(start_time: Instant) -> u64 {
+    u64::try_from(start_time.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
 
 impl BgenReaderCore {
     pub fn open(bgen_path: &Path) -> Result<Self, BgenError> {
@@ -127,6 +257,8 @@ impl BgenReaderCore {
             compression_type,
             variant_records,
             chromosome_boundary_indices,
+            prepared_sample_selection: Mutex::new(None),
+            profiling: ReaderProfiling::default(),
         })
     }
 
@@ -150,11 +282,40 @@ impl BgenReaderCore {
         self.chromosome_boundary_indices.clone()
     }
 
+    pub fn prepare_sample_selection(&self, sample_indices: &[i64]) -> Result<(), BgenError> {
+        let sample_selection_start_time = Instant::now();
+        let sample_selection = Arc::new(build_sample_selection(self.sample_count, sample_indices)?);
+        self.profiling
+            .record_sample_selection_prepare(elapsed_nanoseconds(sample_selection_start_time));
+        let mut prepared_sample_selection = self.prepared_sample_selection.lock().map_err(|_| {
+            BgenError::InvalidFormat("Prepared BGEN sample selection mutex was poisoned.".to_string())
+        })?;
+        *prepared_sample_selection = Some(sample_selection);
+        Ok(())
+    }
+
+    pub fn clear_prepared_sample_selection(&self) -> Result<(), BgenError> {
+        let mut prepared_sample_selection = self.prepared_sample_selection.lock().map_err(|_| {
+            BgenError::InvalidFormat("Prepared BGEN sample selection mutex was poisoned.".to_string())
+        })?;
+        *prepared_sample_selection = None;
+        Ok(())
+    }
+
+    pub fn reset_profile(&self) {
+        self.profiling.reset();
+    }
+
+    pub fn profile_snapshot(&self) -> ReaderProfileSnapshot {
+        self.profiling.snapshot()
+    }
+
     pub fn variant_metadata_slice(
         &self,
         variant_start: usize,
         variant_stop: usize,
     ) -> Result<VariantMetadataLists, BgenError> {
+        let metadata_slice_start_time = Instant::now();
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
 
         let selected_variant_records = &self.variant_records[variant_start..variant_stop];
@@ -179,13 +340,16 @@ impl BgenReaderCore {
             .map(|variant_record| variant_record.reference_allele.clone())
             .collect();
 
-        Ok((
+        let variant_metadata_lists = (
             chromosome_values,
             variant_identifier_values,
             position_values,
             allele_one_values,
             allele_two_values,
-        ))
+        );
+        self.profiling
+            .record_metadata_slice(elapsed_nanoseconds(metadata_slice_start_time));
+        Ok(variant_metadata_lists)
     }
 
     pub fn read_dosage_f32(
@@ -195,39 +359,143 @@ impl BgenReaderCore {
         variant_stop: usize,
     ) -> Result<Vec<f32>, BgenError> {
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
+        let sample_selection_start_time = Instant::now();
         let sample_selection = build_sample_selection(self.sample_count, sample_indices)?;
+        self.profiling
+            .record_sample_selection_prepare(elapsed_nanoseconds(sample_selection_start_time));
         let selected_sample_count = sample_selection.selected_sample_count;
         let selected_variant_count = variant_stop - variant_start;
-        let selected_variant_records = &self.variant_records[variant_start..variant_stop];
-
         let mut row_major_dosage_values = vec![0.0_f32; selected_sample_count * selected_variant_count];
-        if selected_sample_count == 0 || selected_variant_count == 0 {
-            return Ok(row_major_dosage_values);
-        }
-
-        let output_pointer_address = row_major_dosage_values.as_mut_ptr() as usize;
-        selected_variant_records
-            .par_iter()
-            .enumerate()
-            .try_for_each(|(variant_index, variant_record)| {
-                let output_pointer = output_pointer_address as *mut f32;
-                decode_variant_dosages_into_row_major_matrix(
-                    &self.mmap,
-                    self.compression_type,
-                    self.sample_count,
-                    &sample_selection.file_to_selected_index,
-                    variant_record,
-                    output_pointer,
-                    variant_index,
-                    selected_variant_count,
-                )
-            })?;
-
+        self.read_dosage_f32_into_address_with_selection(
+            &sample_selection,
+            variant_start,
+            variant_stop,
+            row_major_dosage_values.as_mut_ptr() as usize,
+            row_major_dosage_values.len(),
+        )?;
         Ok(row_major_dosage_values)
+    }
+
+    pub fn read_dosage_f32_prepared(
+        &self,
+        variant_start: usize,
+        variant_stop: usize,
+    ) -> Result<Vec<f32>, BgenError> {
+        validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
+        let sample_selection = self.prepared_sample_selection_arc()?;
+        let selected_sample_count = sample_selection.selected_sample_count;
+        let selected_variant_count = variant_stop - variant_start;
+        let mut row_major_dosage_values = vec![0.0_f32; selected_sample_count * selected_variant_count];
+        self.read_dosage_f32_into_address_with_selection(
+            sample_selection.as_ref(),
+            variant_start,
+            variant_stop,
+            row_major_dosage_values.as_mut_ptr() as usize,
+            row_major_dosage_values.len(),
+        )?;
+        Ok(row_major_dosage_values)
+    }
+
+    pub fn read_dosage_f32_into_address(
+        &self,
+        sample_indices: &[i64],
+        variant_start: usize,
+        variant_stop: usize,
+        output_pointer_address: usize,
+        output_value_count: usize,
+    ) -> Result<(), BgenError> {
+        validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
+        let sample_selection_start_time = Instant::now();
+        let sample_selection = build_sample_selection(self.sample_count, sample_indices)?;
+        self.profiling
+            .record_sample_selection_prepare(elapsed_nanoseconds(sample_selection_start_time));
+        self.read_dosage_f32_into_address_with_selection(
+            &sample_selection,
+            variant_start,
+            variant_stop,
+            output_pointer_address,
+            output_value_count,
+        )
+    }
+
+    pub fn read_dosage_f32_into_address_prepared(
+        &self,
+        variant_start: usize,
+        variant_stop: usize,
+        output_pointer_address: usize,
+        output_value_count: usize,
+    ) -> Result<(), BgenError> {
+        validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
+        let sample_selection = self.prepared_sample_selection_arc()?;
+        self.read_dosage_f32_into_address_with_selection(
+            sample_selection.as_ref(),
+            variant_start,
+            variant_stop,
+            output_pointer_address,
+            output_value_count,
+        )
     }
 
     pub fn bgen_path(&self) -> &Path {
         &self.bgen_path
+    }
+
+    fn prepared_sample_selection_arc(&self) -> Result<Arc<SampleSelection>, BgenError> {
+        let prepared_sample_selection = self.prepared_sample_selection.lock().map_err(|_| {
+            BgenError::InvalidFormat("Prepared BGEN sample selection mutex was poisoned.".to_string())
+        })?;
+        prepared_sample_selection.clone().ok_or_else(|| {
+            BgenError::Range("Prepared BGEN sample selection was requested before binding aligned samples.".to_string())
+        })
+    }
+
+    fn read_dosage_f32_into_address_with_selection(
+        &self,
+        sample_selection: &SampleSelection,
+        variant_start: usize,
+        variant_stop: usize,
+        output_pointer_address: usize,
+        output_value_count: usize,
+    ) -> Result<(), BgenError> {
+        let selected_sample_count = sample_selection.selected_sample_count;
+        let selected_variant_count = variant_stop - variant_start;
+        let expected_output_value_count = selected_sample_count.checked_mul(selected_variant_count).ok_or_else(|| {
+            BgenError::Range("Integer overflow while validating BGEN output buffer size.".to_string())
+        })?;
+        if output_value_count != expected_output_value_count {
+            return Err(BgenError::Range(format!(
+                "Output buffer shape mismatch for BGEN dosage read. Expected {expected_output_value_count} float32 values, observed {output_value_count}.",
+            )));
+        }
+        if selected_sample_count == 0 || selected_variant_count == 0 {
+            return Ok(());
+        }
+
+        let output_pointer = output_pointer_address;
+        let profiling = &self.profiling;
+        self.variant_records[variant_start..variant_stop]
+            .par_iter()
+            .enumerate()
+            .map_init(
+                ThreadScratch::default,
+                |thread_scratch, (variant_index, variant_record)| {
+                    decode_variant_dosages_into_row_major_matrix(
+                        &self.mmap,
+                        self.compression_type,
+                        self.sample_count,
+                        sample_selection,
+                        variant_record,
+                        output_pointer,
+                        variant_index,
+                        selected_variant_count,
+                        thread_scratch,
+                    )
+                },
+            )
+            .collect::<Result<Vec<ThreadLocalProfileSnapshot>, BgenError>>()?
+            .into_iter()
+            .for_each(|thread_local_snapshot| profiling.merge_thread_local_snapshot(thread_local_snapshot));
+        Ok(())
     }
 }
 
@@ -235,6 +503,23 @@ impl BgenReaderCore {
 struct SampleSelection {
     selected_sample_count: usize,
     file_to_selected_index: Vec<usize>,
+}
+
+struct ThreadScratch {
+    zlib_decompressor: Decompress,
+    zstd_decompressor: zstd::bulk::Decompressor<'static>,
+    decompressed_probability_block: Vec<u8>,
+}
+
+impl Default for ThreadScratch {
+    fn default() -> Self {
+        Self {
+            zlib_decompressor: Decompress::new(true),
+            zstd_decompressor: zstd::bulk::Decompressor::new()
+                .expect("zstd decompressor construction should not fail"),
+            decompressed_probability_block: Vec::new(),
+        }
+    }
 }
 
 fn validate_variant_bounds(variant_start: usize, variant_stop: usize, variant_count: usize) -> Result<(), BgenError> {
@@ -432,13 +717,20 @@ fn decode_variant_dosages_into_row_major_matrix(
     mmap: &[u8],
     compression_type: CompressionType,
     sample_count: usize,
-    file_to_selected_index: &[usize],
+    sample_selection: &SampleSelection,
     variant_record: &VariantRecord,
-    output_pointer: *mut f32,
+    output_pointer_address: usize,
     variant_index: usize,
     variant_count: usize,
-) -> Result<(), BgenError> {
-    let probability_block = read_probability_block(mmap, compression_type, variant_record.genotype_block_offset)?;
+) -> Result<ThreadLocalProfileSnapshot, BgenError> {
+    let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
+    let probability_block = read_probability_block(
+        mmap,
+        compression_type,
+        variant_record.genotype_block_offset,
+        thread_scratch,
+        &mut thread_local_profile_snapshot,
+    )?;
     let block_bytes = probability_block.as_ref();
 
     let mut cursor = 0;
@@ -489,11 +781,12 @@ fn decode_variant_dosages_into_row_major_matrix(
         return decode_unphased_eight_bit_dosages_into_row_major_matrix(
             sample_ploidy_and_missingness,
             &block_bytes[cursor..],
-            file_to_selected_index,
+            sample_selection,
             variant_record,
-            output_pointer,
+            output_pointer_address,
             variant_index,
             variant_count,
+            thread_local_profile_snapshot,
         );
     }
 
@@ -502,7 +795,9 @@ fn decode_variant_dosages_into_row_major_matrix(
     } else {
         f64::from((1_u32 << probability_bit_count) - 1)
     };
+    let probability_decode_start_time = Instant::now();
     let mut bit_reader = PackedProbabilityReader::new(&block_bytes[cursor..]);
+    let output_pointer = output_pointer_address as *mut f32;
 
     for (file_sample_index, ploidy_and_missingness) in sample_ploidy_and_missingness.iter().enumerate() {
         let observed_ploidy = ploidy_and_missingness & PLOIDY_MASK;
@@ -548,28 +843,35 @@ fn decode_variant_dosages_into_row_major_matrix(
             }
         };
 
-        let selected_index = file_to_selected_index[file_sample_index];
+        let selected_index = sample_selection.file_to_selected_index[file_sample_index];
         if selected_index != usize::MAX {
+            let output_write_start_time = Instant::now();
             let output_offset = (selected_index * variant_count) + variant_index;
             unsafe {
                 // Each parallel worker owns one distinct variant column, so these writes do not overlap.
                 output_pointer.add(output_offset).write(dosage_value);
             }
+            thread_local_profile_snapshot.output_write_ns += elapsed_nanoseconds(output_write_start_time);
+            thread_local_profile_snapshot.output_write_count += 1;
         }
     }
 
-    Ok(())
+    thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
+    thread_local_profile_snapshot.probability_decode_count += 1;
+
+    Ok(thread_local_profile_snapshot)
 }
 
 fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     sample_ploidy_and_missingness: &[u8],
     packed_probability_bytes: &[u8],
-    file_to_selected_index: &[usize],
+    sample_selection: &SampleSelection,
     variant_record: &VariantRecord,
-    output_pointer: *mut f32,
+    output_pointer_address: usize,
     variant_index: usize,
     variant_count: usize,
-) -> Result<(), BgenError> {
+    mut thread_local_profile_snapshot: ThreadLocalProfileSnapshot,
+) -> Result<ThreadLocalProfileSnapshot, BgenError> {
     let expected_probability_byte_count = sample_ploidy_and_missingness.len().checked_mul(2).ok_or_else(|| {
         BgenError::InvalidFormat("Integer overflow while decoding 8-bit BGEN probabilities.".to_string())
     })?;
@@ -582,6 +884,8 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
 
     let reciprocal_scale = 1.0_f32 / 255.0_f32;
     let mut probability_offset = 0;
+    let probability_decode_start_time = Instant::now();
+    let output_pointer = output_pointer_address as *mut f32;
     for (file_sample_index, ploidy_and_missingness) in sample_ploidy_and_missingness.iter().enumerate() {
         let observed_ploidy = ploidy_and_missingness & PLOIDY_MASK;
         if observed_ploidy != 2 {
@@ -602,17 +906,23 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
             2.0_f32 - ((2.0_f32 * homozygous_reference_probability) + heterozygous_probability)
         };
 
-        let selected_index = file_to_selected_index[file_sample_index];
+        let selected_index = sample_selection.file_to_selected_index[file_sample_index];
         if selected_index != usize::MAX {
+            let output_write_start_time = Instant::now();
             let output_offset = (selected_index * variant_count) + variant_index;
             unsafe {
                 // Each parallel worker owns one distinct variant column, so these writes do not overlap.
                 output_pointer.add(output_offset).write(dosage_value);
             }
+            thread_local_profile_snapshot.output_write_ns += elapsed_nanoseconds(output_write_start_time);
+            thread_local_profile_snapshot.output_write_count += 1;
         }
     }
 
-    Ok(())
+    thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
+    thread_local_profile_snapshot.probability_decode_count += 1;
+
+    Ok(thread_local_profile_snapshot)
 }
 
 fn read_probability_block(

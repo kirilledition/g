@@ -23,7 +23,6 @@ def __getattr__(name: str) -> typing.Any:
         "AssociationMode",
         "Device",
         "GenotypeSourceFormat",
-        "OutputMode",
         "SampleIdentifierSource",
     }:
         return getattr(types, name)
@@ -37,7 +36,6 @@ __all__ = [
     "ComputeConfig",
     "Device",
     "GenotypeSourceFormat",
-    "OutputMode",
     "Regenie2LinearConfig",
     "RunArtifacts",
     "SampleIdentifierSource",

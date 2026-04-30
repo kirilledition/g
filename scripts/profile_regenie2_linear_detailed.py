@@ -220,6 +220,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Number of unprofiled warmup runs before timed profiling.",
     )
     argument_parser.add_argument(
+        "--arrow-payload-batch-size",
+        type=int,
+        default=1,
+        help="Number of REGENIE output chunks to batch per Arrow IPC write.",
+    )
+    argument_parser.add_argument(
         "--transfer-guard-device-to-host",
         choices=("allow", "log", "log_explicit", "disallow", "disallow_explicit"),
         help="Optional JAX device-to-host transfer guard level during the profiled run.",
@@ -689,9 +695,9 @@ def run_profiled_regenie2_linear(
                     device=arguments.device,
                     variant_limit=arguments.variant_limit,
                     prefetch_chunks=arguments.prefetch_chunks,
-                    output_mode=types.OutputMode.ARROW_CHUNKS,
                     output_run_directory=report_paths["output_run_directory"],
                     finalize_parquet=True,
+                    arrow_payload_batch_size=arguments.arrow_payload_batch_size,
                 ),
             )
             profiler.disable()
@@ -728,9 +734,9 @@ def run_warmup_passes(arguments: argparse.Namespace) -> None:
                 device=arguments.device,
                 variant_limit=arguments.variant_limit,
                 prefetch_chunks=arguments.prefetch_chunks,
-                output_mode=types.OutputMode.ARROW_CHUNKS,
                 output_run_directory=warmup_output_root,
                 finalize_parquet=True,
+                arrow_payload_batch_size=arguments.arrow_payload_batch_size,
             ),
         )
         print(

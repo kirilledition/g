@@ -137,6 +137,7 @@ class Regenie2LinearState:
         covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
         phenotype_residual: Phenotype residualized against covariates (before LOCO adjustment).
         sample_count: Number of samples.
+        degrees_of_freedom: Residual degrees of freedom for one-variant tests.
 
     """
 
@@ -145,6 +146,28 @@ class Regenie2LinearState:
     covariate_crossproduct_cholesky_factor: jax.Array
     phenotype_residual: jax.Array
     sample_count: jax.Array
+    degrees_of_freedom: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2LinearChromosomeState:
+    """Chromosome-specific REGENIE step 2 linear state.
+
+    Attributes:
+        covariate_matrix_transpose: Transpose of the covariate design matrix.
+        covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
+        adjusted_residual: Covariate-residualized phenotype after LOCO subtraction.
+        adjusted_residual_sum_squares: Sum of squares of ``adjusted_residual``.
+        degrees_of_freedom: Residual degrees of freedom for one-variant tests.
+
+    """
+
+    covariate_matrix_transpose: jax.Array
+    covariate_crossproduct_cholesky_factor: jax.Array
+    adjusted_residual: jax.Array
+    adjusted_residual_sum_squares: jax.Array
+    degrees_of_freedom: jax.Array
 
 
 @jax.tree_util.register_dataclass

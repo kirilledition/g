@@ -183,10 +183,44 @@ def test_persist_chunked_results_writes_chunks(tmp_path: Path) -> None:
         frame_iterator=accumulators,
         output_run_paths=prepared_output_run.output_run_paths,
         association_mode=AssociationMode.REGENIE2_LINEAR,
+        payload_batch_size=1,
     )
 
     chunk_paths = sorted(prepared_output_run.output_run_paths.chunks_directory.glob("chunk_*.arrow"))
     assert [path.name for path in chunk_paths] == ["chunk_000000000.arrow", "chunk_000000001.arrow"]
+
+
+def test_persist_chunked_results_batches_multiple_payloads_into_one_arrow_file(tmp_path: Path) -> None:
+    prepared_output_run = prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    accumulators = iter(
+        [
+            create_regenie_chunk_accumulator(
+                chunk_identifier=0,
+                variant_stop_index=1,
+                variant_identifier="v0",
+            ),
+            create_regenie_chunk_accumulator(
+                chunk_identifier=1,
+                variant_stop_index=2,
+                variant_identifier="v1",
+            ),
+        ]
+    )
+
+    persist_chunked_results(
+        frame_iterator=accumulators,
+        output_run_paths=prepared_output_run.output_run_paths,
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        payload_batch_size=2,
+    )
+
+    chunk_paths = sorted(prepared_output_run.output_run_paths.chunks_directory.glob("chunk_*.arrow"))
+    assert [path.name for path in chunk_paths] == ["chunk_000000000_000000001.arrow"]
+    assert scan_committed_chunk_identifiers(prepared_output_run.output_run_paths.chunks_directory) == frozenset({0, 1})
 
 
 def test_finalize_chunks_to_parquet_writes_expected_schema(tmp_path: Path) -> None:

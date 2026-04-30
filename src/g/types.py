@@ -10,13 +10,6 @@ class Device(enum.StrEnum):
     GPU = "gpu"
 
 
-class OutputMode(enum.StrEnum):
-    """Output format mode."""
-
-    TSV = "tsv"
-    ARROW_CHUNKS = "arrow_chunks"
-
-
 class AssociationMode(enum.StrEnum):
     """Statistical association model."""
 

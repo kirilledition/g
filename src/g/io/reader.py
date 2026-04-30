@@ -90,8 +90,22 @@ class Float32BlockReader(typing.Protocol):
         sample_index_array: npt.NDArray[np.intp],
         variant_start: int,
         variant_stop: int,
-    ) -> npt.NDArray[np.float32]:
+        ) -> npt.NDArray[np.float32]:
         """Read one float32 dosage block for contiguous variant slices."""
+
+
+@typing.runtime_checkable
+class ReusableFloat32BlockReader(typing.Protocol):
+    """Protocol for readers that can fill a caller-provided float32 dosage buffer."""
+
+    def read_float32_into(
+        self,
+        output_array: npt.NDArray[np.float32],
+        sample_index_array: npt.NDArray[np.intp],
+        variant_start: int,
+        variant_stop: int,
+    ) -> npt.NDArray[np.float32]:
+        """Fill one float32 dosage block into a caller-provided output array."""
 
 
 @typing.runtime_checkable
@@ -172,6 +186,25 @@ def read_float32_block_from_reader(
         order=types.ArrayMemoryOrder.C_CONTIGUOUS,
     )
     return np.asarray(genotype_matrix_host, dtype=np.float32, order=types.ArrayMemoryOrder.C_CONTIGUOUS.value)
+
+
+def read_float32_block_into_buffer_from_reader(
+    genotype_reader: GenotypeReader,
+    output_array: npt.NDArray[np.float32],
+    sample_index_array: npt.NDArray[np.intp],
+    variant_start: int,
+    variant_stop: int,
+) -> npt.NDArray[np.float32]:
+    """Read one float32 dosage block into a caller-provided output buffer when available."""
+    if isinstance(genotype_reader, ReusableFloat32BlockReader):
+        return genotype_reader.read_float32_into(output_array, sample_index_array, variant_start, variant_stop)
+    output_array[:, :] = read_float32_block_from_reader(
+        genotype_reader=genotype_reader,
+        sample_index_array=sample_index_array,
+        variant_start=variant_start,
+        variant_stop=variant_stop,
+    )
+    return output_array
 
 
 def iter_genotype_chunks_from_reader(

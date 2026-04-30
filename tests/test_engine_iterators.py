@@ -5,8 +5,6 @@ from unittest.mock import patch
 
 import jax.numpy as jnp
 import numpy as np
-import polars as pl
-import pytest
 
 from g.engine import (
     Regenie2LinearChunkAccumulator,
@@ -14,7 +12,6 @@ from g.engine import (
     split_dosage_genotype_chunk_by_absolute_variant_slices,
     split_dosage_genotype_chunk_by_chromosome,
     split_dosage_genotype_chunk_with_reader_metadata,
-    write_frame_iterator_to_tsv,
 )
 from g.io.source import build_bgen_source_config
 from g.models import (
@@ -176,6 +173,7 @@ def test_iter_regenie2_linear_output_frames_reuses_open_bgen_reader() -> None:
         patch("g.engine.open_genotype_reader", return_value=genotype_reader) as mock_open_genotype_reader,
         patch("g.engine.load_aligned_sample_data_from_source", return_value=aligned_sample_data) as mock_load,
         patch("g.engine.prepare_regenie2_linear_state", return_value="regenie-state"),
+        patch("g.engine.prepare_regenie2_linear_chromosome_state", return_value="chromosome-state"),
         patch("g.engine.load_prediction_source", return_value=FakePredictionSource()),
         patch("g.engine.iter_dosage_genotype_chunks_from_source", return_value=iter([source_chunk])) as mock_iter,
         patch("g.engine.compute_regenie2_linear_chunk", return_value=regenie_result),
@@ -197,22 +195,3 @@ def test_iter_regenie2_linear_output_frames_reuses_open_bgen_reader() -> None:
     mock_open_genotype_reader.assert_called_once()
     assert mock_load.call_args.kwargs["genotype_reader"] is genotype_reader
     assert mock_iter.call_args.kwargs["genotype_reader"] is genotype_reader
-
-
-def test_write_frame_iterator_to_tsv_batches_multiple_chunks(tmp_path: Path) -> None:
-    output_path = tmp_path / "results.tsv"
-    accumulators = [
-        build_chunk_accumulator(variant_start_index=0, chromosome_values=["22", "22"]),
-        build_chunk_accumulator(variant_start_index=2, chromosome_values=["22", "22"]),
-    ]
-
-    write_frame_iterator_to_tsv(iter(accumulators), output_path, frame_batch_size=2)
-
-    output_frame = pl.read_csv(output_path, separator="\t")
-    assert output_frame.height == 4
-    assert output_frame.get_column("variant_identifier").to_list() == ["variant0", "variant1", "variant2", "variant3"]
-
-
-def test_write_frame_iterator_to_tsv_rejects_non_positive_batch_size(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="TSV frame batch size must be positive"):
-        write_frame_iterator_to_tsv(iter(()), tmp_path / "results.tsv", frame_batch_size=0)

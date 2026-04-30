@@ -529,6 +529,8 @@ class BgenReader:
         if variant_start == variant_stop:
             return ((variant_start, variant_stop),)
         chromosome_boundary_indices = self.resolve_chromosome_boundary_indices()
+        if chromosome_boundary_indices.size <= 2:
+            return ((variant_start, variant_stop),)
         boundary_start_index = int(np.searchsorted(chromosome_boundary_indices, variant_start, side="right") - 1)
         boundary_stop_index = int(np.searchsorted(chromosome_boundary_indices, variant_stop, side="left"))
         chromosome_slices: list[tuple[int, int]] = []
@@ -610,6 +612,42 @@ class BgenReader:
             int(variant_stop),
         )
         return np.asarray(dosage_matrix, dtype=np.float32, order="C")
+
+    def read_float32_into(
+        self,
+        output_array: npt.NDArray[np.float32],
+        sample_index_array: npt.NDArray[np.int64] | npt.NDArray[np.intp],
+        variant_start: int,
+        variant_stop: int,
+    ) -> npt.NDArray[np.float32]:
+        """Fill one strict float32 dosage block into a caller-provided output buffer."""
+        if variant_start < 0 or variant_stop < variant_start or variant_stop > self.variant_count:
+            message = (
+                f"Variant bounds must satisfy 0 <= start <= stop <= {self.variant_count}. "
+                f"Received start={variant_start}, stop={variant_stop}."
+            )
+            raise ValueError(message)
+        selected_sample_count = len(sample_index_array)
+        selected_variant_count = variant_stop - variant_start
+        expected_shape = (selected_sample_count, selected_variant_count)
+        if output_array.shape != expected_shape:
+            message = (
+                f"Output array shape mismatch: expected {expected_shape}, observed {output_array.shape}."
+            )
+            raise ValueError(message)
+        if output_array.dtype != np.float32:
+            message = "Output array for BGEN dosage reads must have dtype float32."
+            raise ValueError(message)
+        if not output_array.flags.c_contiguous:
+            message = "Output array for BGEN dosage reads must be C-contiguous."
+            raise ValueError(message)
+        self.core_reader.read_dosage_f32_into(
+            np.ascontiguousarray(sample_index_array, dtype=np.int64),
+            int(variant_start),
+            int(variant_stop),
+            output_array,
+        )
+        return output_array
 
     def close(self) -> None:
         """Close the underlying BGEN handle."""

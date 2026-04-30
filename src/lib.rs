@@ -3,7 +3,10 @@
 mod bgen;
 
 use numpy::ndarray::{Array1, Array2};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3};
+use numpy::{
+    IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3,
+    PyReadwriteArray2, PyUntypedArrayMethods,
+};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
@@ -78,6 +81,49 @@ impl PyBgenReader {
         let dosage_matrix = Array2::from_shape_vec((selected_sample_count, selected_variant_count), dosage_values)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(dosage_matrix.into_pyarray(py))
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn read_dosage_f32_into<'py>(
+        &self,
+        py: Python<'py>,
+        sample_indices: PyReadonlyArray1<'py, i64>,
+        variant_start: usize,
+        variant_stop: usize,
+        mut output_array: PyReadwriteArray2<'py, f32>,
+    ) -> PyResult<()> {
+        let sample_index_values = sample_indices.as_slice()?;
+        let selected_sample_count = sample_index_values.len();
+        let selected_variant_count = variant_stop.saturating_sub(variant_start);
+        let output_shape = output_array.shape();
+        if output_shape != [selected_sample_count, selected_variant_count] {
+            return Err(PyValueError::new_err(format!(
+                "Output array shape mismatch: expected ({selected_sample_count}, {selected_variant_count}), observed ({}, {}).",
+                output_shape[0], output_shape[1],
+            )));
+        }
+        if !output_array.is_c_contiguous() {
+            return Err(PyValueError::new_err(
+                "Output array for BGEN dosage reads must be C-contiguous float32.",
+            ));
+        }
+
+        let output_slice = output_array.as_slice_mut().map_err(|_| {
+            PyValueError::new_err("Output array for BGEN dosage reads must expose a contiguous mutable slice.")
+        })?;
+        let output_pointer_address = output_slice.as_mut_ptr() as usize;
+        let output_value_count = output_slice.len();
+
+        py.detach(|| {
+            self.reader.read_dosage_f32_into_address(
+                sample_index_values,
+                variant_start,
+                variant_stop,
+                output_pointer_address,
+                output_value_count,
+            )
+        })
+        .map_err(convert_bgen_error)
     }
 
     #[allow(clippy::unused_self)]

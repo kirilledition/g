@@ -33,6 +33,7 @@ class TestPrepareRegenie2LinearState:
         assert state.covariate_crossproduct_cholesky_factor.shape == (covariate_count, covariate_count)
         assert state.phenotype_residual.shape == (sample_count,)
         assert int(state.sample_count) == sample_count
+        assert float(state.degrees_of_freedom) == sample_count - covariate_count - 1
 
     def test_phenotype_residual_orthogonal_to_covariates(self) -> None:
         """Ensure phenotype residual is orthogonal to covariate space."""
@@ -125,6 +126,41 @@ class TestComputeRegenie2LinearChunk:
         assert jnp.all(result.valid_mask)
         assert jnp.all(result.chi_squared >= 0)
         assert jnp.all(result.log10_p_value >= 0)
+
+    def test_chromosome_state_matches_direct_chunk_api(self) -> None:
+        """Ensure chromosome-cached computation matches the compatibility wrapper."""
+        sample_count = 64
+        variant_count = 4
+        covariate_count = 2
+
+        rng = np.random.default_rng(7)
+        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
+        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
+        phenotype_vector = jnp.array(rng.standard_normal(sample_count), dtype=jnp.float32)
+        genotype_matrix = jnp.array(rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32))
+        loco_predictions = jnp.array(rng.standard_normal(sample_count) * 0.2, dtype=jnp.float32)
+
+        state = regenie2_linear.prepare_regenie2_linear_state(
+            covariate_matrix=jnp.array(covariate_matrix),
+            phenotype_vector=phenotype_vector,
+        )
+        chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(state, loco_predictions)
+
+        direct_result = regenie2_linear.compute_regenie2_linear_chunk(
+            state=state,
+            genotype_matrix=genotype_matrix,
+            loco_predictions=loco_predictions,
+        )
+        cached_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
+            chromosome_state=chromosome_state,
+            genotype_matrix=genotype_matrix,
+        )
+
+        numpy.testing.assert_allclose(direct_result.beta, cached_result.beta)
+        numpy.testing.assert_allclose(direct_result.standard_error, cached_result.standard_error)
+        numpy.testing.assert_allclose(direct_result.chi_squared, cached_result.chi_squared)
+        numpy.testing.assert_allclose(direct_result.log10_p_value, cached_result.log10_p_value)
+        numpy.testing.assert_array_equal(direct_result.valid_mask, cached_result.valid_mask)
 
     def test_handles_zero_variance_genotypes(self) -> None:
         """Ensure monomorphic variants are marked invalid."""

@@ -64,6 +64,7 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
     assert cpu_command[:4] == ["uv", "run", "g", "regenie2-linear"]
     assert "--device" in cpu_command
     assert cpu_command[cpu_command.index("--device") + 1] == "cpu"
+    assert "--finalize-parquet" in cpu_command
     assert "--variant-limit" in cpu_command
     assert gpu_command[gpu_command.index("--device") + 1] == "gpu"
     assert "--variant-limit" not in gpu_command
@@ -205,7 +206,7 @@ def test_text_summary_includes_required_sections(tmp_path: Path) -> None:
 
 def test_quantitative_step2_comparison_wires_parity_logic(tmp_path: Path) -> None:
     regenie_output = tmp_path / "regenie.regenie"
-    g_output = tmp_path / "g.tsv"
+    g_output = tmp_path / "g.parquet"
     regenie_output.write_text("CHROM GENPOS ID BETA LOG10P\n1 100 rs1 0.1 1.0\n1 200 rs2 0.2 2.0\n")
     pd.DataFrame(
         {
@@ -213,7 +214,7 @@ def test_quantitative_step2_comparison_wires_parity_logic(tmp_path: Path) -> Non
             "beta": [0.1, 0.2],
             "log10_p_value": [1.0, 2.0],
         }
-    ).to_csv(g_output, sep="\t", index=False)
+    ).to_parquet(g_output, index=False)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
         regenie_output_path=regenie_output,
         g_output_path=g_output,
@@ -226,7 +227,7 @@ def test_quantitative_step2_comparison_wires_parity_logic(tmp_path: Path) -> Non
 
 def test_quantitative_step2_comparison_uses_full_variant_identity_when_available(tmp_path: Path) -> None:
     regenie_output = tmp_path / "regenie.regenie"
-    g_output = tmp_path / "g.tsv"
+    g_output = tmp_path / "g.parquet"
     regenie_output.write_text(
         "\n".join(
             [
@@ -247,12 +248,33 @@ def test_quantitative_step2_comparison_uses_full_variant_identity_when_available
             "beta": [0.1],
             "log10_p_value": [1.0],
         }
-    ).to_csv(g_output, sep="\t", index=False)
+    ).to_parquet(g_output, index=False)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
         regenie_output_path=regenie_output,
         g_output_path=g_output,
     )
     assert agreement.comparable
     assert agreement.merged_variant_count == 1
+    assert agreement.beta_allclose_within_tolerance is True
+    assert agreement.log10p_allclose_within_tolerance is True
+
+
+def test_quantitative_step2_comparison_reads_parquet_outputs(tmp_path: Path) -> None:
+    regenie_output = tmp_path / "regenie.regenie"
+    g_output = tmp_path / "g.parquet"
+    regenie_output.write_text("CHROM GENPOS ID BETA LOG10P\n1 100 rs1 0.1 1.0\n1 200 rs2 0.2 2.0\n")
+    pd.DataFrame(
+        {
+            "variant_identifier": ["rs1", "rs2"],
+            "beta": [0.1, 0.2],
+            "log10_p_value": [1.0, 2.0],
+        }
+    ).to_parquet(g_output, index=False)
+    agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
+        regenie_output_path=regenie_output,
+        g_output_path=g_output,
+    )
+    assert agreement.comparable
+    assert agreement.merged_variant_count == 2
     assert agreement.beta_allclose_within_tolerance is True
     assert agreement.log10p_allclose_within_tolerance is True

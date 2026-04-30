@@ -47,6 +47,14 @@ benchmark-plink-reader:
 benchmark-bgen-reader:
     uv run python scripts/benchmark_bgen_reader.py
 
+# Benchmark REGENIE step 2 in fresh Python processes
+benchmark-regenie2-linear-fresh-gpu:
+    uv run python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu
+
+# Benchmark REGENIE step 2 in fresh Python processes using Arrow chunks + Parquet finalization
+benchmark-regenie2-linear-fresh-gpu-parquet:
+    uv run python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --finalize-parquet
+
 # Profile full REGENIE step 2 execution
 profile-regenie2-linear-detailed:
     mkdir -p {{data_dir}}/profiles/regenie2_linear_detailed

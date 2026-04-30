@@ -62,10 +62,8 @@ load_aligned_sample_data_from_source = source.load_aligned_sample_data_from_sour
 iter_dosage_genotype_chunks_from_source = source.iter_dosage_genotype_chunks_from_source
 load_prediction_source = regenie.load_prediction_source
 prepare_regenie2_linear_state = regenie2_linear.prepare_regenie2_linear_state
-compute_regenie2_linear_chunk = regenie2_linear.compute_regenie2_linear_chunk
-
-DEFAULT_TSV_FRAME_BATCH_SIZE = 2
-
+prepare_regenie2_linear_chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state
+compute_regenie2_linear_chunk = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state
 
 def split_dosage_genotype_chunk_by_chromosome(
     genotype_chunk: models.DosageGenotypeChunk,
@@ -406,6 +404,7 @@ def iter_regenie2_linear_output_frames(
 
         current_chromosome: str | None = None
         current_loco_predictions: jax.Array | None = None
+        current_regenie2_linear_chromosome_state: models.Regenie2LinearChromosomeState | None = None
         chunk_number = 0
         for source_chunk in chunk_iterator:
             for current_chunk in split_dosage_genotype_chunk_with_reader_metadata(source_chunk, genotype_reader):
@@ -420,15 +419,19 @@ def iter_regenie2_linear_output_frames(
                         sample_family_identifiers=aligned_sample_data.family_identifiers,
                         sample_individual_identifiers=aligned_sample_data.individual_identifiers,
                     )
+                    current_regenie2_linear_chromosome_state = prepare_regenie2_linear_chromosome_state(
+                        regenie2_linear_state,
+                        current_loco_predictions,
+                    )
                     current_chromosome = chromosome
 
                 assert current_loco_predictions is not None
+                assert current_regenie2_linear_chromosome_state is not None
                 with jax.profiler.StepTraceAnnotation("regenie2_linear_chunk", step_num=chunk_number):
                     with jax.profiler.TraceAnnotation("regenie2_linear.compute"):
                         regenie2_linear_result = compute_regenie2_linear_chunk(
-                            state=regenie2_linear_state,
+                            chromosome_state=current_regenie2_linear_chromosome_state,
                             genotype_matrix=current_chunk.genotypes,
-                            loco_predictions=current_loco_predictions,
                         )
                     with jax.profiler.TraceAnnotation("regenie2_linear.accumulate"):
                         yield Regenie2LinearChunkAccumulator(
@@ -438,53 +441,3 @@ def iter_regenie2_linear_output_frames(
                             regenie2_linear_result=regenie2_linear_result,
                         )
                 chunk_number += 1
-
-
-def write_frame_iterator_to_tsv(
-    frame_iterator: collections.abc.Iterator[Regenie2LinearChunkAccumulator],
-    output_path: Path,
-    *,
-    frame_batch_size: int = DEFAULT_TSV_FRAME_BATCH_SIZE,
-) -> None:
-    """Write accumulated REGENIE chunk results to a TSV file."""
-    if frame_batch_size <= 0:
-        message = "TSV frame batch size must be positive."
-        raise ValueError(message)
-
-    def flush_accumulator_batch(
-        accumulator_batch: list[Regenie2LinearChunkAccumulator],
-        output_file: typing.TextIO,
-        *,
-        include_header: bool,
-    ) -> bool:
-        if not accumulator_batch:
-            return False
-        output_frame = concatenate_regenie2_linear_results(accumulator_batch)
-        output_frame.write_csv(
-            output_file,
-            separator="\t",
-            include_header=include_header,
-        )
-        accumulator_batch.clear()
-        return True
-
-    first_chunk_written = False
-    accumulator_batch: list[Regenie2LinearChunkAccumulator] = []
-    with output_path.open("w", encoding="utf-8") as output_file:
-        for accumulator in frame_iterator:
-            accumulator_batch.append(accumulator)
-            if len(accumulator_batch) >= frame_batch_size:
-                batch_was_written = flush_accumulator_batch(
-                    accumulator_batch,
-                    output_file,
-                    include_header=not first_chunk_written,
-                )
-                first_chunk_written = first_chunk_written or batch_was_written
-        batch_was_written = flush_accumulator_batch(
-            accumulator_batch,
-            output_file,
-            include_header=not first_chunk_written,
-        )
-        first_chunk_written = first_chunk_written or batch_was_written
-    if not first_chunk_written:
-        pl.DataFrame().write_csv(output_path, separator="\t")

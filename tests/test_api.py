@@ -6,16 +6,16 @@ from unittest.mock import patch
 import pytest
 
 import g
+from g import api
 from g.api import (
     ComputeConfig,
     RunArtifacts,
     parse_covariate_name_list,
     regenie2_linear,
-    resolve_output_path,
     validate_compute_config,
 )
 from g.io.output import OutputRunPaths, PreparedOutputRun
-from g.types import AssociationMode, Device, GenotypeSourceFormat, OutputMode
+from g.types import Device, GenotypeSourceFormat
 
 
 def test_public_package_no_longer_exposes_direct_linear_or_logistic() -> None:
@@ -31,21 +31,25 @@ def test_parse_covariate_name_list_handles_iterable_input() -> None:
     assert parse_covariate_name_list(["age", " sex ", ""]) == ("age", "sex")
 
 
-def test_resolve_output_path_appends_regenie_suffix_for_prefix() -> None:
-    assert resolve_output_path("results/output", AssociationMode.REGENIE2_LINEAR) == Path(
-        "results/output.regenie2_linear.tsv"
-    )
-
-
-def test_resolve_output_path_preserves_tsv_suffix() -> None:
-    assert resolve_output_path("results/output.tsv", AssociationMode.REGENIE2_LINEAR) == Path("results/output.tsv")
-
-
 def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
     with (
         patch("g.api.configure_jax_device") as mock_configure_jax_device,
         patch("g.api.iter_regenie2_linear_output_frames", return_value=iter(())) as mock_iterator,
-        patch("g.api.write_frame_iterator_to_tsv") as mock_write_frame_iterator_to_tsv,
+        patch(
+            "g.api.prepare_output_run",
+            return_value=PreparedOutputRun(
+                output_run_paths=OutputRunPaths(
+                    run_directory=Path("results/output.regenie2_linear.run"),
+                    chunks_directory=Path("results/output.regenie2_linear.run/chunks"),
+                ),
+                committed_chunk_identifiers=frozenset(),
+            ),
+        ),
+        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
+        patch(
+            "g.api.finalize_chunks_to_parquet",
+            return_value=Path("results/output.regenie2_linear.run/final.parquet"),
+        ),
     ):
         artifacts = regenie2_linear(
             bgen="dataset.bgen",
@@ -57,13 +61,16 @@ def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
             pred="predictions.list",
         )
 
-    assert artifacts == RunArtifacts(sumstats_tsv=Path("results/output.regenie2_linear.tsv"))
+    assert artifacts == RunArtifacts(
+        output_run_directory=Path("results/output.regenie2_linear.run"),
+        final_parquet=Path("results/output.regenie2_linear.run/final.parquet"),
+    )
     mock_configure_jax_device.assert_called_once_with(Device.CPU)
     assert mock_iterator.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_iterator.call_args.kwargs["prediction_list_path"] == Path("predictions.list")
     genotype_source_config = mock_iterator.call_args.kwargs["genotype_source_config"]
     assert genotype_source_config.source_format == GenotypeSourceFormat.BGEN
-    assert mock_write_frame_iterator_to_tsv.call_args.args[1] == Path("results/output.regenie2_linear.tsv")
+    mock_persist_chunked_results.assert_called_once()
 
 
 @pytest.mark.parametrize(
@@ -72,6 +79,7 @@ def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
         (ComputeConfig(chunk_size=0), "Chunk size must be positive"),
         (ComputeConfig(variant_limit=0), "Variant limit must be positive"),
         (ComputeConfig(prefetch_chunks=-1), "Prefetch chunk count must be zero or positive"),
+        (ComputeConfig(arrow_payload_batch_size=0), "Arrow payload batch size must be positive"),
     ],
 )
 def test_validate_compute_config_rejects_invalid_values(
@@ -108,9 +116,9 @@ def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalizati
             out="results/output",
             pred="predictions.list",
             compute=ComputeConfig(
-                output_mode=OutputMode.ARROW_CHUNKS,
                 output_run_directory=Path("results/output"),
                 resume=True,
+                finalize_parquet=False,
             ),
         )
 
@@ -121,5 +129,6 @@ def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalizati
     mock_configure_jax_device.assert_called_once_with(Device.CPU)
     assert mock_iterator.call_args.kwargs["committed_chunk_identifiers"] == {3}
     mock_persist_chunked_results.assert_called_once()
+    assert mock_persist_chunked_results.call_args.kwargs["payload_batch_size"] == api.DEFAULT_ARROW_PAYLOAD_BATCH_SIZE
     mock_prepare_output_run.assert_called_once()
     mock_finalize.assert_not_called()

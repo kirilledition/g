@@ -27,6 +27,14 @@ class PyBgenReader:
         variant_stop: int,
     ) -> npt.NDArray[np.float32]: ...
 
+    def read_dosage_f32_into(
+        self,
+        sample_indices: npt.NDArray[np.int64],
+        variant_start: int,
+        variant_stop: int,
+        output_array: npt.NDArray[np.float32],
+    ) -> None: ...
+
     def close(self) -> None: ...
 
 def hello_from_bin() -> str: ...

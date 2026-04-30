@@ -231,11 +231,38 @@ def test_open_bgen_read_float32_matches_read() -> None:
     np.testing.assert_allclose(strict_dosage_matrix, compatibility_dosage_matrix)
 
 
+def test_open_bgen_read_float32_into_fills_reusable_output_array() -> None:
+    bgen_path = HAPLOTYPES_BGEN_PATH
+    sample_indices = np.array([0, 2, 3], dtype=np.intp)
+    variant_start = 1
+    variant_stop = 4
+
+    with open_bgen(bgen_path) as bgen_reader:
+        output_array = np.empty((3, 3), dtype=np.float32, order="C")
+        filled_output_array = bgen_reader.read_float32_into(output_array, sample_indices, variant_start, variant_stop)
+        compatibility_dosage_matrix = bgen_reader.read(
+            index=(sample_indices, slice(variant_start, variant_stop)),
+            dtype=np.float32,
+            order=ArrayMemoryOrder.C_CONTIGUOUS,
+        )
+
+    assert filled_output_array is output_array
+    np.testing.assert_allclose(output_array, compatibility_dosage_matrix)
+
+
 def test_open_bgen_read_float32_rejects_invalid_variant_bounds() -> None:
     bgen_path = HAPLOTYPES_BGEN_PATH
 
     with open_bgen(bgen_path) as bgen_reader, pytest.raises(ValueError, match="Variant bounds must satisfy"):
         _ = bgen_reader.read_float32(np.array([0, 1], dtype=np.intp), 3, 2)
+
+
+def test_open_bgen_read_float32_into_rejects_non_contiguous_output_array() -> None:
+    bgen_path = HAPLOTYPES_BGEN_PATH
+
+    with open_bgen(bgen_path) as bgen_reader, pytest.raises(ValueError, match="C-contiguous"):
+        output_array = np.empty((3, 3), dtype=np.float32, order="F")
+        _ = bgen_reader.read_float32_into(output_array, np.array([0, 1, 2], dtype=np.intp), 1, 4)
 
 
 def test_open_bgen_split_variant_slice_by_chromosome_returns_whole_chunk_for_single_chromosome() -> None:

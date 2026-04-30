@@ -30,11 +30,15 @@ def resolve_chunk_size(requested_chunk_size: int | None) -> int:
     return api.DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE
 
 
+def resolve_arrow_payload_batch_size(requested_arrow_payload_batch_size: int | None) -> int:
+    """Resolve the effective Arrow payload batch size."""
+    if requested_arrow_payload_batch_size is not None:
+        return requested_arrow_payload_batch_size
+    return api.DEFAULT_ARROW_PAYLOAD_BATCH_SIZE
+
+
 def print_success_message(artifacts: api.RunArtifacts) -> None:
     """Print a concise success message for a completed CLI run."""
-    if artifacts.sumstats_tsv is not None:
-        typer.echo(f"Success. Results saved to {artifacts.sumstats_tsv}")
-        return
     if artifacts.output_run_directory is not None:
         typer.echo(f"Success. Chunked run saved to {artifacts.output_run_directory}")
         if artifacts.final_parquet is not None:
@@ -52,15 +56,18 @@ def run_regenie2_linear_command(
     ),
     pheno: Path = typer.Option(..., help="Phenotype table path."),
     pheno_name: str = typer.Option(..., "--pheno-name", help="Phenotype column name to analyze."),
-    out: Path = typer.Option(..., help="Output prefix or TSV path."),
+    out: Path = typer.Option(..., help="Output prefix or run directory."),
     covar: Path | None = typer.Option(None, help="Optional covariate table path."),
     covar_names: str | None = typer.Option(None, "--covar-names", help="Comma-separated covariate column names."),
     pred: Path = typer.Option(..., help="REGENIE step 1 _pred.list file path."),
     chunk_size: int | None = typer.Option(None, help="Variants per chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
     device: types.Device = typer.Option(types.Device.CPU, help="JAX execution device."),
-    output_mode: types.OutputMode = typer.Option(types.OutputMode.TSV, help="Output format mode."),
-    output_run_directory: Path | None = typer.Option(None, help="Run directory for chunked output mode."),
+    output_run_directory: Path | None = typer.Option(None, help="Run directory for Arrow chunked output."),
+    arrow_payload_batch_size: int | None = typer.Option(
+        None,
+        help="Number of REGENIE output chunks to batch per Arrow IPC write.",
+    ),
     resume: bool = typer.Option(  # noqa: FBT001
         default=False,
         help="Resume a previous chunked run.",
@@ -75,10 +82,10 @@ def run_regenie2_linear_command(
         chunk_size=resolve_chunk_size(chunk_size),
         device=device,
         variant_limit=variant_limit,
-        output_mode=output_mode,
         output_run_directory=output_run_directory,
         resume=resume,
         finalize_parquet=finalize_parquet,
+        arrow_payload_batch_size=resolve_arrow_payload_batch_size(arrow_payload_batch_size),
     )
     artifacts = run_regenie2_linear_api(
         bgen=bgen,
