@@ -1,16 +1,18 @@
 #![warn(clippy::pedantic)]
 
-mod bgen;
+pub mod bgen;
+
+use std::collections::HashMap;
 
 use numpy::ndarray::{Array1, Array2};
 use numpy::{
-    IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3,
-    PyReadwriteArray2, PyUntypedArrayMethods,
+    IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3, PyReadwriteArray2,
+    PyUntypedArrayMethods,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::bgen::{BgenError, BgenReaderCore, VariantMetadataLists};
+use crate::bgen::{BgenError, BgenReaderCore, ReaderProfileSnapshot, VariantMetadataLists};
 
 #[pyclass]
 struct PyBgenReader {
@@ -21,8 +23,10 @@ struct PyBgenReader {
 impl PyBgenReader {
     #[new]
     #[allow(clippy::needless_pass_by_value)]
-    fn new(bgen_path: String) -> PyResult<Self> {
-        let reader = BgenReaderCore::open(std::path::Path::new(&bgen_path)).map_err(convert_bgen_error)?;
+    #[pyo3(signature = (bgen_path, trusted_no_missing_diploid=false))]
+    fn new(bgen_path: String, trusted_no_missing_diploid: bool) -> PyResult<Self> {
+        let reader = BgenReaderCore::open(std::path::Path::new(&bgen_path), trusted_no_missing_diploid)
+            .map_err(convert_bgen_error)?;
         Ok(Self { reader })
     }
 
@@ -54,14 +58,29 @@ impl PyBgenReader {
         self.reader.chromosome_boundary_indices()
     }
 
-    fn variant_metadata_slice(
-        &self,
-        variant_start: usize,
-        variant_stop: usize,
-    ) -> PyResult<VariantMetadataLists> {
-        self.reader
-            .variant_metadata_slice(variant_start, variant_stop)
-            .map_err(convert_bgen_error)
+    #[allow(clippy::needless_pass_by_value)]
+    fn prepare_sample_selection(&self, sample_indices: PyReadonlyArray1<'_, i64>) -> PyResult<()> {
+        self.reader.prepare_sample_selection(sample_indices.as_slice()?).map_err(convert_bgen_error)
+    }
+
+    fn clear_prepared_sample_selection(&self) -> PyResult<()> {
+        self.reader.clear_prepared_sample_selection().map_err(convert_bgen_error)
+    }
+
+    fn reset_profile(&self) {
+        self.reader.reset_profile();
+    }
+
+    fn profile_snapshot(&self) -> HashMap<String, u64> {
+        build_profile_snapshot_dict(&self.reader.profile_snapshot())
+    }
+
+    fn validate_trusted_no_missing_diploid(&self) -> PyResult<()> {
+        self.reader.validate_trusted_no_missing_diploid().map_err(convert_bgen_error)
+    }
+
+    fn variant_metadata_slice(&self, variant_start: usize, variant_stop: usize) -> PyResult<VariantMetadataLists> {
+        self.reader.variant_metadata_slice(variant_start, variant_stop).map_err(convert_bgen_error)
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -78,6 +97,23 @@ impl PyBgenReader {
         let dosage_values = py
             .detach(|| self.reader.read_dosage_f32(sample_index_values, variant_start, variant_stop))
             .map_err(convert_bgen_error)?;
+        let dosage_matrix = Array2::from_shape_vec((selected_sample_count, selected_variant_count), dosage_values)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(dosage_matrix.into_pyarray(py))
+    }
+
+    fn read_dosage_f32_prepared<'py>(
+        &self,
+        py: Python<'py>,
+        variant_start: usize,
+        variant_stop: usize,
+    ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+        let selected_variant_count = variant_stop.saturating_sub(variant_start);
+        let dosage_values = py
+            .detach(|| self.reader.read_dosage_f32_prepared(variant_start, variant_stop))
+            .map_err(convert_bgen_error)?;
+        let selected_sample_count =
+            if selected_variant_count == 0 { 0 } else { dosage_values.len() / selected_variant_count };
         let dosage_matrix = Array2::from_shape_vec((selected_sample_count, selected_variant_count), dosage_values)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(dosage_matrix.into_pyarray(py))
@@ -103,9 +139,7 @@ impl PyBgenReader {
             )));
         }
         if !output_array.is_c_contiguous() {
-            return Err(PyValueError::new_err(
-                "Output array for BGEN dosage reads must be C-contiguous float32.",
-            ));
+            return Err(PyValueError::new_err("Output array for BGEN dosage reads must be C-contiguous float32."));
         }
 
         let output_slice = output_array.as_slice_mut().map_err(|_| {
@@ -117,6 +151,42 @@ impl PyBgenReader {
         py.detach(|| {
             self.reader.read_dosage_f32_into_address(
                 sample_index_values,
+                variant_start,
+                variant_stop,
+                output_pointer_address,
+                output_value_count,
+            )
+        })
+        .map_err(convert_bgen_error)
+    }
+
+    fn read_dosage_f32_into_prepared<'py>(
+        &self,
+        py: Python<'py>,
+        variant_start: usize,
+        variant_stop: usize,
+        mut output_array: PyReadwriteArray2<'py, f32>,
+    ) -> PyResult<()> {
+        let output_shape = output_array.shape();
+        let selected_variant_count = variant_stop.saturating_sub(variant_start);
+        if output_shape[1] != selected_variant_count {
+            return Err(PyValueError::new_err(format!(
+                "Output array shape mismatch: expected variant width {selected_variant_count}, observed {}.",
+                output_shape[1],
+            )));
+        }
+        if !output_array.is_c_contiguous() {
+            return Err(PyValueError::new_err("Output array for BGEN dosage reads must be C-contiguous float32."));
+        }
+
+        let output_slice = output_array.as_slice_mut().map_err(|_| {
+            PyValueError::new_err("Output array for BGEN dosage reads must expose a contiguous mutable slice.")
+        })?;
+        let output_pointer_address = output_slice.as_mut_ptr() as usize;
+        let output_value_count = output_slice.len();
+
+        py.detach(|| {
+            self.reader.read_dosage_f32_into_address_prepared(
                 variant_start,
                 variant_stop,
                 output_pointer_address,
@@ -242,11 +312,35 @@ fn convert_probability_matrix_to_dosage_f32<'py>(
 
 fn convert_bgen_error(error: BgenError) -> PyErr {
     match error {
-        BgenError::InvalidFormat(message)
-        | BgenError::UnsupportedFormat(message)
-        | BgenError::Range(message) => PyValueError::new_err(message),
+        BgenError::InvalidFormat(message) | BgenError::UnsupportedFormat(message) | BgenError::Range(message) => {
+            PyValueError::new_err(message)
+        }
         BgenError::Io(io_error) => PyRuntimeError::new_err(io_error.to_string()),
     }
+}
+
+fn build_profile_snapshot_dict(profile_snapshot: &ReaderProfileSnapshot) -> HashMap<String, u64> {
+    HashMap::from([
+        ("sample_selection_prepare_ns".to_string(), profile_snapshot.sample_selection_prepare_ns),
+        ("sample_selection_prepare_count".to_string(), profile_snapshot.sample_selection_prepare_count),
+        ("compressed_block_fetch_ns".to_string(), profile_snapshot.compressed_block_fetch_ns),
+        ("compressed_block_fetch_count".to_string(), profile_snapshot.compressed_block_fetch_count),
+        ("compressed_byte_count".to_string(), profile_snapshot.compressed_byte_count),
+        ("decompression_ns".to_string(), profile_snapshot.decompression_ns),
+        ("decompression_count".to_string(), profile_snapshot.decompression_count),
+        ("uncompressed_byte_count".to_string(), profile_snapshot.uncompressed_byte_count),
+        ("zlib_stream_count".to_string(), profile_snapshot.zlib_stream_count),
+        ("probability_decode_ns".to_string(), profile_snapshot.probability_decode_ns),
+        ("probability_decode_count".to_string(), profile_snapshot.probability_decode_count),
+        ("variant_decode_count".to_string(), profile_snapshot.variant_decode_count),
+        ("output_write_ns".to_string(), profile_snapshot.output_write_ns),
+        ("output_write_count".to_string(), profile_snapshot.output_write_count),
+        ("output_byte_count".to_string(), profile_snapshot.output_byte_count),
+        ("decode_tile_count".to_string(), profile_snapshot.decode_tile_count),
+        ("selected_sample_count".to_string(), profile_snapshot.selected_sample_count),
+        ("metadata_slice_ns".to_string(), profile_snapshot.metadata_slice_ns),
+        ("metadata_slice_count".to_string(), profile_snapshot.metadata_slice_count),
+    ])
 }
 
 #[pymodule]

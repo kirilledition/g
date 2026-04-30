@@ -6,15 +6,22 @@ edition = "2024"
 [lib]
 name = "_core"
 # "cdylib" is necessary to produce a shared library for Python to import from.
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # "extension-module" tells pyo3 we want to build an extension module (skips linking against libpython.so)
 # "abi3-py313" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.13.
-pyo3 = { version = "0.28.2", features = ["extension-module", "abi3-py313"] }
+pyo3 = { version = "0.28.3", features = ["extension-module", "abi3-py313"] }
 numpy = "0.28.0"
-flate2 = "1.1.5"
-memmap2 = "0.9.9"
-rayon = "1.11.0"
-thiserror = "2.0.17"
-zstd = "0.13.3"
+flate2 = "1.1.9"
+memmap2 = "0.9.10"
+rayon = "1.12.0"
+thiserror = "2.0.18"
+
+[dev-dependencies]
+criterion = "0.5.1"
+pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
+
+[[bench]]
+name = "bgen_read"
+harness = false

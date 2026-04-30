@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import time
 import typing
@@ -71,6 +72,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cpu-only", action="store_true", help="Skip GPU benchmark even if available.")
     parser.add_argument("--variant-limit", type=int, help="Optional variant cap for g runs.")
     parser.add_argument("--chunk-size", type=int, default=8192, help="Chunk size for g runs.")
+    parser.add_argument(
+        "--only-quantitative-step2",
+        action="store_true",
+        help="Benchmark only original regenie quantitative step 2 against g step 2.",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -149,8 +155,21 @@ def build_not_implemented_result(
 def build_regenie_program_specs(
     regenie_executable: str,
     baseline_paths: baseline_benchmark.BaselinePaths,
+    *,
+    only_quantitative_step2: bool = False,
 ) -> list[tuple[str, str, int, list[str], Path]]:
     """Build original regenie comparison specs."""
+    if only_quantitative_step2:
+        return [
+            (
+                "regenie_step2_quantitative",
+                "quantitative",
+                2,
+                baseline_benchmark.build_regenie_step2_continuous_command(regenie_executable, baseline_paths),
+                baseline_paths.baseline_directory / "regenie_step2_qt",
+            )
+        ]
+
     return [
         (
             "regenie_step1_binary",
@@ -292,12 +311,14 @@ def run_g_quantitative_step2(
     """Run one g quantitative step2 program and collect metadata."""
     stdout_log_path = log_directory / f"{program_name}.stdout.log"
     stderr_log_path = log_directory / f"{program_name}.stderr.log"
+    output_run_directory = output_prefix.with_suffix(".regenie2_linear.run")
+    if output_run_directory.exists():
+        shutil.rmtree(output_run_directory)
     success, duration_seconds, error_message = run_command_with_logs(
         command_arguments=command_arguments,
         stdout_log_path=stdout_log_path,
         stderr_log_path=stderr_log_path,
     )
-    output_run_directory = output_prefix.with_suffix(".regenie2_linear.run")
     output_path = output_run_directory / "final.parquet"
     output_row_count = count_table_rows(output_path)
     variants_per_second = None
@@ -354,6 +375,20 @@ def summarize_quantitative_step2_agreement(
     if required_observed_columns.issubset(observed_frame.columns) and required_baseline_columns.issubset(
         baseline_frame.columns
     ):
+        observed_frame = observed_frame.assign(
+            chromosome=observed_frame["chromosome"].astype(str),
+            position=pd.to_numeric(observed_frame["position"], downcast="integer"),
+            variant_identifier=observed_frame["variant_identifier"].astype(str),
+            allele_one=observed_frame["allele_one"].astype(str),
+            allele_two=observed_frame["allele_two"].astype(str),
+        )
+        baseline_frame = baseline_frame.assign(
+            CHROM=baseline_frame["CHROM"].astype(str),
+            GENPOS=pd.to_numeric(baseline_frame["GENPOS"], downcast="integer"),
+            ID=baseline_frame["ID"].astype(str),
+            ALLELE0=baseline_frame["ALLELE0"].astype(str),
+            ALLELE1=baseline_frame["ALLELE1"].astype(str),
+        )
         merged_frame = observed_frame.merge(
             baseline_frame[
                 ["CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1", "BETA", "LOG10P"]
@@ -477,6 +512,7 @@ def main() -> None:
     for program_name, trait_type, step, command_arguments, output_prefix in build_regenie_program_specs(
         regenie_executable,
         baseline_paths,
+        only_quantitative_step2=arguments.only_quantitative_step2,
     ):
         results.append(
             run_regenie_program(
@@ -489,30 +525,31 @@ def main() -> None:
             )
         )
 
-    results.append(
-        build_not_implemented_result(
-            program_name="g_regenie2_binary_step1",
-            trait_type="binary",
-            step=1,
-            device="cpu",
+    if not arguments.only_quantitative_step2:
+        results.append(
+            build_not_implemented_result(
+                program_name="g_regenie2_binary_step1",
+                trait_type="binary",
+                step=1,
+                device="cpu",
+            )
         )
-    )
-    results.append(
-        build_not_implemented_result(
-            program_name="g_regenie2_binary_step2",
-            trait_type="binary",
-            step=2,
-            device="cpu",
+        results.append(
+            build_not_implemented_result(
+                program_name="g_regenie2_binary_step2",
+                trait_type="binary",
+                step=2,
+                device="cpu",
+            )
         )
-    )
-    results.append(
-        build_not_implemented_result(
-            program_name="g_regenie2_quantitative_step1",
-            trait_type="quantitative",
-            step=1,
-            device="cpu",
+        results.append(
+            build_not_implemented_result(
+                program_name="g_regenie2_quantitative_step1",
+                trait_type="quantitative",
+                step=1,
+                device="cpu",
+            )
         )
-    )
 
     g_output_cpu_prefix = arguments.output_dir / "g_regenie2_qt_step2_cpu"
     g_cpu_command_arguments = build_g_step2_command(

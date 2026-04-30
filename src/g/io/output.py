@@ -26,6 +26,7 @@ CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 DEFAULT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_WRITER_TIMEOUT_SECONDS = 120.0
 DEFAULT_PAYLOAD_BATCH_SIZE = 1
+DEFAULT_WRITER_THREAD_COUNT = 1
 
 ChunkPayloadBatch = tuple[engine.ChunkPayload, ...]
 
@@ -279,19 +280,41 @@ def persist_chunked_results(
     output_run_paths: OutputRunPaths,
     association_mode: types.AssociationMode,
     *,
+    writer_thread_count: int = DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = DEFAULT_WRITER_QUEUE_DEPTH,
     writer_timeout_seconds: float = DEFAULT_WRITER_TIMEOUT_SECONDS,
     payload_batch_size: int = DEFAULT_PAYLOAD_BATCH_SIZE,
 ) -> None:
     """Persist chunked results through a non-blocking background writer."""
+    if writer_thread_count < 1:
+        message = "Writer thread count must be at least 1."
+        raise ValueError(message)
     work_queue: queue.Queue[ChunkPayloadBatch | None] = queue.Queue(maxsize=writer_queue_depth)
     writer_errors: list[BaseException] = []
-    writer_thread = threading.Thread(
-        target=run_background_writer,
-        args=(work_queue, output_run_paths.chunks_directory, association_mode, writer_errors),
-        daemon=True,
-    )
-    writer_thread.start()
+    writer_threads = [
+        threading.Thread(
+            target=run_background_writer,
+            args=(work_queue, output_run_paths.chunks_directory, association_mode, writer_errors),
+            daemon=True,
+            name=f"chunk-writer-{writer_thread_index}",
+        )
+        for writer_thread_index in range(writer_thread_count)
+    ]
+    for writer_thread in writer_threads:
+        writer_thread.start()
+
+    def stop_writer_threads(timeout_seconds: float) -> None:
+        for _writer_thread in writer_threads:
+            work_queue.put(None, timeout=timeout_seconds)
+        for writer_thread in writer_threads:
+            writer_thread.join(timeout=timeout_seconds)
+
+    def clear_work_queue() -> None:
+        while not work_queue.empty():
+            try:
+                work_queue.get_nowait()
+            except queue.Empty:
+                break
 
     def enqueue_chunk_payload_batch(chunk_payloads: list[engine.ChunkPayload]) -> None:
         try:
@@ -312,19 +335,13 @@ def persist_chunked_results(
                 chunk_accumulator_batch.clear()
         if chunk_accumulator_batch:
             enqueue_chunk_payload_batch(engine.build_chunk_payload_batch(chunk_accumulator_batch))
-        work_queue.put(None, timeout=writer_timeout_seconds)
-        writer_thread.join(timeout=writer_timeout_seconds)
+        stop_writer_threads(writer_timeout_seconds)
         if writer_errors:
             message = f"Background writer failed: {writer_errors[0]}"
             raise RuntimeError(message) from writer_errors[0]
     except Exception:
-        while not work_queue.empty():
-            try:
-                work_queue.get_nowait()
-            except queue.Empty:
-                break
-        work_queue.put(None)
-        writer_thread.join(timeout=5.0)
+        clear_work_queue()
+        stop_writer_threads(5.0)
         raise
 
 

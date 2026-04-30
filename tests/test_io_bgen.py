@@ -193,6 +193,42 @@ def test_open_bgen_reads_phased_haplotype_example_as_dosage() -> None:
     np.testing.assert_allclose(genotype_matrix, expected_genotype_matrix)
 
 
+def test_open_bgen_trusted_no_missing_diploid_opt_in_reaches_core() -> None:
+    class FakePyBgenReader:
+        def __init__(self, bgen_path: str, trusted_no_missing_diploid: bool = False) -> None:
+            self.sample_count = 2
+            self.variant_count = 0
+            self.contains_embedded_samples = False
+            self.bgen_path = bgen_path
+            self.trusted_no_missing_diploid = trusted_no_missing_diploid
+
+        def sample_identifiers(self) -> list[str]:
+            return []
+
+        def chromosome_boundary_indices(self) -> list[int]:
+            return [0]
+
+        def close(self) -> None:
+            return
+
+    fake_core_module = SimpleNamespace(PyBgenReader=FakePyBgenReader)
+    with patch("g.io.bgen.load_backend_core", return_value=fake_core_module):
+        with open_bgen(HAPLOTYPES_BGEN_PATH, trusted_no_missing_diploid=True) as bgen_reader:
+            assert bgen_reader.trusted_no_missing_diploid is True
+            assert bgen_reader.core_reader.trusted_no_missing_diploid is True
+
+
+def test_open_bgen_validate_trusted_no_missing_diploid_rejects_phased_fixture() -> None:
+    with (
+        open_bgen(HAPLOTYPES_BGEN_PATH) as bgen_reader,
+        pytest.raises(
+            ValueError,
+            match="not compatible with trusted_no_missing_diploid because it is phased",
+        ),
+    ):
+        bgen_reader.validate_trusted_no_missing_diploid()
+
+
 def test_open_bgen_direct_subset_read_matches_probability_tensor_conversion() -> None:
     bgen_path = HAPLOTYPES_BGEN_PATH
     sample_indices = np.array([0, 2], dtype=np.intp)
@@ -248,6 +284,67 @@ def test_open_bgen_read_float32_into_fills_reusable_output_array() -> None:
 
     assert filled_output_array is output_array
     np.testing.assert_allclose(output_array, compatibility_dosage_matrix)
+
+
+def test_open_bgen_prepared_sample_selection_matches_generic_float32_read() -> None:
+    bgen_path = HAPLOTYPES_BGEN_PATH
+    sample_indices = np.array([0, 2, 3], dtype=np.intp)
+    variant_start = 1
+    variant_stop = 4
+
+    with open_bgen(bgen_path) as bgen_reader:
+        bgen_reader.prepare_sample_selection(sample_indices)
+        prepared_dosage_matrix = bgen_reader.read_float32_prepared(variant_start, variant_stop)
+        generic_dosage_matrix = bgen_reader.read_float32(sample_indices, variant_start, variant_stop)
+
+    np.testing.assert_allclose(prepared_dosage_matrix, generic_dosage_matrix)
+
+
+def test_open_bgen_prepared_read_into_matches_generic_read_into() -> None:
+    bgen_path = HAPLOTYPES_BGEN_PATH
+    sample_indices = np.array([0, 2, 3], dtype=np.intp)
+    variant_start = 1
+    variant_stop = 4
+
+    with open_bgen(bgen_path) as bgen_reader:
+        prepared_output_array = np.empty((3, 3), dtype=np.float32, order="C")
+        generic_output_array = np.empty((3, 3), dtype=np.float32, order="C")
+        bgen_reader.prepare_sample_selection(sample_indices)
+        returned_prepared_output_array = bgen_reader.read_float32_into_prepared(
+            prepared_output_array,
+            variant_start,
+            variant_stop,
+        )
+        returned_generic_output_array = bgen_reader.read_float32_into(
+            generic_output_array,
+            sample_indices,
+            variant_start,
+            variant_stop,
+        )
+
+    assert returned_prepared_output_array is prepared_output_array
+    assert returned_generic_output_array is generic_output_array
+    np.testing.assert_allclose(prepared_output_array, generic_output_array)
+
+
+def test_open_bgen_profile_snapshot_tracks_native_read_work() -> None:
+    bgen_path = HAPLOTYPES_BGEN_PATH
+    sample_indices = np.array([0, 2, 3], dtype=np.intp)
+
+    with open_bgen(bgen_path) as bgen_reader:
+        bgen_reader.reset_profile()
+        bgen_reader.prepare_sample_selection(sample_indices)
+        _ = bgen_reader.get_variant_table_arrays(1, 4)
+        _ = bgen_reader.read_float32_prepared(1, 4)
+        profile_snapshot = bgen_reader.profile_snapshot()
+
+    assert profile_snapshot["sample_selection_prepare_count"] >= 1
+    assert profile_snapshot["metadata_slice_count"] >= 1
+    assert profile_snapshot["probability_decode_count"] >= 1
+    assert profile_snapshot["variant_decode_count"] >= 1
+    assert profile_snapshot["output_write_count"] >= 1
+    assert profile_snapshot["output_byte_count"] > 0
+    assert profile_snapshot["uncompressed_byte_count"] > 0
 
 
 def test_open_bgen_read_float32_rejects_invalid_variant_bounds() -> None:

@@ -24,6 +24,7 @@ def load_script_module(module_name: str, relative_path: str):
 
 
 baseline_benchmark = load_script_module("baseline_benchmark_script", "scripts/benchmark.py")
+bgen_reader_benchmark = load_script_module("bgen_reader_benchmark_script", "scripts/benchmark_bgen_reader.py")
 comparison_benchmark = load_script_module("comparison_benchmark_script", "scripts/benchmark_regenie_comparison.py")
 comparison_profile = load_script_module("comparison_profile_script", "scripts/profile_regenie_comparison.py")
 
@@ -41,6 +42,38 @@ def test_regenie_command_builders_shape() -> None:
     assert "--qt" in command_specs[2][3]
     assert command_specs[3][0] == "regenie_step2_quantitative"
     assert "--pred" in command_specs[3][3]
+
+
+def test_bgen_reader_benchmark_parses_sweep_lists() -> None:
+    assert bgen_reader_benchmark.parse_optional_int_list("8192,16384") == [8192, 16384]
+    assert bgen_reader_benchmark.parse_optional_int_list("default,4") == [None, 4]
+
+
+def test_bgen_reader_benchmark_parses_path_modes() -> None:
+    path_modes = bgen_reader_benchmark.parse_path_modes("read_float32,read_float32_prepared,read_float32_into_prepared")
+    assert [path_mode.value for path_mode in path_modes] == [
+        "read_float32",
+        "read_float32_prepared",
+        "read_float32_into_prepared",
+    ]
+
+
+def test_bgen_reader_benchmark_parses_boolean_modes() -> None:
+    assert bgen_reader_benchmark.parse_boolean_mode_list("trusted,safe") == [True, False]
+
+
+def test_regenie_command_builders_can_focus_quantitative_step2() -> None:
+    baseline_paths = baseline_benchmark.build_baseline_paths()
+    command_specs = comparison_benchmark.build_regenie_program_specs(
+        "regenie",
+        baseline_paths,
+        only_quantitative_step2=True,
+    )
+    assert len(command_specs) == 1
+    assert command_specs[0][0] == "regenie_step2_quantitative"
+    assert "--step" in command_specs[0][3]
+    assert command_specs[0][3][command_specs[0][3].index("--step") + 1] == "2"
+    assert "--qt" in command_specs[0][3]
 
 
 def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
@@ -257,6 +290,37 @@ def test_quantitative_step2_comparison_uses_full_variant_identity_when_available
     assert agreement.merged_variant_count == 1
     assert agreement.beta_allclose_within_tolerance is True
     assert agreement.log10p_allclose_within_tolerance is True
+
+
+def test_quantitative_step2_comparison_coerces_merge_key_types(tmp_path: Path) -> None:
+    regenie_output = tmp_path / "regenie.regenie"
+    g_output = tmp_path / "g.parquet"
+    regenie_output.write_text(
+        "\n".join(
+            [
+                "CHROM GENPOS ID ALLELE0 ALLELE1 BETA LOG10P",
+                "22 100 rs1 A G 0.1 1.0",
+            ]
+        )
+        + "\n"
+    )
+    pd.DataFrame(
+        {
+            "chromosome": ["22"],
+            "position": [100],
+            "variant_identifier": ["rs1"],
+            "allele_one": ["G"],
+            "allele_two": ["A"],
+            "beta": [0.1],
+            "log10_p_value": [1.0],
+        }
+    ).to_parquet(g_output, index=False)
+    agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
+        regenie_output_path=regenie_output,
+        g_output_path=g_output,
+    )
+    assert agreement.comparable
+    assert agreement.merged_variant_count == 1
 
 
 def test_quantitative_step2_comparison_reads_parquet_outputs(tmp_path: Path) -> None:

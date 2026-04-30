@@ -109,6 +109,48 @@ class ReusableFloat32BlockReader(typing.Protocol):
 
 
 @typing.runtime_checkable
+class PreparedSampleSelectionReader(typing.Protocol):
+    """Protocol for readers that can bind one reusable aligned sample order."""
+
+    def prepare_sample_selection(self, sample_index_array: npt.NDArray[np.intp]) -> None:
+        """Bind one reusable aligned sample selection for subsequent hot-path reads."""
+
+    def clear_prepared_sample_selection(self) -> None:
+        """Clear any previously bound reusable aligned sample selection."""
+
+
+@typing.runtime_checkable
+class PreparedReusableFloat32BlockReader(typing.Protocol):
+    """Protocol for readers with reusable prepared-sample block reads."""
+
+    def read_float32_prepared(
+        self,
+        variant_start: int,
+        variant_stop: int,
+    ) -> npt.NDArray[np.float32]:
+        """Read one float32 dosage block using a prepared sample selection."""
+
+    def read_float32_into_prepared(
+        self,
+        output_array: npt.NDArray[np.float32],
+        variant_start: int,
+        variant_stop: int,
+    ) -> npt.NDArray[np.float32]:
+        """Fill one output buffer using a prepared sample selection."""
+
+
+@typing.runtime_checkable
+class RustProfiledBgenReader(typing.Protocol):
+    """Protocol for readers exposing cumulative Rust-side profiling counters."""
+
+    def reset_profile(self) -> None:
+        """Reset cumulative Rust-side profiling counters."""
+
+    def profile_snapshot(self) -> dict[str, int]:
+        """Return cumulative Rust-side profiling counters."""
+
+
+@typing.runtime_checkable
 class ChromosomePartitionReader(typing.Protocol):
     """Protocol for readers that can split contiguous variant slices by chromosome."""
 
@@ -280,24 +322,54 @@ def iter_dosage_genotype_chunks_from_reader(
         )
 
     trace_prefix = source_name.lower()
-    for variant_start in range(0, total_variant_count, chunk_size):
-        variant_stop = min(total_variant_count, variant_start + chunk_size)
-        variant_table_arrays = genotype_reader.get_variant_table_arrays(variant_start, variant_stop)
-        with jax.profiler.TraceAnnotation(f"dosage.read_{trace_prefix}_chunk"):
-            genotype_matrix_host = read_float32_block_from_reader(
-                genotype_reader=genotype_reader,
-                sample_index_array=sample_index_array,
-                variant_start=variant_start,
-                variant_stop=variant_stop,
-            )
-        with jax.profiler.TraceAnnotation("dosage.device_put_genotypes"):
-            genotype_matrix_device = jax.device_put(genotype_matrix_host)
-        with jax.profiler.TraceAnnotation("dosage.preprocess_genotypes"):
-            preprocessed_genotype_arrays = genotype_processing.preprocess_genotype_matrix_arrays(genotype_matrix_device)
-        with jax.profiler.TraceAnnotation("dosage.build_chunk"):
-            yield models.DosageGenotypeChunk(
-                genotypes=preprocessed_genotype_arrays.genotypes,
-                metadata=build_variant_metadata(variant_table_arrays, variant_start, variant_stop),
-                allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,
-                observation_count=preprocessed_genotype_arrays.observation_count,
-            )
+    uses_prepared_selection = isinstance(genotype_reader, PreparedSampleSelectionReader)
+    uses_prepared_buffer_fill = isinstance(genotype_reader, PreparedReusableFloat32BlockReader)
+    reusable_output_array = np.empty((sample_index_array.size, chunk_size), dtype=np.float32, order="C")
+    if uses_prepared_selection:
+        genotype_reader.prepare_sample_selection(sample_index_array)
+    try:
+        for variant_start in range(0, total_variant_count, chunk_size):
+            variant_stop = min(total_variant_count, variant_start + chunk_size)
+            variant_table_arrays = genotype_reader.get_variant_table_arrays(variant_start, variant_stop)
+            selected_variant_count = variant_stop - variant_start
+            with jax.profiler.TraceAnnotation(f"dosage.read_{trace_prefix}_chunk"):
+                if uses_prepared_buffer_fill and selected_variant_count == chunk_size:
+                    genotype_matrix_host = genotype_reader.read_float32_into_prepared(
+                        reusable_output_array,
+                        variant_start,
+                        variant_stop,
+                    )
+                elif uses_prepared_buffer_fill:
+                    tail_output_array = np.empty(
+                        (sample_index_array.size, selected_variant_count),
+                        dtype=np.float32,
+                        order="C",
+                    )
+                    genotype_matrix_host = genotype_reader.read_float32_into_prepared(
+                        tail_output_array,
+                        variant_start,
+                        variant_stop,
+                    )
+                else:
+                    genotype_matrix_host = read_float32_block_from_reader(
+                        genotype_reader=genotype_reader,
+                        sample_index_array=sample_index_array,
+                        variant_start=variant_start,
+                        variant_stop=variant_stop,
+                    )
+            with jax.profiler.TraceAnnotation("dosage.device_put_genotypes"):
+                genotype_matrix_device = jax.device_put(genotype_matrix_host)
+            with jax.profiler.TraceAnnotation("dosage.preprocess_genotypes"):
+                preprocessed_genotype_arrays = genotype_processing.preprocess_genotype_matrix_arrays(
+                    genotype_matrix_device
+                )
+            with jax.profiler.TraceAnnotation("dosage.build_chunk"):
+                yield models.DosageGenotypeChunk(
+                    genotypes=preprocessed_genotype_arrays.genotypes,
+                    metadata=build_variant_metadata(variant_table_arrays, variant_start, variant_stop),
+                    allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,
+                    observation_count=preprocessed_genotype_arrays.observation_count,
+                )
+    finally:
+        if uses_prepared_selection:
+            genotype_reader.clear_prepared_sample_selection()

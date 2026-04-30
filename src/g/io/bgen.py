@@ -445,6 +445,7 @@ class BgenReader:
         sample_path: Path | str | None = None,
         *,
         allow_complex: bool = False,
+        trusted_no_missing_diploid: bool = False,
     ) -> None:
         """Open one BGEN file.
 
@@ -465,12 +466,17 @@ class BgenReader:
             Path(sample_path) if sample_path is not None else None,
         )
         core_module = load_backend_core()
-        self.core_reader = core_module.PyBgenReader(str(self.bgen_path))
+        self.core_reader = core_module.PyBgenReader(
+            str(self.bgen_path),
+            bool(trusted_no_missing_diploid),
+        )
         self.sample_identifier_source = resolve_sample_identifier_source(self.core_reader, self.sample_path)
         self.sample_identifier_array = self.resolve_sample_identifier_array()
         self._variant_table: pl.DataFrame | None = None
         self._variant_table_arrays: reader.VariantTableArrays | None = None
         self._chromosome_boundary_indices: npt.NDArray[np.int64] | None = None
+        self._prepared_sample_index_array: npt.NDArray[np.intp] | None = None
+        self.trusted_no_missing_diploid = bool(trusted_no_missing_diploid)
 
     @property
     def sample_count(self) -> int:
@@ -562,6 +568,32 @@ class BgenReader:
             )
         return self._chromosome_boundary_indices
 
+    def prepare_sample_selection(
+        self,
+        sample_index_array: npt.NDArray[np.int64] | npt.NDArray[np.intp],
+    ) -> None:
+        """Bind one reusable aligned sample selection for hot-path reads."""
+        normalized_sample_index_array = np.ascontiguousarray(sample_index_array, dtype=np.int64)
+        self.core_reader.prepare_sample_selection(normalized_sample_index_array)
+        self._prepared_sample_index_array = np.asarray(normalized_sample_index_array, dtype=np.intp)
+
+    def clear_prepared_sample_selection(self) -> None:
+        """Clear one previously bound reusable aligned sample selection."""
+        self.core_reader.clear_prepared_sample_selection()
+        self._prepared_sample_index_array = None
+
+    def reset_profile(self) -> None:
+        """Reset cumulative Rust BGEN profiling counters."""
+        self.core_reader.reset_profile()
+
+    def profile_snapshot(self) -> dict[str, int]:
+        """Return cumulative Rust BGEN profiling counters."""
+        return dict(self.core_reader.profile_snapshot())
+
+    def validate_trusted_no_missing_diploid(self) -> None:
+        """Validate that the open file satisfies the trusted fast-path assumptions."""
+        self.core_reader.validate_trusted_no_missing_diploid()
+
     def read(
         self,
         index: object = None,
@@ -604,13 +636,43 @@ class BgenReader:
                 f"Received start={variant_start}, stop={variant_stop}."
             )
             raise ValueError(message)
+        normalized_sample_index_array = np.ascontiguousarray(sample_index_array, dtype=np.int64)
         if variant_stop == variant_start:
-            return np.empty((len(sample_index_array), 0), dtype=np.float32, order="C")
+            return np.empty((len(normalized_sample_index_array), 0), dtype=np.float32, order="C")
+        if self._prepared_sample_index_array is not None and np.array_equal(
+            self._prepared_sample_index_array,
+            np.asarray(normalized_sample_index_array, dtype=np.intp),
+        ):
+            dosage_matrix = self.core_reader.read_dosage_f32_prepared(
+                int(variant_start),
+                int(variant_stop),
+            )
+            return np.asarray(dosage_matrix, dtype=np.float32, order="C")
         dosage_matrix = self.core_reader.read_dosage_f32(
-            np.ascontiguousarray(sample_index_array, dtype=np.int64),
+            normalized_sample_index_array,
             int(variant_start),
             int(variant_stop),
         )
+        return np.asarray(dosage_matrix, dtype=np.float32, order="C")
+
+    def read_float32_prepared(
+        self,
+        variant_start: int,
+        variant_stop: int,
+    ) -> npt.NDArray[np.float32]:
+        """Read one strict float32 dosage block using the prepared sample selection."""
+        if self._prepared_sample_index_array is None:
+            message = "Prepared BGEN sample selection was requested before aligned samples were bound."
+            raise ValueError(message)
+        if variant_start < 0 or variant_stop < variant_start or variant_stop > self.variant_count:
+            message = (
+                f"Variant bounds must satisfy 0 <= start <= stop <= {self.variant_count}. "
+                f"Received start={variant_start}, stop={variant_stop}."
+            )
+            raise ValueError(message)
+        if variant_stop == variant_start:
+            return np.empty((len(self._prepared_sample_index_array), 0), dtype=np.float32, order="C")
+        dosage_matrix = self.core_reader.read_dosage_f32_prepared(int(variant_start), int(variant_stop))
         return np.asarray(dosage_matrix, dtype=np.float32, order="C")
 
     def read_float32_into(
@@ -631,9 +693,7 @@ class BgenReader:
         selected_variant_count = variant_stop - variant_start
         expected_shape = (selected_sample_count, selected_variant_count)
         if output_array.shape != expected_shape:
-            message = (
-                f"Output array shape mismatch: expected {expected_shape}, observed {output_array.shape}."
-            )
+            message = f"Output array shape mismatch: expected {expected_shape}, observed {output_array.shape}."
             raise ValueError(message)
         if output_array.dtype != np.float32:
             message = "Output array for BGEN dosage reads must have dtype float32."
@@ -641,8 +701,46 @@ class BgenReader:
         if not output_array.flags.c_contiguous:
             message = "Output array for BGEN dosage reads must be C-contiguous."
             raise ValueError(message)
+        normalized_sample_index_array = np.ascontiguousarray(sample_index_array, dtype=np.int64)
+        if self._prepared_sample_index_array is not None and np.array_equal(
+            self._prepared_sample_index_array,
+            np.asarray(normalized_sample_index_array, dtype=np.intp),
+        ):
+            self.core_reader.read_dosage_f32_into_prepared(
+                int(variant_start),
+                int(variant_stop),
+                output_array,
+            )
+            return output_array
         self.core_reader.read_dosage_f32_into(
-            np.ascontiguousarray(sample_index_array, dtype=np.int64),
+            normalized_sample_index_array,
+            int(variant_start),
+            int(variant_stop),
+            output_array,
+        )
+        return output_array
+
+    def read_float32_into_prepared(
+        self,
+        output_array: npt.NDArray[np.float32],
+        variant_start: int,
+        variant_stop: int,
+    ) -> npt.NDArray[np.float32]:
+        """Fill one output buffer using the prepared sample selection."""
+        if self._prepared_sample_index_array is None:
+            message = "Prepared BGEN sample selection was requested before aligned samples were bound."
+            raise ValueError(message)
+        expected_shape = (len(self._prepared_sample_index_array), variant_stop - variant_start)
+        if output_array.shape != expected_shape:
+            message = f"Output array shape mismatch: expected {expected_shape}, observed {output_array.shape}."
+            raise ValueError(message)
+        if output_array.dtype != np.float32:
+            message = "Output array for BGEN dosage reads must have dtype float32."
+            raise ValueError(message)
+        if not output_array.flags.c_contiguous:
+            message = "Output array for BGEN dosage reads must be C-contiguous."
+            raise ValueError(message)
+        self.core_reader.read_dosage_f32_into_prepared(
             int(variant_start),
             int(variant_stop),
             output_array,
@@ -668,9 +766,15 @@ def open_bgen(
     sample_path: Path | str | None = None,
     *,
     allow_complex: bool = False,
+    trusted_no_missing_diploid: bool = False,
 ) -> BgenReader:
     """Open one BGEN file with a bed-reader-like wrapper."""
-    return BgenReader(bgen_path=bgen_path, sample_path=sample_path, allow_complex=allow_complex)
+    return BgenReader(
+        bgen_path=bgen_path,
+        sample_path=sample_path,
+        allow_complex=allow_complex,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
 
 
 def load_bgen_sample_table(bgen_path: Path, sample_path: Path | None = None) -> pl.DataFrame:

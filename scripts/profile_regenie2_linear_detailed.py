@@ -250,6 +250,32 @@ def record_stage_duration(
     stage_timing_accumulator.total_seconds += duration_seconds
 
 
+def record_rust_bgen_profile_delta(
+    stage_timing_accumulators: dict[str, StageTimingAccumulator],
+    start_snapshot: dict[str, int],
+    stop_snapshot: dict[str, int],
+) -> None:
+    """Record timing deltas from cumulative Rust BGEN profile counters."""
+    stage_name_by_counter_prefix = {
+        "sample_selection_prepare": "rust_bgen_sample_selection_prepare",
+        "compressed_block_fetch": "rust_bgen_compressed_block_fetch",
+        "decompression": "rust_bgen_decompression",
+        "probability_decode": "rust_bgen_probability_decode",
+        "output_write": "rust_bgen_output_write",
+        "metadata_slice": "rust_bgen_metadata_slice",
+    }
+    for counter_prefix, stage_name in stage_name_by_counter_prefix.items():
+        nanosecond_key = f"{counter_prefix}_ns"
+        count_key = f"{counter_prefix}_count"
+        duration_nanoseconds = stop_snapshot.get(nanosecond_key, 0) - start_snapshot.get(nanosecond_key, 0)
+        event_count = stop_snapshot.get(count_key, 0) - start_snapshot.get(count_key, 0)
+        if duration_nanoseconds == 0 and event_count == 0:
+            continue
+        stage_timing_accumulator = stage_timing_accumulators.setdefault(stage_name, StageTimingAccumulator())
+        stage_timing_accumulator.event_count += event_count
+        stage_timing_accumulator.total_seconds += duration_nanoseconds / 1_000_000_000.0
+
+
 def block_until_ready(value: typing.Any) -> None:
     """Synchronize any nested JAX arrays contained in a profiling value."""
     if isinstance(value, jax.Array):
@@ -574,62 +600,109 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
             expected_individual_identifiers=expected_individual_identifiers,
             source_name="BGEN",
         )
+        uses_prepared_selection = isinstance(genotype_reader, reader.PreparedSampleSelectionReader)
+        uses_prepared_buffer_fill = isinstance(genotype_reader, reader.PreparedReusableFloat32BlockReader)
+        uses_rust_profile = isinstance(genotype_reader, reader.RustProfiledBgenReader)
+        reusable_output_array = np.empty((sample_index_array.size, chunk_size), dtype=np.float32, order="C")
+        if uses_rust_profile:
+            genotype_reader.reset_profile()
+        if uses_prepared_selection:
+            genotype_reader.prepare_sample_selection(sample_index_array)
 
-        for variant_start in range(0, total_variant_count, chunk_size):
-            variant_stop = min(total_variant_count, variant_start + chunk_size)
+        try:
+            for variant_start in range(0, total_variant_count, chunk_size):
+                variant_stop = min(total_variant_count, variant_start + chunk_size)
 
-            metadata_start_time = time.perf_counter()
-            variant_table_arrays = genotype_reader.get_variant_table_arrays(variant_start, variant_stop)
-            record_stage_duration(
-                stage_timing_accumulators,
-                "get_variant_table_arrays",
-                time.perf_counter() - metadata_start_time,
-            )
+                rust_profile_before_metadata = genotype_reader.profile_snapshot() if uses_rust_profile else {}
+                metadata_start_time = time.perf_counter()
+                variant_table_arrays = genotype_reader.get_variant_table_arrays(variant_start, variant_stop)
+                record_stage_duration(
+                    stage_timing_accumulators,
+                    "get_variant_table_arrays",
+                    time.perf_counter() - metadata_start_time,
+                )
+                rust_profile_after_metadata = genotype_reader.profile_snapshot() if uses_rust_profile else {}
+                record_rust_bgen_profile_delta(
+                    stage_timing_accumulators,
+                    rust_profile_before_metadata,
+                    rust_profile_after_metadata,
+                )
 
-            host_read_start_time = time.perf_counter()
-            genotype_matrix_host = reader.read_float32_block_from_reader(
-                genotype_reader=genotype_reader,
-                sample_index_array=sample_index_array,
-                variant_start=variant_start,
-                variant_stop=variant_stop,
-            )
-            record_stage_duration(
-                stage_timing_accumulators,
-                "bgen_read_host",
-                time.perf_counter() - host_read_start_time,
-            )
+                rust_profile_before_read = genotype_reader.profile_snapshot() if uses_rust_profile else {}
+                host_read_start_time = time.perf_counter()
+                selected_variant_count = variant_stop - variant_start
+                if uses_prepared_buffer_fill and selected_variant_count == chunk_size:
+                    genotype_matrix_host = genotype_reader.read_float32_into_prepared(
+                        reusable_output_array,
+                        variant_start,
+                        variant_stop,
+                    )
+                elif uses_prepared_buffer_fill:
+                    tail_output_array = np.empty(
+                        (sample_index_array.size, selected_variant_count),
+                        dtype=np.float32,
+                        order="C",
+                    )
+                    genotype_matrix_host = genotype_reader.read_float32_into_prepared(
+                        tail_output_array,
+                        variant_start,
+                        variant_stop,
+                    )
+                else:
+                    genotype_matrix_host = reader.read_float32_block_from_reader(
+                        genotype_reader=genotype_reader,
+                        sample_index_array=sample_index_array,
+                        variant_start=variant_start,
+                        variant_stop=variant_stop,
+                    )
+                record_stage_duration(
+                    stage_timing_accumulators,
+                    "bgen_read_host",
+                    time.perf_counter() - host_read_start_time,
+                )
+                rust_profile_after_read = genotype_reader.profile_snapshot() if uses_rust_profile else {}
+                record_rust_bgen_profile_delta(
+                    stage_timing_accumulators,
+                    rust_profile_before_read,
+                    rust_profile_after_read,
+                )
 
-            device_put_start_time = time.perf_counter()
-            genotype_matrix_device = jax.device_put(genotype_matrix_host)
-            block_until_ready(genotype_matrix_device)
-            record_stage_duration(
-                stage_timing_accumulators,
-                "device_put_genotypes",
-                time.perf_counter() - device_put_start_time,
-            )
+                device_put_start_time = time.perf_counter()
+                genotype_matrix_device = jax.device_put(genotype_matrix_host)
+                block_until_ready(genotype_matrix_device)
+                record_stage_duration(
+                    stage_timing_accumulators,
+                    "device_put_genotypes",
+                    time.perf_counter() - device_put_start_time,
+                )
 
-            preprocess_start_time = time.perf_counter()
-            preprocessed_genotype_arrays = genotype_processing.preprocess_genotype_matrix_arrays(genotype_matrix_device)
-            block_until_ready(preprocessed_genotype_arrays)
-            record_stage_duration(
-                stage_timing_accumulators,
-                "preprocess_genotypes",
-                time.perf_counter() - preprocess_start_time,
-            )
+                preprocess_start_time = time.perf_counter()
+                preprocessed_genotype_arrays = genotype_processing.preprocess_genotype_matrix_arrays(
+                    genotype_matrix_device
+                )
+                block_until_ready(preprocessed_genotype_arrays)
+                record_stage_duration(
+                    stage_timing_accumulators,
+                    "preprocess_genotypes",
+                    time.perf_counter() - preprocess_start_time,
+                )
 
-            build_chunk_start_time = time.perf_counter()
-            dosage_genotype_chunk = models.DosageGenotypeChunk(
-                genotypes=preprocessed_genotype_arrays.genotypes,
-                metadata=reader.build_variant_metadata(variant_table_arrays, variant_start, variant_stop),
-                allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,
-                observation_count=preprocessed_genotype_arrays.observation_count,
-            )
-            record_stage_duration(
-                stage_timing_accumulators,
-                "build_dosage_chunk",
-                time.perf_counter() - build_chunk_start_time,
-            )
-            yield dosage_genotype_chunk
+                build_chunk_start_time = time.perf_counter()
+                dosage_genotype_chunk = models.DosageGenotypeChunk(
+                    genotypes=preprocessed_genotype_arrays.genotypes,
+                    metadata=reader.build_variant_metadata(variant_table_arrays, variant_start, variant_stop),
+                    allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,
+                    observation_count=preprocessed_genotype_arrays.observation_count,
+                )
+                record_stage_duration(
+                    stage_timing_accumulators,
+                    "build_dosage_chunk",
+                    time.perf_counter() - build_chunk_start_time,
+                )
+                yield dosage_genotype_chunk
+        finally:
+            if uses_prepared_selection:
+                genotype_reader.clear_prepared_sample_selection()
 
     setattr(
         engine_module,
