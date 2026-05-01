@@ -1,0 +1,75 @@
+name: build
+
+on: 
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    types:
+      - opened
+  release:
+    types:
+      - created
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build
+    env:
+      BOOST_IO: 0
+      STATIC: 1
+      BGEN_VERSION: v1.1.7
+      CMAKE_VERSION_MAJOR: 3.28
+      CMAKE_VERSION_MINOR: 0
+      LIB_INSTALL: g++-9 gfortran-9 libgomp1 make python3 zlib1g-dev wget libcurl4-openssl-dev
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Prep GCC install
+        run: |
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+          sudo apt update
+
+      - name: Apt packages
+        run: |
+          sudo apt install -y --no-install-recommends ${LIB_INSTALL}
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 60 --slave /usr/bin/g++ g++ /usr/bin/g++-9
+          sudo update-alternatives --install /usr/bin/gfortran gfortran /usr/bin/gfortran-9 70
+          sudo update-alternatives --install /usr/bin/f77 f77 /usr/bin/gfortran-9 70
+          sudo update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-9 70
+          wget -O cmake_install.sh "http://cmake.org/files/v${CMAKE_VERSION_MAJOR}/cmake-${CMAKE_VERSION_MAJOR}.${CMAKE_VERSION_MINOR}-linux-x86_64.sh"
+          sudo sh cmake_install.sh --prefix=/usr/local --skip-license --exclude-subdir
+          sudo rm cmake_install.sh
+
+      - name: Cache Bgen
+        id: bgen-cache
+        uses: actions/cache@v3
+        with:
+          path: bgen.tgz
+          key: ${{ runner.os }}-bgen
+
+      - name: Download Bgen if not cached
+        if: steps.bgen-cache.outputs.cache-hit != 'true'
+        run: |
+          wget -O bgen.tgz "http://code.enkre.net/bgen/tarball/release/${BGEN_VERSION}"
+
+      - name: Install Bgen
+        run: |
+          tar -xzf bgen.tgz
+          pushd ${BGEN_VERSION}
+          python3 waf configure
+          python3 waf
+          popd
+
+      - name: Build
+        run: |
+          BGEN_PATH=./${BGEN_VERSION} HAS_BOOST_IOSTREAM=$BOOST_IO STATIC=$STATIC cmake .
+          make
+    
+      - name: Test
+        run: |
+          ./regenie --help
+          ./regenie --version
