@@ -11,12 +11,16 @@ from dataclasses import dataclass
 
 import numpy as np
 import polars as pl
+import pyarrow as pa
+import pyarrow.ipc as pa_ipc
 
 from g import engine, types
 
 if typing.TYPE_CHECKING:
     import collections.abc
     from pathlib import Path
+
+    import numpy.typing as npt
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +29,9 @@ OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 DEFAULT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_WRITER_TIMEOUT_SECONDS = 120.0
-DEFAULT_PAYLOAD_BATCH_SIZE = 1
-DEFAULT_WRITER_THREAD_COUNT = 1
-ChunkPayloadBatch = tuple[engine.ChunkPayload, ...]
+DEFAULT_PAYLOAD_BATCH_SIZE = 4
+DEFAULT_WRITER_THREAD_COUNT = 8
+ChunkWritePayload = engine.ChunkWritePayload
 HostArray = np.ndarray
 
 LEGACY_REGENIE2_LINEAR_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
@@ -69,8 +73,6 @@ REGENIE2_BINARY_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
     "LOG10P": pl.Float32(),
     "EXTRA": pl.Categorical(),
 }
-
-
 @dataclass(frozen=True)
 class OutputRunPaths:
     """Filesystem paths for one chunked output run."""
@@ -136,12 +138,18 @@ def build_chunk_file_name(chunk_identifier: int) -> str:
     return f"chunk_{chunk_identifier:09d}.arrow"
 
 
-def build_chunk_batch_file_name(chunk_payload_batch: ChunkPayloadBatch) -> str:
+def build_chunk_batch_file_name(chunk_write_payload: ChunkWritePayload) -> str:
     """Build a deterministic chunk file name for one payload batch."""
-    if len(chunk_payload_batch) == 1:
-        return build_chunk_file_name(chunk_payload_batch[0].chunk_identifier)
-    first_chunk_identifier = chunk_payload_batch[0].chunk_identifier
-    last_chunk_identifier = chunk_payload_batch[-1].chunk_identifier
+    if isinstance(chunk_write_payload, engine.Regenie2BinaryChunkPayloadBatch):
+        first_chunk_identifier = chunk_write_payload.first_chunk_identifier
+        last_chunk_identifier = chunk_write_payload.last_chunk_identifier
+    else:
+        if len(chunk_write_payload) == 1:
+            return build_chunk_file_name(chunk_write_payload[0].chunk_identifier)
+        first_chunk_identifier = chunk_write_payload[0].chunk_identifier
+        last_chunk_identifier = chunk_write_payload[-1].chunk_identifier
+    if first_chunk_identifier == last_chunk_identifier:
+        return build_chunk_file_name(first_chunk_identifier)
     return f"chunk_{first_chunk_identifier:09d}_{last_chunk_identifier:09d}.arrow"
 
 
@@ -257,6 +265,11 @@ def build_numeric_or_boolean_output_series(
     )
 
 
+def build_constant_numeric_array(value: int | float, row_count: int, data_type: npt.DTypeLike) -> HostArray:
+    """Build a repeated numeric NumPy array."""
+    return np.full(row_count, value, dtype=data_type)
+
+
 def build_regenie2_linear_output_frame_from_payload(chunk_payload: engine.Regenie2LinearChunkPayload) -> pl.DataFrame:
     """Build a Polars DataFrame from a host-side chunk payload."""
     row_count = len(chunk_payload.position)
@@ -354,7 +367,11 @@ def build_regenie2_binary_output_frame_from_payload(chunk_payload: engine.Regeni
                 build_numeric_or_boolean_output_series("SE", chunk_payload.standard_error, association_mode),
                 build_numeric_or_boolean_output_series("CHISQ", chunk_payload.chi_squared, association_mode),
                 build_numeric_or_boolean_output_series("LOG10P", chunk_payload.log10_p_value, association_mode),
-                build_low_cardinality_output_series("EXTRA", chunk_payload.extra, association_mode),
+                build_low_cardinality_output_series(
+                    "EXTRA",
+                    np.asarray(engine.REGENIE2_BINARY_EXTRA_LABELS, dtype="<U9")[chunk_payload.extra_code],
+                    association_mode,
+                ),
             ],
             schema=get_output_schema(association_mode),
         )
@@ -367,7 +384,9 @@ def build_output_frame_from_payload(chunk_payload: engine.ChunkPayload) -> pl.Da
     return build_regenie2_linear_output_frame_from_payload(chunk_payload)
 
 
-def build_output_frame_from_payload_batch(chunk_payload_batch: ChunkPayloadBatch) -> pl.DataFrame:
+def build_output_frame_from_payload_batch(
+    chunk_payload_batch: tuple[engine.ChunkPayload, ...],
+) -> pl.DataFrame:
     """Build one Polars DataFrame from a batch of host-side chunk payloads."""
     if len(chunk_payload_batch) == 1:
         return build_output_frame_from_payload(chunk_payload_batch[0])
@@ -383,8 +402,19 @@ def write_output_frame_to_chunk_file(output_frame: pl.DataFrame, chunk_file_path
     output_frame.write_ipc(chunk_file_path, compression=OUTPUT_COMPRESSION_CODEC)
 
 
+def write_output_record_batch_to_chunk_file(output_batch: pa.RecordBatch, chunk_file_path: Path) -> None:
+    """Write one Arrow RecordBatch to an Arrow IPC chunk file."""
+    write_options = pa_ipc.IpcWriteOptions(compression=OUTPUT_COMPRESSION_CODEC)
+    with pa.OSFile(str(chunk_file_path), "wb") as sink, pa_ipc.new_file(
+        sink,
+        output_batch.schema,
+        options=write_options,
+    ) as writer:
+        writer.write_batch(output_batch)
+
+
 def write_chunk_batch_to_disk(
-    chunk_payload_batch: ChunkPayloadBatch,
+    chunk_payload_batch: ChunkWritePayload,
     chunks_directory: Path,
     association_mode: types.AssociationMode,
 ) -> None:
@@ -393,8 +423,18 @@ def write_chunk_batch_to_disk(
     chunk_file_name = build_chunk_batch_file_name(chunk_payload_batch)
     chunk_file_path = chunks_directory / chunk_file_name
     temporary_path = chunk_file_path.with_suffix(".arrow.tmp")
-    output_frame = build_output_frame_from_payload_batch(chunk_payload_batch)
-    write_output_frame_to_chunk_file(output_frame, temporary_path)
+    if isinstance(chunk_payload_batch, engine.Regenie2BinaryChunkPayloadBatch):
+        write_output_record_batch_to_chunk_file(chunk_payload_batch.output_batch, temporary_path)
+    elif chunk_payload_batch and isinstance(chunk_payload_batch[0], engine.Regenie2BinaryChunkPayload):
+        write_output_record_batch_to_chunk_file(
+            engine.build_regenie2_binary_output_record_batch_from_payloads(
+                typing.cast("tuple[engine.Regenie2BinaryChunkPayload, ...]", chunk_payload_batch)
+            ),
+            temporary_path,
+        )
+    else:
+        output_frame = build_output_frame_from_payload_batch(chunk_payload_batch)
+        write_output_frame_to_chunk_file(output_frame, temporary_path)
     temporary_path.replace(chunk_file_path)
 
 
@@ -408,8 +448,8 @@ def write_chunk_to_disk(
 
 
 def put_chunk_payload_batch_into_queue(
-    work_queue: queue.Queue[ChunkPayloadBatch | None],
-    chunk_payload_batch: ChunkPayloadBatch,
+    work_queue: queue.Queue[ChunkWritePayload | None],
+    chunk_payload_batch: ChunkWritePayload,
     writer_timeout_seconds: float,
 ) -> None:
     """Enqueue one payload batch for asynchronous writing."""
@@ -421,7 +461,7 @@ def put_chunk_payload_batch_into_queue(
 
 
 def join_writer_threads(
-    work_queue: queue.Queue[ChunkPayloadBatch | None],
+    work_queue: queue.Queue[ChunkWritePayload | None],
     writer_threads: list[threading.Thread],
     timeout_seconds: float,
 ) -> None:
@@ -433,7 +473,7 @@ def join_writer_threads(
 
 
 def run_background_writer(
-    work_queue: queue.Queue[ChunkPayloadBatch | None],
+    work_queue: queue.Queue[ChunkWritePayload | None],
     chunks_directory: Path,
     association_mode: types.AssociationMode,
     error_container: list[BaseException],
@@ -464,7 +504,7 @@ def persist_chunked_results(
     if writer_thread_count < 1:
         message = "Writer thread count must be at least 1."
         raise ValueError(message)
-    work_queue: queue.Queue[ChunkPayloadBatch | None] = queue.Queue(maxsize=writer_queue_depth)
+    work_queue: queue.Queue[ChunkWritePayload | None] = queue.Queue(maxsize=writer_queue_depth)
     writer_errors: list[BaseException] = []
     writer_threads = [
         threading.Thread(
@@ -485,8 +525,8 @@ def persist_chunked_results(
             except queue.Empty:
                 break
 
-    def enqueue_chunk_payload_batch(chunk_payloads: list[engine.ChunkPayload]) -> None:
-        put_chunk_payload_batch_into_queue(work_queue, tuple(chunk_payloads), writer_timeout_seconds)
+    def enqueue_chunk_payload_batch(chunk_payloads: ChunkWritePayload) -> None:
+        put_chunk_payload_batch_into_queue(work_queue, chunk_payloads, writer_timeout_seconds)
 
     try:
         chunk_accumulator_batch: list[engine.ChunkAccumulator] = []

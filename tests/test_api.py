@@ -173,7 +173,10 @@ def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalizati
     assert mock_iterator.call_args.kwargs["committed_chunk_identifiers"] == {3}
     mock_persist_chunked_results.assert_called_once()
     assert mock_persist_chunked_results.call_args.kwargs["payload_batch_size"] == api.DEFAULT_ARROW_PAYLOAD_BATCH_SIZE
-    assert mock_persist_chunked_results.call_args.kwargs["writer_thread_count"] == 1
+    assert (
+        mock_persist_chunked_results.call_args.kwargs["writer_thread_count"]
+        == api.output.DEFAULT_WRITER_THREAD_COUNT
+    )
     mock_prepare_output_run.assert_called_once()
     mock_finalize.assert_not_called()
 

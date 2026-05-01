@@ -160,7 +160,7 @@ def test_binary_payload_writes_regenie_like_schema(tmp_path: Path) -> None:
         standard_error=np.asarray([0.2], dtype=np.float32),
         chi_squared=np.asarray([0.25], dtype=np.float32),
         log10_p_value=np.asarray([0.5], dtype=np.float32),
-        extra=np.asarray(["FIRTH"]),
+        extra_code=np.asarray([1], dtype=np.int32),
         is_valid=np.asarray([True]),
     )
 

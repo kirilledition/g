@@ -227,6 +227,7 @@ class Regenie2BinaryChromosomeState:
         standardized_residual: Pearson residual.
         square_root_weight: Square root of Bernoulli variance.
         weighted_genotype_projection_matrix: Cholesky-whitened weighted covariate transpose.
+        null_firth_penalized_log_likelihood: Covariate-only Firth null penalized log-likelihood.
 
     """
 
@@ -239,6 +240,7 @@ class Regenie2BinaryChromosomeState:
     standardized_residual: jax.Array
     square_root_weight: jax.Array
     weighted_genotype_projection_matrix: jax.Array
+    null_firth_penalized_log_likelihood: jax.Array
 
 
 @jax.tree_util.register_dataclass

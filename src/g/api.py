@@ -16,7 +16,7 @@ persist_chunked_results = output.persist_chunked_results
 finalize_chunks_to_parquet = output.finalize_chunks_to_parquet
 
 DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE = 8192
-DEFAULT_ARROW_PAYLOAD_BATCH_SIZE = 1
+DEFAULT_ARROW_PAYLOAD_BATCH_SIZE = output.DEFAULT_PAYLOAD_BATCH_SIZE
 
 
 @dataclasses.dataclass(frozen=True)

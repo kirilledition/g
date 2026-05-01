@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 
 import jax
@@ -228,6 +229,12 @@ def prepare_regenie2_binary_chromosome_state(
         left_side=True,
         lower=True,
     )
+    null_firth_penalized_log_likelihood = fit_covariate_only_firth_null_model(
+        covariate_matrix=state.covariate_matrix,
+        phenotype_vector=state.phenotype_vector,
+        loco_offset=loco_offset_float32,
+        initial_coefficients=null_logistic_coefficients,
+    )
     return models.Regenie2BinaryChromosomeState(
         covariate_matrix=state.covariate_matrix,
         phenotype_vector=state.phenotype_vector,
@@ -238,9 +245,11 @@ def prepare_regenie2_binary_chromosome_state(
         standardized_residual=standardized_residual,
         square_root_weight=square_root_weight,
         weighted_genotype_projection_matrix=weighted_genotype_projection_matrix,
+        null_firth_penalized_log_likelihood=null_firth_penalized_log_likelihood,
     )
 
 
+@functools.partial(jax.jit, static_argnames=("correction",))
 def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     chromosome_state: models.Regenie2BinaryChromosomeState,
     genotype_matrix: jax.Array,
@@ -726,6 +735,22 @@ def compute_firth_variantwise(
     )
 
 
+def build_empty_firth_variant_result(
+    batch_size: int,
+) -> FirthVariantResult:
+    """Build a placeholder Firth result for skipped padded batches."""
+    return FirthVariantResult(
+        beta=jnp.full((batch_size,), jnp.nan, dtype=jnp.float32),
+        standard_error=jnp.full((batch_size,), jnp.nan, dtype=jnp.float32),
+        chi_squared=jnp.full((batch_size,), jnp.nan, dtype=jnp.float32),
+        log10_p_value=jnp.full((batch_size,), jnp.nan, dtype=jnp.float32),
+        penalized_log_likelihood=jnp.full((batch_size,), jnp.nan, dtype=jnp.float32),
+        converged_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
+        valid_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
+        iteration_count=jnp.zeros((batch_size,), dtype=jnp.int32),
+    )
+
+
 @jax.jit
 def apply_device_candidate_corrections_firth(
     chromosome_state: models.Regenie2BinaryChromosomeState,
@@ -755,12 +780,6 @@ def apply_device_candidate_corrections_firth(
             )
             & flat_active_mask
         )
-        null_penalized_log_likelihood = fit_covariate_only_firth_null_model(
-            covariate_matrix=chromosome_state.covariate_matrix,
-            phenotype_vector=chromosome_state.phenotype_vector,
-            loco_offset=chromosome_state.loco_offset,
-            initial_coefficients=chromosome_state.null_logistic_coefficients,
-        )
         standard_initial_coefficients = jnp.broadcast_to(
             chromosome_state.null_logistic_coefficients[None, :],
             (genotype_matrix_by_variant.shape[0], chromosome_state.null_logistic_coefficients.shape[0]),
@@ -782,14 +801,52 @@ def apply_device_candidate_corrections_firth(
             heuristic_initial_coefficients,
             standard_initial_coefficients,
         )
-        firth_result = compute_firth_variantwise(
-            covariate_matrix=chromosome_state.covariate_matrix,
-            phenotype_vector=chromosome_state.phenotype_vector,
-            genotype_matrix_by_variant=genotype_matrix_by_variant,
-            loco_offset=chromosome_state.loco_offset,
-            initial_coefficients=initial_coefficients,
-            skip_firth_mask=~flat_active_mask,
-            null_penalized_log_likelihood=null_penalized_log_likelihood,
+        batch_count = fallback_index_matrix.shape[0]
+        active_batch_count = (fallback_count + FIRTH_BATCH_SIZE - 1) // FIRTH_BATCH_SIZE
+        genotype_batches = genotype_matrix_by_variant.reshape((batch_count, FIRTH_BATCH_SIZE, -1))
+        initial_coefficient_batches = initial_coefficients.reshape((batch_count, FIRTH_BATCH_SIZE, -1))
+        active_mask_batches = flat_active_mask.reshape((batch_count, FIRTH_BATCH_SIZE))
+        empty_firth_variant_result = build_empty_firth_variant_result(FIRTH_BATCH_SIZE)
+
+        def compute_firth_batch(
+            carry: None,
+            batch_index: jax.Array,
+        ) -> tuple[None, FirthVariantResult]:
+            del carry
+
+            def run_active_batch(_: None) -> FirthVariantResult:
+                return compute_firth_variantwise(
+                    covariate_matrix=chromosome_state.covariate_matrix,
+                    phenotype_vector=chromosome_state.phenotype_vector,
+                    genotype_matrix_by_variant=genotype_batches[batch_index],
+                    loco_offset=chromosome_state.loco_offset,
+                    initial_coefficients=initial_coefficient_batches[batch_index],
+                    skip_firth_mask=~active_mask_batches[batch_index],
+                    null_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood,
+                )
+
+            batch_result = jax.lax.cond(
+                batch_index < active_batch_count,
+                run_active_batch,
+                lambda _: empty_firth_variant_result,
+                operand=None,
+            )
+            return None, batch_result
+
+        _, batched_firth_result = jax.lax.scan(
+            compute_firth_batch,
+            None,
+            jnp.arange(batch_count, dtype=jnp.int32),
+        )
+        firth_result = FirthVariantResult(
+            beta=batched_firth_result.beta.reshape((-1,)),
+            standard_error=batched_firth_result.standard_error.reshape((-1,)),
+            chi_squared=batched_firth_result.chi_squared.reshape((-1,)),
+            log10_p_value=batched_firth_result.log10_p_value.reshape((-1,)),
+            penalized_log_likelihood=batched_firth_result.penalized_log_likelihood.reshape((-1,)),
+            converged_mask=batched_firth_result.converged_mask.reshape((-1,)),
+            valid_mask=batched_firth_result.valid_mask.reshape((-1,)),
+            iteration_count=batched_firth_result.iteration_count.reshape((-1,)),
         )
         active_flat_positions = jnp.nonzero(flat_active_mask, size=variant_count, fill_value=0)[0]
         active_fallback_indices = flat_fallback_indices[active_flat_positions]
@@ -843,6 +900,7 @@ def apply_device_candidate_corrections(
     )
 
 
+@functools.partial(jax.jit, static_argnames=("correction",))
 def compute_regenie2_binary_chunk_from_chromosome_state(
     chromosome_state: models.Regenie2BinaryChromosomeState,
     genotype_matrix: jax.Array,
