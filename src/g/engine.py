@@ -12,7 +12,7 @@ import numpy as np
 import polars as pl
 
 from g import models, types
-from g.compute import regenie2_linear
+from g.compute import regenie2_binary, regenie2_linear
 from g.io import reader as genotype_reader_protocols
 from g.io import regenie, source
 
@@ -54,7 +54,40 @@ class Regenie2LinearChunkPayload:
     is_valid: npt.NDArray[np.bool_]
 
 
-ChunkPayload = Regenie2LinearChunkPayload
+@dataclass(frozen=True)
+class Regenie2BinaryChunkAccumulator:
+    """Accumulator for REGENIE step 2 binary chunk results."""
+
+    metadata: models.VariantMetadata
+    allele_one_frequency: jax.Array
+    observation_count: jax.Array
+    regenie2_binary_result: models.Regenie2BinaryChunkResult
+
+
+@dataclass(frozen=True)
+class Regenie2BinaryChunkPayload:
+    """Host-side REGENIE step 2 binary association payload ready for persistence."""
+
+    chunk_identifier: int
+    variant_start_index: int
+    variant_stop_index: int
+    chromosome: npt.NDArray[np.str_]
+    position: npt.NDArray[np.int64]
+    variant_identifier: npt.NDArray[np.str_]
+    allele_one: npt.NDArray[np.str_]
+    allele_two: npt.NDArray[np.str_]
+    allele_one_frequency: npt.NDArray[np.float32]
+    observation_count: npt.NDArray[np.int32]
+    beta: npt.NDArray[np.float32]
+    standard_error: npt.NDArray[np.float32]
+    chi_squared: npt.NDArray[np.float32]
+    log10_p_value: npt.NDArray[np.float32]
+    extra: npt.NDArray[np.str_]
+    is_valid: npt.NDArray[np.bool_]
+
+
+ChunkAccumulator = Regenie2LinearChunkAccumulator | Regenie2BinaryChunkAccumulator
+ChunkPayload = Regenie2LinearChunkPayload | Regenie2BinaryChunkPayload
 
 
 open_genotype_reader = source.open_genotype_reader
@@ -64,6 +97,20 @@ load_prediction_source = regenie.load_prediction_source
 prepare_regenie2_linear_state = regenie2_linear.prepare_regenie2_linear_state
 prepare_regenie2_linear_chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state
 compute_regenie2_linear_chunk = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state
+prepare_regenie2_binary_state = regenie2_binary.prepare_regenie2_binary_state
+prepare_regenie2_binary_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state
+compute_regenie2_binary_chunk = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state
+
+
+def format_regenie2_binary_extra_codes(extra_codes: npt.NDArray[np.int32]) -> npt.NDArray[np.str_]:
+    """Format binary correction codes for REGENIE-like output."""
+    labels = np.empty(extra_codes.shape, dtype="<U9")
+    labels[extra_codes == regenie2_binary.EXTRA_CODE_SCORE] = "NA"
+    labels[extra_codes == regenie2_binary.EXTRA_CODE_FIRTH] = "FIRTH"
+    labels[extra_codes == regenie2_binary.EXTRA_CODE_SPA] = "SPA"
+    labels[extra_codes == regenie2_binary.EXTRA_CODE_TEST_FAIL] = "TEST_FAIL"
+    return labels
+
 
 def split_dosage_genotype_chunk_by_chromosome(
     genotype_chunk: models.DosageGenotypeChunk,
@@ -291,8 +338,120 @@ def build_regenie2_linear_chunk_payload_batch(
     return payloads
 
 
-def build_chunk_payload(chunk_accumulator: Regenie2LinearChunkAccumulator) -> ChunkPayload:
+def build_regenie2_binary_chunk_payload(
+    metadata: models.VariantMetadata,
+    allele_one_frequency: jax.Array,
+    observation_count: jax.Array,
+    regenie2_binary_result: models.Regenie2BinaryChunkResult,
+) -> Regenie2BinaryChunkPayload:
+    """Build a host-side REGENIE step 2 binary payload for background persistence."""
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": allele_one_frequency,
+            "observation_count": observation_count,
+            "beta": regenie2_binary_result.beta,
+            "standard_error": regenie2_binary_result.standard_error,
+            "chi_squared": regenie2_binary_result.chi_squared,
+            "log10_p_value": regenie2_binary_result.log10_p_value,
+            "extra_code": regenie2_binary_result.extra_code,
+            "valid_mask": regenie2_binary_result.valid_mask,
+        }
+    )
+    return Regenie2BinaryChunkPayload(
+        chunk_identifier=metadata.variant_start_index,
+        variant_start_index=metadata.variant_start_index,
+        variant_stop_index=metadata.variant_stop_index,
+        chromosome=metadata.chromosome,
+        position=metadata.position,
+        variant_identifier=metadata.variant_identifiers,
+        allele_one=metadata.allele_one,
+        allele_two=metadata.allele_two,
+        allele_one_frequency=host_values["allele_one_frequency"],
+        observation_count=host_values["observation_count"],
+        beta=host_values["beta"],
+        standard_error=host_values["standard_error"],
+        chi_squared=host_values["chi_squared"],
+        log10_p_value=host_values["log10_p_value"],
+        extra=format_regenie2_binary_extra_codes(host_values["extra_code"]),
+        is_valid=host_values["valid_mask"],
+    )
+
+
+def build_regenie2_binary_chunk_payload_batch(
+    chunk_accumulators: collections.abc.Sequence[Regenie2BinaryChunkAccumulator],
+) -> list[Regenie2BinaryChunkPayload]:
+    """Build host-side binary payloads with one device transfer for the batch."""
+    if not chunk_accumulators:
+        return []
+    host_value_lists = jax.device_get(
+        {
+            "allele_one_frequency": [
+                chunk_accumulator.allele_one_frequency for chunk_accumulator in chunk_accumulators
+            ],
+            "observation_count": [chunk_accumulator.observation_count for chunk_accumulator in chunk_accumulators],
+            "beta": [chunk_accumulator.regenie2_binary_result.beta for chunk_accumulator in chunk_accumulators],
+            "standard_error": [
+                chunk_accumulator.regenie2_binary_result.standard_error for chunk_accumulator in chunk_accumulators
+            ],
+            "chi_squared": [
+                chunk_accumulator.regenie2_binary_result.chi_squared for chunk_accumulator in chunk_accumulators
+            ],
+            "log10_p_value": [
+                chunk_accumulator.regenie2_binary_result.log10_p_value for chunk_accumulator in chunk_accumulators
+            ],
+            "extra_code": [
+                chunk_accumulator.regenie2_binary_result.extra_code for chunk_accumulator in chunk_accumulators
+            ],
+            "valid_mask": [
+                chunk_accumulator.regenie2_binary_result.valid_mask for chunk_accumulator in chunk_accumulators
+            ],
+        }
+    )
+    host_values = {key: np.concatenate(value_list) for key, value_list in host_value_lists.items()}
+
+    payloads: list[Regenie2BinaryChunkPayload] = []
+    variant_offset = 0
+    for chunk_accumulator in chunk_accumulators:
+        metadata = chunk_accumulator.metadata
+        variant_count = len(metadata.position)
+        next_variant_offset = variant_offset + variant_count
+        payloads.append(
+            Regenie2BinaryChunkPayload(
+                chunk_identifier=metadata.variant_start_index,
+                variant_start_index=metadata.variant_start_index,
+                variant_stop_index=metadata.variant_stop_index,
+                chromosome=metadata.chromosome,
+                position=metadata.position,
+                variant_identifier=metadata.variant_identifiers,
+                allele_one=metadata.allele_one,
+                allele_two=metadata.allele_two,
+                allele_one_frequency=np.ascontiguousarray(
+                    host_values["allele_one_frequency"][variant_offset:next_variant_offset]
+                ),
+                observation_count=np.ascontiguousarray(
+                    host_values["observation_count"][variant_offset:next_variant_offset]
+                ),
+                beta=np.ascontiguousarray(host_values["beta"][variant_offset:next_variant_offset]),
+                standard_error=np.ascontiguousarray(host_values["standard_error"][variant_offset:next_variant_offset]),
+                chi_squared=np.ascontiguousarray(host_values["chi_squared"][variant_offset:next_variant_offset]),
+                log10_p_value=np.ascontiguousarray(host_values["log10_p_value"][variant_offset:next_variant_offset]),
+                extra=format_regenie2_binary_extra_codes(host_values["extra_code"][variant_offset:next_variant_offset]),
+                is_valid=np.ascontiguousarray(host_values["valid_mask"][variant_offset:next_variant_offset]),
+            )
+        )
+        variant_offset = next_variant_offset
+    return payloads
+
+
+def build_chunk_payload(chunk_accumulator: ChunkAccumulator) -> ChunkPayload:
     """Build a host-side chunk payload from a device-resident accumulator."""
+    if isinstance(chunk_accumulator, Regenie2BinaryChunkAccumulator):
+        return build_regenie2_binary_chunk_payload(
+            metadata=chunk_accumulator.metadata,
+            allele_one_frequency=chunk_accumulator.allele_one_frequency,
+            observation_count=chunk_accumulator.observation_count,
+            regenie2_binary_result=chunk_accumulator.regenie2_binary_result,
+        )
     return build_regenie2_linear_chunk_payload(
         metadata=chunk_accumulator.metadata,
         allele_one_frequency=chunk_accumulator.allele_one_frequency,
@@ -302,10 +461,24 @@ def build_chunk_payload(chunk_accumulator: Regenie2LinearChunkAccumulator) -> Ch
 
 
 def build_chunk_payload_batch(
-    chunk_accumulators: collections.abc.Sequence[Regenie2LinearChunkAccumulator],
+    chunk_accumulators: collections.abc.Sequence[ChunkAccumulator],
 ) -> list[ChunkPayload]:
     """Build host-side payloads from a same-mode accumulator batch."""
-    return build_regenie2_linear_chunk_payload_batch(chunk_accumulators)
+    if not chunk_accumulators:
+        return []
+    if isinstance(chunk_accumulators[0], Regenie2BinaryChunkAccumulator):
+        return typing.cast(
+            "list[ChunkPayload]",
+            build_regenie2_binary_chunk_payload_batch(
+                typing.cast("collections.abc.Sequence[Regenie2BinaryChunkAccumulator]", chunk_accumulators)
+            ),
+        )
+    return typing.cast(
+        "list[ChunkPayload]",
+        build_regenie2_linear_chunk_payload_batch(
+            typing.cast("collections.abc.Sequence[Regenie2LinearChunkAccumulator]", chunk_accumulators)
+        ),
+    )
 
 
 def concatenate_regenie2_linear_results(
@@ -439,5 +612,96 @@ def iter_regenie2_linear_output_frames(
                             allele_one_frequency=current_chunk.allele_one_frequency,
                             observation_count=current_chunk.observation_count,
                             regenie2_linear_result=regenie2_linear_result,
+                        )
+                chunk_number += 1
+
+
+def iter_regenie2_binary_output_frames(
+    *,
+    genotype_source_config: source.GenotypeSourceConfig,
+    phenotype_path: Path,
+    phenotype_name: str,
+    prediction_list_path: Path,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    chunk_size: int,
+    variant_limit: int | None,
+    prefetch_chunks: int = 0,
+    committed_chunk_identifiers: set[int] | None = None,
+    correction: types.RegenieBinaryCorrection = types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+) -> collections.abc.Iterator[Regenie2BinaryChunkAccumulator]:
+    """Yield REGENIE step 2 binary chunk accumulators."""
+    if genotype_source_config.source_format != types.GenotypeSourceFormat.BGEN:
+        message = "REGENIE step 2 binary association requires a BGEN genotype source."
+        raise ValueError(message)
+
+    genotype_reader = open_genotype_reader(genotype_source_config)
+    committed_identifier_set = committed_chunk_identifiers or set()
+
+    with genotype_reader:
+        with jax.profiler.TraceAnnotation("regenie2_binary.load_aligned_sample_data"):
+            aligned_sample_data = load_aligned_sample_data_from_source(
+                genotype_source_config=genotype_source_config,
+                phenotype_path=phenotype_path,
+                phenotype_name=phenotype_name,
+                covariate_path=covariate_path,
+                covariate_names=covariate_names,
+                is_binary_trait=True,
+                genotype_reader=genotype_reader,
+            )
+        with jax.profiler.TraceAnnotation("regenie2_binary.prepare_state"):
+            regenie2_binary_state = prepare_regenie2_binary_state(
+                covariate_matrix=aligned_sample_data.covariate_matrix,
+                phenotype_vector=aligned_sample_data.phenotype_vector,
+            )
+        with jax.profiler.TraceAnnotation("regenie2_binary.load_prediction_source"):
+            prediction_source = load_prediction_source(prediction_list_path, phenotype_name)
+
+        chunk_iterator = iter_dosage_genotype_chunks_from_source(
+            genotype_source_config=genotype_source_config,
+            sample_indices=aligned_sample_data.sample_indices,
+            expected_individual_identifiers=aligned_sample_data.individual_identifiers,
+            chunk_size=chunk_size,
+            variant_limit=variant_limit,
+            prefetch_chunks=prefetch_chunks,
+            genotype_reader=genotype_reader,
+        )
+
+        current_chromosome: str | None = None
+        current_regenie2_binary_chromosome_state: models.Regenie2BinaryChromosomeState | None = None
+        chunk_number = 0
+        for source_chunk in chunk_iterator:
+            for current_chunk in split_dosage_genotype_chunk_with_reader_metadata(source_chunk, genotype_reader):
+                chunk_identifier = current_chunk.metadata.variant_start_index
+                if chunk_identifier in committed_identifier_set:
+                    continue
+
+                chromosome = str(current_chunk.metadata.chromosome[0])
+                if chromosome != current_chromosome:
+                    loco_offset = prediction_source.get_chromosome_predictions(
+                        chromosome=chromosome,
+                        sample_family_identifiers=aligned_sample_data.family_identifiers,
+                        sample_individual_identifiers=aligned_sample_data.individual_identifiers,
+                    )
+                    current_regenie2_binary_chromosome_state = prepare_regenie2_binary_chromosome_state(
+                        regenie2_binary_state,
+                        loco_offset,
+                    )
+                    current_chromosome = chromosome
+
+                assert current_regenie2_binary_chromosome_state is not None
+                with jax.profiler.StepTraceAnnotation("regenie2_binary_chunk", step_num=chunk_number):
+                    with jax.profiler.TraceAnnotation("regenie2_binary.compute"):
+                        regenie2_binary_result = compute_regenie2_binary_chunk(
+                            chromosome_state=current_regenie2_binary_chromosome_state,
+                            genotype_matrix=current_chunk.genotypes,
+                            correction=correction,
+                        )
+                    with jax.profiler.TraceAnnotation("regenie2_binary.accumulate"):
+                        yield Regenie2BinaryChunkAccumulator(
+                            metadata=current_chunk.metadata,
+                            allele_one_frequency=current_chunk.allele_one_frequency,
+                            observation_count=current_chunk.observation_count,
+                            regenie2_binary_result=regenie2_binary_result,
                         )
                 chunk_number += 1

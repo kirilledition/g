@@ -2,11 +2,89 @@
 
 from __future__ import annotations
 
+import typing
+from dataclasses import dataclass
+
+import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.testing
 
 from g.compute import regenie2_linear
+
+if typing.TYPE_CHECKING:
+    from g import models
+
+
+@dataclass(frozen=True)
+class ReferenceRegenie2LinearChunkResult:
+    """Reference result from the pre-optimization formula."""
+
+    beta: jax.Array
+    standard_error: jax.Array
+    chi_squared: jax.Array
+    log10_p_value: jax.Array
+    valid_mask: jax.Array
+
+
+def compute_legacy_reference_chunk(
+    state: models.Regenie2LinearState,
+    genotype_matrix: jax.Array,
+    loco_predictions: jax.Array,
+) -> ReferenceRegenie2LinearChunkResult:
+    """Compute the pre-optimization formula for regression-test comparison."""
+    adjusted_residual = state.phenotype_residual - loco_predictions
+    adjusted_residual_sum_squares = jnp.dot(adjusted_residual, adjusted_residual)
+    covariate_genotype_crossproduct = state.covariate_matrix_transpose @ genotype_matrix
+    genotype_projection = regenie2_linear.solve_positive_definite_system(
+        state.covariate_crossproduct_cholesky_factor,
+        covariate_genotype_crossproduct,
+    )
+    genotype_sum_squares = jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix)
+    projection_sum_squares = jnp.einsum("ij,ij->j", covariate_genotype_crossproduct, genotype_projection)
+    genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares - projection_sum_squares, 0.0)
+    covariance_with_phenotype = genotype_matrix.T @ adjusted_residual
+    covariance_squared = covariance_with_phenotype * covariance_with_phenotype
+    positive_genotype_residual_mask = genotype_residual_sum_squares > 0.0
+    genotype_residual_sum_squares_inverse = jnp.where(
+        positive_genotype_residual_mask,
+        jnp.reciprocal(genotype_residual_sum_squares),
+        0.0,
+    )
+    beta = jnp.where(
+        positive_genotype_residual_mask,
+        covariance_with_phenotype * genotype_residual_sum_squares_inverse,
+        jnp.nan,
+    )
+    residual_sum_squares_after = adjusted_residual_sum_squares - (
+        covariance_squared * genotype_residual_sum_squares_inverse
+    )
+    residual_sum_squares_after = jnp.maximum(residual_sum_squares_after, 0.0)
+    positive_residual_sum_squares_mask = residual_sum_squares_after > 0.0
+    standard_error = jnp.where(
+        positive_genotype_residual_mask & positive_residual_sum_squares_mask,
+        jnp.sqrt(residual_sum_squares_after * genotype_residual_sum_squares_inverse / state.degrees_of_freedom),
+        jnp.nan,
+    )
+    chi_squared = jnp.where(
+        positive_genotype_residual_mask & positive_residual_sum_squares_mask,
+        (
+            covariance_squared
+            * genotype_residual_sum_squares_inverse
+            * state.degrees_of_freedom
+            / residual_sum_squares_after
+        ),
+        0.0,
+    )
+    log10_p_value = regenie2_linear.chi_squared_to_log10_p_value(chi_squared)
+    valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
+    return ReferenceRegenie2LinearChunkResult(
+        beta=beta,
+        standard_error=standard_error,
+        chi_squared=chi_squared,
+        log10_p_value=log10_p_value,
+        valid_mask=valid_mask,
+    )
 
 
 class TestPrepareRegenie2LinearState:
@@ -31,6 +109,7 @@ class TestPrepareRegenie2LinearState:
         assert state.covariate_matrix.shape == (sample_count, covariate_count)
         assert state.covariate_matrix_transpose.shape == (covariate_count, sample_count)
         assert state.covariate_crossproduct_cholesky_factor.shape == (covariate_count, covariate_count)
+        assert state.whitened_covariate_transpose.shape == (covariate_count, sample_count)
         assert state.phenotype_residual.shape == (sample_count,)
         assert int(state.sample_count) == sample_count
         assert float(state.degrees_of_freedom) == sample_count - covariate_count - 1
@@ -126,6 +205,52 @@ class TestComputeRegenie2LinearChunk:
         assert jnp.all(result.valid_mask)
         assert jnp.all(result.chi_squared >= 0)
         assert jnp.all(result.log10_p_value >= 0)
+
+    def test_optimized_kernel_matches_legacy_reference_formula(self) -> None:
+        """Ensure stacked-score optimization preserves the previous formula."""
+        sample_count = 128
+        variant_count = 8
+        covariate_count = 3
+
+        rng = np.random.default_rng(19)
+        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
+        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
+        covariate_matrix[:, 2] = rng.standard_normal(sample_count).astype(np.float32)
+        phenotype_vector = jnp.array(rng.standard_normal(sample_count), dtype=jnp.float32)
+        genotype_matrix = rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32)
+        genotype_matrix[:, 0] = 0.0
+        genotype_matrix = jnp.array(genotype_matrix)
+        loco_predictions = jnp.array(rng.standard_normal(sample_count) * 0.2, dtype=jnp.float32)
+        state = regenie2_linear.prepare_regenie2_linear_state(
+            covariate_matrix=jnp.array(covariate_matrix),
+            phenotype_vector=phenotype_vector,
+        )
+        optimized_result = regenie2_linear.compute_regenie2_linear_chunk(
+            state=state,
+            genotype_matrix=genotype_matrix,
+            loco_predictions=loco_predictions,
+        )
+        reference_result = compute_legacy_reference_chunk(
+            state=state,
+            genotype_matrix=genotype_matrix,
+            loco_predictions=loco_predictions,
+        )
+
+        numpy.testing.assert_allclose(optimized_result.beta, reference_result.beta, rtol=1e-4, atol=1e-5)
+        numpy.testing.assert_allclose(
+            optimized_result.standard_error,
+            reference_result.standard_error,
+            rtol=1e-4,
+            atol=1e-5,
+        )
+        numpy.testing.assert_allclose(optimized_result.chi_squared, reference_result.chi_squared, rtol=1e-4, atol=1e-5)
+        numpy.testing.assert_allclose(
+            optimized_result.log10_p_value,
+            reference_result.log10_p_value,
+            rtol=1e-4,
+            atol=1e-5,
+        )
+        numpy.testing.assert_array_equal(optimized_result.valid_mask, reference_result.valid_mask)
 
     def test_chromosome_state_matches_direct_chunk_api(self) -> None:
         """Ensure chromosome-cached computation matches the compatibility wrapper."""

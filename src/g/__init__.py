@@ -13,8 +13,10 @@ def __getattr__(name: str) -> typing.Any:
         return cli.main
     if name in {
         "ComputeConfig",
+        "Regenie2BinaryConfig",
         "Regenie2LinearConfig",
         "RunArtifacts",
+        "regenie2",
         "regenie2_linear",
     }:
         return getattr(api, name)
@@ -23,6 +25,8 @@ def __getattr__(name: str) -> typing.Any:
         "AssociationMode",
         "Device",
         "GenotypeSourceFormat",
+        "RegenieBinaryCorrection",
+        "RegenieTraitType",
         "SampleIdentifierSource",
     }:
         return getattr(types, name)
@@ -36,9 +40,13 @@ __all__ = [
     "ComputeConfig",
     "Device",
     "GenotypeSourceFormat",
+    "Regenie2BinaryConfig",
     "Regenie2LinearConfig",
+    "RegenieBinaryCorrection",
+    "RegenieTraitType",
     "RunArtifacts",
     "SampleIdentifierSource",
     "main",
+    "regenie2",
     "regenie2_linear",
 ]

@@ -9,12 +9,14 @@ import numpy as np
 import polars as pl
 import pytest
 
-from g.engine import Regenie2LinearChunkAccumulator, Regenie2LinearChunkPayload
+from g.engine import Regenie2BinaryChunkPayload, Regenie2LinearChunkAccumulator, Regenie2LinearChunkPayload
 from g.io.output import (
+    LEGACY_REGENIE2_LINEAR_OUTPUT_SCHEMA,
     build_chunk_file_name,
     cast_frame_to_schema,
     finalize_chunks_to_parquet,
     get_output_schema,
+    iter_sorted_chunk_file_paths,
     persist_chunked_results,
     prepare_output_run,
     resolve_output_run_paths,
@@ -81,11 +83,101 @@ def create_regenie_chunk_accumulator(
     )
 
 
+def write_legacy_string_chunk(
+    payload: Regenie2LinearChunkPayload,
+    chunk_path: Path,
+) -> None:
+    legacy_output_frame = pl.DataFrame(
+        {
+            "chunk_identifier": [payload.chunk_identifier],
+            "variant_start_index": [payload.variant_start_index],
+            "variant_stop_index": [payload.variant_stop_index],
+            "chromosome": payload.chromosome.tolist(),
+            "position": payload.position.tolist(),
+            "variant_identifier": payload.variant_identifier.tolist(),
+            "allele_one": payload.allele_one.tolist(),
+            "allele_two": payload.allele_two.tolist(),
+            "allele_one_frequency": payload.allele_one_frequency.tolist(),
+            "observation_count": payload.observation_count.tolist(),
+            "beta": payload.beta.tolist(),
+            "standard_error": payload.standard_error.tolist(),
+            "chi_squared": payload.chi_squared.tolist(),
+            "log10_p_value": payload.log10_p_value.tolist(),
+            "is_valid": payload.is_valid.tolist(),
+        },
+        schema=LEGACY_REGENIE2_LINEAR_OUTPUT_SCHEMA,
+    )
+    legacy_output_frame.write_ipc(chunk_path, compression="zstd")
+
+
 def test_get_output_schema_returns_regenie_columns() -> None:
     output_schema = get_output_schema(AssociationMode.REGENIE2_LINEAR)
-    assert "chi_squared" in output_schema
-    assert "log10_p_value" in output_schema
-    assert "is_valid" in output_schema
+    assert output_schema["chromosome"] == pl.Categorical()
+    assert output_schema["variant_identifier"] == pl.String()
+    assert output_schema["allele_one"] == pl.Categorical()
+    assert output_schema["allele_two"] == pl.Categorical()
+
+
+def test_get_output_schema_returns_binary_regenie_columns() -> None:
+    output_schema = get_output_schema(AssociationMode.REGENIE2_BINARY)
+    assert list(output_schema) == [
+        "chunk_identifier",
+        "variant_start_index",
+        "variant_stop_index",
+        "CHROM",
+        "GENPOS",
+        "ID",
+        "ALLELE0",
+        "ALLELE1",
+        "A1FREQ",
+        "INFO",
+        "N",
+        "TEST",
+        "BETA",
+        "SE",
+        "CHISQ",
+        "LOG10P",
+        "EXTRA",
+    ]
+    assert output_schema["CHROM"] == pl.Categorical()
+    assert output_schema["TEST"] == pl.Categorical()
+    assert output_schema["EXTRA"] == pl.Categorical()
+
+
+def test_binary_payload_writes_regenie_like_schema(tmp_path: Path) -> None:
+    payload = Regenie2BinaryChunkPayload(
+        chunk_identifier=7,
+        variant_start_index=7,
+        variant_stop_index=8,
+        chromosome=np.asarray(["22"]),
+        position=np.asarray([12345], dtype=np.int64),
+        variant_identifier=np.asarray(["variant1"]),
+        allele_one=np.asarray(["A"]),
+        allele_two=np.asarray(["G"]),
+        allele_one_frequency=np.asarray([0.25], dtype=np.float32),
+        observation_count=np.asarray([100], dtype=np.int32),
+        beta=np.asarray([0.1], dtype=np.float32),
+        standard_error=np.asarray([0.2], dtype=np.float32),
+        chi_squared=np.asarray([0.25], dtype=np.float32),
+        log10_p_value=np.asarray([0.5], dtype=np.float32),
+        extra=np.asarray(["FIRTH"]),
+        is_valid=np.asarray([True]),
+    )
+
+    write_chunk_to_disk(payload, tmp_path, AssociationMode.REGENIE2_BINARY)
+
+    frame = pl.read_ipc(tmp_path / "chunk_000000007.arrow")
+    assert frame.columns == list(get_output_schema(AssociationMode.REGENIE2_BINARY))
+    assert frame.select("CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1", "TEST", "EXTRA").row(0) == (
+        "22",
+        12345,
+        "variant1",
+        "G",
+        "A",
+        "ADD",
+        "FIRTH",
+    )
+    assert frame.get_column("INFO").to_list() == [1.0]
 
 
 def test_get_output_schema_rejects_non_regenie_modes() -> None:
@@ -97,7 +189,7 @@ def test_cast_frame_to_schema_reorders_and_casts_columns() -> None:
     data_frame = pl.DataFrame(
         {
             "beta": [1.5],
-            "chromosome": [1],
+            "chromosome": ["1"],
             "chunk_identifier": [7],
             "variant_start_index": [0],
             "variant_stop_index": [1],
@@ -218,9 +310,48 @@ def test_persist_chunked_results_batches_multiple_payloads_into_one_arrow_file(t
         payload_batch_size=2,
     )
 
-    chunk_paths = sorted(prepared_output_run.output_run_paths.chunks_directory.glob("chunk_*.arrow"))
+    chunk_paths = tuple(iter_sorted_chunk_file_paths(prepared_output_run.output_run_paths.chunks_directory))
     assert [path.name for path in chunk_paths] == ["chunk_000000000_000000001.arrow"]
     assert scan_committed_chunk_identifiers(prepared_output_run.output_run_paths.chunks_directory) == frozenset({0, 1})
+
+
+def test_prepare_output_run_resume_detects_old_and_new_arrow_chunks(tmp_path: Path) -> None:
+    prepared_output_run = prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    chunks_directory = prepared_output_run.output_run_paths.chunks_directory
+    write_chunk_to_disk(
+        create_regenie_chunk_payload(
+            chunk_identifier=0,
+            variant_stop_index=1,
+            variant_identifier="v0",
+        ),
+        chunks_directory,
+        AssociationMode.REGENIE2_LINEAR,
+    )
+    payload_batch = (
+        create_regenie_chunk_payload(
+            chunk_identifier=1,
+            variant_stop_index=2,
+            variant_identifier="v1",
+        ),
+        create_regenie_chunk_payload(
+            chunk_identifier=2,
+            variant_stop_index=3,
+            variant_identifier="v2",
+        ),
+    )
+    write_legacy_string_chunk(payload_batch[0], chunks_directory / build_chunk_file_name(1))
+    write_legacy_string_chunk(payload_batch[1], chunks_directory / build_chunk_file_name(2))
+
+    resumed_output_run = prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=True,
+    )
+    assert resumed_output_run.committed_chunk_identifiers == frozenset({0, 1, 2})
 
 
 def test_finalize_chunks_to_parquet_writes_expected_schema(tmp_path: Path) -> None:
@@ -248,3 +379,75 @@ def test_finalize_chunks_to_parquet_writes_expected_schema(tmp_path: Path) -> No
     frame = pl.read_parquet(parquet_path)
     assert frame.height == 1
     assert frame.schema == get_output_schema(AssociationMode.REGENIE2_LINEAR)
+
+
+def test_finalize_chunks_to_parquet_reads_mixed_old_and_new_chunks_in_sorted_order(tmp_path: Path) -> None:
+    prepared_output_run = prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    write_legacy_string_chunk(
+        create_regenie_chunk_payload(
+            chunk_identifier=2,
+            variant_stop_index=3,
+            variant_identifier="v2",
+        ),
+        prepared_output_run.output_run_paths.chunks_directory / build_chunk_file_name(2),
+    )
+    write_chunk_to_disk(
+        create_regenie_chunk_payload(
+            chunk_identifier=0,
+            variant_stop_index=1,
+            variant_identifier="v0",
+        ),
+        prepared_output_run.output_run_paths.chunks_directory,
+        AssociationMode.REGENIE2_LINEAR,
+    )
+    write_legacy_string_chunk(
+        create_regenie_chunk_payload(
+            chunk_identifier=1,
+            variant_stop_index=2,
+            variant_identifier="v1",
+        ),
+        prepared_output_run.output_run_paths.chunks_directory / build_chunk_file_name(1),
+    )
+
+    parquet_path = finalize_chunks_to_parquet(
+        prepared_output_run.output_run_paths,
+        AssociationMode.REGENIE2_LINEAR,
+    )
+
+    frame = pl.read_parquet(parquet_path)
+    assert frame.schema == get_output_schema(AssociationMode.REGENIE2_LINEAR)
+    assert frame.get_column("chunk_identifier").to_list() == [0, 1, 2]
+    assert frame.get_column("variant_identifier").to_list() == ["v0", "v1", "v2"]
+
+
+def test_finalize_chunks_to_parquet_writes_empty_schema_when_no_chunks_exist(tmp_path: Path) -> None:
+    prepared_output_run = prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+
+    parquet_path = finalize_chunks_to_parquet(
+        prepared_output_run.output_run_paths,
+        AssociationMode.REGENIE2_LINEAR,
+    )
+
+    frame = pl.read_parquet(parquet_path)
+    assert frame.height == 0
+    assert frame.schema == get_output_schema(AssociationMode.REGENIE2_LINEAR)
+
+
+def test_write_chunk_to_disk_replaces_temporary_file_atomically(tmp_path: Path) -> None:
+    payload = create_regenie_chunk_payload(
+        chunk_identifier=0,
+        variant_stop_index=2,
+        variant_identifier="v0",
+    )
+    write_chunk_to_disk(payload, tmp_path, AssociationMode.REGENIE2_LINEAR)
+
+    assert (tmp_path / build_chunk_file_name(0)).exists()
+    assert not (tmp_path / "chunk_000000000.arrow.tmp").exists()

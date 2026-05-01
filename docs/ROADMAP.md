@@ -6,7 +6,7 @@ The active product direction is a biobank-scale **REGENIE-first** engine:
 
 1. Harden and optimize REGENIE step 2 (`regenie2-linear`) in Python/JAX.
 2. Improve BGEN ingestion and dosage chunk throughput for large cohorts.
-3. Keep Arrow/Parquet chunk persistence robust for long-running resumable jobs.
+3. Keep Arrow chunk persistence and final Parquet compaction robust for long-running resumable jobs.
 4. Expand profiling and performance work around REGENIE execution.
 
 ## Deferred Direction

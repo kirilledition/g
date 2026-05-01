@@ -64,6 +64,12 @@ def prepare_regenie2_linear_state(
     covariate_matrix_transpose = covariate_matrix_float32.T
     covariate_crossproduct = covariate_matrix_transpose @ covariate_matrix_float32
     covariate_crossproduct_cholesky_factor = jnp.linalg.cholesky(covariate_crossproduct)
+    whitened_covariate_transpose = jax.lax.linalg.triangular_solve(
+        covariate_crossproduct_cholesky_factor,
+        covariate_matrix_transpose,
+        left_side=True,
+        lower=True,
+    )
 
     phenotype_projection = solve_positive_definite_system(
         covariate_crossproduct_cholesky_factor,
@@ -75,6 +81,7 @@ def prepare_regenie2_linear_state(
         covariate_matrix=covariate_matrix_float32,
         covariate_matrix_transpose=covariate_matrix_transpose,
         covariate_crossproduct_cholesky_factor=covariate_crossproduct_cholesky_factor,
+        whitened_covariate_transpose=whitened_covariate_transpose,
         phenotype_residual=phenotype_residual,
         sample_count=jnp.asarray(sample_count, dtype=jnp.int32),
         degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=jnp.float32),
@@ -109,9 +116,14 @@ def prepare_regenie2_linear_chromosome_state(
     loco_predictions_float32 = jnp.asarray(loco_predictions, dtype=jnp.float32)
     adjusted_residual = state.phenotype_residual - loco_predictions_float32
     adjusted_residual_sum_squares = jnp.dot(adjusted_residual, adjusted_residual)
+    stacked_score_matrix = jnp.concatenate(
+        [state.whitened_covariate_transpose, adjusted_residual[None, :]],
+        axis=0,
+    )
     return models.Regenie2LinearChromosomeState(
         covariate_matrix_transpose=state.covariate_matrix_transpose,
         covariate_crossproduct_cholesky_factor=state.covariate_crossproduct_cholesky_factor,
+        stacked_score_matrix=stacked_score_matrix,
         adjusted_residual=adjusted_residual,
         adjusted_residual_sum_squares=adjusted_residual_sum_squares,
         degrees_of_freedom=state.degrees_of_freedom,
@@ -124,18 +136,18 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
     genotype_matrix: jax.Array,
 ) -> models.Regenie2LinearChunkResult:
     """Compute REGENIE step 2 linear association using chromosome-cached state."""
-    covariate_matrix_transpose = chromosome_state.covariate_matrix_transpose
-    covariate_genotype_crossproduct = covariate_matrix_transpose @ genotype_matrix
-    genotype_projection = solve_positive_definite_system(
-        chromosome_state.covariate_crossproduct_cholesky_factor,
-        covariate_genotype_crossproduct,
-    )
+    score_matrix = chromosome_state.stacked_score_matrix @ genotype_matrix
+    covariate_projection_coordinates = score_matrix[:-1]
+    covariance_with_phenotype = score_matrix[-1]
 
     genotype_sum_squares = jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix)
-    projection_sum_squares = jnp.einsum("ij,ij->j", covariate_genotype_crossproduct, genotype_projection)
+    projection_sum_squares = jnp.einsum(
+        "ij,ij->j",
+        covariate_projection_coordinates,
+        covariate_projection_coordinates,
+    )
     genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares - projection_sum_squares, 0.0)
 
-    covariance_with_phenotype = genotype_matrix.T @ chromosome_state.adjusted_residual
     covariance_squared = covariance_with_phenotype * covariance_with_phenotype
 
     positive_genotype_residual_mask = genotype_residual_sum_squares > 0.0

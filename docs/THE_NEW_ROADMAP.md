@@ -8,7 +8,7 @@ Build a high-performance GWAS engine centered on **REGENIE workflows** for bioba
 
 1. REGENIE step 2 linear association as the primary public CLI/API workflow.
 2. BGEN ingestion + dosage chunk processing optimized for accelerator execution.
-3. Reliable resumable chunk output with Arrow/Parquet finalization.
+3. Reliable resumable Arrow chunk output with final Parquet compaction.
 4. Profiling-first performance iteration on GPU/CPU JAX paths.
 
 ## Deferred Scope

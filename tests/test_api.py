@@ -11,11 +11,12 @@ from g.api import (
     ComputeConfig,
     RunArtifacts,
     parse_covariate_name_list,
+    regenie2,
     regenie2_linear,
     validate_compute_config,
 )
 from g.io.output import OutputRunPaths, PreparedOutputRun
-from g.types import Device, GenotypeSourceFormat
+from g.types import AssociationMode, Device, GenotypeSourceFormat, RegenieTraitType
 
 
 def test_public_package_no_longer_exposes_direct_linear_or_logistic() -> None:
@@ -73,6 +74,47 @@ def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
     mock_persist_chunked_results.assert_called_once()
 
 
+def test_regenie2_binary_dispatches_binary_iterator_and_output_mode() -> None:
+    with (
+        patch("g.api.configure_jax_device"),
+        patch("g.api.iter_regenie2_binary_output_frames", return_value=iter(())) as mock_iterator,
+        patch(
+            "g.api.prepare_output_run",
+            return_value=PreparedOutputRun(
+                output_run_paths=OutputRunPaths(
+                    run_directory=Path("results/output.regenie2_binary.run"),
+                    chunks_directory=Path("results/output.regenie2_binary.run/chunks"),
+                ),
+                committed_chunk_identifiers=frozenset({5}),
+            ),
+        ) as mock_prepare_output_run,
+        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
+        patch(
+            "g.api.finalize_chunks_to_parquet", return_value=Path("results/output.regenie2_binary.run/final.parquet")
+        ),
+    ):
+        artifacts = regenie2(
+            bgen="dataset.bgen",
+            sample="dataset.sample",
+            pheno="phenotype.tsv",
+            pheno_name="trait",
+            out="results/output",
+            covar_names="age,sex",
+            pred="predictions.list",
+            trait_type=RegenieTraitType.BINARY,
+            compute=ComputeConfig(resume=True),
+        )
+
+    assert artifacts == RunArtifacts(
+        output_run_directory=Path("results/output.regenie2_binary.run"),
+        final_parquet=Path("results/output.regenie2_binary.run/final.parquet"),
+    )
+    assert mock_iterator.call_args.kwargs["committed_chunk_identifiers"] == {5}
+    assert mock_iterator.call_args.kwargs["covariate_names"] == ("age", "sex")
+    assert mock_prepare_output_run.call_args.kwargs["association_mode"] == AssociationMode.REGENIE2_BINARY
+    assert mock_persist_chunked_results.call_args.kwargs["association_mode"] == AssociationMode.REGENIE2_BINARY
+
+
 @pytest.mark.parametrize(
     ("compute_config", "expected_message"),
     [
@@ -80,6 +122,7 @@ def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
         (ComputeConfig(variant_limit=0), "Variant limit must be positive"),
         (ComputeConfig(prefetch_chunks=-1), "Prefetch chunk count must be zero or positive"),
         (ComputeConfig(arrow_payload_batch_size=0), "Arrow payload batch size must be positive"),
+        (ComputeConfig(output_writer_thread_count=0), "Output writer thread count must be positive"),
     ],
 )
 def test_validate_compute_config_rejects_invalid_values(
@@ -130,5 +173,35 @@ def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalizati
     assert mock_iterator.call_args.kwargs["committed_chunk_identifiers"] == {3}
     mock_persist_chunked_results.assert_called_once()
     assert mock_persist_chunked_results.call_args.kwargs["payload_batch_size"] == api.DEFAULT_ARROW_PAYLOAD_BATCH_SIZE
+    assert mock_persist_chunked_results.call_args.kwargs["writer_thread_count"] == 1
     mock_prepare_output_run.assert_called_once()
     mock_finalize.assert_not_called()
+
+
+def test_regenie2_linear_passes_internal_output_writer_configuration() -> None:
+    with (
+        patch("g.api.configure_jax_device"),
+        patch("g.api.iter_regenie2_linear_output_frames", return_value=iter(())),
+        patch(
+            "g.api.prepare_output_run",
+            return_value=PreparedOutputRun(
+                output_run_paths=OutputRunPaths(
+                    run_directory=Path("results/output.regenie2_linear.run"),
+                    chunks_directory=Path("results/output.regenie2_linear.run/chunks"),
+                ),
+                committed_chunk_identifiers=frozenset(),
+            ),
+        ),
+        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
+        patch("g.api.finalize_chunks_to_parquet"),
+    ):
+        regenie2_linear(
+            bgen="dataset.bgen",
+            pheno="phenotype.tsv",
+            pheno_name="trait",
+            out="results/output",
+            pred="predictions.list",
+            compute=ComputeConfig(output_writer_thread_count=2),
+        )
+
+    assert mock_persist_chunked_results.call_args.kwargs["writer_thread_count"] == 2

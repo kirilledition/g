@@ -59,7 +59,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--g-variant-limit", type=int, help="Optional variant cap for g profiling runs.")
     parser.add_argument("--g-chunk-size", type=int, default=1024, help="Chunk size for g profiling runs.")
     parser.add_argument("--enable-jax-trace", action="store_true", help="Enable JAX tracing for g profiles.")
-    parser.add_argument("--enable-memory-profile", action="store_true", help="Enable JAX memory profile for g profiles.")
+    parser.add_argument(
+        "--enable-memory-profile",
+        action="store_true",
+        help="Enable JAX memory profile for g profiles.",
+    )
     return parser
 
 
@@ -92,7 +96,7 @@ def run_profiled_subprocess(
     sample_interval_seconds: float,
 ) -> tuple[bool, float, float, float, float, str | None]:
     """Run one process and sample process-tree RSS/CPU metrics."""
-    process = subprocess.Popen(command_arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # noqa: S603
+    process = subprocess.Popen(command_arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     process_handle = psutil.Process(process.pid)
     start_time = time.perf_counter()
     peak_rss_bytes = 0.0
@@ -373,7 +377,10 @@ def main() -> None:
             program_name="regenie_step1_quantitative",
             trait_type="quantitative",
             step=1,
-            command_arguments=baseline_benchmark.build_regenie_step1_continuous_command(regenie_executable, baseline_paths),
+            command_arguments=baseline_benchmark.build_regenie_step1_continuous_command(
+                regenie_executable,
+                baseline_paths,
+            ),
             output_paths=[regenie_step1_quantitative_prefix.parent / "regenie_step1_qt_pred.list"],
             log_directory=log_directory,
             sample_interval_seconds=arguments.sample_interval_seconds,
@@ -384,7 +391,10 @@ def main() -> None:
             program_name="regenie_step2_quantitative",
             trait_type="quantitative",
             step=2,
-            command_arguments=baseline_benchmark.build_regenie_step2_continuous_command(regenie_executable, baseline_paths),
+            command_arguments=baseline_benchmark.build_regenie_step2_continuous_command(
+                regenie_executable,
+                baseline_paths,
+            ),
             output_paths=[regenie_step2_quantitative_prefix.parent / "regenie_step2_qt_phenotype_continuous.regenie"],
             log_directory=log_directory,
             sample_interval_seconds=arguments.sample_interval_seconds,

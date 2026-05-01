@@ -324,16 +324,19 @@ def iter_dosage_genotype_chunks_from_reader(
     trace_prefix = source_name.lower()
     uses_prepared_selection = isinstance(genotype_reader, PreparedSampleSelectionReader)
     uses_prepared_buffer_fill = isinstance(genotype_reader, PreparedReusableFloat32BlockReader)
-    reusable_output_array = np.empty((sample_index_array.size, chunk_size), dtype=np.float32, order="C")
+    reusable_output_arrays = tuple(
+        np.empty((sample_index_array.size, chunk_size), dtype=np.float32, order="C") for _ in range(2)
+    )
     if uses_prepared_selection:
         genotype_reader.prepare_sample_selection(sample_index_array)
     try:
-        for variant_start in range(0, total_variant_count, chunk_size):
+        for chunk_index, variant_start in enumerate(range(0, total_variant_count, chunk_size)):
             variant_stop = min(total_variant_count, variant_start + chunk_size)
             variant_table_arrays = genotype_reader.get_variant_table_arrays(variant_start, variant_stop)
             selected_variant_count = variant_stop - variant_start
             with jax.profiler.TraceAnnotation(f"dosage.read_{trace_prefix}_chunk"):
                 if uses_prepared_buffer_fill and selected_variant_count == chunk_size:
+                    reusable_output_array = reusable_output_arrays[chunk_index % len(reusable_output_arrays)]
                     genotype_matrix_host = genotype_reader.read_float32_into_prepared(
                         reusable_output_array,
                         variant_start,

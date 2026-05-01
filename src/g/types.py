@@ -14,6 +14,21 @@ class AssociationMode(enum.StrEnum):
     """Statistical association model."""
 
     REGENIE2_LINEAR = "regenie2_linear"
+    REGENIE2_BINARY = "regenie2_binary"
+
+
+class RegenieTraitType(enum.StrEnum):
+    """REGENIE trait family."""
+
+    QUANTITATIVE = "quantitative"
+    BINARY = "binary"
+
+
+class RegenieBinaryCorrection(enum.StrEnum):
+    """Binary step 2 correction mode."""
+
+    FIRTH_APPROXIMATE = "firth_approximate"
+    SPA = "spa"
 
 
 class GenotypeSourceFormat(enum.StrEnum):

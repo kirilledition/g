@@ -8,6 +8,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from g.io import reader as genotype_reader
 from g.io.bgen import (
     build_bgen_variant_table,
     build_bgen_variant_table_arrays,
@@ -195,7 +196,7 @@ def test_open_bgen_reads_phased_haplotype_example_as_dosage() -> None:
 
 def test_open_bgen_trusted_no_missing_diploid_opt_in_reaches_core() -> None:
     class FakePyBgenReader:
-        def __init__(self, bgen_path: str, trusted_no_missing_diploid: bool = False) -> None:
+        def __init__(self, bgen_path: str, trusted_no_missing_diploid: bool = False) -> None:  # noqa: FBT001, FBT002
             self.sample_count = 2
             self.variant_count = 0
             self.contains_embedded_samples = False
@@ -212,10 +213,12 @@ def test_open_bgen_trusted_no_missing_diploid_opt_in_reaches_core() -> None:
             return
 
     fake_core_module = SimpleNamespace(PyBgenReader=FakePyBgenReader)
-    with patch("g.io.bgen.load_backend_core", return_value=fake_core_module):
-        with open_bgen(HAPLOTYPES_BGEN_PATH, trusted_no_missing_diploid=True) as bgen_reader:
-            assert bgen_reader.trusted_no_missing_diploid is True
-            assert bgen_reader.core_reader.trusted_no_missing_diploid is True
+    with (
+        patch("g.io.bgen.load_backend_core", return_value=fake_core_module),
+        open_bgen(HAPLOTYPES_BGEN_PATH, trusted_no_missing_diploid=True) as bgen_reader,
+    ):
+        assert bgen_reader.trusted_no_missing_diploid is True
+        assert bgen_reader.core_reader.trusted_no_missing_diploid is True
 
 
 def test_open_bgen_validate_trusted_no_missing_diploid_rejects_phased_fixture() -> None:
@@ -571,6 +574,77 @@ class FakeGeneratedSampleReader:
         return
 
 
+class FakePreparedReusableReader:
+    """Reader fixture that records reusable output buffers."""
+
+    sample_count = 3
+    variant_count = 6
+    samples = np.array(["sample_0", "sample_1", "sample_2"], dtype=np.str_)
+    variant_table = pl.DataFrame()
+
+    def __init__(self) -> None:
+        self.output_array_identifiers: list[int] = []
+        self.prepared = False
+
+    def get_variant_table_arrays(self, variant_start: int, variant_stop: int) -> genotype_reader.VariantTableArrays:
+        variant_count = variant_stop - variant_start
+        return genotype_reader.VariantTableArrays(
+            chromosome_values=np.full(variant_count, "1", dtype=np.str_),
+            variant_identifier_values=np.asarray(
+                [f"variant_{variant_index}" for variant_index in range(variant_start, variant_stop)],
+                dtype=np.str_,
+            ),
+            position_values=np.arange(variant_start, variant_stop, dtype=np.int64),
+            allele_one_values=np.full(variant_count, "A", dtype=np.str_),
+            allele_two_values=np.full(variant_count, "G", dtype=np.str_),
+        )
+
+    def prepare_sample_selection(self, sample_index_array: np.ndarray) -> None:
+        self.prepared = True
+
+    def clear_prepared_sample_selection(self) -> None:
+        self.prepared = False
+
+    def read(
+        self,
+        index: object = None,
+        dtype: type[np.float32] | type[np.float64] = np.float32,
+        order: ArrayMemoryOrder = ArrayMemoryOrder.C_CONTIGUOUS,
+    ) -> np.ndarray:
+        del index, dtype, order
+        return np.zeros((self.sample_count, self.variant_count), dtype=np.float32)
+
+    def close(self) -> None:
+        return
+
+    def __enter__(self) -> FakePreparedReusableReader:
+        return self
+
+    def __exit__(self, exception_type: object, exception_value: object, traceback: object) -> None:
+        return
+
+    def read_float32_into_prepared(
+        self,
+        output_array: np.ndarray,
+        variant_start: int,
+        variant_stop: int,
+    ) -> np.ndarray:
+        self.output_array_identifiers.append(id(output_array))
+        output_array[:, :] = np.float32(variant_start + 1)
+        return output_array
+
+    def read_float32_prepared(
+        self,
+        variant_start: int,
+        variant_stop: int,
+    ) -> np.ndarray:
+        return np.full(
+            (self.sample_count, variant_stop - variant_start),
+            np.float32(variant_start + 1),
+            dtype=np.float32,
+        )
+
+
 def test_iter_genotype_chunks_requires_real_sample_identifiers() -> None:
     with (
         patch(
@@ -647,3 +721,23 @@ def test_iter_dosage_genotype_chunks() -> None:
     assert len(chunks) == 2
     assert chunks[0].genotypes.shape == (4, 3)
     assert chunks[1].genotypes.shape == (4, 1)
+
+
+def test_iter_dosage_genotype_chunks_from_reader_double_buffers_prepared_output() -> None:
+    fake_reader = FakePreparedReusableReader()
+
+    chunks = list(
+        genotype_reader.iter_dosage_genotype_chunks_from_reader(
+            genotype_reader=fake_reader,
+            source_name="BGEN",
+            sample_indices=np.arange(3, dtype=np.int64),
+            expected_individual_identifiers=np.array(["sample_0", "sample_1", "sample_2"], dtype=np.str_),
+            chunk_size=2,
+            variant_limit=6,
+        )
+    )
+
+    assert len(chunks) == 3
+    assert fake_reader.output_array_identifiers[0] != fake_reader.output_array_identifiers[1]
+    assert fake_reader.output_array_identifiers[0] == fake_reader.output_array_identifiers[2]
+    assert fake_reader.prepared is False

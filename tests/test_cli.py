@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from g.api import DEFAULT_ARROW_PAYLOAD_BATCH_SIZE, DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE, RunArtifacts
 from g.cli import app, main, print_success_message, resolve_arrow_payload_batch_size, resolve_chunk_size
-from g.types import Device
+from g.types import Device, RegenieTraitType
 
 runner = CliRunner()
 
@@ -107,6 +107,40 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
     compute_config = mock_run_regenie2_linear_api.call_args.kwargs["compute"]
     assert compute_config.device == Device.GPU
     assert compute_config.chunk_size == DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE
+
+
+def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
+    with patch(
+        "g.cli.run_regenie2_api",
+        return_value=RunArtifacts(
+            output_run_directory=Path("results/output.regenie2_binary.run"),
+            final_parquet=Path("results/output.regenie2_binary.run/final.parquet"),
+        ),
+    ) as mock_run_regenie2_api:
+        result = runner.invoke(
+            app,
+            [
+                "regenie2",
+                "--bgen",
+                "dataset.bgen",
+                "--sample",
+                "dataset.sample",
+                "--pheno",
+                "phenotype.tsv",
+                "--pheno-name",
+                "trait",
+                "--pred",
+                "predictions.list",
+                "--out",
+                "results/output",
+                "--trait-type",
+                "binary",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert mock_run_regenie2_api.call_args.kwargs["trait_type"] == RegenieTraitType.BINARY
+    assert str(Path("results/output.regenie2_binary.run")) in result.output
 
 
 def test_print_success_message_reports_run_directory_and_parquet(capsys: typing.Any) -> None:

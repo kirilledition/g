@@ -454,6 +454,9 @@ class BgenReader:
             sample_path: Optional explicit `.sample` file path.
             allow_complex: Present for compatibility. Native Rust BGEN reads
                 currently reject unsupported layouts regardless of this flag.
+            trusted_no_missing_diploid: Whether to enable the faster native
+                reader path that trusts unphased diploid records have no
+                missing probabilities.
 
         Raises:
             ValueError: The file uses an unsupported genotype layout.

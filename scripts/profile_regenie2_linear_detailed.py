@@ -86,6 +86,8 @@ class Regenie2DetailedProfileSummary:
     variant_limit: int | None
     prefetch_chunks: int
     warmup_pass_count: int
+    arrow_payload_batch_size: int
+    output_writer_thread_count: int
     total_variants: int
     chunk_count: int
     wall_time_seconds: float
@@ -223,7 +225,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--arrow-payload-batch-size",
         type=int,
         default=1,
-        help="Number of REGENIE output chunks to batch per Arrow IPC write.",
+        help="Number of REGENIE output chunks to batch per write.",
+    )
+    argument_parser.add_argument(
+        "--output-writer-thread-count",
+        type=int,
+        default=1,
+        help="Background writer thread count.",
     )
     argument_parser.add_argument(
         "--transfer-guard-device-to-host",
@@ -544,8 +552,38 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
     )
     wrap_module_function(
         output_module,
-        "write_chunk_to_disk",
-        build_timed_function("write_chunk_to_disk"),
+        "build_output_frame_from_payload_batch",
+        build_timed_function("build_output_frame_from_payload_batch"),
+    )
+    wrap_module_function(
+        output_module,
+        "build_low_cardinality_output_series",
+        build_timed_function("build_low_cardinality_output_series"),
+    )
+    wrap_module_function(
+        output_module,
+        "build_high_cardinality_output_series",
+        build_timed_function("build_high_cardinality_output_series"),
+    )
+    wrap_module_function(
+        output_module,
+        "build_numeric_or_boolean_output_series",
+        build_timed_function("build_numeric_or_boolean_output_series"),
+    )
+    wrap_module_function(
+        output_module,
+        "write_output_frame_to_chunk_file",
+        build_timed_function("write_output_frame_to_chunk_file"),
+    )
+    wrap_module_function(
+        output_module,
+        "put_chunk_payload_batch_into_queue",
+        build_timed_function("put_chunk_payload_batch_into_queue"),
+    )
+    wrap_module_function(
+        output_module,
+        "join_writer_threads",
+        build_timed_function("join_writer_threads"),
     )
 
     def prediction_source_wrapper_builder(
@@ -603,14 +641,16 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
         uses_prepared_selection = isinstance(genotype_reader, reader.PreparedSampleSelectionReader)
         uses_prepared_buffer_fill = isinstance(genotype_reader, reader.PreparedReusableFloat32BlockReader)
         uses_rust_profile = isinstance(genotype_reader, reader.RustProfiledBgenReader)
-        reusable_output_array = np.empty((sample_index_array.size, chunk_size), dtype=np.float32, order="C")
+        reusable_output_arrays = tuple(
+            np.empty((sample_index_array.size, chunk_size), dtype=np.float32, order="C") for _ in range(2)
+        )
         if uses_rust_profile:
             genotype_reader.reset_profile()
         if uses_prepared_selection:
             genotype_reader.prepare_sample_selection(sample_index_array)
 
         try:
-            for variant_start in range(0, total_variant_count, chunk_size):
+            for chunk_index, variant_start in enumerate(range(0, total_variant_count, chunk_size)):
                 variant_stop = min(total_variant_count, variant_start + chunk_size)
 
                 rust_profile_before_metadata = genotype_reader.profile_snapshot() if uses_rust_profile else {}
@@ -632,6 +672,7 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
                 host_read_start_time = time.perf_counter()
                 selected_variant_count = variant_stop - variant_start
                 if uses_prepared_buffer_fill and selected_variant_count == chunk_size:
+                    reusable_output_array = reusable_output_arrays[chunk_index % len(reusable_output_arrays)]
                     genotype_matrix_host = genotype_reader.read_float32_into_prepared(
                         reusable_output_array,
                         variant_start,
@@ -771,6 +812,7 @@ def run_profiled_regenie2_linear(
                     output_run_directory=report_paths["output_run_directory"],
                     finalize_parquet=True,
                     arrow_payload_batch_size=arguments.arrow_payload_batch_size,
+                    output_writer_thread_count=arguments.output_writer_thread_count,
                 ),
             )
             profiler.disable()
@@ -810,6 +852,7 @@ def run_warmup_passes(arguments: argparse.Namespace) -> None:
                 output_run_directory=warmup_output_root,
                 finalize_parquet=True,
                 arrow_payload_batch_size=arguments.arrow_payload_batch_size,
+                output_writer_thread_count=arguments.output_writer_thread_count,
             ),
         )
         print(
@@ -883,6 +926,8 @@ def main() -> None:
         variant_limit=arguments.variant_limit,
         prefetch_chunks=arguments.prefetch_chunks,
         warmup_pass_count=arguments.warmup_pass_count,
+        arrow_payload_batch_size=arguments.arrow_payload_batch_size,
+        output_writer_thread_count=arguments.output_writer_thread_count,
         total_variants=total_variants,
         chunk_count=chunk_count,
         wall_time_seconds=wall_time_seconds,

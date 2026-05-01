@@ -27,10 +27,10 @@ DEFAULT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_WRITER_TIMEOUT_SECONDS = 120.0
 DEFAULT_PAYLOAD_BATCH_SIZE = 1
 DEFAULT_WRITER_THREAD_COUNT = 1
-
 ChunkPayloadBatch = tuple[engine.ChunkPayload, ...]
+HostArray = np.ndarray
 
-REGENIE2_LINEAR_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
+LEGACY_REGENIE2_LINEAR_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
     "chunk_identifier": pl.Int64(),
     "variant_start_index": pl.Int64(),
     "variant_stop_index": pl.Int64(),
@@ -46,6 +46,28 @@ REGENIE2_LINEAR_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
     "chi_squared": pl.Float32(),
     "log10_p_value": pl.Float32(),
     "is_valid": pl.Boolean(),
+}
+LOW_CARDINALITY_STRING_COLUMN_NAMES: typing.Final[frozenset[str]] = frozenset(
+    {"chromosome", "allele_one", "allele_two"}
+)
+REGENIE2_BINARY_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
+    "chunk_identifier": pl.Int64(),
+    "variant_start_index": pl.Int64(),
+    "variant_stop_index": pl.Int64(),
+    "CHROM": pl.Categorical(),
+    "GENPOS": pl.Int64(),
+    "ID": pl.String(),
+    "ALLELE0": pl.Categorical(),
+    "ALLELE1": pl.Categorical(),
+    "A1FREQ": pl.Float32(),
+    "INFO": pl.Float32(),
+    "N": pl.Int32(),
+    "TEST": pl.Categorical(),
+    "BETA": pl.Float32(),
+    "SE": pl.Float32(),
+    "CHISQ": pl.Float32(),
+    "LOG10P": pl.Float32(),
+    "EXTRA": pl.Categorical(),
 }
 
 
@@ -65,18 +87,40 @@ class PreparedOutputRun:
     committed_chunk_identifiers: frozenset[int]
 
 
+def build_output_schema() -> dict[str, pl.DataType]:
+    """Build the fixed output schema."""
+    output_schema = dict(LEGACY_REGENIE2_LINEAR_OUTPUT_SCHEMA)
+    for column_name in LOW_CARDINALITY_STRING_COLUMN_NAMES:
+        output_schema[column_name] = pl.Categorical()
+    return output_schema
+
+
 def get_output_schema(association_mode: types.AssociationMode) -> dict[str, pl.DataType]:
     """Return the fixed output schema for the requested mode."""
-    if association_mode != types.AssociationMode.REGENIE2_LINEAR:
-        message = f"Unsupported association mode for active output schema: {association_mode}"
-        raise ValueError(message)
-    return REGENIE2_LINEAR_OUTPUT_SCHEMA
+    if association_mode == types.AssociationMode.REGENIE2_LINEAR:
+        return build_output_schema()
+    if association_mode == types.AssociationMode.REGENIE2_BINARY:
+        return dict(REGENIE2_BINARY_OUTPUT_SCHEMA)
+    message = f"Unsupported association mode for active output schema: {association_mode}"
+    raise ValueError(message)
 
 
 def cast_frame_to_schema(data_frame: pl.DataFrame, association_mode: types.AssociationMode) -> pl.DataFrame:
     """Cast an output frame to the fixed mode-specific schema."""
     output_schema = get_output_schema(association_mode)
-    return data_frame.select(
+    with pl.StringCache():
+        return data_frame.select(
+            [
+                pl.col(column_name).cast(column_type).alias(column_name)
+                for column_name, column_type in output_schema.items()
+            ]
+        )
+
+
+def cast_lazy_frame_to_schema(lazy_frame: pl.LazyFrame, association_mode: types.AssociationMode) -> pl.LazyFrame:
+    """Cast a lazy output frame to the fixed mode-specific schema."""
+    output_schema = get_output_schema(association_mode)
+    return lazy_frame.select(
         [pl.col(column_name).cast(column_type).alias(column_name) for column_name, column_type in output_schema.items()]
     )
 
@@ -84,10 +128,7 @@ def cast_frame_to_schema(data_frame: pl.DataFrame, association_mode: types.Assoc
 def resolve_output_run_paths(output_root: Path, association_mode: types.AssociationMode) -> OutputRunPaths:
     """Derive run paths from an output root and association mode."""
     run_directory = output_root if output_root.suffix == ".run" else output_root.with_suffix(f".{association_mode}.run")
-    return OutputRunPaths(
-        run_directory=run_directory,
-        chunks_directory=run_directory / "chunks",
-    )
+    return OutputRunPaths(run_directory=run_directory, chunks_directory=run_directory / "chunks")
 
 
 def build_chunk_file_name(chunk_identifier: int) -> str:
@@ -104,9 +145,25 @@ def build_chunk_batch_file_name(chunk_payload_batch: ChunkPayloadBatch) -> str:
     return f"chunk_{first_chunk_identifier:09d}_{last_chunk_identifier:09d}.arrow"
 
 
+def read_chunk_file(chunk_file_path: Path) -> pl.DataFrame:
+    """Read one persisted chunk file into memory."""
+    if chunk_file_path.suffix != ".arrow":
+        message = f"Unsupported chunk file suffix: {chunk_file_path.suffix}"
+        raise ValueError(message)
+    return pl.read_ipc(chunk_file_path)
+
+
+def scan_chunk_file(chunk_file_path: Path) -> pl.LazyFrame:
+    """Open one persisted chunk file as a lazy frame."""
+    if chunk_file_path.suffix != ".arrow":
+        message = f"Unsupported chunk file suffix: {chunk_file_path.suffix}"
+        raise ValueError(message)
+    return pl.scan_ipc(chunk_file_path, rechunk=False)
+
+
 def load_committed_chunk_identifiers_from_chunk_file(chunk_file_path: Path) -> frozenset[int]:
-    """Load committed chunk identifiers from one Arrow IPC chunk file."""
-    chunk_identifier_values = pl.read_ipc(chunk_file_path).get_column("chunk_identifier").unique().to_list()
+    """Load committed chunk identifiers from one chunk file."""
+    chunk_identifier_values = read_chunk_file(chunk_file_path).get_column("chunk_identifier").unique().to_list()
     return frozenset(int(chunk_identifier_value) for chunk_identifier_value in chunk_identifier_values)
 
 
@@ -117,11 +174,12 @@ def scan_committed_chunk_identifiers(chunks_directory: Path) -> frozenset[int]:
     committed_identifiers: set[int] = set()
     for child_path in chunks_directory.iterdir():
         filename_match = CHUNK_FILENAME_PATTERN.match(child_path.name)
-        if filename_match is not None:
-            if filename_match.group(2) is None:
-                committed_identifiers.add(int(filename_match.group(1)))
-            else:
-                committed_identifiers.update(load_committed_chunk_identifiers_from_chunk_file(child_path))
+        if filename_match is None:
+            continue
+        if filename_match.group(2) is None:
+            committed_identifiers.add(int(filename_match.group(1)))
+            continue
+        committed_identifiers.update(load_committed_chunk_identifiers_from_chunk_file(child_path))
     return frozenset(committed_identifiers)
 
 
@@ -143,95 +201,186 @@ def prepare_output_run(
     committed_chunk_identifiers = frozenset[int]()
     if resume:
         committed_chunk_identifiers = scan_committed_chunk_identifiers(output_run_paths.chunks_directory)
-        logger.info(
-            "Resuming run with %d previously committed chunks.",
-            len(committed_chunk_identifiers),
-        )
+        logger.info("Resuming run with %d previously committed chunks.", len(committed_chunk_identifiers))
     return PreparedOutputRun(
         output_run_paths=output_run_paths,
         committed_chunk_identifiers=committed_chunk_identifiers,
     )
 
 
-def build_output_frame_from_payload(chunk_payload: engine.ChunkPayload) -> pl.DataFrame:
+def materialize_host_array(values: HostArray) -> HostArray:
+    """Ensure NumPy arrays are materialized in a layout Polars can ingest efficiently."""
+    if values.flags.c_contiguous:
+        return values
+    return np.ascontiguousarray(values)
+
+
+def build_low_cardinality_output_series(
+    column_name: str,
+    values: HostArray,
+    association_mode: types.AssociationMode,
+) -> pl.Series:
+    """Build one low-cardinality string output series."""
+    output_schema = get_output_schema(association_mode)
+    return pl.Series(
+        column_name,
+        materialize_host_array(values),
+        dtype=output_schema[column_name],
+    )
+
+
+def build_high_cardinality_output_series(
+    column_name: str,
+    values: HostArray,
+    association_mode: types.AssociationMode,
+) -> pl.Series:
+    """Build one high-cardinality string output series."""
+    output_schema = get_output_schema(association_mode)
+    return pl.Series(
+        column_name,
+        materialize_host_array(values),
+        dtype=output_schema[column_name],
+    )
+
+
+def build_numeric_or_boolean_output_series(
+    column_name: str,
+    values: HostArray,
+    association_mode: types.AssociationMode,
+) -> pl.Series:
+    """Build one numeric or boolean output series."""
+    output_schema = get_output_schema(association_mode)
+    return pl.Series(
+        column_name,
+        materialize_host_array(values),
+        dtype=output_schema[column_name],
+    )
+
+
+def build_regenie2_linear_output_frame_from_payload(chunk_payload: engine.Regenie2LinearChunkPayload) -> pl.DataFrame:
     """Build a Polars DataFrame from a host-side chunk payload."""
     row_count = len(chunk_payload.position)
+    with pl.StringCache():
+        return pl.DataFrame(
+            [
+                build_numeric_or_boolean_output_series(
+                    "chunk_identifier",
+                    np.full(row_count, chunk_payload.chunk_identifier, dtype=np.int64),
+                    types.AssociationMode.REGENIE2_LINEAR,
+                ),
+                build_numeric_or_boolean_output_series(
+                    "variant_start_index",
+                    np.full(row_count, chunk_payload.variant_start_index, dtype=np.int64),
+                    types.AssociationMode.REGENIE2_LINEAR,
+                ),
+                build_numeric_or_boolean_output_series(
+                    "variant_stop_index",
+                    np.full(row_count, chunk_payload.variant_stop_index, dtype=np.int64),
+                    types.AssociationMode.REGENIE2_LINEAR,
+                ),
+                build_low_cardinality_output_series(
+                    "chromosome", chunk_payload.chromosome, types.AssociationMode.REGENIE2_LINEAR
+                ),
+                build_numeric_or_boolean_output_series(
+                    "position", chunk_payload.position, types.AssociationMode.REGENIE2_LINEAR
+                ),
+                build_high_cardinality_output_series(
+                    "variant_identifier", chunk_payload.variant_identifier, types.AssociationMode.REGENIE2_LINEAR
+                ),
+                build_low_cardinality_output_series(
+                    "allele_one", chunk_payload.allele_one, types.AssociationMode.REGENIE2_LINEAR
+                ),
+                build_low_cardinality_output_series(
+                    "allele_two", chunk_payload.allele_two, types.AssociationMode.REGENIE2_LINEAR
+                ),
+                build_numeric_or_boolean_output_series(
+                    "allele_one_frequency", chunk_payload.allele_one_frequency, types.AssociationMode.REGENIE2_LINEAR
+                ),
+                build_numeric_or_boolean_output_series(
+                    "observation_count", chunk_payload.observation_count, types.AssociationMode.REGENIE2_LINEAR
+                ),
+                build_numeric_or_boolean_output_series(
+                    "beta", chunk_payload.beta, types.AssociationMode.REGENIE2_LINEAR
+                ),
+                build_numeric_or_boolean_output_series(
+                    "standard_error", chunk_payload.standard_error, types.AssociationMode.REGENIE2_LINEAR
+                ),
+                build_numeric_or_boolean_output_series(
+                    "chi_squared", chunk_payload.chi_squared, types.AssociationMode.REGENIE2_LINEAR
+                ),
+                build_numeric_or_boolean_output_series(
+                    "log10_p_value", chunk_payload.log10_p_value, types.AssociationMode.REGENIE2_LINEAR
+                ),
+                build_numeric_or_boolean_output_series(
+                    "is_valid", chunk_payload.is_valid, types.AssociationMode.REGENIE2_LINEAR
+                ),
+            ],
+            schema=get_output_schema(types.AssociationMode.REGENIE2_LINEAR),
+        )
 
-    def materialize_host_array(value: object) -> object:
-        if isinstance(value, np.ndarray):
-            if value.flags.c_contiguous:
-                return value
-            return np.ascontiguousarray(value)
-        return value
 
-    return pl.DataFrame(
-        {
-            "chunk_identifier": np.full(row_count, chunk_payload.chunk_identifier, dtype=np.int64),
-            "variant_start_index": np.full(row_count, chunk_payload.variant_start_index, dtype=np.int64),
-            "variant_stop_index": np.full(row_count, chunk_payload.variant_stop_index, dtype=np.int64),
-            "chromosome": materialize_host_array(chunk_payload.chromosome),
-            "position": materialize_host_array(chunk_payload.position),
-            "variant_identifier": materialize_host_array(chunk_payload.variant_identifier),
-            "allele_one": materialize_host_array(chunk_payload.allele_one),
-            "allele_two": materialize_host_array(chunk_payload.allele_two),
-            "allele_one_frequency": materialize_host_array(chunk_payload.allele_one_frequency),
-            "observation_count": materialize_host_array(chunk_payload.observation_count),
-            "beta": materialize_host_array(chunk_payload.beta),
-            "standard_error": materialize_host_array(chunk_payload.standard_error),
-            "chi_squared": materialize_host_array(chunk_payload.chi_squared),
-            "log10_p_value": materialize_host_array(chunk_payload.log10_p_value),
-            "is_valid": materialize_host_array(chunk_payload.is_valid),
-        },
-        schema=REGENIE2_LINEAR_OUTPUT_SCHEMA,
-    )
+def build_regenie2_binary_output_frame_from_payload(chunk_payload: engine.Regenie2BinaryChunkPayload) -> pl.DataFrame:
+    """Build a Polars DataFrame from a host-side binary chunk payload."""
+    row_count = len(chunk_payload.position)
+    association_mode = types.AssociationMode.REGENIE2_BINARY
+    with pl.StringCache():
+        return pl.DataFrame(
+            [
+                build_numeric_or_boolean_output_series(
+                    "chunk_identifier",
+                    np.full(row_count, chunk_payload.chunk_identifier, dtype=np.int64),
+                    association_mode,
+                ),
+                build_numeric_or_boolean_output_series(
+                    "variant_start_index",
+                    np.full(row_count, chunk_payload.variant_start_index, dtype=np.int64),
+                    association_mode,
+                ),
+                build_numeric_or_boolean_output_series(
+                    "variant_stop_index",
+                    np.full(row_count, chunk_payload.variant_stop_index, dtype=np.int64),
+                    association_mode,
+                ),
+                build_low_cardinality_output_series("CHROM", chunk_payload.chromosome, association_mode),
+                build_numeric_or_boolean_output_series("GENPOS", chunk_payload.position, association_mode),
+                build_high_cardinality_output_series("ID", chunk_payload.variant_identifier, association_mode),
+                build_low_cardinality_output_series("ALLELE0", chunk_payload.allele_two, association_mode),
+                build_low_cardinality_output_series("ALLELE1", chunk_payload.allele_one, association_mode),
+                build_numeric_or_boolean_output_series("A1FREQ", chunk_payload.allele_one_frequency, association_mode),
+                build_numeric_or_boolean_output_series("INFO", np.ones(row_count, dtype=np.float32), association_mode),
+                build_numeric_or_boolean_output_series("N", chunk_payload.observation_count, association_mode),
+                build_low_cardinality_output_series("TEST", np.full(row_count, "ADD", dtype="<U3"), association_mode),
+                build_numeric_or_boolean_output_series("BETA", chunk_payload.beta, association_mode),
+                build_numeric_or_boolean_output_series("SE", chunk_payload.standard_error, association_mode),
+                build_numeric_or_boolean_output_series("CHISQ", chunk_payload.chi_squared, association_mode),
+                build_numeric_or_boolean_output_series("LOG10P", chunk_payload.log10_p_value, association_mode),
+                build_low_cardinality_output_series("EXTRA", chunk_payload.extra, association_mode),
+            ],
+            schema=get_output_schema(association_mode),
+        )
+
+
+def build_output_frame_from_payload(chunk_payload: engine.ChunkPayload) -> pl.DataFrame:
+    """Build a Polars DataFrame from a host-side chunk payload."""
+    if isinstance(chunk_payload, engine.Regenie2BinaryChunkPayload):
+        return build_regenie2_binary_output_frame_from_payload(chunk_payload)
+    return build_regenie2_linear_output_frame_from_payload(chunk_payload)
 
 
 def build_output_frame_from_payload_batch(chunk_payload_batch: ChunkPayloadBatch) -> pl.DataFrame:
     """Build one Polars DataFrame from a batch of host-side chunk payloads."""
     if len(chunk_payload_batch) == 1:
         return build_output_frame_from_payload(chunk_payload_batch[0])
+    with pl.StringCache():
+        return pl.concat(
+            [build_output_frame_from_payload(chunk_payload) for chunk_payload in chunk_payload_batch],
+            how="vertical",
+        )
 
-    return pl.DataFrame(
-        {
-            "chunk_identifier": np.concatenate(
-                [
-                    np.full(len(chunk_payload.position), chunk_payload.chunk_identifier, dtype=np.int64)
-                    for chunk_payload in chunk_payload_batch
-                ]
-            ),
-            "variant_start_index": np.concatenate(
-                [
-                    np.full(len(chunk_payload.position), chunk_payload.variant_start_index, dtype=np.int64)
-                    for chunk_payload in chunk_payload_batch
-                ]
-            ),
-            "variant_stop_index": np.concatenate(
-                [
-                    np.full(len(chunk_payload.position), chunk_payload.variant_stop_index, dtype=np.int64)
-                    for chunk_payload in chunk_payload_batch
-                ]
-            ),
-            "chromosome": np.concatenate([chunk_payload.chromosome for chunk_payload in chunk_payload_batch]),
-            "position": np.concatenate([chunk_payload.position for chunk_payload in chunk_payload_batch]),
-            "variant_identifier": np.concatenate(
-                [chunk_payload.variant_identifier for chunk_payload in chunk_payload_batch]
-            ),
-            "allele_one": np.concatenate([chunk_payload.allele_one for chunk_payload in chunk_payload_batch]),
-            "allele_two": np.concatenate([chunk_payload.allele_two for chunk_payload in chunk_payload_batch]),
-            "allele_one_frequency": np.concatenate(
-                [chunk_payload.allele_one_frequency for chunk_payload in chunk_payload_batch]
-            ),
-            "observation_count": np.concatenate(
-                [chunk_payload.observation_count for chunk_payload in chunk_payload_batch]
-            ),
-            "beta": np.concatenate([chunk_payload.beta for chunk_payload in chunk_payload_batch]),
-            "standard_error": np.concatenate([chunk_payload.standard_error for chunk_payload in chunk_payload_batch]),
-            "chi_squared": np.concatenate([chunk_payload.chi_squared for chunk_payload in chunk_payload_batch]),
-            "log10_p_value": np.concatenate([chunk_payload.log10_p_value for chunk_payload in chunk_payload_batch]),
-            "is_valid": np.concatenate([chunk_payload.is_valid for chunk_payload in chunk_payload_batch]),
-        },
-        schema=REGENIE2_LINEAR_OUTPUT_SCHEMA,
-    )
+
+def write_output_frame_to_chunk_file(output_frame: pl.DataFrame, chunk_file_path: Path) -> None:
+    """Write one prepared output frame to an Arrow IPC chunk file."""
+    output_frame.write_ipc(chunk_file_path, compression=OUTPUT_COMPRESSION_CODEC)
 
 
 def write_chunk_batch_to_disk(
@@ -239,13 +388,13 @@ def write_chunk_batch_to_disk(
     chunks_directory: Path,
     association_mode: types.AssociationMode,
 ) -> None:
-    """Atomically persist one chunk payload batch as an Arrow IPC file."""
+    """Atomically persist one chunk payload batch."""
+    del association_mode
     chunk_file_name = build_chunk_batch_file_name(chunk_payload_batch)
     chunk_file_path = chunks_directory / chunk_file_name
     temporary_path = chunk_file_path.with_suffix(".arrow.tmp")
-    get_output_schema(association_mode)
     output_frame = build_output_frame_from_payload_batch(chunk_payload_batch)
-    output_frame.write_ipc(temporary_path, compression=OUTPUT_COMPRESSION_CODEC)
+    write_output_frame_to_chunk_file(output_frame, temporary_path)
     temporary_path.replace(chunk_file_path)
 
 
@@ -254,8 +403,33 @@ def write_chunk_to_disk(
     chunks_directory: Path,
     association_mode: types.AssociationMode,
 ) -> None:
-    """Atomically persist one chunk as an Arrow IPC file."""
+    """Atomically persist one chunk."""
     write_chunk_batch_to_disk((chunk_payload,), chunks_directory, association_mode)
+
+
+def put_chunk_payload_batch_into_queue(
+    work_queue: queue.Queue[ChunkPayloadBatch | None],
+    chunk_payload_batch: ChunkPayloadBatch,
+    writer_timeout_seconds: float,
+) -> None:
+    """Enqueue one payload batch for asynchronous writing."""
+    try:
+        work_queue.put(chunk_payload_batch, timeout=writer_timeout_seconds)
+    except queue.Full as error:
+        message = "Background writer queue remained full for too long. Storage throughput is bottlenecking compute."
+        raise TimeoutError(message) from error
+
+
+def join_writer_threads(
+    work_queue: queue.Queue[ChunkPayloadBatch | None],
+    writer_threads: list[threading.Thread],
+    timeout_seconds: float,
+) -> None:
+    """Stop and join all writer threads."""
+    for _writer_thread in writer_threads:
+        work_queue.put(None, timeout=timeout_seconds)
+    for writer_thread in writer_threads:
+        writer_thread.join(timeout=timeout_seconds)
 
 
 def run_background_writer(
@@ -266,17 +440,18 @@ def run_background_writer(
 ) -> None:
     """Background thread loop that drains the work queue and writes chunks."""
     try:
-        while True:
-            chunk_payload_batch = work_queue.get()
-            if chunk_payload_batch is None:
-                return
-            write_chunk_batch_to_disk(chunk_payload_batch, chunks_directory, association_mode)
+        with pl.StringCache():
+            while True:
+                chunk_payload_batch = work_queue.get()
+                if chunk_payload_batch is None:
+                    return
+                write_chunk_batch_to_disk(chunk_payload_batch, chunks_directory, association_mode)
     except Exception as error:  # noqa: BLE001
         error_container.append(error)
 
 
 def persist_chunked_results(
-    frame_iterator: collections.abc.Iterator[engine.Regenie2LinearChunkAccumulator],
+    frame_iterator: collections.abc.Iterator[engine.ChunkAccumulator],
     output_run_paths: OutputRunPaths,
     association_mode: types.AssociationMode,
     *,
@@ -303,12 +478,6 @@ def persist_chunked_results(
     for writer_thread in writer_threads:
         writer_thread.start()
 
-    def stop_writer_threads(timeout_seconds: float) -> None:
-        for _writer_thread in writer_threads:
-            work_queue.put(None, timeout=timeout_seconds)
-        for writer_thread in writer_threads:
-            writer_thread.join(timeout=timeout_seconds)
-
     def clear_work_queue() -> None:
         while not work_queue.empty():
             try:
@@ -317,14 +486,10 @@ def persist_chunked_results(
                 break
 
     def enqueue_chunk_payload_batch(chunk_payloads: list[engine.ChunkPayload]) -> None:
-        try:
-            work_queue.put(tuple(chunk_payloads), timeout=writer_timeout_seconds)
-        except queue.Full as error:
-            message = "Background writer queue remained full for too long. Storage throughput is bottlenecking compute."
-            raise TimeoutError(message) from error
+        put_chunk_payload_batch_into_queue(work_queue, tuple(chunk_payloads), writer_timeout_seconds)
 
     try:
-        chunk_accumulator_batch: list[engine.Regenie2LinearChunkAccumulator] = []
+        chunk_accumulator_batch: list[engine.ChunkAccumulator] = []
         for chunk_accumulator in frame_iterator:
             if writer_errors:
                 message = f"Background writer failed: {writer_errors[0]}"
@@ -335,31 +500,50 @@ def persist_chunked_results(
                 chunk_accumulator_batch.clear()
         if chunk_accumulator_batch:
             enqueue_chunk_payload_batch(engine.build_chunk_payload_batch(chunk_accumulator_batch))
-        stop_writer_threads(writer_timeout_seconds)
+        join_writer_threads(work_queue, writer_threads, writer_timeout_seconds)
         if writer_errors:
             message = f"Background writer failed: {writer_errors[0]}"
             raise RuntimeError(message) from writer_errors[0]
     except Exception:
         clear_work_queue()
-        stop_writer_threads(5.0)
+        join_writer_threads(work_queue, writer_threads, 5.0)
         raise
+
+
+def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:
+    """Return all persisted chunk files in deterministic filename order."""
+    if not chunks_directory.exists():
+        return ()
+    return tuple(
+        sorted(
+            child_path
+            for child_path in chunks_directory.iterdir()
+            if CHUNK_FILENAME_PATTERN.match(child_path.name) is not None
+        )
+    )
 
 
 def finalize_chunks_to_parquet(
     output_run_paths: OutputRunPaths,
     association_mode: types.AssociationMode,
 ) -> Path:
-    """Compact committed Arrow chunk files into a single compressed Parquet file."""
-    chunk_file_paths = sorted(output_run_paths.chunks_directory.glob("chunk_*.arrow"))
+    """Compact committed chunk files into one compressed Parquet file."""
+    chunk_file_paths = iter_sorted_chunk_file_paths(output_run_paths.chunks_directory)
     final_parquet_path = output_run_paths.run_directory / "final.parquet"
     temporary_parquet_path = final_parquet_path.with_suffix(".parquet.tmp")
+    output_schema = get_output_schema(association_mode)
     if chunk_file_paths:
-        pl.scan_ipc(chunk_file_paths, rechunk=False).sink_parquet(
-            temporary_parquet_path,
-            compression=OUTPUT_COMPRESSION_CODEC,
-        )
+        with pl.StringCache():
+            chunk_lazy_frames = [
+                cast_lazy_frame_to_schema(scan_chunk_file(chunk_file_path), association_mode)
+                for chunk_file_path in chunk_file_paths
+            ]
+            pl.concat(chunk_lazy_frames, how="vertical").sink_parquet(
+                temporary_parquet_path,
+                compression=OUTPUT_COMPRESSION_CODEC,
+            )
     else:
-        pl.DataFrame(schema=get_output_schema(association_mode)).write_parquet(
+        pl.DataFrame(schema=output_schema).write_parquet(
             temporary_parquet_path,
             compression=OUTPUT_COMPRESSION_CODEC,
         )

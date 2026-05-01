@@ -27,6 +27,10 @@ baseline_benchmark = load_script_module("baseline_benchmark_script", "scripts/be
 bgen_reader_benchmark = load_script_module("bgen_reader_benchmark_script", "scripts/benchmark_bgen_reader.py")
 comparison_benchmark = load_script_module("comparison_benchmark_script", "scripts/benchmark_regenie_comparison.py")
 comparison_profile = load_script_module("comparison_profile_script", "scripts/profile_regenie_comparison.py")
+fresh_process_benchmark = load_script_module(
+    "fresh_process_benchmark_script",
+    "scripts/benchmark_regenie2_linear_fresh_process.py",
+)
 
 
 def test_regenie_command_builders_shape() -> None:
@@ -94,13 +98,26 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
         chunk_size=2048,
         variant_limit=None,
     )
-    assert cpu_command[:4] == ["uv", "run", "g", "regenie2-linear"]
+    binary_command = comparison_benchmark.build_g_step2_command(
+        uv_executable="uv",
+        baseline_paths=baseline_paths,
+        output_prefix=Path("data/benchmarks/out_bin"),
+        device="cpu",
+        chunk_size=8192,
+        variant_limit=None,
+        trait_type="binary",
+    )
+    assert cpu_command[:4] == ["uv", "run", "g", "regenie2"]
+    assert "--trait-type" in cpu_command
+    assert cpu_command[cpu_command.index("--trait-type") + 1] == "quantitative"
     assert "--device" in cpu_command
     assert cpu_command[cpu_command.index("--device") + 1] == "cpu"
     assert "--finalize-parquet" in cpu_command
     assert "--variant-limit" in cpu_command
     assert gpu_command[gpu_command.index("--device") + 1] == "gpu"
     assert "--variant-limit" not in gpu_command
+    assert binary_command[binary_command.index("--trait-type") + 1] == "binary"
+    assert "phenotype_binary" in binary_command
 
 
 def test_unsupported_g_program_result_marked_not_implemented() -> None:
@@ -256,6 +273,51 @@ def test_quantitative_step2_comparison_wires_parity_logic(tmp_path: Path) -> Non
     assert agreement.merged_variant_count == 2
     assert agreement.beta_allclose_within_tolerance is True
     assert agreement.log10p_allclose_within_tolerance is True
+
+
+def test_fresh_process_benchmark_parser_accepts_output_writer_options() -> None:
+    arguments = fresh_process_benchmark.build_argument_parser().parse_args(
+        [
+            "--output-writer-thread-count",
+            "2",
+        ]
+    )
+    assert arguments.output_writer_thread_count == 2
+
+
+def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
+    trial_results = [
+        fresh_process_benchmark.TrialResult(
+            trial_index=0,
+            wall_time_seconds=2.0,
+            output_path="out0",
+            output_row_count=100,
+            chunk_file_count=2,
+            chunk_bytes=1024,
+            final_parquet_bytes=512,
+        ),
+        fresh_process_benchmark.TrialResult(
+            trial_index=1,
+            wall_time_seconds=1.0,
+            output_path="out1",
+            output_row_count=100,
+            chunk_file_count=2,
+            chunk_bytes=2048,
+            final_parquet_bytes=1024,
+        ),
+    ]
+    summary = fresh_process_benchmark.build_summary(
+        device="gpu",
+        chunk_size=8192,
+        finalize_parquet=True,
+        arrow_payload_batch_size=1,
+        output_writer_thread_count=2,
+        warmup_count=1,
+        trial_results=trial_results,
+    )
+    assert summary.mean_rows_per_second == 75.0
+    assert summary.mean_chunk_bytes == 1536.0
+    assert summary.mean_final_parquet_bytes == 768.0
 
 
 def test_quantitative_step2_comparison_uses_full_variant_identity_when_available(tmp_path: Path) -> None:

@@ -8,7 +8,7 @@ Direct PLINK-style linear/logistic regression workflows are not active in the pa
 
 - Python API: `g.regenie2_linear(...)`
 - CLI command: `g regenie2-linear ...`
-- Output modes: TSV or chunked Arrow + optional finalized Parquet
+- Output artifact: resumable Arrow chunk run directory with `final.parquet` when Parquet finalization is enabled
 
 ## Quick Start
 
@@ -45,9 +45,10 @@ uv run g \
   --out data/example_regenie2
 ```
 
-Output path:
+Output paths:
 
-- `<prefix>.regenie2_linear.tsv` (TSV mode)
+- `<out>/chunks/*.arrow` for committed intermediate chunks
+- `<out>/final.parquet` when finalization is enabled
 
 ## Common Commands
 

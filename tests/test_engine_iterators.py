@@ -8,6 +8,7 @@ import numpy as np
 
 from g.engine import (
     Regenie2LinearChunkAccumulator,
+    iter_regenie2_binary_output_frames,
     iter_regenie2_linear_output_frames,
     split_dosage_genotype_chunk_by_absolute_variant_slices,
     split_dosage_genotype_chunk_by_chromosome,
@@ -17,6 +18,7 @@ from g.io.source import build_bgen_source_config
 from g.models import (
     AlignedSampleData,
     DosageGenotypeChunk,
+    Regenie2BinaryChunkResult,
     Regenie2LinearChunkResult,
     VariantMetadata,
 )
@@ -195,3 +197,41 @@ def test_iter_regenie2_linear_output_frames_reuses_open_bgen_reader() -> None:
     mock_open_genotype_reader.assert_called_once()
     assert mock_load.call_args.kwargs["genotype_reader"] is genotype_reader
     assert mock_iter.call_args.kwargs["genotype_reader"] is genotype_reader
+
+
+def test_iter_regenie2_binary_output_frames_uses_binary_sample_loading() -> None:
+    source_chunk = build_dosage_chunk(chromosome_values=["22"])
+    regenie_result = Regenie2BinaryChunkResult(
+        beta=jnp.asarray([0.1], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.2], dtype=jnp.float32),
+        chi_squared=jnp.asarray([0.25], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([0.5], dtype=jnp.float32),
+        extra_code=jnp.asarray([0], dtype=jnp.int32),
+        valid_mask=jnp.asarray([True]),
+    )
+    genotype_reader = FakeContextReader()
+
+    with (
+        patch("g.engine.open_genotype_reader", return_value=genotype_reader),
+        patch("g.engine.load_aligned_sample_data_from_source", return_value=build_aligned_sample_data()) as mock_load,
+        patch("g.engine.prepare_regenie2_binary_state", return_value="regenie-binary-state"),
+        patch("g.engine.prepare_regenie2_binary_chromosome_state", return_value="binary-chromosome-state"),
+        patch("g.engine.load_prediction_source", return_value=FakePredictionSource()),
+        patch("g.engine.iter_dosage_genotype_chunks_from_source", return_value=iter([source_chunk])),
+        patch("g.engine.compute_regenie2_binary_chunk", return_value=regenie_result),
+    ):
+        accumulators = list(
+            iter_regenie2_binary_output_frames(
+                genotype_source_config=build_bgen_source_config(Path("study.bgen")),
+                phenotype_path=Path("phenotype.tsv"),
+                phenotype_name="trait",
+                prediction_list_path=Path("predictions.list"),
+                covariate_path=Path("covariates.tsv"),
+                covariate_names=("age",),
+                chunk_size=32,
+                variant_limit=1,
+            )
+        )
+
+    assert len(accumulators) == 1
+    assert mock_load.call_args.kwargs["is_binary_trait"] is True

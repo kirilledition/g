@@ -9,11 +9,11 @@ import enum
 import importlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
 import typing
+from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
@@ -275,26 +275,29 @@ def build_case_report(arguments: argparse.Namespace) -> BenchmarkCaseReport:
                 continue
             operation: typing.Callable[[], float]
             if path_mode == BenchmarkPathMode.READ_FLOAT32:
-                operation = lambda: run_native_rust_read_float32(
-                    native_bgen_reader,
-                    sample_index_array,
-                    arguments.chunk_size,
-                    variant_limit,
-                )
+                def operation() -> float:
+                    return run_native_rust_read_float32(
+                        native_bgen_reader,
+                        sample_index_array,
+                        arguments.chunk_size,
+                        variant_limit,
+                    )
             elif path_mode == BenchmarkPathMode.READ_FLOAT32_PREPARED:
-                operation = lambda: run_native_rust_read_float32_prepared(
-                    native_bgen_reader,
-                    sample_index_array,
-                    arguments.chunk_size,
-                    variant_limit,
-                )
+                def operation() -> float:
+                    return run_native_rust_read_float32_prepared(
+                        native_bgen_reader,
+                        sample_index_array,
+                        arguments.chunk_size,
+                        variant_limit,
+                    )
             elif path_mode == BenchmarkPathMode.READ_FLOAT32_INTO_PREPARED:
-                operation = lambda: run_native_rust_read_float32_into_prepared(
-                    native_bgen_reader,
-                    sample_index_array,
-                    arguments.chunk_size,
-                    variant_limit,
-                )
+                def operation() -> float:
+                    return run_native_rust_read_float32_into_prepared(
+                        native_bgen_reader,
+                        sample_index_array,
+                        arguments.chunk_size,
+                        variant_limit,
+                    )
             else:
                 message = f"Unsupported benchmark path mode: {path_mode.value}."
                 raise ValueError(message)
@@ -352,6 +355,7 @@ def run_case_subprocess(
     chunk_size: int,
     decode_tile_variant_count: int | None,
     rayon_thread_count: int | None,
+    *,
     trusted_no_missing_diploid: bool,
 ) -> BenchmarkCaseReport:
     """Run one benchmark case in a fresh subprocess so env knobs take effect."""
@@ -400,12 +404,12 @@ def run_case_subprocess(
     path_results = [PathResult(**path_result_payload) for path_result_payload in case_payload["path_results"]]
     return BenchmarkCaseReport(
         bgen_path=str(case_payload["bgen_path"]),
-        sample_path=typing.cast(str | None, case_payload["sample_path"]),
+        sample_path=typing.cast("str | None", case_payload["sample_path"]),
         chunk_size=int(case_payload["chunk_size"]),
         variant_limit=int(case_payload["variant_limit"]),
         repeat_count=int(case_payload["repeat_count"]),
-        decode_tile_variant_count=typing.cast(int | None, case_payload["decode_tile_variant_count"]),
-        rayon_thread_count=typing.cast(int | None, case_payload["rayon_thread_count"]),
+        decode_tile_variant_count=typing.cast("int | None", case_payload["decode_tile_variant_count"]),
+        rayon_thread_count=typing.cast("int | None", case_payload["rayon_thread_count"]),
         trusted_no_missing_diploid=bool(case_payload["trusted_no_missing_diploid"]),
         path_results=path_results,
         checksum_reference_path=str(case_payload["checksum_reference_path"]),
@@ -438,7 +442,7 @@ def build_sweep_report(arguments: argparse.Namespace) -> BenchmarkSweepReport:
         return BenchmarkSweepReport(cases=[build_case_report(arguments)])
 
     case_reports: list[BenchmarkCaseReport] = []
-    for chunk_size in typing.cast(list[int], chunk_sizes):
+    for chunk_size in typing.cast("list[int]", chunk_sizes):
         for decode_tile_variant_count in decode_tile_variant_counts:
             for rayon_thread_count in rayon_thread_counts:
                 for trusted_no_missing_diploid in trusted_no_missing_diploid_modes:
@@ -448,7 +452,7 @@ def build_sweep_report(arguments: argparse.Namespace) -> BenchmarkSweepReport:
                             chunk_size,
                             decode_tile_variant_count,
                             rayon_thread_count,
-                            trusted_no_missing_diploid,
+                            trusted_no_missing_diploid=trusted_no_missing_diploid,
                         )
                     )
     return BenchmarkSweepReport(cases=case_reports)

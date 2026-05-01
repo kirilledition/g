@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -279,11 +280,6 @@ fn all_samples_present_diploid(sample_ploidy_and_missingness: &[u8]) -> bool {
         }
     }
     ploidy_chunks.remainder().iter().all(|ploidy_byte| *ploidy_byte == 2)
-}
-
-fn read_packed_probability_index_eight_bit(packed_probability_bytes: &[u8], probability_offset: usize) -> usize {
-    usize::from(packed_probability_bytes[probability_offset])
-        | (usize::from(packed_probability_bytes[probability_offset + 1]) << 8)
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -1255,22 +1251,20 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     }
 
     let dosage_lookup = unphased_eight_bit_dosage_lookup();
-    let mut probability_offset = 0;
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let output_pointer = output_pointer_address as *mut f32;
+    let probability_pairs = packed_probability_bytes[..expected_probability_byte_count].chunks_exact(2);
     let all_samples_present = trusted_no_missing_diploid || all_samples_present_diploid(sample_ploidy_and_missingness);
     if sample_selection.is_identity && all_samples_present {
         let output_write_start_time = profiling_enabled.then(Instant::now);
-        for file_sample_index in 0..sample_ploidy_and_missingness.len() {
-            let probability_offset = file_sample_index * 2;
-            let packed_probability_index =
-                read_packed_probability_index_eight_bit(packed_probability_bytes, probability_offset);
+        let mut output_row_pointer = unsafe { output_pointer.add(variant_index) };
+        for probability_pair in probability_pairs {
+            let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
             let dosage_value = dosage_lookup[packed_probability_index];
-
-            let output_offset = (file_sample_index * variant_count) + variant_index;
             unsafe {
                 // Identity-aligned full-sample reads map file-order rows directly into output rows.
-                output_pointer.add(output_offset).write(dosage_value);
+                output_row_pointer.write(dosage_value);
+                output_row_pointer = output_row_pointer.add(variant_count);
             }
         }
         if let Some(output_write_start_time) = output_write_start_time {
@@ -1293,29 +1287,27 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     }
     if sample_selection.is_identity {
         let output_write_start_time = profiling_enabled.then(Instant::now);
-        for (file_sample_index, ploidy_and_missingness) in sample_ploidy_and_missingness.iter().enumerate() {
+        let mut output_row_pointer = unsafe { output_pointer.add(variant_index) };
+        for (ploidy_and_missingness, probability_pair) in sample_ploidy_and_missingness.iter().zip(probability_pairs) {
             let observed_ploidy = ploidy_and_missingness & PLOIDY_MASK;
             if observed_ploidy != 2 {
                 return Err(BgenError::UnsupportedFormat(format!(
-                    "Variant '{}' contains a non-diploid sample at file sample index {file_sample_index}. Observed ploidy {observed_ploidy}.",
+                    "Variant '{}' contains a non-diploid sample in an identity-aligned full-sample read. Observed ploidy {observed_ploidy}.",
                     variant_record.resolved_variant_identifier,
                 )));
             }
 
-            let packed_probability_index = usize::from(packed_probability_bytes[probability_offset])
-                | (usize::from(packed_probability_bytes[probability_offset + 1]) << 8);
-            probability_offset += 2;
+            let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
 
             let dosage_value = if (ploidy_and_missingness & MISSING_SAMPLE_FLAG_MASK) != 0 {
                 f32::NAN
             } else {
                 dosage_lookup[packed_probability_index]
             };
-
-            let output_offset = (file_sample_index * variant_count) + variant_index;
             unsafe {
                 // Identity-aligned full-sample reads map file-order rows directly into output rows.
-                output_pointer.add(output_offset).write(dosage_value);
+                output_row_pointer.write(dosage_value);
+                output_row_pointer = output_row_pointer.add(variant_count);
             }
         }
         if let Some(output_write_start_time) = output_write_start_time {
@@ -1339,10 +1331,8 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
 
     if all_samples_present {
         let output_write_start_time = profiling_enabled.then(Instant::now);
-        for file_sample_index in 0..sample_ploidy_and_missingness.len() {
-            let probability_offset = file_sample_index * 2;
-            let packed_probability_index =
-                read_packed_probability_index_eight_bit(packed_probability_bytes, probability_offset);
+        for (file_sample_index, probability_pair) in probability_pairs.enumerate() {
+            let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
             let dosage_value = dosage_lookup[packed_probability_index];
 
             let selected_index = sample_selection.file_to_selected_index[file_sample_index];
@@ -1375,7 +1365,9 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     }
 
     let output_write_start_time = profiling_enabled.then(Instant::now);
-    for (file_sample_index, ploidy_and_missingness) in sample_ploidy_and_missingness.iter().enumerate() {
+    for (file_sample_index, (ploidy_and_missingness, probability_pair)) in
+        sample_ploidy_and_missingness.iter().zip(probability_pairs).enumerate()
+    {
         let observed_ploidy = ploidy_and_missingness & PLOIDY_MASK;
         if observed_ploidy != 2 {
             return Err(BgenError::UnsupportedFormat(format!(
@@ -1384,9 +1376,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
             )));
         }
 
-        let packed_probability_index = usize::from(packed_probability_bytes[probability_offset])
-            | (usize::from(packed_probability_bytes[probability_offset + 1]) << 8);
-        probability_offset += 2;
+        let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
 
         let dosage_value = if (ploidy_and_missingness & MISSING_SAMPLE_FLAG_MASK) != 0 {
             f32::NAN
@@ -1495,20 +1485,27 @@ fn decompress_zlib_block_into_scratch(
             .reserve(expected_length - thread_scratch.decompressed_probability_block.capacity());
     }
     thread_scratch.zlib_decompressor.reset(true);
+    let total_output_before = thread_scratch.zlib_decompressor.total_out();
+    let output_buffer: &mut [MaybeUninit<u8>] =
+        &mut thread_scratch.decompressed_probability_block.spare_capacity_mut()[..expected_length];
     let status = thread_scratch
         .zlib_decompressor
-        .decompress_vec(compressed_payload, &mut thread_scratch.decompressed_probability_block, FlushDecompress::Finish)
+        .decompress_uninit(compressed_payload, output_buffer, FlushDecompress::Finish)
         .map_err(std::io::Error::from)?;
     if status != Status::StreamEnd {
         return Err(BgenError::InvalidFormat(
             "Zlib-compressed BGEN block did not terminate at stream end.".to_string(),
         ));
     }
-    if thread_scratch.decompressed_probability_block.len() != expected_length {
+    let decompressed_length = usize::try_from(thread_scratch.zlib_decompressor.total_out() - total_output_before)
+        .map_err(|_| BgenError::InvalidFormat("Decoded zlib block length does not fit into usize.".to_string()))?;
+    if decompressed_length != expected_length {
         return Err(BgenError::InvalidFormat(format!(
-            "Zlib-compressed BGEN block expanded to {} bytes, but the header declared {expected_length} bytes.",
-            thread_scratch.decompressed_probability_block.len(),
+            "Zlib-compressed BGEN block expanded to {decompressed_length} bytes, but the header declared {expected_length} bytes.",
         )));
+    }
+    unsafe {
+        thread_scratch.decompressed_probability_block.set_len(decompressed_length);
     }
     Ok(())
 }
