@@ -17,6 +17,7 @@ finalize_chunks_to_parquet = output.finalize_chunks_to_parquet
 
 DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE = 8192
 DEFAULT_ARROW_PAYLOAD_BATCH_SIZE = output.DEFAULT_PAYLOAD_BATCH_SIZE
+DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH = output.DEFAULT_WRITER_QUEUE_DEPTH
 
 
 @dataclasses.dataclass(frozen=True)
@@ -32,6 +33,7 @@ class ComputeConfig:
     finalize_parquet: bool = True
     arrow_payload_batch_size: int = DEFAULT_ARROW_PAYLOAD_BATCH_SIZE
     output_writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT
+    output_writer_queue_depth: int = DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
 
 
 @dataclasses.dataclass(frozen=True)
@@ -83,6 +85,9 @@ def validate_compute_config(compute_config: ComputeConfig) -> None:
         raise ValueError(message)
     if compute_config.output_writer_thread_count <= 0:
         message = "Output writer thread count must be positive."
+        raise ValueError(message)
+    if compute_config.output_writer_queue_depth <= 0:
+        message = "Output writer queue depth must be positive."
         raise ValueError(message)
 
 
@@ -184,6 +189,7 @@ def regenie2(
         association_mode=association_mode,
         finalize_parquet=compute_config.finalize_parquet,
         writer_thread_count=compute_config.output_writer_thread_count,
+        writer_queue_depth=compute_config.output_writer_queue_depth,
         payload_batch_size=compute_config.arrow_payload_batch_size,
     )
     return RunArtifacts(

@@ -97,6 +97,12 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
                 "results/output",
                 "--device",
                 "gpu",
+                "--prefetch-chunks",
+                "2",
+                "--output-writer-thread-count",
+                "3",
+                "--output-writer-queue-depth",
+                "5",
             ],
         )
 
@@ -107,6 +113,9 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
     compute_config = mock_run_regenie2_linear_api.call_args.kwargs["compute"]
     assert compute_config.device == Device.GPU
     assert compute_config.chunk_size == DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE
+    assert compute_config.prefetch_chunks == 2
+    assert compute_config.output_writer_thread_count == 3
+    assert compute_config.output_writer_queue_depth == 5
 
 
 def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
@@ -135,11 +144,21 @@ def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
                 "results/output",
                 "--trait-type",
                 "binary",
+                "--prefetch-chunks",
+                "4",
+                "--output-writer-thread-count",
+                "2",
+                "--output-writer-queue-depth",
+                "6",
             ],
         )
 
     assert result.exit_code == 0
     assert mock_run_regenie2_api.call_args.kwargs["trait_type"] == RegenieTraitType.BINARY
+    compute_config = mock_run_regenie2_api.call_args.kwargs["compute"]
+    assert compute_config.prefetch_chunks == 4
+    assert compute_config.output_writer_thread_count == 2
+    assert compute_config.output_writer_queue_depth == 6
     assert str(Path("results/output.regenie2_binary.run")) in result.output
 
 

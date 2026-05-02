@@ -31,6 +31,10 @@ fresh_process_benchmark = load_script_module(
     "fresh_process_benchmark_script",
     "scripts/benchmark_regenie2_linear_fresh_process.py",
 )
+tuning_benchmark = load_script_module(
+    "tuning_benchmark_script",
+    "scripts/tune_regenie2_gpu.py",
+)
 
 
 def test_regenie_command_builders_shape() -> None:
@@ -64,6 +68,71 @@ def test_bgen_reader_benchmark_parses_path_modes() -> None:
 
 def test_bgen_reader_benchmark_parses_boolean_modes() -> None:
     assert bgen_reader_benchmark.parse_boolean_mode_list("trusted,safe") == [True, False]
+
+
+def test_tuning_benchmark_builds_queue_depth_values() -> None:
+    assert tuning_benchmark.build_queue_depth_values(4, (1, 2)) == (4, 8)
+
+
+def test_tuning_benchmark_builds_trial_environment_from_low_level_knobs() -> None:
+    candidate = tuning_benchmark.Step2TuningCandidate(
+        trait_type=tuning_benchmark.types.RegenieTraitType.BINARY,
+        chunk_size=8192,
+        prefetch_chunks=1,
+        arrow_payload_batch_size=4,
+        output_writer_thread_count=8,
+        output_writer_queue_depth=16,
+        bgen_decode_tile_variant_count=128,
+        rayon_thread_count=4,
+        firth_batch_size=64,
+    )
+    environment = tuning_benchmark.build_step2_trial_environment(candidate)
+    assert environment["G_BGEN_DECODE_TILE_VARIANT_COUNT"] == "128"
+    assert environment["RAYON_NUM_THREADS"] == "4"
+    assert environment["G_REGENIE2_BINARY_FIRTH_BATCH_SIZE"] == "64"
+
+
+def test_tuning_benchmark_builds_shared_compute_candidates() -> None:
+    bgen_candidate_summary = tuning_benchmark.BgenCandidateSummary(
+        candidate=tuning_benchmark.BgenCandidate(
+            decode_tile_variant_count=64,
+            rayon_thread_count=2,
+            benchmark_chunk_size=8192,
+        ),
+        median_seconds=0.1,
+        mean_seconds=0.1,
+        repeat_count=3,
+    )
+    candidates = tuning_benchmark.build_compute_stage_candidates(
+        trait_type=tuning_benchmark.types.RegenieTraitType.QUANTITATIVE,
+        chunk_sizes=(4096, 8192),
+        prefetch_chunk_values=(0, 1),
+        bgen_candidates=(bgen_candidate_summary,),
+        firth_batch_sizes=(32, 64),
+    )
+    assert len(candidates) == 4
+    assert all(candidate.firth_batch_size is None for candidate in candidates)
+
+
+def test_tuning_benchmark_builds_binary_compute_candidates_with_firth_sizes() -> None:
+    bgen_candidate_summary = tuning_benchmark.BgenCandidateSummary(
+        candidate=tuning_benchmark.BgenCandidate(
+            decode_tile_variant_count=64,
+            rayon_thread_count=2,
+            benchmark_chunk_size=8192,
+        ),
+        median_seconds=0.1,
+        mean_seconds=0.1,
+        repeat_count=3,
+    )
+    candidates = tuning_benchmark.build_compute_stage_candidates(
+        trait_type=tuning_benchmark.types.RegenieTraitType.BINARY,
+        chunk_sizes=(8192,),
+        prefetch_chunk_values=(1,),
+        bgen_candidates=(bgen_candidate_summary,),
+        firth_batch_sizes=(32, 64),
+    )
+    assert [candidate.firth_batch_size for candidate in candidates] == [32, 64]
 
 
 def test_regenie_command_builders_can_focus_quantitative_step2() -> None:

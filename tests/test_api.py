@@ -118,6 +118,7 @@ def test_regenie2_binary_dispatches_binary_iterator_and_output_mode() -> None:
         (ComputeConfig(prefetch_chunks=-1), "Prefetch chunk count must be zero or positive"),
         (ComputeConfig(arrow_payload_batch_size=0), "Arrow payload batch size must be positive"),
         (ComputeConfig(output_writer_thread_count=0), "Output writer thread count must be positive"),
+        (ComputeConfig(output_writer_queue_depth=0), "Output writer queue depth must be positive"),
     ],
 )
 def test_validate_compute_config_rejects_invalid_values(
@@ -172,6 +173,10 @@ def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalizati
         mock_persist_chunked_results.call_args.kwargs["writer_thread_count"]
         == api.output.DEFAULT_WRITER_THREAD_COUNT
     )
+    assert (
+        mock_persist_chunked_results.call_args.kwargs["writer_queue_depth"]
+        == api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
+    )
     mock_prepare_output_run.assert_called_once()
 
 
@@ -197,7 +202,8 @@ def test_regenie2_linear_passes_internal_output_writer_configuration() -> None:
             pheno_name="trait",
             out="results/output",
             pred="predictions.list",
-            compute=ComputeConfig(output_writer_thread_count=2),
+            compute=ComputeConfig(output_writer_thread_count=2, output_writer_queue_depth=3),
         )
 
     assert mock_persist_chunked_results.call_args.kwargs["writer_thread_count"] == 2
+    assert mock_persist_chunked_results.call_args.kwargs["writer_queue_depth"] == 3

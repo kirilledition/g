@@ -63,11 +63,20 @@ def run_regenie2_linear_command(
     pred: Path = typer.Option(..., help="REGENIE step 1 _pred.list file path."),
     chunk_size: int | None = typer.Option(None, help="Variants per chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
+    prefetch_chunks: int = typer.Option(1, help="Number of genotype chunks to prefetch on the host."),
     device: types.Device = typer.Option(types.Device.CPU, help="JAX execution device."),
     output_run_directory: Path | None = typer.Option(None, help="Run directory for Arrow chunked output."),
     arrow_payload_batch_size: int | None = typer.Option(
         None,
         help="Number of REGENIE output chunks to batch per Arrow IPC write.",
+    ),
+    output_writer_thread_count: int = typer.Option(
+        api.output.DEFAULT_WRITER_THREAD_COUNT,
+        help="Background output writer thread count.",
+    ),
+    output_writer_queue_depth: int = typer.Option(
+        api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH,
+        help="Maximum number of queued output write jobs.",
     ),
     resume: bool = typer.Option(  # noqa: FBT001
         default=False,
@@ -83,10 +92,13 @@ def run_regenie2_linear_command(
         chunk_size=resolve_chunk_size(chunk_size),
         device=device,
         variant_limit=variant_limit,
+        prefetch_chunks=prefetch_chunks,
         output_run_directory=output_run_directory,
         resume=resume,
         finalize_parquet=finalize_parquet,
         arrow_payload_batch_size=resolve_arrow_payload_batch_size(arrow_payload_batch_size),
+        output_writer_thread_count=output_writer_thread_count,
+        output_writer_queue_depth=output_writer_queue_depth,
     )
     artifacts = run_regenie2_linear_api(
         bgen=bgen,
@@ -128,11 +140,20 @@ def run_regenie2_command(
     ),
     chunk_size: int | None = typer.Option(None, help="Variants per chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
+    prefetch_chunks: int = typer.Option(1, help="Number of genotype chunks to prefetch on the host."),
     device: types.Device = typer.Option(types.Device.CPU, help="JAX execution device."),
     output_run_directory: Path | None = typer.Option(None, help="Run directory for Arrow chunked output."),
     arrow_payload_batch_size: int | None = typer.Option(
         None,
         help="Number of REGENIE output chunks to batch per Arrow IPC write.",
+    ),
+    output_writer_thread_count: int = typer.Option(
+        api.output.DEFAULT_WRITER_THREAD_COUNT,
+        help="Background output writer thread count.",
+    ),
+    output_writer_queue_depth: int = typer.Option(
+        api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH,
+        help="Maximum number of queued output write jobs.",
     ),
     resume: bool = typer.Option(  # noqa: FBT001
         default=False,
@@ -148,10 +169,13 @@ def run_regenie2_command(
         chunk_size=resolve_chunk_size(chunk_size),
         device=device,
         variant_limit=variant_limit,
+        prefetch_chunks=prefetch_chunks,
         output_run_directory=output_run_directory,
         resume=resume,
         finalize_parquet=finalize_parquet,
         arrow_payload_batch_size=resolve_arrow_payload_batch_size(arrow_payload_batch_size),
+        output_writer_thread_count=output_writer_thread_count,
+        output_writer_queue_depth=output_writer_queue_depth,
     )
     artifacts = run_regenie2_api(
         bgen=bgen,

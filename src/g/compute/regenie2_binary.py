@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import functools
+import os
+import typing
 from dataclasses import dataclass
 
 import jax
@@ -27,7 +29,29 @@ FIRTH_COEFFICIENT_TOLERANCE = 1.0e-4
 FIRTH_LIKELIHOOD_TOLERANCE = 1.0e-4
 FIRTH_MAXIMUM_STEP_SIZE = 5.0
 FIRTH_MAXIMUM_ITERATIONS = 50
-FIRTH_BATCH_SIZE = 64
+DEFAULT_FIRTH_BATCH_SIZE = 64
+
+BinaryScoreTestChunkComputeFunction = typing.Callable[
+    [models.Regenie2BinaryChromosomeState, jax.Array, types.RegenieBinaryCorrection],
+    models.Regenie2BinaryChunkResult,
+]
+BinaryChunkComputeFunction = typing.Callable[
+    [models.Regenie2BinaryChromosomeState, jax.Array, types.RegenieBinaryCorrection],
+    models.Regenie2BinaryChunkResult,
+]
+
+
+@functools.cache
+def get_firth_batch_size() -> int:
+    """Resolve the active fixed Firth batch size from the environment."""
+    raw_value = os.environ.get("G_REGENIE2_BINARY_FIRTH_BATCH_SIZE")
+    if raw_value is None:
+        return DEFAULT_FIRTH_BATCH_SIZE
+    parsed_value = int(raw_value)
+    if parsed_value <= 0:
+        message = "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE must be positive."
+        raise ValueError(message)
+    return parsed_value
 
 
 @jax.tree_util.register_dataclass
@@ -279,6 +303,12 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
         extra_code=extra_code,
         valid_mask=valid_mask,
     )
+
+
+compute_regenie2_binary_score_test_chunk = typing.cast(
+    "BinaryScoreTestChunkComputeFunction",
+    compute_regenie2_binary_score_test_chunk_from_chromosome_state,
+)
 
 
 def compute_information_components(
@@ -695,8 +725,9 @@ def build_device_firth_batch_plan(
     variant_count: int,
 ) -> tuple[jax.Array, jax.Array]:
     """Build fixed-shape Firth index batches on device."""
-    max_batch_count = (variant_count + FIRTH_BATCH_SIZE - 1) // FIRTH_BATCH_SIZE
-    padded_variant_count = max_batch_count * FIRTH_BATCH_SIZE
+    firth_batch_size = get_firth_batch_size()
+    max_batch_count = (variant_count + firth_batch_size - 1) // firth_batch_size
+    padded_variant_count = max_batch_count * firth_batch_size
     fallback_index_vector = jnp.nonzero(fallback_mask, size=variant_count, fill_value=0)[0]
     fallback_count = jnp.sum(fallback_mask, dtype=jnp.int32)
     padded_index_vector = jnp.pad(
@@ -706,8 +737,8 @@ def build_device_firth_batch_plan(
     )
     active_mask_vector = jnp.arange(padded_variant_count, dtype=jnp.int32) < fallback_count
     return (
-        padded_index_vector.reshape((max_batch_count, FIRTH_BATCH_SIZE)),
-        active_mask_vector.reshape((max_batch_count, FIRTH_BATCH_SIZE)),
+        padded_index_vector.reshape((max_batch_count, firth_batch_size)),
+        active_mask_vector.reshape((max_batch_count, firth_batch_size)),
     )
 
 
@@ -765,6 +796,7 @@ def apply_device_candidate_corrections_firth(
         return result
 
     def apply_candidate_corrections() -> models.Regenie2BinaryChunkResult:
+        firth_batch_size = get_firth_batch_size()
         genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
         variant_count = genotype_matrix_float32.shape[1]
         fallback_index_matrix, fallback_active_mask_matrix = build_device_firth_batch_plan(
@@ -802,11 +834,11 @@ def apply_device_candidate_corrections_firth(
             standard_initial_coefficients,
         )
         batch_count = fallback_index_matrix.shape[0]
-        active_batch_count = (fallback_count + FIRTH_BATCH_SIZE - 1) // FIRTH_BATCH_SIZE
-        genotype_batches = genotype_matrix_by_variant.reshape((batch_count, FIRTH_BATCH_SIZE, -1))
-        initial_coefficient_batches = initial_coefficients.reshape((batch_count, FIRTH_BATCH_SIZE, -1))
-        active_mask_batches = flat_active_mask.reshape((batch_count, FIRTH_BATCH_SIZE))
-        empty_firth_variant_result = build_empty_firth_variant_result(FIRTH_BATCH_SIZE)
+        active_batch_count = (fallback_count + firth_batch_size - 1) // firth_batch_size
+        genotype_batches = genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
+        initial_coefficient_batches = initial_coefficients.reshape((batch_count, firth_batch_size, -1))
+        active_mask_batches = flat_active_mask.reshape((batch_count, firth_batch_size))
+        empty_firth_variant_result = build_empty_firth_variant_result(firth_batch_size)
 
         def compute_firth_batch(
             carry: None,
@@ -907,10 +939,10 @@ def compute_regenie2_binary_chunk_from_chromosome_state(
     correction: types.RegenieBinaryCorrection = types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
 ) -> models.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association using cached null state."""
-    score_test_result = compute_regenie2_binary_score_test_chunk_from_chromosome_state(
-        chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
-        correction=correction,
+    score_test_result = compute_regenie2_binary_score_test_chunk(
+        chromosome_state,
+        genotype_matrix,
+        correction,
     )
     return apply_device_candidate_corrections(
         chromosome_state=chromosome_state,
@@ -928,8 +960,12 @@ def compute_regenie2_binary_chunk(
 ) -> models.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association for a genotype chunk."""
     chromosome_state = prepare_regenie2_binary_chromosome_state(state, loco_offset)
-    return compute_regenie2_binary_chunk_from_chromosome_state(
-        chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
-        correction=correction,
+    compute_regenie2_binary_chunk_from_state = typing.cast(
+        "BinaryChunkComputeFunction",
+        compute_regenie2_binary_chunk_from_chromosome_state,
+    )
+    return compute_regenie2_binary_chunk_from_state(
+        chromosome_state,
+        genotype_matrix,
+        correction,
     )

@@ -55,6 +55,10 @@ benchmark-regenie2-linear-fresh-gpu:
 benchmark-regenie2-linear-fresh-gpu-parquet:
     uv run python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --finalize-parquet
 
+# Sequentially tune GPU REGENIE step 2 and active BGEN reader knobs
+tune-regenie2-gpu:
+    uv run python scripts/tune_regenie2_gpu.py
+
 # Profile full REGENIE step 2 execution
 profile-regenie2-linear-detailed:
     mkdir -p {{data_dir}}/profiles/regenie2_linear_detailed
