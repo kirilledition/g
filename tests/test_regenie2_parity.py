@@ -35,9 +35,6 @@ def load_regenie_baseline_results(variant_limit: int) -> pd.DataFrame:
     ).head(variant_limit)
     return baseline_frame.rename(
         columns={
-            "CHROM": "chromosome",
-            "GENPOS": "position",
-            "ID": "variant_identifier",
             "BETA": "baseline_beta",
             "SE": "baseline_standard_error",
             "CHISQ": "baseline_chi_squared",
@@ -95,14 +92,14 @@ def test_regenie2_linear_matches_regenie_baseline_beta(
 ) -> None:
     """Validate beta estimates match REGENIE within tolerance."""
     merged_results = regenie2_parity_results.observed_results.merge(
-        regenie2_parity_results.baseline_results[["variant_identifier", "baseline_beta"]],
-        on="variant_identifier",
+        regenie2_parity_results.baseline_results[["ID", "baseline_beta"]],
+        on="ID",
         how="inner",
     )
 
     assert len(merged_results) == PARITY_VARIANT_LIMIT
     np.testing.assert_allclose(
-        merged_results["beta"].to_numpy(),
+        merged_results["BETA"].to_numpy(),
         merged_results["baseline_beta"].to_numpy(),
         atol=1.0e-3,
     )
@@ -113,14 +110,14 @@ def test_regenie2_linear_matches_regenie_baseline_log10p(
 ) -> None:
     """Validate -log10(p) values match REGENIE within tolerance."""
     merged_results = regenie2_parity_results.observed_results.merge(
-        regenie2_parity_results.baseline_results[["variant_identifier", "baseline_log10_p_value"]],
-        on="variant_identifier",
+        regenie2_parity_results.baseline_results[["ID", "baseline_log10_p_value"]],
+        on="ID",
         how="inner",
     )
 
     assert len(merged_results) == PARITY_VARIANT_LIMIT
     np.testing.assert_allclose(
-        merged_results["log10_p_value"].to_numpy(),
+        merged_results["LOG10P"].to_numpy(),
         merged_results["baseline_log10_p_value"].to_numpy(),
         atol=1.5e-2,
     )
@@ -133,10 +130,9 @@ def test_regenie2_linear_api_produces_valid_output(
     observed_results = regenie2_parity_results.observed_results
 
     assert len(observed_results) == PARITY_VARIANT_LIMIT
-    assert observed_results["variant_identifier"].is_unique
-    assert observed_results["is_valid"].all()
-    assert (observed_results["observation_count"] > 0).all()
-    assert np.isfinite(observed_results["beta"]).all()
-    assert np.isfinite(observed_results["standard_error"]).all()
-    assert np.isfinite(observed_results["chi_squared"]).all()
-    assert np.isfinite(observed_results["log10_p_value"]).all()
+    assert observed_results["ID"].is_unique
+    assert (observed_results["N"] > 0).all()
+    assert np.isfinite(observed_results["BETA"]).all()
+    assert np.isfinite(observed_results["SE"]).all()
+    assert np.isfinite(observed_results["CHISQ"]).all()
+    assert np.isfinite(observed_results["LOG10P"]).all()

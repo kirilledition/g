@@ -58,29 +58,34 @@ class PyOutputWriterSession:
         writer_queue_depth: int = 1,
         finalize_parquet: bool = True,
     ) -> None: ...
-    def enqueue_binary_chunk_batch(
+    def enqueue_regenie_step2_chunk_batch(
         self,
         *,
         chunk_file_name: str,
         chunk_identifier: npt.NDArray[np.int64],
         variant_start_index: npt.NDArray[np.int64],
         variant_stop_index: npt.NDArray[np.int64],
-        chromosome: list[str],
-        position: npt.NDArray[np.int64],
-        variant_identifier: list[str],
-        allele_zero: list[str],
-        allele_one: list[str],
-        allele_one_frequency: npt.NDArray[np.float32],
-        observation_count: npt.NDArray[np.int32],
+        chrom: list[str],
+        genpos: npt.NDArray[np.int64],
+        variant_id: list[str],
+        allele0: list[str],
+        allele1: list[str],
+        a1freq: npt.NDArray[np.float32],
+        n: npt.NDArray[np.int32],
         beta: npt.NDArray[np.float32],
-        standard_error: npt.NDArray[np.float32],
-        chi_squared: npt.NDArray[np.float32],
-        log10_p_value: npt.NDArray[np.float32],
-        extra_code: npt.NDArray[np.int32],
+        se: npt.NDArray[np.float32],
+        chisq: npt.NDArray[np.float32],
+        log10p: npt.NDArray[np.float32],
+        extra_code: npt.NDArray[np.int32] | None = None,
     ) -> None: ...
     def finish(self) -> str | None: ...
     def abort(self) -> None: ...
 
+def finalize_output_run_chunks(
+    run_directory: str,
+    chunks_directory: str,
+    association_mode: str,
+) -> str: ...
 def hello_from_bin() -> str: ...
 def convert_probability_tensor_to_dosage_f32(
     probability_tensor: npt.NDArray[np.float32],

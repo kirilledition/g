@@ -102,12 +102,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=Path("data/benchmarks/regenie_comparison"),
         help="Directory where report and logs are written.",
     )
-    parser.add_argument(
-        "--g-output-writer-backend",
-        choices=("python", "rust"),
-        default="python",
-        help="Output writer backend for g runs.",
-    )
     return parser
 
 
@@ -246,7 +240,6 @@ def build_g_step2_command(
     device: str,
     chunk_size: int,
     variant_limit: int | None,
-    output_writer_backend: str,
     trait_type: str = "quantitative",
 ) -> list[str]:
     """Build g step2 CLI command."""
@@ -284,8 +277,6 @@ def build_g_step2_command(
         str(chunk_size),
         "--device",
         device,
-        "--output-writer-backend",
-        output_writer_backend,
     ]
     if G_FINALIZE_PARQUET:
         command_arguments.append("--finalize-parquet")
@@ -421,17 +412,17 @@ def summarize_quantitative_step2_agreement(
     baseline_frame = pd.read_csv(regenie_output_path, sep=r"\s+")
     observed_frame = load_g_output_frame(g_output_path)
 
-    required_observed_columns = {"chromosome", "position", "variant_identifier", "allele_one", "allele_two"}
+    required_observed_columns = {"CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"}
     required_baseline_columns = {"CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"}
     if required_observed_columns.issubset(observed_frame.columns) and required_baseline_columns.issubset(
         baseline_frame.columns
     ):
         observed_frame = observed_frame.assign(
-            chromosome=observed_frame["chromosome"].astype(str),
-            position=pd.to_numeric(observed_frame["position"], downcast="integer"),
-            variant_identifier=observed_frame["variant_identifier"].astype(str),
-            allele_one=observed_frame["allele_one"].astype(str),
-            allele_two=observed_frame["allele_two"].astype(str),
+            CHROM=observed_frame["CHROM"].astype(str),
+            GENPOS=pd.to_numeric(observed_frame["GENPOS"], downcast="integer"),
+            ID=observed_frame["ID"].astype(str),
+            ALLELE0=observed_frame["ALLELE0"].astype(str),
+            ALLELE1=observed_frame["ALLELE1"].astype(str),
         )
         baseline_frame = baseline_frame.assign(
             CHROM=baseline_frame["CHROM"].astype(str),
@@ -442,15 +433,16 @@ def summarize_quantitative_step2_agreement(
         )
         merged_frame = observed_frame.merge(
             baseline_frame[["CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1", "BETA", "LOG10P"]],
-            left_on=["chromosome", "position", "variant_identifier", "allele_two", "allele_one"],
-            right_on=["CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"],
+            on=["CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"],
             how="inner",
+            suffixes=("_g", "_regenie"),
         )
     else:
         merged_frame = observed_frame.merge(
-            baseline_frame.rename(columns={"ID": "variant_identifier"})[["variant_identifier", "BETA", "LOG10P"]],
-            on="variant_identifier",
+            baseline_frame[["ID", "BETA", "LOG10P"]],
+            on="ID",
             how="inner",
+            suffixes=("_g", "_regenie"),
         )
     if merged_frame.empty:
         return QuantitativeStep2Agreement(
@@ -464,8 +456,8 @@ def summarize_quantitative_step2_agreement(
             log10p_allclose_within_tolerance=None,
             notes="No overlapping variants between outputs.",
         )
-    beta_error_series = (merged_frame["beta"] - merged_frame["BETA"]).abs()
-    log10p_error_series = (merged_frame["log10_p_value"] - merged_frame["LOG10P"]).abs()
+    beta_error_series = (merged_frame["BETA_g"] - merged_frame["BETA_regenie"]).abs()
+    log10p_error_series = (merged_frame["LOG10P_g"] - merged_frame["LOG10P_regenie"]).abs()
     return QuantitativeStep2Agreement(
         comparable=True,
         merged_variant_count=int(merged_frame.shape[0]),
@@ -678,11 +670,10 @@ def main() -> None:
 
     active_trait_type = "binary" if arguments.only_binary_step2 else "quantitative"
     active_trait_label = "binary" if active_trait_type == "binary" else "quantitative"
-    backend_suffix = arguments.g_output_writer_backend
     g_output_cpu_prefix = arguments.output_dir / (
-        f"g_regenie2_binary_step2_cpu_{backend_suffix}"
+        "g_regenie2_binary_step2_cpu"
         if active_trait_type == "binary"
-        else f"g_regenie2_qt_step2_cpu_{backend_suffix}"
+        else "g_regenie2_qt_step2_cpu"
     )
     g_cpu_command_arguments = build_g_step2_command(
         uv_executable=uv_executable,
@@ -691,12 +682,11 @@ def main() -> None:
         device="cpu",
         chunk_size=arguments.chunk_size,
         variant_limit=arguments.variant_limit,
-        output_writer_backend=arguments.g_output_writer_backend,
         trait_type=active_trait_type,
     )
     results.append(
         run_g_step2(
-            program_name=f"g_regenie2_{active_trait_label}_step2_cpu_{backend_suffix}",
+            program_name=f"g_regenie2_{active_trait_label}_step2_cpu",
             trait_type=active_trait_type,
             device="cpu",
             command_arguments=g_cpu_command_arguments,
@@ -708,9 +698,9 @@ def main() -> None:
     run_gpu = arguments.include_gpu and not arguments.cpu_only
     if run_gpu:
         g_output_gpu_prefix = arguments.output_dir / (
-            f"g_regenie2_binary_step2_gpu_{backend_suffix}"
+            "g_regenie2_binary_step2_gpu"
             if active_trait_type == "binary"
-            else f"g_regenie2_qt_step2_gpu_{backend_suffix}"
+            else "g_regenie2_qt_step2_gpu"
         )
         g_gpu_command_arguments = build_g_step2_command(
             uv_executable=uv_executable,
@@ -719,12 +709,11 @@ def main() -> None:
             device="gpu",
             chunk_size=arguments.chunk_size,
             variant_limit=arguments.variant_limit,
-            output_writer_backend=arguments.g_output_writer_backend,
             trait_type=active_trait_type,
         )
         results.append(
             run_g_step2(
-                program_name=f"g_regenie2_{active_trait_label}_step2_gpu_{backend_suffix}",
+                program_name=f"g_regenie2_{active_trait_label}_step2_gpu",
                 trait_type=active_trait_type,
                 device="gpu",
                 command_arguments=g_gpu_command_arguments,
@@ -735,7 +724,7 @@ def main() -> None:
     else:
         results.append(
             ComparisonProgramResult(
-                program_name=f"g_regenie2_{active_trait_label}_step2_gpu_{backend_suffix}",
+                program_name=f"g_regenie2_{active_trait_label}_step2_gpu",
                 implementation="g",
                 trait_type=active_trait_type,
                 step=2,
@@ -754,7 +743,7 @@ def main() -> None:
         )
 
     if not arguments.only_quantitative_step2 and not arguments.only_binary_step2:
-        g_binary_output_cpu_prefix = arguments.output_dir / f"g_regenie2_binary_step2_cpu_{backend_suffix}"
+        g_binary_output_cpu_prefix = arguments.output_dir / "g_regenie2_binary_step2_cpu"
         g_binary_cpu_command_arguments = build_g_step2_command(
             uv_executable=uv_executable,
             baseline_paths=baseline_paths,
@@ -762,12 +751,11 @@ def main() -> None:
             device="cpu",
             chunk_size=arguments.chunk_size,
             variant_limit=arguments.variant_limit,
-            output_writer_backend=arguments.g_output_writer_backend,
             trait_type="binary",
         )
         results.append(
             run_g_step2(
-                program_name=f"g_regenie2_binary_step2_cpu_{backend_suffix}",
+                program_name="g_regenie2_binary_step2_cpu",
                 trait_type="binary",
                 device="cpu",
                 command_arguments=g_binary_cpu_command_arguments,
@@ -776,7 +764,7 @@ def main() -> None:
             )
         )
         if run_gpu:
-            g_binary_output_gpu_prefix = arguments.output_dir / f"g_regenie2_binary_step2_gpu_{backend_suffix}"
+            g_binary_output_gpu_prefix = arguments.output_dir / "g_regenie2_binary_step2_gpu"
             g_binary_gpu_command_arguments = build_g_step2_command(
                 uv_executable=uv_executable,
                 baseline_paths=baseline_paths,
@@ -784,12 +772,11 @@ def main() -> None:
                 device="gpu",
                 chunk_size=arguments.chunk_size,
                 variant_limit=arguments.variant_limit,
-                output_writer_backend=arguments.g_output_writer_backend,
                 trait_type="binary",
             )
             results.append(
                 run_g_step2(
-                    program_name=f"g_regenie2_binary_step2_gpu_{backend_suffix}",
+                    program_name="g_regenie2_binary_step2_gpu",
                     trait_type="binary",
                     device="gpu",
                     command_arguments=g_binary_gpu_command_arguments,
@@ -820,10 +807,10 @@ def main() -> None:
 
     regenie_quantitative_result = extract_program(results, "regenie_step2_quantitative")
     regenie_binary_result = extract_program(results, "regenie_step2_binary")
-    g_cpu_result = extract_program(results, f"g_regenie2_quantitative_step2_cpu_{backend_suffix}")
-    g_gpu_result = extract_program(results, f"g_regenie2_quantitative_step2_gpu_{backend_suffix}")
-    g_binary_cpu_result = extract_program(results, f"g_regenie2_binary_step2_cpu_{backend_suffix}")
-    g_binary_gpu_result = extract_program(results, f"g_regenie2_binary_step2_gpu_{backend_suffix}")
+    g_cpu_result = extract_program(results, "g_regenie2_quantitative_step2_cpu")
+    g_gpu_result = extract_program(results, "g_regenie2_quantitative_step2_gpu")
+    g_binary_cpu_result = extract_program(results, "g_regenie2_binary_step2_cpu")
+    g_binary_gpu_result = extract_program(results, "g_regenie2_binary_step2_gpu")
     agreement_cpu = summarize_quantitative_step2_agreement(
         regenie_output_path=(
             result_output_path(regenie_quantitative_result)

@@ -89,7 +89,6 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
         device="cpu",
         chunk_size=512,
         variant_limit=1024,
-        output_writer_backend="python",
     )
     gpu_command = comparison_benchmark.build_g_step2_command(
         uv_executable="uv",
@@ -98,7 +97,6 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
         device="gpu",
         chunk_size=2048,
         variant_limit=None,
-        output_writer_backend="python",
     )
     binary_command = comparison_benchmark.build_g_step2_command(
         uv_executable="uv",
@@ -107,7 +105,6 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
         device="cpu",
         chunk_size=8192,
         variant_limit=None,
-        output_writer_backend="rust",
         trait_type="binary",
     )
     assert cpu_command[:4] == ["uv", "run", "g", "regenie2"]
@@ -115,13 +112,11 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
     assert cpu_command[cpu_command.index("--trait-type") + 1] == "quantitative"
     assert "--device" in cpu_command
     assert cpu_command[cpu_command.index("--device") + 1] == "cpu"
-    assert cpu_command[cpu_command.index("--output-writer-backend") + 1] == "python"
     assert "--finalize-parquet" in cpu_command
     assert "--variant-limit" in cpu_command
     assert gpu_command[gpu_command.index("--device") + 1] == "gpu"
     assert "--variant-limit" not in gpu_command
     assert binary_command[binary_command.index("--trait-type") + 1] == "binary"
-    assert binary_command[binary_command.index("--output-writer-backend") + 1] == "rust"
     assert "phenotype_binary" in binary_command
 
 
@@ -265,9 +260,9 @@ def test_quantitative_step2_comparison_wires_parity_logic(tmp_path: Path) -> Non
     regenie_output.write_text("CHROM GENPOS ID BETA LOG10P\n1 100 rs1 0.1 1.0\n1 200 rs2 0.2 2.0\n")
     pd.DataFrame(
         {
-            "variant_identifier": ["rs1", "rs2"],
-            "beta": [0.1, 0.2],
-            "log10_p_value": [1.0, 2.0],
+            "ID": ["rs1", "rs2"],
+            "BETA": [0.1, 0.2],
+            "LOG10P": [1.0, 2.0],
         }
     ).to_parquet(g_output, index=False)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
@@ -340,13 +335,13 @@ def test_quantitative_step2_comparison_uses_full_variant_identity_when_available
     )
     pd.DataFrame(
         {
-            "chromosome": [1],
-            "position": [100],
-            "variant_identifier": ["rs1"],
-            "allele_one": ["G"],
-            "allele_two": ["A"],
-            "beta": [0.1],
-            "log10_p_value": [1.0],
+            "CHROM": [1],
+            "GENPOS": [100],
+            "ID": ["rs1"],
+            "ALLELE0": ["A"],
+            "ALLELE1": ["G"],
+            "BETA": [0.1],
+            "LOG10P": [1.0],
         }
     ).to_parquet(g_output, index=False)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
@@ -373,13 +368,13 @@ def test_quantitative_step2_comparison_coerces_merge_key_types(tmp_path: Path) -
     )
     pd.DataFrame(
         {
-            "chromosome": ["22"],
-            "position": [100],
-            "variant_identifier": ["rs1"],
-            "allele_one": ["G"],
-            "allele_two": ["A"],
-            "beta": [0.1],
-            "log10_p_value": [1.0],
+            "CHROM": ["22"],
+            "GENPOS": [100],
+            "ID": ["rs1"],
+            "ALLELE0": ["A"],
+            "ALLELE1": ["G"],
+            "BETA": [0.1],
+            "LOG10P": [1.0],
         }
     ).to_parquet(g_output, index=False)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
@@ -396,9 +391,9 @@ def test_quantitative_step2_comparison_reads_parquet_outputs(tmp_path: Path) -> 
     regenie_output.write_text("CHROM GENPOS ID BETA LOG10P\n1 100 rs1 0.1 1.0\n1 200 rs2 0.2 2.0\n")
     pd.DataFrame(
         {
-            "variant_identifier": ["rs1", "rs2"],
-            "beta": [0.1, 0.2],
-            "log10_p_value": [1.0, 2.0],
+            "ID": ["rs1", "rs2"],
+            "BETA": [0.1, 0.2],
+            "LOG10P": [1.0, 2.0],
         }
     ).to_parquet(g_output, index=False)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(

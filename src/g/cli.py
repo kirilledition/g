@@ -77,10 +77,6 @@ def run_regenie2_linear_command(
         default=False,
         help="Compact committed Arrow chunks into Parquet.",
     ),
-    output_writer_backend: types.OutputWriterBackend = typer.Option(
-        types.OutputWriterBackend.PYTHON,
-        help="Backend used for chunk output writing.",
-    ),
 ) -> None:
     """Run a REGENIE step 2 linear association scan."""
     compute_config = api.ComputeConfig(
@@ -91,7 +87,6 @@ def run_regenie2_linear_command(
         resume=resume,
         finalize_parquet=finalize_parquet,
         arrow_payload_batch_size=resolve_arrow_payload_batch_size(arrow_payload_batch_size),
-        output_writer_backend=output_writer_backend,
     )
     artifacts = run_regenie2_linear_api(
         bgen=bgen,
@@ -147,10 +142,6 @@ def run_regenie2_command(
         default=False,
         help="Compact committed Arrow chunks into Parquet.",
     ),
-    output_writer_backend: types.OutputWriterBackend = typer.Option(
-        types.OutputWriterBackend.PYTHON,
-        help="Backend used for chunk output writing.",
-    ),
 ) -> None:
     """Run a REGENIE step 2 association scan."""
     compute_config = api.ComputeConfig(
@@ -161,7 +152,6 @@ def run_regenie2_command(
         resume=resume,
         finalize_parquet=finalize_parquet,
         arrow_payload_batch_size=resolve_arrow_payload_batch_size(arrow_payload_batch_size),
-        output_writer_backend=output_writer_backend,
     )
     artifacts = run_regenie2_api(
         bgen=bgen,

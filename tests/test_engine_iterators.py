@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from g.engine import (
-    Regenie2LinearChunkAccumulator,
+    Regenie2ChunkAccumulator,
     iter_regenie2_binary_output_frames,
     iter_regenie2_linear_output_frames,
     split_dosage_genotype_chunk_by_absolute_variant_slices,
@@ -88,7 +88,7 @@ def build_chunk_accumulator(
     *,
     variant_start_index: int,
     chromosome_values: list[str],
-) -> Regenie2LinearChunkAccumulator:
+) -> Regenie2ChunkAccumulator:
     dosage_chunk = build_dosage_chunk(chromosome_values=chromosome_values)
     variant_count = len(chromosome_values)
     metadata = VariantMetadata(
@@ -109,11 +109,15 @@ def build_chunk_accumulator(
         log10_p_value=jnp.full((variant_count,), 2.0, dtype=jnp.float32),
         valid_mask=jnp.ones((variant_count,), dtype=bool),
     )
-    return Regenie2LinearChunkAccumulator(
+    return Regenie2ChunkAccumulator(
         metadata=metadata,
         allele_one_frequency=dosage_chunk.allele_one_frequency,
         observation_count=dosage_chunk.observation_count,
-        regenie2_linear_result=regenie_result,
+        beta=regenie_result.beta,
+        standard_error=regenie_result.standard_error,
+        chi_squared=regenie_result.chi_squared,
+        log10_p_value=regenie_result.log10_p_value,
+        extra_code=None,
     )
 
 

@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from g.api import DEFAULT_ARROW_PAYLOAD_BATCH_SIZE, DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE, RunArtifacts
 from g.cli import app, main, print_success_message, resolve_arrow_payload_batch_size, resolve_chunk_size
-from g.types import Device, OutputWriterBackend, RegenieTraitType
+from g.types import Device, RegenieTraitType
 
 runner = CliRunner()
 
@@ -107,7 +107,6 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
     compute_config = mock_run_regenie2_linear_api.call_args.kwargs["compute"]
     assert compute_config.device == Device.GPU
     assert compute_config.chunk_size == DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE
-    assert compute_config.output_writer_backend == OutputWriterBackend.PYTHON
 
 
 def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
@@ -136,14 +135,11 @@ def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
                 "results/output",
                 "--trait-type",
                 "binary",
-                "--output-writer-backend",
-                "rust",
             ],
         )
 
     assert result.exit_code == 0
     assert mock_run_regenie2_api.call_args.kwargs["trait_type"] == RegenieTraitType.BINARY
-    assert mock_run_regenie2_api.call_args.kwargs["compute"].output_writer_backend == OutputWriterBackend.RUST
     assert str(Path("results/output.regenie2_binary.run")) in result.output
 
 

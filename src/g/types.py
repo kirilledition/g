@@ -53,10 +53,3 @@ class ArrayMemoryOrder(enum.StrEnum):
     ANY = "A"
     C_CONTIGUOUS = "C"
     FORTRAN_CONTIGUOUS = "F"
-
-
-class OutputWriterBackend(enum.StrEnum):
-    """Output persistence backend selector."""
-
-    PYTHON = "python"
-    RUST = "rust"

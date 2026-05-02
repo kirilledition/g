@@ -32,7 +32,6 @@ class ComputeConfig:
     finalize_parquet: bool = True
     arrow_payload_batch_size: int = DEFAULT_ARROW_PAYLOAD_BATCH_SIZE
     output_writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT
-    output_writer_backend: types.OutputWriterBackend = types.OutputWriterBackend.PYTHON
 
 
 @dataclasses.dataclass(frozen=True)
@@ -183,7 +182,6 @@ def regenie2(
         frame_iterator=frame_iterator,
         output_run_paths=output_run_paths,
         association_mode=association_mode,
-        output_writer_backend=compute_config.output_writer_backend,
         finalize_parquet=compute_config.finalize_parquet,
         writer_thread_count=compute_config.output_writer_thread_count,
         payload_batch_size=compute_config.arrow_payload_batch_size,

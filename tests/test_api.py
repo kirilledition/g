@@ -16,7 +16,7 @@ from g.api import (
     validate_compute_config,
 )
 from g.io.output import OutputRunPaths, PreparedOutputRun
-from g.types import AssociationMode, Device, GenotypeSourceFormat, OutputWriterBackend, RegenieTraitType
+from g.types import AssociationMode, Device, GenotypeSourceFormat, RegenieTraitType
 
 
 def test_public_package_no_longer_exposes_direct_linear_or_logistic() -> None:
@@ -201,33 +201,3 @@ def test_regenie2_linear_passes_internal_output_writer_configuration() -> None:
         )
 
     assert mock_persist_chunked_results.call_args.kwargs["writer_thread_count"] == 2
-
-
-def test_regenie2_passes_output_writer_backend_to_persistence() -> None:
-    with (
-        patch("g.api.configure_jax_device"),
-        patch("g.api.iter_regenie2_binary_output_frames", return_value=iter(())),
-        patch(
-            "g.api.prepare_output_run",
-            return_value=PreparedOutputRun(
-                output_run_paths=OutputRunPaths(
-                    run_directory=Path("results/output.regenie2_binary.run"),
-                    chunks_directory=Path("results/output.regenie2_binary.run/chunks"),
-                ),
-                committed_chunk_identifiers=frozenset(),
-            ),
-        ),
-        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
-    ):
-        regenie2(
-            bgen="dataset.bgen",
-            sample="dataset.sample",
-            pheno="phenotype.tsv",
-            pheno_name="trait",
-            out="results/output",
-            pred="predictions.list",
-            trait_type=RegenieTraitType.BINARY,
-            compute=ComputeConfig(output_writer_backend=OutputWriterBackend.RUST),
-        )
-
-    assert mock_persist_chunked_results.call_args.kwargs["output_writer_backend"] == OutputWriterBackend.RUST
