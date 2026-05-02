@@ -102,6 +102,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=Path("data/benchmarks/regenie_comparison"),
         help="Directory where report and logs are written.",
     )
+    parser.add_argument(
+        "--g-output-writer-backend",
+        choices=("python", "rust"),
+        default="python",
+        help="Output writer backend for g runs.",
+    )
     return parser
 
 
@@ -240,6 +246,7 @@ def build_g_step2_command(
     device: str,
     chunk_size: int,
     variant_limit: int | None,
+    output_writer_backend: str,
     trait_type: str = "quantitative",
 ) -> list[str]:
     """Build g step2 CLI command."""
@@ -277,6 +284,8 @@ def build_g_step2_command(
         str(chunk_size),
         "--device",
         device,
+        "--output-writer-backend",
+        output_writer_backend,
     ]
     if G_FINALIZE_PARQUET:
         command_arguments.append("--finalize-parquet")
@@ -669,8 +678,11 @@ def main() -> None:
 
     active_trait_type = "binary" if arguments.only_binary_step2 else "quantitative"
     active_trait_label = "binary" if active_trait_type == "binary" else "quantitative"
+    backend_suffix = arguments.g_output_writer_backend
     g_output_cpu_prefix = arguments.output_dir / (
-        "g_regenie2_binary_step2_cpu" if active_trait_type == "binary" else "g_regenie2_qt_step2_cpu"
+        f"g_regenie2_binary_step2_cpu_{backend_suffix}"
+        if active_trait_type == "binary"
+        else f"g_regenie2_qt_step2_cpu_{backend_suffix}"
     )
     g_cpu_command_arguments = build_g_step2_command(
         uv_executable=uv_executable,
@@ -679,11 +691,12 @@ def main() -> None:
         device="cpu",
         chunk_size=arguments.chunk_size,
         variant_limit=arguments.variant_limit,
+        output_writer_backend=arguments.g_output_writer_backend,
         trait_type=active_trait_type,
     )
     results.append(
         run_g_step2(
-            program_name=f"g_regenie2_{active_trait_label}_step2_cpu",
+            program_name=f"g_regenie2_{active_trait_label}_step2_cpu_{backend_suffix}",
             trait_type=active_trait_type,
             device="cpu",
             command_arguments=g_cpu_command_arguments,
@@ -695,7 +708,9 @@ def main() -> None:
     run_gpu = arguments.include_gpu and not arguments.cpu_only
     if run_gpu:
         g_output_gpu_prefix = arguments.output_dir / (
-            "g_regenie2_binary_step2_gpu" if active_trait_type == "binary" else "g_regenie2_qt_step2_gpu"
+            f"g_regenie2_binary_step2_gpu_{backend_suffix}"
+            if active_trait_type == "binary"
+            else f"g_regenie2_qt_step2_gpu_{backend_suffix}"
         )
         g_gpu_command_arguments = build_g_step2_command(
             uv_executable=uv_executable,
@@ -704,11 +719,12 @@ def main() -> None:
             device="gpu",
             chunk_size=arguments.chunk_size,
             variant_limit=arguments.variant_limit,
+            output_writer_backend=arguments.g_output_writer_backend,
             trait_type=active_trait_type,
         )
         results.append(
             run_g_step2(
-                program_name=f"g_regenie2_{active_trait_label}_step2_gpu",
+                program_name=f"g_regenie2_{active_trait_label}_step2_gpu_{backend_suffix}",
                 trait_type=active_trait_type,
                 device="gpu",
                 command_arguments=g_gpu_command_arguments,
@@ -719,7 +735,7 @@ def main() -> None:
     else:
         results.append(
             ComparisonProgramResult(
-                program_name=f"g_regenie2_{active_trait_label}_step2_gpu",
+                program_name=f"g_regenie2_{active_trait_label}_step2_gpu_{backend_suffix}",
                 implementation="g",
                 trait_type=active_trait_type,
                 step=2,
@@ -738,7 +754,7 @@ def main() -> None:
         )
 
     if not arguments.only_quantitative_step2 and not arguments.only_binary_step2:
-        g_binary_output_cpu_prefix = arguments.output_dir / "g_regenie2_binary_step2_cpu"
+        g_binary_output_cpu_prefix = arguments.output_dir / f"g_regenie2_binary_step2_cpu_{backend_suffix}"
         g_binary_cpu_command_arguments = build_g_step2_command(
             uv_executable=uv_executable,
             baseline_paths=baseline_paths,
@@ -746,11 +762,12 @@ def main() -> None:
             device="cpu",
             chunk_size=arguments.chunk_size,
             variant_limit=arguments.variant_limit,
+            output_writer_backend=arguments.g_output_writer_backend,
             trait_type="binary",
         )
         results.append(
             run_g_step2(
-                program_name="g_regenie2_binary_step2_cpu",
+                program_name=f"g_regenie2_binary_step2_cpu_{backend_suffix}",
                 trait_type="binary",
                 device="cpu",
                 command_arguments=g_binary_cpu_command_arguments,
@@ -759,7 +776,7 @@ def main() -> None:
             )
         )
         if run_gpu:
-            g_binary_output_gpu_prefix = arguments.output_dir / "g_regenie2_binary_step2_gpu"
+            g_binary_output_gpu_prefix = arguments.output_dir / f"g_regenie2_binary_step2_gpu_{backend_suffix}"
             g_binary_gpu_command_arguments = build_g_step2_command(
                 uv_executable=uv_executable,
                 baseline_paths=baseline_paths,
@@ -767,11 +784,12 @@ def main() -> None:
                 device="gpu",
                 chunk_size=arguments.chunk_size,
                 variant_limit=arguments.variant_limit,
+                output_writer_backend=arguments.g_output_writer_backend,
                 trait_type="binary",
             )
             results.append(
                 run_g_step2(
-                    program_name="g_regenie2_binary_step2_gpu",
+                    program_name=f"g_regenie2_binary_step2_gpu_{backend_suffix}",
                     trait_type="binary",
                     device="gpu",
                     command_arguments=g_binary_gpu_command_arguments,
@@ -802,10 +820,10 @@ def main() -> None:
 
     regenie_quantitative_result = extract_program(results, "regenie_step2_quantitative")
     regenie_binary_result = extract_program(results, "regenie_step2_binary")
-    g_cpu_result = extract_program(results, "g_regenie2_quantitative_step2_cpu")
-    g_gpu_result = extract_program(results, "g_regenie2_quantitative_step2_gpu")
-    g_binary_cpu_result = extract_program(results, "g_regenie2_binary_step2_cpu")
-    g_binary_gpu_result = extract_program(results, "g_regenie2_binary_step2_gpu")
+    g_cpu_result = extract_program(results, f"g_regenie2_quantitative_step2_cpu_{backend_suffix}")
+    g_gpu_result = extract_program(results, f"g_regenie2_quantitative_step2_gpu_{backend_suffix}")
+    g_binary_cpu_result = extract_program(results, f"g_regenie2_binary_step2_cpu_{backend_suffix}")
+    g_binary_gpu_result = extract_program(results, f"g_regenie2_binary_step2_gpu_{backend_suffix}")
     agreement_cpu = summarize_quantitative_step2_agreement(
         regenie_output_path=(
             result_output_path(regenie_quantitative_result)

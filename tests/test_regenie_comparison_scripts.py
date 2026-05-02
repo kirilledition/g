@@ -89,6 +89,7 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
         device="cpu",
         chunk_size=512,
         variant_limit=1024,
+        output_writer_backend="python",
     )
     gpu_command = comparison_benchmark.build_g_step2_command(
         uv_executable="uv",
@@ -97,6 +98,7 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
         device="gpu",
         chunk_size=2048,
         variant_limit=None,
+        output_writer_backend="python",
     )
     binary_command = comparison_benchmark.build_g_step2_command(
         uv_executable="uv",
@@ -105,6 +107,7 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
         device="cpu",
         chunk_size=8192,
         variant_limit=None,
+        output_writer_backend="rust",
         trait_type="binary",
     )
     assert cpu_command[:4] == ["uv", "run", "g", "regenie2"]
@@ -112,11 +115,13 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
     assert cpu_command[cpu_command.index("--trait-type") + 1] == "quantitative"
     assert "--device" in cpu_command
     assert cpu_command[cpu_command.index("--device") + 1] == "cpu"
+    assert cpu_command[cpu_command.index("--output-writer-backend") + 1] == "python"
     assert "--finalize-parquet" in cpu_command
     assert "--variant-limit" in cpu_command
     assert gpu_command[gpu_command.index("--device") + 1] == "gpu"
     assert "--variant-limit" not in gpu_command
     assert binary_command[binary_command.index("--trait-type") + 1] == "binary"
+    assert binary_command[binary_command.index("--output-writer-backend") + 1] == "rust"
     assert "phenotype_binary" in binary_command
 
 

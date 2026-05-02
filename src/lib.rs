@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic)]
 
 pub mod bgen;
+pub mod output;
 
 use std::collections::HashMap;
 
@@ -13,6 +14,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use crate::bgen::{BgenError, BgenReaderCore, ReaderProfileSnapshot, VariantMetadataLists};
+use crate::output::PyOutputWriterSession;
 
 #[pyclass]
 struct PyBgenReader {
@@ -346,6 +348,7 @@ fn build_profile_snapshot_dict(profile_snapshot: &ReaderProfileSnapshot) -> Hash
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyBgenReader>()?;
+    module.add_class::<PyOutputWriterSession>()?;
     module.add_function(wrap_pyfunction!(hello_from_bin, module)?)?;
     module.add_function(wrap_pyfunction!(convert_probability_tensor_to_dosage_f32, module)?)?;
     module.add_function(wrap_pyfunction!(convert_probability_matrix_to_dosage_f32, module)?)?;

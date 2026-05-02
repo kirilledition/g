@@ -7,9 +7,15 @@ import typing
 import jax.numpy as jnp
 import numpy as np
 import polars as pl
+import pyarrow.parquet as pq
 import pytest
 
-from g.engine import Regenie2BinaryChunkPayload, Regenie2LinearChunkAccumulator, Regenie2LinearChunkPayload
+from g.engine import (
+    Regenie2BinaryChunkAccumulator,
+    Regenie2BinaryChunkPayload,
+    Regenie2LinearChunkAccumulator,
+    Regenie2LinearChunkPayload,
+)
 from g.io.output import (
     LEGACY_REGENIE2_LINEAR_OUTPUT_SCHEMA,
     build_chunk_file_name,
@@ -23,8 +29,8 @@ from g.io.output import (
     scan_committed_chunk_identifiers,
     write_chunk_to_disk,
 )
-from g.models import Regenie2LinearChunkResult, VariantMetadata
-from g.types import AssociationMode
+from g.models import Regenie2BinaryChunkResult, Regenie2LinearChunkResult, VariantMetadata
+from g.types import AssociationMode, OutputWriterBackend
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -78,6 +84,35 @@ def create_regenie_chunk_accumulator(
             standard_error=jnp.asarray([0.01], dtype=jnp.float32),
             chi_squared=jnp.asarray([10.0], dtype=jnp.float32),
             log10_p_value=jnp.asarray([5.0], dtype=jnp.float32),
+            valid_mask=jnp.asarray([True], dtype=jnp.bool_),
+        ),
+    )
+
+
+def create_regenie_binary_chunk_accumulator(
+    *,
+    chunk_identifier: int,
+    variant_stop_index: int,
+    variant_identifier: str,
+) -> Regenie2BinaryChunkAccumulator:
+    return Regenie2BinaryChunkAccumulator(
+        metadata=VariantMetadata(
+            variant_start_index=chunk_identifier,
+            variant_stop_index=variant_stop_index,
+            chromosome=np.asarray(["22"]),
+            variant_identifiers=np.asarray([variant_identifier]),
+            position=np.asarray([123 + chunk_identifier], dtype=np.int64),
+            allele_one=np.asarray(["A"]),
+            allele_two=np.asarray(["G"]),
+        ),
+        allele_one_frequency=jnp.asarray([0.25], dtype=jnp.float32),
+        observation_count=jnp.asarray([100], dtype=jnp.int32),
+        regenie2_binary_result=Regenie2BinaryChunkResult(
+            beta=jnp.asarray([0.1], dtype=jnp.float32),
+            standard_error=jnp.asarray([0.2], dtype=jnp.float32),
+            chi_squared=jnp.asarray([0.25], dtype=jnp.float32),
+            log10_p_value=jnp.asarray([0.5], dtype=jnp.float32),
+            extra_code=jnp.asarray([1], dtype=jnp.int32),
             valid_mask=jnp.asarray([True], dtype=jnp.bool_),
         ),
     )
@@ -451,3 +486,111 @@ def test_write_chunk_to_disk_replaces_temporary_file_atomically(tmp_path: Path) 
 
     assert (tmp_path / build_chunk_file_name(0)).exists()
     assert not (tmp_path / "chunk_000000000.arrow.tmp").exists()
+
+
+@pytest.mark.parametrize(
+    "output_writer_backend",
+    [OutputWriterBackend.PYTHON, OutputWriterBackend.RUST],
+)
+def test_binary_persist_chunked_results_writes_expected_chunk_schema(
+    tmp_path: Path,
+    output_writer_backend: OutputWriterBackend,
+) -> None:
+    prepared_output_run = prepare_output_run(
+        output_root=tmp_path / f"output_{output_writer_backend}",
+        association_mode=AssociationMode.REGENIE2_BINARY,
+        resume=False,
+    )
+    accumulators = iter(
+        [
+            create_regenie_binary_chunk_accumulator(
+                chunk_identifier=7,
+                variant_stop_index=8,
+                variant_identifier="variant1",
+            )
+        ]
+    )
+
+    persist_chunked_results(
+        frame_iterator=accumulators,
+        output_run_paths=prepared_output_run.output_run_paths,
+        association_mode=AssociationMode.REGENIE2_BINARY,
+        output_writer_backend=output_writer_backend,
+        writer_thread_count=1,
+        payload_batch_size=1,
+    )
+
+    frame = pl.read_ipc(prepared_output_run.output_run_paths.chunks_directory / "chunk_000000007.arrow")
+    assert frame.columns == list(get_output_schema(AssociationMode.REGENIE2_BINARY))
+    assert frame.select("CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1", "TEST", "EXTRA").row(0) == (
+        "22",
+        130,
+        "variant1",
+        "G",
+        "A",
+        "ADD",
+        "FIRTH",
+    )
+
+
+def test_binary_python_and_rust_output_backends_write_matching_parquet(tmp_path: Path) -> None:
+    python_output_run = prepare_output_run(
+        output_root=tmp_path / "python_output",
+        association_mode=AssociationMode.REGENIE2_BINARY,
+        resume=False,
+    )
+    rust_output_run = prepare_output_run(
+        output_root=tmp_path / "rust_output",
+        association_mode=AssociationMode.REGENIE2_BINARY,
+        resume=False,
+    )
+
+    python_accumulators = iter(
+        [
+            create_regenie_binary_chunk_accumulator(
+                chunk_identifier=7,
+                variant_stop_index=8,
+                variant_identifier="variant1",
+            )
+        ]
+    )
+    rust_accumulators = iter(
+        [
+            create_regenie_binary_chunk_accumulator(
+                chunk_identifier=7,
+                variant_stop_index=8,
+                variant_identifier="variant1",
+            )
+        ]
+    )
+
+    python_parquet_path = persist_chunked_results(
+        frame_iterator=python_accumulators,
+        output_run_paths=python_output_run.output_run_paths,
+        association_mode=AssociationMode.REGENIE2_BINARY,
+        output_writer_backend=OutputWriterBackend.PYTHON,
+        finalize_parquet=True,
+        writer_thread_count=1,
+        payload_batch_size=1,
+    )
+    rust_parquet_path = persist_chunked_results(
+        frame_iterator=rust_accumulators,
+        output_run_paths=rust_output_run.output_run_paths,
+        association_mode=AssociationMode.REGENIE2_BINARY,
+        output_writer_backend=OutputWriterBackend.RUST,
+        finalize_parquet=True,
+        writer_thread_count=1,
+        payload_batch_size=1,
+    )
+
+    assert python_parquet_path is not None
+    assert rust_parquet_path is not None
+    assert pl.read_parquet(python_parquet_path).to_dict(as_series=False) == pl.read_parquet(
+        rust_parquet_path
+    ).to_dict(as_series=False)
+    python_parquet_file = pq.ParquetFile(python_parquet_path)
+    rust_parquet_file = pq.ParquetFile(rust_parquet_path)
+    assert python_parquet_path.stat().st_size == rust_parquet_path.stat().st_size
+    assert python_parquet_file.metadata.created_by == rust_parquet_file.metadata.created_by
+    assert python_parquet_file.metadata.num_row_groups == rust_parquet_file.metadata.num_row_groups
+    assert python_parquet_file.schema_arrow.equals(rust_parquet_file.schema_arrow)

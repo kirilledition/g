@@ -48,6 +48,39 @@ class PyBgenReader:
     ) -> None: ...
     def close(self) -> None: ...
 
+class PyOutputWriterSession:
+    def __init__(
+        self,
+        run_directory: str,
+        chunks_directory: str,
+        association_mode: str,
+        writer_thread_count: int = 1,
+        writer_queue_depth: int = 1,
+        finalize_parquet: bool = True,
+    ) -> None: ...
+    def enqueue_binary_chunk_batch(
+        self,
+        *,
+        chunk_file_name: str,
+        chunk_identifier: npt.NDArray[np.int64],
+        variant_start_index: npt.NDArray[np.int64],
+        variant_stop_index: npt.NDArray[np.int64],
+        chromosome: list[str],
+        position: npt.NDArray[np.int64],
+        variant_identifier: list[str],
+        allele_zero: list[str],
+        allele_one: list[str],
+        allele_one_frequency: npt.NDArray[np.float32],
+        observation_count: npt.NDArray[np.int32],
+        beta: npt.NDArray[np.float32],
+        standard_error: npt.NDArray[np.float32],
+        chi_squared: npt.NDArray[np.float32],
+        log10_p_value: npt.NDArray[np.float32],
+        extra_code: npt.NDArray[np.int32],
+    ) -> None: ...
+    def finish(self) -> str | None: ...
+    def abort(self) -> None: ...
+
 def hello_from_bin() -> str: ...
 def convert_probability_tensor_to_dosage_f32(
     probability_tensor: npt.NDArray[np.float32],

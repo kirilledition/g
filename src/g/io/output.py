@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import queue
 import re
 import threading
 import typing
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -18,7 +20,6 @@ from g import engine, types
 
 if typing.TYPE_CHECKING:
     import collections.abc
-    from pathlib import Path
 
     import numpy.typing as npt
 
@@ -33,6 +34,9 @@ DEFAULT_PAYLOAD_BATCH_SIZE = 4
 DEFAULT_WRITER_THREAD_COUNT = 8
 ChunkWritePayload = engine.ChunkWritePayload
 HostArray = np.ndarray
+OUTPUT_IPC_WRITE_OPTIONS: typing.Final[pa_ipc.IpcWriteOptions] = pa_ipc.IpcWriteOptions(
+    compression=OUTPUT_COMPRESSION_CODEC
+)
 
 LEGACY_REGENIE2_LINEAR_OUTPUT_SCHEMA: typing.Final[dict[str, pl.DataType]] = {
     "chunk_identifier": pl.Int64(),
@@ -89,6 +93,11 @@ class PreparedOutputRun:
     committed_chunk_identifiers: frozenset[int]
 
 
+def load_backend_core() -> typing.Any:
+    """Load the native extension module."""
+    return importlib.import_module("g._core")
+
+
 def build_output_schema() -> dict[str, pl.DataType]:
     """Build the fixed output schema."""
     output_schema = dict(LEGACY_REGENIE2_LINEAR_OUTPUT_SCHEMA)
@@ -140,7 +149,10 @@ def build_chunk_file_name(chunk_identifier: int) -> str:
 
 def build_chunk_batch_file_name(chunk_write_payload: ChunkWritePayload) -> str:
     """Build a deterministic chunk file name for one payload batch."""
-    if isinstance(chunk_write_payload, engine.Regenie2BinaryChunkPayloadBatch):
+    if isinstance(
+        chunk_write_payload,
+        engine.Regenie2BinaryChunkPayloadBatch | engine.Regenie2BinaryArrowChunkPayloadBatch,
+    ):
         first_chunk_identifier = chunk_write_payload.first_chunk_identifier
         last_chunk_identifier = chunk_write_payload.last_chunk_identifier
     else:
@@ -404,13 +416,64 @@ def write_output_frame_to_chunk_file(output_frame: pl.DataFrame, chunk_file_path
 
 def write_output_record_batch_to_chunk_file(output_batch: pa.RecordBatch, chunk_file_path: Path) -> None:
     """Write one Arrow RecordBatch to an Arrow IPC chunk file."""
-    write_options = pa_ipc.IpcWriteOptions(compression=OUTPUT_COMPRESSION_CODEC)
     with pa.OSFile(str(chunk_file_path), "wb") as sink, pa_ipc.new_file(
         sink,
         output_batch.schema,
-        options=write_options,
+        options=OUTPUT_IPC_WRITE_OPTIONS,
     ) as writer:
         writer.write_batch(output_batch)
+
+
+def write_binary_chunk_batch_to_disk_with_python_backend(
+    chunk_payload_batch: (
+        engine.Regenie2BinaryArrowChunkPayloadBatch
+        | engine.Regenie2BinaryChunkPayloadBatch
+        | tuple[engine.Regenie2BinaryChunkPayload, ...]
+    ),
+    chunk_file_path: Path,
+) -> None:
+    """Write one binary chunk batch with the Python backend."""
+    if isinstance(chunk_payload_batch, engine.Regenie2BinaryArrowChunkPayloadBatch):
+        output_batch = chunk_payload_batch.output_batch
+    elif isinstance(chunk_payload_batch, engine.Regenie2BinaryChunkPayloadBatch):
+        output_batch = engine.build_regenie2_binary_output_record_batch_from_payload_batch(chunk_payload_batch)
+    else:
+        output_batch = engine.build_regenie2_binary_output_record_batch_from_payloads(chunk_payload_batch)
+    write_output_record_batch_to_chunk_file(output_batch, chunk_file_path)
+
+
+def enqueue_chunk_payload_batch_with_rust_backend(
+    writer_session: typing.Any,
+    chunk_payload_batch: ChunkWritePayload,
+    chunk_file_name: str,
+    association_mode: types.AssociationMode,
+) -> None:
+    """Enqueue one chunk batch into the Rust output writer backend."""
+    if association_mode != types.AssociationMode.REGENIE2_BINARY:
+        message = "Rust output backend currently supports only REGENIE step 2 binary output."
+        raise ValueError(message)
+    if isinstance(chunk_payload_batch, engine.Regenie2BinaryChunkPayloadBatch):
+        writer_session.enqueue_binary_chunk_batch(
+            chunk_file_name=chunk_file_name,
+            chunk_identifier=chunk_payload_batch.chunk_identifier,
+            variant_start_index=chunk_payload_batch.variant_start_index,
+            variant_stop_index=chunk_payload_batch.variant_stop_index,
+            chromosome=list(chunk_payload_batch.chromosome),
+            position=chunk_payload_batch.position,
+            variant_identifier=list(chunk_payload_batch.variant_identifier),
+            allele_zero=list(chunk_payload_batch.allele_zero),
+            allele_one=list(chunk_payload_batch.allele_one),
+            allele_one_frequency=chunk_payload_batch.allele_one_frequency,
+            observation_count=chunk_payload_batch.observation_count,
+            beta=chunk_payload_batch.beta,
+            standard_error=chunk_payload_batch.standard_error,
+            chi_squared=chunk_payload_batch.chi_squared,
+            log10_p_value=chunk_payload_batch.log10_p_value,
+            extra_code=chunk_payload_batch.extra_code,
+        )
+        return
+    message = "Rust output backend received a non-binary chunk payload batch."
+    raise ValueError(message)
 
 
 def write_chunk_batch_to_disk(
@@ -423,13 +486,14 @@ def write_chunk_batch_to_disk(
     chunk_file_name = build_chunk_batch_file_name(chunk_payload_batch)
     chunk_file_path = chunks_directory / chunk_file_name
     temporary_path = chunk_file_path.with_suffix(".arrow.tmp")
-    if isinstance(chunk_payload_batch, engine.Regenie2BinaryChunkPayloadBatch):
-        write_output_record_batch_to_chunk_file(chunk_payload_batch.output_batch, temporary_path)
+    if isinstance(
+        chunk_payload_batch,
+        engine.Regenie2BinaryArrowChunkPayloadBatch | engine.Regenie2BinaryChunkPayloadBatch,
+    ):
+        write_binary_chunk_batch_to_disk_with_python_backend(chunk_payload_batch, temporary_path)
     elif chunk_payload_batch and isinstance(chunk_payload_batch[0], engine.Regenie2BinaryChunkPayload):
-        write_output_record_batch_to_chunk_file(
-            engine.build_regenie2_binary_output_record_batch_from_payloads(
-                typing.cast("tuple[engine.Regenie2BinaryChunkPayload, ...]", chunk_payload_batch)
-            ),
+        write_binary_chunk_batch_to_disk_with_python_backend(
+            typing.cast("tuple[engine.Regenie2BinaryChunkPayload, ...]", chunk_payload_batch),
             temporary_path,
         )
     else:
@@ -495,15 +559,27 @@ def persist_chunked_results(
     output_run_paths: OutputRunPaths,
     association_mode: types.AssociationMode,
     *,
+    output_writer_backend: types.OutputWriterBackend = types.OutputWriterBackend.PYTHON,
+    finalize_parquet: bool = False,
     writer_thread_count: int = DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = DEFAULT_WRITER_QUEUE_DEPTH,
     writer_timeout_seconds: float = DEFAULT_WRITER_TIMEOUT_SECONDS,
     payload_batch_size: int = DEFAULT_PAYLOAD_BATCH_SIZE,
-) -> None:
+) -> Path | None:
     """Persist chunked results through a non-blocking background writer."""
     if writer_thread_count < 1:
         message = "Writer thread count must be at least 1."
         raise ValueError(message)
+    if output_writer_backend == types.OutputWriterBackend.RUST:
+        return persist_chunked_results_with_rust_backend(
+            frame_iterator=frame_iterator,
+            output_run_paths=output_run_paths,
+            association_mode=association_mode,
+            writer_thread_count=writer_thread_count,
+            writer_queue_depth=writer_queue_depth,
+            payload_batch_size=payload_batch_size,
+            finalize_parquet=finalize_parquet,
+        )
     work_queue: queue.Queue[ChunkWritePayload | None] = queue.Queue(maxsize=writer_queue_depth)
     writer_errors: list[BaseException] = []
     writer_threads = [
@@ -536,10 +612,20 @@ def persist_chunked_results(
                 raise RuntimeError(message) from writer_errors[0]
             chunk_accumulator_batch.append(chunk_accumulator)
             if len(chunk_accumulator_batch) >= payload_batch_size:
-                enqueue_chunk_payload_batch(engine.build_chunk_payload_batch(chunk_accumulator_batch))
+                enqueue_chunk_payload_batch(
+                    engine.build_chunk_write_payload_batch(
+                        chunk_accumulator_batch,
+                        types.OutputWriterBackend.PYTHON,
+                    )
+                )
                 chunk_accumulator_batch.clear()
         if chunk_accumulator_batch:
-            enqueue_chunk_payload_batch(engine.build_chunk_payload_batch(chunk_accumulator_batch))
+            enqueue_chunk_payload_batch(
+                engine.build_chunk_write_payload_batch(
+                    chunk_accumulator_batch,
+                    types.OutputWriterBackend.PYTHON,
+                )
+            )
         join_writer_threads(work_queue, writer_threads, writer_timeout_seconds)
         if writer_errors:
             message = f"Background writer failed: {writer_errors[0]}"
@@ -548,6 +634,65 @@ def persist_chunked_results(
         clear_work_queue()
         join_writer_threads(work_queue, writer_threads, 5.0)
         raise
+    if finalize_parquet:
+        return finalize_chunks_to_parquet(output_run_paths, association_mode)
+    return None
+
+
+def persist_chunked_results_with_rust_backend(
+    frame_iterator: collections.abc.Iterator[engine.ChunkAccumulator],
+    output_run_paths: OutputRunPaths,
+    association_mode: types.AssociationMode,
+    *,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    payload_batch_size: int,
+    finalize_parquet: bool,
+) -> Path | None:
+    """Persist chunked results through the Rust output backend."""
+    core_module = load_backend_core()
+    writer_session = core_module.PyOutputWriterSession(
+        run_directory=str(output_run_paths.run_directory),
+        chunks_directory=str(output_run_paths.chunks_directory),
+        association_mode=str(association_mode),
+        writer_thread_count=writer_thread_count,
+        writer_queue_depth=writer_queue_depth,
+        finalize_parquet=False,
+    )
+    try:
+        chunk_accumulator_batch: list[engine.ChunkAccumulator] = []
+        for chunk_accumulator in frame_iterator:
+            chunk_accumulator_batch.append(chunk_accumulator)
+            if len(chunk_accumulator_batch) >= payload_batch_size:
+                chunk_payload_batch = engine.build_chunk_write_payload_batch(
+                    chunk_accumulator_batch,
+                    types.OutputWriterBackend.RUST,
+                )
+                enqueue_chunk_payload_batch_with_rust_backend(
+                    writer_session,
+                    chunk_payload_batch,
+                    build_chunk_batch_file_name(chunk_payload_batch),
+                    association_mode,
+                )
+                chunk_accumulator_batch.clear()
+        if chunk_accumulator_batch:
+            chunk_payload_batch = engine.build_chunk_write_payload_batch(
+                chunk_accumulator_batch,
+                types.OutputWriterBackend.RUST,
+            )
+            enqueue_chunk_payload_batch_with_rust_backend(
+                writer_session,
+                chunk_payload_batch,
+                build_chunk_batch_file_name(chunk_payload_batch),
+                association_mode,
+            )
+        writer_session.finish()
+    except Exception:
+        writer_session.abort()
+        raise
+    if not finalize_parquet:
+        return None
+    return finalize_chunks_to_parquet(output_run_paths, association_mode)
 
 
 def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:

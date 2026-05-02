@@ -16,7 +16,7 @@ from g.api import (
     validate_compute_config,
 )
 from g.io.output import OutputRunPaths, PreparedOutputRun
-from g.types import AssociationMode, Device, GenotypeSourceFormat, RegenieTraitType
+from g.types import AssociationMode, Device, GenotypeSourceFormat, OutputWriterBackend, RegenieTraitType
 
 
 def test_public_package_no_longer_exposes_direct_linear_or_logistic() -> None:
@@ -47,11 +47,8 @@ def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
             ),
         ),
         patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
-        patch(
-            "g.api.finalize_chunks_to_parquet",
-            return_value=Path("results/output.regenie2_linear.run/final.parquet"),
-        ),
     ):
+        mock_persist_chunked_results.return_value = Path("results/output.regenie2_linear.run/final.parquet")
         artifacts = regenie2_linear(
             bgen="dataset.bgen",
             sample="dataset.sample",
@@ -89,10 +86,8 @@ def test_regenie2_binary_dispatches_binary_iterator_and_output_mode() -> None:
             ),
         ) as mock_prepare_output_run,
         patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
-        patch(
-            "g.api.finalize_chunks_to_parquet", return_value=Path("results/output.regenie2_binary.run/final.parquet")
-        ),
     ):
+        mock_persist_chunked_results.return_value = Path("results/output.regenie2_binary.run/final.parquet")
         artifacts = regenie2(
             bgen="dataset.bgen",
             sample="dataset.sample",
@@ -150,8 +145,8 @@ def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalizati
         ) as mock_prepare_output_run,
         patch("g.api.iter_regenie2_linear_output_frames", return_value=iter(())) as mock_iterator,
         patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
-        patch("g.api.finalize_chunks_to_parquet") as mock_finalize,
     ):
+        mock_persist_chunked_results.return_value = None
         artifacts = regenie2_linear(
             bgen="dataset.bgen",
             pheno="phenotype.tsv",
@@ -178,7 +173,6 @@ def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalizati
         == api.output.DEFAULT_WRITER_THREAD_COUNT
     )
     mock_prepare_output_run.assert_called_once()
-    mock_finalize.assert_not_called()
 
 
 def test_regenie2_linear_passes_internal_output_writer_configuration() -> None:
@@ -196,7 +190,6 @@ def test_regenie2_linear_passes_internal_output_writer_configuration() -> None:
             ),
         ),
         patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
-        patch("g.api.finalize_chunks_to_parquet"),
     ):
         regenie2_linear(
             bgen="dataset.bgen",
@@ -208,3 +201,33 @@ def test_regenie2_linear_passes_internal_output_writer_configuration() -> None:
         )
 
     assert mock_persist_chunked_results.call_args.kwargs["writer_thread_count"] == 2
+
+
+def test_regenie2_passes_output_writer_backend_to_persistence() -> None:
+    with (
+        patch("g.api.configure_jax_device"),
+        patch("g.api.iter_regenie2_binary_output_frames", return_value=iter(())),
+        patch(
+            "g.api.prepare_output_run",
+            return_value=PreparedOutputRun(
+                output_run_paths=OutputRunPaths(
+                    run_directory=Path("results/output.regenie2_binary.run"),
+                    chunks_directory=Path("results/output.regenie2_binary.run/chunks"),
+                ),
+                committed_chunk_identifiers=frozenset(),
+            ),
+        ),
+        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
+    ):
+        regenie2(
+            bgen="dataset.bgen",
+            sample="dataset.sample",
+            pheno="phenotype.tsv",
+            pheno_name="trait",
+            out="results/output",
+            pred="predictions.list",
+            trait_type=RegenieTraitType.BINARY,
+            compute=ComputeConfig(output_writer_backend=OutputWriterBackend.RUST),
+        )
+
+    assert mock_persist_chunked_results.call_args.kwargs["output_writer_backend"] == OutputWriterBackend.RUST
