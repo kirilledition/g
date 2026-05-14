@@ -12,16 +12,23 @@ Direct PLINK-style linear/logistic regression workflows are not active in the pa
 
 ## Quick Start
 
-Enter the development shell:
+Bootstrap a CPU-oriented development environment:
 
 ```bash
-nix develop
+just bootstrap
 ```
 
-Install dependencies:
+Bootstrap a GPU-capable environment for CUDA JAX work:
 
 ```bash
-uv sync -U --group dev --group gpu
+just bootstrap-gpu
+```
+
+Check the local toolchain:
+
+```bash
+just doctor
+just doctor-baselines
 ```
 
 Prepare local data:
@@ -53,6 +60,12 @@ Output paths:
 ## Common Commands
 
 ```bash
+just bootstrap
+just bootstrap-gpu
+just doctor
+just doctor-baselines
+just slurm-gpu-shell
+just slurm-gpu-just doctor-jax
 just check
 just test
 just regenie2-linear
@@ -94,6 +107,12 @@ Reports are written to:
 - `tests/` - active tests for REGENIE and shared I/O infrastructure
 - `archive/direct_association/` - archived direct linear/logistic reference code and tests (not CI)
 - `scripts/` - active utilities for data setup, baseline benchmarking, and REGENIE profiling
+
+## Ubuntu + SLURM
+
+On the Ubuntu server, keep the login node for `just check`, `just test`, and dependency sync, and push GPU work through SLURM with `just slurm-gpu-*`.
+
+The default GPU node name is `landau`. Full server notes live in [docs/UBUNTU_SLURM_DEVELOPMENT.md](/mnt/beegfs/kirill/Projects/g/docs/UBUNTU_SLURM_DEVELOPMENT.md).
 
 ## Status
 

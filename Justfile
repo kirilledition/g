@@ -3,6 +3,15 @@
 set allow-duplicate-recipes := true
 
 data_dir := env_var_or_default('GWAS_ENGINE_DATA_DIR', 'data')
+python_version := env_var_or_default('GWAS_ENGINE_PYTHON_VERSION', '3.13')
+slurm_gpu_node := env_var_or_default('GWAS_ENGINE_GPU_NODE', 'landau')
+slurm_partition := env_var_or_default('GWAS_ENGINE_SLURM_PARTITION', '')
+slurm_account := env_var_or_default('GWAS_ENGINE_SLURM_ACCOUNT', '')
+slurm_time_limit := env_var_or_default('GWAS_ENGINE_SLURM_TIME', '04:00:00')
+slurm_cpus_per_task := env_var_or_default('GWAS_ENGINE_SLURM_CPUS_PER_TASK', '8')
+slurm_memory := env_var_or_default('GWAS_ENGINE_SLURM_MEMORY', '64G')
+slurm_gpu_count := env_var_or_default('GWAS_ENGINE_SLURM_GPUS_PER_TASK', '1')
+slurm_extra_arguments := env_var_or_default('GWAS_ENGINE_SLURM_EXTRA_ARGS', '')
 
 # --- Data Preparation ---
 
@@ -30,6 +39,113 @@ benchmark-baselines-full: setup-data
     HAIL_INCLUDE=1 uv run python scripts/benchmark.py
 
 # --- Development ---
+
+# Bootstrap a CPU-only development environment on the login node
+bootstrap:
+    uv python install {{python_version}}
+    uv sync --python {{python_version}} --group dev
+
+# Bootstrap a GPU-capable development environment for JAX CUDA work
+bootstrap-gpu:
+    uv python install {{python_version}}
+    uv sync --python {{python_version}} --group dev --group gpu
+
+# Check local toolchain prerequisites for development on the current host
+doctor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    required_commands=(uv cargo rustc)
+    for command_name in "${required_commands[@]}"; do
+      if ! command -v "${command_name}" >/dev/null 2>&1; then
+        echo "Missing required command: ${command_name}" >&2
+        exit 1
+      fi
+    done
+    resolved_python_version="$(
+      uv run --python {{python_version}} python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
+    )"
+    if [[ "${resolved_python_version}" != "{{python_version}}" ]]; then
+      echo "Resolved Python ${resolved_python_version}, expected {{python_version}}." >&2
+      exit 1
+    fi
+    echo "Core development toolchain looks usable on this host."
+
+# Check external baseline tools used by data prep and comparison benchmarks
+doctor-baselines:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    required_commands=(plink plink2 regenie)
+    for command_name in "${required_commands[@]}"; do
+      if ! command -v "${command_name}" >/dev/null 2>&1; then
+        echo "Missing required baseline command: ${command_name}" >&2
+        exit 1
+      fi
+    done
+    echo "Baseline benchmark tools are available on PATH."
+
+# Probe JAX runtime on the current host
+doctor-jax:
+    uv run --python {{python_version}} python scripts/probe_jax_runtime.py
+
+# Start an interactive SLURM shell on the configured GPU node
+slurm-gpu-shell:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    slurm_arguments=(
+      "--nodelist={{slurm_gpu_node}}"
+      "--gres=gpu:{{slurm_gpu_count}}"
+      "--cpus-per-task={{slurm_cpus_per_task}}"
+      "--mem={{slurm_memory}}"
+      "--time={{slurm_time_limit}}"
+    )
+    if [[ -n "{{slurm_partition}}" ]]; then
+      slurm_arguments+=("--partition={{slurm_partition}}")
+    fi
+    if [[ -n "{{slurm_account}}" ]]; then
+      slurm_arguments+=("--account={{slurm_account}}")
+    fi
+    if [[ -n "{{slurm_extra_arguments}}" ]]; then
+      read -r -a extra_arguments <<< "{{slurm_extra_arguments}}"
+      slurm_arguments+=("${extra_arguments[@]}")
+    fi
+    exec srun "${slurm_arguments[@]}" --pty bash -l
+
+# Run an arbitrary command through SLURM on the configured GPU node
+slurm-gpu-run +command_arguments:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$#" -eq 0 ]]; then
+      echo "Usage: just slurm-gpu-run <command...>" >&2
+      exit 1
+    fi
+    slurm_arguments=(
+      "--nodelist={{slurm_gpu_node}}"
+      "--gres=gpu:{{slurm_gpu_count}}"
+      "--cpus-per-task={{slurm_cpus_per_task}}"
+      "--mem={{slurm_memory}}"
+      "--time={{slurm_time_limit}}"
+    )
+    if [[ -n "{{slurm_partition}}" ]]; then
+      slurm_arguments+=("--partition={{slurm_partition}}")
+    fi
+    if [[ -n "{{slurm_account}}" ]]; then
+      slurm_arguments+=("--account={{slurm_account}}")
+    fi
+    if [[ -n "{{slurm_extra_arguments}}" ]]; then
+      read -r -a extra_arguments <<< "{{slurm_extra_arguments}}"
+      slurm_arguments+=("${extra_arguments[@]}")
+    fi
+    exec srun "${slurm_arguments[@]}" "$@"
+
+# Run another just recipe through SLURM on the configured GPU node
+slurm-gpu-just +just_arguments:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$#" -eq 0 ]]; then
+      echo "Usage: just slurm-gpu-just <recipe...>" >&2
+      exit 1
+    fi
+    exec just slurm-gpu-run just "$@"
 
 # Run REGENIE step 2 with local baseline predictions
 regenie2-linear:
@@ -111,6 +227,10 @@ ci-test:
 test:
     uv run pytest tests/
 
-upgrade-deps:
+upgrade-python-deps:
     uv sync -U --group dev --group gpu
+
+upgrade-nix-lock:
     nix flake update
+
+upgrade-deps: upgrade-python-deps
