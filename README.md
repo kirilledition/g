@@ -1,14 +1,34 @@
 # GWAS Engine (`g`)
 
-`g` is a GPU-accelerated GWAS engine focused on **REGENIE step 2** for quantitative traits.
+`g` is a GPU-accelerated GWAS engine focused on **REGENIE step 2**.
 
 Direct PLINK-style linear/logistic regression workflows are not active in the package API or CLI. Legacy implementations are preserved under `archive/direct_association/` as reference material only.
 
 ## Active Public Surface
 
-- Python API: `g.regenie2_linear(...)`
-- CLI command: `g regenie2-linear ...`
+The currently supported public interface is:
+
+- Python API:
+  - `g.regenie2(...)` (general step 2 entrypoint)
+  - `g.regenie2_linear(...)` (quantitative shorthand)
+- CLI commands:
+  - `g regenie2 ...` (general step 2 entrypoint)
+  - `g regenie2-linear ...` (quantitative shorthand)
 - Output artifact: resumable Arrow chunk run directory with `final.parquet` when Parquet finalization is enabled
+
+### Trait types and binary behavior
+
+`g.regenie2(...)` and `g regenie2 ...` support:
+
+- `--trait-type quantitative` (default)
+- `--trait-type binary`
+
+For binary traits, `--binary-correction` supports:
+
+- `firth_approximate` (default)
+- `firth`
+
+Current binary-mode status is **partial / evolving**. The binary pipeline is exposed as public, but behavior/performance parity with quantitative workflows is still under active development.
 
 ## Quick Start
 
@@ -37,7 +57,7 @@ Prepare local data:
 just setup-data
 ```
 
-Run REGENIE step 2:
+Run REGENIE step 2 quantitative (linear shorthand):
 
 ```bash
 uv run g \
@@ -50,6 +70,39 @@ uv run g \
   --covar-names age,sex \
   --pred data/baselines/regenie_step1_qt_pred.list \
   --out data/example_regenie2
+```
+
+Run REGENIE step 2 via the general entrypoint:
+
+```bash
+uv run g \
+  regenie2 \
+  --bgen data/1kg_chr22_full.bgen \
+  --sample data/1kg_chr22_full.sample \
+  --pheno data/pheno_cont.txt \
+  --pheno-name phenotype_continuous \
+  --covar data/covariates.txt \
+  --covar-names age,sex \
+  --pred data/baselines/regenie_step1_qt_pred.list \
+  --trait-type quantitative \
+  --out data/example_regenie2
+```
+
+Binary example (public, partial/evolving):
+
+```bash
+uv run g \
+  regenie2 \
+  --bgen data/1kg_chr22_full.bgen \
+  --sample data/1kg_chr22_full.sample \
+  --pheno data/pheno_binary.txt \
+  --pheno-name phenotype_binary \
+  --covar data/covariates.txt \
+  --covar-names age,sex \
+  --pred data/baselines/regenie_step1_bt_pred.list \
+  --trait-type binary \
+  --binary-correction firth_approximate \
+  --out data/example_regenie2_binary
 ```
 
 Output paths:
@@ -92,13 +145,7 @@ The comparison suite benchmarks and profiles:
 Explicitly unimplemented in `g` and reported as `not_implemented`:
 
 - binary step 1
-- binary step 2
 - quantitative step 1
-
-Reports are written to:
-
-- Benchmarks: `data/benchmarks/regenie_comparison/`
-- Profiles: `data/profiles/regenie_comparison/`
 
 ## Repository Layout
 
@@ -116,6 +163,6 @@ The default GPU node name is `landau`. Full server notes live in [docs/UBUNTU_SL
 
 ## Status
 
-Active development targets biobank-scale REGENIE workflows. PLINK-style direct regression will remain archived until explicitly resumed.
+Active development targets biobank-scale REGENIE workflows.
 
 The active REGENIE step 2 default chunk size is `8192`.

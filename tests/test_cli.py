@@ -118,6 +118,13 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
     assert compute_config.output_writer_queue_depth == 5
 
 
+def test_regenie2_help_shows_binary_trait_and_correction_options() -> None:
+    result = runner.invoke(app, ["regenie2", "--help"])
+    assert result.exit_code == 0
+    assert "--trait-type" in result.output
+    assert "binary" in result.output
+    assert "--binary-correction" in result.output
+
 def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
     with patch(
         "g.cli.run_regenie2_api",
