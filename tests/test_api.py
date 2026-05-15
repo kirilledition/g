@@ -24,6 +24,13 @@ def test_public_package_no_longer_exposes_direct_linear_or_logistic() -> None:
     assert not hasattr(g, "logistic")
 
 
+def test_public_package_exports_include_general_and_linear_regenie2() -> None:
+    assert "regenie2" in g.__all__
+    assert "regenie2_linear" in g.__all__
+    assert "Regenie2BinaryConfig" in g.__all__
+    assert g.regenie2 is api.regenie2
+    assert g.regenie2_linear is api.regenie2_linear
+
 def test_parse_covariate_name_list_handles_string_input() -> None:
     assert parse_covariate_name_list(" age, sex ,, bmi ") == ("age", "sex", "bmi")
 
