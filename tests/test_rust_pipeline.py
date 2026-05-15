@@ -1,0 +1,265 @@
+from __future__ import annotations
+
+import typing
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import jax.numpy as jnp
+import numpy as np
+
+from g import models
+from g.compute import regenie2_linear
+from g.engine import rust_pipeline
+from g.io import output, source
+
+
+class FakePredictionSource:
+    def get_chromosome_predictions(
+        self,
+        chromosome: str,
+        sample_family_identifiers: np.ndarray,
+        sample_individual_identifiers: np.ndarray,
+    ) -> jnp.ndarray:
+        del chromosome, sample_family_identifiers, sample_individual_identifiers
+        return jnp.asarray([0.0, 0.0], dtype=jnp.float32)
+
+
+class FakeWriterSession:
+    def __init__(self) -> None:
+        self.finished = False
+        self.aborted = False
+
+    def finish(self) -> str:
+        self.finished = True
+        return "results/final.parquet"
+
+    def abort(self) -> None:
+        self.aborted = True
+
+
+class FakeRustEngine:
+    instances: typing.ClassVar[list[FakeRustEngine]] = []
+
+    def __init__(self, bgen_path: str, chunk_size: int, variant_limit: int | None = None) -> None:
+        self.bgen_path = bgen_path
+        self.chunk_size = chunk_size
+        self.variant_limit = variant_limit
+        self.variant_count = 10
+        self.run_arguments: tuple[np.ndarray, object, list[int] | None] | None = None
+        FakeRustEngine.instances.append(self)
+
+    def variant_metadata_slice(
+        self,
+        variant_start: int,
+        variant_stop: int,
+    ) -> tuple[list[str], list[str], list[int], list[str], list[str]]:
+        selected_variant_count = variant_stop - variant_start
+        return (
+            ["22"] * selected_variant_count,
+            [f"variant{variant_index}" for variant_index in range(variant_start, variant_stop)],
+            [variant_index * 100 for variant_index in range(variant_start, variant_stop)],
+            ["A"] * selected_variant_count,
+            ["G"] * selected_variant_count,
+        )
+
+    def run_bgen_chunks(
+        self,
+        sample_indices: np.ndarray,
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int:
+        self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
+        return 0
+
+    def run_bgen_dosage_chunks(
+        self,
+        sample_indices: np.ndarray,
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+        prefetch_chunks: int = 1,
+    ) -> int:
+        del prefetch_chunks
+        self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
+        return 0
+
+    def run_bgen_dosage_buffered_chunks(
+        self,
+        sample_indices: np.ndarray,
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int:
+        self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
+        return 0
+
+
+def build_aligned_sample_data() -> models.AlignedSampleData:
+    return models.AlignedSampleData(
+        sample_indices=np.asarray([1, 0], dtype=np.int64),
+        family_identifiers=np.asarray(["family1", "family2"], dtype=np.str_),
+        individual_identifiers=np.asarray(["sample1", "sample2"], dtype=np.str_),
+        phenotype_name="trait",
+        phenotype_vector=jnp.asarray([0.0, 1.0], dtype=jnp.float32),
+        covariate_names=("intercept",),
+        covariate_matrix=jnp.asarray([[1.0], [1.0]], dtype=jnp.float32),
+        is_binary_trait=False,
+    )
+
+
+def build_native_metadata() -> typing.Any:
+    return SimpleNamespace(
+        variant_start_index=5,
+        variant_stop_index=7,
+        chromosome=["22", "22"],
+        variant_identifiers=["variant5", "variant6"],
+        position=np.asarray([100, 200], dtype=np.int64),
+        allele_one=["A", "C"],
+        allele_two=["G", "T"],
+    )
+
+
+def test_build_variant_metadata_converts_native_columns() -> None:
+    metadata = rust_pipeline.build_variant_metadata(build_native_metadata())
+
+    assert metadata.variant_start_index == 5
+    assert metadata.variant_stop_index == 7
+    assert metadata.chromosome.tolist() == ["22", "22"]
+    assert metadata.variant_identifiers.tolist() == ["variant5", "variant6"]
+    assert metadata.allele_one.tolist() == ["A", "C"]
+    assert metadata.allele_two.tolist() == ["G", "T"]
+
+
+def test_linear_callback_computes_and_writes_chunk() -> None:
+    writer_session = object()
+    result = models.Regenie2LinearChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    callback = rust_pipeline.LinearRegenie2RustPipelineCallback(
+        aligned_sample_data=build_aligned_sample_data(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+    )
+
+    with (
+        patch(
+            "g.engine.rust_pipeline.regenie2_linear.prepare_regenie2_linear_chromosome_state",
+            return_value="chromosome-state",
+        ),
+        patch(
+            "g.engine.rust_pipeline.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
+            return_value=result,
+        ) as mock_compute,
+        patch("g.engine.rust_pipeline.output.write_regenie2_chunk") as mock_write,
+    ):
+        callback.compute_chunk(
+            metadata=build_native_metadata(),
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            allele_one_frequency=np.asarray([0.25, 0.75], dtype=np.float32),
+            observation_count=np.asarray([2, 2], dtype=np.int32),
+        )
+        callback.finish()
+
+    assert callback.processed_chunk_count == 1
+    mock_compute.assert_called_once()
+    written_accumulator = mock_write.call_args.args[1]
+    assert written_accumulator.metadata.variant_start_index == 5
+    np.testing.assert_allclose(np.asarray(written_accumulator.allele_one_frequency), [0.25, 0.75])
+
+
+def test_linear_callback_preprocesses_dosage_chunk_on_device() -> None:
+    writer_session = object()
+    result = models.Regenie2LinearChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    callback = rust_pipeline.LinearRegenie2RustPipelineCallback(
+        aligned_sample_data=build_aligned_sample_data(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+    )
+
+    with (
+        patch(
+            "g.engine.rust_pipeline.regenie2_linear.prepare_regenie2_linear_chromosome_state",
+            return_value="chromosome-state",
+        ),
+        patch(
+            "g.engine.rust_pipeline.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
+            return_value=result,
+        ),
+        patch("g.engine.rust_pipeline.output.write_regenie2_chunk") as mock_write,
+    ):
+        callback.compute_dosage_chunk(
+            metadata=build_native_metadata(),
+            genotype_matrix=np.asarray([[0.0, np.nan], [2.0, 1.0]], dtype=np.float32),
+        )
+        callback.finish()
+
+    written_accumulator = mock_write.call_args.args[1]
+    np.testing.assert_allclose(np.asarray(written_accumulator.allele_one_frequency), [0.5, 0.5])
+    np.testing.assert_array_equal(np.asarray(written_accumulator.observation_count), [2, 1])
+
+
+def test_run_linear_bgen_rust_pipeline_invokes_native_engine_and_writer() -> None:
+    FakeRustEngine.instances.clear()
+    writer_session = FakeWriterSession()
+    aligned_sample_data = build_aligned_sample_data()
+
+    with (
+        patch("g.engine.rust_pipeline._core.PyRegenie2RunEngine", FakeRustEngine),
+        patch("g.engine.rust_pipeline.load_bgen_aligned_sample_data", return_value=aligned_sample_data),
+        patch("g.engine.rust_pipeline.output.create_output_writer_session", return_value=writer_session),
+        patch("g.engine.rust_pipeline.regenie.load_prediction_source", return_value=FakePredictionSource()),
+        patch.object(
+            regenie2_linear,
+            "prepare_regenie2_linear_state",
+            return_value=typing.cast("models.Regenie2LinearState", "state"),
+        ),
+    ):
+        final_path = rust_pipeline.run_regenie2_linear_bgen_rust_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
+            committed_chunk_identifiers={64, 0},
+            finalize_parquet=True,
+            writer_thread_count=2,
+            writer_queue_depth=3,
+        )
+
+    assert final_path == Path("results/final.parquet")
+    assert writer_session.finished is True
+    engine = FakeRustEngine.instances[0]
+    assert engine.bgen_path == "study.bgen"
+    assert engine.chunk_size == 32
+    assert engine.variant_limit == 100
+    assert engine.run_arguments is not None
+    sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
+    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    assert isinstance(callback, rust_pipeline.LinearRegenie2RustPipelineCallback)
+    assert committed_chunk_identifiers == [0, 64]
+
+
+def test_load_bgen_aligned_sample_data_rejects_non_bgen_sources() -> None:
+    with np.testing.assert_raises_regex(ValueError, "BGEN genotype sources only"):
+        rust_pipeline.load_bgen_aligned_sample_data(
+            genotype_source_config=source.build_plink_source_config(Path("study")),
+            engine=typing.cast("typing.Any", object()),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            covariate_path=None,
+            covariate_names=None,
+            is_binary_trait=False,
+        )

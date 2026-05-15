@@ -3,6 +3,24 @@ from __future__ import annotations
 import numpy as np
 import numpy.typing as npt
 
+class PyChunkSpec:
+    variant_start_index: int
+    variant_stop_index: int
+
+class PyChunkStats:
+    allele_one_frequency: npt.NDArray[np.float32]
+    observation_count: npt.NDArray[np.int32]
+    has_missing_values: bool
+
+class PyVariantMetadata:
+    variant_start_index: int
+    variant_stop_index: int
+    chromosome: list[str]
+    variant_identifiers: list[str]
+    position: npt.NDArray[np.int64]
+    allele_one: list[str]
+    allele_two: list[str]
+
 class PyBgenReader:
     sample_count: int
     variant_count: int
@@ -46,7 +64,51 @@ class PyBgenReader:
         variant_stop: int,
         output_array: npt.NDArray[np.float32],
     ) -> None: ...
+    def read_preprocessed_dosage_f32_into_prepared(
+        self,
+        variant_start: int,
+        variant_stop: int,
+        output_array: npt.NDArray[np.float32],
+    ) -> PyChunkStats: ...
     def close(self) -> None: ...
+
+class PyRegenie2RunEngine:
+    sample_count: int
+    variant_count: int
+    contains_embedded_samples: bool
+
+    def __init__(
+        self,
+        bgen_path: str,
+        chunk_size: int,
+        variant_limit: int | None = None,
+        trusted_no_missing_diploid: bool = False,
+    ) -> None: ...
+    def sample_identifiers(self) -> list[str]: ...
+    def variant_metadata_slice(
+        self,
+        variant_start: int,
+        variant_stop: int,
+    ) -> tuple[list[str], list[str], list[int], list[str], list[str]]: ...
+    def run_bgen_chunks(
+        self,
+        sample_indices: npt.NDArray[np.int64],
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int: ...
+    def run_bgen_dosage_chunks(
+        self,
+        sample_indices: npt.NDArray[np.int64],
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+        prefetch_chunks: int = 1,
+    ) -> int: ...
+    def run_bgen_dosage_buffered_chunks(
+        self,
+        sample_indices: npt.NDArray[np.int64],
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int: ...
 
 class PyOutputWriterSession:
     def __init__(
@@ -80,6 +142,13 @@ def finalize_output_run_chunks(
 ) -> str: ...
 def scan_committed_chunk_identifiers(chunks_directory: str) -> list[int]: ...
 def hello_from_bin() -> str: ...
+def plan_genotype_chunks(
+    variant_count: int,
+    chunk_size: int,
+    chromosome_boundary_indices: list[int],
+    variant_limit: int | None = None,
+    committed_chunk_identifiers: list[int] | None = None,
+) -> list[PyChunkSpec]: ...
 def convert_probability_tensor_to_dosage_f32(
     probability_tensor: npt.NDArray[np.float32],
     combination_count: int,

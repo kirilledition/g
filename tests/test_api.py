@@ -118,6 +118,48 @@ def test_regenie2_binary_dispatches_binary_iterator_and_output_mode() -> None:
     assert mock_persist_chunked_results.call_args.kwargs["association_mode"] == AssociationMode.REGENIE2_BINARY
 
 
+def test_regenie2_binary_rust_pipeline_env_dispatches_opt_in_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(api.RUST_PIPELINE_ENVIRONMENT_VARIABLE, "1")
+    with (
+        patch("g.api.configure_jax_device"),
+        patch(
+            "g.api.prepare_output_run",
+            return_value=PreparedOutputRun(
+                output_run_paths=OutputRunPaths(
+                    run_directory=Path("results/output.regenie2_binary.run"),
+                    chunks_directory=Path("results/output.regenie2_binary.run/chunks"),
+                ),
+                committed_chunk_identifiers=frozenset({5}),
+            ),
+        ),
+        patch("g.api.run_regenie2_binary_bgen_rust_pipeline") as mock_rust_pipeline,
+        patch("g.api.iter_regenie2_binary_output_frames") as mock_iterator,
+        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
+    ):
+        mock_rust_pipeline.return_value = Path("results/output.regenie2_binary.run/final.parquet")
+        artifacts = regenie2(
+            bgen="dataset.bgen",
+            sample="dataset.sample",
+            pheno="phenotype.tsv",
+            pheno_name="trait",
+            out="results/output",
+            covar_names="age,sex",
+            pred="predictions.list",
+            trait_type=RegenieTraitType.BINARY,
+            compute=ComputeConfig(resume=True),
+        )
+
+    assert artifacts == RunArtifacts(
+        output_run_directory=Path("results/output.regenie2_binary.run"),
+        final_parquet=Path("results/output.regenie2_binary.run/final.parquet"),
+    )
+    mock_rust_pipeline.assert_called_once()
+    assert mock_rust_pipeline.call_args.kwargs["committed_chunk_identifiers"] == {5}
+    assert mock_rust_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
+    mock_iterator.assert_not_called()
+    mock_persist_chunked_results.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("compute_config", "expected_message"),
     [

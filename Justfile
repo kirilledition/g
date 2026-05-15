@@ -215,6 +215,10 @@ regenie2-binary-gpu:
 regenie2-binary-gpu-smoke:
     {{server_env}} && uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu_smoke --trait-type binary --device gpu --variant-limit 1000 --finalize-parquet
 
+# Smoke test binary REGENIE step 2 through the opt-in Rust BGEN pipeline
+regenie2-binary-gpu-smoke-rust:
+    {{server_env}} && G_REGENIE2_RUST_PIPELINE=1 uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu_smoke_rust --trait-type binary --device gpu --variant-limit 1000 --finalize-parquet
+
 # Run binary REGENIE step 2 through SLURM on the configured GPU node
 slurm-regenie2-binary-gpu:
     {{server_env}} && just slurm-gpu-just regenie2-binary-gpu
@@ -222,6 +226,10 @@ slurm-regenie2-binary-gpu:
 # Smoke test binary REGENIE step 2 through SLURM on the configured GPU node
 slurm-regenie2-binary-gpu-smoke:
     {{server_env}} && just slurm-gpu-just regenie2-binary-gpu-smoke
+
+# Smoke test binary REGENIE step 2 through SLURM using the opt-in Rust BGEN pipeline
+slurm-regenie2-binary-gpu-smoke-rust:
+    {{server_env}} && just slurm-gpu-just regenie2-binary-gpu-smoke-rust
 
 # Verify binary REGENIE step 2 GPU output artifacts
 verify-regenie2-binary-gpu-output:
@@ -242,6 +250,16 @@ verify-regenie2-binary-gpu-smoke-output:
     find "${run_directory}/chunks" -type f -name '*.arrow' | grep -q .
     test -s "${run_directory}/final.parquet"
     echo "Binary REGENIE step 2 GPU smoke output is present."
+
+# Verify binary REGENIE step 2 Rust pipeline GPU smoke output artifacts
+verify-regenie2-binary-gpu-smoke-rust-output:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run_directory="{{data_dir}}/regenie2_binary_chr22_gpu_smoke_rust.regenie2_binary.run"
+    test -d "${run_directory}/chunks"
+    find "${run_directory}/chunks" -type f -name '*.arrow' | grep -q .
+    test -s "${run_directory}/final.parquet"
+    echo "Binary REGENIE step 2 Rust pipeline GPU smoke output is present."
 
 # Run CPU/GPU JAX runtime probe
 probe-jax:
@@ -299,6 +317,29 @@ typecheck:
 
 # Run all checks (format, lint, typecheck)
 check: format lint typecheck
+
+# Check Python formatting without requiring Nix or direct Cargo access
+format-local-check:
+    uv run ruff format --check .
+
+# Lint Python without applying fixes; useful in uv/maturin-only environments
+lint-local:
+    uv run ruff check .
+
+# Type check Python in uv/maturin-only environments
+typecheck-local:
+    uv run ty check src tests scripts
+
+# Focused no-Nix smoke tests that also rebuild the native extension through maturin
+test-local-focused:
+    uv run pytest tests/test_core.py tests/test_io_bgen.py tests/test_io_output.py
+
+# Non-heavy no-Nix test suite
+test-local:
+    uv run pytest tests/ -m "not phase0_data and not phase1_parity"
+
+# Local no-Nix verification lane; Rust fmt/clippy still require a full Cargo toolchain
+check-local: format-local-check lint-local typecheck-local test-local-focused
 
 # Run CI lint checks without installing the project package
 ci-lint:
