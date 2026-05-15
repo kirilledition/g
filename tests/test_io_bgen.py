@@ -133,7 +133,7 @@ def test_convert_probability_tensor_to_dosage_rejects_unsupported_layout() -> No
 def test_load_backend_core_reports_missing_dependency() -> None:
     with (
         patch(
-            "g.io.bgen.importlib.import_module",
+            "g.io.bgen.dosage.importlib.import_module",
             side_effect=ModuleNotFoundError("missing"),
         ),
         pytest.raises(ModuleNotFoundError, match="Rust core helpers are unavailable"),
@@ -214,7 +214,7 @@ def test_open_bgen_trusted_no_missing_diploid_opt_in_reaches_core() -> None:
 
     fake_core_module = SimpleNamespace(PyBgenReader=FakePyBgenReader)
     with (
-        patch("g.io.bgen.load_backend_core", return_value=fake_core_module),
+        patch("g.io.bgen.dosage.load_backend_core", return_value=fake_core_module),
         open_bgen(HAPLOTYPES_BGEN_PATH, trusted_no_missing_diploid=True) as bgen_reader,
     ):
         assert bgen_reader.trusted_no_missing_diploid is True
@@ -398,7 +398,7 @@ def test_open_bgen_defers_variant_table_materialization() -> None:
 
     with (
         patch(
-            "g.io.bgen.build_variant_table_from_core_metadata",
+            "g.io.bgen.metadata.build_variant_table_from_core_metadata",
             return_value=pl.DataFrame(),
         ) as mock_build_variant_table,
         open_bgen(bgen_path) as bgen_reader,
@@ -413,7 +413,7 @@ def test_bgen_variant_slice_metadata_does_not_materialize_full_variant_table() -
 
     with (
         patch(
-            "g.io.bgen.build_variant_table_from_core_metadata",
+            "g.io.bgen.metadata.build_variant_table_from_core_metadata",
             return_value=pl.DataFrame(),
         ) as mock_build_variant_table,
         open_bgen(bgen_path) as bgen_reader,
@@ -429,7 +429,7 @@ def test_bgen_variant_slice_metadata_caches_full_array_build() -> None:
 
     with (
         patch(
-            "g.io.bgen.build_core_variant_metadata",
+            "g.io.bgen.metadata.build_core_variant_metadata",
             wraps=build_core_variant_metadata,
         ) as mock_build_core_variant_metadata,
         open_bgen(bgen_path) as bgen_reader,
@@ -648,7 +648,7 @@ class FakePreparedReusableReader:
 def test_iter_genotype_chunks_requires_real_sample_identifiers() -> None:
     with (
         patch(
-            "g.io.bgen.open_bgen",
+            "g.io.bgen.chunks.open_bgen",
             return_value=FakeGeneratedSampleReader(),
         ),
         pytest.raises(ValueError, match=r"does not contain samples and no \.sample file was found"),
@@ -666,7 +666,7 @@ def test_iter_genotype_chunks_requires_real_sample_identifiers() -> None:
 def test_iter_dosage_genotype_chunks_requires_real_sample_identifiers() -> None:
     with (
         patch(
-            "g.io.bgen.open_bgen",
+            "g.io.bgen.chunks.open_bgen",
             return_value=FakeGeneratedSampleReader(),
         ),
         pytest.raises(ValueError, match=r"does not contain samples and no \.sample file was found"),

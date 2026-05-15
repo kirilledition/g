@@ -114,8 +114,7 @@ impl PyBgenReader {
         let dosage_values = py
             .detach(|| self.reader.read_dosage_f32_prepared(variant_start, variant_stop))
             .map_err(convert_bgen_error)?;
-        let selected_sample_count =
-            if selected_variant_count == 0 { 0 } else { dosage_values.len() / selected_variant_count };
+        let selected_sample_count = dosage_values.len().checked_div(selected_variant_count).unwrap_or(0);
         let dosage_matrix = Array2::from_shape_vec((selected_sample_count, selected_variant_count), dosage_values)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(dosage_matrix.into_pyarray(py))

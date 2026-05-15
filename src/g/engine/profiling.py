@@ -1,8 +1,14 @@
+"""JAX profiler context managers for REGENIE step 2 chunk execution."""
 
 from __future__ import annotations
+
 import contextlib
-import collections.abc
+import typing
+
 import jax.profiler
+
+if typing.TYPE_CHECKING:
+    import collections.abc
 
 
 @contextlib.contextmanager

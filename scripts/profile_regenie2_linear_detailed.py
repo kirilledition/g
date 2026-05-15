@@ -24,6 +24,7 @@ import polars as pl
 
 from g import api, jax_setup, models, types
 from g import engine as engine_module
+from g.compute import regenie2_linear
 from g.io import genotype_processing, reader, regenie, source
 from g.io import output as output_module
 
@@ -511,18 +512,18 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
         return wrapper_builder
 
     wrap_module_function(
-        engine_module,
+        source,
         "load_aligned_sample_data_from_source",
         build_timed_function("load_aligned_sample_data"),
     )
     wrap_module_function(
-        engine_module,
+        regenie2_linear,
         "prepare_regenie2_linear_state",
         build_timed_function("prepare_state"),
     )
     wrap_module_function(
-        engine_module,
-        "compute_regenie2_linear_chunk",
+        regenie2_linear,
+        "compute_regenie2_linear_chunk_from_chromosome_state",
         build_timed_function("compute_regenie2_linear_chunk"),
     )
     wrap_module_function(
@@ -572,18 +573,18 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
     )
     wrap_module_function(
         output_module,
-        "write_output_frame_to_chunk_file",
-        build_timed_function("write_output_frame_to_chunk_file"),
+        "build_chunk_write_payload_batch",
+        build_timed_function("build_chunk_write_payload_batch"),
     )
     wrap_module_function(
         output_module,
-        "put_chunk_payload_batch_into_queue",
-        build_timed_function("put_chunk_payload_batch_into_queue"),
+        "enqueue_chunk_payload_batch",
+        build_timed_function("enqueue_chunk_payload_batch"),
     )
     wrap_module_function(
         output_module,
-        "join_writer_threads",
-        build_timed_function("join_writer_threads"),
+        "create_output_writer_session",
+        build_timed_function("create_output_writer_session"),
     )
 
     def prediction_source_wrapper_builder(
@@ -600,9 +601,9 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
 
         return timed_load_prediction_source
 
-    wrap_module_function(engine_module, "load_prediction_source", prediction_source_wrapper_builder)
+    wrap_module_function(regenie, "load_prediction_source", prediction_source_wrapper_builder)
 
-    original_iter_dosage_genotype_chunks_from_source = engine_module.iter_dosage_genotype_chunks_from_source
+    original_iter_dosage_genotype_chunks_from_source = source.iter_dosage_genotype_chunks_from_source
 
     def profiled_iter_dosage_genotype_chunks_from_source(
         genotype_source_config: source.GenotypeSourceConfig,
@@ -746,14 +747,14 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
                 genotype_reader.clear_prepared_sample_selection()
 
     setattr(
-        engine_module,
+        source,
         "iter_dosage_genotype_chunks_from_source",
         profiled_iter_dosage_genotype_chunks_from_source,
     )
 
     def restore_iter_dosage() -> None:
         setattr(
-            engine_module,
+            source,
             "iter_dosage_genotype_chunks_from_source",
             original_iter_dosage_genotype_chunks_from_source,
         )

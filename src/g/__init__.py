@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
 import typing
-
-from g import api, cli, types
 
 
 def __getattr__(name: str) -> typing.Any:
     """Resolve public package attributes lazily to avoid eager heavy imports."""
     if name == "main":
+        cli = importlib.import_module("g.cli")
         return cli.main
     if name in {
         "ComputeConfig",
@@ -19,6 +19,7 @@ def __getattr__(name: str) -> typing.Any:
         "regenie2",
         "regenie2_linear",
     }:
+        api = importlib.import_module("g.api")
         return getattr(api, name)
     if name in {
         "ArrayMemoryOrder",
@@ -29,6 +30,7 @@ def __getattr__(name: str) -> typing.Any:
         "RegenieTraitType",
         "SampleIdentifierSource",
     }:
+        types = importlib.import_module("g.types")
         return getattr(types, name)
     message = f"module 'g' has no attribute {name!r}"
     raise AttributeError(message)

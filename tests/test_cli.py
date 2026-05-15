@@ -125,6 +125,7 @@ def test_regenie2_help_shows_binary_trait_and_correction_options() -> None:
     assert "binary" in result.output
     assert "--binary-correction" in result.output
 
+
 def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
     with patch(
         "g.cli.run_regenie2_api",

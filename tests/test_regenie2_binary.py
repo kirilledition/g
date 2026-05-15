@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import typing
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,6 +10,26 @@ import pytest
 from g import models
 from g.compute import regenie2_binary
 from g.types import RegenieBinaryCorrection
+
+BinaryChunkComputeFunction = typing.Callable[
+    [models.Regenie2BinaryChromosomeState, jax.Array, RegenieBinaryCorrection],
+    models.Regenie2BinaryChunkResult,
+]
+compute_score_test_chunk = typing.cast(
+    "BinaryChunkComputeFunction",
+    regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state,
+)
+compute_binary_chunk = typing.cast(
+    "BinaryChunkComputeFunction",
+    regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state,
+)
+
+
+def jax_backend_is_available(backend_name: str) -> bool:
+    try:
+        return bool(jax.devices(backend_name))
+    except RuntimeError:
+        return False
 
 
 def build_binary_inputs() -> tuple[jax.Array, jax.Array, jax.Array]:
@@ -57,10 +79,10 @@ def build_chromosome_state() -> tuple[
 def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
     genotype_matrix, chromosome_state = build_chromosome_state()
     candidate_genotype_matrix = genotype_matrix[:, :1]
-    score_result = regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state(
-        chromosome_state=chromosome_state,
-        genotype_matrix=candidate_genotype_matrix,
-        correction=RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    score_result = compute_score_test_chunk(
+        chromosome_state,
+        candidate_genotype_matrix,
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
     )
     forced_candidate_result = models.Regenie2BinaryChunkResult(
         beta=score_result.beta,
@@ -89,15 +111,15 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
 def test_non_candidate_score_rows_remain_unchanged_after_device_correction() -> None:
     genotype_matrix, chromosome_state = build_chromosome_state()
 
-    score_test_result = regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state(
-        chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
-        correction=RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    score_test_result = compute_score_test_chunk(
+        chromosome_state,
+        genotype_matrix,
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
     )
-    corrected_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
-        chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
-        correction=RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    corrected_result = compute_binary_chunk(
+        chromosome_state,
+        genotype_matrix,
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
     )
 
     non_candidate_mask = np.asarray(score_test_result.extra_code) == regenie2_binary.EXTRA_CODE_SCORE
@@ -138,10 +160,10 @@ def test_failed_firth_lanes_become_test_fail() -> None:
         jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32),
     )
     genotype_matrix = covariate_matrix[:, 1:2]
-    score_result = regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state(
-        chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
-        correction=RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    score_result = compute_score_test_chunk(
+        chromosome_state,
+        genotype_matrix,
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
     )
     forced_candidate_result = models.Regenie2BinaryChunkResult(
         beta=score_result.beta,
@@ -164,7 +186,7 @@ def test_failed_firth_lanes_become_test_fail() -> None:
 
 
 @pytest.mark.skipif(
-    not jax.devices("gpu") or not jax.devices("cpu"),
+    not jax_backend_is_available("gpu") or not jax_backend_is_available("cpu"),
     reason="CPU or GPU backend unavailable",
 )
 def test_cpu_and_gpu_jax_outputs_match_on_toy_chunk() -> None:
@@ -180,10 +202,10 @@ def test_cpu_and_gpu_jax_outputs_match_on_toy_chunk() -> None:
         cpu_state,
         jax.device_put(jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32), cpu_device),
     )
-    cpu_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
-        chromosome_state=cpu_chromosome_state,
-        genotype_matrix=cpu_genotypes,
-        correction=RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    cpu_result = compute_binary_chunk(
+        cpu_chromosome_state,
+        cpu_genotypes,
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
     )
 
     gpu_covariates = jax.device_put(covariate_matrix, gpu_device)
@@ -194,10 +216,10 @@ def test_cpu_and_gpu_jax_outputs_match_on_toy_chunk() -> None:
         gpu_state,
         jax.device_put(jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32), gpu_device),
     )
-    gpu_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
-        chromosome_state=gpu_chromosome_state,
-        genotype_matrix=gpu_genotypes,
-        correction=RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    gpu_result = compute_binary_chunk(
+        gpu_chromosome_state,
+        gpu_genotypes,
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
     )
 
     np.testing.assert_allclose(np.asarray(cpu_result.beta), np.asarray(gpu_result.beta), rtol=1.0e-4, atol=1.0e-4)

@@ -90,7 +90,7 @@ class Float32BlockReader(typing.Protocol):
         sample_index_array: npt.NDArray[np.intp],
         variant_start: int,
         variant_stop: int,
-        ) -> npt.NDArray[np.float32]:
+    ) -> npt.NDArray[np.float32]:
         """Read one float32 dosage block for contiguous variant slices."""
 
 

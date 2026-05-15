@@ -20,6 +20,7 @@ dev = [
     "pandas>=3.0.2",
     "psutil>=7.2.2",
     "py-cpuinfo>=9.0.0",
+    "pyarrow>=23.0.0",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.12",
@@ -50,7 +51,7 @@ cache-keys = [
 [tool.ruff]
 line-length = 120
 target-version = "py313"
-exclude = ["archive/", "scripts/"]
+exclude = ["archive/", "scripts/", ".git/"]
 
 [tool.ruff.lint]
 fixable = ["ALL"]

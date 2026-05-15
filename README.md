@@ -35,6 +35,8 @@ Current binary-mode status is **partial / evolving**. The binary pipeline is exp
 Bootstrap a CPU-oriented development environment:
 
 ```bash
+UV_CACHE_DIR=/tmp/g-uv-cache uv run --no-project python scripts/bootstrap_server_tools.py
+source scripts/server_env.sh
 just bootstrap
 ```
 
@@ -47,6 +49,7 @@ just bootstrap-gpu
 Check the local toolchain:
 
 ```bash
+just doctor-server
 just doctor
 just doctor-baselines
 ```
@@ -115,6 +118,8 @@ Output paths:
 ```bash
 just bootstrap
 just bootstrap-gpu
+just setup-server-tools
+just doctor-server
 just doctor
 just doctor-baselines
 just slurm-gpu-shell
@@ -127,6 +132,12 @@ just benchmark-regenie-comparison
 just benchmark-regenie-comparison-gpu
 just profile-regenie-comparison
 just profile-regenie-comparison-gpu
+just setup-regenie2-binary-gpu-inputs
+just verify-regenie2-binary-gpu-inputs
+just slurm-regenie2-binary-gpu-smoke
+just verify-regenie2-binary-gpu-smoke-output
+just slurm-regenie2-binary-gpu
+just verify-regenie2-binary-gpu-output
 ```
 
 ## REGENIE Comparison Suite
@@ -157,7 +168,7 @@ Explicitly unimplemented in `g` and reported as `not_implemented`:
 
 ## Ubuntu + SLURM
 
-On the Ubuntu server, keep the login node for `just check`, `just test`, and dependency sync, and push GPU work through SLURM with `just slurm-gpu-*`.
+On the Ubuntu server, keep the login node for `just check`, `just test`, dependency sync, data preparation, and baseline generation. Push GPU work through SLURM with `just slurm-gpu-*`.
 
 The default GPU node name is `landau`. Full server notes live in [docs/UBUNTU_SLURM_DEVELOPMENT.md](/mnt/beegfs/kirill/Projects/g/docs/UBUNTU_SLURM_DEVELOPMENT.md).
 

@@ -1,3 +1,5 @@
+"""BGEN read selector normalization helpers."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,18 +10,44 @@ import numpy.typing as npt
 
 @dataclass(frozen=True)
 class ContiguousVariantSlice:
+    """Contiguous absolute variant slice.
+
+    Attributes:
+        variant_start: Inclusive absolute variant start index.
+        variant_stop: Exclusive absolute variant stop index.
+
+    """
+
     variant_start: int
     variant_stop: int
 
 
 @dataclass(frozen=True)
 class ReadSelection:
+    """Normalized BGEN row and column selection.
+
+    Attributes:
+        sample_index_array: Explicit sample indices.
+        variant_index_array: Explicit variant indices.
+
+    """
+
     sample_index_array: npt.NDArray[np.int64]
     variant_index_array: npt.NDArray[np.int64]
 
 
 @dataclass(frozen=True)
 class VariantReadRun:
+    """Contiguous input variant run and output column span.
+
+    Attributes:
+        variant_start: Inclusive absolute variant start index.
+        variant_stop: Exclusive absolute variant stop index.
+        output_start: Inclusive output matrix column start.
+        output_stop: Exclusive output matrix column stop.
+
+    """
+
     variant_start: int
     variant_stop: int
     output_start: int
@@ -27,6 +55,7 @@ class VariantReadRun:
 
 
 def normalize_axis_index(axis_index: int, axis_size: int, axis_name: str) -> int:
+    """Normalize one possibly-negative axis index."""
     normalized_axis_index = axis_index + axis_size if axis_index < 0 else axis_index
     if normalized_axis_index < 0 or normalized_axis_index >= axis_size:
         raise IndexError(f"{axis_name} index {axis_index} is out of bounds for axis size {axis_size}.")
@@ -34,6 +63,7 @@ def normalize_axis_index(axis_index: int, axis_size: int, axis_name: str) -> int
 
 
 def normalize_axis_selector(axis_selector: object, axis_size: int, axis_name: str) -> npt.NDArray[np.int64]:
+    """Normalize one row or column selector into explicit indices."""
     if axis_selector is None:
         return np.arange(axis_size, dtype=np.int64)
     if isinstance(axis_selector, slice):
@@ -58,6 +88,7 @@ def normalize_axis_selector(axis_selector: object, axis_size: int, axis_name: st
 
 
 def normalize_read_selection(index: object, sample_count: int, variant_count: int) -> ReadSelection:
+    """Normalize a BGEN read index into explicit sample and variant indices."""
     if index is None:
         sample_selector = slice(None)
         variant_selector = slice(None)
@@ -75,17 +106,21 @@ def normalize_read_selection(index: object, sample_count: int, variant_count: in
 
 
 def resolve_contiguous_variant_slice(variant_index_array: npt.NDArray[np.int64]) -> ContiguousVariantSlice | None:
+    """Return a contiguous variant slice when explicit indices are a single run."""
     if variant_index_array.size == 0:
         return ContiguousVariantSlice(variant_start=0, variant_stop=0)
     if variant_index_array.size == 1:
         variant_start = int(variant_index_array[0])
         return ContiguousVariantSlice(variant_start=variant_start, variant_stop=variant_start + 1)
     if np.all(np.diff(variant_index_array) == 1):
-        return ContiguousVariantSlice(variant_start=int(variant_index_array[0]), variant_stop=int(variant_index_array[-1]) + 1)
+        return ContiguousVariantSlice(
+            variant_start=int(variant_index_array[0]), variant_stop=int(variant_index_array[-1]) + 1
+        )
     return None
 
 
 def build_variant_read_runs(variant_index_array: npt.NDArray[np.int64]) -> list[VariantReadRun]:
+    """Split explicit variant indices into contiguous read runs."""
     if variant_index_array.size == 0:
         return []
     variant_read_runs: list[VariantReadRun] = []
@@ -95,8 +130,14 @@ def build_variant_read_runs(variant_index_array: npt.NDArray[np.int64]) -> list[
         previous_variant_index = int(variant_index_array[output_index - 1])
         current_variant_index = int(variant_index_array[output_index])
         if current_variant_index != previous_variant_index + 1:
-            variant_read_runs.append(VariantReadRun(run_variant_start, previous_variant_index + 1, run_output_start, output_index))
+            variant_read_runs.append(
+                VariantReadRun(run_variant_start, previous_variant_index + 1, run_output_start, output_index)
+            )
             run_variant_start = current_variant_index
             run_output_start = output_index
-    variant_read_runs.append(VariantReadRun(run_variant_start, int(variant_index_array[-1]) + 1, run_output_start, int(variant_index_array.size)))
+    variant_read_runs.append(
+        VariantReadRun(
+            run_variant_start, int(variant_index_array[-1]) + 1, run_output_start, int(variant_index_array.size)
+        )
+    )
     return variant_read_runs

@@ -1,9 +1,11 @@
 # Justfile for GWAS Engine (g)
 
 set allow-duplicate-recipes := true
+set shell := ["bash", "-cu"]
 
 data_dir := env_var_or_default('GWAS_ENGINE_DATA_DIR', 'data')
 python_version := env_var_or_default('GWAS_ENGINE_PYTHON_VERSION', '3.13')
+tools_dir := env_var_or_default('GWAS_ENGINE_TOOLS_DIR', '.tools')
 slurm_gpu_node := env_var_or_default('GWAS_ENGINE_GPU_NODE', 'landau')
 slurm_partition := env_var_or_default('GWAS_ENGINE_SLURM_PARTITION', '')
 slurm_account := env_var_or_default('GWAS_ENGINE_SLURM_ACCOUNT', '')
@@ -12,48 +14,86 @@ slurm_cpus_per_task := env_var_or_default('GWAS_ENGINE_SLURM_CPUS_PER_TASK', '8'
 slurm_memory := env_var_or_default('GWAS_ENGINE_SLURM_MEMORY', '64G')
 slurm_gpu_count := env_var_or_default('GWAS_ENGINE_SLURM_GPUS_PER_TASK', '1')
 slurm_extra_arguments := env_var_or_default('GWAS_ENGINE_SLURM_EXTRA_ARGS', '')
+server_env := '. scripts/server_env.sh'
 
 # --- Data Preparation ---
 
 setup-data:
-    uv run python scripts/fetch_1kg.py
-    uv run python scripts/simulate_phenos.py
+    {{server_env}} && uv run python scripts/fetch_1kg.py
+    {{server_env}} && uv run python scripts/simulate_phenos.py
+
+# Generate binary REGENIE step 1 predictions required by g binary step 2
+setup-binary-baseline: setup-data
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    mkdir -p "{{data_dir}}/baselines"
+    regenie \
+      --step 1 \
+      --bed "{{data_dir}}/1kg_chr22_full" \
+      --phenoFile "{{data_dir}}/pheno_bin.txt" \
+      --covarFile "{{data_dir}}/covariates.txt" \
+      --bt \
+      --cc12 \
+      --force-step1 \
+      --bsize 1000 \
+      --out "{{data_dir}}/baselines/regenie_step1"
+    test -s "{{data_dir}}/baselines/regenie_step1_pred.list"
+
+# Prepare all local inputs required for binary REGENIE step 2 GPU execution
+setup-regenie2-binary-gpu-inputs: setup-binary-baseline
+
+# Verify local inputs required for binary REGENIE step 2 GPU execution
+verify-regenie2-binary-gpu-inputs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -s "{{data_dir}}/1kg_chr22_full.bgen"
+    test -s "{{data_dir}}/1kg_chr22_full.sample"
+    test -s "{{data_dir}}/pheno_bin.txt"
+    test -s "{{data_dir}}/covariates.txt"
+    test -s "{{data_dir}}/baselines/regenie_step1_pred.list"
+    echo "Binary REGENIE step 2 GPU inputs are present."
 
 # Run PLINK2/Regenie baselines and generate hardware report (excludes slow Hail benchmarks by default)
 benchmark-baselines: setup-data
-    uv run python scripts/benchmark.py
+    {{server_env}} && uv run python scripts/benchmark.py
 
 # Compare original regenie (all 4 programs) vs g quantitative step2 CPU
 benchmark-regenie-comparison-cpu: setup-data
-    uv run python scripts/benchmark_regenie_comparison.py --cpu-only
+    {{server_env}} && uv run python scripts/benchmark_regenie_comparison.py --cpu-only
 
 # Compare original regenie (all 4 programs) vs g quantitative step2 CPU+GPU
 benchmark-regenie-comparison-gpu: setup-data
-    uv run python scripts/benchmark_regenie_comparison.py --include-gpu
+    {{server_env}} && uv run python scripts/benchmark_regenie_comparison.py --include-gpu
 
 # Alias for comparison benchmark (CPU-only default)
 benchmark-regenie-comparison: benchmark-regenie-comparison-cpu
 
 # Run full baselines including Hail (slow - requires cached MatrixTable)
 benchmark-baselines-full: setup-data
-    HAIL_INCLUDE=1 uv run python scripts/benchmark.py
+    {{server_env}} && HAIL_INCLUDE=1 uv run python scripts/benchmark.py
 
 # --- Development ---
 
+# Install repo-local command-line tools for the Ubuntu SLURM server
+setup-server-tools:
+    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/g-uv-cache}" UV_LINK_MODE="${UV_LINK_MODE:-copy}" uv run --no-project python scripts/bootstrap_server_tools.py
+
 # Bootstrap a CPU-only development environment on the login node
 bootstrap:
-    uv python install {{python_version}}
-    uv sync --python {{python_version}} --group dev
+    {{server_env}} && uv python install {{python_version}}
+    {{server_env}} && uv sync --python {{python_version}} --group dev
 
 # Bootstrap a GPU-capable development environment for JAX CUDA work
 bootstrap-gpu:
-    uv python install {{python_version}}
-    uv sync --python {{python_version}} --group dev --group gpu
+    {{server_env}} && uv python install {{python_version}}
+    {{server_env}} && uv sync --python {{python_version}} --group dev --group gpu
 
 # Check local toolchain prerequisites for development on the current host
 doctor:
     #!/usr/bin/env bash
     set -euo pipefail
+    . scripts/server_env.sh
     required_commands=(uv cargo rustc)
     for command_name in "${required_commands[@]}"; do
       if ! command -v "${command_name}" >/dev/null 2>&1; then
@@ -70,10 +110,31 @@ doctor:
     fi
     echo "Core development toolchain looks usable on this host."
 
+# Check server development prerequisites, local tools, and cache writability
+doctor-server:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    required_commands=(just uv srun zstd cargo cargo-clippy cargo-fmt rustc rustfmt plink plink2 regenie)
+    for command_name in "${required_commands[@]}"; do
+      if ! command -v "${command_name}" >/dev/null 2>&1; then
+        echo "Missing required server command: ${command_name}" >&2
+        exit 1
+      fi
+    done
+    mkdir -p "${UV_CACHE_DIR}"
+    test -w "${UV_CACHE_DIR}"
+    uv run --python {{python_version}} python -c 'import sys; print(f"python={sys.version_info.major}.{sys.version_info.minor}")'
+    echo "hostname=$(hostname)"
+    echo "tools_dir={{tools_dir}}"
+    echo "uv_cache_dir=${UV_CACHE_DIR}"
+    echo "Server development toolchain looks usable on this host."
+
 # Check external baseline tools used by data prep and comparison benchmarks
 doctor-baselines:
     #!/usr/bin/env bash
     set -euo pipefail
+    . scripts/server_env.sh
     required_commands=(plink plink2 regenie)
     for command_name in "${required_commands[@]}"; do
       if ! command -v "${command_name}" >/dev/null 2>&1; then
@@ -85,12 +146,13 @@ doctor-baselines:
 
 # Probe JAX runtime on the current host
 doctor-jax:
-    uv run --python {{python_version}} python scripts/probe_jax_runtime.py
+    {{server_env}} && uv run --python {{python_version}} python scripts/probe_jax_runtime.py
 
 # Start an interactive SLURM shell on the configured GPU node
 slurm-gpu-shell:
     #!/usr/bin/env bash
     set -euo pipefail
+    . scripts/server_env.sh
     slurm_arguments=(
       "--nodelist={{slurm_gpu_node}}"
       "--gres=gpu:{{slurm_gpu_count}}"
@@ -114,10 +176,7 @@ slurm-gpu-shell:
 slurm-gpu-run +command_arguments:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ "$#" -eq 0 ]]; then
-      echo "Usage: just slurm-gpu-run <command...>" >&2
-      exit 1
-    fi
+    . scripts/server_env.sh
     slurm_arguments=(
       "--nodelist={{slurm_gpu_node}}"
       "--gres=gpu:{{slurm_gpu_count}}"
@@ -135,100 +194,133 @@ slurm-gpu-run +command_arguments:
       read -r -a extra_arguments <<< "{{slurm_extra_arguments}}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
-    exec srun "${slurm_arguments[@]}" "$@"
+    exec srun "${slurm_arguments[@]}" {{command_arguments}}
 
 # Run another just recipe through SLURM on the configured GPU node
 slurm-gpu-just +just_arguments:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ "$#" -eq 0 ]]; then
-      echo "Usage: just slurm-gpu-just <recipe...>" >&2
-      exit 1
-    fi
-    exec just slurm-gpu-run just "$@"
+    . scripts/server_env.sh
+    exec just slurm-gpu-run just {{just_arguments}}
 
 # Run REGENIE step 2 with local baseline predictions
 regenie2-linear:
-    uv run g regenie2-linear --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_cont.txt --pheno-name phenotype_continuous --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_qt_pred.list --out {{data_dir}}/regenie2_linear
+    {{server_env}} && uv run g regenie2-linear --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_cont.txt --pheno-name phenotype_continuous --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_qt_pred.list --out {{data_dir}}/regenie2_linear
+
+# Run binary REGENIE step 2 on chr22 with GPU JAX
+regenie2-binary-gpu:
+    {{server_env}} && uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu --trait-type binary --device gpu --finalize-parquet
+
+# Smoke test binary REGENIE step 2 on a small chr22 variant slice with GPU JAX
+regenie2-binary-gpu-smoke:
+    {{server_env}} && uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu_smoke --trait-type binary --device gpu --variant-limit 1000 --finalize-parquet
+
+# Run binary REGENIE step 2 through SLURM on the configured GPU node
+slurm-regenie2-binary-gpu:
+    {{server_env}} && just slurm-gpu-just regenie2-binary-gpu
+
+# Smoke test binary REGENIE step 2 through SLURM on the configured GPU node
+slurm-regenie2-binary-gpu-smoke:
+    {{server_env}} && just slurm-gpu-just regenie2-binary-gpu-smoke
+
+# Verify binary REGENIE step 2 GPU output artifacts
+verify-regenie2-binary-gpu-output:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run_directory="{{data_dir}}/regenie2_binary_chr22_gpu.regenie2_binary.run"
+    test -d "${run_directory}/chunks"
+    find "${run_directory}/chunks" -type f -name '*.arrow' | grep -q .
+    test -s "${run_directory}/final.parquet"
+    echo "Binary REGENIE step 2 GPU output is present."
+
+# Verify binary REGENIE step 2 GPU smoke output artifacts
+verify-regenie2-binary-gpu-smoke-output:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run_directory="{{data_dir}}/regenie2_binary_chr22_gpu_smoke.regenie2_binary.run"
+    test -d "${run_directory}/chunks"
+    find "${run_directory}/chunks" -type f -name '*.arrow' | grep -q .
+    test -s "${run_directory}/final.parquet"
+    echo "Binary REGENIE step 2 GPU smoke output is present."
 
 # Run CPU/GPU JAX runtime probe
 probe-jax:
-    uv run python scripts/probe_jax_runtime.py
+    {{server_env}} && uv run python scripts/probe_jax_runtime.py
 
 # Benchmark PLINK reader and preprocessing paths
 benchmark-plink-reader:
-    uv run python scripts/benchmark_plink_reader.py
+    {{server_env}} && uv run python scripts/benchmark_plink_reader.py
 
 # Benchmark BGEN float32 read paths
 benchmark-bgen-reader:
-    uv run python scripts/benchmark_bgen_reader.py
+    {{server_env}} && uv run python scripts/benchmark_bgen_reader.py
 
 # Benchmark REGENIE step 2 in fresh Python processes
 benchmark-regenie2-linear-fresh-gpu:
-    uv run python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu
+    {{server_env}} && uv run python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu
 
 # Benchmark REGENIE step 2 in fresh Python processes using Arrow chunks + Parquet finalization
 benchmark-regenie2-linear-fresh-gpu-parquet:
-    uv run python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --finalize-parquet
+    {{server_env}} && uv run python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --finalize-parquet
 
 # Sequentially tune GPU REGENIE step 2 and active BGEN reader knobs
 tune-regenie2-gpu:
-    uv run python scripts/tune_regenie2_gpu.py
+    {{server_env}} && uv run python scripts/tune_regenie2_gpu.py
 
 # Profile full REGENIE step 2 execution
 profile-regenie2-linear-detailed:
     mkdir -p {{data_dir}}/profiles/regenie2_linear_detailed
-    XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_PYTHON_CLIENT_MEM_FRACTION=.50 uv run python scripts/profile_regenie2_linear_detailed.py --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_cont.txt --pheno-name phenotype_continuous --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_qt_pred.list --output-dir {{data_dir}}/profiles/regenie2_linear_detailed --report-name regenie2_linear_chr22_full --enable-jax-trace --enable-memory-profile --cprofile-sort cumulative
+    {{server_env}} && XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_PYTHON_CLIENT_MEM_FRACTION=.50 uv run python scripts/profile_regenie2_linear_detailed.py --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_cont.txt --pheno-name phenotype_continuous --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_qt_pred.list --output-dir {{data_dir}}/profiles/regenie2_linear_detailed --report-name regenie2_linear_chr22_full --enable-jax-trace --enable-memory-profile --cprofile-sort cumulative
 
 # Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU
 profile-regenie-comparison-cpu: setup-data
-    uv run python scripts/profile_regenie_comparison.py --cpu-only
+    {{server_env}} && uv run python scripts/profile_regenie_comparison.py --cpu-only
 
 # Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU+GPU
 profile-regenie-comparison-gpu: setup-data
-    uv run python scripts/profile_regenie_comparison.py --include-gpu
+    {{server_env}} && uv run python scripts/profile_regenie_comparison.py --include-gpu
 
 # Alias for unified profiling comparison (CPU-only default)
 profile-regenie-comparison: profile-regenie-comparison-cpu
 
 # Format code
 format:
-    uv run ruff format .
-    cargo fmt
+    {{server_env}} && uv run ruff format .
+    {{server_env}} && cargo fmt
 
 # Lint code
 lint:
-    uv run ruff check . --fix
-    cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
+    {{server_env}} && uv run ruff check . --fix
+    {{server_env}} && cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
 
 # Type check Python code
 typecheck:
-    uv run ty check src tests scripts
+    {{server_env}} && uv run ty check src tests scripts
 
 # Run all checks (format, lint, typecheck)
 check: format lint typecheck
 
 # Run CI lint checks without installing the project package
 ci-lint:
-    uv sync --group dev --frozen --no-install-project
-    uv run --no-sync ruff check .
+    {{server_env}} && uv sync --group dev --frozen --no-install-project
+    {{server_env}} && uv run --no-sync ruff check .
 
 # Run CI type checks without installing the project package
 ci-typecheck:
-    uv sync --group dev --frozen --no-install-project
-    uv run --no-sync ty check src tests scripts
+    {{server_env}} && uv sync --group dev --frozen --no-install-project
+    {{server_env}} && uv run --no-sync ty check src tests scripts
 
 # Run CI tests that exclude heavy data- and parity-dependent suites
 ci-test:
-    uv sync --group dev --frozen
-    uv run --no-sync pytest tests/ -m "not phase0_data and not phase1_parity"
+    {{server_env}} && uv sync --group dev --frozen
+    {{server_env}} && uv run --no-sync pytest tests/ -m "not phase0_data and not phase1_parity"
 
 # Run tests
 test:
-    uv run pytest tests/
+    {{server_env}} && uv run pytest tests/
 
 upgrade-python-deps:
-    uv sync -U --group dev --group gpu
+    {{server_env}} && uv sync -U --group dev --group gpu
 
 upgrade-nix-lock:
     nix flake update

@@ -1,10 +1,23 @@
+"""Oxford sample-file parsing and BGEN sample identifier helpers."""
+
 from __future__ import annotations
 
-from pathlib import Path
+import typing
 
 import numpy as np
 import numpy.typing as npt
 import polars as pl
+
+from g import types
+
+if typing.TYPE_CHECKING:
+    from pathlib import Path
+
+
+class CoreBgenSampleHandle(typing.Protocol):
+    """BGEN core methods required to resolve sample identifiers."""
+
+    contains_embedded_samples: bool
 
 
 def split_sample_file_line(raw_line: str) -> list[str]:
@@ -18,6 +31,23 @@ def resolve_bgen_sample_path(bgen_path: Path, sample_path: Path | None = None) -
         return sample_path
     adjacent_sample_path = bgen_path.with_suffix(".sample")
     return adjacent_sample_path if adjacent_sample_path.exists() else None
+
+
+def resolve_sample_identifier_source(
+    core_reader: CoreBgenSampleHandle,
+    sample_path: Path | None,
+) -> types.SampleIdentifierSource:
+    """Resolve where sample identifiers originated for one open BGEN handle."""
+    if sample_path is not None:
+        return types.SampleIdentifierSource.EXTERNAL
+    if bool(core_reader.contains_embedded_samples):
+        return types.SampleIdentifierSource.EMBEDDED
+    return types.SampleIdentifierSource.GENERATED
+
+
+def build_generated_sample_identifier_array(sample_count: int) -> npt.NDArray[np.str_]:
+    """Build deterministic fallback sample identifiers when the file stores none."""
+    return np.asarray([f"sample_{sample_index}" for sample_index in range(sample_count)], dtype=np.str_)
 
 
 def build_sample_identifier_table(sample_identifiers: npt.NDArray[np.str_]) -> pl.DataFrame:

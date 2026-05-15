@@ -9,65 +9,20 @@ import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-import jax
 import numpy as np
-import numpy.typing as npt
 import polars as pl
 
-from g import engine, types
+from g import types
+from g.engine import payloads as engine_payloads
+from g.engine import types as engine_types
 
 if typing.TYPE_CHECKING:
     import collections.abc
 
 
+build_chunk_write_payload_batch = engine_payloads.build_chunk_write_payload_batch
 
 
-def build_chunk_write_payload_batch(
-    chunk_accumulators: collections.abc.Sequence[engine.ChunkAccumulator],
-) -> ChunkWritePayload:
-    """Build one flat host-side payload batch for Rust persistence."""
-    if not chunk_accumulators:
-        raise ValueError("Chunk payload batches require at least one accumulator.")
-    host_value_lists = jax.device_get(
-        {
-            "allele_one_frequency": [chunk_accumulator.allele_one_frequency for chunk_accumulator in chunk_accumulators],
-            "observation_count": [chunk_accumulator.observation_count for chunk_accumulator in chunk_accumulators],
-            "beta": [chunk_accumulator.beta for chunk_accumulator in chunk_accumulators],
-            "standard_error": [chunk_accumulator.standard_error for chunk_accumulator in chunk_accumulators],
-            "chi_squared": [chunk_accumulator.chi_squared for chunk_accumulator in chunk_accumulators],
-            "log10_p_value": [chunk_accumulator.log10_p_value for chunk_accumulator in chunk_accumulators],
-            "extra_code": [chunk_accumulator.extra_code for chunk_accumulator in chunk_accumulators],
-        }
-    )
-    row_counts = np.asarray([len(chunk_accumulator.metadata.position) for chunk_accumulator in chunk_accumulators], dtype=np.int64)
-    chunk_identifier = np.concatenate([np.full(int(row_count), chunk_accumulator.metadata.variant_start_index, dtype=np.int64) for chunk_accumulator, row_count in zip(chunk_accumulators, row_counts, strict=True)])
-    variant_start_index = np.concatenate([np.full(int(row_count), chunk_accumulator.metadata.variant_start_index, dtype=np.int64) for chunk_accumulator, row_count in zip(chunk_accumulators, row_counts, strict=True)])
-    variant_stop_index = np.concatenate([np.full(int(row_count), chunk_accumulator.metadata.variant_stop_index, dtype=np.int64) for chunk_accumulator, row_count in zip(chunk_accumulators, row_counts, strict=True)])
-    extra_code_value_list = typing.cast("list[npt.NDArray[np.int32] | None]", host_value_lists["extra_code"])
-    extra_code: npt.NDArray[np.int32] | None
-    if any(extra_code_value is None for extra_code_value in extra_code_value_list):
-        extra_code = None
-    else:
-        extra_code = np.concatenate(typing.cast("list[npt.NDArray[np.int32]]", extra_code_value_list))
-    return engine.Regenie2ChunkPayloadBatch(
-        first_chunk_identifier=chunk_accumulators[0].metadata.variant_start_index,
-        last_chunk_identifier=chunk_accumulators[-1].metadata.variant_start_index,
-        chunk_identifier=chunk_identifier,
-        variant_start_index=variant_start_index,
-        variant_stop_index=variant_stop_index,
-        chromosome=tuple(np.concatenate([chunk_accumulator.metadata.chromosome for chunk_accumulator in chunk_accumulators]).tolist()),
-        position=np.concatenate([chunk_accumulator.metadata.position for chunk_accumulator in chunk_accumulators]),
-        variant_identifier=tuple(np.concatenate([chunk_accumulator.metadata.variant_identifiers for chunk_accumulator in chunk_accumulators]).tolist()),
-        allele_zero=tuple(np.concatenate([chunk_accumulator.metadata.allele_two for chunk_accumulator in chunk_accumulators]).tolist()),
-        allele_one=tuple(np.concatenate([chunk_accumulator.metadata.allele_one for chunk_accumulator in chunk_accumulators]).tolist()),
-        allele_one_frequency=np.concatenate(host_value_lists["allele_one_frequency"]),
-        observation_count=np.concatenate(host_value_lists["observation_count"]),
-        beta=np.concatenate(host_value_lists["beta"]),
-        standard_error=np.concatenate(host_value_lists["standard_error"]),
-        chi_squared=np.concatenate(host_value_lists["chi_squared"]),
-        log10_p_value=np.concatenate(host_value_lists["log10_p_value"]),
-        extra_code=extra_code,
-    )
 logger = logging.getLogger(__name__)
 
 
@@ -76,7 +31,7 @@ CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 DEFAULT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_PAYLOAD_BATCH_SIZE = 4
 DEFAULT_WRITER_THREAD_COUNT = 8
-ChunkWritePayload = engine.ChunkWritePayload
+ChunkWritePayload = engine_types.Regenie2ChunkPayloadBatch
 
 
 @dataclass(frozen=True)
@@ -261,13 +216,13 @@ def write_chunk_batch_to_disk(
 
 
 def write_chunk_to_disk(
-    chunk_payload: engine.ChunkPayload,
+    chunk_payload: engine_types.Regenie2ChunkPayload,
     chunks_directory: Path,
     association_mode: types.AssociationMode,
 ) -> None:
     """Persist one chunk through the Rust writer."""
     write_chunk_batch_to_disk(
-        engine.Regenie2ChunkPayloadBatch(
+        engine_types.Regenie2ChunkPayloadBatch(
             first_chunk_identifier=chunk_payload.chunk_identifier,
             last_chunk_identifier=chunk_payload.chunk_identifier,
             chunk_identifier=np.full(len(chunk_payload.position), chunk_payload.chunk_identifier, dtype=np.int64),
@@ -292,7 +247,7 @@ def write_chunk_to_disk(
 
 
 def persist_chunked_results(
-    frame_iterator: collections.abc.Iterator[engine.ChunkAccumulator],
+    frame_iterator: collections.abc.Iterator[engine_types.Regenie2ChunkAccumulator],
     output_run_paths: OutputRunPaths,
     association_mode: types.AssociationMode,
     *,
@@ -316,11 +271,11 @@ def persist_chunked_results(
         finalize_parquet=finalize_parquet,
     )
     try:
-        chunk_accumulator_batch: list[engine.ChunkAccumulator] = []
+        chunk_accumulator_batch: list[engine_types.Regenie2ChunkAccumulator] = []
         for chunk_accumulator in frame_iterator:
             chunk_accumulator_batch.append(chunk_accumulator)
             if len(chunk_accumulator_batch) >= payload_batch_size:
-                chunk_payload_batch = engine.build_chunk_write_payload_batch(chunk_accumulator_batch)
+                chunk_payload_batch = engine_payloads.build_chunk_write_payload_batch(chunk_accumulator_batch)
                 enqueue_chunk_payload_batch(
                     writer_session,
                     chunk_payload_batch,
@@ -329,7 +284,7 @@ def persist_chunked_results(
                 )
                 chunk_accumulator_batch.clear()
         if chunk_accumulator_batch:
-            chunk_payload_batch = engine.build_chunk_write_payload_batch(chunk_accumulator_batch)
+            chunk_payload_batch = engine_payloads.build_chunk_write_payload_batch(chunk_accumulator_batch)
             enqueue_chunk_payload_batch(
                 writer_session,
                 chunk_payload_batch,

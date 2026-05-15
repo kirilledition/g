@@ -164,8 +164,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
     )
 
     residual_sum_squares_after = (
-        chromosome_state.adjusted_residual_sum_squares
-        - covariance_squared * genotype_residual_sum_squares_inverse
+        chromosome_state.adjusted_residual_sum_squares - covariance_squared * genotype_residual_sum_squares_inverse
     )
     residual_sum_squares_after = jnp.maximum(residual_sum_squares_after, 0.0)
     positive_residual_sum_squares_mask = residual_sum_squares_after > 0.0
@@ -173,9 +172,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
     standard_error = jnp.where(
         positive_genotype_residual_mask & positive_residual_sum_squares_mask,
         jnp.sqrt(
-            residual_sum_squares_after
-            * genotype_residual_sum_squares_inverse
-            / chromosome_state.degrees_of_freedom
+            residual_sum_squares_after * genotype_residual_sum_squares_inverse / chromosome_state.degrees_of_freedom
         ),
         jnp.nan,
     )

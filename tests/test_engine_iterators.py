@@ -176,13 +176,27 @@ def test_iter_regenie2_linear_output_frames_reuses_open_bgen_reader() -> None:
     genotype_reader = FakeContextReader()
 
     with (
-        patch("g.engine.open_genotype_reader", return_value=genotype_reader) as mock_open_genotype_reader,
-        patch("g.engine.load_aligned_sample_data_from_source", return_value=aligned_sample_data) as mock_load,
-        patch("g.engine.prepare_regenie2_linear_state", return_value="regenie-state"),
-        patch("g.engine.prepare_regenie2_linear_chromosome_state", return_value="chromosome-state"),
-        patch("g.engine.load_prediction_source", return_value=FakePredictionSource()),
-        patch("g.engine.iter_dosage_genotype_chunks_from_source", return_value=iter([source_chunk])) as mock_iter,
-        patch("g.engine.compute_regenie2_linear_chunk", return_value=regenie_result),
+        patch(
+            "g.engine.dispatch.source.open_genotype_reader", return_value=genotype_reader
+        ) as mock_open_genotype_reader,
+        patch(
+            "g.engine.dispatch.source.load_aligned_sample_data_from_source",
+            return_value=aligned_sample_data,
+        ) as mock_load,
+        patch("g.engine.dispatch.regenie2_linear.prepare_regenie2_linear_state", return_value="regenie-state"),
+        patch(
+            "g.engine.dispatch.regenie2_linear.prepare_regenie2_linear_chromosome_state",
+            return_value="chromosome-state",
+        ),
+        patch("g.engine.dispatch.regenie.load_prediction_source", return_value=FakePredictionSource()),
+        patch(
+            "g.engine.dispatch.source.iter_dosage_genotype_chunks_from_source",
+            return_value=iter([source_chunk]),
+        ) as mock_iter,
+        patch(
+            "g.engine.dispatch.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
+            return_value=regenie_result,
+        ),
     ):
         accumulators = list(
             iter_regenie2_linear_output_frames(
@@ -216,13 +230,19 @@ def test_iter_regenie2_binary_output_frames_uses_binary_sample_loading() -> None
     genotype_reader = FakeContextReader()
 
     with (
-        patch("g.engine.open_genotype_reader", return_value=genotype_reader),
-        patch("g.engine.load_aligned_sample_data_from_source", return_value=build_aligned_sample_data()) as mock_load,
-        patch("g.engine.prepare_regenie2_binary_state", return_value="regenie-binary-state"),
-        patch("g.engine.prepare_regenie2_binary_chromosome_state", return_value="binary-chromosome-state"),
-        patch("g.engine.load_prediction_source", return_value=FakePredictionSource()),
-        patch("g.engine.iter_dosage_genotype_chunks_from_source", return_value=iter([source_chunk])),
-        patch("g.engine.compute_regenie2_binary_chunk", return_value=regenie_result),
+        patch("g.engine.dispatch.source.open_genotype_reader", return_value=genotype_reader),
+        patch(
+            "g.engine.dispatch.source.load_aligned_sample_data_from_source",
+            return_value=build_aligned_sample_data(),
+        ) as mock_load,
+        patch("g.engine.dispatch.regenie2_binary.prepare_regenie2_binary_state", return_value="regenie-binary-state"),
+        patch(
+            "g.engine.dispatch.regenie2_binary.prepare_regenie2_binary_chromosome_state",
+            return_value="binary-chromosome-state",
+        ),
+        patch("g.engine.dispatch.regenie.load_prediction_source", return_value=FakePredictionSource()),
+        patch("g.engine.dispatch.source.iter_dosage_genotype_chunks_from_source", return_value=iter([source_chunk])),
+        patch("g.engine.dispatch.compute_regenie2_binary_chunk", return_value=regenie_result),
     ):
         accumulators = list(
             iter_regenie2_binary_output_frames(

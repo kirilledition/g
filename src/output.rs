@@ -165,7 +165,9 @@ impl PyOutputWriterSession {
             se: se.as_slice()?.to_vec(),
             chisq: chisq.as_slice()?.to_vec(),
             log10p: log10p.as_slice()?.to_vec(),
-            extra_code: extra_code.map(|extra_code_array| extra_code_array.as_slice().map(<[i32]>::to_vec)).transpose()?,
+            extra_code: extra_code
+                .map(|extra_code_array| extra_code_array.as_slice().map(<[i32]>::to_vec))
+                .transpose()?,
         };
         self.raise_if_worker_failed()?;
         let sender_guard =
@@ -262,7 +264,9 @@ fn run_output_writer_worker(
 ) {
     while let Ok(job) = receiver.recv() {
         let write_result = match job {
-            OutputWriteJob::RegenieStep2(regenie_step2_job) => write_regenie_step2_chunk_job(&config, *regenie_step2_job),
+            OutputWriteJob::RegenieStep2(regenie_step2_job) => {
+                write_regenie_step2_chunk_job(&config, *regenie_step2_job)
+            }
             OutputWriteJob::Shutdown => return,
         };
         if let Err(error) = write_result {
@@ -274,7 +278,10 @@ fn run_output_writer_worker(
     }
 }
 
-fn write_regenie_step2_chunk_job(config: &RustOutputWriterConfig, job: RegenieStep2ChunkWriteJob) -> Result<(), String> {
+fn write_regenie_step2_chunk_job(
+    config: &RustOutputWriterConfig,
+    job: RegenieStep2ChunkWriteJob,
+) -> Result<(), String> {
     let chunk_file_path = config.chunks_directory.join(&job.chunk_file_name);
     let temporary_chunk_file_path = chunk_file_path.with_extension("arrow.tmp");
     let record_batch = build_regenie_step2_record_batch(job)?;
@@ -401,7 +408,8 @@ fn build_regenie_step2_ipc_write_options() -> Result<IpcWriteOptions, String> {
 fn get_regenie_step2_ipc_write_options() -> &'static IpcWriteOptions {
     static REGENIE_STEP2_IPC_WRITE_OPTIONS: OnceLock<IpcWriteOptions> = OnceLock::new();
     REGENIE_STEP2_IPC_WRITE_OPTIONS.get_or_init(|| {
-        build_regenie_step2_ipc_write_options().expect("REGENIE step 2 IPC write options should support zstd compression")
+        build_regenie_step2_ipc_write_options()
+            .expect("REGENIE step 2 IPC write options should support zstd compression")
     })
 }
 
@@ -488,8 +496,8 @@ fn get_regenie_step2_final_schema() -> &'static Arc<Schema> {
 
 fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> PyResult<RecordBatch> {
     let final_column_names = [
-        "CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1", "A1FREQ", "INFO", "N", "TEST", "BETA", "SE", "CHISQ",
-        "LOG10P", "EXTRA",
+        "CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1", "A1FREQ", "INFO", "N", "TEST", "BETA", "SE", "CHISQ", "LOG10P",
+        "EXTRA",
     ];
     let projected_columns = final_column_names
         .iter()

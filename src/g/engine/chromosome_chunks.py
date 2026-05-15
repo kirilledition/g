@@ -1,5 +1,7 @@
+"""Helpers for keeping dosage chunks chromosome-homogeneous."""
 
 from __future__ import annotations
+
 import itertools
 
 import numpy as np

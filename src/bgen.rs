@@ -705,7 +705,7 @@ fn build_sample_selection(sample_count: usize, sample_indices: &[i64]) -> Result
     let mut is_identity = sample_indices.len() == sample_count;
     for (selected_index, raw_sample_index) in sample_indices.iter().enumerate() {
         let sample_index = usize::try_from(*raw_sample_index).map_err(|_| {
-            BgenError::Range(format!("Sample indices must be non-negative. Observed sample index {raw_sample_index}.",))
+            BgenError::Range(format!("Sample indices must be non-negative. Observed sample index {raw_sample_index}."))
         })?;
         if sample_index >= sample_count {
             return Err(BgenError::Range(format!(

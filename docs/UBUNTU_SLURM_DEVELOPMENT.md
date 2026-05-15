@@ -9,19 +9,22 @@ This repository was originally developed inside the Nix flake on a personal mach
 
 Install or make available on `PATH`:
 
-- `just`
 - `uv`
-- `cargo`
-- `rustc`
-- `plink`
-- `plink2`
-- `regenie`
+- `srun`
+- `zstd`
 
-Python itself does not need to be preinstalled globally if `uv python install` works in your account.
+The repo-local bootstrap installs `just`, `cargo`, `rustc`, `plink`, `plink2`, and `regenie` into `.tools/`. Python itself does not need to be preinstalled globally if `uv python install` works in your account.
 
 ## Bootstrap
 
-CPU-oriented login-node setup:
+First-run setup before `just` is available:
+
+```bash
+UV_CACHE_DIR=/tmp/g-uv-cache uv run --no-project python scripts/bootstrap_server_tools.py
+source scripts/server_env.sh
+```
+
+CPU-oriented login-node setup after the first-run bootstrap:
 
 ```bash
 just bootstrap
@@ -36,6 +39,7 @@ just bootstrap-gpu
 Sanity checks:
 
 ```bash
+just doctor-server
 just doctor
 just doctor-baselines
 ```
@@ -53,6 +57,13 @@ Prepare benchmark data only after `plink2` is available:
 
 ```bash
 just setup-data
+```
+
+Generate binary REGENIE step 1 predictions required by binary step 2:
+
+```bash
+just setup-binary-baseline
+just verify-regenie2-binary-gpu-inputs
 ```
 
 ## GPU Workflow Through SLURM
@@ -85,8 +96,28 @@ Run existing repo recipes on the GPU node while keeping `just` as the top-level 
 
 ```bash
 just slurm-gpu-just doctor-jax
+just slurm-regenie2-binary-gpu-smoke
+just verify-regenie2-binary-gpu-smoke-output
+just slurm-regenie2-binary-gpu
+just verify-regenie2-binary-gpu-output
 just slurm-gpu-just benchmark-regenie-comparison-gpu
 just slurm-gpu-just profile-regenie-comparison-gpu
+```
+
+The binary chr22 GPU run uses:
+
+```bash
+data/1kg_chr22_full.bgen
+data/1kg_chr22_full.sample
+data/pheno_bin.txt
+data/covariates.txt
+data/baselines/regenie_step1_pred.list
+```
+
+Outputs are written under:
+
+```bash
+data/regenie2_binary_chr22_gpu.regenie2_binary.run/
 ```
 
 ## Notes
@@ -94,3 +125,5 @@ just slurm-gpu-just profile-regenie-comparison-gpu
 - `just upgrade-deps` is now Python-package only. Nix lockfile updates moved to `just upgrade-nix-lock`.
 - `just doctor-jax` should be treated as a host-specific check. On a login node without NVIDIA libraries, CPU fallback is expected.
 - JAX persistent compilation cache lives under `JAX_COMPILATION_CACHE_DIR` when set, otherwise under the current user cache directory.
+- `.tools/` and `data/` are local server state and must not be committed.
+- `scripts/server_env.sh` sets repo-local tools on `PATH`, `UV_CACHE_DIR=/tmp/g-uv-cache`, `UV_LINK_MODE=copy`, and repo-local Rust homes unless those variables are already set.

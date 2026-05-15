@@ -31,6 +31,7 @@ def test_public_package_exports_include_general_and_linear_regenie2() -> None:
     assert g.regenie2 is api.regenie2
     assert g.regenie2_linear is api.regenie2_linear
 
+
 def test_parse_covariate_name_list_handles_string_input() -> None:
     assert parse_covariate_name_list(" age, sex ,, bmi ") == ("age", "sex", "bmi")
 
@@ -177,13 +178,9 @@ def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalizati
     mock_persist_chunked_results.assert_called_once()
     assert mock_persist_chunked_results.call_args.kwargs["payload_batch_size"] == api.DEFAULT_ARROW_PAYLOAD_BATCH_SIZE
     assert (
-        mock_persist_chunked_results.call_args.kwargs["writer_thread_count"]
-        == api.output.DEFAULT_WRITER_THREAD_COUNT
+        mock_persist_chunked_results.call_args.kwargs["writer_thread_count"] == api.output.DEFAULT_WRITER_THREAD_COUNT
     )
-    assert (
-        mock_persist_chunked_results.call_args.kwargs["writer_queue_depth"]
-        == api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
-    )
+    assert mock_persist_chunked_results.call_args.kwargs["writer_queue_depth"] == api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
     mock_prepare_output_run.assert_called_once()
 
 
