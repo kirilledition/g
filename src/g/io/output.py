@@ -9,10 +9,10 @@ import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 
-from g import engine, types
+from g import types
+from g.output import payload, schema, writer
 
 if typing.TYPE_CHECKING:
     import collections.abc
@@ -26,7 +26,7 @@ CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 DEFAULT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_PAYLOAD_BATCH_SIZE = 4
 DEFAULT_WRITER_THREAD_COUNT = 8
-ChunkWritePayload = engine.ChunkWritePayload
+ChunkWritePayload = payload.AssociationOutputBatch
 
 
 @dataclass(frozen=True)
@@ -211,38 +211,20 @@ def write_chunk_batch_to_disk(
 
 
 def write_chunk_to_disk(
-    chunk_payload: engine.ChunkPayload,
+    chunk_payload: payload.Regenie2ChunkPayload,
     chunks_directory: Path,
     association_mode: types.AssociationMode,
 ) -> None:
     """Persist one chunk through the Rust writer."""
     write_chunk_batch_to_disk(
-        engine.Regenie2ChunkPayloadBatch(
-            first_chunk_identifier=chunk_payload.chunk_identifier,
-            last_chunk_identifier=chunk_payload.chunk_identifier,
-            chunk_identifier=np.full(len(chunk_payload.position), chunk_payload.chunk_identifier, dtype=np.int64),
-            variant_start_index=np.full(len(chunk_payload.position), chunk_payload.variant_start_index, dtype=np.int64),
-            variant_stop_index=np.full(len(chunk_payload.position), chunk_payload.variant_stop_index, dtype=np.int64),
-            chromosome=tuple(chunk_payload.chromosome.tolist()),
-            position=chunk_payload.position,
-            variant_identifier=tuple(chunk_payload.variant_identifier.tolist()),
-            allele_zero=tuple(chunk_payload.allele_zero.tolist()),
-            allele_one=tuple(chunk_payload.allele_one.tolist()),
-            allele_one_frequency=chunk_payload.allele_one_frequency,
-            observation_count=chunk_payload.observation_count,
-            beta=chunk_payload.beta,
-            standard_error=chunk_payload.standard_error,
-            chi_squared=chunk_payload.chi_squared,
-            log10_p_value=chunk_payload.log10_p_value,
-            extra_code=chunk_payload.extra_code,
-        ),
+        writer.build_output_batch_from_chunk_payload(chunk_payload),
         chunks_directory,
         association_mode,
     )
 
 
 def persist_chunked_results(
-    frame_iterator: collections.abc.Iterator[engine.ChunkAccumulator],
+    frame_iterator: collections.abc.Iterator[schema.AssociationChunkResult],
     output_run_paths: OutputRunPaths,
     association_mode: types.AssociationMode,
     *,
@@ -266,11 +248,11 @@ def persist_chunked_results(
         finalize_parquet=finalize_parquet,
     )
     try:
-        chunk_accumulator_batch: list[engine.ChunkAccumulator] = []
+        chunk_accumulator_batch: list[schema.AssociationChunkResult] = []
         for chunk_accumulator in frame_iterator:
             chunk_accumulator_batch.append(chunk_accumulator)
             if len(chunk_accumulator_batch) >= payload_batch_size:
-                chunk_payload_batch = engine.build_chunk_write_payload_batch(chunk_accumulator_batch)
+                chunk_payload_batch = payload.build_output_batch(chunk_accumulator_batch)
                 enqueue_chunk_payload_batch(
                     writer_session,
                     chunk_payload_batch,
@@ -279,7 +261,7 @@ def persist_chunked_results(
                 )
                 chunk_accumulator_batch.clear()
         if chunk_accumulator_batch:
-            chunk_payload_batch = engine.build_chunk_write_payload_batch(chunk_accumulator_batch)
+            chunk_payload_batch = payload.build_output_batch(chunk_accumulator_batch)
             enqueue_chunk_payload_batch(
                 writer_session,
                 chunk_payload_batch,

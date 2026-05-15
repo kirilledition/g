@@ -13,9 +13,9 @@ import pyarrow.ipc
 import pyarrow.parquet as pq
 import pytest
 
-from g import engine
 from g.io import output
 from g.models import VariantMetadata
+from g.output import payload, schema
 from g.types import AssociationMode
 
 if typing.TYPE_CHECKING:
@@ -55,8 +55,8 @@ def create_regenie_chunk_payload(
     allele_zero: str = "C",
     allele_one: str = "A",
     extra_code: npt.NDArray[np.int32] | None = None,
-) -> engine.Regenie2ChunkPayload:
-    return engine.Regenie2ChunkPayload(
+) -> payload.Regenie2ChunkPayload:
+    return payload.Regenie2ChunkPayload(
         chunk_identifier=chunk_identifier,
         variant_start_index=chunk_identifier,
         variant_stop_index=variant_stop_index,
@@ -84,8 +84,8 @@ def create_regenie_chunk_accumulator(
     allele_zero: str = "C",
     allele_one: str = "A",
     extra_code: jax.Array | None = None,
-) -> engine.Regenie2ChunkAccumulator:
-    return engine.Regenie2ChunkAccumulator(
+) -> schema.AssociationChunkResult:
+    return schema.AssociationChunkResult(
         metadata=VariantMetadata(
             variant_start_index=chunk_identifier,
             variant_stop_index=variant_stop_index,
@@ -105,7 +105,7 @@ def create_regenie_chunk_accumulator(
     )
 
 
-def write_reference_chunk(chunk_payload: engine.Regenie2ChunkPayload, chunk_path: Path) -> None:
+def write_reference_chunk(chunk_payload: payload.Regenie2ChunkPayload, chunk_path: Path) -> None:
     reference_output_frame = pl.DataFrame(
         {
             "chunk_identifier": [chunk_payload.chunk_identifier],
