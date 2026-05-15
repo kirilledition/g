@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from g.api import DEFAULT_ARROW_PAYLOAD_BATCH_SIZE, DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE, RunArtifacts
-from g.cli import app, main, print_success_message, resolve_arrow_payload_batch_size, resolve_chunk_size
+from g.api import DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE, RunArtifacts
+from g.cli import app, main, print_success_message, resolve_chunk_size
 from g.types import Device, RegenieTraitType
 
 runner = CliRunner()
@@ -37,14 +37,6 @@ def test_resolve_chunk_size_uses_regenie_default() -> None:
 
 def test_resolve_chunk_size_preserves_explicit_override() -> None:
     assert resolve_chunk_size(1024) == 1024
-
-
-def test_resolve_arrow_payload_batch_size_uses_default() -> None:
-    assert resolve_arrow_payload_batch_size(None) == DEFAULT_ARROW_PAYLOAD_BATCH_SIZE
-
-
-def test_resolve_arrow_payload_batch_size_preserves_explicit_override() -> None:
-    assert resolve_arrow_payload_batch_size(4) == 4
 
 
 def test_removed_linear_command_is_unknown() -> None:

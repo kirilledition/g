@@ -31,13 +31,6 @@ def resolve_chunk_size(requested_chunk_size: int | None) -> int:
     return api.DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE
 
 
-def resolve_arrow_payload_batch_size(requested_arrow_payload_batch_size: int | None) -> int:
-    """Resolve the effective Arrow payload batch size."""
-    if requested_arrow_payload_batch_size is not None:
-        return requested_arrow_payload_batch_size
-    return api.DEFAULT_ARROW_PAYLOAD_BATCH_SIZE
-
-
 def print_success_message(artifacts: api.RunArtifacts) -> None:
     """Print a concise success message for a completed CLI run."""
     if artifacts.output_run_directory is not None:
@@ -66,10 +59,6 @@ def run_regenie2_linear_command(
     prefetch_chunks: int = typer.Option(1, help="Number of genotype chunks to prefetch on the host."),
     device: types.Device = typer.Option(types.Device.CPU, help="JAX execution device."),
     output_run_directory: Path | None = typer.Option(None, help="Run directory for Arrow chunked output."),
-    arrow_payload_batch_size: int | None = typer.Option(
-        None,
-        help="Number of REGENIE output chunks to batch per Arrow IPC write.",
-    ),
     output_writer_thread_count: int = typer.Option(
         api.output.DEFAULT_WRITER_THREAD_COUNT,
         help="Background output writer thread count.",
@@ -96,7 +85,6 @@ def run_regenie2_linear_command(
         output_run_directory=output_run_directory,
         resume=resume,
         finalize_parquet=finalize_parquet,
-        arrow_payload_batch_size=resolve_arrow_payload_batch_size(arrow_payload_batch_size),
         output_writer_thread_count=output_writer_thread_count,
         output_writer_queue_depth=output_writer_queue_depth,
     )
@@ -143,10 +131,6 @@ def run_regenie2_command(
     prefetch_chunks: int = typer.Option(1, help="Number of genotype chunks to prefetch on the host."),
     device: types.Device = typer.Option(types.Device.CPU, help="JAX execution device."),
     output_run_directory: Path | None = typer.Option(None, help="Run directory for Arrow chunked output."),
-    arrow_payload_batch_size: int | None = typer.Option(
-        None,
-        help="Number of REGENIE output chunks to batch per Arrow IPC write.",
-    ),
     output_writer_thread_count: int = typer.Option(
         api.output.DEFAULT_WRITER_THREAD_COUNT,
         help="Background output writer thread count.",
@@ -173,7 +157,6 @@ def run_regenie2_command(
         output_run_directory=output_run_directory,
         resume=resume,
         finalize_parquet=finalize_parquet,
-        arrow_payload_batch_size=resolve_arrow_payload_batch_size(arrow_payload_batch_size),
         output_writer_thread_count=output_writer_thread_count,
         output_writer_queue_depth=output_writer_queue_depth,
     )

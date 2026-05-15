@@ -124,7 +124,6 @@ def test_regenie2_binary_dispatches_binary_iterator_and_output_mode() -> None:
         (ComputeConfig(chunk_size=0), "Chunk size must be positive"),
         (ComputeConfig(variant_limit=0), "Variant limit must be positive"),
         (ComputeConfig(prefetch_chunks=-1), "Prefetch chunk count must be zero or positive"),
-        (ComputeConfig(arrow_payload_batch_size=0), "Arrow payload batch size must be positive"),
         (ComputeConfig(output_writer_thread_count=0), "Output writer thread count must be positive"),
         (ComputeConfig(output_writer_queue_depth=0), "Output writer queue depth must be positive"),
     ],
@@ -176,7 +175,6 @@ def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalizati
     mock_configure_jax_device.assert_called_once_with(Device.CPU)
     assert mock_iterator.call_args.kwargs["committed_chunk_identifiers"] == {3}
     mock_persist_chunked_results.assert_called_once()
-    assert mock_persist_chunked_results.call_args.kwargs["payload_batch_size"] == api.DEFAULT_ARROW_PAYLOAD_BATCH_SIZE
     assert (
         mock_persist_chunked_results.call_args.kwargs["writer_thread_count"] == api.output.DEFAULT_WRITER_THREAD_COUNT
     )

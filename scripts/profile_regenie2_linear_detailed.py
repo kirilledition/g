@@ -87,7 +87,6 @@ class Regenie2DetailedProfileSummary:
     variant_limit: int | None
     prefetch_chunks: int
     warmup_pass_count: int
-    arrow_payload_batch_size: int
     output_writer_thread_count: int
     total_variants: int
     chunk_count: int
@@ -221,12 +220,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="Number of unprofiled warmup runs before timed profiling.",
-    )
-    argument_parser.add_argument(
-        "--arrow-payload-batch-size",
-        type=int,
-        default=1,
-        help="Number of REGENIE output chunks to batch per write.",
     )
     argument_parser.add_argument(
         "--output-writer-thread-count",
@@ -528,11 +521,6 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
     )
     wrap_module_function(
         engine_module,
-        "build_chunk_payload",
-        build_timed_function("build_chunk_payload"),
-    )
-    wrap_module_function(
-        engine_module,
         "split_dosage_genotype_chunk_by_chromosome",
         build_timed_function("split_chunk_by_chromosome"),
     )
@@ -553,33 +541,8 @@ def install_timing_instrumentation() -> TimingInstrumentationHandle:
     )
     wrap_module_function(
         output_module,
-        "build_output_frame_from_payload_batch",
-        build_timed_function("build_output_frame_from_payload_batch"),
-    )
-    wrap_module_function(
-        output_module,
-        "build_low_cardinality_output_series",
-        build_timed_function("build_low_cardinality_output_series"),
-    )
-    wrap_module_function(
-        output_module,
-        "build_high_cardinality_output_series",
-        build_timed_function("build_high_cardinality_output_series"),
-    )
-    wrap_module_function(
-        output_module,
-        "build_numeric_or_boolean_output_series",
-        build_timed_function("build_numeric_or_boolean_output_series"),
-    )
-    wrap_module_function(
-        output_module,
-        "build_chunk_write_payload_batch",
-        build_timed_function("build_chunk_write_payload_batch"),
-    )
-    wrap_module_function(
-        output_module,
-        "enqueue_chunk_payload_batch",
-        build_timed_function("enqueue_chunk_payload_batch"),
+        "write_regenie2_chunk",
+        build_timed_function("write_regenie2_chunk"),
     )
     wrap_module_function(
         output_module,
@@ -812,7 +775,6 @@ def run_profiled_regenie2_linear(
                     prefetch_chunks=arguments.prefetch_chunks,
                     output_run_directory=report_paths["output_run_directory"],
                     finalize_parquet=True,
-                    arrow_payload_batch_size=arguments.arrow_payload_batch_size,
                     output_writer_thread_count=arguments.output_writer_thread_count,
                 ),
             )
@@ -852,7 +814,6 @@ def run_warmup_passes(arguments: argparse.Namespace) -> None:
                 prefetch_chunks=arguments.prefetch_chunks,
                 output_run_directory=warmup_output_root,
                 finalize_parquet=True,
-                arrow_payload_batch_size=arguments.arrow_payload_batch_size,
                 output_writer_thread_count=arguments.output_writer_thread_count,
             ),
         )
@@ -927,7 +888,6 @@ def main() -> None:
         variant_limit=arguments.variant_limit,
         prefetch_chunks=arguments.prefetch_chunks,
         warmup_pass_count=arguments.warmup_pass_count,
-        arrow_payload_batch_size=arguments.arrow_payload_batch_size,
         output_writer_thread_count=arguments.output_writer_thread_count,
         total_variants=total_variants,
         chunk_count=chunk_count,

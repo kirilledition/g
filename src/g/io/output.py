@@ -9,18 +9,15 @@ import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
+import jax
 import polars as pl
 
-from g import types
-from g.engine import payloads as engine_payloads
-from g.engine import types as engine_types
+from g import models, types
 
 if typing.TYPE_CHECKING:
     import collections.abc
 
-
-build_chunk_write_payload_batch = engine_payloads.build_chunk_write_payload_batch
+    from g.engine import types as engine_types
 
 
 logger = logging.getLogger(__name__)
@@ -29,9 +26,7 @@ logger = logging.getLogger(__name__)
 OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 DEFAULT_WRITER_QUEUE_DEPTH = 4
-DEFAULT_PAYLOAD_BATCH_SIZE = 4
 DEFAULT_WRITER_THREAD_COUNT = 8
-ChunkWritePayload = engine_types.Regenie2ChunkPayloadBatch
 
 
 @dataclass(frozen=True)
@@ -66,15 +61,6 @@ def build_chunk_file_name(chunk_identifier: int) -> str:
     return f"chunk_{chunk_identifier:09d}.arrow"
 
 
-def build_chunk_batch_file_name(chunk_write_payload: ChunkWritePayload) -> str:
-    """Build a deterministic chunk file name for one payload batch."""
-    first_chunk_identifier = chunk_write_payload.first_chunk_identifier
-    last_chunk_identifier = chunk_write_payload.last_chunk_identifier
-    if first_chunk_identifier == last_chunk_identifier:
-        return build_chunk_file_name(first_chunk_identifier)
-    return f"chunk_{first_chunk_identifier:09d}_{last_chunk_identifier:09d}.arrow"
-
-
 def read_chunk_file(chunk_file_path: Path) -> pl.DataFrame:
     """Read one persisted chunk file into memory."""
     if chunk_file_path.suffix != ".arrow":
@@ -99,18 +85,9 @@ def load_committed_chunk_identifiers_from_chunk_file(chunk_file_path: Path) -> f
 
 def scan_committed_chunk_identifiers(chunks_directory: Path) -> frozenset[int]:
     """Scan a chunks directory and return identifiers of completed chunks."""
-    if not chunks_directory.exists():
-        return frozenset()
-    committed_identifiers: set[int] = set()
-    for child_path in chunks_directory.iterdir():
-        filename_match = CHUNK_FILENAME_PATTERN.match(child_path.name)
-        if filename_match is None:
-            continue
-        if filename_match.group(2) is None:
-            committed_identifiers.add(int(filename_match.group(1)))
-            continue
-        committed_identifiers.update(load_committed_chunk_identifiers_from_chunk_file(child_path))
-    return frozenset(committed_identifiers)
+    core_module = load_backend_core()
+    chunk_identifiers = core_module.scan_committed_chunk_identifiers(str(chunks_directory))
+    return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
 
 
 def prepare_output_run(
@@ -138,36 +115,6 @@ def prepare_output_run(
     )
 
 
-def enqueue_chunk_payload_batch(
-    writer_session: typing.Any,
-    chunk_payload_batch: ChunkWritePayload,
-    chunk_file_name: str,
-    association_mode: types.AssociationMode,
-) -> None:
-    """Enqueue one chunk batch into the Rust output writer session."""
-    if association_mode not in {types.AssociationMode.REGENIE2_LINEAR, types.AssociationMode.REGENIE2_BINARY}:
-        message = f"Unsupported association mode for chunk enqueue: {association_mode}"
-        raise ValueError(message)
-    writer_session.enqueue_regenie_step2_chunk_batch(
-        chunk_file_name=chunk_file_name,
-        chunk_identifier=chunk_payload_batch.chunk_identifier,
-        variant_start_index=chunk_payload_batch.variant_start_index,
-        variant_stop_index=chunk_payload_batch.variant_stop_index,
-        chrom=list(chunk_payload_batch.chromosome),
-        genpos=chunk_payload_batch.position,
-        variant_id=list(chunk_payload_batch.variant_identifier),
-        allele0=list(chunk_payload_batch.allele_zero),
-        allele1=list(chunk_payload_batch.allele_one),
-        a1freq=chunk_payload_batch.allele_one_frequency,
-        n=chunk_payload_batch.observation_count,
-        beta=chunk_payload_batch.beta,
-        se=chunk_payload_batch.standard_error,
-        chisq=chunk_payload_batch.chi_squared,
-        log10p=chunk_payload_batch.log10_p_value,
-        extra_code=chunk_payload_batch.extra_code,
-    )
-
-
 def create_output_writer_session(
     output_run_paths: OutputRunPaths,
     association_mode: types.AssociationMode,
@@ -188,12 +135,12 @@ def create_output_writer_session(
     )
 
 
-def write_chunk_batch_to_disk(
-    chunk_payload_batch: ChunkWritePayload,
+def write_chunk_to_disk(
+    chunk_payload: engine_types.Regenie2ChunkPayload,
     chunks_directory: Path,
     association_mode: types.AssociationMode,
 ) -> None:
-    """Persist one payload batch through the Rust writer."""
+    """Persist one chunk through the Rust writer."""
     output_run_paths = OutputRunPaths(run_directory=chunks_directory.parent, chunks_directory=chunks_directory)
     writer_session = create_output_writer_session(
         output_run_paths,
@@ -202,37 +149,18 @@ def write_chunk_batch_to_disk(
         writer_queue_depth=1,
         finalize_parquet=False,
     )
+    metadata = models.VariantMetadata(
+        variant_start_index=chunk_payload.variant_start_index,
+        variant_stop_index=chunk_payload.variant_stop_index,
+        chromosome=chunk_payload.chromosome,
+        variant_identifiers=chunk_payload.variant_identifier,
+        position=chunk_payload.position,
+        allele_one=chunk_payload.allele_one,
+        allele_two=chunk_payload.allele_zero,
+    )
     try:
-        enqueue_chunk_payload_batch(
-            writer_session,
-            chunk_payload_batch,
-            build_chunk_batch_file_name(chunk_payload_batch),
-            association_mode,
-        )
-        writer_session.finish()
-    except Exception:
-        writer_session.abort()
-        raise
-
-
-def write_chunk_to_disk(
-    chunk_payload: engine_types.Regenie2ChunkPayload,
-    chunks_directory: Path,
-    association_mode: types.AssociationMode,
-) -> None:
-    """Persist one chunk through the Rust writer."""
-    write_chunk_batch_to_disk(
-        engine_types.Regenie2ChunkPayloadBatch(
-            first_chunk_identifier=chunk_payload.chunk_identifier,
-            last_chunk_identifier=chunk_payload.chunk_identifier,
-            chunk_identifier=np.full(len(chunk_payload.position), chunk_payload.chunk_identifier, dtype=np.int64),
-            variant_start_index=np.full(len(chunk_payload.position), chunk_payload.variant_start_index, dtype=np.int64),
-            variant_stop_index=np.full(len(chunk_payload.position), chunk_payload.variant_stop_index, dtype=np.int64),
-            chromosome=tuple(chunk_payload.chromosome.tolist()),
-            position=chunk_payload.position,
-            variant_identifier=tuple(chunk_payload.variant_identifier.tolist()),
-            allele_zero=tuple(chunk_payload.allele_zero.tolist()),
-            allele_one=tuple(chunk_payload.allele_one.tolist()),
+        writer_session.write_regenie2_chunk(
+            metadata=metadata,
             allele_one_frequency=chunk_payload.allele_one_frequency,
             observation_count=chunk_payload.observation_count,
             beta=chunk_payload.beta,
@@ -240,9 +168,35 @@ def write_chunk_to_disk(
             chi_squared=chunk_payload.chi_squared,
             log10_p_value=chunk_payload.log10_p_value,
             extra_code=chunk_payload.extra_code,
-        ),
-        chunks_directory,
-        association_mode,
+        )
+        writer_session.finish()
+    except Exception:
+        writer_session.abort()
+        raise
+
+
+def write_regenie2_chunk(writer_session: typing.Any, chunk_accumulator: engine_types.Regenie2ChunkAccumulator) -> None:
+    """Move one computed chunk from device memory into the Rust output sink."""
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": chunk_accumulator.allele_one_frequency,
+            "observation_count": chunk_accumulator.observation_count,
+            "beta": chunk_accumulator.beta,
+            "standard_error": chunk_accumulator.standard_error,
+            "chi_squared": chunk_accumulator.chi_squared,
+            "log10_p_value": chunk_accumulator.log10_p_value,
+            "extra_code": chunk_accumulator.extra_code,
+        }
+    )
+    writer_session.write_regenie2_chunk(
+        metadata=chunk_accumulator.metadata,
+        allele_one_frequency=host_values["allele_one_frequency"],
+        observation_count=host_values["observation_count"],
+        beta=host_values["beta"],
+        standard_error=host_values["standard_error"],
+        chi_squared=host_values["chi_squared"],
+        log10_p_value=host_values["log10_p_value"],
+        extra_code=host_values["extra_code"],
     )
 
 
@@ -254,14 +208,10 @@ def persist_chunked_results(
     finalize_parquet: bool = False,
     writer_thread_count: int = DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = DEFAULT_WRITER_QUEUE_DEPTH,
-    payload_batch_size: int = DEFAULT_PAYLOAD_BATCH_SIZE,
 ) -> Path | None:
     """Persist chunked results through the native Rust writer."""
     if writer_thread_count < 1:
         message = "Writer thread count must be at least 1."
-        raise ValueError(message)
-    if payload_batch_size <= 0:
-        message = "Payload batch size must be at least 1."
         raise ValueError(message)
     writer_session = create_output_writer_session(
         output_run_paths,
@@ -271,26 +221,8 @@ def persist_chunked_results(
         finalize_parquet=finalize_parquet,
     )
     try:
-        chunk_accumulator_batch: list[engine_types.Regenie2ChunkAccumulator] = []
         for chunk_accumulator in frame_iterator:
-            chunk_accumulator_batch.append(chunk_accumulator)
-            if len(chunk_accumulator_batch) >= payload_batch_size:
-                chunk_payload_batch = engine_payloads.build_chunk_write_payload_batch(chunk_accumulator_batch)
-                enqueue_chunk_payload_batch(
-                    writer_session,
-                    chunk_payload_batch,
-                    build_chunk_batch_file_name(chunk_payload_batch),
-                    association_mode,
-                )
-                chunk_accumulator_batch.clear()
-        if chunk_accumulator_batch:
-            chunk_payload_batch = engine_payloads.build_chunk_write_payload_batch(chunk_accumulator_batch)
-            enqueue_chunk_payload_batch(
-                writer_session,
-                chunk_payload_batch,
-                build_chunk_batch_file_name(chunk_payload_batch),
-                association_mode,
-            )
+            write_regenie2_chunk(writer_session, chunk_accumulator)
         final_parquet_path = writer_session.finish()
     except Exception:
         writer_session.abort()

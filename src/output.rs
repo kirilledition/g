@@ -1,27 +1,31 @@
 #![allow(clippy::needless_pass_by_value)]
 
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
 use arrow::array::{
-    ArrayRef, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray, StringDictionaryBuilder, new_null_array,
+    Array, ArrayRef, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray, StringDictionaryBuilder,
+    new_null_array,
 };
 use arrow::datatypes::{DataType, Field, Int8Type, Int32Type, Schema};
 use arrow::ipc::CompressionType;
-use arrow::ipc::reader::FileReader;
+use arrow::ipc::reader::FileReader as ArrowFileReader;
 use arrow::ipc::writer::{FileWriter, IpcWriteOptions};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use numpy::{PyReadonlyArray1, PyUntypedArrayMethods};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
+use parquet::format::KeyValue;
 use parquet::schema::types::ColumnPath;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
+const REGENIE_STEP2_CHUNKS_PER_ARROW_FILE: usize = 4;
 
 #[derive(Clone)]
 struct RustOutputWriterConfig {
@@ -31,12 +35,10 @@ struct RustOutputWriterConfig {
     finalize_parquet: bool,
 }
 
-#[derive(Clone)]
-struct RegenieStep2ChunkWriteJob {
-    chunk_file_name: String,
-    chunk_identifier: Vec<i64>,
-    variant_start_index: Vec<i64>,
-    variant_stop_index: Vec<i64>,
+struct RegenieStep2ChunkJob {
+    chunk_identifier: i64,
+    variant_start_index: i64,
+    variant_stop_index: i64,
     chrom: Vec<String>,
     genpos: Vec<i64>,
     id: Vec<String>,
@@ -51,18 +53,29 @@ struct RegenieStep2ChunkWriteJob {
     extra_code: Option<Vec<i32>>,
 }
 
+struct RegenieStep2ChunkWriteBatch {
+    chunk_file_name: String,
+    chunks: Vec<RegenieStep2ChunkJob>,
+}
+
+enum OutputCoordinatorJob {
+    RegenieStep2(Box<RegenieStep2ChunkJob>),
+    Finish,
+    Abort,
+}
+
 enum OutputWriteJob {
-    RegenieStep2(Box<RegenieStep2ChunkWriteJob>),
+    RegenieStep2(Box<RegenieStep2ChunkWriteBatch>),
     Shutdown,
 }
 
 #[pyclass]
 pub struct PyOutputWriterSession {
-    sender: Mutex<Option<Sender<OutputWriteJob>>>,
+    sender: Mutex<Option<Sender<OutputCoordinatorJob>>>,
+    coordinator_handle: Mutex<Option<JoinHandle<()>>>,
     worker_handles: Mutex<Vec<JoinHandle<()>>>,
     worker_errors: Arc<Mutex<Vec<String>>>,
     config: RustOutputWriterConfig,
-    worker_thread_count: usize,
 }
 
 #[pymethods]
@@ -87,44 +100,41 @@ impl PyOutputWriterSession {
             finalize_parquet,
         };
         let (sender, receiver) = bounded(writer_queue_depth.max(1));
+        let (writer_sender, writer_receiver) = bounded(writer_queue_depth.max(1));
         let worker_errors = Arc::new(Mutex::new(Vec::new()));
         let mut worker_handles = Vec::with_capacity(writer_thread_count);
         for _ in 0..writer_thread_count {
-            let receiver_clone = receiver.clone();
+            let receiver_clone = writer_receiver.clone();
             let config_clone = config.clone();
             let worker_errors_clone = Arc::clone(&worker_errors);
             worker_handles.push(std::thread::spawn(move || {
                 run_output_writer_worker(receiver_clone, config_clone, worker_errors_clone);
             }));
         }
+        let coordinator_worker_errors = Arc::clone(&worker_errors);
+        let coordinator_handle = std::thread::spawn(move || {
+            run_output_writer_coordinator(receiver, writer_sender, writer_thread_count, coordinator_worker_errors);
+        });
         Ok(Self {
             sender: Mutex::new(Some(sender)),
+            coordinator_handle: Mutex::new(Some(coordinator_handle)),
             worker_handles: Mutex::new(worker_handles),
             worker_errors,
             config,
-            worker_thread_count: writer_thread_count,
         })
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (chunk_file_name, chunk_identifier, variant_start_index, variant_stop_index, chrom, genpos, variant_id, allele0, allele1, a1freq, n, beta, se, chisq, log10p, extra_code=None))]
-    fn enqueue_regenie_step2_chunk_batch(
+    #[pyo3(signature = (metadata, allele_one_frequency, observation_count, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
+    fn write_regenie2_chunk(
         &self,
-        chunk_file_name: String,
-        chunk_identifier: PyReadonlyArray1<'_, i64>,
-        variant_start_index: PyReadonlyArray1<'_, i64>,
-        variant_stop_index: PyReadonlyArray1<'_, i64>,
-        chrom: Vec<String>,
-        genpos: PyReadonlyArray1<'_, i64>,
-        variant_id: Vec<String>,
-        allele0: Vec<String>,
-        allele1: Vec<String>,
-        a1freq: PyReadonlyArray1<'_, f32>,
-        n: PyReadonlyArray1<'_, i32>,
+        metadata: &Bound<'_, PyAny>,
+        allele_one_frequency: PyReadonlyArray1<'_, f32>,
+        observation_count: PyReadonlyArray1<'_, i32>,
         beta: PyReadonlyArray1<'_, f32>,
-        se: PyReadonlyArray1<'_, f32>,
-        chisq: PyReadonlyArray1<'_, f32>,
-        log10p: PyReadonlyArray1<'_, f32>,
+        standard_error: PyReadonlyArray1<'_, f32>,
+        chi_squared: PyReadonlyArray1<'_, f32>,
+        log10_p_value: PyReadonlyArray1<'_, f32>,
         extra_code: Option<PyReadonlyArray1<'_, i32>>,
     ) -> PyResult<()> {
         if self.config.association_mode != "regenie2_linear" && self.config.association_mode != "regenie2_binary" {
@@ -132,39 +142,48 @@ impl PyOutputWriterSession {
                 "Rust output backend only supports REGENIE step 2 quantitative and binary output.",
             ));
         }
-        let row_count = genpos.len();
+        let variant_start_index = metadata.getattr("variant_start_index")?.extract::<i64>()?;
+        let variant_stop_index = metadata.getattr("variant_stop_index")?.extract::<i64>()?;
+        let chromosome = metadata.getattr("chromosome")?.call_method0("tolist")?.extract::<Vec<String>>()?;
+        let position_object = metadata.getattr("position")?;
+        let position = position_object.extract::<PyReadonlyArray1<'_, i64>>()?;
+        let variant_identifier =
+            metadata.getattr("variant_identifiers")?.call_method0("tolist")?.extract::<Vec<String>>()?;
+        let allele_one = metadata.getattr("allele_one")?.call_method0("tolist")?.extract::<Vec<String>>()?;
+        let allele_zero = metadata.getattr("allele_two")?.call_method0("tolist")?.extract::<Vec<String>>()?;
+
+        let row_count = position.len();
         let observed_lengths = [
-            chunk_identifier.len(),
-            variant_start_index.len(),
-            variant_stop_index.len(),
-            chrom.len(),
-            variant_id.len(),
-            allele0.len(),
-            allele1.len(),
-            a1freq.len(),
-            n.len(),
+            chromosome.len(),
+            variant_identifier.len(),
+            allele_zero.len(),
+            allele_one.len(),
+            allele_one_frequency.len(),
+            observation_count.len(),
             beta.len(),
-            se.len(),
-            chisq.len(),
-            log10p.len(),
+            standard_error.len(),
+            chi_squared.len(),
+            log10_p_value.len(),
         ];
         validate_column_lengths(row_count, observed_lengths.as_slice())?;
-        let job = RegenieStep2ChunkWriteJob {
-            chunk_file_name,
-            chunk_identifier: chunk_identifier.as_slice()?.to_vec(),
-            variant_start_index: variant_start_index.as_slice()?.to_vec(),
-            variant_stop_index: variant_stop_index.as_slice()?.to_vec(),
-            chrom,
-            genpos: genpos.as_slice()?.to_vec(),
-            id: variant_id,
-            allele0,
-            allele1,
-            a1freq: a1freq.as_slice()?.to_vec(),
-            n: n.as_slice()?.to_vec(),
+        if let Some(extra_code_values) = extra_code.as_ref() {
+            validate_column_lengths(row_count, &[extra_code_values.len()])?;
+        }
+        let job = RegenieStep2ChunkJob {
+            chunk_identifier: variant_start_index,
+            variant_start_index,
+            variant_stop_index,
+            chrom: chromosome,
+            genpos: position.as_slice()?.to_vec(),
+            id: variant_identifier,
+            allele0: allele_zero,
+            allele1: allele_one,
+            a1freq: allele_one_frequency.as_slice()?.to_vec(),
+            n: observation_count.as_slice()?.to_vec(),
             beta: beta.as_slice()?.to_vec(),
-            se: se.as_slice()?.to_vec(),
-            chisq: chisq.as_slice()?.to_vec(),
-            log10p: log10p.as_slice()?.to_vec(),
+            se: standard_error.as_slice()?.to_vec(),
+            chisq: chi_squared.as_slice()?.to_vec(),
+            log10p: log10_p_value.as_slice()?.to_vec(),
             extra_code: extra_code
                 .map(|extra_code_array| extra_code_array.as_slice().map(<[i32]>::to_vec))
                 .transpose()?,
@@ -176,13 +195,14 @@ impl PyOutputWriterSession {
             .as_ref()
             .ok_or_else(|| PyRuntimeError::new_err("Rust output writer session is already closed."))?;
         sender
-            .send(OutputWriteJob::RegenieStep2(Box::new(job)))
+            .send(OutputCoordinatorJob::RegenieStep2(Box::new(job)))
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(())
     }
 
     fn finish(&self) -> PyResult<Option<String>> {
-        close_writer_sender(&self.sender, self.worker_thread_count)?;
+        close_writer_sender(&self.sender, OutputCoordinatorJob::Finish)?;
+        join_coordinator_thread(&self.coordinator_handle)?;
         join_writer_threads(&self.worker_handles)?;
         self.raise_if_worker_failed()?;
         if !self.config.finalize_parquet {
@@ -198,7 +218,8 @@ impl PyOutputWriterSession {
     }
 
     fn abort(&self) -> PyResult<()> {
-        close_writer_sender(&self.sender, self.worker_thread_count)?;
+        close_writer_sender(&self.sender, OutputCoordinatorJob::Abort)?;
+        join_coordinator_thread(&self.coordinator_handle)?;
         join_writer_threads(&self.worker_handles)?;
         Ok(())
     }
@@ -217,6 +238,13 @@ pub fn finalize_output_run_chunks(
     Ok(final_parquet_path.display().to_string())
 }
 
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::missing_errors_doc)]
+pub fn scan_committed_chunk_identifiers(chunks_directory: String) -> PyResult<Vec<i64>> {
+    scan_committed_chunk_identifiers_from_arrow_files(Path::new(&chunks_directory))
+}
+
 impl PyOutputWriterSession {
     fn raise_if_worker_failed(&self) -> PyResult<()> {
         let worker_errors = self
@@ -230,13 +258,24 @@ impl PyOutputWriterSession {
     }
 }
 
-fn close_writer_sender(sender: &Mutex<Option<Sender<OutputWriteJob>>>, worker_thread_count: usize) -> PyResult<()> {
+fn close_writer_sender(
+    sender: &Mutex<Option<Sender<OutputCoordinatorJob>>>,
+    close_job: OutputCoordinatorJob,
+) -> PyResult<()> {
     let mut sender_guard =
         sender.lock().map_err(|_| PyRuntimeError::new_err("Rust output writer sender lock was poisoned."))?;
     if let Some(active_sender) = sender_guard.take() {
-        for _ in 0..worker_thread_count {
-            active_sender.send(OutputWriteJob::Shutdown).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        }
+        active_sender.send(close_job).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    }
+    Ok(())
+}
+
+fn join_coordinator_thread(coordinator_handle: &Mutex<Option<JoinHandle<()>>>) -> PyResult<()> {
+    let mut coordinator_handle_guard = coordinator_handle
+        .lock()
+        .map_err(|_| PyRuntimeError::new_err("Rust output writer coordinator handle lock was poisoned."))?;
+    if let Some(handle) = coordinator_handle_guard.take() {
+        handle.join().map_err(|_| PyRuntimeError::new_err("Rust output writer coordinator thread panicked."))?;
     }
     Ok(())
 }
@@ -257,6 +296,62 @@ fn validate_column_lengths(expected_row_count: usize, observed_lengths: &[usize]
     Err(PyValueError::new_err("Rust output writer batch column lengths do not all match the expected row count."))
 }
 
+fn run_output_writer_coordinator(
+    receiver: Receiver<OutputCoordinatorJob>,
+    writer_sender: Sender<OutputWriteJob>,
+    writer_thread_count: usize,
+    worker_errors: Arc<Mutex<Vec<String>>>,
+) {
+    let mut pending_chunks = Vec::with_capacity(REGENIE_STEP2_CHUNKS_PER_ARROW_FILE);
+    while let Ok(job) = receiver.recv() {
+        match job {
+            OutputCoordinatorJob::RegenieStep2(chunk_job) => {
+                pending_chunks.push(*chunk_job);
+                if pending_chunks.len() >= REGENIE_STEP2_CHUNKS_PER_ARROW_FILE
+                    && flush_pending_regenie_step2_chunks(&writer_sender, &mut pending_chunks, &worker_errors).is_err()
+                {
+                    break;
+                }
+            }
+            OutputCoordinatorJob::Finish => {
+                let _ = flush_pending_regenie_step2_chunks(&writer_sender, &mut pending_chunks, &worker_errors);
+                break;
+            }
+            OutputCoordinatorJob::Abort => break,
+        }
+    }
+    for _ in 0..writer_thread_count {
+        if let Err(error) = writer_sender.send(OutputWriteJob::Shutdown) {
+            push_worker_error(&worker_errors, error.to_string());
+            return;
+        }
+    }
+}
+
+fn flush_pending_regenie_step2_chunks(
+    writer_sender: &Sender<OutputWriteJob>,
+    pending_chunks: &mut Vec<RegenieStep2ChunkJob>,
+    worker_errors: &Arc<Mutex<Vec<String>>>,
+) -> Result<(), ()> {
+    if pending_chunks.is_empty() {
+        return Ok(());
+    }
+    let first_chunk_identifier = pending_chunks.first().map_or(0, |chunk_job| chunk_job.chunk_identifier);
+    let last_chunk_identifier =
+        pending_chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_identifier);
+    let chunk_file_name = build_chunk_file_name(first_chunk_identifier, last_chunk_identifier);
+    let write_batch = RegenieStep2ChunkWriteBatch { chunk_file_name, chunks: std::mem::take(pending_chunks) };
+    writer_sender.send(OutputWriteJob::RegenieStep2(Box::new(write_batch))).map_err(|error| {
+        push_worker_error(worker_errors, error.to_string());
+    })
+}
+
+fn push_worker_error(worker_errors: &Arc<Mutex<Vec<String>>>, error: String) {
+    if let Ok(mut worker_errors_guard) = worker_errors.lock() {
+        worker_errors_guard.push(error);
+    }
+}
+
 fn run_output_writer_worker(
     receiver: Receiver<OutputWriteJob>,
     config: RustOutputWriterConfig,
@@ -270,9 +365,7 @@ fn run_output_writer_worker(
             OutputWriteJob::Shutdown => return,
         };
         if let Err(error) = write_result {
-            if let Ok(mut worker_errors_guard) = worker_errors.lock() {
-                worker_errors_guard.push(error.clone());
-            }
+            push_worker_error(&worker_errors, error);
             return;
         }
     }
@@ -280,7 +373,7 @@ fn run_output_writer_worker(
 
 fn write_regenie_step2_chunk_job(
     config: &RustOutputWriterConfig,
-    job: RegenieStep2ChunkWriteJob,
+    job: RegenieStep2ChunkWriteBatch,
 ) -> Result<(), String> {
     let chunk_file_path = config.chunks_directory.join(&job.chunk_file_name);
     let temporary_chunk_file_path = chunk_file_path.with_extension("arrow.tmp");
@@ -290,27 +383,73 @@ fn write_regenie_step2_chunk_job(
     Ok(())
 }
 
-fn build_regenie_step2_record_batch(job: RegenieStep2ChunkWriteJob) -> Result<RecordBatch, String> {
+fn build_chunk_file_name(first_chunk_identifier: i64, last_chunk_identifier: i64) -> String {
+    if first_chunk_identifier == last_chunk_identifier {
+        return format!("chunk_{first_chunk_identifier:09}.arrow");
+    }
+    format!("chunk_{first_chunk_identifier:09}_{last_chunk_identifier:09}.arrow")
+}
+
+fn build_regenie_step2_record_batch(job: RegenieStep2ChunkWriteBatch) -> Result<RecordBatch, String> {
     let schema = get_regenie_step2_chunk_schema();
-    let row_count = job.genpos.len();
+    let row_count = job.chunks.iter().map(|chunk_job| chunk_job.genpos.len()).sum();
+    let mut chunk_identifier = Vec::with_capacity(row_count);
+    let mut variant_start_index = Vec::with_capacity(row_count);
+    let mut variant_stop_index = Vec::with_capacity(row_count);
+    let mut chrom = Vec::with_capacity(row_count);
+    let mut genpos = Vec::with_capacity(row_count);
+    let mut id = Vec::with_capacity(row_count);
+    let mut allele0 = Vec::with_capacity(row_count);
+    let mut allele1 = Vec::with_capacity(row_count);
+    let mut a1freq = Vec::with_capacity(row_count);
+    let mut n = Vec::with_capacity(row_count);
+    let mut beta = Vec::with_capacity(row_count);
+    let mut se = Vec::with_capacity(row_count);
+    let mut chisq = Vec::with_capacity(row_count);
+    let mut log10p = Vec::with_capacity(row_count);
+    let mut extra_code = Vec::with_capacity(row_count);
+
+    for chunk_job in job.chunks {
+        let chunk_row_count = chunk_job.genpos.len();
+        chunk_identifier.extend(std::iter::repeat_n(chunk_job.chunk_identifier, chunk_row_count));
+        variant_start_index.extend(std::iter::repeat_n(chunk_job.variant_start_index, chunk_row_count));
+        variant_stop_index.extend(std::iter::repeat_n(chunk_job.variant_stop_index, chunk_row_count));
+        chrom.extend(chunk_job.chrom);
+        genpos.extend(chunk_job.genpos);
+        id.extend(chunk_job.id);
+        allele0.extend(chunk_job.allele0);
+        allele1.extend(chunk_job.allele1);
+        a1freq.extend(chunk_job.a1freq);
+        n.extend(chunk_job.n);
+        beta.extend(chunk_job.beta);
+        se.extend(chunk_job.se);
+        chisq.extend(chunk_job.chisq);
+        log10p.extend(chunk_job.log10p);
+        match chunk_job.extra_code {
+            None => extra_code.extend(std::iter::repeat_n(None, chunk_row_count)),
+            Some(extra_code_values) => {
+                extra_code.extend(extra_code_values.into_iter().map(Some));
+            }
+        }
+    }
     let columns: Vec<ArrayRef> = vec![
-        Arc::new(Int64Array::from(job.chunk_identifier)),
-        Arc::new(Int64Array::from(job.variant_start_index)),
-        Arc::new(Int64Array::from(job.variant_stop_index)),
-        Arc::new(build_dictionary_string_array(&job.chrom)?),
-        Arc::new(Int64Array::from(job.genpos)),
-        Arc::new(StringArray::from(job.id)),
-        Arc::new(build_dictionary_string_array(&job.allele0)?),
-        Arc::new(build_dictionary_string_array(&job.allele1)?),
-        Arc::new(Float32Array::from(job.a1freq)),
+        Arc::new(Int64Array::from(chunk_identifier)),
+        Arc::new(Int64Array::from(variant_start_index)),
+        Arc::new(Int64Array::from(variant_stop_index)),
+        Arc::new(build_dictionary_string_array(&chrom)?),
+        Arc::new(Int64Array::from(genpos)),
+        Arc::new(StringArray::from(id)),
+        Arc::new(build_dictionary_string_array(&allele0)?),
+        Arc::new(build_dictionary_string_array(&allele1)?),
+        Arc::new(Float32Array::from(a1freq)),
         new_null_array(&DataType::Float32, row_count),
-        Arc::new(Int32Array::from(job.n)),
+        Arc::new(Int32Array::from(n)),
         Arc::new(build_constant_dictionary_string_array(row_count, "ADD")?),
-        Arc::new(Float32Array::from(job.beta)),
-        Arc::new(Float32Array::from(job.se)),
-        Arc::new(Float32Array::from(job.chisq)),
-        Arc::new(Float32Array::from(job.log10p)),
-        Arc::new(build_extra_string_array(job.extra_code, row_count)?),
+        Arc::new(Float32Array::from(beta)),
+        Arc::new(Float32Array::from(se)),
+        Arc::new(Float32Array::from(chisq)),
+        Arc::new(Float32Array::from(log10p)),
+        Arc::new(build_extra_string_array(extra_code)?),
     ];
     RecordBatch::try_new(Arc::clone(schema), columns).map_err(|error| error.to_string())
 }
@@ -363,30 +502,15 @@ fn build_constant_dictionary_string_array(
     Ok(builder.finish())
 }
 
-fn build_extra_string_array(extra_code: Option<Vec<i32>>, row_count: usize) -> Result<StringArray, String> {
-    let mut values: Vec<Option<&str>> = Vec::with_capacity(row_count);
-    match extra_code {
-        None => {
-            for _ in 0..row_count {
-                values.push(None);
-            }
-        }
-        Some(extra_code_values) => {
-            if extra_code_values.len() != row_count {
-                return Err(format!(
-                    "Rust output writer extra-code length {} did not match row count {row_count}.",
-                    extra_code_values.len(),
-                ));
-            }
-            for extra_code_value in extra_code_values {
-                match extra_code_value {
-                    0 => values.push(None),
-                    1 => values.push(Some("FIRTH")),
-                    2 => values.push(Some("SPA")),
-                    3 => values.push(Some("TEST_FAIL")),
-                    _ => return Err(format!("Unsupported REGENIE step 2 extra code: {extra_code_value}")),
-                }
-            }
+fn build_extra_string_array(extra_code: Vec<Option<i32>>) -> Result<StringArray, String> {
+    let mut values: Vec<Option<&str>> = Vec::with_capacity(extra_code.len());
+    for maybe_extra_code_value in extra_code {
+        match maybe_extra_code_value {
+            None | Some(0) => values.push(None),
+            Some(1) => values.push(Some("FIRTH")),
+            Some(2) => values.push(Some("SPA")),
+            Some(3) => values.push(Some("TEST_FAIL")),
+            Some(extra_code_value) => return Err(format!("Unsupported REGENIE step 2 extra code: {extra_code_value}")),
         }
     }
     Ok(StringArray::from(values))
@@ -434,17 +558,20 @@ fn write_final_parquet_from_chunk_files(
     let final_schema = Arc::clone(get_regenie_step2_final_schema());
     let mut parquet_writer = ArrowWriter::try_new(output_file, final_schema, Some(writer_properties))
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    let chunk_file_count = chunk_file_paths.len();
+    let mut output_row_count = 0usize;
     for chunk_file_path in chunk_file_paths {
         let input_file = File::open(&chunk_file_path).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         let file_reader =
-            FileReader::try_new(input_file, None).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            ArrowFileReader::try_new(input_file, None).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         for maybe_batch in file_reader {
             let batch = maybe_batch.map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-            parquet_writer
-                .write(&project_chunk_batch_to_final_batch(batch)?)
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            let projected_batch = project_chunk_batch_to_final_batch(batch)?;
+            output_row_count += projected_batch.num_rows();
+            parquet_writer.write(&projected_batch).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         }
     }
+    append_output_footer_metadata(&mut parquet_writer, association_mode, chunk_file_count, output_row_count);
     parquet_writer.close().map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
     Ok(())
 }
@@ -466,6 +593,24 @@ fn build_regenie_step2_parquet_writer_properties() -> WriterProperties {
 fn get_regenie_step2_parquet_writer_properties() -> &'static WriterProperties {
     static REGENIE_STEP2_PARQUET_WRITER_PROPERTIES: OnceLock<WriterProperties> = OnceLock::new();
     REGENIE_STEP2_PARQUET_WRITER_PROPERTIES.get_or_init(build_regenie_step2_parquet_writer_properties)
+}
+
+fn append_output_footer_metadata(
+    parquet_writer: &mut ArrowWriter<File>,
+    association_mode: &str,
+    chunk_file_count: usize,
+    row_count: usize,
+) {
+    let metadata_values = [
+        ("g.output.schema_version", "1".to_string()),
+        ("g.output.association_mode", association_mode.to_string()),
+        ("g.output.chunk_file_count", chunk_file_count.to_string()),
+        ("g.output.row_count", row_count.to_string()),
+        ("g.output.writer", "rust".to_string()),
+    ];
+    for (key, value) in metadata_values {
+        parquet_writer.append_key_value_metadata(KeyValue { key: key.to_string(), value: Some(value) });
+    }
 }
 
 fn build_regenie_step2_final_schema() -> Schema {
@@ -506,4 +651,168 @@ fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> PyResult<RecordBatc
         .ok_or_else(|| PyRuntimeError::new_err("Rust output writer could not project chunk batch to final schema."))?;
     RecordBatch::try_new(Arc::clone(get_regenie_step2_final_schema()), projected_columns)
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+fn scan_committed_chunk_identifiers_from_arrow_files(chunks_directory: &Path) -> PyResult<Vec<i64>> {
+    if !chunks_directory.exists() {
+        return Ok(Vec::new());
+    }
+    let mut committed_identifiers = BTreeSet::new();
+    let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+        .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
+        .filter(|chunk_file_path| chunk_file_path.extension().is_some_and(|extension| extension == "arrow"))
+        .collect::<Vec<_>>();
+    chunk_file_paths.sort();
+    for chunk_file_path in chunk_file_paths {
+        if let Some((first_chunk_identifier, None)) = parse_chunk_file_name(&chunk_file_path) {
+            committed_identifiers.insert(first_chunk_identifier);
+            continue;
+        }
+        let input_file = File::open(&chunk_file_path).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let file_reader =
+            ArrowFileReader::try_new(input_file, None).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        for maybe_batch in file_reader {
+            let batch = maybe_batch.map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            let chunk_identifier_array = batch
+                .column_by_name("chunk_identifier")
+                .and_then(|column| column.as_any().downcast_ref::<Int64Array>())
+                .ok_or_else(|| {
+                    PyRuntimeError::new_err("Rust output writer could not read chunk identifiers from Arrow chunk.")
+                })?;
+            for row_index in 0..chunk_identifier_array.len() {
+                if !chunk_identifier_array.is_null(row_index) {
+                    committed_identifiers.insert(chunk_identifier_array.value(row_index));
+                }
+            }
+        }
+    }
+    Ok(committed_identifiers.into_iter().collect())
+}
+
+fn parse_chunk_file_name(chunk_file_path: &Path) -> Option<(i64, Option<i64>)> {
+    let file_name = chunk_file_path.file_name()?.to_str()?;
+    let chunk_name = file_name.strip_prefix("chunk_")?.strip_suffix(".arrow")?;
+    let chunk_parts = chunk_name.split('_').collect::<Vec<_>>();
+    match chunk_parts.as_slice() {
+        [first_chunk_identifier] => first_chunk_identifier.parse::<i64>().ok().map(|identifier| (identifier, None)),
+        [first_chunk_identifier, last_chunk_identifier] => {
+            first_chunk_identifier.parse::<i64>().ok().zip(last_chunk_identifier.parse::<i64>().ok().map(Some))
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use parquet::file::reader::{FileReader as ParquetFileReader, SerializedFileReader};
+
+    use super::*;
+
+    fn build_test_chunk(chunk_identifier: i64, extra_code: Option<Vec<i32>>) -> RegenieStep2ChunkJob {
+        RegenieStep2ChunkJob {
+            chunk_identifier,
+            variant_start_index: chunk_identifier,
+            variant_stop_index: chunk_identifier + 1,
+            chrom: vec!["22".to_string()],
+            genpos: vec![100 + chunk_identifier],
+            id: vec![format!("variant{chunk_identifier}")],
+            allele0: vec!["G".to_string()],
+            allele1: vec!["A".to_string()],
+            a1freq: vec![0.5],
+            n: vec![100],
+            beta: vec![0.1],
+            se: vec![0.01],
+            chisq: vec![10.0],
+            log10p: vec![5.0],
+            extra_code,
+        }
+    }
+
+    fn build_test_batch(chunks: Vec<RegenieStep2ChunkJob>) -> RegenieStep2ChunkWriteBatch {
+        let first_chunk_identifier = chunks.first().map_or(0, |chunk_job| chunk_job.chunk_identifier);
+        let last_chunk_identifier =
+            chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_identifier);
+        RegenieStep2ChunkWriteBatch {
+            chunk_file_name: build_chunk_file_name(first_chunk_identifier, last_chunk_identifier),
+            chunks,
+        }
+    }
+
+    fn create_test_directory() -> PathBuf {
+        let unique_suffix =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("system time should be after Unix epoch").as_nanos();
+        let directory_path = std::env::temp_dir().join(format!("g-output-rust-test-{unique_suffix}"));
+        std::fs::create_dir_all(&directory_path).expect("test directory should be created");
+        directory_path
+    }
+
+    #[test]
+    fn linear_record_batch_uses_shared_schema_and_null_extra() {
+        let record_batch = build_regenie_step2_record_batch(build_test_batch(vec![build_test_chunk(0, None)]))
+            .expect("linear record batch should build");
+
+        assert_eq!(record_batch.schema().fields().len(), 17);
+        assert!(record_batch.schema().field_with_name("INFO").expect("INFO field should exist").is_nullable());
+        assert!(record_batch.schema().field_with_name("EXTRA").expect("EXTRA field should exist").is_nullable());
+        assert_eq!(record_batch.num_rows(), 1);
+        assert_eq!(record_batch.column_by_name("EXTRA").expect("EXTRA column should exist").null_count(), 1);
+    }
+
+    #[test]
+    fn binary_record_batch_maps_extra_code_with_same_schema() {
+        let linear_record_batch = build_regenie_step2_record_batch(build_test_batch(vec![build_test_chunk(0, None)]))
+            .expect("linear record batch should build");
+        let binary_record_batch =
+            build_regenie_step2_record_batch(build_test_batch(vec![build_test_chunk(1, Some(vec![1]))]))
+                .expect("binary record batch should build");
+
+        assert_eq!(linear_record_batch.schema(), binary_record_batch.schema());
+        let extra_array = binary_record_batch
+            .column_by_name("EXTRA")
+            .expect("EXTRA column should exist")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("EXTRA column should be a string array");
+        assert_eq!(extra_array.value(0), "FIRTH");
+    }
+
+    #[test]
+    fn finalization_writes_footer_metadata() {
+        let run_directory = create_test_directory();
+        let chunks_directory = run_directory.join("chunks");
+        std::fs::create_dir_all(&chunks_directory).expect("chunk directory should be created");
+        let config = RustOutputWriterConfig {
+            run_directory: run_directory.clone(),
+            chunks_directory: chunks_directory.clone(),
+            association_mode: "regenie2_binary".to_string(),
+            finalize_parquet: true,
+        };
+        write_regenie_step2_chunk_job(
+            &config,
+            build_test_batch(vec![build_test_chunk(0, Some(vec![1])), build_test_chunk(1, Some(vec![0]))]),
+        )
+        .expect("chunk batch should write");
+
+        let final_parquet_path = run_directory.join("final.parquet");
+        write_final_parquet_from_chunk_files(&chunks_directory, &final_parquet_path, "regenie2_binary")
+            .expect("final parquet should write");
+
+        let parquet_file = File::open(final_parquet_path).expect("final parquet should open");
+        let parquet_reader = SerializedFileReader::new(parquet_file).expect("parquet reader should open");
+        let key_value_metadata =
+            parquet_reader.metadata().file_metadata().key_value_metadata().expect("footer metadata should exist");
+        let metadata_value = |key: &str| {
+            key_value_metadata.iter().find(|entry| entry.key == key).and_then(|entry| entry.value.as_deref())
+        };
+        assert_eq!(metadata_value("g.output.schema_version"), Some("1"));
+        assert_eq!(metadata_value("g.output.association_mode"), Some("regenie2_binary"));
+        assert_eq!(metadata_value("g.output.chunk_file_count"), Some("1"));
+        assert_eq!(metadata_value("g.output.row_count"), Some("2"));
+        assert_eq!(metadata_value("g.output.writer"), Some("rust"));
+
+        std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
+    }
 }

@@ -39,7 +39,6 @@ class BenchmarkSummary:
     device: str
     chunk_size: int
     finalize_parquet: bool
-    arrow_payload_batch_size: int
     output_writer_thread_count: int
     trial_count: int
     warmup_count: int
@@ -64,12 +63,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Finalize Arrow chunks into Parquet before finishing the trial.",
-    )
-    parser.add_argument(
-        "--arrow-payload-batch-size",
-        type=int,
-        default=api.DEFAULT_ARROW_PAYLOAD_BATCH_SIZE,
-        help="Number of REGENIE output chunks to batch per write.",
     )
     parser.add_argument(
         "--output-writer-thread-count",
@@ -97,7 +90,6 @@ def build_child_command(
     device: str,
     chunk_size: int,
     finalize_parquet: bool,
-    arrow_payload_batch_size: int,
     output_writer_thread_count: int,
 ) -> list[str]:
     """Build the child Python command for one isolated trial."""
@@ -124,7 +116,6 @@ def build_child_command(
                 device=types.Device({device!r}),
                 chunk_size={chunk_size},
                 finalize_parquet={finalize_parquet},
-                arrow_payload_batch_size={arrow_payload_batch_size},
                 output_writer_thread_count={output_writer_thread_count},
             ),
         )
@@ -164,7 +155,6 @@ def build_child_command(
         device=device,
         chunk_size=chunk_size,
         finalize_parquet="True" if finalize_parquet else "False",
-        arrow_payload_batch_size=arrow_payload_batch_size,
         output_writer_thread_count=output_writer_thread_count,
     )
     return [sys.executable, "-c", child_code]
@@ -178,13 +168,12 @@ def run_fresh_process_trial(
     device: str,
     chunk_size: int,
     finalize_parquet: bool,
-    arrow_payload_batch_size: int,
     output_writer_thread_count: int,
 ) -> TrialResult:
     """Run one isolated fresh-process trial."""
     output_prefix = output_directory / (
         f"{device}_finalize{int(finalize_parquet)}_"
-        f"chunk{chunk_size}_arrowbatch{arrow_payload_batch_size}_"
+        f"chunk{chunk_size}_"
         f"writer{output_writer_thread_count}_"
         f"trial{trial_index:02d}"
     )
@@ -194,7 +183,6 @@ def run_fresh_process_trial(
         device=device,
         chunk_size=chunk_size,
         finalize_parquet=finalize_parquet,
-        arrow_payload_batch_size=arrow_payload_batch_size,
         output_writer_thread_count=output_writer_thread_count,
     )
     child_environment = os.environ.copy()
@@ -227,7 +215,6 @@ def build_summary(
     device: str,
     chunk_size: int,
     finalize_parquet: bool,
-    arrow_payload_batch_size: int,
     output_writer_thread_count: int,
     warmup_count: int,
     trial_results: list[TrialResult],
@@ -244,7 +231,6 @@ def build_summary(
         device=device,
         chunk_size=chunk_size,
         finalize_parquet=finalize_parquet,
-        arrow_payload_batch_size=arrow_payload_batch_size,
         output_writer_thread_count=output_writer_thread_count,
         trial_count=len(trial_results),
         warmup_count=warmup_count,
@@ -274,7 +260,6 @@ def main() -> None:
             device=arguments.device,
             chunk_size=arguments.chunk_size,
             finalize_parquet=arguments.finalize_parquet,
-            arrow_payload_batch_size=arguments.arrow_payload_batch_size,
             output_writer_thread_count=arguments.output_writer_thread_count,
         )
 
@@ -286,7 +271,6 @@ def main() -> None:
             device=arguments.device,
             chunk_size=arguments.chunk_size,
             finalize_parquet=arguments.finalize_parquet,
-            arrow_payload_batch_size=arguments.arrow_payload_batch_size,
             output_writer_thread_count=arguments.output_writer_thread_count,
         )
         for trial_index in range(arguments.trials)
@@ -296,7 +280,6 @@ def main() -> None:
         device=arguments.device,
         chunk_size=arguments.chunk_size,
         finalize_parquet=arguments.finalize_parquet,
-        arrow_payload_batch_size=arguments.arrow_payload_batch_size,
         output_writer_thread_count=arguments.output_writer_thread_count,
         warmup_count=arguments.warmup_trials,
         trial_results=measured_trial_results,
@@ -304,7 +287,6 @@ def main() -> None:
     default_summary_filename = (
         f"{arguments.device}_finalize{int(arguments.finalize_parquet)}_"
         f"chunk{arguments.chunk_size}_"
-        f"arrowbatch{arguments.arrow_payload_batch_size}_"
         f"writer{arguments.output_writer_thread_count}.json"
     )
     json_summary_path = arguments.json_summary_path or (arguments.output_dir / default_summary_filename)

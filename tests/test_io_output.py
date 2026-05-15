@@ -214,7 +214,6 @@ def test_persist_chunked_results_batches_multiple_chunks_into_one_arrow_file(tmp
         frame_iterator=accumulators,
         output_run_paths=prepared_output_run.output_run_paths,
         association_mode=AssociationMode.REGENIE2_LINEAR,
-        payload_batch_size=2,
     )
 
     chunk_paths = tuple(output.iter_sorted_chunk_file_paths(prepared_output_run.output_run_paths.chunks_directory))
@@ -323,6 +322,13 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
     assert parquet_schema.names == EXPECTED_FINAL_COLUMNS
     assert parquet_schema.field("INFO").nullable
     assert parquet_schema.field("EXTRA").nullable
+    parquet_metadata = pq.ParquetFile(parquet_path).metadata.metadata
+    assert parquet_metadata is not None
+    assert parquet_metadata[b"g.output.schema_version"] == b"1"
+    assert parquet_metadata[b"g.output.association_mode"] == b"regenie2_binary"
+    assert parquet_metadata[b"g.output.chunk_file_count"] == b"1"
+    assert parquet_metadata[b"g.output.row_count"] == b"1"
+    assert parquet_metadata[b"g.output.writer"] == b"rust"
 
 
 def test_finalize_chunks_to_parquet_writes_empty_schema_when_no_chunks_exist(tmp_path: Path) -> None:
@@ -377,7 +383,6 @@ def test_persist_chunked_results_finalizes_binary_output_with_nullable_extra(tmp
         association_mode=AssociationMode.REGENIE2_BINARY,
         finalize_parquet=True,
         writer_thread_count=1,
-        payload_batch_size=2,
     )
 
     assert parquet_path is not None
