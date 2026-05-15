@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import typing
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 import polars as pl
@@ -15,7 +13,6 @@ import pytest
 
 from g import engine
 from g.io import output
-from g.models import VariantMetadata
 from g.types import AssociationMode
 
 if typing.TYPE_CHECKING:
@@ -71,36 +68,6 @@ def create_regenie_chunk_payload(
         standard_error=np.asarray([0.01], dtype=np.float32),
         chi_squared=np.asarray([10.0], dtype=np.float32),
         log10_p_value=np.asarray([5.0], dtype=np.float32),
-        extra_code=extra_code,
-    )
-
-
-def create_regenie_chunk_accumulator(
-    *,
-    chunk_identifier: int,
-    variant_stop_index: int,
-    variant_identifier: str,
-    chromosome: str = "1",
-    allele_zero: str = "C",
-    allele_one: str = "A",
-    extra_code: jax.Array | None = None,
-) -> engine.Regenie2ChunkAccumulator:
-    return engine.Regenie2ChunkAccumulator(
-        metadata=VariantMetadata(
-            variant_start_index=chunk_identifier,
-            variant_stop_index=variant_stop_index,
-            chromosome=np.asarray([chromosome]),
-            variant_identifiers=np.asarray([variant_identifier]),
-            position=np.asarray([123 + chunk_identifier], dtype=np.int64),
-            allele_one=np.asarray([allele_one]),
-            allele_two=np.asarray([allele_zero]),
-        ),
-        allele_one_frequency=jnp.asarray([0.5], dtype=jnp.float32),
-        observation_count=jnp.asarray([100], dtype=jnp.int32),
-        beta=jnp.asarray([0.1], dtype=jnp.float32),
-        standard_error=jnp.asarray([0.01], dtype=jnp.float32),
-        chi_squared=jnp.asarray([10.0], dtype=jnp.float32),
-        log10_p_value=jnp.asarray([5.0], dtype=jnp.float32),
         extra_code=extra_code,
     )
 
@@ -194,32 +161,6 @@ def test_write_binary_chunk_to_disk_maps_extra_code_to_label(tmp_path: Path) -> 
         "A",
         "ADD",
         "FIRTH",
-    )
-
-
-def test_persist_chunked_results_batches_multiple_chunks_into_one_arrow_file(tmp_path: Path) -> None:
-    prepared_output_run = output.prepare_output_run(
-        output_root=tmp_path / "output",
-        association_mode=AssociationMode.REGENIE2_LINEAR,
-        resume=False,
-    )
-    accumulators = iter(
-        [
-            create_regenie_chunk_accumulator(chunk_identifier=0, variant_stop_index=1, variant_identifier="v0"),
-            create_regenie_chunk_accumulator(chunk_identifier=1, variant_stop_index=2, variant_identifier="v1"),
-        ]
-    )
-
-    output.persist_chunked_results(
-        frame_iterator=accumulators,
-        output_run_paths=prepared_output_run.output_run_paths,
-        association_mode=AssociationMode.REGENIE2_LINEAR,
-    )
-
-    chunk_paths = tuple(output.iter_sorted_chunk_file_paths(prepared_output_run.output_run_paths.chunks_directory))
-    assert [path.name for path in chunk_paths] == ["chunk_000000000_000000001.arrow"]
-    assert output.scan_committed_chunk_identifiers(prepared_output_run.output_run_paths.chunks_directory) == frozenset(
-        {0, 1}
     )
 
 
@@ -346,46 +287,3 @@ def test_finalize_chunks_to_parquet_writes_empty_schema_when_no_chunks_exist(tmp
     parquet_frame = pl.read_parquet(parquet_path)
     assert parquet_frame.height == 0
     assert parquet_frame.columns == EXPECTED_FINAL_COLUMNS
-
-
-def test_persist_chunked_results_finalizes_binary_output_with_nullable_extra(tmp_path: Path) -> None:
-    output_run = output.prepare_output_run(
-        output_root=tmp_path / "binary_output",
-        association_mode=AssociationMode.REGENIE2_BINARY,
-        resume=False,
-    )
-    accumulators = iter(
-        [
-            create_regenie_chunk_accumulator(
-                chunk_identifier=7,
-                variant_stop_index=8,
-                variant_identifier="variant1",
-                chromosome="22",
-                allele_zero="G",
-                allele_one="A",
-                extra_code=jnp.asarray([1], dtype=jnp.int32),
-            ),
-            create_regenie_chunk_accumulator(
-                chunk_identifier=8,
-                variant_stop_index=9,
-                variant_identifier="variant2",
-                chromosome="22",
-                allele_zero="G",
-                allele_one="A",
-                extra_code=jnp.asarray([0], dtype=jnp.int32),
-            ),
-        ]
-    )
-
-    parquet_path = output.persist_chunked_results(
-        frame_iterator=accumulators,
-        output_run_paths=output_run.output_run_paths,
-        association_mode=AssociationMode.REGENIE2_BINARY,
-        finalize_parquet=True,
-        writer_thread_count=1,
-    )
-
-    assert parquet_path is not None
-    parquet_frame = pl.read_parquet(parquet_path)
-    assert parquet_frame.columns == EXPECTED_FINAL_COLUMNS
-    assert parquet_frame.get_column("EXTRA").to_list() == ["FIRTH", None]

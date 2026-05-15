@@ -33,7 +33,7 @@ def test_plan_genotype_chunks_splits_by_boundaries_and_resume_state() -> None:
 
 
 def test_preprocessed_bgen_read_fills_output_and_returns_stats() -> None:
-    reader = _core.PyBgenReader(str(HAPLOTYPES_BGEN_PATH))
+    reader = _core.BgenReader(str(HAPLOTYPES_BGEN_PATH))
     sample_indices = np.array([0, 2, 3], dtype=np.int64)
     output_array = np.empty((3, 3), dtype=np.float32, order="C")
     try:
@@ -65,7 +65,7 @@ def test_regenie2_run_engine_calls_callback_for_planned_bgen_chunks() -> None:
 
         def compute_chunk(
             self,
-            metadata: _core.PyVariantMetadata,
+            metadata: _core.VariantMetadata,
             genotype_matrix: np.ndarray,
             allele_one_frequency: np.ndarray,
             observation_count: np.ndarray,
@@ -81,7 +81,7 @@ def test_regenie2_run_engine_calls_callback_for_planned_bgen_chunks() -> None:
             assert observation_count.shape == (genotype_matrix.shape[1],)
 
     callback = RecordingCallback()
-    engine = _core.PyRegenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
+    engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
 
     processed_chunk_count = engine.run_bgen_chunks(
         np.arange(4, dtype=np.int64),
@@ -91,3 +91,36 @@ def test_regenie2_run_engine_calls_callback_for_planned_bgen_chunks() -> None:
 
     assert processed_chunk_count == 1
     assert callback.chunk_shapes == [(2, 4, 2)]
+
+
+def test_regenie_prediction_source_loads_aligned_loco_predictions(tmp_path: Path) -> None:
+    loco_path = tmp_path / "trait.loco"
+    loco_path.write_text("FID_IID 0_A 0_B 0_C\nchr22 0.1 0.2 0.3\n01 1.0 2.0 3.0\n")
+    prediction_list_path = tmp_path / "trait_pred.list"
+    prediction_list_path.write_text(f"trait {loco_path}\n")
+
+    prediction_source = _core.RegeniePredictionSource(
+        str(prediction_list_path),
+        "trait",
+        ["0", "0"],
+        ["C", "A"],
+    )
+
+    assert prediction_source.get_chromosome_predictions("22").dtype == np.float32
+    np.testing.assert_allclose(prediction_source.get_chromosome_predictions("chr22"), [0.3, 0.1], atol=1e-6)
+    np.testing.assert_allclose(prediction_source.get_chromosome_predictions("1"), [3.0, 1.0], atol=1e-6)
+
+
+def test_regenie_prediction_source_reports_missing_samples(tmp_path: Path) -> None:
+    loco_path = tmp_path / "trait.loco"
+    loco_path.write_text("FID_IID 0_A\n22 0.1\n")
+    prediction_list_path = tmp_path / "trait_pred.list"
+    prediction_list_path.write_text(f"trait {loco_path}\n")
+
+    with np.testing.assert_raises_regex(ValueError, "Target samples not found in LOCO file"):
+        _core.RegeniePredictionSource(
+            str(prediction_list_path),
+            "trait",
+            ["0"],
+            ["missing"],
+        )

@@ -1,4 +1,4 @@
-"""Opt-in Rust-driven REGENIE step 2 pipeline wrappers."""
+"""Native-driven REGENIE step 2 pipeline wrappers."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import numpy.typing as npt
 from g import _core, models, types
 from g.compute import regenie2_binary, regenie2_linear
 from g.engine import types as engine_types
-from g.io import bgen, genotype_processing, output, regenie, source
+from g.io import bgen, genotype_processing, output, source
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,15 @@ class DosageChunkWorkItem:
     genotype_matrix: npt.NDArray[np.float32]
 
 
-def build_variant_metadata(native_metadata: _core.PyVariantMetadata) -> models.VariantMetadata:
+class RegeniePredictionSourceProtocol(typing.Protocol):
+    """Native prediction source interface used by the JAX callbacks."""
+
+    def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]:
+        """Return already-aligned LOCO predictions for one chromosome."""
+        ...
+
+
+def build_variant_metadata(native_metadata: _core.VariantMetadata) -> models.VariantMetadata:
     """Convert native Rust metadata into the Python model used by compute/output code."""
     return models.VariantMetadata(
         variant_start_index=native_metadata.variant_start_index,
@@ -40,14 +48,15 @@ def build_variant_metadata(native_metadata: _core.PyVariantMetadata) -> models.V
     )
 
 
-class LinearRegenie2RustPipelineCallback:
-    """Compute/write callback used by the BGEN Rust pipeline for quantitative traits."""
+class LinearRegenie2PipelineCallback:
+    """Compute/write callback used by the native BGEN pipeline for quantitative traits."""
 
     def __init__(
         self,
         aligned_sample_data: models.AlignedSampleData,
-        prediction_source: regenie.Step1PredictionSource,
+        prediction_source: RegeniePredictionSourceProtocol,
         writer_session: typing.Any,
+        staging_depth: int = 1,
     ) -> None:
         """Initialize the callback state."""
         self.aligned_sample_data = aligned_sample_data
@@ -60,20 +69,22 @@ class LinearRegenie2RustPipelineCallback:
         self.current_chromosome: str | None = None
         self.current_chromosome_state: models.Regenie2LinearChromosomeState | None = None
         self.processed_chunk_count = 0
-        self.dosage_queue: queue.Queue[DosageChunkWorkItem | None] = queue.Queue(maxsize=2)
-        self.free_dosage_buffers: queue.Queue[npt.NDArray[np.float32]] = queue.Queue(maxsize=2)
+        self.dosage_queue_depth = max(1, staging_depth)
+        self.dosage_buffer_limit = self.dosage_queue_depth + 1
+        self.dosage_queue: queue.Queue[DosageChunkWorkItem | None] = queue.Queue(maxsize=self.dosage_queue_depth)
+        self.free_dosage_buffers: queue.Queue[npt.NDArray[np.float32]] = queue.Queue(maxsize=self.dosage_buffer_limit)
         self.dosage_buffer_count = 0
         self.worker_error: BaseException | None = None
         self.worker_thread = threading.Thread(
             target=self.consume_dosage_chunks,
-            name="regenie2-linear-rust-callback",
+            name="regenie2-linear-callback",
             daemon=True,
         )
         self.worker_thread.start()
 
     def compute_chunk(
         self,
-        metadata: _core.PyVariantMetadata,
+        metadata: _core.VariantMetadata,
         genotype_matrix: npt.NDArray[np.float32],
         allele_one_frequency: npt.NDArray[np.float32],
         observation_count: npt.NDArray[np.int32],
@@ -98,11 +109,7 @@ class LinearRegenie2RustPipelineCallback:
         """Compute one already-preprocessed chunk and write it."""
         chromosome = str(variant_metadata.chromosome[0])
         if chromosome != self.current_chromosome:
-            loco_predictions = self.prediction_source.get_chromosome_predictions(
-                chromosome=chromosome,
-                sample_family_identifiers=self.aligned_sample_data.family_identifiers,
-                sample_individual_identifiers=self.aligned_sample_data.individual_identifiers,
-            )
+            loco_predictions = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
             self.current_chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
                 self.regenie_state,
                 loco_predictions,
@@ -131,7 +138,7 @@ class LinearRegenie2RustPipelineCallback:
 
     def compute_dosage_chunk(
         self,
-        metadata: _core.PyVariantMetadata,
+        metadata: _core.VariantMetadata,
         genotype_matrix: npt.NDArray[np.float32],
     ) -> None:
         """Enqueue one Rust-provided dosage chunk for JAX processing."""
@@ -172,7 +179,7 @@ class LinearRegenie2RustPipelineCallback:
     def raise_worker_error_if_present(self) -> None:
         """Raise an asynchronous worker failure on the producer thread."""
         if self.worker_error is not None:
-            message = f"Rust pipeline callback worker failed: {self.worker_error}"
+            message = f"native pipeline callback worker failed: {self.worker_error}"
             raise RuntimeError(message) from self.worker_error
 
     def finish(self) -> None:
@@ -196,7 +203,7 @@ class LinearRegenie2RustPipelineCallback:
                 if dosage_buffer.shape == expected_shape:
                     return dosage_buffer
                 return np.empty(expected_shape, dtype=np.float32, order="C")
-            if self.dosage_buffer_count < 2:
+            if self.dosage_buffer_count < self.dosage_buffer_limit:
                 self.dosage_buffer_count += 1
                 return np.empty(expected_shape, dtype=np.float32, order="C")
             with contextlib.suppress(queue.Empty):
@@ -211,15 +218,16 @@ class LinearRegenie2RustPipelineCallback:
             self.free_dosage_buffers.put_nowait(dosage_buffer)
 
 
-class BinaryRegenie2RustPipelineCallback:
-    """Compute/write callback used by the BGEN Rust pipeline for binary traits."""
+class BinaryRegenie2PipelineCallback:
+    """Compute/write callback used by the native BGEN pipeline for binary traits."""
 
     def __init__(
         self,
         aligned_sample_data: models.AlignedSampleData,
-        prediction_source: regenie.Step1PredictionSource,
+        prediction_source: RegeniePredictionSourceProtocol,
         writer_session: typing.Any,
         correction: types.RegenieBinaryCorrection,
+        staging_depth: int = 1,
     ) -> None:
         """Initialize the callback state."""
         self.aligned_sample_data = aligned_sample_data
@@ -233,20 +241,22 @@ class BinaryRegenie2RustPipelineCallback:
         self.current_chromosome: str | None = None
         self.current_chromosome_state: models.Regenie2BinaryChromosomeState | None = None
         self.processed_chunk_count = 0
-        self.dosage_queue: queue.Queue[DosageChunkWorkItem | None] = queue.Queue(maxsize=2)
-        self.free_dosage_buffers: queue.Queue[npt.NDArray[np.float32]] = queue.Queue(maxsize=2)
+        self.dosage_queue_depth = max(1, staging_depth)
+        self.dosage_buffer_limit = self.dosage_queue_depth + 1
+        self.dosage_queue: queue.Queue[DosageChunkWorkItem | None] = queue.Queue(maxsize=self.dosage_queue_depth)
+        self.free_dosage_buffers: queue.Queue[npt.NDArray[np.float32]] = queue.Queue(maxsize=self.dosage_buffer_limit)
         self.dosage_buffer_count = 0
         self.worker_error: BaseException | None = None
         self.worker_thread = threading.Thread(
             target=self.consume_dosage_chunks,
-            name="regenie2-binary-rust-callback",
+            name="regenie2-binary-callback",
             daemon=True,
         )
         self.worker_thread.start()
 
     def compute_chunk(
         self,
-        metadata: _core.PyVariantMetadata,
+        metadata: _core.VariantMetadata,
         genotype_matrix: npt.NDArray[np.float32],
         allele_one_frequency: npt.NDArray[np.float32],
         observation_count: npt.NDArray[np.int32],
@@ -271,11 +281,7 @@ class BinaryRegenie2RustPipelineCallback:
         """Compute one already-preprocessed chunk and write it."""
         chromosome = str(variant_metadata.chromosome[0])
         if chromosome != self.current_chromosome:
-            loco_offset = self.prediction_source.get_chromosome_predictions(
-                chromosome=chromosome,
-                sample_family_identifiers=self.aligned_sample_data.family_identifiers,
-                sample_individual_identifiers=self.aligned_sample_data.individual_identifiers,
-            )
+            loco_offset = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
             self.current_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
                 self.regenie_state,
                 loco_offset,
@@ -305,7 +311,7 @@ class BinaryRegenie2RustPipelineCallback:
 
     def compute_dosage_chunk(
         self,
-        metadata: _core.PyVariantMetadata,
+        metadata: _core.VariantMetadata,
         genotype_matrix: npt.NDArray[np.float32],
     ) -> None:
         """Enqueue one Rust-provided dosage chunk for JAX processing."""
@@ -346,7 +352,7 @@ class BinaryRegenie2RustPipelineCallback:
     def raise_worker_error_if_present(self) -> None:
         """Raise an asynchronous worker failure on the producer thread."""
         if self.worker_error is not None:
-            message = f"Rust pipeline callback worker failed: {self.worker_error}"
+            message = f"native pipeline callback worker failed: {self.worker_error}"
             raise RuntimeError(message) from self.worker_error
 
     def finish(self) -> None:
@@ -370,7 +376,7 @@ class BinaryRegenie2RustPipelineCallback:
                 if dosage_buffer.shape == expected_shape:
                     return dosage_buffer
                 return np.empty(expected_shape, dtype=np.float32, order="C")
-            if self.dosage_buffer_count < 2:
+            if self.dosage_buffer_count < self.dosage_buffer_limit:
                 self.dosage_buffer_count += 1
                 return np.empty(expected_shape, dtype=np.float32, order="C")
             with contextlib.suppress(queue.Empty):
@@ -409,7 +415,7 @@ def build_chunk_accumulator(
     )
 
 
-def run_regenie2_linear_bgen_rust_pipeline(
+def run_regenie2_linear_bgen_pipeline(
     *,
     genotype_source_config: source.GenotypeSourceConfig,
     phenotype_path: Path,
@@ -426,7 +432,7 @@ def run_regenie2_linear_bgen_rust_pipeline(
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
 ) -> Path | None:
-    """Run the opt-in BGEN Rust pipeline for quantitative REGENIE step 2."""
+    """Run the native BGEN pipeline for quantitative REGENIE step 2."""
     engine = build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
@@ -448,22 +454,26 @@ def run_regenie2_linear_bgen_rust_pipeline(
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
     )
-    callback = LinearRegenie2RustPipelineCallback(
+    callback = LinearRegenie2PipelineCallback(
         aligned_sample_data=aligned_sample_data,
-        prediction_source=regenie.load_prediction_source(prediction_list_path, phenotype_name),
+        prediction_source=build_regenie_prediction_source(
+            prediction_list_path=prediction_list_path,
+            phenotype_name=phenotype_name,
+            aligned_sample_data=aligned_sample_data,
+        ),
         writer_session=writer_session,
+        staging_depth=prefetch_chunks,
     )
     return run_bgen_engine_with_callback(
         engine=engine,
         aligned_sample_data=aligned_sample_data,
-        prefetch_chunks=prefetch_chunks,
         committed_chunk_identifiers=committed_chunk_identifiers,
         writer_session=writer_session,
         callback=callback,
     )
 
 
-def run_regenie2_binary_bgen_rust_pipeline(
+def run_regenie2_binary_bgen_pipeline(
     *,
     genotype_source_config: source.GenotypeSourceConfig,
     phenotype_path: Path,
@@ -481,7 +491,7 @@ def run_regenie2_binary_bgen_rust_pipeline(
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
     correction: types.RegenieBinaryCorrection = types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
 ) -> Path | None:
-    """Run the opt-in BGEN Rust pipeline for binary REGENIE step 2."""
+    """Run the native BGEN pipeline for binary REGENIE step 2."""
     engine = build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
@@ -503,16 +513,20 @@ def run_regenie2_binary_bgen_rust_pipeline(
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
     )
-    callback = BinaryRegenie2RustPipelineCallback(
+    callback = BinaryRegenie2PipelineCallback(
         aligned_sample_data=aligned_sample_data,
-        prediction_source=regenie.load_prediction_source(prediction_list_path, phenotype_name),
+        prediction_source=build_regenie_prediction_source(
+            prediction_list_path=prediction_list_path,
+            phenotype_name=phenotype_name,
+            aligned_sample_data=aligned_sample_data,
+        ),
         writer_session=writer_session,
         correction=correction,
+        staging_depth=prefetch_chunks,
     )
     return run_bgen_engine_with_callback(
         engine=engine,
         aligned_sample_data=aligned_sample_data,
-        prefetch_chunks=prefetch_chunks,
         committed_chunk_identifiers=committed_chunk_identifiers,
         writer_session=writer_session,
         callback=callback,
@@ -522,16 +536,16 @@ def run_regenie2_binary_bgen_rust_pipeline(
 def load_bgen_aligned_sample_data(
     *,
     genotype_source_config: source.GenotypeSourceConfig,
-    engine: _core.PyRegenie2RunEngine,
+    engine: _core.Regenie2RunEngine,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
     covariate_names: tuple[str, ...] | None,
     is_binary_trait: bool,
 ) -> models.AlignedSampleData:
-    """Load aligned samples for the opt-in BGEN Rust pipeline."""
+    """Load aligned samples for the native BGEN pipeline."""
     if genotype_source_config.source_format != types.GenotypeSourceFormat.BGEN:
-        message = "The Rust pipeline currently supports BGEN genotype sources only."
+        message = "The native pipeline currently supports BGEN genotype sources only."
         raise ValueError(message)
     resolved_sample_path = bgen.resolve_bgen_sample_path(
         genotype_source_config.source_path,
@@ -561,14 +575,31 @@ def load_bgen_aligned_sample_data(
     )
 
 
+def build_regenie_prediction_source(
+    *,
+    prediction_list_path: Path,
+    phenotype_name: str,
+    aligned_sample_data: models.AlignedSampleData,
+) -> _core.RegeniePredictionSource:
+    """Load Rust-owned REGENIE step 1 predictions aligned to the run samples."""
+    sample_family_identifiers = typing.cast("list[str]", aligned_sample_data.family_identifiers.tolist())
+    sample_individual_identifiers = typing.cast("list[str]", aligned_sample_data.individual_identifiers.tolist())
+    return _core.RegeniePredictionSource(
+        str(prediction_list_path),
+        phenotype_name,
+        sample_family_identifiers,
+        sample_individual_identifiers,
+    )
+
+
 def build_bgen_run_engine(
     *,
     genotype_source_config: source.GenotypeSourceConfig,
     chunk_size: int,
     variant_limit: int | None,
-) -> _core.PyRegenie2RunEngine:
+) -> _core.Regenie2RunEngine:
     """Open the native BGEN run engine once for alignment and chunk delivery."""
-    return _core.PyRegenie2RunEngine(
+    return _core.Regenie2RunEngine(
         str(genotype_source_config.source_path),
         chunk_size=chunk_size,
         variant_limit=variant_limit,
@@ -577,15 +608,13 @@ def build_bgen_run_engine(
 
 def run_bgen_engine_with_callback(
     *,
-    engine: _core.PyRegenie2RunEngine,
+    engine: _core.Regenie2RunEngine,
     aligned_sample_data: models.AlignedSampleData,
-    prefetch_chunks: int,
     committed_chunk_identifiers: set[int] | None,
     writer_session: typing.Any,
     callback: object,
 ) -> Path | None:
     """Run native BGEN chunk delivery and close the output writer."""
-    del prefetch_chunks
     try:
         engine.run_bgen_dosage_buffered_chunks(
             np.ascontiguousarray(aligned_sample_data.sample_indices, dtype=np.int64),

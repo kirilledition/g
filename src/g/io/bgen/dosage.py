@@ -2,22 +2,10 @@
 
 from __future__ import annotations
 
-import importlib
-import typing
-
 import numpy as np
 import numpy.typing as npt
 
-if typing.TYPE_CHECKING:
-    from g import types
-
-
-def load_backend_core() -> typing.Any:
-    """Load the native extension module for BGEN decoding helpers."""
-    try:
-        return importlib.import_module("g._core")
-    except ModuleNotFoundError as error:
-        raise ModuleNotFoundError("Rust core helpers are unavailable. Ensure the extension module is built.") from error
+from g import _core, types
 
 
 def convert_probability_tensor_to_dosage(
@@ -30,8 +18,7 @@ def convert_probability_tensor_to_dosage(
 ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
     """Convert a BGEN probability tensor into additive dosages."""
     if dtype is np.float32:
-        core_module = load_backend_core()
-        dosage_matrix = core_module.convert_probability_tensor_to_dosage_f32(
+        dosage_matrix = _core.convert_probability_tensor_to_dosage_f32(
             np.asarray(probability_tensor, dtype=np.float32, order="C"), int(combination_count), bool(is_phased)
         )
         return np.asarray(dosage_matrix, dtype=np.float32, order=order.value)
@@ -54,8 +41,7 @@ def convert_probability_matrix_to_dosage(
 ) -> npt.NDArray[np.float32] | npt.NDArray[np.float64]:
     """Convert one variant's probability matrix into additive dosages."""
     if probability_matrix.dtype == np.float32:
-        core_module = load_backend_core()
-        dosage_vector = core_module.convert_probability_matrix_to_dosage_f32(
+        dosage_vector = _core.convert_probability_matrix_to_dosage_f32(
             np.asarray(probability_matrix, dtype=np.float32, order="C"),
             int(combination_count),
             bool(is_phased),

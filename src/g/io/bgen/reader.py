@@ -8,9 +8,9 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 
-from g import types
+from g import _core, types
 from g.io import reader
-from g.io.bgen import dosage, metadata, sample, selectors
+from g.io.bgen import metadata, sample, selectors
 
 if typing.TYPE_CHECKING:
     import polars as pl
@@ -48,8 +48,7 @@ class BgenReader:
             self.bgen_path,
             Path(sample_path) if sample_path is not None else None,
         )
-        core_module = dosage.load_backend_core()
-        self.core_reader = core_module.PyBgenReader(
+        self.core_reader = _core.BgenReader(
             str(self.bgen_path),
             bool(trusted_no_missing_diploid),
         )

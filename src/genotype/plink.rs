@@ -6,6 +6,7 @@ pub struct PlinkBedAdapterPlan {
     pub reason: String,
 }
 
+#[must_use]
 pub fn bed_reader_dependency_status() -> PlinkBedAdapterPlan {
     PlinkBedAdapterPlan {
         bed_reader_crate_blocked: true,

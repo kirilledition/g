@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 
 use crate::genotype::common::{ChunkSpec, GenotypeError};
 
+#[must_use]
 pub fn resolve_total_variant_count(variant_count: usize, variant_limit: Option<usize>) -> usize {
     variant_limit.map_or(variant_count, |limit| limit.min(variant_count))
 }

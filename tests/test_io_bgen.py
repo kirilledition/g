@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import typing
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -17,7 +18,6 @@ from g.io.bgen import (
     convert_probability_tensor_to_dosage,
     iter_dosage_genotype_chunks,
     iter_genotype_chunks,
-    load_backend_core,
     load_bgen_sample_table,
     open_bgen,
     read_bgen_chunk,
@@ -130,17 +130,6 @@ def test_convert_probability_tensor_to_dosage_rejects_unsupported_layout() -> No
         )
 
 
-def test_load_backend_core_reports_missing_dependency() -> None:
-    with (
-        patch(
-            "g.io.bgen.dosage.importlib.import_module",
-            side_effect=ModuleNotFoundError("missing"),
-        ),
-        pytest.raises(ModuleNotFoundError, match="Rust core helpers are unavailable"),
-    ):
-        load_backend_core()
-
-
 def test_build_bgen_variant_table_counts_last_allele() -> None:
     mock_bgen_handle = SimpleNamespace(
         allele_ids=np.array(["A,G", "C,T"], dtype=np.str_),
@@ -195,7 +184,7 @@ def test_open_bgen_reads_phased_haplotype_example_as_dosage() -> None:
 
 
 def test_open_bgen_trusted_no_missing_diploid_opt_in_reaches_core() -> None:
-    class FakePyBgenReader:
+    class FakeBgenReader:
         def __init__(self, bgen_path: str, trusted_no_missing_diploid: bool = False) -> None:  # noqa: FBT001, FBT002
             self.sample_count = 2
             self.variant_count = 0
@@ -212,13 +201,13 @@ def test_open_bgen_trusted_no_missing_diploid_opt_in_reaches_core() -> None:
         def close(self) -> None:
             return
 
-    fake_core_module = SimpleNamespace(PyBgenReader=FakePyBgenReader)
     with (
-        patch("g.io.bgen.dosage.load_backend_core", return_value=fake_core_module),
+        patch("g.io.bgen.reader._core.BgenReader", FakeBgenReader),
         open_bgen(HAPLOTYPES_BGEN_PATH, trusted_no_missing_diploid=True) as bgen_reader,
     ):
         assert bgen_reader.trusted_no_missing_diploid is True
-        assert bgen_reader.core_reader.trusted_no_missing_diploid is True
+        core_reader = typing.cast("typing.Any", bgen_reader.core_reader)
+        assert core_reader.trusted_no_missing_diploid is True
 
 
 def test_open_bgen_validate_trusted_no_missing_diploid_rejects_phased_fixture() -> None:

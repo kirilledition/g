@@ -10,19 +10,29 @@ import numpy as np
 
 from g import models
 from g.compute import regenie2_linear
-from g.engine import rust_pipeline
+from g.engine import regenie2_pipeline
 from g.io import output, source
 
 
 class FakePredictionSource:
-    def get_chromosome_predictions(
+    instances: typing.ClassVar[list[FakePredictionSource]] = []
+
+    def __init__(
         self,
-        chromosome: str,
-        sample_family_identifiers: np.ndarray,
-        sample_individual_identifiers: np.ndarray,
-    ) -> jnp.ndarray:
-        del chromosome, sample_family_identifiers, sample_individual_identifiers
-        return jnp.asarray([0.0, 0.0], dtype=jnp.float32)
+        prediction_list_path: str | None = None,
+        phenotype_name: str | None = None,
+        sample_family_identifiers: list[str] | None = None,
+        sample_individual_identifiers: list[str] | None = None,
+    ) -> None:
+        self.prediction_list_path = prediction_list_path
+        self.phenotype_name = phenotype_name
+        self.sample_family_identifiers = sample_family_identifiers
+        self.sample_individual_identifiers = sample_individual_identifiers
+        FakePredictionSource.instances.append(self)
+
+    def get_chromosome_predictions(self, chromosome: str) -> np.ndarray:
+        del chromosome
+        return np.asarray([0.0, 0.0], dtype=np.float32)
 
 
 class FakeWriterSession:
@@ -38,8 +48,8 @@ class FakeWriterSession:
         self.aborted = True
 
 
-class FakeRustEngine:
-    instances: typing.ClassVar[list[FakeRustEngine]] = []
+class FakeRunEngine:
+    instances: typing.ClassVar[list[FakeRunEngine]] = []
 
     def __init__(self, bgen_path: str, chunk_size: int, variant_limit: int | None = None) -> None:
         self.bgen_path = bgen_path
@@ -47,7 +57,7 @@ class FakeRustEngine:
         self.variant_limit = variant_limit
         self.variant_count = 10
         self.run_arguments: tuple[np.ndarray, object, list[int] | None] | None = None
-        FakeRustEngine.instances.append(self)
+        FakeRunEngine.instances.append(self)
 
     def variant_metadata_slice(
         self,
@@ -119,7 +129,7 @@ def build_native_metadata() -> typing.Any:
 
 
 def test_build_variant_metadata_converts_native_columns() -> None:
-    metadata = rust_pipeline.build_variant_metadata(build_native_metadata())
+    metadata = regenie2_pipeline.build_variant_metadata(build_native_metadata())
 
     assert metadata.variant_start_index == 5
     assert metadata.variant_stop_index == 7
@@ -138,7 +148,7 @@ def test_linear_callback_computes_and_writes_chunk() -> None:
         log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
         valid_mask=jnp.asarray([True, True]),
     )
-    callback = rust_pipeline.LinearRegenie2RustPipelineCallback(
+    callback = regenie2_pipeline.LinearRegenie2PipelineCallback(
         aligned_sample_data=build_aligned_sample_data(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -146,14 +156,14 @@ def test_linear_callback_computes_and_writes_chunk() -> None:
 
     with (
         patch(
-            "g.engine.rust_pipeline.regenie2_linear.prepare_regenie2_linear_chromosome_state",
+            "g.engine.regenie2_pipeline.regenie2_linear.prepare_regenie2_linear_chromosome_state",
             return_value="chromosome-state",
         ),
         patch(
-            "g.engine.rust_pipeline.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
+            "g.engine.regenie2_pipeline.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ) as mock_compute,
-        patch("g.engine.rust_pipeline.output.write_regenie2_chunk") as mock_write,
+        patch("g.engine.regenie2_pipeline.output.write_regenie2_chunk") as mock_write,
     ):
         callback.compute_chunk(
             metadata=build_native_metadata(),
@@ -179,7 +189,7 @@ def test_linear_callback_preprocesses_dosage_chunk_on_device() -> None:
         log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
         valid_mask=jnp.asarray([True, True]),
     )
-    callback = rust_pipeline.LinearRegenie2RustPipelineCallback(
+    callback = regenie2_pipeline.LinearRegenie2PipelineCallback(
         aligned_sample_data=build_aligned_sample_data(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -187,14 +197,14 @@ def test_linear_callback_preprocesses_dosage_chunk_on_device() -> None:
 
     with (
         patch(
-            "g.engine.rust_pipeline.regenie2_linear.prepare_regenie2_linear_chromosome_state",
+            "g.engine.regenie2_pipeline.regenie2_linear.prepare_regenie2_linear_chromosome_state",
             return_value="chromosome-state",
         ),
         patch(
-            "g.engine.rust_pipeline.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
+            "g.engine.regenie2_pipeline.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ),
-        patch("g.engine.rust_pipeline.output.write_regenie2_chunk") as mock_write,
+        patch("g.engine.regenie2_pipeline.output.write_regenie2_chunk") as mock_write,
     ):
         callback.compute_dosage_chunk(
             metadata=build_native_metadata(),
@@ -207,23 +217,24 @@ def test_linear_callback_preprocesses_dosage_chunk_on_device() -> None:
     np.testing.assert_array_equal(np.asarray(written_accumulator.observation_count), [2, 1])
 
 
-def test_run_linear_bgen_rust_pipeline_invokes_native_engine_and_writer() -> None:
-    FakeRustEngine.instances.clear()
+def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
+    FakeRunEngine.instances.clear()
+    FakePredictionSource.instances.clear()
     writer_session = FakeWriterSession()
     aligned_sample_data = build_aligned_sample_data()
 
     with (
-        patch("g.engine.rust_pipeline._core.PyRegenie2RunEngine", FakeRustEngine),
-        patch("g.engine.rust_pipeline.load_bgen_aligned_sample_data", return_value=aligned_sample_data),
-        patch("g.engine.rust_pipeline.output.create_output_writer_session", return_value=writer_session),
-        patch("g.engine.rust_pipeline.regenie.load_prediction_source", return_value=FakePredictionSource()),
+        patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.regenie2_pipeline.load_bgen_aligned_sample_data", return_value=aligned_sample_data),
+        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
         patch.object(
             regenie2_linear,
             "prepare_regenie2_linear_state",
             return_value=typing.cast("models.Regenie2LinearState", "state"),
         ),
     ):
-        final_path = rust_pipeline.run_regenie2_linear_bgen_rust_pipeline(
+        final_path = regenie2_pipeline.run_regenie2_linear_bgen_pipeline(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",
@@ -233,6 +244,7 @@ def test_run_linear_bgen_rust_pipeline_invokes_native_engine_and_writer() -> Non
             chunk_size=32,
             variant_limit=100,
             output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
+            prefetch_chunks=3,
             committed_chunk_identifiers={64, 0},
             finalize_parquet=True,
             writer_thread_count=2,
@@ -241,20 +253,27 @@ def test_run_linear_bgen_rust_pipeline_invokes_native_engine_and_writer() -> Non
 
     assert final_path == Path("results/final.parquet")
     assert writer_session.finished is True
-    engine = FakeRustEngine.instances[0]
+    engine = FakeRunEngine.instances[0]
     assert engine.bgen_path == "study.bgen"
     assert engine.chunk_size == 32
     assert engine.variant_limit == 100
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, rust_pipeline.LinearRegenie2RustPipelineCallback)
+    assert isinstance(callback, regenie2_pipeline.LinearRegenie2PipelineCallback)
+    assert callback.dosage_queue_depth == 3
+    assert callback.dosage_buffer_limit == 4
     assert committed_chunk_identifiers == [0, 64]
+    prediction_source = FakePredictionSource.instances[0]
+    assert prediction_source.prediction_list_path == "pred.list"
+    assert prediction_source.phenotype_name == "trait"
+    assert prediction_source.sample_family_identifiers == ["family1", "family2"]
+    assert prediction_source.sample_individual_identifiers == ["sample1", "sample2"]
 
 
 def test_load_bgen_aligned_sample_data_rejects_non_bgen_sources() -> None:
     with np.testing.assert_raises_regex(ValueError, "BGEN genotype sources only"):
-        rust_pipeline.load_bgen_aligned_sample_data(
+        regenie2_pipeline.load_bgen_aligned_sample_data(
             genotype_source_config=source.build_plink_source_config(Path("study")),
             engine=typing.cast("typing.Any", object()),
             phenotype_path=Path("phenotype.tsv"),

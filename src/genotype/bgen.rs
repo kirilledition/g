@@ -632,11 +632,13 @@ impl GenotypeReaderCore for BgenReaderCore {
     }
 
     fn prepare_sample_selection(&self, sample_indices: &[i64]) -> Result<(), GenotypeError> {
-        BgenReaderCore::prepare_sample_selection(self, sample_indices).map_err(convert_bgen_error_to_genotype_error)
+        BgenReaderCore::prepare_sample_selection(self, sample_indices)
+            .map_err(|error| convert_bgen_error_to_genotype_error(&error))
     }
 
     fn clear_prepared_sample_selection(&self) -> Result<(), GenotypeError> {
-        BgenReaderCore::clear_prepared_sample_selection(self).map_err(convert_bgen_error_to_genotype_error)
+        BgenReaderCore::clear_prepared_sample_selection(self)
+            .map_err(|error| convert_bgen_error_to_genotype_error(&error))
     }
 
     fn variant_metadata_slice(
@@ -646,7 +648,7 @@ impl GenotypeReaderCore for BgenReaderCore {
     ) -> Result<VariantMetadataColumns, GenotypeError> {
         let (chromosome, variant_identifier, position, allele_one, allele_two) =
             BgenReaderCore::variant_metadata_slice(self, variant_start, variant_stop)
-                .map_err(convert_bgen_error_to_genotype_error)?;
+                .map_err(|error| convert_bgen_error_to_genotype_error(&error))?;
         Ok(VariantMetadataColumns { chromosome, variant_identifier, position, allele_one, allele_two })
     }
 
@@ -664,11 +666,11 @@ impl GenotypeReaderCore for BgenReaderCore {
             output_pointer_address,
             output_value_count,
         )
-        .map_err(convert_bgen_error_to_genotype_error)
+        .map_err(|error| convert_bgen_error_to_genotype_error(&error))
     }
 }
 
-fn convert_bgen_error_to_genotype_error(error: BgenError) -> GenotypeError {
+fn convert_bgen_error_to_genotype_error(error: &BgenError) -> GenotypeError {
     GenotypeError::Reader(error.to_string())
 }
 

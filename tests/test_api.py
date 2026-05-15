@@ -43,7 +43,6 @@ def test_parse_covariate_name_list_handles_iterable_input() -> None:
 def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
     with (
         patch("g.api.configure_jax_device") as mock_configure_jax_device,
-        patch("g.api.iter_regenie2_linear_output_frames", return_value=iter(())) as mock_iterator,
         patch(
             "g.api.prepare_output_run",
             return_value=PreparedOutputRun(
@@ -54,9 +53,9 @@ def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
                 committed_chunk_identifiers=frozenset(),
             ),
         ),
-        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
+        patch("g.api.run_regenie2_linear_bgen_pipeline") as mock_pipeline,
     ):
-        mock_persist_chunked_results.return_value = Path("results/output.regenie2_linear.run/final.parquet")
+        mock_pipeline.return_value = Path("results/output.regenie2_linear.run/final.parquet")
         artifacts = regenie2_linear(
             bgen="dataset.bgen",
             sample="dataset.sample",
@@ -72,17 +71,16 @@ def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
         final_parquet=Path("results/output.regenie2_linear.run/final.parquet"),
     )
     mock_configure_jax_device.assert_called_once_with(Device.CPU)
-    assert mock_iterator.call_args.kwargs["covariate_names"] == ("age", "sex")
-    assert mock_iterator.call_args.kwargs["prediction_list_path"] == Path("predictions.list")
-    genotype_source_config = mock_iterator.call_args.kwargs["genotype_source_config"]
+    assert mock_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
+    assert mock_pipeline.call_args.kwargs["prediction_list_path"] == Path("predictions.list")
+    genotype_source_config = mock_pipeline.call_args.kwargs["genotype_source_config"]
     assert genotype_source_config.source_format == GenotypeSourceFormat.BGEN
-    mock_persist_chunked_results.assert_called_once()
+    mock_pipeline.assert_called_once()
 
 
-def test_regenie2_binary_dispatches_binary_iterator_and_output_mode() -> None:
+def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
     with (
         patch("g.api.configure_jax_device"),
-        patch("g.api.iter_regenie2_binary_output_frames", return_value=iter(())) as mock_iterator,
         patch(
             "g.api.prepare_output_run",
             return_value=PreparedOutputRun(
@@ -93,9 +91,9 @@ def test_regenie2_binary_dispatches_binary_iterator_and_output_mode() -> None:
                 committed_chunk_identifiers=frozenset({5}),
             ),
         ) as mock_prepare_output_run,
-        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
+        patch("g.api.run_regenie2_binary_bgen_pipeline") as mock_pipeline,
     ):
-        mock_persist_chunked_results.return_value = Path("results/output.regenie2_binary.run/final.parquet")
+        mock_pipeline.return_value = Path("results/output.regenie2_binary.run/final.parquet")
         artifacts = regenie2(
             bgen="dataset.bgen",
             sample="dataset.sample",
@@ -112,52 +110,10 @@ def test_regenie2_binary_dispatches_binary_iterator_and_output_mode() -> None:
         output_run_directory=Path("results/output.regenie2_binary.run"),
         final_parquet=Path("results/output.regenie2_binary.run/final.parquet"),
     )
-    assert mock_iterator.call_args.kwargs["committed_chunk_identifiers"] == {5}
-    assert mock_iterator.call_args.kwargs["covariate_names"] == ("age", "sex")
+    assert mock_pipeline.call_args.kwargs["committed_chunk_identifiers"] == {5}
+    assert mock_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_prepare_output_run.call_args.kwargs["association_mode"] == AssociationMode.REGENIE2_BINARY
-    assert mock_persist_chunked_results.call_args.kwargs["association_mode"] == AssociationMode.REGENIE2_BINARY
-
-
-def test_regenie2_binary_rust_pipeline_env_dispatches_opt_in_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(api.RUST_PIPELINE_ENVIRONMENT_VARIABLE, "1")
-    with (
-        patch("g.api.configure_jax_device"),
-        patch(
-            "g.api.prepare_output_run",
-            return_value=PreparedOutputRun(
-                output_run_paths=OutputRunPaths(
-                    run_directory=Path("results/output.regenie2_binary.run"),
-                    chunks_directory=Path("results/output.regenie2_binary.run/chunks"),
-                ),
-                committed_chunk_identifiers=frozenset({5}),
-            ),
-        ),
-        patch("g.api.run_regenie2_binary_bgen_rust_pipeline") as mock_rust_pipeline,
-        patch("g.api.iter_regenie2_binary_output_frames") as mock_iterator,
-        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
-    ):
-        mock_rust_pipeline.return_value = Path("results/output.regenie2_binary.run/final.parquet")
-        artifacts = regenie2(
-            bgen="dataset.bgen",
-            sample="dataset.sample",
-            pheno="phenotype.tsv",
-            pheno_name="trait",
-            out="results/output",
-            covar_names="age,sex",
-            pred="predictions.list",
-            trait_type=RegenieTraitType.BINARY,
-            compute=ComputeConfig(resume=True),
-        )
-
-    assert artifacts == RunArtifacts(
-        output_run_directory=Path("results/output.regenie2_binary.run"),
-        final_parquet=Path("results/output.regenie2_binary.run/final.parquet"),
-    )
-    mock_rust_pipeline.assert_called_once()
-    assert mock_rust_pipeline.call_args.kwargs["committed_chunk_identifiers"] == {5}
-    assert mock_rust_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
-    mock_iterator.assert_not_called()
-    mock_persist_chunked_results.assert_not_called()
+    assert mock_pipeline.call_args.kwargs["writer_thread_count"] == api.output.DEFAULT_WRITER_THREAD_COUNT
 
 
 @pytest.mark.parametrize(
@@ -193,10 +149,9 @@ def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalizati
                 committed_chunk_identifiers=frozenset({3}),
             ),
         ) as mock_prepare_output_run,
-        patch("g.api.iter_regenie2_linear_output_frames", return_value=iter(())) as mock_iterator,
-        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
+        patch("g.api.run_regenie2_linear_bgen_pipeline") as mock_pipeline,
     ):
-        mock_persist_chunked_results.return_value = None
+        mock_pipeline.return_value = None
         artifacts = regenie2_linear(
             bgen="dataset.bgen",
             pheno="phenotype.tsv",
@@ -215,19 +170,16 @@ def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalizati
         final_parquet=None,
     )
     mock_configure_jax_device.assert_called_once_with(Device.CPU)
-    assert mock_iterator.call_args.kwargs["committed_chunk_identifiers"] == {3}
-    mock_persist_chunked_results.assert_called_once()
-    assert (
-        mock_persist_chunked_results.call_args.kwargs["writer_thread_count"] == api.output.DEFAULT_WRITER_THREAD_COUNT
-    )
-    assert mock_persist_chunked_results.call_args.kwargs["writer_queue_depth"] == api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
+    assert mock_pipeline.call_args.kwargs["committed_chunk_identifiers"] == {3}
+    mock_pipeline.assert_called_once()
+    assert mock_pipeline.call_args.kwargs["writer_thread_count"] == api.output.DEFAULT_WRITER_THREAD_COUNT
+    assert mock_pipeline.call_args.kwargs["writer_queue_depth"] == api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
     mock_prepare_output_run.assert_called_once()
 
 
 def test_regenie2_linear_passes_internal_output_writer_configuration() -> None:
     with (
         patch("g.api.configure_jax_device"),
-        patch("g.api.iter_regenie2_linear_output_frames", return_value=iter(())),
         patch(
             "g.api.prepare_output_run",
             return_value=PreparedOutputRun(
@@ -238,7 +190,7 @@ def test_regenie2_linear_passes_internal_output_writer_configuration() -> None:
                 committed_chunk_identifiers=frozenset(),
             ),
         ),
-        patch("g.api.persist_chunked_results") as mock_persist_chunked_results,
+        patch("g.api.run_regenie2_linear_bgen_pipeline") as mock_pipeline,
     ):
         regenie2_linear(
             bgen="dataset.bgen",
@@ -249,5 +201,5 @@ def test_regenie2_linear_passes_internal_output_writer_configuration() -> None:
             compute=ComputeConfig(output_writer_thread_count=2, output_writer_queue_depth=3),
         )
 
-    assert mock_persist_chunked_results.call_args.kwargs["writer_thread_count"] == 2
-    assert mock_persist_chunked_results.call_args.kwargs["writer_queue_depth"] == 3
+    assert mock_pipeline.call_args.kwargs["writer_thread_count"] == 2
+    assert mock_pipeline.call_args.kwargs["writer_queue_depth"] == 3

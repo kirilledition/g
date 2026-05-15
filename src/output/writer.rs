@@ -70,7 +70,7 @@ enum OutputWriteJob {
 }
 
 #[pyclass]
-pub struct PyOutputWriterSession {
+pub struct OutputWriterSession {
     sender: Mutex<Option<Sender<OutputCoordinatorJob>>>,
     coordinator_handle: Mutex<Option<JoinHandle<()>>>,
     worker_handles: Mutex<Vec<JoinHandle<()>>>,
@@ -79,7 +79,7 @@ pub struct PyOutputWriterSession {
 }
 
 #[pymethods]
-impl PyOutputWriterSession {
+impl OutputWriterSession {
     #[new]
     #[pyo3(signature = (run_directory, chunks_directory, association_mode, writer_thread_count=1, writer_queue_depth=1, finalize_parquet=true))]
     fn new(
@@ -245,7 +245,7 @@ pub fn scan_committed_chunk_identifiers(chunks_directory: String) -> PyResult<Ve
     scan_committed_chunk_identifiers_from_arrow_files(Path::new(&chunks_directory))
 }
 
-impl PyOutputWriterSession {
+impl OutputWriterSession {
     fn raise_if_worker_failed(&self) -> PyResult<()> {
         let worker_errors = self
             .worker_errors

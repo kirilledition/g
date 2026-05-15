@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::bgen::{BgenError, BgenReaderCore};
+use crate::genotype::bgen::{BgenError, BgenReaderCore};
 use crate::genotype::common::{ChunkSpec, GenotypeError};
 use crate::genotype::planner;
 

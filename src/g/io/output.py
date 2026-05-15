@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import logging
 import re
 import typing
@@ -12,11 +11,9 @@ from pathlib import Path
 import jax
 import polars as pl
 
-from g import models, types
+from g import _core, models, types
 
 if typing.TYPE_CHECKING:
-    import collections.abc
-
     from g.engine import types as engine_types
 
 
@@ -43,11 +40,6 @@ class PreparedOutputRun:
 
     output_run_paths: OutputRunPaths
     committed_chunk_identifiers: frozenset[int]
-
-
-def load_backend_core() -> typing.Any:
-    """Load the native extension module."""
-    return importlib.import_module("g._core")
 
 
 def resolve_output_run_paths(output_root: Path, association_mode: types.AssociationMode) -> OutputRunPaths:
@@ -85,8 +77,7 @@ def load_committed_chunk_identifiers_from_chunk_file(chunk_file_path: Path) -> f
 
 def scan_committed_chunk_identifiers(chunks_directory: Path) -> frozenset[int]:
     """Scan a chunks directory and return identifiers of completed chunks."""
-    core_module = load_backend_core()
-    chunk_identifiers = core_module.scan_committed_chunk_identifiers(str(chunks_directory))
+    chunk_identifiers = _core.scan_committed_chunk_identifiers(str(chunks_directory))
     return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
 
 
@@ -124,8 +115,7 @@ def create_output_writer_session(
     finalize_parquet: bool,
 ) -> typing.Any:
     """Create one native Rust output writer session."""
-    core_module = load_backend_core()
-    return core_module.PyOutputWriterSession(
+    return _core.OutputWriterSession(
         run_directory=str(output_run_paths.run_directory),
         chunks_directory=str(output_run_paths.chunks_directory),
         association_mode=str(association_mode),
@@ -200,38 +190,6 @@ def write_regenie2_chunk(writer_session: typing.Any, chunk_accumulator: engine_t
     )
 
 
-def persist_chunked_results(
-    frame_iterator: collections.abc.Iterator[engine_types.Regenie2ChunkAccumulator],
-    output_run_paths: OutputRunPaths,
-    association_mode: types.AssociationMode,
-    *,
-    finalize_parquet: bool = False,
-    writer_thread_count: int = DEFAULT_WRITER_THREAD_COUNT,
-    writer_queue_depth: int = DEFAULT_WRITER_QUEUE_DEPTH,
-) -> Path | None:
-    """Persist chunked results through the native Rust writer."""
-    if writer_thread_count < 1:
-        message = "Writer thread count must be at least 1."
-        raise ValueError(message)
-    writer_session = create_output_writer_session(
-        output_run_paths,
-        association_mode,
-        writer_thread_count=writer_thread_count,
-        writer_queue_depth=writer_queue_depth,
-        finalize_parquet=finalize_parquet,
-    )
-    try:
-        for chunk_accumulator in frame_iterator:
-            write_regenie2_chunk(writer_session, chunk_accumulator)
-        final_parquet_path = writer_session.finish()
-    except Exception:
-        writer_session.abort()
-        raise
-    if final_parquet_path is None:
-        return None
-    return Path(final_parquet_path)
-
-
 def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:
     """Return all persisted chunk files in deterministic filename order."""
     if not chunks_directory.exists():
@@ -250,8 +208,7 @@ def finalize_chunks_to_parquet(
     association_mode: types.AssociationMode,
 ) -> Path:
     """Compact committed chunk files into one compressed Parquet file in Rust."""
-    core_module = load_backend_core()
-    final_parquet_path = core_module.finalize_output_run_chunks(
+    final_parquet_path = _core.finalize_output_run_chunks(
         run_directory=str(output_run_paths.run_directory),
         chunks_directory=str(output_run_paths.chunks_directory),
         association_mode=str(association_mode),

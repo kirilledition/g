@@ -215,10 +215,6 @@ regenie2-binary-gpu:
 regenie2-binary-gpu-smoke:
     {{server_env}} && uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu_smoke --trait-type binary --device gpu --variant-limit 1000 --finalize-parquet
 
-# Smoke test binary REGENIE step 2 through the opt-in Rust BGEN pipeline
-regenie2-binary-gpu-smoke-rust:
-    {{server_env}} && G_REGENIE2_RUST_PIPELINE=1 uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu_smoke_rust --trait-type binary --device gpu --variant-limit 1000 --finalize-parquet
-
 # Run binary REGENIE step 2 through SLURM on the configured GPU node
 slurm-regenie2-binary-gpu:
     {{server_env}} && just slurm-gpu-just regenie2-binary-gpu
@@ -226,10 +222,6 @@ slurm-regenie2-binary-gpu:
 # Smoke test binary REGENIE step 2 through SLURM on the configured GPU node
 slurm-regenie2-binary-gpu-smoke:
     {{server_env}} && just slurm-gpu-just regenie2-binary-gpu-smoke
-
-# Smoke test binary REGENIE step 2 through SLURM using the opt-in Rust BGEN pipeline
-slurm-regenie2-binary-gpu-smoke-rust:
-    {{server_env}} && just slurm-gpu-just regenie2-binary-gpu-smoke-rust
 
 # Verify binary REGENIE step 2 GPU output artifacts
 verify-regenie2-binary-gpu-output:
@@ -251,23 +243,9 @@ verify-regenie2-binary-gpu-smoke-output:
     test -s "${run_directory}/final.parquet"
     echo "Binary REGENIE step 2 GPU smoke output is present."
 
-# Verify binary REGENIE step 2 Rust pipeline GPU smoke output artifacts
-verify-regenie2-binary-gpu-smoke-rust-output:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    run_directory="{{data_dir}}/regenie2_binary_chr22_gpu_smoke_rust.regenie2_binary.run"
-    test -d "${run_directory}/chunks"
-    find "${run_directory}/chunks" -type f -name '*.arrow' | grep -q .
-    test -s "${run_directory}/final.parquet"
-    echo "Binary REGENIE step 2 Rust pipeline GPU smoke output is present."
-
 # Run CPU/GPU JAX runtime probe
 probe-jax:
     {{server_env}} && uv run python scripts/probe_jax_runtime.py
-
-# Benchmark PLINK reader and preprocessing paths
-benchmark-plink-reader:
-    {{server_env}} && uv run python scripts/benchmark_plink_reader.py
 
 # Benchmark BGEN float32 read paths
 benchmark-bgen-reader:
@@ -284,11 +262,6 @@ benchmark-regenie2-linear-fresh-gpu-parquet:
 # Sequentially tune GPU REGENIE step 2 and active BGEN reader knobs
 tune-regenie2-gpu:
     {{server_env}} && uv run python scripts/tune_regenie2_gpu.py
-
-# Profile full REGENIE step 2 execution
-profile-regenie2-linear-detailed:
-    mkdir -p {{data_dir}}/profiles/regenie2_linear_detailed
-    {{server_env}} && XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_PYTHON_CLIENT_MEM_FRACTION=.50 uv run python scripts/profile_regenie2_linear_detailed.py --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_cont.txt --pheno-name phenotype_continuous --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_qt_pred.list --output-dir {{data_dir}}/profiles/regenie2_linear_detailed --report-name regenie2_linear_chr22_full --enable-jax-trace --enable-memory-profile --cprofile-sort cumulative
 
 # Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU
 profile-regenie-comparison-cpu: setup-data

@@ -3,24 +3,19 @@
 from __future__ import annotations
 
 import dataclasses
-import os
 from pathlib import Path
 
 from g import engine, jax_setup, types
 from g.io import output, source
 
 configure_jax_device = jax_setup.configure_jax_device
-iter_regenie2_linear_output_frames = engine.iter_regenie2_linear_output_frames
-iter_regenie2_binary_output_frames = engine.iter_regenie2_binary_output_frames
-run_regenie2_linear_bgen_rust_pipeline = engine.run_regenie2_linear_bgen_rust_pipeline
-run_regenie2_binary_bgen_rust_pipeline = engine.run_regenie2_binary_bgen_rust_pipeline
+run_regenie2_linear_bgen_pipeline = engine.run_regenie2_linear_bgen_pipeline
+run_regenie2_binary_bgen_pipeline = engine.run_regenie2_binary_bgen_pipeline
 prepare_output_run = output.prepare_output_run
-persist_chunked_results = output.persist_chunked_results
 finalize_chunks_to_parquet = output.finalize_chunks_to_parquet
 
 DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE = 8192
 DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH = output.DEFAULT_WRITER_QUEUE_DEPTH
-RUST_PIPELINE_ENVIRONMENT_VARIABLE = "G_REGENIE2_RUST_PIPELINE"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -90,12 +85,6 @@ def validate_compute_config(compute_config: ComputeConfig) -> None:
         raise ValueError(message)
 
 
-def should_use_rust_pipeline() -> bool:
-    """Return whether the opt-in Rust pipeline should handle REGENIE step 2."""
-    raw_value = os.environ.get(RUST_PIPELINE_ENVIRONMENT_VARIABLE, "")
-    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def regenie2_linear(
     *,
     bgen: Path | str,
@@ -159,51 +148,9 @@ def regenie2(
     output_run_paths = prepared_output_run.output_run_paths
     committed_chunk_identifiers = set(prepared_output_run.committed_chunk_identifiers)
 
-    if should_use_rust_pipeline():
-        if trait_type == types.RegenieTraitType.BINARY:
-            binary_config = binary or Regenie2BinaryConfig()
-            final_parquet_path = run_regenie2_binary_bgen_rust_pipeline(
-                genotype_source_config=genotype_source_config,
-                phenotype_path=Path(pheno),
-                phenotype_name=pheno_name,
-                prediction_list_path=Path(pred),
-                covariate_path=Path(covar) if covar is not None else None,
-                covariate_names=covariate_name_list,
-                chunk_size=compute_config.chunk_size,
-                variant_limit=compute_config.variant_limit,
-                prefetch_chunks=compute_config.prefetch_chunks,
-                output_run_paths=output_run_paths,
-                committed_chunk_identifiers=committed_chunk_identifiers,
-                finalize_parquet=compute_config.finalize_parquet,
-                writer_thread_count=compute_config.output_writer_thread_count,
-                writer_queue_depth=compute_config.output_writer_queue_depth,
-                correction=binary_config.correction,
-            )
-        else:
-            final_parquet_path = run_regenie2_linear_bgen_rust_pipeline(
-                genotype_source_config=genotype_source_config,
-                phenotype_path=Path(pheno),
-                phenotype_name=pheno_name,
-                prediction_list_path=Path(pred),
-                covariate_path=Path(covar) if covar is not None else None,
-                covariate_names=covariate_name_list,
-                chunk_size=compute_config.chunk_size,
-                variant_limit=compute_config.variant_limit,
-                prefetch_chunks=compute_config.prefetch_chunks,
-                output_run_paths=output_run_paths,
-                committed_chunk_identifiers=committed_chunk_identifiers,
-                finalize_parquet=compute_config.finalize_parquet,
-                writer_thread_count=compute_config.output_writer_thread_count,
-                writer_queue_depth=compute_config.output_writer_queue_depth,
-            )
-        return RunArtifacts(
-            output_run_directory=output_run_paths.run_directory,
-            final_parquet=final_parquet_path,
-        )
-
     if trait_type == types.RegenieTraitType.BINARY:
         binary_config = binary or Regenie2BinaryConfig()
-        frame_iterator = iter_regenie2_binary_output_frames(
+        final_parquet_path = run_regenie2_binary_bgen_pipeline(
             genotype_source_config=genotype_source_config,
             phenotype_path=Path(pheno),
             phenotype_name=pheno_name,
@@ -213,11 +160,15 @@ def regenie2(
             chunk_size=compute_config.chunk_size,
             variant_limit=compute_config.variant_limit,
             prefetch_chunks=compute_config.prefetch_chunks,
+            output_run_paths=output_run_paths,
             committed_chunk_identifiers=committed_chunk_identifiers,
+            finalize_parquet=compute_config.finalize_parquet,
+            writer_thread_count=compute_config.output_writer_thread_count,
+            writer_queue_depth=compute_config.output_writer_queue_depth,
             correction=binary_config.correction,
         )
     else:
-        frame_iterator = iter_regenie2_linear_output_frames(
+        final_parquet_path = run_regenie2_linear_bgen_pipeline(
             genotype_source_config=genotype_source_config,
             phenotype_path=Path(pheno),
             phenotype_name=pheno_name,
@@ -227,17 +178,13 @@ def regenie2(
             chunk_size=compute_config.chunk_size,
             variant_limit=compute_config.variant_limit,
             prefetch_chunks=compute_config.prefetch_chunks,
+            output_run_paths=output_run_paths,
             committed_chunk_identifiers=committed_chunk_identifiers,
+            finalize_parquet=compute_config.finalize_parquet,
+            writer_thread_count=compute_config.output_writer_thread_count,
+            writer_queue_depth=compute_config.output_writer_queue_depth,
         )
 
-    final_parquet_path = persist_chunked_results(
-        frame_iterator=frame_iterator,
-        output_run_paths=output_run_paths,
-        association_mode=association_mode,
-        finalize_parquet=compute_config.finalize_parquet,
-        writer_thread_count=compute_config.output_writer_thread_count,
-        writer_queue_depth=compute_config.output_writer_queue_depth,
-    )
     return RunArtifacts(
         output_run_directory=output_run_paths.run_directory,
         final_parquet=final_parquet_path,

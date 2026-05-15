@@ -197,15 +197,16 @@ def _run_g_profile(
     enable_jax_trace: bool,
     enable_memory_profile: bool,
 ) -> ExternalProfileResult:
-    profile_script_path = Path("scripts/profile_regenie2_linear_detailed.py")
+    del enable_jax_trace, enable_memory_profile
     profile_run_directory = output_dir / program_name
     profile_run_directory.mkdir(parents=True, exist_ok=True)
-    summary_path = profile_run_directory / "summary.json"
+    output_prefix = profile_run_directory / "g_regenie2_linear"
+    final_parquet_path = output_prefix.with_suffix(".regenie2_linear.run") / "final.parquet"
     command_arguments = [
         "uv",
         "run",
-        "python",
-        str(profile_script_path),
+        "g",
+        "regenie2-linear",
         "--bgen",
         str(baseline_paths.bgen_path),
         "--sample",
@@ -224,19 +225,12 @@ def _run_g_profile(
         device,
         "--chunk-size",
         str(chunk_size),
-        "--output-dir",
-        str(profile_run_directory),
-        "--report-name",
-        "profile",
-        "--json-summary-path",
-        str(summary_path),
+        "--out",
+        str(output_prefix),
+        "--finalize-parquet",
     ]
     if variant_limit is not None:
         command_arguments.extend(["--variant-limit", str(variant_limit)])
-    if enable_jax_trace:
-        command_arguments.append("--enable-jax-trace")
-    if enable_memory_profile:
-        command_arguments.append("--enable-memory-profile")
     stdout_log_path = profile_run_directory / "stdout.log"
     stderr_log_path = profile_run_directory / "stderr.log"
     success, duration_seconds, peak_rss_megabytes, cpu_user_seconds, cpu_system_seconds, error_message = (
@@ -247,11 +241,7 @@ def _run_g_profile(
             sample_interval_seconds=0.05,
         )
     )
-    output_paths: list[Path] = [summary_path]
-    if summary_path.exists():
-        summary_data = json.loads(summary_path.read_text())
-        if summary_data.get("final_parquet_path"):
-            output_paths.append(Path(summary_data["final_parquet_path"]))
+    output_paths: list[Path] = [final_parquet_path]
     return ExternalProfileResult(
         program_name=program_name,
         implementation="g",

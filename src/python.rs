@@ -12,20 +12,23 @@ use numpy::{
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::bgen::{BgenError, BgenReaderCore, ReaderProfileSnapshot, VariantMetadataLists};
-use crate::genotype::common::{ChunkSpec, ChunkStats, GenotypeError, VariantMetadataColumns};
+use crate::genotype::bgen::{BgenError, BgenReaderCore, ReaderProfileSnapshot, VariantMetadataLists};
+use crate::genotype::common::{
+    ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunkStats, GenotypeError, VariantMetadataColumns,
+};
 use crate::genotype::planner;
-use crate::output::{PyOutputWriterSession, finalize_output_run_chunks, scan_committed_chunk_identifiers};
+use crate::output::{OutputWriterSession, finalize_output_run_chunks, scan_committed_chunk_identifiers};
 use crate::pipeline::Regenie2RunEngineCore;
+use crate::regenie::{PredictionError, PredictionSource};
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
-struct PyChunkSpec {
-    chunk_spec: ChunkSpec,
+struct ChunkSpec {
+    chunk_spec: NativeChunkSpec,
 }
 
 #[pymethods]
-impl PyChunkSpec {
+impl ChunkSpec {
     #[getter]
     fn variant_start_index(&self) -> usize {
         self.chunk_spec.variant_start_index
@@ -38,18 +41,18 @@ impl PyChunkSpec {
 }
 
 #[pyclass]
-struct PyChunkStats {
-    stats: ChunkStats,
+struct ChunkStats {
+    stats: NativeChunkStats,
 }
 
-impl PyChunkStats {
-    fn new(stats: ChunkStats) -> Self {
+impl ChunkStats {
+    fn new(stats: NativeChunkStats) -> Self {
         Self { stats }
     }
 }
 
 #[pymethods]
-impl PyChunkStats {
+impl ChunkStats {
     #[getter]
     fn allele_one_frequency<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
         self.stats.allele_one_frequency.clone().into_pyarray(py)
@@ -67,20 +70,20 @@ impl PyChunkStats {
 }
 
 #[pyclass]
-struct PyVariantMetadata {
+struct VariantMetadata {
     variant_start_index: usize,
     variant_stop_index: usize,
     metadata: VariantMetadataColumns,
 }
 
-impl PyVariantMetadata {
+impl VariantMetadata {
     fn new(variant_start_index: usize, variant_stop_index: usize, metadata: VariantMetadataColumns) -> Self {
         Self { variant_start_index, variant_stop_index, metadata }
     }
 }
 
 #[pymethods]
-impl PyVariantMetadata {
+impl VariantMetadata {
     #[getter]
     fn variant_start_index(&self) -> usize {
         self.variant_start_index
@@ -118,12 +121,12 @@ impl PyVariantMetadata {
 }
 
 #[pyclass]
-struct PyBgenReader {
+struct BgenReader {
     reader: BgenReaderCore,
 }
 
 #[pymethods]
-impl PyBgenReader {
+impl BgenReader {
     #[new]
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (bgen_path, trusted_no_missing_diploid=false))]
@@ -304,7 +307,7 @@ impl PyBgenReader {
         variant_start: usize,
         variant_stop: usize,
         mut output_array: PyReadwriteArray2<'py, f32>,
-    ) -> PyResult<PyChunkStats> {
+    ) -> PyResult<ChunkStats> {
         let output_shape = output_array.shape();
         let selected_variant_count = variant_stop.saturating_sub(variant_start);
         if output_shape[1] != selected_variant_count {
@@ -337,7 +340,7 @@ impl PyBgenReader {
                 )
             })
             .map_err(convert_bgen_error)?;
-        Ok(PyChunkStats::new(stats))
+        Ok(ChunkStats::new(stats))
     }
 
     #[allow(clippy::unused_self)]
@@ -345,18 +348,23 @@ impl PyBgenReader {
 }
 
 #[pyclass]
-struct PyRegenie2RunEngine {
+struct Regenie2RunEngine {
     engine: Regenie2RunEngineCore,
 }
 
+#[pyclass]
+struct RegeniePredictionSource {
+    source: PredictionSource,
+}
+
 struct StagedBgenDosageChunk {
-    chunk_spec: ChunkSpec,
+    chunk_spec: NativeChunkSpec,
     metadata: VariantMetadataColumns,
     dosage_values: Vec<f32>,
 }
 
 #[pymethods]
-impl PyRegenie2RunEngine {
+impl Regenie2RunEngine {
     #[new]
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (bgen_path, chunk_size, variant_limit=None, trusted_no_missing_diploid=false))]
@@ -414,8 +422,7 @@ impl PyRegenie2RunEngine {
         let run_result = self.run_prepared_bgen_chunks(py, &sample_index_values, callback, committed_chunk_identifiers);
         let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
         match (run_result, clear_result) {
-            (Err(error), _) => Err(error),
-            (Ok(_), Err(error)) => Err(error),
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
             (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
         }
     }
@@ -442,8 +449,7 @@ impl PyRegenie2RunEngine {
         );
         let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
         match (run_result, clear_result) {
-            (Err(error), _) => Err(error),
-            (Ok(_), Err(error)) => Err(error),
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
             (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
         }
     }
@@ -468,14 +474,44 @@ impl PyRegenie2RunEngine {
         );
         let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
         match (run_result, clear_result) {
-            (Err(error), _) => Err(error),
-            (Ok(_), Err(error)) => Err(error),
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
             (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
         }
     }
 }
 
-impl PyRegenie2RunEngine {
+#[pymethods]
+impl RegeniePredictionSource {
+    #[new]
+    #[allow(clippy::needless_pass_by_value)]
+    fn new(
+        prediction_list_path: String,
+        phenotype_name: String,
+        sample_family_identifiers: Vec<String>,
+        sample_individual_identifiers: Vec<String>,
+    ) -> PyResult<Self> {
+        let source = PredictionSource::load(
+            Path::new(&prediction_list_path),
+            &phenotype_name,
+            &sample_family_identifiers,
+            &sample_individual_identifiers,
+        )
+        .map_err(convert_prediction_error)?;
+        Ok(Self { source })
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn get_chromosome_predictions<'py>(
+        &self,
+        py: Python<'py>,
+        chromosome: String,
+    ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let prediction_values = self.source.chromosome_predictions(&chromosome).map_err(convert_prediction_error)?;
+        Ok(Array1::from_vec(prediction_values.to_vec()).into_pyarray(py))
+    }
+}
+
+impl Regenie2RunEngine {
     fn run_prepared_bgen_chunks<'py>(
         &self,
         py: Python<'py>,
@@ -507,7 +543,7 @@ impl PyRegenie2RunEngine {
                 .map_err(convert_bgen_error)?;
             let metadata = Py::new(
                 py,
-                PyVariantMetadata::new(
+                VariantMetadata::new(
                     chunk_spec.variant_start_index,
                     chunk_spec.variant_stop_index,
                     convert_variant_metadata_tuple(metadata_tuple),
@@ -557,7 +593,7 @@ impl PyRegenie2RunEngine {
         py: Python<'py>,
         selected_sample_count: &[i64],
         callback: &Bound<'py, PyAny>,
-        chunk_specs: Vec<ChunkSpec>,
+        chunk_specs: Vec<NativeChunkSpec>,
         prefetch_chunks: usize,
     ) -> PyResult<usize> {
         let (sender, receiver) = bounded(prefetch_chunks.max(1));
@@ -579,14 +615,14 @@ impl PyRegenie2RunEngine {
                     }
                 }
             });
-            consume_prefetched_bgen_dosage_chunks(py, selected_sample_count, callback, receiver, cancellation_flag)
+            consume_prefetched_bgen_dosage_chunks(py, selected_sample_count, callback, receiver, &cancellation_flag)
         })
     }
 
     fn read_bgen_dosage_chunk(
         &self,
         selected_sample_count: usize,
-        chunk_spec: &ChunkSpec,
+        chunk_spec: &NativeChunkSpec,
     ) -> Result<StagedBgenDosageChunk, BgenError> {
         read_bgen_dosage_chunk_from_reader(self.engine.reader(), selected_sample_count, chunk_spec)
     }
@@ -640,7 +676,7 @@ impl PyRegenie2RunEngine {
                 .map_err(convert_bgen_error)?;
             let metadata = Py::new(
                 py,
-                PyVariantMetadata::new(
+                VariantMetadata::new(
                     chunk_spec.variant_start_index,
                     chunk_spec.variant_stop_index,
                     convert_variant_metadata_tuple(metadata_tuple),
@@ -655,7 +691,7 @@ impl PyRegenie2RunEngine {
 fn read_bgen_dosage_chunk_from_reader(
     reader: &BgenReaderCore,
     selected_sample_count: usize,
-    chunk_spec: &ChunkSpec,
+    chunk_spec: &NativeChunkSpec,
 ) -> Result<StagedBgenDosageChunk, BgenError> {
     let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
     let mut dosage_values = vec![0.0_f32; selected_sample_count * selected_variant_count];
@@ -681,7 +717,7 @@ fn consume_prefetched_bgen_dosage_chunks<'py>(
     selected_sample_count: usize,
     callback: &Bound<'py, PyAny>,
     receiver: Receiver<Result<StagedBgenDosageChunk, String>>,
-    cancellation_flag: Arc<AtomicBool>,
+    cancellation_flag: &Arc<AtomicBool>,
 ) -> PyResult<usize> {
     let mut processed_chunk_count = 0;
     for staged_chunk_result in receiver {
@@ -711,7 +747,7 @@ fn call_dosage_chunk_callback<'py>(
         staged_chunk.chunk_spec.variant_stop_index - staged_chunk.chunk_spec.variant_start_index;
     let metadata = Py::new(
         py,
-        PyVariantMetadata::new(
+        VariantMetadata::new(
             staged_chunk.chunk_spec.variant_start_index,
             staged_chunk.chunk_spec.variant_stop_index,
             staged_chunk.metadata,
@@ -731,6 +767,7 @@ fn hello_from_bin() -> String {
 }
 
 #[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
 #[pyo3(signature = (variant_count, chunk_size, chromosome_boundary_indices, variant_limit=None, committed_chunk_identifiers=None))]
 fn plan_genotype_chunks(
     variant_count: usize,
@@ -738,7 +775,7 @@ fn plan_genotype_chunks(
     chromosome_boundary_indices: Vec<usize>,
     variant_limit: Option<usize>,
     committed_chunk_identifiers: Option<Vec<usize>>,
-) -> PyResult<Vec<PyChunkSpec>> {
+) -> PyResult<Vec<ChunkSpec>> {
     let committed_identifier_set = build_committed_identifier_set(committed_chunk_identifiers);
     let chunk_specs = planner::plan_chromosome_homogeneous_chunks(
         variant_count,
@@ -748,7 +785,7 @@ fn plan_genotype_chunks(
         &committed_identifier_set,
     )
     .map_err(convert_genotype_error)?;
-    Ok(chunk_specs.into_iter().map(|chunk_spec| PyChunkSpec { chunk_spec }).collect())
+    Ok(chunk_specs.into_iter().map(|chunk_spec| ChunkSpec { chunk_spec }).collect())
 }
 
 fn validate_supported_layout(combination_count: usize, is_phased: bool) -> PyResult<()> {
@@ -872,6 +909,20 @@ fn convert_genotype_error(error: GenotypeError) -> PyErr {
     }
 }
 
+fn convert_prediction_error(error: PredictionError) -> PyErr {
+    match error {
+        PredictionError::PredictionListNotFound(path) => pyo3::exceptions::PyFileNotFoundError::new_err(format!(
+            "Prediction list file not found: {}",
+            path.display()
+        )),
+        PredictionError::LocoFileNotFound(path) => {
+            pyo3::exceptions::PyFileNotFoundError::new_err(format!("LOCO file not found: {}", path.display()))
+        }
+        PredictionError::Io(io_error) => PyRuntimeError::new_err(io_error.to_string()),
+        other_error => PyValueError::new_err(other_error.to_string()),
+    }
+}
+
 fn build_committed_identifier_set(committed_chunk_identifiers: Option<Vec<usize>>) -> BTreeSet<usize> {
     committed_chunk_identifiers.unwrap_or_default().into_iter().collect()
 }
@@ -907,12 +958,13 @@ fn build_profile_snapshot_dict(profile_snapshot: &ReaderProfileSnapshot) -> Hash
 
 #[allow(clippy::missing_errors_doc)]
 pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<PyBgenReader>()?;
-    module.add_class::<PyChunkSpec>()?;
-    module.add_class::<PyChunkStats>()?;
-    module.add_class::<PyOutputWriterSession>()?;
-    module.add_class::<PyRegenie2RunEngine>()?;
-    module.add_class::<PyVariantMetadata>()?;
+    module.add_class::<BgenReader>()?;
+    module.add_class::<ChunkSpec>()?;
+    module.add_class::<ChunkStats>()?;
+    module.add_class::<OutputWriterSession>()?;
+    module.add_class::<Regenie2RunEngine>()?;
+    module.add_class::<RegeniePredictionSource>()?;
+    module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
     module.add_function(wrap_pyfunction!(hello_from_bin, module)?)?;

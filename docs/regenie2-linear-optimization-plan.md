@@ -101,13 +101,13 @@ Latest profiled stage ranking from `full_chr22_gpu_chunk1024_direct_summary.json
 | `write_chunk_to_disk` | 1.264s | 6.98% |
 | `get_variant_table_arrays` | 0.662s | 3.66% |
 | `device_put_genotypes` | 0.355s | 1.96% |
-| `build_chunk_payload` | 0.118s | 0.65% |
+| `write_regenie2_chunk` | 0.118s | 0.65% |
 | `preprocess_genotypes` | 0.080s | 0.44% |
 | `compute_regenie2_linear_chunk` | 0.071s | 0.39% |
 
 Important interpretation:
 
-- `persist_chunked_results_total` is an enclosing lifetime metric and overlaps other stages
+- output finalization is an enclosing lifetime metric and overlaps other stages
 - JAX compute remains very small relative to ingestion
 - the kernel is still not the place to optimize first
 
@@ -298,7 +298,7 @@ Continue measuring after each step:
 - `bgen_read_host`
 - `get_variant_table_arrays`
 - `device_put_genotypes`
-- `build_chunk_payload`
+- `write_regenie2_chunk`
 - `write_chunk_to_disk`
 - variants per second
 

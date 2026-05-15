@@ -11,7 +11,6 @@ from g.io.bgen.chunks import (
 from g.io.bgen.dosage import (
     convert_probability_matrix_to_dosage,
     convert_probability_tensor_to_dosage,
-    load_backend_core,
 )
 from g.io.bgen.metadata import (
     CoreVariantMetadata,
@@ -62,7 +61,6 @@ __all__ = [
     "convert_probability_tensor_to_dosage",
     "iter_dosage_genotype_chunks",
     "iter_genotype_chunks",
-    "load_backend_core",
     "load_bgen_sample_table",
     "load_sample_identifier_table",
     "normalize_axis_index",

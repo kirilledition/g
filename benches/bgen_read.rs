@@ -3,7 +3,7 @@ use std::path::Path;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use pprof::criterion::{Output, PProfProfiler};
 
-use _core::bgen::BgenReaderCore;
+use _core::genotype::bgen::BgenReaderCore;
 
 const CHUNK_SIZES: [usize; 5] = [1024, 2048, 4096, 8192, 16384];
 

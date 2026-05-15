@@ -3,16 +3,16 @@ from __future__ import annotations
 import numpy as np
 import numpy.typing as npt
 
-class PyChunkSpec:
+class ChunkSpec:
     variant_start_index: int
     variant_stop_index: int
 
-class PyChunkStats:
+class ChunkStats:
     allele_one_frequency: npt.NDArray[np.float32]
     observation_count: npt.NDArray[np.int32]
     has_missing_values: bool
 
-class PyVariantMetadata:
+class VariantMetadata:
     variant_start_index: int
     variant_stop_index: int
     chromosome: list[str]
@@ -21,7 +21,7 @@ class PyVariantMetadata:
     allele_one: list[str]
     allele_two: list[str]
 
-class PyBgenReader:
+class BgenReader:
     sample_count: int
     variant_count: int
     contains_embedded_samples: bool
@@ -69,10 +69,10 @@ class PyBgenReader:
         variant_start: int,
         variant_stop: int,
         output_array: npt.NDArray[np.float32],
-    ) -> PyChunkStats: ...
+    ) -> ChunkStats: ...
     def close(self) -> None: ...
 
-class PyRegenie2RunEngine:
+class Regenie2RunEngine:
     sample_count: int
     variant_count: int
     contains_embedded_samples: bool
@@ -110,7 +110,17 @@ class PyRegenie2RunEngine:
         committed_chunk_identifiers: list[int] | None = None,
     ) -> int: ...
 
-class PyOutputWriterSession:
+class RegeniePredictionSource:
+    def __init__(
+        self,
+        prediction_list_path: str,
+        phenotype_name: str,
+        sample_family_identifiers: list[str],
+        sample_individual_identifiers: list[str],
+    ) -> None: ...
+    def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]: ...
+
+class OutputWriterSession:
     def __init__(
         self,
         run_directory: str,
@@ -148,7 +158,7 @@ def plan_genotype_chunks(
     chromosome_boundary_indices: list[int],
     variant_limit: int | None = None,
     committed_chunk_identifiers: list[int] | None = None,
-) -> list[PyChunkSpec]: ...
+) -> list[ChunkSpec]: ...
 def convert_probability_tensor_to_dosage_f32(
     probability_tensor: npt.NDArray[np.float32],
     combination_count: int,
