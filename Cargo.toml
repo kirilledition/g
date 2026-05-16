@@ -32,22 +32,13 @@ criterion = "0.8.2"
 name = "bgen_read"
 harness = false
 
-[profile.dev]
-debug = 1
-opt-level = 3
-split-debuginfo = "unpacked"
-
-[profile.release]
+[profile.perf]
+inherits = "release"
 opt-level = 3
 codegen-units = 1
 debug = 1
 lto = "fat"
 strip = "none"
-
-[profile.test]
-debug = 1
-opt-level = 3
-split-debuginfo = "unpacked"
 
 [profile.bench]
 opt-level = 3

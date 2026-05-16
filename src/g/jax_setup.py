@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import typing
 from pathlib import Path
 
 import jax
@@ -19,6 +20,8 @@ DEFAULT_MATMUL_PRECISION = os.environ.get(
 ENABLE_PERSISTENT_COMPILATION_CACHE = os.environ.get("G_ENABLE_JAX_PERSISTENT_COMPILATION_CACHE", "1") == "1"
 PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = -1
 PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
+CUDA_PLATFORM_NAME = "cuda"
+GPU_DEVICE_PLATFORM_NAME = "gpu"
 
 
 def resolve_jax_compilation_cache_directory() -> Path:
@@ -50,8 +53,32 @@ def configure_jax_device(device: types.Device) -> None:
 
     """
     if device == types.Device.GPU:
-        # Let JAX auto-detect GPU (CUDA or ROCm) with CPU fallback
-        # Don't force platform order to avoid ROCm initialization errors on NVIDIA systems
-        jax.config.update("jax_platforms", "")
+        jax.config.update("jax_platforms", CUDA_PLATFORM_NAME)
+        require_gpu_device()
     else:
         jax.config.update("jax_platforms", "cpu")
+
+
+def require_gpu_device() -> None:
+    """Raise when JAX cannot initialize a GPU backend."""
+    try:
+        devices = jax.devices()
+    except RuntimeError as error:
+        message = (
+            "JAX GPU execution was requested, but no CUDA-enabled JAX backend could be initialized. "
+            "Install the GPU dependency group on the target node, for example: "
+            "`uv sync --python 3.14 --group dev --group gpu`."
+        )
+        raise RuntimeError(message) from error
+    gpu_devices = [
+        device
+        for device in devices
+        if getattr(typing.cast("typing.Any", device), "platform", None) == GPU_DEVICE_PLATFORM_NAME
+    ]
+    if not gpu_devices:
+        observed_devices = ", ".join(str(device) for device in devices) or "none"
+        message = (
+            "JAX GPU execution was requested, but JAX did not report any GPU devices. "
+            f"Observed devices: {observed_devices}."
+        )
+        raise RuntimeError(message)

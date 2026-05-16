@@ -27,6 +27,7 @@ baseline_benchmark = load_script_module("baseline_benchmark_script", "scripts/be
 bgen_reader_benchmark = load_script_module("bgen_reader_benchmark_script", "scripts/benchmark_bgen_reader.py")
 comparison_benchmark = load_script_module("comparison_benchmark_script", "scripts/benchmark_regenie_comparison.py")
 comparison_profile = load_script_module("comparison_profile_script", "scripts/profile_regenie_comparison.py")
+deep_profile = load_script_module("deep_profile_script", "scripts/profile_regenie2_deep.py")
 fresh_process_benchmark = load_script_module(
     "fresh_process_benchmark_script",
     "scripts/benchmark_regenie2_linear_fresh_process.py",
@@ -385,6 +386,141 @@ def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
     assert summary.mean_rows_per_second == 75.0
     assert summary.mean_chunk_bytes == 1536.0
     assert summary.mean_final_parquet_bytes == 768.0
+
+
+def test_deep_profile_builds_cache_environment(tmp_path: Path) -> None:
+    candidate = deep_profile.Step2Candidate(
+        trait_type="binary",
+        device="gpu",
+        chunk_size=8192,
+        prefetch_chunks=1,
+        output_writer_thread_count=4,
+        output_writer_queue_depth=8,
+        bgen_decode_tile_variant_count=128,
+        rayon_thread_count=2,
+        firth_batch_size=64,
+    )
+    environment = deep_profile.build_g_trial_environment(
+        candidate=candidate,
+        cache_directory=tmp_path / "jax_cache",
+        stage_timing_path=tmp_path / "stages.json",
+    )
+    assert environment["JAX_COMPILATION_CACHE_DIR"] == str(tmp_path / "jax_cache")
+    assert environment["G_REGENIE2_STAGE_TIMINGS_JSON"] == str(tmp_path / "stages.json")
+    assert environment["G_BGEN_DECODE_TILE_VARIANT_COUNT"] == "128"
+    assert environment["RAYON_NUM_THREADS"] == "2"
+    assert environment["G_REGENIE2_BINARY_FIRTH_BATCH_SIZE"] == "64"
+    assert "JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES" not in environment
+
+
+def test_deep_profile_child_command_contains_binary_controls() -> None:
+    baseline_paths = baseline_benchmark.build_baseline_paths()
+    candidate = deep_profile.Step2Candidate(
+        trait_type="binary",
+        device="cpu",
+        chunk_size=4096,
+        prefetch_chunks=2,
+        output_writer_thread_count=1,
+        output_writer_queue_depth=2,
+        bgen_decode_tile_variant_count=None,
+        rayon_thread_count=None,
+        firth_batch_size=32,
+    )
+    command = deep_profile.build_g_step2_child_command(
+        baseline_paths=baseline_paths,
+        candidate=candidate,
+        output_prefix=Path("data/profiles/out"),
+        variant_limit=1000,
+    )
+    command_text = command[2]
+    assert command[:2] == [sys.executable, "-c"]
+    assert "phenotype_binary" in command_text
+    assert "types.Device('cpu')" in command_text
+    assert "chunk_size=4096" in command_text
+    assert "variant_limit=1000" in command_text
+    assert "FIRTH_APPROXIMATE" in command_text
+    assert "jax_probe_device_platform" in command_text
+
+
+def test_deep_profile_aggregates_trial_results() -> None:
+    trial_results = [
+        deep_profile.TrialResult(
+            name="trial0",
+            implementation="g",
+            trait_type="quantitative",
+            device="gpu",
+            status="success",
+            wall_time_seconds=2.0,
+            output_row_count=100,
+            stdout_log_path="stdout0",
+            stderr_log_path="stderr0",
+            command_arguments=["python"],
+            environment_overrides={},
+        ),
+        deep_profile.TrialResult(
+            name="trial1",
+            implementation="g",
+            trait_type="quantitative",
+            device="gpu",
+            status="success",
+            wall_time_seconds=1.0,
+            output_row_count=100,
+            stdout_log_path="stdout1",
+            stderr_log_path="stderr1",
+            command_arguments=["python"],
+            environment_overrides={},
+        ),
+    ]
+    aggregate = deep_profile.aggregate_trial_results(
+        name="headline_g_quantitative_gpu",
+        implementation="g",
+        trait_type="quantitative",
+        device="gpu",
+        warmup_count=1,
+        trial_results=trial_results,
+    )
+    assert aggregate.status == "success"
+    assert aggregate.median_wall_time_seconds == 1.5
+    assert aggregate.rows_per_second == 100 / 1.5
+
+
+def test_deep_profile_runtime_comparison_uses_regenie_baseline() -> None:
+    regenie_result = deep_profile.AggregateResult(
+        name="headline_regenie_quantitative",
+        implementation="regenie",
+        trait_type="quantitative",
+        device="external_cpu",
+        status="success",
+        trial_count=1,
+        warmup_count=0,
+        median_wall_time_seconds=10.0,
+        mean_wall_time_seconds=10.0,
+        min_wall_time_seconds=10.0,
+        max_wall_time_seconds=10.0,
+        standard_deviation_seconds=0.0,
+        rows_per_second=10.0,
+        trials=[],
+    )
+    g_result = deep_profile.AggregateResult(
+        name="headline_g_quantitative_gpu",
+        implementation="g",
+        trait_type="quantitative",
+        device="gpu",
+        status="success",
+        trial_count=1,
+        warmup_count=0,
+        median_wall_time_seconds=2.5,
+        mean_wall_time_seconds=2.5,
+        min_wall_time_seconds=2.5,
+        max_wall_time_seconds=2.5,
+        standard_deviation_seconds=0.0,
+        rows_per_second=40.0,
+        trials=[],
+    )
+    comparisons = deep_profile.build_runtime_comparisons([regenie_result, g_result])
+    comparison = comparisons["headline_g_quantitative_gpu_vs_regenie_quantitative"]
+    assert comparison["speedup_ratio"] == 4.0
+    assert comparison["absolute_delta_seconds"] == -7.5
 
 
 def test_quantitative_step2_comparison_uses_full_variant_identity_when_available(tmp_path: Path) -> None:

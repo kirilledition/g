@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from g.jax_setup import (
     FLOAT_DTYPE,
     configure_jax_device,
+    require_gpu_device,
     resolve_jax_compilation_cache_directory,
 )
 from g.types import Device
@@ -71,10 +72,14 @@ def test_resolve_jax_cache_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_configure_jax_device_gpu() -> None:
-    """Ensure configuring for GPU sets an empty platforms string for auto-detection."""
-    with patch("g.jax_setup.jax.config.update") as mock_update:
+    """Ensure configuring for GPU requires the CUDA backend."""
+    with (
+        patch("g.jax_setup.jax.config.update") as mock_update,
+        patch("g.jax_setup.require_gpu_device") as mock_require_gpu_device,
+    ):
         configure_jax_device(Device.GPU)
-        mock_update.assert_called_once_with("jax_platforms", "")
+        mock_update.assert_called_once_with("jax_platforms", "cuda")
+        mock_require_gpu_device.assert_called_once_with()
 
 
 def test_configure_jax_device_cpu() -> None:
@@ -82,6 +87,45 @@ def test_configure_jax_device_cpu() -> None:
     with patch("g.jax_setup.jax.config.update") as mock_update:
         configure_jax_device(Device.CPU)
         mock_update.assert_called_once_with("jax_platforms", "cpu")
+
+
+def test_require_gpu_device_accepts_gpu_platform() -> None:
+    """Ensure GPU validation accepts a JAX GPU device."""
+
+    class FakeDevice:
+        platform = "gpu"
+
+    with patch("g.jax_setup.jax.devices", return_value=[FakeDevice()]):
+        require_gpu_device()
+
+
+def test_require_gpu_device_rejects_cpu_only_backend() -> None:
+    """Ensure GPU validation rejects CPU-only device lists."""
+
+    class FakeDevice:
+        platform = "cpu"
+
+        def __str__(self) -> str:
+            return "CpuDevice(id=0)"
+
+    with patch("g.jax_setup.jax.devices", return_value=[FakeDevice()]):
+        try:
+            require_gpu_device()
+        except RuntimeError as error:
+            assert "did not report any GPU devices" in str(error)
+        else:
+            raise AssertionError("Expected GPU validation to fail for CPU-only devices.")
+
+
+def test_require_gpu_device_wraps_backend_initialization_errors() -> None:
+    """Ensure CUDA initialization errors get an actionable message."""
+    with patch("g.jax_setup.jax.devices", side_effect=RuntimeError("Unknown backend cuda")):
+        try:
+            require_gpu_device()
+        except RuntimeError as error:
+            assert "no CUDA-enabled JAX backend" in str(error)
+        else:
+            raise AssertionError("Expected GPU validation to fail when CUDA initialization fails.")
 
 
 def test_float_dtype_is_float32() -> None:

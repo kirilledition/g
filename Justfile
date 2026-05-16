@@ -58,13 +58,17 @@ verify-regenie2-binary-gpu-inputs:
 benchmark-baselines: setup-data
     {{server_env}} && uv run python scripts/benchmark.py
 
+# Build and install the Rust extension using the opt-in native performance profile
+install-perf-extension:
+    {{server_env}} && RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf --uv
+
 # Compare original regenie (all 4 programs) vs g quantitative step2 CPU
-benchmark-regenie-comparison-cpu: setup-data
-    {{server_env}} && uv run python scripts/benchmark_regenie_comparison.py --cpu-only
+benchmark-regenie-comparison-cpu: setup-data install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/benchmark_regenie_comparison.py --cpu-only
 
 # Compare original regenie (all 4 programs) vs g quantitative step2 CPU+GPU
-benchmark-regenie-comparison-gpu: setup-data
-    {{server_env}} && uv run python scripts/benchmark_regenie_comparison.py --include-gpu
+benchmark-regenie-comparison-gpu: setup-data install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/benchmark_regenie_comparison.py --include-gpu
 
 # Alias for comparison benchmark (CPU-only default)
 benchmark-regenie-comparison: benchmark-regenie-comparison-cpu
@@ -87,6 +91,10 @@ bootstrap:
 # Bootstrap a GPU-capable development environment for JAX CUDA work
 bootstrap-gpu:
     {{server_env}} && uv python install {{python_version}}
+    {{server_env}} && uv sync --python {{python_version}} --group dev --group gpu
+
+# Install CUDA-capable Python dependencies into the current environment
+install-gpu-dependencies:
     {{server_env}} && uv sync --python {{python_version}} --group dev --group gpu
 
 # Check local toolchain prerequisites for development on the current host
@@ -248,31 +256,67 @@ probe-jax:
     {{server_env}} && uv run python scripts/probe_jax_runtime.py
 
 # Benchmark BGEN float32 read paths
-benchmark-bgen-reader:
-    {{server_env}} && uv run python scripts/benchmark_bgen_reader.py
+benchmark-bgen-reader: install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/benchmark_bgen_reader.py
 
 # Benchmark REGENIE step 2 in fresh Python processes
-benchmark-regenie2-linear-fresh-gpu:
-    {{server_env}} && uv run python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu
+benchmark-regenie2-linear-fresh-gpu: install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu
 
 # Benchmark REGENIE step 2 in fresh Python processes using Arrow chunks + Parquet finalization
-benchmark-regenie2-linear-fresh-gpu-parquet:
-    {{server_env}} && uv run python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --finalize-parquet
+benchmark-regenie2-linear-fresh-gpu-parquet: install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --finalize-parquet
 
 # Sequentially tune GPU REGENIE step 2 and active BGEN reader knobs
-tune-regenie2-gpu:
-    {{server_env}} && uv run python scripts/tune_regenie2_gpu.py
+tune-regenie2-gpu: install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/tune_regenie2_gpu.py
+
+# Run Rust Criterion benchmarks with native performance flags
+benchmark-rust:
+    {{server_env}} && RUSTFLAGS="-C target-cpu=native" cargo bench
 
 # Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU
-profile-regenie-comparison-cpu: setup-data
-    {{server_env}} && uv run python scripts/profile_regenie_comparison.py --cpu-only
+profile-regenie-comparison-cpu: setup-data install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/profile_regenie_comparison.py --cpu-only
 
 # Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU+GPU
-profile-regenie-comparison-gpu: setup-data
-    {{server_env}} && uv run python scripts/profile_regenie_comparison.py --include-gpu
+profile-regenie-comparison-gpu: setup-data install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/profile_regenie_comparison.py --include-gpu
 
 # Alias for unified profiling comparison (CPU-only default)
 profile-regenie-comparison: profile-regenie-comparison-cpu
+
+# Run the deep REGENIE step 2 profiling harness on the current host
+profile-regenie2-deep: setup-data install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/profile_regenie2_deep.py
+
+# Smoke test the deep REGENIE step 2 profiling harness on the current host
+profile-regenie2-deep-smoke: setup-data install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/profile_regenie2_deep.py --smoke --skip-deep-profiles
+
+# Submit one long landau SLURM job for the deep REGENIE step 2 profiling harness
+profile-regenie2-deep-landau:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    slurm_arguments=(
+      "--nodelist={{slurm_gpu_node}}"
+      "--gres=gpu:1"
+      "--cpus-per-task=8"
+      "--mem=64G"
+      "--time=12:00:00"
+    )
+    if [[ -n "{{slurm_partition}}" ]]; then
+      slurm_arguments+=("--partition={{slurm_partition}}")
+    fi
+    if [[ -n "{{slurm_account}}" ]]; then
+      slurm_arguments+=("--account={{slurm_account}}")
+    fi
+    if [[ -n "{{slurm_extra_arguments}}" ]]; then
+      read -r -a extra_arguments <<< "{{slurm_extra_arguments}}"
+      slurm_arguments+=("${extra_arguments[@]}")
+    fi
+    exec srun "${slurm_arguments[@]}" bash -lc '. scripts/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python scripts/profile_regenie2_deep.py'
 
 # Format code
 format:

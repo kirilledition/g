@@ -407,6 +407,14 @@ impl Regenie2RunEngine {
         self.engine.reader().variant_metadata_slice(variant_start, variant_stop).map_err(convert_bgen_error)
     }
 
+    fn reset_profile(&self) {
+        self.engine.reader().reset_profile();
+    }
+
+    fn profile_snapshot(&self) -> HashMap<String, u64> {
+        build_profile_snapshot_dict(&self.engine.reader().profile_snapshot())
+    }
+
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (sample_indices, callback, committed_chunk_identifiers=None))]
     fn run_bgen_chunks<'py>(
@@ -640,7 +648,7 @@ impl Regenie2RunEngine {
             let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
             let output_array_object =
                 callback.call_method1("acquire_dosage_buffer", (sample_index_values.len(), selected_variant_count))?;
-            {
+            let stats = {
                 let mut output_array = output_array_object.extract::<PyReadwriteArray2<'_, f32>>()?;
                 let output_shape = output_array.shape();
                 if output_shape != [sample_index_values.len(), selected_variant_count] {
@@ -659,16 +667,18 @@ impl Regenie2RunEngine {
                 })?;
                 let output_pointer_address = output_slice.as_mut_ptr() as usize;
                 let output_value_count = output_slice.len();
-                py.detach(|| {
-                    self.engine.reader().read_dosage_f32_into_address_prepared(
-                        chunk_spec.variant_start_index,
-                        chunk_spec.variant_stop_index,
-                        output_pointer_address,
-                        output_value_count,
-                    )
-                })
-                .map_err(convert_bgen_error)?;
-            }
+                let chunk_stats = py
+                    .detach(|| {
+                        self.engine.reader().read_preprocessed_dosage_f32_into_address_prepared(
+                            chunk_spec.variant_start_index,
+                            chunk_spec.variant_stop_index,
+                            output_pointer_address,
+                            output_value_count,
+                        )
+                    })
+                    .map_err(convert_bgen_error)?;
+                Py::new(py, ChunkStats::new(chunk_stats))?
+            };
             let metadata_tuple = self
                 .engine
                 .reader()
@@ -682,7 +692,7 @@ impl Regenie2RunEngine {
                     convert_variant_metadata_tuple(metadata_tuple),
                 ),
             )?;
-            callback.call_method1("compute_dosage_chunk", (metadata, output_array_object))?;
+            callback.call_method1("compute_preprocessed_dosage_chunk", (metadata, output_array_object, stats))?;
         }
         Ok(chunk_specs.len())
     }

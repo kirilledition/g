@@ -30,8 +30,8 @@ class Regenie2ChunkAccumulator:
     """
 
     metadata: VariantMetadata
-    allele_one_frequency: jax.Array
-    observation_count: jax.Array
+    allele_one_frequency: jax.Array | npt.NDArray[np.float32]
+    observation_count: jax.Array | npt.NDArray[np.int32]
     beta: jax.Array
     standard_error: jax.Array
     chi_squared: jax.Array

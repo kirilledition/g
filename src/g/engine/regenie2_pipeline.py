@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import contextlib
+import json
+import os
 import queue
 import threading
+import time
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,12 +30,163 @@ class DosageChunkWorkItem:
     genotype_matrix: npt.NDArray[np.float32]
 
 
+@dataclass(frozen=True)
+class PreprocessedDosageChunkWorkItem:
+    """One native-preprocessed dosage chunk staged for asynchronous JAX compute."""
+
+    metadata: models.VariantMetadata
+    genotype_matrix: npt.NDArray[np.float32]
+    allele_one_frequency: npt.NDArray[np.float32]
+    observation_count: npt.NDArray[np.int32]
+
+
 class RegeniePredictionSourceProtocol(typing.Protocol):
     """Native prediction source interface used by the JAX callbacks."""
 
     def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]:
         """Return already-aligned LOCO predictions for one chromosome."""
         ...
+
+
+@dataclass(frozen=True)
+class StageTimingSnapshot:
+    """Diagnostic stage timing snapshot for one native REGENIE step 2 run.
+
+    Attributes:
+        stage_totals_seconds: Total wall time per measured stage.
+        stage_counts: Number of observations per measured stage.
+        native_bgen_profile: Native BGEN profile counters from the run engine.
+
+    """
+
+    stage_totals_seconds: dict[str, float]
+    stage_counts: dict[str, int]
+    native_bgen_profile: dict[str, int]
+
+
+class StageTimingRecorder:
+    """Thread-safe diagnostic wall-time collector for profiling harnesses."""
+
+    def __init__(self) -> None:
+        """Initialize empty stage timing state."""
+        self.stage_totals_seconds: dict[str, float] = {}
+        self.stage_counts: dict[str, int] = {}
+        self.native_bgen_profile: dict[str, int] = {}
+        self.lock = threading.Lock()
+
+    def add_stage_duration(self, stage_name: str, duration_seconds: float) -> None:
+        """Accumulate one measured duration."""
+        with self.lock:
+            self.stage_totals_seconds[stage_name] = self.stage_totals_seconds.get(stage_name, 0.0) + duration_seconds
+            self.stage_counts[stage_name] = self.stage_counts.get(stage_name, 0) + 1
+
+    def set_native_bgen_profile(self, profile_snapshot: dict[str, int]) -> None:
+        """Store native BGEN profiling counters."""
+        with self.lock:
+            self.native_bgen_profile = dict(profile_snapshot)
+
+    def snapshot(self) -> StageTimingSnapshot:
+        """Return an immutable copy of the current timings."""
+        with self.lock:
+            return StageTimingSnapshot(
+                stage_totals_seconds=dict(self.stage_totals_seconds),
+                stage_counts=dict(self.stage_counts),
+                native_bgen_profile=dict(self.native_bgen_profile),
+            )
+
+
+def build_stage_timing_recorder_from_environment() -> StageTimingRecorder | None:
+    """Create a diagnostic stage recorder when requested by the profiling harness."""
+    if not os.environ.get("G_REGENIE2_STAGE_TIMINGS_JSON"):
+        return None
+    return StageTimingRecorder()
+
+
+def write_stage_timing_snapshot_from_environment(stage_timing_recorder: StageTimingRecorder | None) -> None:
+    """Persist diagnostic stage timings when the profiling harness requests them."""
+    if stage_timing_recorder is None:
+        return
+    stage_timing_path = os.environ.get("G_REGENIE2_STAGE_TIMINGS_JSON")
+    if not stage_timing_path:
+        return
+    snapshot = stage_timing_recorder.snapshot()
+    payload = {
+        "stage_totals_seconds": snapshot.stage_totals_seconds,
+        "stage_counts": snapshot.stage_counts,
+        "native_bgen_profile": snapshot.native_bgen_profile,
+    }
+    Path(stage_timing_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(stage_timing_path).write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
+
+
+def record_stage_duration(
+    stage_timing_recorder: StageTimingRecorder | None,
+    stage_name: str,
+    start_time: float,
+) -> None:
+    """Record elapsed wall time for a stage when diagnostics are active."""
+    if stage_timing_recorder is None:
+        return
+    stage_timing_recorder.add_stage_duration(stage_name, time.perf_counter() - start_time)
+
+
+def block_until_ready(value: typing.Any) -> None:
+    """Synchronize a JAX value when it supports readiness blocking."""
+    block_until_ready_method = getattr(value, "block_until_ready", None)
+    if callable(block_until_ready_method):
+        block_until_ready_method()
+
+
+def put_genotype_matrix_on_device(
+    genotype_matrix: jax.Array | npt.NDArray[np.float32],
+    stage_timing_recorder: StageTimingRecorder | None,
+) -> jax.Array:
+    """Transfer a genotype chunk to the active JAX device with optional timing."""
+    start_time = time.perf_counter()
+    genotype_device_array = jax.device_put(genotype_matrix)
+    if stage_timing_recorder is not None:
+        block_until_ready(genotype_device_array)
+    record_stage_duration(stage_timing_recorder, "host_to_device_transfer", start_time)
+    return genotype_device_array
+
+
+def write_regenie2_chunk_with_optional_timing(
+    *,
+    writer_session: typing.Any,
+    chunk_accumulator: engine_types.Regenie2ChunkAccumulator,
+    stage_timing_recorder: StageTimingRecorder | None,
+) -> None:
+    """Write one REGENIE chunk while isolating device-get and native writer timings."""
+    if stage_timing_recorder is None:
+        output.write_regenie2_chunk(writer_session, chunk_accumulator)
+        return
+
+    materialization_start_time = time.perf_counter()
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": chunk_accumulator.allele_one_frequency,
+            "observation_count": chunk_accumulator.observation_count,
+            "beta": chunk_accumulator.beta,
+            "standard_error": chunk_accumulator.standard_error,
+            "chi_squared": chunk_accumulator.chi_squared,
+            "log10_p_value": chunk_accumulator.log10_p_value,
+            "extra_code": chunk_accumulator.extra_code,
+        }
+    )
+    record_stage_duration(stage_timing_recorder, "device_to_host_materialization", materialization_start_time)
+
+    write_start_time = time.perf_counter()
+    writer_session.write_regenie2_chunk(
+        metadata=chunk_accumulator.metadata,
+        allele_one_frequency=host_values["allele_one_frequency"],
+        observation_count=host_values["observation_count"],
+        beta=host_values["beta"],
+        standard_error=host_values["standard_error"],
+        chi_squared=host_values["chi_squared"],
+        log10_p_value=host_values["log10_p_value"],
+        extra_code=host_values["extra_code"],
+    )
+    record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
 
 
 def build_variant_metadata(native_metadata: _core.VariantMetadata) -> models.VariantMetadata:
@@ -56,12 +210,16 @@ class NativeBgenCallbackRunner:
         *,
         worker_name: str,
         staging_depth: int = 1,
+        stage_timing_recorder: StageTimingRecorder | None = None,
     ) -> None:
         """Initialize shared native callback state."""
         self.processed_chunk_count = 0
+        self.stage_timing_recorder = stage_timing_recorder
         self.dosage_queue_depth = max(1, staging_depth)
         self.dosage_buffer_limit = self.dosage_queue_depth + 1
-        self.dosage_queue: queue.Queue[DosageChunkWorkItem | None] = queue.Queue(maxsize=self.dosage_queue_depth)
+        self.dosage_queue: queue.Queue[DosageChunkWorkItem | PreprocessedDosageChunkWorkItem | None] = queue.Queue(
+            maxsize=self.dosage_queue_depth
+        )
         self.free_dosage_buffers: queue.Queue[npt.NDArray[np.float32]] = queue.Queue(maxsize=self.dosage_buffer_limit)
         self.dosage_buffer_count = 0
         self.worker_error: BaseException | None = None
@@ -110,6 +268,22 @@ class NativeBgenCallbackRunner:
             DosageChunkWorkItem(metadata=build_variant_metadata(metadata), genotype_matrix=genotype_matrix)
         )
 
+    def compute_preprocessed_dosage_chunk(
+        self,
+        metadata: _core.VariantMetadata,
+        genotype_matrix: npt.NDArray[np.float32],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Enqueue one Rust-preprocessed dosage chunk for JAX association."""
+        self.put_dosage_work_item(
+            PreprocessedDosageChunkWorkItem(
+                metadata=build_variant_metadata(metadata),
+                genotype_matrix=genotype_matrix,
+                allele_one_frequency=chunk_stats.allele_one_frequency,
+                observation_count=chunk_stats.observation_count,
+            )
+        )
+
     def consume_dosage_chunks(self) -> None:
         """Consume queued dosage chunks and run JAX work in order."""
         try:
@@ -117,6 +291,16 @@ class NativeBgenCallbackRunner:
                 work_item = self.dosage_queue.get()
                 if work_item is None:
                     return
+                if isinstance(work_item, PreprocessedDosageChunkWorkItem):
+                    self.compute_preprocessed_chunk(
+                        variant_metadata=work_item.metadata,
+                        genotype_matrix=work_item.genotype_matrix,
+                        allele_one_frequency=work_item.allele_one_frequency,
+                        observation_count=work_item.observation_count,
+                    )
+                    self.processed_chunk_count += 1
+                    self.release_dosage_buffer(work_item.genotype_matrix)
+                    continue
                 preprocessed_genotype_arrays = genotype_processing.preprocess_genotype_matrix_arrays(
                     jax.device_put(work_item.genotype_matrix)
                 )
@@ -131,7 +315,7 @@ class NativeBgenCallbackRunner:
         except Exception as error:  # noqa: BLE001
             self.worker_error = error
 
-    def put_dosage_work_item(self, work_item: DosageChunkWorkItem | None) -> None:
+    def put_dosage_work_item(self, work_item: DosageChunkWorkItem | PreprocessedDosageChunkWorkItem | None) -> None:
         """Put work into the bounded worker queue while surfacing worker errors."""
         while True:
             self.raise_worker_error_if_present()
@@ -192,6 +376,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         prediction_source: RegeniePredictionSourceProtocol,
         writer_session: typing.Any,
         staging_depth: int = 1,
+        stage_timing_recorder: StageTimingRecorder | None = None,
     ) -> None:
         """Initialize the callback state."""
         self.aligned_sample_data = aligned_sample_data
@@ -206,6 +391,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         super().__init__(
             worker_name="regenie2-linear-callback",
             staging_depth=staging_depth,
+            stage_timing_recorder=stage_timing_recorder,
         )
 
     def compute_preprocessed_chunk(
@@ -227,13 +413,17 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.current_chromosome = chromosome
         assert self.current_chromosome_state is not None
 
+        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
+        compute_start_time = time.perf_counter()
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
             chromosome_state=self.current_chromosome_state,
-            genotype_matrix=jax.device_put(genotype_matrix),
+            genotype_matrix=genotype_device_array,
         )
-        output.write_regenie2_chunk(
-            self.writer_session,
-            build_chunk_accumulator(
+        block_until_ready(result.log10_p_value)
+        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        write_regenie2_chunk_with_optional_timing(
+            writer_session=self.writer_session,
+            chunk_accumulator=build_chunk_accumulator(
                 metadata=variant_metadata,
                 allele_one_frequency=allele_one_frequency,
                 observation_count=observation_count,
@@ -243,6 +433,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 log10_p_value=result.log10_p_value,
                 extra_code=None,
             ),
+            stage_timing_recorder=self.stage_timing_recorder,
         )
 
 
@@ -256,6 +447,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         writer_session: typing.Any,
         correction: types.RegenieBinaryCorrection,
         staging_depth: int = 1,
+        stage_timing_recorder: StageTimingRecorder | None = None,
     ) -> None:
         """Initialize the callback state."""
         self.aligned_sample_data = aligned_sample_data
@@ -271,6 +463,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         super().__init__(
             worker_name="regenie2-binary-callback",
             staging_depth=staging_depth,
+            stage_timing_recorder=stage_timing_recorder,
         )
 
     def compute_preprocessed_chunk(
@@ -292,14 +485,18 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.current_chromosome = chromosome
         assert self.current_chromosome_state is not None
 
+        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
+        compute_start_time = time.perf_counter()
         result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
             chromosome_state=self.current_chromosome_state,
-            genotype_matrix=jax.device_put(genotype_matrix),
+            genotype_matrix=genotype_device_array,
             correction=self.correction,
         )
-        output.write_regenie2_chunk(
-            self.writer_session,
-            build_chunk_accumulator(
+        block_until_ready(result.log10_p_value)
+        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        write_regenie2_chunk_with_optional_timing(
+            writer_session=self.writer_session,
+            chunk_accumulator=build_chunk_accumulator(
                 metadata=variant_metadata,
                 allele_one_frequency=allele_one_frequency,
                 observation_count=observation_count,
@@ -309,6 +506,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 log10_p_value=result.log10_p_value,
                 extra_code=result.extra_code,
             ),
+            stage_timing_recorder=self.stage_timing_recorder,
         )
 
 
@@ -326,8 +524,8 @@ def build_chunk_accumulator(
     """Build one chunk accumulator from Rust-side metadata and JAX outputs."""
     return engine_types.Regenie2ChunkAccumulator(
         metadata=metadata,
-        allele_one_frequency=jax.device_put(allele_one_frequency),
-        observation_count=jax.device_put(observation_count),
+        allele_one_frequency=allele_one_frequency,
+        observation_count=observation_count,
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
@@ -375,6 +573,7 @@ def run_regenie2_linear_bgen_pipeline(
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
     )
+    stage_timing_recorder = build_stage_timing_recorder_from_environment()
     callback = LinearRegenie2PipelineCallback(
         aligned_sample_data=aligned_sample_data,
         prediction_source=build_regenie_prediction_source(
@@ -384,6 +583,7 @@ def run_regenie2_linear_bgen_pipeline(
         ),
         writer_session=writer_session,
         staging_depth=prefetch_chunks,
+        stage_timing_recorder=stage_timing_recorder,
     )
     return run_bgen_engine_with_callback(
         engine=engine,
@@ -391,6 +591,7 @@ def run_regenie2_linear_bgen_pipeline(
         committed_chunk_identifiers=committed_chunk_identifiers,
         writer_session=writer_session,
         callback=callback,
+        stage_timing_recorder=stage_timing_recorder,
     )
 
 
@@ -434,6 +635,7 @@ def run_regenie2_binary_bgen_pipeline(
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
     )
+    stage_timing_recorder = build_stage_timing_recorder_from_environment()
     callback = BinaryRegenie2PipelineCallback(
         aligned_sample_data=aligned_sample_data,
         prediction_source=build_regenie_prediction_source(
@@ -444,6 +646,7 @@ def run_regenie2_binary_bgen_pipeline(
         writer_session=writer_session,
         correction=correction,
         staging_depth=prefetch_chunks,
+        stage_timing_recorder=stage_timing_recorder,
     )
     return run_bgen_engine_with_callback(
         engine=engine,
@@ -451,6 +654,7 @@ def run_regenie2_binary_bgen_pipeline(
         committed_chunk_identifiers=committed_chunk_identifiers,
         writer_session=writer_session,
         callback=callback,
+        stage_timing_recorder=stage_timing_recorder,
     )
 
 
@@ -532,22 +736,35 @@ def run_bgen_engine_with_callback(
     committed_chunk_identifiers: set[int] | None,
     writer_session: typing.Any,
     callback: object,
+    stage_timing_recorder: StageTimingRecorder | None,
 ) -> Path | None:
     """Run native BGEN chunk delivery and close the output writer."""
     try:
+        if stage_timing_recorder is not None:
+            engine.reset_profile()
+        engine_delivery_start_time = time.perf_counter()
         engine.run_bgen_dosage_buffered_chunks(
             np.ascontiguousarray(aligned_sample_data.sample_indices, dtype=np.int64),
             callback,
             committed_chunk_identifiers=sorted(committed_chunk_identifiers or set()),
         )
+        record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
+        if stage_timing_recorder is not None:
+            stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
+        callback_finish_start_time = time.perf_counter()
         typing.cast("typing.Any", callback).finish()
+        record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
+        writer_finish_start_time = time.perf_counter()
         final_parquet_path = writer_session.finish()
+        record_stage_duration(stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time)
     except Exception:
         abort_callback = getattr(callback, "abort", None)
         if callable(abort_callback):
             abort_callback()
         writer_session.abort()
+        write_stage_timing_snapshot_from_environment(stage_timing_recorder)
         raise
+    write_stage_timing_snapshot_from_environment(stage_timing_recorder)
     if final_parquet_path is None:
         return None
     return Path(final_parquet_path)
