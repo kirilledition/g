@@ -31,13 +31,6 @@ class RegenieBinaryCorrection(enum.StrEnum):
     SPA = "spa"
 
 
-class GenotypeSourceFormat(enum.StrEnum):
-    """Supported genotype file formats."""
-
-    PLINK = "plink"
-    BGEN = "bgen"
-
-
 class SampleIdentifierSource(enum.StrEnum):
     """Origin of BGEN sample identifiers."""
 

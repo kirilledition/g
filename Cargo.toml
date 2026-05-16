@@ -10,11 +10,11 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # "extension-module" tells pyo3 we want to build an extension module (skips linking against libpython.so)
-# "abi3-py313" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.13.
-pyo3 = { version = "0.28.3", features = ["abi3-py313"] }
+# "abi3-py314" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.14.
+pyo3 = { version = "0.28.3", features = ["abi3-py314"] }
 numpy = "0.28.0"
-arrow = { version = "56.2.0", features = ["ipc_compression"] }
-parquet = { version = "56.2.0", default-features = false, features = ["arrow", "zstd"] }
+arrow = { version = "58.3.0", features = ["ipc_compression"] }
+parquet = { version = "58.3.0", default-features = false, features = ["arrow", "zstd"] }
 crossbeam-channel = "0.5.15"
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 memmap2 = "0.9.10"
@@ -22,13 +22,36 @@ rayon = "1.12.0"
 thiserror = "2.0.18"
 
 [features]
-default = ["extension-module"]
+default = []
 extension-module = ["pyo3/extension-module"]
 
 [dev-dependencies]
-criterion = "0.5.1"
-pprof = { version = "0.15.0", features = ["criterion", "flamegraph"] }
+criterion = "0.8.2"
 
 [[bench]]
 name = "bgen_read"
 harness = false
+
+[profile.dev]
+debug = 1
+opt-level = 3
+split-debuginfo = "unpacked"
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+debug = 1
+lto = "fat"
+strip = "none"
+
+[profile.test]
+debug = 1
+opt-level = 3
+split-debuginfo = "unpacked"
+
+[profile.bench]
+opt-level = 3
+codegen-units = 1
+debug = 1
+lto = "fat"
+strip = "none"

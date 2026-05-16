@@ -14,6 +14,14 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/g-uv-cache}"
 export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 export CARGO_HOME="${CARGO_HOME:-${tools_directory}/rust/cargo}"
 export RUSTUP_HOME="${RUSTUP_HOME:-${tools_directory}/rust/rustup}"
+export PYO3_PYTHON="${PYO3_PYTHON:-python3.14}"
+
+if command -v "${PYO3_PYTHON}" >/dev/null 2>&1; then
+  python_library_directory="$("${PYO3_PYTHON}" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")')"
+  if [ -n "${python_library_directory}" ]; then
+    export LD_LIBRARY_PATH="${python_library_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+  fi
+fi
 
 if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -w "${XDG_RUNTIME_DIR}" ]; then
   user_identifier="$(id -u)"

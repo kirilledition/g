@@ -10,7 +10,7 @@ if typing.TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
-    from g.models import VariantMetadata
+    from g.io.models import VariantMetadata
 
 
 @dataclass(frozen=True)

@@ -7,21 +7,13 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from g.io.source import (
-    GenotypeSourceConfig,
-    build_bgen_source_config,
-    build_genotype_source_signature_paths,
-    build_plink_source_config,
-    load_aligned_sample_data_from_source,
-    resolve_genotype_source_config,
-    validate_genotype_source_config,
-)
-from g.types import ArrayMemoryOrder, GenotypeSourceFormat, SampleIdentifierSource
+from g.io import source
+from g.types import ArrayMemoryOrder, SampleIdentifierSource
 
 if typing.TYPE_CHECKING:
     import polars as pl
 
-    from g.io.reader import GenotypeReader, VariantTableArrays
+    from g.io.reader import VariantTableArrays
 
 
 class FakeSourceReader:
@@ -66,56 +58,34 @@ class FakeSourceReader:
         return
 
 
-def test_resolve_genotype_source_config_requires_exactly_one_source() -> None:
-    """Ensure the public source resolver rejects ambiguous inputs."""
-    with pytest.raises(ValueError, match="Exactly one genotype source"):
-        resolve_genotype_source_config(None, None)
-    with pytest.raises(ValueError, match="Exactly one genotype source"):
-        resolve_genotype_source_config("dataset", "dataset.bgen")
+def test_resolve_genotype_source_config_requires_bgen_source() -> None:
+    """Ensure the source resolver requires a BGEN input."""
+    with pytest.raises(ValueError, match="BGEN source"):
+        source.resolve_genotype_source_config(None)
 
 
-def test_build_genotype_source_signature_paths_supports_both_formats() -> None:
-    """Ensure reproducibility signatures include the right source files."""
-    plink_paths = build_genotype_source_signature_paths(build_plink_source_config(Path("dataset")))
-    bgen_paths = build_genotype_source_signature_paths(build_bgen_source_config(Path("dataset.bgen")))
+def test_build_genotype_source_signature_paths_uses_bgen_and_sample() -> None:
+    """Ensure reproducibility signatures include BGEN and optional sample files."""
+    bgen_paths = source.build_genotype_source_signature_paths(source.build_bgen_source_config(Path("dataset.bgen")))
 
-    assert plink_paths == (Path("dataset.bed"), Path("dataset.bim"), Path("dataset.fam"))
+    with patch("g.io.source.resolve_bgen_sample_path", return_value=Path("dataset.sample")):
+        bgen_sample_paths = source.build_genotype_source_signature_paths(
+            source.build_bgen_source_config(Path("dataset.bgen"), sample_path=Path("dataset.sample"))
+        )
+
     assert bgen_paths == (Path("dataset.bgen"),)
+    assert bgen_sample_paths == (Path("dataset.bgen"), Path("dataset.sample"))
 
 
-def test_validate_genotype_source_config_rejects_unknown_format() -> None:
-    """Ensure unsupported source formats fail fast."""
-    with pytest.raises(ValueError, match="Unsupported genotype source format"):
-        validate_genotype_source_config(
-            GenotypeSourceConfig(
-                source_format=typing.cast("GenotypeSourceFormat", "vcf"),
-                source_path=Path("study.vcf"),
-            )
-        )
-
-
-def test_load_aligned_sample_data_from_source_dispatches_to_plink_loader() -> None:
-    """Ensure sample loading uses the PLINK backend for PLINK configs."""
-    plink_source_config = build_plink_source_config(Path("study"))
-    expected_aligned_sample_data = object()
-
-    with patch("g.io.source.load_aligned_sample_data", return_value=expected_aligned_sample_data) as mock_load:
-        aligned_sample_data = load_aligned_sample_data_from_source(
-            genotype_source_config=plink_source_config,
-            phenotype_path=Path("pheno.tsv"),
-            phenotype_name="trait",
-            covariate_path=Path("covar.tsv"),
-            covariate_names=("age",),
-            is_binary_trait=False,
-        )
-
-    assert aligned_sample_data is expected_aligned_sample_data
-    mock_load.assert_called_once()
+def test_validate_genotype_source_config_rejects_non_bgen_suffix() -> None:
+    """Ensure source configs fail fast for non-BGEN paths."""
+    with pytest.raises(ValueError, match=r"Expected a \.bgen source path"):
+        source.validate_genotype_source_config(source.GenotypeSourceConfig(source_path=Path("study.vcf")))
 
 
 def test_load_aligned_sample_data_from_source_dispatches_to_bgen_loader() -> None:
     """Ensure sample loading uses embedded BGEN sample identifiers for BGEN configs."""
-    bgen_source_config = build_bgen_source_config(Path("study.bgen"))
+    genotype_source_config = source.build_bgen_source_config(Path("study.bgen"))
     sample_table = object()
     expected_aligned_sample_data = object()
 
@@ -126,8 +96,8 @@ def test_load_aligned_sample_data_from_source_dispatches_to_bgen_loader() -> Non
             return_value=expected_aligned_sample_data,
         ) as mock_load_from_sample_table,
     ):
-        aligned_sample_data = load_aligned_sample_data_from_source(
-            genotype_source_config=bgen_source_config,
+        aligned_sample_data = source.load_aligned_sample_data_from_source(
+            genotype_source_config=genotype_source_config,
             phenotype_path=Path("pheno.tsv"),
             phenotype_name="trait",
             covariate_path=None,
@@ -142,8 +112,8 @@ def test_load_aligned_sample_data_from_source_dispatches_to_bgen_loader() -> Non
 
 def test_load_aligned_sample_data_from_source_reuses_open_bgen_reader() -> None:
     """Ensure BGEN sample alignment can reuse an already-open reader."""
-    bgen_source_config = build_bgen_source_config(Path("study.bgen"))
-    genotype_reader = typing.cast("GenotypeReader", FakeSourceReader())
+    genotype_source_config = source.build_bgen_source_config(Path("study.bgen"))
+    genotype_reader = typing.cast("source.reader.GenotypeReader", FakeSourceReader())
     expected_aligned_sample_data = object()
 
     with (
@@ -153,8 +123,8 @@ def test_load_aligned_sample_data_from_source_reuses_open_bgen_reader() -> None:
             return_value=expected_aligned_sample_data,
         ) as mock_load_from_sample_table,
     ):
-        aligned_sample_data = load_aligned_sample_data_from_source(
-            genotype_source_config=bgen_source_config,
+        aligned_sample_data = source.load_aligned_sample_data_from_source(
+            genotype_source_config=genotype_source_config,
             phenotype_path=Path("pheno.tsv"),
             phenotype_name="trait",
             covariate_path=None,
@@ -170,9 +140,9 @@ def test_load_aligned_sample_data_from_source_reuses_open_bgen_reader() -> None:
 
 
 def test_load_aligned_sample_data_from_source_uses_explicit_sample_file_with_open_reader() -> None:
-    """Ensure explicit BGEN sample files are still honored when a reader is already open."""
-    bgen_source_config = build_bgen_source_config(Path("study.bgen"), sample_path=Path("study.sample"))
-    genotype_reader = typing.cast("GenotypeReader", FakeSourceReader())
+    """Ensure explicit BGEN sample files are honored when a reader is already open."""
+    genotype_source_config = source.build_bgen_source_config(Path("study.bgen"), sample_path=Path("study.sample"))
+    genotype_reader = typing.cast("source.reader.GenotypeReader", FakeSourceReader())
     sample_table = object()
     expected_aligned_sample_data = object()
 
@@ -183,8 +153,8 @@ def test_load_aligned_sample_data_from_source_uses_explicit_sample_file_with_ope
             return_value=expected_aligned_sample_data,
         ) as mock_load_from_sample_table,
     ):
-        aligned_sample_data = load_aligned_sample_data_from_source(
-            genotype_source_config=bgen_source_config,
+        aligned_sample_data = source.load_aligned_sample_data_from_source(
+            genotype_source_config=genotype_source_config,
             phenotype_path=Path("pheno.tsv"),
             phenotype_name="trait",
             covariate_path=None,
@@ -207,12 +177,6 @@ def test_load_aligned_sample_data_from_source_uses_explicit_sample_file_with_ope
 
 def test_build_bgen_source_config_preserves_sample_path() -> None:
     """Ensure BGEN source configs keep the optional sample-file path."""
-    genotype_source_config = build_bgen_source_config(Path("study.bgen"), sample_path=Path("study.sample"))
+    genotype_source_config = source.build_bgen_source_config(Path("study.bgen"), sample_path=Path("study.sample"))
 
     assert genotype_source_config.sample_path == Path("study.sample")
-
-
-def test_resolve_genotype_source_config_rejects_sample_for_plink() -> None:
-    """Ensure explicit sample files are only accepted for BGEN configs."""
-    with pytest.raises(ValueError, match="can only be provided together with `bgen`"):
-        resolve_genotype_source_config("dataset", None, "dataset.sample")

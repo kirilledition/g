@@ -11,7 +11,8 @@ from pathlib import Path
 import jax
 import polars as pl
 
-from g import _core, models, types
+from g import _core, types
+from g.io import models
 
 if typing.TYPE_CHECKING:
     from g.engine import types as engine_types

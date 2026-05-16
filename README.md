@@ -2,7 +2,7 @@
 
 `g` is a GPU-accelerated GWAS engine focused on **REGENIE step 2**.
 
-Direct PLINK-style linear/logistic regression workflows are not active in the package API or CLI. Legacy implementations are preserved under `archive/direct_association/` as reference material only.
+The package API and CLI are BGEN-backed REGENIE step 2 workflows only.
 
 ## Active Public Surface
 

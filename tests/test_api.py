@@ -16,7 +16,7 @@ from g.api import (
     validate_compute_config,
 )
 from g.io.output import OutputRunPaths, PreparedOutputRun
-from g.types import AssociationMode, Device, GenotypeSourceFormat, RegenieTraitType
+from g.types import AssociationMode, Device, RegenieTraitType
 
 
 def test_public_package_no_longer_exposes_direct_linear_or_logistic() -> None:
@@ -74,7 +74,8 @@ def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
     assert mock_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_pipeline.call_args.kwargs["prediction_list_path"] == Path("predictions.list")
     genotype_source_config = mock_pipeline.call_args.kwargs["genotype_source_config"]
-    assert genotype_source_config.source_format == GenotypeSourceFormat.BGEN
+    assert genotype_source_config.source_path == Path("dataset.bgen")
+    assert genotype_source_config.sample_path == Path("dataset.sample")
     mock_pipeline.assert_called_once()
 
 

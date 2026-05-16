@@ -92,6 +92,7 @@
             pkg-config
             cacert
             openssl
+            python314
             openjdk11_headless
             openblas
             lapack
@@ -102,13 +103,14 @@
           ];
 
           shellHook = ''
-            export UV_PYTHON=python3.13
+            export UV_PYTHON=python3.14
+            export PYO3_PYTHON=python3.14
             export CFLAGS="-D_DEFAULT_SOURCE ''${CFLAGS:+$CFLAGS}"
             export CXXFLAGS="-D_DEFAULT_SOURCE ''${CXXFLAGS:+$CXXFLAGS}"
             export JAVA_HOME=${pkgs.openjdk11_headless}
             export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             export NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
-            export LD_LIBRARY_PATH=/run/opengl-driver/lib:''${NIX_LD_LIBRARY_PATH:+:$NIX_LD_LIBRARY_PATH}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+            export LD_LIBRARY_PATH=${pkgs.python314}/lib:/run/opengl-driver/lib:''${NIX_LD_LIBRARY_PATH:+:$NIX_LD_LIBRARY_PATH}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
             echo "GWAS Engine dev shell ready (uv, Rust, plink, plink2, regenie, Hail runtime tools)."
           '';
         };

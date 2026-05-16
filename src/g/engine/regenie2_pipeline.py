@@ -13,10 +13,10 @@ import jax
 import numpy as np
 import numpy.typing as npt
 
-from g import _core, models, types
-from g.compute import regenie2_binary, regenie2_linear
+from g import _core, types
+from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, regenie2_linear_types
 from g.engine import types as engine_types
-from g.io import bgen, genotype_processing, output, source
+from g.io import bgen, genotype_processing, models, output, samples, source
 
 
 @dataclass(frozen=True)
@@ -48,26 +48,16 @@ def build_variant_metadata(native_metadata: _core.VariantMetadata) -> models.Var
     )
 
 
-class LinearRegenie2PipelineCallback:
-    """Compute/write callback used by the native BGEN pipeline for quantitative traits."""
+class NativeBgenCallbackRunner:
+    """Reusable callback lifecycle for native BGEN chunk delivery."""
 
     def __init__(
         self,
-        aligned_sample_data: models.AlignedSampleData,
-        prediction_source: RegeniePredictionSourceProtocol,
-        writer_session: typing.Any,
+        *,
+        worker_name: str,
         staging_depth: int = 1,
     ) -> None:
-        """Initialize the callback state."""
-        self.aligned_sample_data = aligned_sample_data
-        self.prediction_source = prediction_source
-        self.writer_session = writer_session
-        self.regenie_state = regenie2_linear.prepare_regenie2_linear_state(
-            covariate_matrix=aligned_sample_data.covariate_matrix,
-            phenotype_vector=aligned_sample_data.phenotype_vector,
-        )
-        self.current_chromosome: str | None = None
-        self.current_chromosome_state: models.Regenie2LinearChromosomeState | None = None
+        """Initialize shared native callback state."""
         self.processed_chunk_count = 0
         self.dosage_queue_depth = max(1, staging_depth)
         self.dosage_buffer_limit = self.dosage_queue_depth + 1
@@ -77,7 +67,7 @@ class LinearRegenie2PipelineCallback:
         self.worker_error: BaseException | None = None
         self.worker_thread = threading.Thread(
             target=self.consume_dosage_chunks,
-            name="regenie2-linear-callback",
+            name=worker_name,
             daemon=True,
         )
         self.worker_thread.start()
@@ -97,6 +87,7 @@ class LinearRegenie2PipelineCallback:
             allele_one_frequency=allele_one_frequency,
             observation_count=observation_count,
         )
+        self.processed_chunk_count += 1
 
     def compute_preprocessed_chunk(
         self,
@@ -107,34 +98,7 @@ class LinearRegenie2PipelineCallback:
         observation_count: jax.Array | npt.NDArray[np.int32],
     ) -> None:
         """Compute one already-preprocessed chunk and write it."""
-        chromosome = str(variant_metadata.chromosome[0])
-        if chromosome != self.current_chromosome:
-            loco_predictions = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
-            self.current_chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
-                self.regenie_state,
-                loco_predictions,
-            )
-            self.current_chromosome = chromosome
-        assert self.current_chromosome_state is not None
-
-        result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
-            chromosome_state=self.current_chromosome_state,
-            genotype_matrix=jax.device_put(genotype_matrix),
-        )
-        output.write_regenie2_chunk(
-            self.writer_session,
-            build_chunk_accumulator(
-                metadata=variant_metadata,
-                allele_one_frequency=allele_one_frequency,
-                observation_count=observation_count,
-                beta=result.beta,
-                standard_error=result.standard_error,
-                chi_squared=result.chi_squared,
-                log10_p_value=result.log10_p_value,
-                extra_code=None,
-            ),
-        )
-        self.processed_chunk_count += 1
+        raise NotImplementedError
 
     def compute_dosage_chunk(
         self,
@@ -162,6 +126,7 @@ class LinearRegenie2PipelineCallback:
                     allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,
                     observation_count=preprocessed_genotype_arrays.observation_count,
                 )
+                self.processed_chunk_count += 1
                 self.release_dosage_buffer(work_item.genotype_matrix)
         except Exception as error:  # noqa: BLE001
             self.worker_error = error
@@ -218,7 +183,70 @@ class LinearRegenie2PipelineCallback:
             self.free_dosage_buffers.put_nowait(dosage_buffer)
 
 
-class BinaryRegenie2PipelineCallback:
+class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
+    """Compute/write callback used by the native BGEN pipeline for quantitative traits."""
+
+    def __init__(
+        self,
+        aligned_sample_data: models.AlignedSampleData,
+        prediction_source: RegeniePredictionSourceProtocol,
+        writer_session: typing.Any,
+        staging_depth: int = 1,
+    ) -> None:
+        """Initialize the callback state."""
+        self.aligned_sample_data = aligned_sample_data
+        self.prediction_source = prediction_source
+        self.writer_session = writer_session
+        self.regenie_state = regenie2_linear.prepare_regenie2_linear_state(
+            covariate_matrix=aligned_sample_data.covariate_matrix,
+            phenotype_vector=aligned_sample_data.phenotype_vector,
+        )
+        self.current_chromosome: str | None = None
+        self.current_chromosome_state: regenie2_linear_types.Regenie2LinearChromosomeState | None = None
+        super().__init__(
+            worker_name="regenie2-linear-callback",
+            staging_depth=staging_depth,
+        )
+
+    def compute_preprocessed_chunk(
+        self,
+        *,
+        variant_metadata: models.VariantMetadata,
+        genotype_matrix: jax.Array | npt.NDArray[np.float32],
+        allele_one_frequency: jax.Array | npt.NDArray[np.float32],
+        observation_count: jax.Array | npt.NDArray[np.int32],
+    ) -> None:
+        """Compute one already-preprocessed chunk and write it."""
+        chromosome = str(variant_metadata.chromosome[0])
+        if chromosome != self.current_chromosome:
+            loco_predictions = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
+            self.current_chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
+                self.regenie_state,
+                loco_predictions,
+            )
+            self.current_chromosome = chromosome
+        assert self.current_chromosome_state is not None
+
+        result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
+            chromosome_state=self.current_chromosome_state,
+            genotype_matrix=jax.device_put(genotype_matrix),
+        )
+        output.write_regenie2_chunk(
+            self.writer_session,
+            build_chunk_accumulator(
+                metadata=variant_metadata,
+                allele_one_frequency=allele_one_frequency,
+                observation_count=observation_count,
+                beta=result.beta,
+                standard_error=result.standard_error,
+                chi_squared=result.chi_squared,
+                log10_p_value=result.log10_p_value,
+                extra_code=None,
+            ),
+        )
+
+
+class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
     """Compute/write callback used by the native BGEN pipeline for binary traits."""
 
     def __init__(
@@ -239,35 +267,10 @@ class BinaryRegenie2PipelineCallback:
             phenotype_vector=aligned_sample_data.phenotype_vector,
         )
         self.current_chromosome: str | None = None
-        self.current_chromosome_state: models.Regenie2BinaryChromosomeState | None = None
-        self.processed_chunk_count = 0
-        self.dosage_queue_depth = max(1, staging_depth)
-        self.dosage_buffer_limit = self.dosage_queue_depth + 1
-        self.dosage_queue: queue.Queue[DosageChunkWorkItem | None] = queue.Queue(maxsize=self.dosage_queue_depth)
-        self.free_dosage_buffers: queue.Queue[npt.NDArray[np.float32]] = queue.Queue(maxsize=self.dosage_buffer_limit)
-        self.dosage_buffer_count = 0
-        self.worker_error: BaseException | None = None
-        self.worker_thread = threading.Thread(
-            target=self.consume_dosage_chunks,
-            name="regenie2-binary-callback",
-            daemon=True,
-        )
-        self.worker_thread.start()
-
-    def compute_chunk(
-        self,
-        metadata: _core.VariantMetadata,
-        genotype_matrix: npt.NDArray[np.float32],
-        allele_one_frequency: npt.NDArray[np.float32],
-        observation_count: npt.NDArray[np.int32],
-    ) -> None:
-        """Compute one Rust-provided chunk and write it through the native output sink."""
-        variant_metadata = build_variant_metadata(metadata)
-        self.compute_preprocessed_chunk(
-            variant_metadata=variant_metadata,
-            genotype_matrix=genotype_matrix,
-            allele_one_frequency=allele_one_frequency,
-            observation_count=observation_count,
+        self.current_chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState | None = None
+        super().__init__(
+            worker_name="regenie2-binary-callback",
+            staging_depth=staging_depth,
         )
 
     def compute_preprocessed_chunk(
@@ -307,88 +310,6 @@ class BinaryRegenie2PipelineCallback:
                 extra_code=result.extra_code,
             ),
         )
-        self.processed_chunk_count += 1
-
-    def compute_dosage_chunk(
-        self,
-        metadata: _core.VariantMetadata,
-        genotype_matrix: npt.NDArray[np.float32],
-    ) -> None:
-        """Enqueue one Rust-provided dosage chunk for JAX processing."""
-        self.put_dosage_work_item(
-            DosageChunkWorkItem(metadata=build_variant_metadata(metadata), genotype_matrix=genotype_matrix)
-        )
-
-    def consume_dosage_chunks(self) -> None:
-        """Consume queued dosage chunks and run JAX work in order."""
-        try:
-            while True:
-                work_item = self.dosage_queue.get()
-                if work_item is None:
-                    return
-                preprocessed_genotype_arrays = genotype_processing.preprocess_genotype_matrix_arrays(
-                    jax.device_put(work_item.genotype_matrix)
-                )
-                self.compute_preprocessed_chunk(
-                    variant_metadata=work_item.metadata,
-                    genotype_matrix=preprocessed_genotype_arrays.genotypes,
-                    allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,
-                    observation_count=preprocessed_genotype_arrays.observation_count,
-                )
-                self.release_dosage_buffer(work_item.genotype_matrix)
-        except Exception as error:  # noqa: BLE001
-            self.worker_error = error
-
-    def put_dosage_work_item(self, work_item: DosageChunkWorkItem | None) -> None:
-        """Put work into the bounded worker queue while surfacing worker errors."""
-        while True:
-            self.raise_worker_error_if_present()
-            try:
-                self.dosage_queue.put(work_item, timeout=0.1)
-                return
-            except queue.Full:
-                continue
-
-    def raise_worker_error_if_present(self) -> None:
-        """Raise an asynchronous worker failure on the producer thread."""
-        if self.worker_error is not None:
-            message = f"native pipeline callback worker failed: {self.worker_error}"
-            raise RuntimeError(message) from self.worker_error
-
-    def finish(self) -> None:
-        """Wait until all queued JAX work has been written."""
-        self.put_dosage_work_item(None)
-        self.worker_thread.join()
-        self.raise_worker_error_if_present()
-
-    def abort(self) -> None:
-        """Stop the worker after an upstream failure."""
-        with contextlib.suppress(queue.Full):
-            self.dosage_queue.put_nowait(None)
-
-    def acquire_dosage_buffer(self, sample_count: int, variant_count: int) -> npt.NDArray[np.float32]:
-        """Return a reusable host dosage buffer for Rust to fill."""
-        expected_shape = (sample_count, variant_count)
-        while True:
-            self.raise_worker_error_if_present()
-            with contextlib.suppress(queue.Empty):
-                dosage_buffer = self.free_dosage_buffers.get_nowait()
-                if dosage_buffer.shape == expected_shape:
-                    return dosage_buffer
-                return np.empty(expected_shape, dtype=np.float32, order="C")
-            if self.dosage_buffer_count < self.dosage_buffer_limit:
-                self.dosage_buffer_count += 1
-                return np.empty(expected_shape, dtype=np.float32, order="C")
-            with contextlib.suppress(queue.Empty):
-                dosage_buffer = self.free_dosage_buffers.get(timeout=0.1)
-                if dosage_buffer.shape == expected_shape:
-                    return dosage_buffer
-                return np.empty(expected_shape, dtype=np.float32, order="C")
-
-    def release_dosage_buffer(self, dosage_buffer: npt.NDArray[np.float32]) -> None:
-        """Return a processed host dosage buffer to the reusable pool."""
-        with contextlib.suppress(queue.Full):
-            self.free_dosage_buffers.put_nowait(dosage_buffer)
 
 
 def build_chunk_accumulator(
@@ -544,9 +465,7 @@ def load_bgen_aligned_sample_data(
     is_binary_trait: bool,
 ) -> models.AlignedSampleData:
     """Load aligned samples for the native BGEN pipeline."""
-    if genotype_source_config.source_format != types.GenotypeSourceFormat.BGEN:
-        message = "The native pipeline currently supports BGEN genotype sources only."
-        raise ValueError(message)
+    source.validate_genotype_source_config(genotype_source_config)
     resolved_sample_path = bgen.resolve_bgen_sample_path(
         genotype_source_config.source_path,
         genotype_source_config.sample_path,
@@ -565,7 +484,7 @@ def load_bgen_aligned_sample_data(
     else:
         message = "BGEN file does not contain samples and no .sample file was found."
         raise ValueError(message)
-    return source.load_aligned_sample_data_from_individual_identifier_table(
+    return samples.load_aligned_sample_data_from_individual_identifier_table(
         sample_table=sample_table,
         phenotype_path=phenotype_path,
         phenotype_name=phenotype_name,

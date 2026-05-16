@@ -9,10 +9,6 @@ The active product direction is a biobank-scale **REGENIE-first** engine:
 3. Keep Arrow chunk persistence and final Parquet compaction robust for long-running resumable jobs.
 4. Expand profiling and performance work around REGENIE execution.
 
-## Deferred Direction
-
-Direct PLINK-style linear/logistic association in `g` is intentionally deferred. The historical implementation has been moved to `archive/direct_association/` for future reuse if priorities change.
-
 ## Near-Term Milestones
 
 1. REGENIE step 2 profiling-driven performance improvements.

@@ -3,5 +3,4 @@
 pub mod bgen;
 pub mod common;
 pub mod planner;
-pub mod plink;
 pub mod preprocess;

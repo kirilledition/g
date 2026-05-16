@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use pprof::criterion::{Output, PProfProfiler};
 
 use _core::genotype::bgen::BgenReaderCore;
 
@@ -82,9 +81,5 @@ fn benchmark_native_bgen_read(criterion: &mut Criterion) {
     }
 }
 
-criterion_group! {
-    name = benches;
-    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = benchmark_native_bgen_read
-}
+criterion_group!(benches, benchmark_native_bgen_read);
 criterion_main!(benches);

@@ -18,8 +18,8 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use numpy::{PyReadonlyArray1, PyUntypedArrayMethods};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
+use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
-use parquet::format::KeyValue;
 use parquet::schema::types::ColumnPath;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -579,7 +579,7 @@ fn write_final_parquet_from_chunk_files(
 fn build_regenie_step2_parquet_writer_properties() -> WriterProperties {
     WriterProperties::builder()
         .set_compression(Compression::ZSTD(ZstdLevel::default()))
-        .set_max_row_group_size(REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE)
+        .set_max_row_group_row_count(Some(REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE))
         .set_dictionary_enabled(false)
         .set_column_dictionary_enabled(ColumnPath::from("CHROM"), true)
         .set_column_dictionary_enabled(ColumnPath::from("ALLELE0"), true)

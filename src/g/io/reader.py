@@ -1,4 +1,4 @@
-"""Format-agnostic genotype reader interfaces and shared iteration helpers."""
+"""Genotype reader interfaces and BGEN-compatible iteration helpers."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import numpy as np
 import numpy.typing as npt
 import polars as pl
 
-from g import models, types
-from g.io import genotype_processing
+from g import types
+from g.io import genotype_processing, models
 
 if typing.TYPE_CHECKING:
     import collections.abc

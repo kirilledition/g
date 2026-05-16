@@ -5,27 +5,26 @@ readme = "README.md"
 authors = [
     { name = "kirill denisov", email = "101817863+kirilledition@users.noreply.github.com" },
 ]
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.14,<3.15"
 dependencies = [
-    "bed-reader @ git+https://github.com/fastlmm/bed-reader.git@3466e0832c65302092ca9645750bfdb06e2d4cf2",
     "jax[cpu]>=0.10.0",
-    "numpy>=2.4.4",
+    "numpy>=2.4.5",
     "polars>=1.40.1",
-    "typer>=0.25.0",
+    "typer>=0.25.1",
 ]
 
 [dependency-groups]
 dev = [
     "gputil>=1.4.0",
-    "maturin>=1.0,<2.0",
-    "pandas>=3.0.2",
+    "maturin>=1.13.3,<2.0",
+    "pandas>=3.0.3",
     "psutil>=7.2.2",
     "py-cpuinfo>=9.0.0",
-    "pyarrow>=23.0.0",
+    "pyarrow>=24.0.0",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
-    "ruff>=0.15.12",
-    "ty>=0.0.33",
+    "ruff>=0.15.13",
+    "ty>=0.0.36",
 ]
 gpu = ["jax[cuda12]>=0.10.0"]
 
@@ -33,10 +32,11 @@ gpu = ["jax[cuda12]>=0.10.0"]
 g = "g:main"
 
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
+requires = ["maturin>=1.13.3,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
+features = ["extension-module"]
 module-name = "g._core"
 python-packages = ["g"]
 python-source = "src"
@@ -51,7 +51,7 @@ cache-keys = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py313"
+target-version = "py314"
 exclude = ["archive/", "scripts/", ".git/"]
 
 [tool.ruff.lint]

@@ -8,10 +8,12 @@ from unittest.mock import patch
 import jax.numpy as jnp
 import numpy as np
 
-from g import models
-from g.compute import regenie2_linear
+from g.compute import regenie2_linear, regenie2_linear_types
 from g.engine import regenie2_pipeline
-from g.io import output, source
+from g.io import models, output, source
+
+if typing.TYPE_CHECKING:
+    import polars as pl
 
 
 class FakePredictionSource:
@@ -141,7 +143,7 @@ def test_build_variant_metadata_converts_native_columns() -> None:
 
 def test_linear_callback_computes_and_writes_chunk() -> None:
     writer_session = object()
-    result = models.Regenie2LinearChunkResult(
+    result = regenie2_linear_types.Regenie2LinearChunkResult(
         beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
         chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
@@ -182,7 +184,7 @@ def test_linear_callback_computes_and_writes_chunk() -> None:
 
 def test_linear_callback_preprocesses_dosage_chunk_on_device() -> None:
     writer_session = object()
-    result = models.Regenie2LinearChunkResult(
+    result = regenie2_linear_types.Regenie2LinearChunkResult(
         beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
         chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
@@ -231,7 +233,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
         patch.object(
             regenie2_linear,
             "prepare_regenie2_linear_state",
-            return_value=typing.cast("models.Regenie2LinearState", "state"),
+            return_value=typing.cast("regenie2_linear_types.Regenie2LinearState", "state"),
         ),
     ):
         final_path = regenie2_pipeline.run_regenie2_linear_bgen_pipeline(
@@ -271,10 +273,10 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert prediction_source.sample_individual_identifiers == ["sample1", "sample2"]
 
 
-def test_load_bgen_aligned_sample_data_rejects_non_bgen_sources() -> None:
-    with np.testing.assert_raises_regex(ValueError, "BGEN genotype sources only"):
+def test_load_bgen_aligned_sample_data_rejects_non_bgen_source_suffix() -> None:
+    with np.testing.assert_raises_regex(ValueError, r"Expected a \.bgen source path"):
         regenie2_pipeline.load_bgen_aligned_sample_data(
-            genotype_source_config=source.build_plink_source_config(Path("study")),
+            genotype_source_config=source.GenotypeSourceConfig(source_path=Path("study.vcf")),
             engine=typing.cast("typing.Any", object()),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",
@@ -282,3 +284,33 @@ def test_load_bgen_aligned_sample_data_rejects_non_bgen_sources() -> None:
             covariate_names=None,
             is_binary_trait=False,
         )
+
+
+def test_load_bgen_aligned_sample_data_uses_shared_sample_alignment() -> None:
+    expected_aligned_sample_data = object()
+    engine = SimpleNamespace(
+        sample_count=2,
+        contains_embedded_samples=True,
+        sample_identifiers=lambda: ["sample1", "sample2"],
+    )
+
+    with (
+        patch("g.engine.regenie2_pipeline.bgen.resolve_bgen_sample_path", return_value=None),
+        patch(
+            "g.engine.regenie2_pipeline.samples.load_aligned_sample_data_from_individual_identifier_table",
+            return_value=expected_aligned_sample_data,
+        ) as mock_load_from_sample_table,
+    ):
+        aligned_sample_data = regenie2_pipeline.load_bgen_aligned_sample_data(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            engine=typing.cast("typing.Any", engine),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            is_binary_trait=True,
+        )
+
+    assert aligned_sample_data is expected_aligned_sample_data
+    sample_table = typing.cast("pl.DataFrame", mock_load_from_sample_table.call_args.kwargs["sample_table"])
+    assert sample_table.get_column("individual_identifier").to_list() == ["sample1", "sample2"]

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
-from g import models
+from g.io import models
 
 if typing.TYPE_CHECKING:
     import numpy as np

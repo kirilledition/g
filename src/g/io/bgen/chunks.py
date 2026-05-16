@@ -8,8 +8,8 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-from g import models, types
-from g.io import reader
+from g import types
+from g.io import models, reader
 from g.io.bgen import sample
 from g.io.bgen.reader import BgenReader, open_bgen
 

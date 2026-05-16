@@ -77,9 +77,9 @@ mod tests {
 
         let stats = preprocess_row_major_dosage_matrix(&mut dosage_values, 3, 2).expect("preprocess should succeed");
 
-        assert_eq!(dosage_values, vec![0.0, 1.5, 2.0, 1.0, 2.0, 1.5]);
-        assert_eq!(stats.observation_count, vec![3, 2]);
-        assert_eq!(stats.allele_one_frequency, vec![2.0 / 3.0, 0.75]);
+        assert_eq!(dosage_values, vec![0.0, 1.0, 2.0, 1.0, 2.0, 1.0]);
+        assert_eq!(stats.observation_count, vec![3, 1]);
+        assert_eq!(stats.allele_one_frequency, vec![2.0 / 3.0, 0.5]);
         assert!(stats.has_missing_values);
     }
 

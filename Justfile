@@ -4,7 +4,7 @@ set allow-duplicate-recipes := true
 set shell := ["bash", "-cu"]
 
 data_dir := env_var_or_default('GWAS_ENGINE_DATA_DIR', 'data')
-python_version := env_var_or_default('GWAS_ENGINE_PYTHON_VERSION', '3.13')
+python_version := env_var_or_default('GWAS_ENGINE_PYTHON_VERSION', '3.14')
 tools_dir := env_var_or_default('GWAS_ENGINE_TOOLS_DIR', '.tools')
 slurm_gpu_node := env_var_or_default('GWAS_ENGINE_GPU_NODE', 'landau')
 slurm_partition := env_var_or_default('GWAS_ENGINE_SLURM_PARTITION', '')

@@ -13,7 +13,7 @@ import numpy.testing
 from g.compute import regenie2_linear
 
 if typing.TYPE_CHECKING:
-    from g import models
+    from g.compute import regenie2_linear_types
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,7 @@ class ReferenceRegenie2LinearChunkResult:
 
 
 def compute_legacy_reference_chunk(
-    state: models.Regenie2LinearState,
+    state: regenie2_linear_types.Regenie2LinearState,
     genotype_matrix: jax.Array,
     loco_predictions: jax.Array,
 ) -> ReferenceRegenie2LinearChunkResult:

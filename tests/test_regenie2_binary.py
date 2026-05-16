@@ -7,13 +7,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from g import models
-from g.compute import regenie2_binary
+from g.compute import regenie2_binary, regenie2_binary_types
 from g.types import RegenieBinaryCorrection
 
 BinaryChunkComputeFunction = typing.Callable[
-    [models.Regenie2BinaryChromosomeState, jax.Array, RegenieBinaryCorrection],
-    models.Regenie2BinaryChunkResult,
+    [regenie2_binary_types.Regenie2BinaryChromosomeState, jax.Array, RegenieBinaryCorrection],
+    regenie2_binary_types.Regenie2BinaryChunkResult,
 ]
 compute_score_test_chunk = typing.cast(
     "BinaryChunkComputeFunction",
@@ -65,7 +64,7 @@ def build_binary_inputs() -> tuple[jax.Array, jax.Array, jax.Array]:
 
 def build_chromosome_state() -> tuple[
     jax.Array,
-    models.Regenie2BinaryChromosomeState,
+    regenie2_binary_types.Regenie2BinaryChromosomeState,
 ]:
     covariate_matrix, phenotype_vector, genotype_matrix = build_binary_inputs()
     state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
@@ -84,7 +83,7 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
         candidate_genotype_matrix,
         RegenieBinaryCorrection.FIRTH_APPROXIMATE,
     )
-    forced_candidate_result = models.Regenie2BinaryChunkResult(
+    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
@@ -165,7 +164,7 @@ def test_failed_firth_lanes_become_test_fail() -> None:
         genotype_matrix,
         RegenieBinaryCorrection.FIRTH_APPROXIMATE,
     )
-    forced_candidate_result = models.Regenie2BinaryChunkResult(
+    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
