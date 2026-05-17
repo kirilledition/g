@@ -93,6 +93,7 @@ def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
             ),
         ) as mock_prepare_output_run,
         patch("g.api.run_regenie2_binary_bgen_pipeline") as mock_pipeline,
+        patch("g.api.warm_regenie2_binary_bgen_cache") as mock_warm_cache,
     ):
         mock_pipeline.return_value = Path("results/output.regenie2_binary.run/final.parquet")
         artifacts = regenie2(
@@ -104,7 +105,7 @@ def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
             covar_names="age,sex",
             pred="predictions.list",
             trait_type=RegenieTraitType.BINARY,
-            compute=ComputeConfig(resume=True),
+            compute=ComputeConfig(resume=True, warm_cache_first=True, trusted_no_missing_diploid=True),
         )
 
     assert artifacts == RunArtifacts(
@@ -115,6 +116,9 @@ def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
     assert mock_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_prepare_output_run.call_args.kwargs["association_mode"] == AssociationMode.REGENIE2_BINARY
     assert mock_pipeline.call_args.kwargs["writer_thread_count"] == api.output.DEFAULT_WRITER_THREAD_COUNT
+    assert mock_pipeline.call_args.kwargs["trusted_no_missing_diploid"] is True
+    mock_warm_cache.assert_called_once()
+    assert mock_warm_cache.call_args.kwargs["trusted_no_missing_diploid"] is True
 
 
 @pytest.mark.parametrize(

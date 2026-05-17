@@ -10,6 +10,7 @@ from g import api, types
 
 run_regenie2_linear_api = api.regenie2_linear
 run_regenie2_api = api.regenie2
+run_regenie2_warm_cache_api = api.regenie2_warm_cache
 
 app = typer.Typer(
     name="g",
@@ -41,6 +42,14 @@ def print_success_message(artifacts: api.RunArtifacts) -> None:
     typer.echo("Success. Run completed.")
 
 
+def print_warm_cache_message(report: api.WarmCacheReport) -> None:
+    """Print a concise success message for cache warming."""
+    warmed_shape_descriptions = ", ".join(
+        f"({shape.sample_count}, {shape.variant_count})" for shape in report.warmed_shapes
+    )
+    typer.echo(f"Success. Warmed JAX cache shapes: {warmed_shape_descriptions}")
+
+
 @app.command("regenie2-linear", no_args_is_help=True)
 def run_regenie2_linear_command(
     bgen: Path = typer.Option(..., help="BGEN file path."),
@@ -67,6 +76,14 @@ def run_regenie2_linear_command(
         api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH,
         help="Maximum number of queued output write jobs.",
     ),
+    trusted_no_missing_diploid: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Use the native fast path for validated BGENs with no missing diploid genotypes.",
+    ),
+    warm_cache_first: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Warm exact JAX cache shapes in this process before running.",
+    ),
     resume: bool = typer.Option(  # noqa: FBT001
         default=False,
         help="Resume a previous chunked run.",
@@ -87,6 +104,8 @@ def run_regenie2_linear_command(
         finalize_parquet=finalize_parquet,
         output_writer_thread_count=output_writer_thread_count,
         output_writer_queue_depth=output_writer_queue_depth,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        warm_cache_first=warm_cache_first,
     )
     artifacts = run_regenie2_linear_api(
         bgen=bgen,
@@ -139,6 +158,14 @@ def run_regenie2_command(
         api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH,
         help="Maximum number of queued output write jobs.",
     ),
+    trusted_no_missing_diploid: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Use the native fast path for validated BGENs with no missing diploid genotypes.",
+    ),
+    warm_cache_first: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Warm exact JAX cache shapes in this process before running.",
+    ),
     resume: bool = typer.Option(  # noqa: FBT001
         default=False,
         help="Resume a previous chunked run.",
@@ -159,6 +186,8 @@ def run_regenie2_command(
         finalize_parquet=finalize_parquet,
         output_writer_thread_count=output_writer_thread_count,
         output_writer_queue_depth=output_writer_queue_depth,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        warm_cache_first=warm_cache_first,
     )
     artifacts = run_regenie2_api(
         bgen=bgen,
@@ -174,6 +203,59 @@ def run_regenie2_command(
         binary=api.Regenie2BinaryConfig(correction=binary_correction),
     )
     print_success_message(artifacts)
+
+
+@app.command("regenie2-warm-cache", no_args_is_help=True)
+def run_regenie2_warm_cache_command(
+    bgen: Path = typer.Option(..., help="BGEN file path."),
+    sample: Path | None = typer.Option(
+        None,
+        help="Optional BGEN sample-file path. Defaults to embedded samples or an adjacent .sample file.",
+    ),
+    pheno: Path = typer.Option(..., help="Phenotype table path."),
+    pheno_name: str = typer.Option(..., "--pheno-name", help="Phenotype column name to analyze."),
+    trait_type: types.RegenieTraitType = typer.Option(
+        types.RegenieTraitType.QUANTITATIVE,
+        "--trait-type",
+        help="Trait type to warm.",
+    ),
+    covar: Path | None = typer.Option(None, help="Optional covariate table path."),
+    covar_names: str | None = typer.Option(None, "--covar-names", help="Comma-separated covariate column names."),
+    pred: Path = typer.Option(..., help="REGENIE step 1 _pred.list file path."),
+    binary_correction: types.RegenieBinaryCorrection = typer.Option(
+        types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+        "--binary-correction",
+        help="Correction path for binary score-test candidates.",
+    ),
+    chunk_size: int | None = typer.Option(None, help="Variants per chunk."),
+    variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
+    device: types.Device = typer.Option(types.Device.CPU, help="JAX execution device."),
+    trusted_no_missing_diploid: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Use the native fast path for validated BGENs with no missing diploid genotypes.",
+    ),
+) -> None:
+    """Warm JAX compilation-cache entries for a REGENIE step 2 association scan."""
+    compute_config = api.ComputeConfig(
+        chunk_size=resolve_chunk_size(chunk_size),
+        device=device,
+        variant_limit=variant_limit,
+        finalize_parquet=False,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
+    report = run_regenie2_warm_cache_api(
+        bgen=bgen,
+        sample=sample,
+        pheno=pheno,
+        pheno_name=pheno_name,
+        covar=covar,
+        covar_names=api.parse_covariate_name_list(covar_names),
+        pred=pred,
+        trait_type=trait_type,
+        compute=compute_config,
+        binary=api.Regenie2BinaryConfig(correction=binary_correction),
+    )
+    print_warm_cache_message(report)
 
 
 def main() -> None:

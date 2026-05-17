@@ -7,8 +7,9 @@ from unittest.mock import patch
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
-from g.compute import regenie2_linear, regenie2_linear_types
+from g.compute import regenie2_binary_types, regenie2_linear, regenie2_linear_types
 from g.engine import regenie2_pipeline
 from g.io import models, output, source
 
@@ -53,13 +54,25 @@ class FakeWriterSession:
 class FakeRunEngine:
     instances: typing.ClassVar[list[FakeRunEngine]] = []
 
-    def __init__(self, bgen_path: str, chunk_size: int, variant_limit: int | None = None) -> None:
+    def __init__(
+        self,
+        bgen_path: str,
+        chunk_size: int,
+        variant_limit: int | None = None,
+        trusted_no_missing_diploid: bool = False,  # noqa: FBT001, FBT002
+    ) -> None:
         self.bgen_path = bgen_path
         self.chunk_size = chunk_size
         self.variant_limit = variant_limit
+        self.trusted_no_missing_diploid = trusted_no_missing_diploid
         self.variant_count = 10
         self.run_arguments: tuple[np.ndarray, object, list[int] | None] | None = None
+        self.run_method: str | None = None
+        self.validation_count = 0
         FakeRunEngine.instances.append(self)
+
+    def validate_trusted_no_missing_diploid(self) -> None:
+        self.validation_count += 1
 
     def variant_metadata_slice(
         self,
@@ -81,6 +94,7 @@ class FakeRunEngine:
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
     ) -> int:
+        self.run_method = "chunks"
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
         return 0
 
@@ -92,6 +106,7 @@ class FakeRunEngine:
         prefetch_chunks: int = 1,
     ) -> int:
         del prefetch_chunks
+        self.run_method = "dosage"
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
         return 0
 
@@ -101,6 +116,17 @@ class FakeRunEngine:
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
     ) -> int:
+        self.run_method = "buffered"
+        self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
+        return 0
+
+    def run_bgen_variant_major_dosage_buffered_chunks(
+        self,
+        sample_indices: np.ndarray,
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int:
+        self.run_method = "variant_major_buffered"
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
         return 0
 
@@ -251,6 +277,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             finalize_parquet=True,
             writer_thread_count=2,
             writer_queue_depth=3,
+            trusted_no_missing_diploid=True,
         )
 
     assert final_path == Path("results/final.parquet")
@@ -259,6 +286,8 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert engine.bgen_path == "study.bgen"
     assert engine.chunk_size == 32
     assert engine.variant_limit == 100
+    assert engine.trusted_no_missing_diploid is True
+    assert engine.validation_count == 1
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
@@ -271,6 +300,91 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert prediction_source.phenotype_name == "trait"
     assert prediction_source.sample_family_identifiers == ["family1", "family2"]
     assert prediction_source.sample_individual_identifiers == ["sample1", "sample2"]
+
+
+def test_binary_variant_major_pipeline_requires_trusted_bgen(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(regenie2_pipeline.BINARY_VARIANT_MAJOR_ENVIRONMENT_VARIABLE, "1")
+
+    with pytest.raises(ValueError, match="trusted-no-missing-diploid"):
+        regenie2_pipeline.run_regenie2_binary_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            prediction_list_path=Path("pred.list"),
+            covariate_path=None,
+            covariate_names=None,
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
+            trusted_no_missing_diploid=False,
+        )
+
+
+def test_binary_variant_major_pipeline_invokes_variant_major_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeRunEngine.instances.clear()
+    FakePredictionSource.instances.clear()
+    monkeypatch.setenv(regenie2_pipeline.BINARY_VARIANT_MAJOR_ENVIRONMENT_VARIABLE, "1")
+    writer_session = FakeWriterSession()
+    aligned_sample_data = build_aligned_sample_data()
+
+    with (
+        patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.regenie2_pipeline.load_bgen_aligned_sample_data", return_value=aligned_sample_data),
+        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
+        patch(
+            "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_state",
+            return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
+        ),
+    ):
+        final_path = regenie2_pipeline.run_regenie2_binary_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
+            prefetch_chunks=3,
+            committed_chunk_identifiers={64, 0},
+            trusted_no_missing_diploid=True,
+        )
+
+    assert final_path == Path("results/final.parquet")
+    engine = FakeRunEngine.instances[0]
+    assert engine.validation_count == 1
+    assert engine.run_method == "variant_major_buffered"
+    assert engine.run_arguments is not None
+    sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
+    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    assert isinstance(callback, regenie2_pipeline.BinaryRegenie2PipelineCallback)
+    assert committed_chunk_identifiers == [0, 64]
+
+
+def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeRunEngine.instances.clear()
+    monkeypatch.setenv(
+        regenie2_pipeline.ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE,
+        "1",
+    )
+
+    with patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine):
+        engine = regenie2_pipeline.build_bgen_run_engine(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            chunk_size=32,
+            variant_limit=100,
+            trusted_no_missing_diploid=True,
+        )
+
+    assert isinstance(engine, FakeRunEngine)
+    assert engine.trusted_no_missing_diploid is True
+    assert engine.validation_count == 0
 
 
 def test_load_bgen_aligned_sample_data_rejects_non_bgen_source_suffix() -> None:

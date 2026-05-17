@@ -403,6 +403,10 @@ impl Regenie2RunEngine {
         self.engine.reader().sample_identifiers()
     }
 
+    fn chromosome_boundary_indices(&self) -> Vec<usize> {
+        self.engine.reader().chromosome_boundary_indices()
+    }
+
     fn variant_metadata_slice(&self, variant_start: usize, variant_stop: usize) -> PyResult<VariantMetadataLists> {
         self.engine.reader().variant_metadata_slice(variant_start, variant_stop).map_err(convert_bgen_error)
     }
@@ -413,6 +417,10 @@ impl Regenie2RunEngine {
 
     fn profile_snapshot(&self) -> HashMap<String, u64> {
         build_profile_snapshot_dict(&self.engine.reader().profile_snapshot())
+    }
+
+    fn validate_trusted_no_missing_diploid(&self) -> PyResult<()> {
+        self.engine.reader().validate_trusted_no_missing_diploid().map_err(convert_bgen_error)
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -475,6 +483,31 @@ impl Regenie2RunEngine {
         self.engine.reader().prepare_sample_selection(&sample_index_values).map_err(convert_bgen_error)?;
 
         let run_result = self.run_prepared_bgen_dosage_buffered_chunks(
+            py,
+            &sample_index_values,
+            callback,
+            committed_chunk_identifiers,
+        );
+        let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
+        match (run_result, clear_result) {
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+            (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
+        }
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (sample_indices, callback, committed_chunk_identifiers=None))]
+    fn run_bgen_variant_major_dosage_buffered_chunks<'py>(
+        &self,
+        py: Python<'py>,
+        sample_indices: PyReadonlyArray1<'py, i64>,
+        callback: &Bound<'py, PyAny>,
+        committed_chunk_identifiers: Option<Vec<usize>>,
+    ) -> PyResult<usize> {
+        let sample_index_values = sample_indices.as_slice()?.to_vec();
+        self.engine.reader().prepare_sample_selection(&sample_index_values).map_err(convert_bgen_error)?;
+
+        let run_result = self.run_prepared_bgen_variant_major_dosage_buffered_chunks(
             py,
             &sample_index_values,
             callback,
@@ -693,6 +726,77 @@ impl Regenie2RunEngine {
                 ),
             )?;
             callback.call_method1("compute_preprocessed_dosage_chunk", (metadata, output_array_object, stats))?;
+        }
+        Ok(chunk_specs.len())
+    }
+
+    fn run_prepared_bgen_variant_major_dosage_buffered_chunks<'py>(
+        &self,
+        py: Python<'py>,
+        sample_index_values: &[i64],
+        callback: &Bound<'py, PyAny>,
+        committed_chunk_identifiers: Option<Vec<usize>>,
+    ) -> PyResult<usize> {
+        let committed_identifier_set = build_committed_identifier_set(committed_chunk_identifiers);
+        let chunk_specs = self.engine.plan_chunks(&committed_identifier_set).map_err(convert_genotype_error)?;
+        for chunk_spec in &chunk_specs {
+            let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
+            let output_array_object = callback.call_method1(
+                "acquire_variant_major_dosage_buffer",
+                (selected_variant_count, sample_index_values.len()),
+            )?;
+            let stats = {
+                let mut output_array = output_array_object.extract::<PyReadwriteArray2<'_, f32>>()?;
+                let output_shape = output_array.shape();
+                if output_shape != [selected_variant_count, sample_index_values.len()] {
+                    return Err(PyValueError::new_err(format!(
+                        "Reusable variant-major BGEN dosage buffer shape mismatch: expected ({selected_variant_count}, {}), observed ({}, {}).",
+                        sample_index_values.len(),
+                        output_shape[0],
+                        output_shape[1],
+                    )));
+                }
+                if !output_array.is_c_contiguous() {
+                    return Err(PyValueError::new_err(
+                        "Reusable variant-major BGEN dosage buffer must be C-contiguous float32.",
+                    ));
+                }
+                let output_slice = output_array.as_slice_mut().map_err(|_| {
+                    PyValueError::new_err(
+                        "Reusable variant-major BGEN dosage buffer must expose a contiguous mutable slice.",
+                    )
+                })?;
+                let output_pointer_address = output_slice.as_mut_ptr() as usize;
+                let output_value_count = output_slice.len();
+                let chunk_stats = py
+                    .detach(|| {
+                        self.engine.reader().read_preprocessed_variant_major_dosage_f32_into_address_prepared(
+                            chunk_spec.variant_start_index,
+                            chunk_spec.variant_stop_index,
+                            output_pointer_address,
+                            output_value_count,
+                        )
+                    })
+                    .map_err(convert_bgen_error)?;
+                Py::new(py, ChunkStats::new(chunk_stats))?
+            };
+            let metadata_tuple = self
+                .engine
+                .reader()
+                .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
+                .map_err(convert_bgen_error)?;
+            let metadata = Py::new(
+                py,
+                VariantMetadata::new(
+                    chunk_spec.variant_start_index,
+                    chunk_spec.variant_stop_index,
+                    convert_variant_metadata_tuple(metadata_tuple),
+                ),
+            )?;
+            callback.call_method1(
+                "compute_preprocessed_variant_major_dosage_chunk",
+                (metadata, output_array_object, stats),
+            )?;
         }
         Ok(chunk_specs.len())
     }

@@ -3,9 +3,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import typing
 from pathlib import Path
 
 import pandas as pd
+
+if typing.TYPE_CHECKING:
+    import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
@@ -388,7 +392,9 @@ def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
     assert summary.mean_final_parquet_bytes == 768.0
 
 
-def test_deep_profile_builds_cache_environment(tmp_path: Path) -> None:
+def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("G_PROFILE_GPU_JAX_CACHE_PARENT", str(tmp_path / "gpu_cache"))
+    monkeypatch.setenv("SLURM_JOB_ID", "12345")
     candidate = deep_profile.Step2Candidate(
         trait_type="binary",
         device="gpu",
@@ -405,7 +411,7 @@ def test_deep_profile_builds_cache_environment(tmp_path: Path) -> None:
         cache_directory=tmp_path / "jax_cache",
         stage_timing_path=tmp_path / "stages.json",
     )
-    assert environment["JAX_COMPILATION_CACHE_DIR"] == str(tmp_path / "jax_cache")
+    assert environment["JAX_COMPILATION_CACHE_DIR"] == str(tmp_path / "gpu_cache" / "12345" / "jax_cache")
     assert environment["G_REGENIE2_STAGE_TIMINGS_JSON"] == str(tmp_path / "stages.json")
     assert environment["G_BGEN_DECODE_TILE_VARIANT_COUNT"] == "128"
     assert environment["RAYON_NUM_THREADS"] == "2"

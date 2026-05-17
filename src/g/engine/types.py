@@ -10,8 +10,6 @@ if typing.TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
-    from g.io.models import VariantMetadata
-
 
 @dataclass(frozen=True)
 class Regenie2ChunkAccumulator:
@@ -29,7 +27,7 @@ class Regenie2ChunkAccumulator:
 
     """
 
-    metadata: VariantMetadata
+    metadata: typing.Any
     allele_one_frequency: jax.Array | npt.NDArray[np.float32]
     observation_count: jax.Array | npt.NDArray[np.int32]
     beta: jax.Array

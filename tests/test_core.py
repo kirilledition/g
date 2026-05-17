@@ -58,6 +58,27 @@ def test_preprocessed_bgen_read_fills_output_and_returns_stats() -> None:
     assert stats.has_missing_values is False
 
 
+def test_preprocessed_bgen_trusted_fast_path_matches_safe_stats() -> None:
+    safe_reader = _core.BgenReader(str(HAPLOTYPES_BGEN_PATH))
+    trusted_reader = _core.BgenReader(str(HAPLOTYPES_BGEN_PATH), trusted_no_missing_diploid=True)
+    sample_indices = np.array([0, 2, 3], dtype=np.int64)
+    safe_output_array = np.empty((3, 3), dtype=np.float32, order="C")
+    trusted_output_array = np.empty((3, 3), dtype=np.float32, order="C")
+    try:
+        safe_reader.prepare_sample_selection(sample_indices)
+        trusted_reader.prepare_sample_selection(sample_indices)
+        safe_stats = safe_reader.read_preprocessed_dosage_f32_into_prepared(1, 4, safe_output_array)
+        trusted_stats = trusted_reader.read_preprocessed_dosage_f32_into_prepared(1, 4, trusted_output_array)
+    finally:
+        safe_reader.clear_prepared_sample_selection()
+        trusted_reader.clear_prepared_sample_selection()
+
+    np.testing.assert_allclose(trusted_output_array, safe_output_array)
+    np.testing.assert_allclose(trusted_stats.allele_one_frequency, safe_stats.allele_one_frequency)
+    np.testing.assert_array_equal(trusted_stats.observation_count, safe_stats.observation_count)
+    assert trusted_stats.has_missing_values == safe_stats.has_missing_values
+
+
 def test_regenie2_run_engine_calls_callback_for_planned_bgen_chunks() -> None:
     class RecordingCallback:
         def __init__(self) -> None:

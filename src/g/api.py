@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import time
 from pathlib import Path
 
 from g import engine, jax_setup, types
@@ -11,8 +12,11 @@ from g.io import output, source
 configure_jax_device = jax_setup.configure_jax_device
 run_regenie2_linear_bgen_pipeline = engine.run_regenie2_linear_bgen_pipeline
 run_regenie2_binary_bgen_pipeline = engine.run_regenie2_binary_bgen_pipeline
+warm_regenie2_linear_bgen_cache = engine.warm_regenie2_linear_bgen_cache
+warm_regenie2_binary_bgen_cache = engine.warm_regenie2_binary_bgen_cache
 prepare_output_run = output.prepare_output_run
 finalize_chunks_to_parquet = output.finalize_chunks_to_parquet
+WarmCacheReport = engine.WarmCacheReport
 
 DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE = 8192
 DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH = output.DEFAULT_WRITER_QUEUE_DEPTH
@@ -31,6 +35,8 @@ class ComputeConfig:
     finalize_parquet: bool = True
     output_writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT
     output_writer_queue_depth: int = DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
+    trusted_no_missing_diploid: bool = False
+    warm_cache_first: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -129,28 +135,132 @@ def regenie2(
     binary: Regenie2BinaryConfig | None = None,
 ) -> RunArtifacts:
     """Run a REGENIE step 2 association scan and write results to disk."""
+    api_entry_start_time = time.perf_counter()
+    stage_timing_recorder = engine.build_stage_timing_recorder_from_environment()
+    compute_config = compute or ComputeConfig()
+    try:
+        validate_compute_config(compute_config)
+        device_start_time = time.perf_counter()
+        configure_jax_device(compute_config.device)
+        engine.record_stage_duration(stage_timing_recorder, "jax_device_configuration_backend_init", device_start_time)
+        covariate_name_list = parse_covariate_name_list(covar_names)
+        genotype_source_config = source.build_bgen_source_config(bgen, sample)
+        binary_config = binary or Regenie2BinaryConfig()
+        if compute_config.warm_cache_first:
+            warm_cache_start_time = time.perf_counter()
+            if trait_type == types.RegenieTraitType.BINARY:
+                warm_regenie2_binary_bgen_cache(
+                    genotype_source_config=genotype_source_config,
+                    phenotype_path=Path(pheno),
+                    phenotype_name=pheno_name,
+                    prediction_list_path=Path(pred),
+                    covariate_path=Path(covar) if covar is not None else None,
+                    covariate_names=covariate_name_list,
+                    chunk_size=compute_config.chunk_size,
+                    variant_limit=compute_config.variant_limit,
+                    correction=binary_config.correction,
+                    trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
+                )
+            else:
+                warm_regenie2_linear_bgen_cache(
+                    genotype_source_config=genotype_source_config,
+                    phenotype_path=Path(pheno),
+                    phenotype_name=pheno_name,
+                    prediction_list_path=Path(pred),
+                    covariate_path=Path(covar) if covar is not None else None,
+                    covariate_names=covariate_name_list,
+                    chunk_size=compute_config.chunk_size,
+                    variant_limit=compute_config.variant_limit,
+                    trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
+                )
+            engine.record_stage_duration(stage_timing_recorder, "jax_cache_warmup", warm_cache_start_time)
+        output_run_directory = compute_config.output_run_directory or Path(out)
+        association_mode = (
+            types.AssociationMode.REGENIE2_BINARY
+            if trait_type == types.RegenieTraitType.BINARY
+            else types.AssociationMode.REGENIE2_LINEAR
+        )
+        output_start_time = time.perf_counter()
+        prepared_output_run = prepare_output_run(
+            output_root=output_run_directory,
+            association_mode=association_mode,
+            resume=compute_config.resume,
+        )
+        engine.record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)
+        output_run_paths = prepared_output_run.output_run_paths
+        committed_chunk_identifiers = set(prepared_output_run.committed_chunk_identifiers)
+
+        if trait_type == types.RegenieTraitType.BINARY:
+            final_parquet_path = run_regenie2_binary_bgen_pipeline(
+                genotype_source_config=genotype_source_config,
+                phenotype_path=Path(pheno),
+                phenotype_name=pheno_name,
+                prediction_list_path=Path(pred),
+                covariate_path=Path(covar) if covar is not None else None,
+                covariate_names=covariate_name_list,
+                chunk_size=compute_config.chunk_size,
+                variant_limit=compute_config.variant_limit,
+                prefetch_chunks=compute_config.prefetch_chunks,
+                output_run_paths=output_run_paths,
+                committed_chunk_identifiers=committed_chunk_identifiers,
+                finalize_parquet=compute_config.finalize_parquet,
+                writer_thread_count=compute_config.output_writer_thread_count,
+                writer_queue_depth=compute_config.output_writer_queue_depth,
+                trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
+                correction=binary_config.correction,
+                stage_timing_recorder=stage_timing_recorder,
+            )
+        else:
+            final_parquet_path = run_regenie2_linear_bgen_pipeline(
+                genotype_source_config=genotype_source_config,
+                phenotype_path=Path(pheno),
+                phenotype_name=pheno_name,
+                prediction_list_path=Path(pred),
+                covariate_path=Path(covar) if covar is not None else None,
+                covariate_names=covariate_name_list,
+                chunk_size=compute_config.chunk_size,
+                variant_limit=compute_config.variant_limit,
+                prefetch_chunks=compute_config.prefetch_chunks,
+                output_run_paths=output_run_paths,
+                committed_chunk_identifiers=committed_chunk_identifiers,
+                finalize_parquet=compute_config.finalize_parquet,
+                writer_thread_count=compute_config.output_writer_thread_count,
+                writer_queue_depth=compute_config.output_writer_queue_depth,
+                trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
+                stage_timing_recorder=stage_timing_recorder,
+            )
+
+        return RunArtifacts(
+            output_run_directory=output_run_paths.run_directory,
+            final_parquet=final_parquet_path,
+        )
+    finally:
+        engine.record_stage_duration(stage_timing_recorder, "python_api_entry", api_entry_start_time)
+        engine.write_stage_timing_snapshot_from_environment(stage_timing_recorder)
+
+
+def regenie2_warm_cache(
+    *,
+    bgen: Path | str,
+    sample: Path | str | None = None,
+    pheno: Path | str,
+    pheno_name: str,
+    covar: Path | str | None = None,
+    covar_names: str | list[str] | tuple[str, ...] | None = None,
+    pred: Path | str,
+    trait_type: types.RegenieTraitType = types.RegenieTraitType.QUANTITATIVE,
+    compute: ComputeConfig | None = None,
+    binary: Regenie2BinaryConfig | None = None,
+) -> WarmCacheReport:
+    """Warm JAX compilation-cache entries for a REGENIE step 2 CLI run."""
     compute_config = compute or ComputeConfig()
     validate_compute_config(compute_config)
     configure_jax_device(compute_config.device)
     covariate_name_list = parse_covariate_name_list(covar_names)
     genotype_source_config = source.build_bgen_source_config(bgen, sample)
-    output_run_directory = compute_config.output_run_directory or Path(out)
-    association_mode = (
-        types.AssociationMode.REGENIE2_BINARY
-        if trait_type == types.RegenieTraitType.BINARY
-        else types.AssociationMode.REGENIE2_LINEAR
-    )
-    prepared_output_run = prepare_output_run(
-        output_root=output_run_directory,
-        association_mode=association_mode,
-        resume=compute_config.resume,
-    )
-    output_run_paths = prepared_output_run.output_run_paths
-    committed_chunk_identifiers = set(prepared_output_run.committed_chunk_identifiers)
-
     if trait_type == types.RegenieTraitType.BINARY:
         binary_config = binary or Regenie2BinaryConfig()
-        final_parquet_path = run_regenie2_binary_bgen_pipeline(
+        return warm_regenie2_binary_bgen_cache(
             genotype_source_config=genotype_source_config,
             phenotype_path=Path(pheno),
             phenotype_name=pheno_name,
@@ -159,33 +269,17 @@ def regenie2(
             covariate_names=covariate_name_list,
             chunk_size=compute_config.chunk_size,
             variant_limit=compute_config.variant_limit,
-            prefetch_chunks=compute_config.prefetch_chunks,
-            output_run_paths=output_run_paths,
-            committed_chunk_identifiers=committed_chunk_identifiers,
-            finalize_parquet=compute_config.finalize_parquet,
-            writer_thread_count=compute_config.output_writer_thread_count,
-            writer_queue_depth=compute_config.output_writer_queue_depth,
             correction=binary_config.correction,
+            trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
         )
-    else:
-        final_parquet_path = run_regenie2_linear_bgen_pipeline(
-            genotype_source_config=genotype_source_config,
-            phenotype_path=Path(pheno),
-            phenotype_name=pheno_name,
-            prediction_list_path=Path(pred),
-            covariate_path=Path(covar) if covar is not None else None,
-            covariate_names=covariate_name_list,
-            chunk_size=compute_config.chunk_size,
-            variant_limit=compute_config.variant_limit,
-            prefetch_chunks=compute_config.prefetch_chunks,
-            output_run_paths=output_run_paths,
-            committed_chunk_identifiers=committed_chunk_identifiers,
-            finalize_parquet=compute_config.finalize_parquet,
-            writer_thread_count=compute_config.output_writer_thread_count,
-            writer_queue_depth=compute_config.output_writer_queue_depth,
-        )
-
-    return RunArtifacts(
-        output_run_directory=output_run_paths.run_directory,
-        final_parquet=final_parquet_path,
+    return warm_regenie2_linear_bgen_cache(
+        genotype_source_config=genotype_source_config,
+        phenotype_path=Path(pheno),
+        phenotype_name=pheno_name,
+        prediction_list_path=Path(pred),
+        covariate_path=Path(covar) if covar is not None else None,
+        covariate_names=covariate_name_list,
+        chunk_size=compute_config.chunk_size,
+        variant_limit=compute_config.variant_limit,
+        trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
     )

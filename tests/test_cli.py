@@ -6,8 +6,9 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from g.api import DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE, RunArtifacts
+from g.api import DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE, RunArtifacts, WarmCacheReport
 from g.cli import app, main, print_success_message, resolve_chunk_size
+from g.engine.regenie2_pipeline import WarmCacheShape
 from g.types import Device, RegenieTraitType
 
 runner = CliRunner()
@@ -95,6 +96,8 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
                 "3",
                 "--output-writer-queue-depth",
                 "5",
+                "--trusted-no-missing-diploid",
+                "--warm-cache-first",
             ],
         )
 
@@ -108,6 +111,8 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
     assert compute_config.prefetch_chunks == 2
     assert compute_config.output_writer_thread_count == 3
     assert compute_config.output_writer_queue_depth == 5
+    assert compute_config.trusted_no_missing_diploid is True
+    assert compute_config.warm_cache_first is True
 
 
 def test_regenie2_help_shows_binary_trait_and_correction_options() -> None:
@@ -150,6 +155,8 @@ def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
                 "2",
                 "--output-writer-queue-depth",
                 "6",
+                "--trusted-no-missing-diploid",
+                "--warm-cache-first",
             ],
         )
 
@@ -159,7 +166,54 @@ def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
     assert compute_config.prefetch_chunks == 4
     assert compute_config.output_writer_thread_count == 2
     assert compute_config.output_writer_queue_depth == 6
+    assert compute_config.trusted_no_missing_diploid is True
+    assert compute_config.warm_cache_first is True
     assert str(Path("results/output.regenie2_binary.run")) in result.output
+
+
+def test_regenie2_warm_cache_command_dispatches_api_call() -> None:
+    with patch(
+        "g.cli.run_regenie2_warm_cache_api",
+        return_value=WarmCacheReport(warmed_shapes=(WarmCacheShape(sample_count=100, variant_count=8192),)),
+    ) as mock_run_regenie2_warm_cache_api:
+        result = runner.invoke(
+            app,
+            [
+                "regenie2-warm-cache",
+                "--bgen",
+                "dataset.bgen",
+                "--sample",
+                "dataset.sample",
+                "--pheno",
+                "phenotype.tsv",
+                "--pheno-name",
+                "trait",
+                "--covar",
+                "covariates.tsv",
+                "--covar-names",
+                "age,sex",
+                "--pred",
+                "predictions.list",
+                "--trait-type",
+                "binary",
+                "--binary-correction",
+                "firth_approximate",
+                "--chunk-size",
+                "4096",
+                "--device",
+                "gpu",
+                "--trusted-no-missing-diploid",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "Warmed JAX cache shapes" in result.output
+    assert mock_run_regenie2_warm_cache_api.call_args.kwargs["trait_type"] == RegenieTraitType.BINARY
+    assert mock_run_regenie2_warm_cache_api.call_args.kwargs["covar_names"] == ("age", "sex")
+    compute_config = mock_run_regenie2_warm_cache_api.call_args.kwargs["compute"]
+    assert compute_config.device == Device.GPU
+    assert compute_config.chunk_size == 4096
+    assert compute_config.trusted_no_missing_diploid is True
 
 
 def test_print_success_message_reports_run_directory_and_parquet(capsys: typing.Any) -> None:

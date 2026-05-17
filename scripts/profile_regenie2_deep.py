@@ -25,6 +25,7 @@ DEFAULT_OUTPUT_PARENT = Path("data/profiles")
 DEFAULT_VARIANT_COUNT = 418_943
 JAX_XLA_AUTOTUNE_CACHE = "xla_gpu_per_fusion_autotune_cache_dir"
 ENABLE_XLA_AUTOTUNE_CACHE = os.environ.get("G_PROFILE_ENABLE_XLA_AUTOTUNE_CACHE") == "1"
+GPU_JAX_CACHE_PARENT_DEFAULT = "/tmp/g-jax-profile-cache"
 
 
 def load_script_module(module_name: str, relative_path: str) -> typing.Any:
@@ -371,10 +372,15 @@ def build_g_trial_environment(
     stage_timing_path: Path | None,
 ) -> dict[str, str]:
     """Build child process environment overrides for one g trial."""
+    jax_cache_directory = cache_directory
+    if candidate.device == "gpu":
+        job_identifier = os.environ.get("SLURM_JOB_ID") or str(os.getpid())
+        gpu_cache_parent = os.environ.get("G_PROFILE_GPU_JAX_CACHE_PARENT", GPU_JAX_CACHE_PARENT_DEFAULT)
+        jax_cache_directory = Path(gpu_cache_parent) / job_identifier / cache_directory.name
     environment = {
         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
         "XLA_PYTHON_CLIENT_MEM_FRACTION": ".50",
-        "JAX_COMPILATION_CACHE_DIR": str(cache_directory),
+        "JAX_COMPILATION_CACHE_DIR": str(jax_cache_directory),
         "JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES": "-1",
         "JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS": "0",
     }
@@ -520,7 +526,9 @@ def run_logged_command(
     stdout_log_path.write_text(completed_process.stdout, encoding="utf-8")
     stderr_log_path.write_text(completed_process.stderr, encoding="utf-8")
     status = "success" if completed_process.returncode == 0 else "failed"
-    notes = None if completed_process.returncode == 0 else completed_process.stderr.strip()
+    notes = None
+    if completed_process.returncode != 0:
+        notes = completed_process.stderr.strip() or completed_process.stdout.strip()
     return TrialResult(
         name=name,
         implementation=implementation,
@@ -606,6 +614,7 @@ def run_regenie_trial(
     log_directory: Path,
 ) -> TrialResult:
     """Run one original REGENIE step 2 trial."""
+    output_directory.mkdir(parents=True, exist_ok=True)
     output_prefix = output_directory / name
     command_arguments = build_regenie_step2_command(
         trait_type=trait_type,

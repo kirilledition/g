@@ -67,6 +67,7 @@ class Regenie2BinaryChunkResult:
         log10_p_value: Negative log10 p-values.
         extra_code: Integer correction code for output rendering.
         valid_mask: Boolean mask for valid statistics.
+        firth_iteration_count: Number of Firth iterations per variant, or zero for non-Firth rows.
 
     """
 
@@ -76,3 +77,4 @@ class Regenie2BinaryChunkResult:
     log10_p_value: jax.Array
     extra_code: jax.Array
     valid_mask: jax.Array
+    firth_iteration_count: jax.Array

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
@@ -21,12 +22,17 @@ from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, r
 from g.engine import types as engine_types
 from g.io import bgen, genotype_processing, models, output, samples, source
 
+BINARY_VARIANT_MAJOR_ENVIRONMENT_VARIABLE = "G_REGENIE2_BINARY_VARIANT_MAJOR"
+ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE = (
+    "G_REGENIE2_ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED"
+)
+
 
 @dataclass(frozen=True)
 class DosageChunkWorkItem:
     """One raw dosage chunk staged for asynchronous JAX processing."""
 
-    metadata: models.VariantMetadata
+    metadata: typing.Any
     genotype_matrix: npt.NDArray[np.float32]
 
 
@@ -34,8 +40,18 @@ class DosageChunkWorkItem:
 class PreprocessedDosageChunkWorkItem:
     """One native-preprocessed dosage chunk staged for asynchronous JAX compute."""
 
-    metadata: models.VariantMetadata
+    metadata: typing.Any
     genotype_matrix: npt.NDArray[np.float32]
+    allele_one_frequency: npt.NDArray[np.float32]
+    observation_count: npt.NDArray[np.int32]
+
+
+@dataclass(frozen=True)
+class PreprocessedVariantMajorDosageChunkWorkItem:
+    """One native-preprocessed variant-major dosage chunk staged for JAX compute."""
+
+    metadata: typing.Any
+    genotype_matrix_by_variant: npt.NDArray[np.float32]
     allele_one_frequency: npt.NDArray[np.float32]
     observation_count: npt.NDArray[np.int32]
 
@@ -56,12 +72,14 @@ class StageTimingSnapshot:
         stage_totals_seconds: Total wall time per measured stage.
         stage_counts: Number of observations per measured stage.
         native_bgen_profile: Native BGEN profile counters from the run engine.
+        binary_chunk_diagnostics: Binary score/Firth diagnostics per processed chunk.
 
     """
 
     stage_totals_seconds: dict[str, float]
     stage_counts: dict[str, int]
     native_bgen_profile: dict[str, int]
+    binary_chunk_diagnostics: tuple[dict[str, int | float], ...]
 
 
 class StageTimingRecorder:
@@ -72,6 +90,7 @@ class StageTimingRecorder:
         self.stage_totals_seconds: dict[str, float] = {}
         self.stage_counts: dict[str, int] = {}
         self.native_bgen_profile: dict[str, int] = {}
+        self.binary_chunk_diagnostics: list[dict[str, int | float]] = []
         self.lock = threading.Lock()
 
     def add_stage_duration(self, stage_name: str, duration_seconds: float) -> None:
@@ -85,6 +104,11 @@ class StageTimingRecorder:
         with self.lock:
             self.native_bgen_profile = dict(profile_snapshot)
 
+    def add_binary_chunk_diagnostics(self, diagnostics: dict[str, int | float]) -> None:
+        """Store diagnostic counters for one binary chunk."""
+        with self.lock:
+            self.binary_chunk_diagnostics.append(dict(diagnostics))
+
     def snapshot(self) -> StageTimingSnapshot:
         """Return an immutable copy of the current timings."""
         with self.lock:
@@ -92,6 +116,7 @@ class StageTimingRecorder:
                 stage_totals_seconds=dict(self.stage_totals_seconds),
                 stage_counts=dict(self.stage_counts),
                 native_bgen_profile=dict(self.native_bgen_profile),
+                binary_chunk_diagnostics=tuple(dict(diagnostics) for diagnostics in self.binary_chunk_diagnostics),
             )
 
 
@@ -100,6 +125,22 @@ def build_stage_timing_recorder_from_environment() -> StageTimingRecorder | None
     if not os.environ.get("G_REGENIE2_STAGE_TIMINGS_JSON"):
         return None
     return StageTimingRecorder()
+
+
+def binary_variant_major_enabled() -> bool:
+    """Return whether the internal binary variant-major path is enabled."""
+    raw_value = os.environ.get(BINARY_VARIANT_MAJOR_ENVIRONMENT_VARIABLE)
+    if raw_value is None:
+        return False
+    return raw_value.lower() in {"1", "true", "yes", "on"}
+
+
+def assume_trusted_no_missing_diploid_validated() -> bool:
+    """Return whether trusted BGEN validation should be treated as already completed."""
+    raw_value = os.environ.get(ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE)
+    if raw_value is None:
+        return False
+    return raw_value.lower() in {"1", "true", "yes", "on"}
 
 
 def write_stage_timing_snapshot_from_environment(stage_timing_recorder: StageTimingRecorder | None) -> None:
@@ -114,6 +155,7 @@ def write_stage_timing_snapshot_from_environment(stage_timing_recorder: StageTim
         "stage_totals_seconds": snapshot.stage_totals_seconds,
         "stage_counts": snapshot.stage_counts,
         "native_bgen_profile": snapshot.native_bgen_profile,
+        "binary_chunk_diagnostics": snapshot.binary_chunk_diagnostics,
     }
     Path(stage_timing_path).parent.mkdir(parents=True, exist_ok=True)
     Path(stage_timing_path).write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
@@ -135,6 +177,51 @@ def block_until_ready(value: typing.Any) -> None:
     block_until_ready_method = getattr(value, "block_until_ready", None)
     if callable(block_until_ready_method):
         block_until_ready_method()
+
+
+def record_binary_chunk_diagnostics(
+    *,
+    stage_timing_recorder: StageTimingRecorder | None,
+    result: regenie2_binary_types.Regenie2BinaryChunkResult,
+) -> None:
+    """Record binary candidate and Firth diagnostics for one chunk."""
+    if stage_timing_recorder is None:
+        return
+    firth_iteration_count = result.firth_iteration_count
+    firth_attempt_mask = firth_iteration_count > 0
+    firth_candidate_count = jnp.sum(firth_attempt_mask, dtype=jnp.int32)
+    finite_iteration_count = jnp.where(firth_attempt_mask, firth_iteration_count, jnp.asarray(0, dtype=jnp.int32))
+    sorted_active_iteration_count = jnp.sort(
+        jnp.where(firth_attempt_mask, firth_iteration_count, np.iinfo(np.int32).max)
+    )
+    median_iteration_index = jnp.maximum((firth_candidate_count - 1) // 2, 0)
+    diagnostics = jax.device_get(
+        {
+            "score_test_candidate_count": jnp.sum(
+                (result.extra_code == regenie2_binary.EXTRA_CODE_FIRTH)
+                | (result.extra_code == regenie2_binary.EXTRA_CODE_SPA)
+                | (result.extra_code == regenie2_binary.EXTRA_CODE_TEST_FAIL),
+                dtype=jnp.int32,
+            ),
+            "firth_candidate_count": firth_candidate_count,
+            "firth_iteration_min": jnp.where(
+                firth_candidate_count > 0,
+                sorted_active_iteration_count[0],
+                jnp.asarray(0, dtype=jnp.int32),
+            ),
+            "firth_iteration_median": jnp.where(
+                firth_candidate_count > 0,
+                sorted_active_iteration_count[median_iteration_index],
+                jnp.asarray(0, dtype=jnp.int32),
+            ),
+            "firth_iteration_max": jnp.max(finite_iteration_count),
+            "firth_converged_count": jnp.sum(result.extra_code == regenie2_binary.EXTRA_CODE_FIRTH, dtype=jnp.int32),
+            "firth_failed_count": jnp.sum(result.extra_code == regenie2_binary.EXTRA_CODE_TEST_FAIL, dtype=jnp.int32),
+        }
+    )
+    stage_timing_recorder.add_binary_chunk_diagnostics(
+        {key: int(value) if key != "firth_iteration_median" else float(value) for key, value in diagnostics.items()}
+    )
 
 
 def put_genotype_matrix_on_device(
@@ -202,6 +289,11 @@ def build_variant_metadata(native_metadata: _core.VariantMetadata) -> models.Var
     )
 
 
+def get_metadata_chromosome(metadata: typing.Any) -> str:
+    """Return the first chromosome label from native or Python metadata."""
+    return str(metadata.chromosome[0])
+
+
 class NativeBgenCallbackRunner:
     """Reusable callback lifecycle for native BGEN chunk delivery."""
 
@@ -217,9 +309,9 @@ class NativeBgenCallbackRunner:
         self.stage_timing_recorder = stage_timing_recorder
         self.dosage_queue_depth = max(1, staging_depth)
         self.dosage_buffer_limit = self.dosage_queue_depth + 1
-        self.dosage_queue: queue.Queue[DosageChunkWorkItem | PreprocessedDosageChunkWorkItem | None] = queue.Queue(
-            maxsize=self.dosage_queue_depth
-        )
+        self.dosage_queue: queue.Queue[
+            DosageChunkWorkItem | PreprocessedDosageChunkWorkItem | PreprocessedVariantMajorDosageChunkWorkItem | None
+        ] = queue.Queue(maxsize=self.dosage_queue_depth)
         self.free_dosage_buffers: queue.Queue[npt.NDArray[np.float32]] = queue.Queue(maxsize=self.dosage_buffer_limit)
         self.dosage_buffer_count = 0
         self.worker_error: BaseException | None = None
@@ -238,9 +330,8 @@ class NativeBgenCallbackRunner:
         observation_count: npt.NDArray[np.int32],
     ) -> None:
         """Compute one Rust-provided chunk and write it through the native output sink."""
-        variant_metadata = build_variant_metadata(metadata)
         self.compute_preprocessed_chunk(
-            variant_metadata=variant_metadata,
+            variant_metadata=metadata,
             genotype_matrix=genotype_matrix,
             allele_one_frequency=allele_one_frequency,
             observation_count=observation_count,
@@ -250,12 +341,23 @@ class NativeBgenCallbackRunner:
     def compute_preprocessed_chunk(
         self,
         *,
-        variant_metadata: models.VariantMetadata,
+        variant_metadata: typing.Any,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
         allele_one_frequency: jax.Array | npt.NDArray[np.float32],
         observation_count: jax.Array | npt.NDArray[np.int32],
     ) -> None:
         """Compute one already-preprocessed chunk and write it."""
+        raise NotImplementedError
+
+    def compute_preprocessed_variant_major_chunk(
+        self,
+        *,
+        variant_metadata: typing.Any,
+        genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
+        allele_one_frequency: jax.Array | npt.NDArray[np.float32],
+        observation_count: jax.Array | npt.NDArray[np.int32],
+    ) -> None:
+        """Compute one already-preprocessed variant-major chunk and write it."""
         raise NotImplementedError
 
     def compute_dosage_chunk(
@@ -264,9 +366,7 @@ class NativeBgenCallbackRunner:
         genotype_matrix: npt.NDArray[np.float32],
     ) -> None:
         """Enqueue one Rust-provided dosage chunk for JAX processing."""
-        self.put_dosage_work_item(
-            DosageChunkWorkItem(metadata=build_variant_metadata(metadata), genotype_matrix=genotype_matrix)
-        )
+        self.put_dosage_work_item(DosageChunkWorkItem(metadata=metadata, genotype_matrix=genotype_matrix))
 
     def compute_preprocessed_dosage_chunk(
         self,
@@ -275,12 +375,36 @@ class NativeBgenCallbackRunner:
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed dosage chunk for JAX association."""
+        bridge_start_time = time.perf_counter()
+        allele_one_frequency = chunk_stats.allele_one_frequency
+        observation_count = chunk_stats.observation_count
+        record_stage_duration(self.stage_timing_recorder, "native_metadata_stats_bridge", bridge_start_time)
         self.put_dosage_work_item(
             PreprocessedDosageChunkWorkItem(
-                metadata=build_variant_metadata(metadata),
+                metadata=metadata,
                 genotype_matrix=genotype_matrix,
-                allele_one_frequency=chunk_stats.allele_one_frequency,
-                observation_count=chunk_stats.observation_count,
+                allele_one_frequency=allele_one_frequency,
+                observation_count=observation_count,
+            )
+        )
+
+    def compute_preprocessed_variant_major_dosage_chunk(
+        self,
+        metadata: _core.VariantMetadata,
+        genotype_matrix_by_variant: npt.NDArray[np.float32],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Enqueue one Rust-preprocessed variant-major dosage chunk for JAX association."""
+        bridge_start_time = time.perf_counter()
+        allele_one_frequency = chunk_stats.allele_one_frequency
+        observation_count = chunk_stats.observation_count
+        record_stage_duration(self.stage_timing_recorder, "native_metadata_stats_bridge", bridge_start_time)
+        self.put_dosage_work_item(
+            PreprocessedVariantMajorDosageChunkWorkItem(
+                metadata=metadata,
+                genotype_matrix_by_variant=genotype_matrix_by_variant,
+                allele_one_frequency=allele_one_frequency,
+                observation_count=observation_count,
             )
         )
 
@@ -291,6 +415,16 @@ class NativeBgenCallbackRunner:
                 work_item = self.dosage_queue.get()
                 if work_item is None:
                     return
+                if isinstance(work_item, PreprocessedVariantMajorDosageChunkWorkItem):
+                    self.compute_preprocessed_variant_major_chunk(
+                        variant_metadata=work_item.metadata,
+                        genotype_matrix_by_variant=work_item.genotype_matrix_by_variant,
+                        allele_one_frequency=work_item.allele_one_frequency,
+                        observation_count=work_item.observation_count,
+                    )
+                    self.processed_chunk_count += 1
+                    self.release_dosage_buffer(work_item.genotype_matrix_by_variant)
+                    continue
                 if isinstance(work_item, PreprocessedDosageChunkWorkItem):
                     self.compute_preprocessed_chunk(
                         variant_metadata=work_item.metadata,
@@ -315,14 +449,23 @@ class NativeBgenCallbackRunner:
         except Exception as error:  # noqa: BLE001
             self.worker_error = error
 
-    def put_dosage_work_item(self, work_item: DosageChunkWorkItem | PreprocessedDosageChunkWorkItem | None) -> None:
+    def put_dosage_work_item(
+        self,
+        work_item: DosageChunkWorkItem
+        | PreprocessedDosageChunkWorkItem
+        | PreprocessedVariantMajorDosageChunkWorkItem
+        | None,
+    ) -> None:
         """Put work into the bounded worker queue while surfacing worker errors."""
         while True:
             self.raise_worker_error_if_present()
+            put_start_time = time.perf_counter()
             try:
                 self.dosage_queue.put(work_item, timeout=0.1)
+                record_stage_duration(self.stage_timing_recorder, "callback_queue_put", put_start_time)
                 return
             except queue.Full:
+                record_stage_duration(self.stage_timing_recorder, "callback_queue_producer_blocking", put_start_time)
                 continue
 
     def raise_worker_error_if_present(self) -> None:
@@ -345,6 +488,15 @@ class NativeBgenCallbackRunner:
     def acquire_dosage_buffer(self, sample_count: int, variant_count: int) -> npt.NDArray[np.float32]:
         """Return a reusable host dosage buffer for Rust to fill."""
         expected_shape = (sample_count, variant_count)
+        return self.acquire_dosage_buffer_with_shape(expected_shape)
+
+    def acquire_variant_major_dosage_buffer(self, variant_count: int, sample_count: int) -> npt.NDArray[np.float32]:
+        """Return a reusable host variant-major dosage buffer for Rust to fill."""
+        expected_shape = (variant_count, sample_count)
+        return self.acquire_dosage_buffer_with_shape(expected_shape)
+
+    def acquire_dosage_buffer_with_shape(self, expected_shape: tuple[int, int]) -> npt.NDArray[np.float32]:
+        """Return a reusable host dosage buffer with the requested shape."""
         while True:
             self.raise_worker_error_if_present()
             with contextlib.suppress(queue.Empty):
@@ -397,19 +549,27 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def compute_preprocessed_chunk(
         self,
         *,
-        variant_metadata: models.VariantMetadata,
+        variant_metadata: typing.Any,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
         allele_one_frequency: jax.Array | npt.NDArray[np.float32],
         observation_count: jax.Array | npt.NDArray[np.int32],
     ) -> None:
         """Compute one already-preprocessed chunk and write it."""
-        chromosome = str(variant_metadata.chromosome[0])
+        chromosome = get_metadata_chromosome(variant_metadata)
         if chromosome != self.current_chromosome:
+            chromosome_start_time = time.perf_counter()
             loco_predictions = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
             self.current_chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
                 self.regenie_state,
                 loco_predictions,
             )
+            chromosome_ready_value = getattr(
+                self.current_chromosome_state,
+                "adjusted_residual",
+                self.current_chromosome_state,
+            )
+            block_until_ready(chromosome_ready_value)
+            record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
             self.current_chromosome = chromosome
         assert self.current_chromosome_state is not None
 
@@ -469,19 +629,27 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def compute_preprocessed_chunk(
         self,
         *,
-        variant_metadata: models.VariantMetadata,
+        variant_metadata: typing.Any,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
         allele_one_frequency: jax.Array | npt.NDArray[np.float32],
         observation_count: jax.Array | npt.NDArray[np.int32],
     ) -> None:
         """Compute one already-preprocessed chunk and write it."""
-        chromosome = str(variant_metadata.chromosome[0])
+        chromosome = get_metadata_chromosome(variant_metadata)
         if chromosome != self.current_chromosome:
+            chromosome_start_time = time.perf_counter()
             loco_offset = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
             self.current_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
                 self.regenie_state,
                 loco_offset,
             )
+            chromosome_ready_value = getattr(
+                self.current_chromosome_state,
+                "fitted_probability",
+                self.current_chromosome_state,
+            )
+            block_until_ready(chromosome_ready_value)
+            record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
             self.current_chromosome = chromosome
         assert self.current_chromosome_state is not None
 
@@ -494,6 +662,59 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         )
         block_until_ready(result.log10_p_value)
         record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
+        write_regenie2_chunk_with_optional_timing(
+            writer_session=self.writer_session,
+            chunk_accumulator=build_chunk_accumulator(
+                metadata=variant_metadata,
+                allele_one_frequency=allele_one_frequency,
+                observation_count=observation_count,
+                beta=result.beta,
+                standard_error=result.standard_error,
+                chi_squared=result.chi_squared,
+                log10_p_value=result.log10_p_value,
+                extra_code=result.extra_code,
+            ),
+            stage_timing_recorder=self.stage_timing_recorder,
+        )
+
+    def compute_preprocessed_variant_major_chunk(
+        self,
+        *,
+        variant_metadata: typing.Any,
+        genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
+        allele_one_frequency: jax.Array | npt.NDArray[np.float32],
+        observation_count: jax.Array | npt.NDArray[np.int32],
+    ) -> None:
+        """Compute one already-preprocessed variant-major chunk and write it."""
+        chromosome = get_metadata_chromosome(variant_metadata)
+        if chromosome != self.current_chromosome:
+            chromosome_start_time = time.perf_counter()
+            loco_offset = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
+            self.current_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
+                self.regenie_state,
+                loco_offset,
+            )
+            chromosome_ready_value = getattr(
+                self.current_chromosome_state,
+                "fitted_probability",
+                self.current_chromosome_state,
+            )
+            block_until_ready(chromosome_ready_value)
+            record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
+            self.current_chromosome = chromosome
+        assert self.current_chromosome_state is not None
+
+        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix_by_variant, self.stage_timing_recorder)
+        compute_start_time = time.perf_counter()
+        result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
+            chromosome_state=self.current_chromosome_state,
+            genotype_matrix=jnp.transpose(genotype_device_array),
+            correction=self.correction,
+        )
+        block_until_ready(result.log10_p_value)
+        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
         write_regenie2_chunk_with_optional_timing(
             writer_session=self.writer_session,
             chunk_accumulator=build_chunk_accumulator(
@@ -512,7 +733,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
 
 def build_chunk_accumulator(
     *,
-    metadata: models.VariantMetadata,
+    metadata: typing.Any,
     allele_one_frequency: jax.Array | npt.NDArray[np.float32],
     observation_count: jax.Array | npt.NDArray[np.int32],
     beta: jax.Array,
@@ -534,6 +755,205 @@ def build_chunk_accumulator(
     )
 
 
+@dataclass(frozen=True)
+class WarmCacheShape:
+    """One genotype matrix shape warmed for the JAX compilation cache."""
+
+    sample_count: int
+    variant_count: int
+
+
+@dataclass(frozen=True)
+class WarmCacheReport:
+    """Summary of warmed REGENIE step 2 JAX cache entries."""
+
+    warmed_shapes: tuple[WarmCacheShape, ...]
+
+
+def build_warm_cache_shapes(
+    *,
+    engine: _core.Regenie2RunEngine,
+    chunk_size: int,
+    variant_limit: int | None,
+    sample_count: int,
+) -> tuple[WarmCacheShape, ...]:
+    """Build the full and tail chunk shapes that should be warmed."""
+    chunk_specs = _core.plan_genotype_chunks(
+        engine.variant_count,
+        chunk_size,
+        engine.chromosome_boundary_indices(),
+        variant_limit=variant_limit,
+        committed_chunk_identifiers=None,
+    )
+    variant_counts = []
+    for chunk_spec in chunk_specs:
+        variant_count = int(chunk_spec.variant_stop_index - chunk_spec.variant_start_index)
+        if variant_count > 0 and variant_count not in variant_counts:
+            variant_counts.append(variant_count)
+    variant_counts.sort(reverse=True)
+    return tuple(
+        WarmCacheShape(sample_count=sample_count, variant_count=variant_count) for variant_count in variant_counts[:2]
+    )
+
+
+def build_synthetic_genotype_matrix(
+    *,
+    phenotype_vector: jax.Array,
+    variant_count: int,
+    is_binary_trait: bool,
+) -> jax.Array:
+    """Build deterministic genotype inputs for cache warming."""
+    if is_binary_trait:
+        genotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float32) * 2.0
+    else:
+        sample_index = jnp.arange(phenotype_vector.shape[0], dtype=jnp.float32)
+        genotype_vector = jnp.mod(sample_index, 3.0)
+        genotype_vector = genotype_vector - jnp.mean(genotype_vector)
+    return jnp.tile(genotype_vector[:, None], (1, variant_count))
+
+
+def warm_regenie2_linear_bgen_cache(
+    *,
+    genotype_source_config: source.GenotypeSourceConfig,
+    phenotype_path: Path,
+    phenotype_name: str,
+    prediction_list_path: Path,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    chunk_size: int,
+    variant_limit: int | None,
+    trusted_no_missing_diploid: bool = False,
+) -> WarmCacheReport:
+    """Warm full and tail JAX compilation-cache shapes for quantitative REGENIE step 2."""
+    engine = build_bgen_run_engine(
+        genotype_source_config=genotype_source_config,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
+    aligned_sample_data = load_bgen_aligned_sample_data(
+        genotype_source_config=genotype_source_config,
+        engine=engine,
+        phenotype_path=phenotype_path,
+        phenotype_name=phenotype_name,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
+        is_binary_trait=False,
+    )
+    prediction_source = build_regenie_prediction_source(
+        prediction_list_path=prediction_list_path,
+        phenotype_name=phenotype_name,
+        aligned_sample_data=aligned_sample_data,
+    )
+    chromosome = first_engine_chromosome(engine)
+    regenie_state = regenie2_linear.prepare_regenie2_linear_state(
+        covariate_matrix=aligned_sample_data.covariate_matrix,
+        phenotype_vector=aligned_sample_data.phenotype_vector,
+    )
+    chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
+        regenie_state,
+        jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
+    )
+    shapes = build_warm_cache_shapes(
+        engine=engine,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        sample_count=int(aligned_sample_data.sample_indices.shape[0]),
+    )
+    for shape in shapes:
+        genotype_matrix = build_synthetic_genotype_matrix(
+            phenotype_vector=aligned_sample_data.phenotype_vector,
+            variant_count=shape.variant_count,
+            is_binary_trait=False,
+        )
+        result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
+            chromosome_state=chromosome_state,
+            genotype_matrix=genotype_matrix,
+        )
+        block_until_ready(result.log10_p_value)
+    return WarmCacheReport(warmed_shapes=shapes)
+
+
+def warm_regenie2_binary_bgen_cache(
+    *,
+    genotype_source_config: source.GenotypeSourceConfig,
+    phenotype_path: Path,
+    phenotype_name: str,
+    prediction_list_path: Path,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    chunk_size: int,
+    variant_limit: int | None,
+    correction: types.RegenieBinaryCorrection,
+    trusted_no_missing_diploid: bool = False,
+) -> WarmCacheReport:
+    """Warm full and tail JAX compilation-cache shapes for binary REGENIE step 2."""
+    engine = build_bgen_run_engine(
+        genotype_source_config=genotype_source_config,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
+    aligned_sample_data = load_bgen_aligned_sample_data(
+        genotype_source_config=genotype_source_config,
+        engine=engine,
+        phenotype_path=phenotype_path,
+        phenotype_name=phenotype_name,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
+        is_binary_trait=True,
+    )
+    prediction_source = build_regenie_prediction_source(
+        prediction_list_path=prediction_list_path,
+        phenotype_name=phenotype_name,
+        aligned_sample_data=aligned_sample_data,
+    )
+    chromosome = first_engine_chromosome(engine)
+    regenie_state = regenie2_binary.prepare_regenie2_binary_state(
+        covariate_matrix=aligned_sample_data.covariate_matrix,
+        phenotype_vector=aligned_sample_data.phenotype_vector,
+    )
+    chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
+        regenie_state,
+        jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
+    )
+    shapes = build_warm_cache_shapes(
+        engine=engine,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        sample_count=int(aligned_sample_data.sample_indices.shape[0]),
+    )
+    for shape in shapes:
+        genotype_matrix = build_synthetic_genotype_matrix(
+            phenotype_vector=aligned_sample_data.phenotype_vector,
+            variant_count=shape.variant_count,
+            is_binary_trait=True,
+        )
+        if binary_variant_major_enabled():
+            result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
+                chromosome_state=chromosome_state,
+                genotype_matrix=jnp.transpose(genotype_matrix),
+                correction=correction,
+            )
+        else:
+            result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
+                chromosome_state=chromosome_state,
+                genotype_matrix=genotype_matrix,
+                correction=correction,
+            )
+        block_until_ready(result.log10_p_value)
+    return WarmCacheReport(warmed_shapes=shapes)
+
+
+def first_engine_chromosome(engine: _core.Regenie2RunEngine) -> str:
+    """Return the first chromosome label from the native BGEN engine."""
+    chromosome_values, _, _, _, _ = engine.variant_metadata_slice(0, 1)
+    if not chromosome_values:
+        message = "Cannot warm REGENIE step 2 cache for an empty BGEN dataset."
+        raise ValueError(message)
+    return chromosome_values[0]
+
+
 def run_regenie2_linear_bgen_pipeline(
     *,
     genotype_source_config: source.GenotypeSourceConfig,
@@ -550,13 +970,20 @@ def run_regenie2_linear_bgen_pipeline(
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
+    trusted_no_missing_diploid: bool = False,
+    stage_timing_recorder: StageTimingRecorder | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
+    stage_timing_recorder = stage_timing_recorder or build_stage_timing_recorder_from_environment()
+    engine_start_time = time.perf_counter()
     engine = build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
+    record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
+    alignment_start_time = time.perf_counter()
     aligned_sample_data = load_bgen_aligned_sample_data(
         genotype_source_config=genotype_source_config,
         engine=engine,
@@ -566,6 +993,8 @@ def run_regenie2_linear_bgen_pipeline(
         covariate_names=covariate_names,
         is_binary_trait=False,
     )
+    record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
+    writer_start_time = time.perf_counter()
     writer_session = output.create_output_writer_session(
         output_run_paths,
         types.AssociationMode.REGENIE2_LINEAR,
@@ -573,14 +1002,17 @@ def run_regenie2_linear_bgen_pipeline(
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
     )
-    stage_timing_recorder = build_stage_timing_recorder_from_environment()
+    record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
+    prediction_start_time = time.perf_counter()
+    prediction_source = build_regenie_prediction_source(
+        prediction_list_path=prediction_list_path,
+        phenotype_name=phenotype_name,
+        aligned_sample_data=aligned_sample_data,
+    )
+    record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
     callback = LinearRegenie2PipelineCallback(
         aligned_sample_data=aligned_sample_data,
-        prediction_source=build_regenie_prediction_source(
-            prediction_list_path=prediction_list_path,
-            phenotype_name=phenotype_name,
-            aligned_sample_data=aligned_sample_data,
-        ),
+        prediction_source=prediction_source,
         writer_session=writer_session,
         staging_depth=prefetch_chunks,
         stage_timing_recorder=stage_timing_recorder,
@@ -611,14 +1043,28 @@ def run_regenie2_binary_bgen_pipeline(
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
+    trusted_no_missing_diploid: bool = False,
     correction: types.RegenieBinaryCorrection = types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    stage_timing_recorder: StageTimingRecorder | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for binary REGENIE step 2."""
+    stage_timing_recorder = stage_timing_recorder or build_stage_timing_recorder_from_environment()
+    use_variant_major = binary_variant_major_enabled()
+    if use_variant_major and not trusted_no_missing_diploid:
+        message = (
+            f"{BINARY_VARIANT_MAJOR_ENVIRONMENT_VARIABLE}=1 requires "
+            "--trusted-no-missing-diploid for the current native BGEN decoder."
+        )
+        raise ValueError(message)
+    engine_start_time = time.perf_counter()
     engine = build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
+    record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
+    alignment_start_time = time.perf_counter()
     aligned_sample_data = load_bgen_aligned_sample_data(
         genotype_source_config=genotype_source_config,
         engine=engine,
@@ -628,6 +1074,8 @@ def run_regenie2_binary_bgen_pipeline(
         covariate_names=covariate_names,
         is_binary_trait=True,
     )
+    record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
+    writer_start_time = time.perf_counter()
     writer_session = output.create_output_writer_session(
         output_run_paths,
         types.AssociationMode.REGENIE2_BINARY,
@@ -635,14 +1083,17 @@ def run_regenie2_binary_bgen_pipeline(
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
     )
-    stage_timing_recorder = build_stage_timing_recorder_from_environment()
+    record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
+    prediction_start_time = time.perf_counter()
+    prediction_source = build_regenie_prediction_source(
+        prediction_list_path=prediction_list_path,
+        phenotype_name=phenotype_name,
+        aligned_sample_data=aligned_sample_data,
+    )
+    record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
     callback = BinaryRegenie2PipelineCallback(
         aligned_sample_data=aligned_sample_data,
-        prediction_source=build_regenie_prediction_source(
-            prediction_list_path=prediction_list_path,
-            phenotype_name=phenotype_name,
-            aligned_sample_data=aligned_sample_data,
-        ),
+        prediction_source=prediction_source,
         writer_session=writer_session,
         correction=correction,
         staging_depth=prefetch_chunks,
@@ -655,6 +1106,7 @@ def run_regenie2_binary_bgen_pipeline(
         writer_session=writer_session,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
+        variant_major_dosage=use_variant_major,
     )
 
 
@@ -720,13 +1172,18 @@ def build_bgen_run_engine(
     genotype_source_config: source.GenotypeSourceConfig,
     chunk_size: int,
     variant_limit: int | None,
+    trusted_no_missing_diploid: bool = False,
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN run engine once for alignment and chunk delivery."""
-    return _core.Regenie2RunEngine(
+    engine = _core.Regenie2RunEngine(
         str(genotype_source_config.source_path),
         chunk_size=chunk_size,
         variant_limit=variant_limit,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
+    if trusted_no_missing_diploid and not assume_trusted_no_missing_diploid_validated():
+        engine.validate_trusted_no_missing_diploid()
+    return engine
 
 
 def run_bgen_engine_with_callback(
@@ -737,17 +1194,27 @@ def run_bgen_engine_with_callback(
     writer_session: typing.Any,
     callback: object,
     stage_timing_recorder: StageTimingRecorder | None,
+    variant_major_dosage: bool = False,
 ) -> Path | None:
     """Run native BGEN chunk delivery and close the output writer."""
     try:
         if stage_timing_recorder is not None:
             engine.reset_profile()
         engine_delivery_start_time = time.perf_counter()
-        engine.run_bgen_dosage_buffered_chunks(
-            np.ascontiguousarray(aligned_sample_data.sample_indices, dtype=np.int64),
-            callback,
-            committed_chunk_identifiers=sorted(committed_chunk_identifiers or set()),
-        )
+        sample_indices = np.ascontiguousarray(aligned_sample_data.sample_indices, dtype=np.int64)
+        committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
+        if variant_major_dosage:
+            engine.run_bgen_variant_major_dosage_buffered_chunks(
+                sample_indices,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
+        else:
+            engine.run_bgen_dosage_buffered_chunks(
+                sample_indices,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
         record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
         if stage_timing_recorder is not None:
             stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())

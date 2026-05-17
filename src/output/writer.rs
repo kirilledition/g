@@ -144,13 +144,12 @@ impl OutputWriterSession {
         }
         let variant_start_index = metadata.getattr("variant_start_index")?.extract::<i64>()?;
         let variant_stop_index = metadata.getattr("variant_stop_index")?.extract::<i64>()?;
-        let chromosome = metadata.getattr("chromosome")?.call_method0("tolist")?.extract::<Vec<String>>()?;
+        let chromosome = extract_string_column(metadata, "chromosome")?;
         let position_object = metadata.getattr("position")?;
         let position = position_object.extract::<PyReadonlyArray1<'_, i64>>()?;
-        let variant_identifier =
-            metadata.getattr("variant_identifiers")?.call_method0("tolist")?.extract::<Vec<String>>()?;
-        let allele_one = metadata.getattr("allele_one")?.call_method0("tolist")?.extract::<Vec<String>>()?;
-        let allele_zero = metadata.getattr("allele_two")?.call_method0("tolist")?.extract::<Vec<String>>()?;
+        let variant_identifier = extract_string_column(metadata, "variant_identifiers")?;
+        let allele_one = extract_string_column(metadata, "allele_one")?;
+        let allele_zero = extract_string_column(metadata, "allele_two")?;
 
         let row_count = position.len();
         let observed_lengths = [
@@ -256,6 +255,14 @@ impl OutputWriterSession {
         }
         Ok(())
     }
+}
+
+fn extract_string_column(metadata: &Bound<'_, PyAny>, attribute_name: &str) -> PyResult<Vec<String>> {
+    let column_object = metadata.getattr(attribute_name)?;
+    if let Ok(values) = column_object.extract::<Vec<String>>() {
+        return Ok(values);
+    }
+    column_object.call_method0("tolist")?.extract::<Vec<String>>()
 }
 
 fn close_writer_sender(

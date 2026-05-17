@@ -22,6 +22,21 @@ compute_binary_chunk = typing.cast(
     "BinaryChunkComputeFunction",
     regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state,
 )
+compute_score_test_chunk_variant_major = typing.cast(
+    "BinaryChunkComputeFunction",
+    regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major,
+)
+compute_binary_chunk_variant_major = typing.cast(
+    "BinaryChunkComputeFunction",
+    regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major,
+)
+
+
+def clear_binary_compute_caches() -> None:
+    """Clear cached binary configuration and JAX traces."""
+    regenie2_binary.get_firth_batch_size.cache_clear()
+    regenie2_binary.get_firth_candidate_capacity.cache_clear()
+    jax.clear_caches()
 
 
 def jax_backend_is_available(backend_name: str) -> bool:
@@ -75,6 +90,32 @@ def build_chromosome_state() -> tuple[
     return genotype_matrix, chromosome_state
 
 
+def test_firth_candidate_capacity_uses_default() -> None:
+    regenie2_binary.get_firth_candidate_capacity.cache_clear()
+
+    assert regenie2_binary.get_firth_candidate_capacity() == regenie2_binary.DEFAULT_FIRTH_CANDIDATE_CAPACITY
+
+
+def test_firth_candidate_capacity_rejects_invalid_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY", "0")
+    regenie2_binary.get_firth_candidate_capacity.cache_clear()
+
+    with pytest.raises(ValueError, match="G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY"):
+        regenie2_binary.get_firth_candidate_capacity()
+
+
+def test_device_firth_batch_plan_uses_candidate_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("G_REGENIE2_BINARY_FIRTH_BATCH_SIZE", "2")
+    clear_binary_compute_caches()
+    fallback_mask = jnp.asarray([True, False, True, False, True], dtype=jnp.bool_)
+
+    batch_plan = regenie2_binary.build_device_firth_batch_plan(fallback_mask, candidate_capacity=4)
+
+    np.testing.assert_array_equal(np.asarray(batch_plan.fallback_index_matrix), [[0, 2], [4, 0]])
+    np.testing.assert_array_equal(np.asarray(batch_plan.fallback_active_mask_matrix), [[True, True], [True, False]])
+    np.testing.assert_array_equal(np.asarray(batch_plan.active_flat_position_vector), [0, 1, 2, 0])
+
+
 def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
     genotype_matrix, chromosome_state = build_chromosome_state()
     candidate_genotype_matrix = genotype_matrix[:, :1]
@@ -90,6 +131,7 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
         log10_p_value=score_result.log10_p_value,
         extra_code=jnp.asarray([regenie2_binary.EXTRA_CODE_FIRTH], dtype=jnp.int32),
         valid_mask=jnp.asarray([True]),
+        firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
     )
 
     result = regenie2_binary.apply_device_candidate_corrections(
@@ -105,6 +147,60 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
     assert np.isfinite(np.asarray(result.log10_p_value[0]))
     assert int(np.asarray(result.extra_code[0])) == regenie2_binary.EXTRA_CODE_FIRTH
     assert bool(np.asarray(result.valid_mask[0]))
+
+
+def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    genotype_matrix, chromosome_state = build_chromosome_state()
+    score_result = compute_score_test_chunk(
+        chromosome_state,
+        genotype_matrix,
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    )
+    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
+        beta=score_result.beta,
+        standard_error=score_result.standard_error,
+        chi_squared=score_result.chi_squared,
+        log10_p_value=score_result.log10_p_value,
+        extra_code=jnp.full((genotype_matrix.shape[1],), regenie2_binary.EXTRA_CODE_FIRTH, dtype=jnp.int32),
+        valid_mask=jnp.ones((genotype_matrix.shape[1],), dtype=jnp.bool_),
+        firth_iteration_count=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
+    )
+
+    monkeypatch.setenv("G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY", "1")
+    clear_binary_compute_caches()
+    overflow_result = regenie2_binary.apply_device_candidate_corrections(
+        chromosome_state=chromosome_state,
+        genotype_matrix=genotype_matrix,
+        result=forced_candidate_result,
+        correction=RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    )
+
+    monkeypatch.setenv("G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY", "8")
+    clear_binary_compute_caches()
+    bounded_result = regenie2_binary.apply_device_candidate_corrections(
+        chromosome_state=chromosome_state,
+        genotype_matrix=genotype_matrix,
+        result=forced_candidate_result,
+        correction=RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    )
+
+    np.testing.assert_allclose(np.asarray(overflow_result.beta), np.asarray(bounded_result.beta), equal_nan=True)
+    np.testing.assert_allclose(
+        np.asarray(overflow_result.standard_error),
+        np.asarray(bounded_result.standard_error),
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        np.asarray(overflow_result.chi_squared),
+        np.asarray(bounded_result.chi_squared),
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        np.asarray(overflow_result.log10_p_value),
+        np.asarray(bounded_result.log10_p_value),
+        equal_nan=True,
+    )
+    np.testing.assert_array_equal(np.asarray(overflow_result.extra_code), np.asarray(bounded_result.extra_code))
 
 
 def test_non_candidate_score_rows_remain_unchanged_after_device_correction() -> None:
@@ -140,6 +236,75 @@ def test_non_candidate_score_rows_remain_unchanged_after_device_correction() -> 
     )
 
 
+def test_variant_major_score_test_matches_sample_major() -> None:
+    genotype_matrix, chromosome_state = build_chromosome_state()
+
+    sample_major_result = compute_score_test_chunk(
+        chromosome_state,
+        genotype_matrix,
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    )
+    variant_major_result = compute_score_test_chunk_variant_major(
+        chromosome_state,
+        jnp.transpose(genotype_matrix),
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    )
+
+    np.testing.assert_allclose(np.asarray(variant_major_result.beta), np.asarray(sample_major_result.beta))
+    np.testing.assert_allclose(
+        np.asarray(variant_major_result.standard_error),
+        np.asarray(sample_major_result.standard_error),
+    )
+    np.testing.assert_allclose(
+        np.asarray(variant_major_result.chi_squared),
+        np.asarray(sample_major_result.chi_squared),
+    )
+    np.testing.assert_allclose(
+        np.asarray(variant_major_result.log10_p_value),
+        np.asarray(sample_major_result.log10_p_value),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(variant_major_result.extra_code), np.asarray(sample_major_result.extra_code)
+    )
+
+
+def test_variant_major_binary_chunk_matches_sample_major() -> None:
+    genotype_matrix, chromosome_state = build_chromosome_state()
+
+    sample_major_result = compute_binary_chunk(
+        chromosome_state,
+        genotype_matrix,
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    )
+    variant_major_result = compute_binary_chunk_variant_major(
+        chromosome_state,
+        jnp.transpose(genotype_matrix),
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(variant_major_result.beta), np.asarray(sample_major_result.beta), equal_nan=True
+    )
+    np.testing.assert_allclose(
+        np.asarray(variant_major_result.standard_error),
+        np.asarray(sample_major_result.standard_error),
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        np.asarray(variant_major_result.chi_squared),
+        np.asarray(sample_major_result.chi_squared),
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        np.asarray(variant_major_result.log10_p_value),
+        np.asarray(sample_major_result.log10_p_value),
+        equal_nan=True,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(variant_major_result.extra_code), np.asarray(sample_major_result.extra_code)
+    )
+
+
 def test_failed_firth_lanes_become_test_fail() -> None:
     covariate_matrix = jnp.asarray(
         [
@@ -171,6 +336,7 @@ def test_failed_firth_lanes_become_test_fail() -> None:
         log10_p_value=score_result.log10_p_value,
         extra_code=jnp.asarray([regenie2_binary.EXTRA_CODE_FIRTH], dtype=jnp.int32),
         valid_mask=jnp.asarray([True]),
+        firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
     )
 
     corrected_result = regenie2_binary.apply_device_candidate_corrections(

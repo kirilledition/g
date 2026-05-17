@@ -110,6 +110,18 @@ struct ThreadLocalProfileSnapshot {
     selected_sample_count: u64,
 }
 
+#[derive(Debug)]
+struct VariantDecodeResult {
+    profile_snapshot: ThreadLocalProfileSnapshot,
+    selected_dosage_total: f32,
+}
+
+#[derive(Debug)]
+struct DosageTileDecodeResult {
+    profile_snapshot: ThreadLocalProfileSnapshot,
+    selected_dosage_totals: Vec<f32>,
+}
+
 #[derive(Debug, Default)]
 struct ReaderProfiling {
     enabled: AtomicBool,
@@ -524,12 +536,8 @@ impl BgenReaderCore {
         output_pointer_address: usize,
         output_value_count: usize,
     ) -> Result<ChunkStats, BgenError> {
-        self.read_dosage_f32_into_address_prepared(
-            variant_start,
-            variant_stop,
-            output_pointer_address,
-            output_value_count,
-        )?;
+        let sample_selection = self.prepared_sample_selection_arc()?;
+        validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
         let selected_variant_count = variant_stop.saturating_sub(variant_start);
         if selected_variant_count == 0 {
             return Ok(ChunkStats {
@@ -541,10 +549,124 @@ impl BgenReaderCore {
         let selected_sample_count = output_value_count.checked_div(selected_variant_count).ok_or_else(|| {
             BgenError::Range("Unable to resolve sample count for preprocessed BGEN dosage matrix.".to_string())
         })?;
+        if self.trusted_no_missing_diploid {
+            let selected_dosage_totals = self
+                .read_dosage_f32_into_address_with_selection_and_optional_stats(
+                    &sample_selection,
+                    variant_start,
+                    variant_stop,
+                    output_pointer_address,
+                    output_value_count,
+                    true,
+                )?
+                .ok_or_else(|| {
+                    BgenError::Range("Trusted BGEN stats collection unexpectedly returned no totals.".to_string())
+                })?;
+            let observation_count_value = i32::try_from(selected_sample_count).map_err(|_| {
+                BgenError::Range("Selected sample count does not fit into int32 observation_count output.".to_string())
+            })?;
+            let denominator = 2.0_f32 * selected_sample_count as f32;
+            let allele_one_frequency = if selected_sample_count == 0 {
+                vec![0.0_f32; selected_variant_count]
+            } else {
+                selected_dosage_totals.iter().map(|total| *total / denominator).collect()
+            };
+            return Ok(ChunkStats {
+                allele_one_frequency,
+                observation_count: vec![observation_count_value; selected_variant_count],
+                has_missing_values: false,
+            });
+        }
+        self.read_dosage_f32_into_address_with_selection(
+            &sample_selection,
+            variant_start,
+            variant_stop,
+            output_pointer_address,
+            output_value_count,
+        )?;
         let output_slice =
             unsafe { std::slice::from_raw_parts_mut(output_pointer_address as *mut f32, output_value_count) };
         preprocess::preprocess_row_major_dosage_matrix(output_slice, selected_sample_count, selected_variant_count)
             .map_err(|error| BgenError::Range(error.to_string()))
+    }
+
+    pub fn read_preprocessed_variant_major_dosage_f32_into_address_prepared(
+        &self,
+        variant_start: usize,
+        variant_stop: usize,
+        output_pointer_address: usize,
+        output_value_count: usize,
+    ) -> Result<ChunkStats, BgenError> {
+        if !self.trusted_no_missing_diploid {
+            return Err(BgenError::UnsupportedFormat(
+                "Variant-major preprocessed BGEN reads require trusted_no_missing_diploid.".to_string(),
+            ));
+        }
+        let sample_selection = self.prepared_sample_selection_arc()?;
+        validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
+        let selected_variant_count = variant_stop.saturating_sub(variant_start);
+        let selected_sample_count = sample_selection.selected_sample_count;
+        let expected_output_value_count =
+            selected_sample_count.checked_mul(selected_variant_count).ok_or_else(|| {
+                BgenError::Range("Integer overflow while validating variant-major BGEN output buffer size.".to_string())
+            })?;
+        if output_value_count != expected_output_value_count {
+            return Err(BgenError::Range(format!(
+                "Variant-major output buffer shape mismatch for BGEN dosage read. Expected {expected_output_value_count} float32 values, observed {output_value_count}.",
+            )));
+        }
+        if selected_variant_count == 0 {
+            return Ok(ChunkStats {
+                allele_one_frequency: Vec::new(),
+                observation_count: Vec::new(),
+                has_missing_values: false,
+            });
+        }
+        if selected_sample_count == 0 {
+            return Ok(ChunkStats {
+                allele_one_frequency: vec![0.0_f32; selected_variant_count],
+                observation_count: vec![0_i32; selected_variant_count],
+                has_missing_values: false,
+            });
+        }
+
+        let profiling = &self.profiling;
+        let profiling_enabled = profiling.enabled.load(Ordering::Relaxed);
+        profiling.record_selected_sample_count(selected_sample_count);
+        let decode_tile_variant_count = decode_tile_variant_count();
+        let decode_results = self.variant_records[variant_start..variant_stop]
+            .par_chunks(decode_tile_variant_count)
+            .enumerate()
+            .map_init(ThreadScratch::default, |thread_scratch, (tile_index, variant_record_chunk)| {
+                decode_trusted_variant_major_dosage_tile(
+                    &self.mmap,
+                    self.compression_type,
+                    self.sample_count,
+                    &sample_selection,
+                    variant_record_chunk,
+                    output_pointer_address,
+                    selected_sample_count,
+                    tile_index * decode_tile_variant_count,
+                    profiling_enabled,
+                    thread_scratch,
+                )
+            })
+            .collect::<Result<Vec<DosageTileDecodeResult>, BgenError>>()?;
+        let mut selected_dosage_totals = Vec::with_capacity(selected_variant_count);
+        for decode_result in decode_results {
+            profiling.merge_thread_local_snapshot(&decode_result.profile_snapshot);
+            selected_dosage_totals.extend(decode_result.selected_dosage_totals);
+        }
+        let observation_count_value = i32::try_from(selected_sample_count).map_err(|_| {
+            BgenError::Range("Selected sample count does not fit into int32 observation_count output.".to_string())
+        })?;
+        let denominator = 2.0_f32 * selected_sample_count as f32;
+        let allele_one_frequency = selected_dosage_totals.iter().map(|total| *total / denominator).collect();
+        Ok(ChunkStats {
+            allele_one_frequency,
+            observation_count: vec![observation_count_value; selected_variant_count],
+            has_missing_values: false,
+        })
     }
 
     pub fn bgen_path(&self) -> &Path {
@@ -569,6 +691,26 @@ impl BgenReaderCore {
         output_pointer_address: usize,
         output_value_count: usize,
     ) -> Result<(), BgenError> {
+        self.read_dosage_f32_into_address_with_selection_and_optional_stats(
+            sample_selection,
+            variant_start,
+            variant_stop,
+            output_pointer_address,
+            output_value_count,
+            false,
+        )
+        .map(|_| ())
+    }
+
+    fn read_dosage_f32_into_address_with_selection_and_optional_stats(
+        &self,
+        sample_selection: &SampleSelection,
+        variant_start: usize,
+        variant_stop: usize,
+        output_pointer_address: usize,
+        output_value_count: usize,
+        collect_dosage_totals: bool,
+    ) -> Result<Option<Vec<f32>>, BgenError> {
         let selected_sample_count = sample_selection.selected_sample_count;
         let selected_variant_count = variant_stop - variant_start;
         let expected_output_value_count =
@@ -581,7 +723,7 @@ impl BgenReaderCore {
             )));
         }
         if selected_sample_count == 0 || selected_variant_count == 0 {
-            return Ok(());
+            return Ok(collect_dosage_totals.then(|| vec![0.0_f32; selected_variant_count]));
         }
 
         let output_pointer = output_pointer_address;
@@ -589,7 +731,7 @@ impl BgenReaderCore {
         let profiling_enabled = profiling.enabled.load(Ordering::Relaxed);
         profiling.record_selected_sample_count(selected_sample_count);
         let decode_tile_variant_count = decode_tile_variant_count();
-        self.variant_records[variant_start..variant_stop]
+        let decode_results = self.variant_records[variant_start..variant_stop]
             .par_chunks(decode_tile_variant_count)
             .enumerate()
             .map_init(ThreadScratch::default, |thread_scratch, (tile_index, variant_record_chunk)| {
@@ -604,13 +746,19 @@ impl BgenReaderCore {
                     tile_index * decode_tile_variant_count,
                     profiling_enabled,
                     self.trusted_no_missing_diploid,
+                    collect_dosage_totals,
                     thread_scratch,
                 )
             })
-            .collect::<Result<Vec<ThreadLocalProfileSnapshot>, BgenError>>()?
-            .into_iter()
-            .for_each(|thread_local_snapshot| profiling.merge_thread_local_snapshot(&thread_local_snapshot));
-        Ok(())
+            .collect::<Result<Vec<DosageTileDecodeResult>, BgenError>>()?;
+        let mut selected_dosage_totals = collect_dosage_totals.then(|| Vec::with_capacity(selected_variant_count));
+        for decode_result in decode_results {
+            profiling.merge_thread_local_snapshot(&decode_result.profile_snapshot);
+            if let Some(totals) = &mut selected_dosage_totals {
+                totals.extend(decode_result.selected_dosage_totals);
+            }
+        }
+        Ok(selected_dosage_totals)
     }
 }
 
@@ -709,8 +857,9 @@ fn decode_variant_dosage_tile_into_row_major_matrix(
     tile_variant_start_index: usize,
     profiling_enabled: bool,
     trusted_no_missing_diploid: bool,
+    collect_dosage_totals: bool,
     thread_scratch: &mut ThreadScratch,
-) -> Result<ThreadLocalProfileSnapshot, BgenError> {
+) -> Result<DosageTileDecodeResult, BgenError> {
     let tile_variant_count = variant_record_chunk.len();
     let tile_value_count = sample_selection
         .selected_sample_count
@@ -726,8 +875,9 @@ fn decode_variant_dosage_tile_into_row_major_matrix(
 
     let tile_pointer_address = thread_scratch.dosage_tile.as_mut_ptr() as usize;
     let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
+    let mut selected_dosage_totals = if collect_dosage_totals { vec![0.0_f32; tile_variant_count] } else { Vec::new() };
     for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
-        let variant_profile_snapshot = decode_variant_dosages_into_row_major_matrix(
+        let variant_decode_result = decode_variant_dosages_into_row_major_matrix(
             mmap,
             compression_type,
             sample_count,
@@ -738,8 +888,13 @@ fn decode_variant_dosage_tile_into_row_major_matrix(
             tile_variant_count,
             profiling_enabled,
             trusted_no_missing_diploid,
+            collect_dosage_totals,
             thread_scratch,
         )?;
+        let variant_profile_snapshot = variant_decode_result.profile_snapshot;
+        if collect_dosage_totals {
+            selected_dosage_totals[tile_variant_index] = variant_decode_result.selected_dosage_total;
+        }
         thread_local_profile_snapshot.compressed_block_fetch_ns += variant_profile_snapshot.compressed_block_fetch_ns;
         thread_local_profile_snapshot.compressed_block_fetch_count +=
             variant_profile_snapshot.compressed_block_fetch_count;
@@ -781,7 +936,56 @@ fn decode_variant_dosage_tile_into_row_major_matrix(
             .unwrap_or(u64::MAX);
     }
 
-    Ok(thread_local_profile_snapshot)
+    Ok(DosageTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_totals })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_trusted_variant_major_dosage_tile(
+    mmap: &[u8],
+    compression_type: CompressionType,
+    sample_count: usize,
+    sample_selection: &SampleSelection,
+    variant_record_chunk: &[VariantRecord],
+    output_pointer_address: usize,
+    selected_sample_count: usize,
+    tile_variant_start_index: usize,
+    profiling_enabled: bool,
+    thread_scratch: &mut ThreadScratch,
+) -> Result<DosageTileDecodeResult, BgenError> {
+    let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
+    let mut selected_dosage_totals = vec![0.0_f32; variant_record_chunk.len()];
+    for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
+        let variant_decode_result = decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
+            mmap,
+            compression_type,
+            sample_count,
+            sample_selection,
+            variant_record,
+            output_pointer_address,
+            tile_variant_start_index + tile_variant_index,
+            selected_sample_count,
+            profiling_enabled,
+            thread_scratch,
+        )?;
+        let variant_profile_snapshot = variant_decode_result.profile_snapshot;
+        selected_dosage_totals[tile_variant_index] = variant_decode_result.selected_dosage_total;
+        thread_local_profile_snapshot.compressed_block_fetch_ns += variant_profile_snapshot.compressed_block_fetch_ns;
+        thread_local_profile_snapshot.compressed_block_fetch_count +=
+            variant_profile_snapshot.compressed_block_fetch_count;
+        thread_local_profile_snapshot.compressed_byte_count += variant_profile_snapshot.compressed_byte_count;
+        thread_local_profile_snapshot.decompression_ns += variant_profile_snapshot.decompression_ns;
+        thread_local_profile_snapshot.decompression_count += variant_profile_snapshot.decompression_count;
+        thread_local_profile_snapshot.uncompressed_byte_count += variant_profile_snapshot.uncompressed_byte_count;
+        thread_local_profile_snapshot.zlib_stream_count += variant_profile_snapshot.zlib_stream_count;
+        thread_local_profile_snapshot.probability_decode_ns += variant_profile_snapshot.probability_decode_ns;
+        thread_local_profile_snapshot.probability_decode_count += variant_profile_snapshot.probability_decode_count;
+        thread_local_profile_snapshot.variant_decode_count += variant_profile_snapshot.variant_decode_count;
+        thread_local_profile_snapshot.output_write_ns += variant_profile_snapshot.output_write_ns;
+        thread_local_profile_snapshot.output_write_count += variant_profile_snapshot.output_write_count;
+        thread_local_profile_snapshot.output_byte_count += variant_profile_snapshot.output_byte_count;
+    }
+    thread_local_profile_snapshot.decode_tile_count += 1;
+    Ok(DosageTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_totals })
 }
 
 fn validate_variant_bounds(variant_start: usize, variant_stop: usize, variant_count: usize) -> Result<(), BgenError> {
@@ -1083,6 +1287,126 @@ fn validate_variant_compatible_with_trusted_no_missing_diploid(
     Ok(())
 }
 
+#[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
+fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
+    mmap: &[u8],
+    compression_type: CompressionType,
+    sample_count: usize,
+    sample_selection: &SampleSelection,
+    variant_record: &VariantRecord,
+    output_pointer_address: usize,
+    variant_index: usize,
+    selected_sample_count: usize,
+    profiling_enabled: bool,
+    thread_scratch: &mut ThreadScratch,
+) -> Result<VariantDecodeResult, BgenError> {
+    let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
+    let probability_block = read_probability_block(
+        mmap,
+        compression_type,
+        variant_record,
+        thread_scratch,
+        &mut thread_local_profile_snapshot,
+        profiling_enabled,
+    )?;
+
+    let mut cursor = 0;
+    let stored_sample_count = u32_to_usize(read_u32_at(probability_block, cursor)?)?;
+    cursor += 4;
+    if stored_sample_count != sample_count {
+        return Err(BgenError::InvalidFormat(format!(
+            "Variant '{}' stores {stored_sample_count} samples in its probability block, but the file header reports {sample_count}.",
+            variant_record.resolved_variant_identifier,
+        )));
+    }
+
+    let allele_count = read_u16_at(probability_block, cursor)?;
+    cursor += 2;
+    if allele_count != 2 {
+        return Err(BgenError::UnsupportedFormat(format!(
+            "Variant '{}' is not biallelic.",
+            variant_record.resolved_variant_identifier,
+        )));
+    }
+
+    let minimum_ploidy = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    let maximum_ploidy = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    if minimum_ploidy != 2 || maximum_ploidy != 2 {
+        return Err(BgenError::UnsupportedFormat(format!(
+            "Variant '{}' uses ploidy bounds [{minimum_ploidy}, {maximum_ploidy}], but variant-major trusted reads require diploid variants.",
+            variant_record.resolved_variant_identifier,
+        )));
+    }
+
+    let sample_ploidy_and_missingness = read_exact_bytes(probability_block, cursor, sample_count)?;
+    cursor += sample_count;
+    if !all_samples_present_diploid(sample_ploidy_and_missingness) {
+        return Err(BgenError::UnsupportedFormat(format!(
+            "Variant '{}' contains missing or non-diploid samples, but variant-major trusted reads require no missing diploid genotypes.",
+            variant_record.resolved_variant_identifier,
+        )));
+    }
+
+    let phased_flag = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    let probability_bit_count = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    if phased_flag != 0 || probability_bit_count != 8 {
+        return Err(BgenError::UnsupportedFormat(format!(
+            "Variant '{}' is not an unphased 8-bit BGEN variant.",
+            variant_record.resolved_variant_identifier,
+        )));
+    }
+
+    let expected_probability_byte_count = sample_count.checked_mul(2).ok_or_else(|| {
+        BgenError::InvalidFormat("Integer overflow while decoding 8-bit BGEN probabilities.".to_string())
+    })?;
+    let packed_probability_bytes = read_exact_bytes(probability_block, cursor, expected_probability_byte_count)?;
+    let probability_decode_start_time = profiling_enabled.then(Instant::now);
+    let output_write_start_time = profiling_enabled.then(Instant::now);
+    let dosage_lookup = unphased_eight_bit_dosage_lookup();
+    let output_pointer = output_pointer_address as *mut f32;
+    let variant_row_offset = variant_index.checked_mul(selected_sample_count).ok_or_else(|| {
+        BgenError::Range("Integer overflow while locating variant-major BGEN output row.".to_string())
+    })?;
+    let mut selected_dosage_total = 0.0_f32;
+    for (file_sample_index, probability_pair) in packed_probability_bytes.chunks_exact(2).enumerate() {
+        let selected_index = if sample_selection.is_identity {
+            file_sample_index
+        } else {
+            sample_selection.file_to_selected_index[file_sample_index]
+        };
+        if selected_index == usize::MAX {
+            continue;
+        }
+        let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
+        let dosage_value = dosage_lookup[packed_probability_index];
+        selected_dosage_total += dosage_value;
+        unsafe {
+            // Each parallel worker owns a distinct variant row in the variant-major output matrix.
+            output_pointer.add(variant_row_offset + selected_index).write(dosage_value);
+        }
+    }
+    if let Some(output_write_start_time) = output_write_start_time {
+        thread_local_profile_snapshot.output_write_ns += elapsed_nanoseconds(output_write_start_time);
+        thread_local_profile_snapshot.output_write_count += 1;
+        thread_local_profile_snapshot.output_byte_count += u64::try_from(
+            selected_sample_count
+                .checked_mul(std::mem::size_of::<f32>())
+                .ok_or_else(|| BgenError::Range("Integer overflow while profiling BGEN output bytes.".to_string()))?,
+        )
+        .unwrap_or(u64::MAX);
+    }
+    if let Some(probability_decode_start_time) = probability_decode_start_time {
+        thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
+        thread_local_profile_snapshot.probability_decode_count += 1;
+    }
+    thread_local_profile_snapshot.variant_decode_count += 1;
+    Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total })
+}
+
 #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments, clippy::too_many_lines)]
 fn decode_variant_dosages_into_row_major_matrix(
     mmap: &[u8],
@@ -1095,8 +1419,9 @@ fn decode_variant_dosages_into_row_major_matrix(
     variant_count: usize,
     profiling_enabled: bool,
     trusted_no_missing_diploid: bool,
+    collect_dosage_totals: bool,
     thread_scratch: &mut ThreadScratch,
-) -> Result<ThreadLocalProfileSnapshot, BgenError> {
+) -> Result<VariantDecodeResult, BgenError> {
     let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
     let probability_block = read_probability_block(
         mmap,
@@ -1163,6 +1488,7 @@ fn decode_variant_dosages_into_row_major_matrix(
             variant_count,
             profiling_enabled,
             trusted_no_missing_diploid,
+            collect_dosage_totals,
             thread_local_profile_snapshot,
         );
     }
@@ -1172,6 +1498,7 @@ fn decode_variant_dosages_into_row_major_matrix(
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let mut bit_reader = PackedProbabilityReader::new(&block_bytes[cursor..]);
     let output_pointer = output_pointer_address as *mut f32;
+    let mut selected_dosage_total = 0.0_f32;
     if sample_selection.is_identity {
         let output_write_start_time = profiling_enabled.then(Instant::now);
         for (file_sample_index, ploidy_and_missingness) in sample_ploidy_and_missingness.iter().enumerate() {
@@ -1224,6 +1551,9 @@ fn decode_variant_dosages_into_row_major_matrix(
                 // Identity-aligned full-sample reads map file-order rows directly into output rows.
                 output_pointer.add(output_offset).write(dosage_value);
             }
+            if collect_dosage_totals && !dosage_value.is_nan() {
+                selected_dosage_total += dosage_value;
+            }
         }
         if let Some(output_write_start_time) = output_write_start_time {
             thread_local_profile_snapshot.output_write_ns += elapsed_nanoseconds(output_write_start_time);
@@ -1241,7 +1571,7 @@ fn decode_variant_dosages_into_row_major_matrix(
         }
         thread_local_profile_snapshot.variant_decode_count += 1;
 
-        return Ok(thread_local_profile_snapshot);
+        return Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total });
     }
 
     let output_write_start_time = profiling_enabled.then(Instant::now);
@@ -1296,6 +1626,9 @@ fn decode_variant_dosages_into_row_major_matrix(
                 // Each parallel worker owns one distinct variant column, so these writes do not overlap.
                 output_pointer.add(output_offset).write(dosage_value);
             }
+            if collect_dosage_totals && !dosage_value.is_nan() {
+                selected_dosage_total += dosage_value;
+            }
         }
     }
     if let Some(output_write_start_time) = output_write_start_time {
@@ -1317,7 +1650,7 @@ fn decode_variant_dosages_into_row_major_matrix(
 
     thread_local_profile_snapshot.variant_decode_count += 1;
 
-    Ok(thread_local_profile_snapshot)
+    Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total })
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -1331,8 +1664,9 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     variant_count: usize,
     profiling_enabled: bool,
     trusted_no_missing_diploid: bool,
+    collect_dosage_totals: bool,
     mut thread_local_profile_snapshot: ThreadLocalProfileSnapshot,
-) -> Result<ThreadLocalProfileSnapshot, BgenError> {
+) -> Result<VariantDecodeResult, BgenError> {
     let expected_probability_byte_count = sample_ploidy_and_missingness.len().checked_mul(2).ok_or_else(|| {
         BgenError::InvalidFormat("Integer overflow while decoding 8-bit BGEN probabilities.".to_string())
     })?;
@@ -1348,6 +1682,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     let output_pointer = output_pointer_address as *mut f32;
     let probability_pairs = packed_probability_bytes[..expected_probability_byte_count].chunks_exact(2);
     let all_samples_present = trusted_no_missing_diploid || all_samples_present_diploid(sample_ploidy_and_missingness);
+    let mut selected_dosage_total = 0.0_f32;
     if sample_selection.is_identity && all_samples_present {
         let output_write_start_time = profiling_enabled.then(Instant::now);
         let mut output_row_pointer = unsafe { output_pointer.add(variant_index) };
@@ -1358,6 +1693,9 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
                 // Identity-aligned full-sample reads map file-order rows directly into output rows.
                 output_row_pointer.write(dosage_value);
                 output_row_pointer = output_row_pointer.add(variant_count);
+            }
+            if collect_dosage_totals {
+                selected_dosage_total += dosage_value;
             }
         }
         if let Some(output_write_start_time) = output_write_start_time {
@@ -1376,7 +1714,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
         }
         thread_local_profile_snapshot.variant_decode_count += 1;
 
-        return Ok(thread_local_profile_snapshot);
+        return Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total });
     }
     if sample_selection.is_identity {
         let output_write_start_time = profiling_enabled.then(Instant::now);
@@ -1402,6 +1740,9 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
                 output_row_pointer.write(dosage_value);
                 output_row_pointer = output_row_pointer.add(variant_count);
             }
+            if collect_dosage_totals && !dosage_value.is_nan() {
+                selected_dosage_total += dosage_value;
+            }
         }
         if let Some(output_write_start_time) = output_write_start_time {
             thread_local_profile_snapshot.output_write_ns += elapsed_nanoseconds(output_write_start_time);
@@ -1419,7 +1760,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
         }
         thread_local_profile_snapshot.variant_decode_count += 1;
 
-        return Ok(thread_local_profile_snapshot);
+        return Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total });
     }
 
     if all_samples_present {
@@ -1434,6 +1775,9 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
                 unsafe {
                     // Each parallel worker owns one distinct variant column, so these writes do not overlap.
                     output_pointer.add(output_offset).write(dosage_value);
+                }
+                if collect_dosage_totals {
+                    selected_dosage_total += dosage_value;
                 }
             }
         }
@@ -1454,7 +1798,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
         }
         thread_local_profile_snapshot.variant_decode_count += 1;
 
-        return Ok(thread_local_profile_snapshot);
+        return Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total });
     }
 
     let output_write_start_time = profiling_enabled.then(Instant::now);
@@ -1484,6 +1828,9 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
                 // Each parallel worker owns one distinct variant column, so these writes do not overlap.
                 output_pointer.add(output_offset).write(dosage_value);
             }
+            if collect_dosage_totals && !dosage_value.is_nan() {
+                selected_dosage_total += dosage_value;
+            }
         }
     }
     if let Some(output_write_start_time) = output_write_start_time {
@@ -1504,7 +1851,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     }
     thread_local_profile_snapshot.variant_decode_count += 1;
 
-    Ok(thread_local_profile_snapshot)
+    Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total })
 }
 
 fn read_probability_block<'a>(
