@@ -22,6 +22,10 @@ EXTRA_CODE_SCORE = 0
 EXTRA_CODE_FIRTH = 1
 EXTRA_CODE_SPA = 2
 EXTRA_CODE_TEST_FAIL = 3
+FIRTH_FAILURE_NONE = 0
+FIRTH_FAILURE_NUMERICAL = 1
+FIRTH_FAILURE_MAX_ITERATIONS = 2
+FIRTH_FAILURE_INVALID_STATISTIC = 3
 INITIAL_RESPONSE_SCALE = 4.863891244002886
 BINARY_CASE_THRESHOLD = 0.5
 ALLELE_COUNT_MULTIPLIER = 2.0
@@ -32,6 +36,7 @@ FIRTH_MAXIMUM_STEP_SIZE = 5.0
 FIRTH_MAXIMUM_ITERATIONS = 50
 DEFAULT_FIRTH_BATCH_SIZE = 64
 DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
+FIRTH_CANDIDATE_GROUPING_ENVIRONMENT_VARIABLE = "G_REGENIE2_BINARY_GROUP_FIRTH_CANDIDATES"
 
 BinaryScoreTestChunkComputeFunction = typing.Callable[
     [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.RegenieBinaryCorrection],
@@ -71,6 +76,15 @@ def get_firth_candidate_capacity() -> int:
         message = "G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY must be positive."
         raise ValueError(message)
     return parsed_value
+
+
+@functools.cache
+def get_group_firth_candidates() -> bool:
+    """Resolve whether Firth candidates are grouped by expected iteration cost."""
+    raw_value = os.environ.get(FIRTH_CANDIDATE_GROUPING_ENVIRONMENT_VARIABLE)
+    if raw_value is None:
+        return True
+    return raw_value.lower() not in {"0", "false", "no", "off"}
 
 
 @jax.tree_util.register_dataclass
@@ -144,6 +158,7 @@ class FirthVariantResult:
         converged_mask: Whether the lane converged.
         valid_mask: Whether corrected statistics are valid.
         iteration_count: Number of solver iterations performed.
+        failure_code: Integer failure-reason code.
 
     """
 
@@ -155,6 +170,7 @@ class FirthVariantResult:
     converged_mask: jax.Array
     valid_mask: jax.Array
     iteration_count: jax.Array
+    failure_code: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -172,6 +188,25 @@ class FirthBatchPlan:
     fallback_index_matrix: jax.Array
     fallback_active_mask_matrix: jax.Array
     active_flat_position_vector: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class FirthCandidateBatchInputs:
+    """Fixed-shape Firth candidate inputs after optional lane ordering.
+
+    Attributes:
+        flat_fallback_indices: Candidate variant indices in flattened batch order.
+        flat_active_mask: Active-lane mask in flattened batch order.
+        genotype_matrix_by_variant: Candidate genotypes in flattened batch order.
+        heuristic_firth_mask: Whether each lane uses the separation-oriented initializer.
+
+    """
+
+    flat_fallback_indices: jax.Array
+    flat_active_mask: jax.Array
+    genotype_matrix_by_variant: jax.Array
+    heuristic_firth_mask: jax.Array
 
 
 def prepare_regenie2_binary_state(
@@ -339,6 +374,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
         extra_code=extra_code,
         valid_mask=valid_mask,
         firth_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
+        firth_failure_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
     )
 
 
@@ -386,6 +422,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
         extra_code=extra_code,
         valid_mask=valid_mask,
         firth_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
+        firth_failure_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
     )
 
 
@@ -735,6 +772,23 @@ def fit_single_variant_firth_logistic_regression(
         & jnp.isfinite(log10_p_value)
         & (standard_error > 0.0)
     )
+    numerical_failure_mask = (~skip_firth) & final_state.failed
+    maximum_iteration_failure_mask = (
+        (~skip_firth)
+        & (~final_state.converged)
+        & (~final_state.failed)
+        & (final_state.iteration_count >= FIRTH_MAXIMUM_ITERATIONS)
+    )
+    invalid_statistic_failure_mask = (~skip_firth) & final_state.converged & (~final_state.failed) & (~valid_mask)
+    failure_code = jnp.where(
+        numerical_failure_mask,
+        FIRTH_FAILURE_NUMERICAL,
+        jnp.where(
+            maximum_iteration_failure_mask,
+            FIRTH_FAILURE_MAX_ITERATIONS,
+            jnp.where(invalid_statistic_failure_mask, FIRTH_FAILURE_INVALID_STATISTIC, FIRTH_FAILURE_NONE),
+        ),
+    ).astype(jnp.int32)
     return FirthVariantResult(
         beta=jnp.where(skip_firth, jnp.nan, beta),
         standard_error=jnp.where(skip_firth, jnp.nan, standard_error),
@@ -744,6 +798,7 @@ def fit_single_variant_firth_logistic_regression(
         converged_mask=jnp.where(skip_firth, jnp.asarray(0, dtype=jnp.bool_), final_state.converged),
         valid_mask=valid_mask,
         iteration_count=jnp.where(skip_firth, jnp.asarray(0, dtype=jnp.int32), final_state.iteration_count),
+        failure_code=jnp.where(skip_firth, FIRTH_FAILURE_NONE, failure_code),
     )
 
 
@@ -832,6 +887,25 @@ def build_device_firth_batch_plan(
     )
 
 
+def group_firth_candidate_batch_inputs(
+    *,
+    flat_fallback_indices: jax.Array,
+    flat_active_mask: jax.Array,
+    genotype_matrix_by_variant: jax.Array,
+    heuristic_firth_mask: jax.Array,
+) -> FirthCandidateBatchInputs:
+    """Group likely long-running Firth lanes together before fixed-size batching."""
+    inactive_sort_key = jnp.asarray(2, dtype=jnp.int32)
+    sort_key = jnp.where(flat_active_mask, heuristic_firth_mask.astype(jnp.int32), inactive_sort_key)
+    sort_order = jnp.argsort(sort_key, stable=True)
+    return FirthCandidateBatchInputs(
+        flat_fallback_indices=jnp.take(flat_fallback_indices, sort_order, axis=0),
+        flat_active_mask=jnp.take(flat_active_mask, sort_order, axis=0),
+        genotype_matrix_by_variant=jnp.take(genotype_matrix_by_variant, sort_order, axis=0),
+        heuristic_firth_mask=jnp.take(heuristic_firth_mask, sort_order, axis=0),
+    )
+
+
 def compute_firth_variantwise(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
@@ -869,6 +943,7 @@ def build_empty_firth_variant_result(
         converged_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
         valid_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
         iteration_count=jnp.zeros((batch_size,), dtype=jnp.int32),
+        failure_code=jnp.zeros((batch_size,), dtype=jnp.int32),
     )
 
 
@@ -905,6 +980,17 @@ def apply_device_candidate_corrections_firth(
                 )
                 & flat_active_mask
             )
+            if get_group_firth_candidates():
+                ordered_candidate_inputs = group_firth_candidate_batch_inputs(
+                    flat_fallback_indices=flat_fallback_indices,
+                    flat_active_mask=flat_active_mask,
+                    genotype_matrix_by_variant=genotype_matrix_by_variant,
+                    heuristic_firth_mask=heuristic_firth_mask,
+                )
+                flat_fallback_indices = ordered_candidate_inputs.flat_fallback_indices
+                flat_active_mask = ordered_candidate_inputs.flat_active_mask
+                genotype_matrix_by_variant = ordered_candidate_inputs.genotype_matrix_by_variant
+                heuristic_firth_mask = ordered_candidate_inputs.heuristic_firth_mask
             standard_initial_coefficients = jnp.broadcast_to(
                 chromosome_state.null_logistic_coefficients[None, :],
                 (genotype_matrix_by_variant.shape[0], chromosome_state.null_logistic_coefficients.shape[0]),
@@ -972,6 +1058,7 @@ def apply_device_candidate_corrections_firth(
                 converged_mask=batched_firth_result.converged_mask.reshape((-1,)),
                 valid_mask=batched_firth_result.valid_mask.reshape((-1,)),
                 iteration_count=batched_firth_result.iteration_count.reshape((-1,)),
+                failure_code=batched_firth_result.failure_code.reshape((-1,)),
             )
             active_flat_positions = batch_plan.active_flat_position_vector
             active_fallback_indices = flat_fallback_indices[active_flat_positions]
@@ -1006,6 +1093,9 @@ def apply_device_candidate_corrections_firth(
                 valid_mask=result.valid_mask.at[active_fallback_indices].set(active_valid_mask),
                 firth_iteration_count=result.firth_iteration_count.at[active_fallback_indices].set(
                     firth_result.iteration_count[active_flat_positions]
+                ),
+                firth_failure_code=result.firth_failure_code.at[active_fallback_indices].set(
+                    firth_result.failure_code[active_flat_positions]
                 ),
             )
 
@@ -1057,6 +1147,17 @@ def apply_device_candidate_corrections_firth_variant_major(
                 )
                 & flat_active_mask
             )
+            if get_group_firth_candidates():
+                ordered_candidate_inputs = group_firth_candidate_batch_inputs(
+                    flat_fallback_indices=flat_fallback_indices,
+                    flat_active_mask=flat_active_mask,
+                    genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
+                    heuristic_firth_mask=heuristic_firth_mask,
+                )
+                flat_fallback_indices = ordered_candidate_inputs.flat_fallback_indices
+                flat_active_mask = ordered_candidate_inputs.flat_active_mask
+                candidate_genotype_matrix_by_variant = ordered_candidate_inputs.genotype_matrix_by_variant
+                heuristic_firth_mask = ordered_candidate_inputs.heuristic_firth_mask
             standard_initial_coefficients = jnp.broadcast_to(
                 chromosome_state.null_logistic_coefficients[None, :],
                 (
@@ -1127,6 +1228,7 @@ def apply_device_candidate_corrections_firth_variant_major(
                 converged_mask=batched_firth_result.converged_mask.reshape((-1,)),
                 valid_mask=batched_firth_result.valid_mask.reshape((-1,)),
                 iteration_count=batched_firth_result.iteration_count.reshape((-1,)),
+                failure_code=batched_firth_result.failure_code.reshape((-1,)),
             )
             active_flat_positions = batch_plan.active_flat_position_vector
             active_fallback_indices = flat_fallback_indices[active_flat_positions]
@@ -1161,6 +1263,9 @@ def apply_device_candidate_corrections_firth_variant_major(
                 valid_mask=result.valid_mask.at[active_fallback_indices].set(active_valid_mask),
                 firth_iteration_count=result.firth_iteration_count.at[active_fallback_indices].set(
                     firth_result.iteration_count[active_flat_positions]
+                ),
+                firth_failure_code=result.firth_failure_code.at[active_fallback_indices].set(
+                    firth_result.failure_code[active_flat_positions]
                 ),
             )
 

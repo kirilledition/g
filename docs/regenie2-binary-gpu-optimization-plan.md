@@ -282,6 +282,88 @@ Measurement status:
 
 ### 6. Firth Failure Shortcuts
 
-Status: diagnostics-driven follow-up.
+Status: in progress.
 
 The current binary run had 2,295 failed Firth lanes. Many failed lanes likely run to 50 iterations. Add failure-reason diagnostics first, then short-circuit obvious separation/non-convergence cases if parity remains acceptable.
+
+Diagnostic plan:
+
+1. Add an internal Firth failure-reason code alongside `firth_iteration_count`.
+2. Keep public output schema unchanged; failure codes are only emitted through stage diagnostics.
+3. Classify failed Firth lanes as:
+   - numerical failure;
+   - maximum-iteration non-convergence;
+   - converged-but-invalid final statistic.
+4. Preserve existing merge behavior: failed Firth lanes keep score-test statistics and write `TEST_FAIL`.
+5. Benchmark on landau with trusted variant-major hot mode and already-validated BGEN input.
+
+Diagnostic result:
+
+| Scenario | Firth candidates | Failed | Numerical | Max iteration | Invalid statistic | Hot wall |
+|---|---:|---:|---:|---:|---:|---:|
+| Trusted variant-major hot, validation skipped | 17,938 | 2,201 | 0 | 2,201 | 0 | 7.426s |
+
+Interpretation:
+
+- All observed failed lanes are maximum-iteration non-convergence. There is no evidence that numerical failure handling is a meaningful optimization target for this dataset.
+- The safe optimization target is reducing batch-level waiting caused by max-iteration lanes.
+
+Candidate-grouping plan:
+
+1. Use the existing case-control allele-count separation heuristic as a predictor for long-running lanes.
+2. Reorder fixed-shape Firth candidate lanes before batching:
+   - active ordinary lanes first;
+   - active heuristic/separation lanes second;
+   - padded inactive lanes last.
+3. Keep scatter indices with each lane so output order remains unchanged.
+4. Gate the behavior with `G_REGENIE2_BINARY_GROUP_FIRTH_CANDIDATES`; default enabled.
+5. Validate exact parity on the toy tests and full chr22 output before accepting the optimization.
+6. Benchmark hot landau runs against grouping disabled.
+
+Risk:
+
+- Reordering should be statistically neutral because each Firth lane is independent and results are scattered back by original variant index. The practical risk is extra sort overhead or unexpected XLA batching behavior, so the optimization must remain easy to disable.
+
+Implementation notes:
+
+- Environment variable: `G_REGENIE2_BINARY_GROUP_FIRTH_CANDIDATES`
+- Default: enabled
+- Disable value examples: `0`, `false`, `no`, `off`
+
+Landau measurement:
+
+| Scenario | Wall | JAX compute | Firth candidates | Max-iteration failures | Full output parity |
+|---|---:|---:|---:|---:|---|
+| Grouping disabled hot | 7.479s | 4.959s | 17,938 | 2,305 | reference |
+| Grouping enabled hot | 7.460s | 4.935s | 17,938 | 2,305 | exact |
+
+Interpretation:
+
+- Grouping is exact-output compatible, but only marginally faster on the measured chr22 run (`~0.02s` hot wall, `~0.024s` JAX compute).
+- This suggests max-iteration lanes are not the only cause of batch-level waiting, or the heuristic does not strongly isolate the slow lanes.
+- The next Firth optimization should tune batch size with the new diagnostics rather than invest more in lane ordering.
+
+Batch-size grid result:
+
+Status: measured, not accepted as a default change.
+
+The original plan called for a focused Firth batch-size grid over `32,64,128,256,512`. The grid was run on landau with trusted variant-major mode, validation skipped, and candidate grouping enabled.
+
+| Firth batch size | Hot wall | JAX compute | Firth failures | Output parity vs batch 64 |
+|---:|---:|---:|---:|---|
+| 32 | 9.767s | 7.228s | 2,131 | rejected |
+| 64 | 7.471s | 4.938s | 2,201 | reference |
+| 128 | 6.510s | 3.983s | 2,281 | rejected |
+| 256 | 6.293s | 3.776s | 2,281 | rejected |
+| 512 | 5.960s | 3.431s | 2,177 | rejected |
+
+Parity notes:
+
+- All batch sizes preserved row count, allele frequency, and `N`.
+- Batch sizes other than `64` changed thousands of Firth beta/SE/chi-square/log10p values and thousands of `EXTRA` labels.
+- Therefore `DEFAULT_FIRTH_BATCH_SIZE` remains `64`.
+
+Interpretation:
+
+- Larger batches are faster, but batch size currently affects the Firth numerical trajectory enough to change output classifications. This is not acceptable for the default workflow.
+- Any future larger-batch optimization must first make Firth numerics batch-size invariant, likely by refactoring the batched IRLS solve and convergence logic rather than only changing the environment default.

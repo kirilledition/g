@@ -217,6 +217,18 @@ def record_binary_chunk_diagnostics(
             "firth_iteration_max": jnp.max(finite_iteration_count),
             "firth_converged_count": jnp.sum(result.extra_code == regenie2_binary.EXTRA_CODE_FIRTH, dtype=jnp.int32),
             "firth_failed_count": jnp.sum(result.extra_code == regenie2_binary.EXTRA_CODE_TEST_FAIL, dtype=jnp.int32),
+            "firth_numerical_failure_count": jnp.sum(
+                result.firth_failure_code == regenie2_binary.FIRTH_FAILURE_NUMERICAL,
+                dtype=jnp.int32,
+            ),
+            "firth_max_iteration_failure_count": jnp.sum(
+                result.firth_failure_code == regenie2_binary.FIRTH_FAILURE_MAX_ITERATIONS,
+                dtype=jnp.int32,
+            ),
+            "firth_invalid_statistic_failure_count": jnp.sum(
+                result.firth_failure_code == regenie2_binary.FIRTH_FAILURE_INVALID_STATISTIC,
+                dtype=jnp.int32,
+            ),
         }
     )
     stage_timing_recorder.add_binary_chunk_diagnostics(

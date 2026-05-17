@@ -116,6 +116,31 @@ def test_device_firth_batch_plan_uses_candidate_capacity(monkeypatch: pytest.Mon
     np.testing.assert_array_equal(np.asarray(batch_plan.active_flat_position_vector), [0, 1, 2, 0])
 
 
+def test_group_firth_candidate_batch_inputs_places_heuristic_lanes_after_regular_lanes() -> None:
+    ordered_inputs = regenie2_binary.group_firth_candidate_batch_inputs(
+        flat_fallback_indices=jnp.asarray([10, 11, 12, 0], dtype=jnp.int32),
+        flat_active_mask=jnp.asarray([True, True, True, False], dtype=jnp.bool_),
+        genotype_matrix_by_variant=jnp.asarray(
+            [
+                [10.0, 10.0],
+                [11.0, 11.0],
+                [12.0, 12.0],
+                [0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        ),
+        heuristic_firth_mask=jnp.asarray([True, False, True, False], dtype=jnp.bool_),
+    )
+
+    np.testing.assert_array_equal(np.asarray(ordered_inputs.flat_fallback_indices), [11, 10, 12, 0])
+    np.testing.assert_array_equal(np.asarray(ordered_inputs.flat_active_mask), [True, True, True, False])
+    np.testing.assert_array_equal(np.asarray(ordered_inputs.heuristic_firth_mask), [False, True, True, False])
+    np.testing.assert_array_equal(
+        np.asarray(ordered_inputs.genotype_matrix_by_variant),
+        [[11.0, 11.0], [10.0, 10.0], [12.0, 12.0], [0.0, 0.0]],
+    )
+
+
 def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
     genotype_matrix, chromosome_state = build_chromosome_state()
     candidate_genotype_matrix = genotype_matrix[:, :1]
@@ -132,6 +157,7 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
         extra_code=jnp.asarray([regenie2_binary.EXTRA_CODE_FIRTH], dtype=jnp.int32),
         valid_mask=jnp.asarray([True]),
         firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
+        firth_failure_code=jnp.asarray([0], dtype=jnp.int32),
     )
 
     result = regenie2_binary.apply_device_candidate_corrections(
@@ -164,6 +190,7 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback(monkeypat
         extra_code=jnp.full((genotype_matrix.shape[1],), regenie2_binary.EXTRA_CODE_FIRTH, dtype=jnp.int32),
         valid_mask=jnp.ones((genotype_matrix.shape[1],), dtype=jnp.bool_),
         firth_iteration_count=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
+        firth_failure_code=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
     )
 
     monkeypatch.setenv("G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY", "1")
@@ -337,6 +364,7 @@ def test_failed_firth_lanes_become_test_fail() -> None:
         extra_code=jnp.asarray([regenie2_binary.EXTRA_CODE_FIRTH], dtype=jnp.int32),
         valid_mask=jnp.asarray([True]),
         firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
+        firth_failure_code=jnp.asarray([0], dtype=jnp.int32),
     )
 
     corrected_result = regenie2_binary.apply_device_candidate_corrections(
