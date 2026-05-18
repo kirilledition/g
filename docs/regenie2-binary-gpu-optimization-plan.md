@@ -171,13 +171,13 @@ Binary score and Firth naturally consume candidate genotypes by variant. The cur
 Detailed plan:
 
 1. Add a native BGEN decode API that fills a C-contiguous `(variant_count, sample_count)` float32 buffer. Done.
-2. Keep the current sample-major API as the default until parity and performance are proven. Done.
+2. Keep the current sample-major API for untrusted BGENs, where the trusted variant-major decoder is not available. Done.
 3. Add a Python callback path for variant-major preprocessed chunks with the same `_core.VariantMetadata` and `_core.ChunkStats` objects. Done.
 4. Add binary-only JAX kernels that accept `genotype_matrix_by_variant` directly:
    - score test uses variant-major matrix-vector and matrix-matrix products;
    - Firth candidate selection uses direct row gathers instead of column gathers and transposes;
    - Firth batch planning keeps the bounded candidate capacity introduced above.
-5. Add a `G_REGENIE2_BINARY_VARIANT_MAJOR=1` internal switch for A/B testing. Done.
+5. Add a temporary internal switch for A/B testing, then remove it once the trusted path is accepted. Done.
 6. Test against the sample-major path for:
    - row counts;
    - output schema;
@@ -196,8 +196,9 @@ Correctness result:
 
 Implementation notes:
 
-- Environment variable: `G_REGENIE2_BINARY_VARIANT_MAJOR=1`
-- Required with current decoder: `trusted_no_missing_diploid=True` / `--trusted-no-missing-diploid`
+- Trusted binary BGEN runs now use native variant-major delivery automatically.
+- Untrusted binary BGEN runs continue to use sample-major delivery.
+- The temporary `G_REGENIE2_BINARY_VARIANT_MAJOR` comparison switch was removed after parity and performance were measured.
 - Native API: `run_bgen_variant_major_dosage_buffered_chunks`
 - Python callback: `compute_preprocessed_variant_major_dosage_chunk`
 - Current JAX production behavior: `jnp.transpose(genotype_matrix_by_variant)` followed by `compute_regenie2_binary_chunk_from_chromosome_state`.
@@ -316,19 +317,16 @@ Candidate-grouping plan:
    - active heuristic/separation lanes second;
    - padded inactive lanes last.
 3. Keep scatter indices with each lane so output order remains unchanged.
-4. Gate the behavior with `G_REGENIE2_BINARY_GROUP_FIRTH_CANDIDATES`; default enabled.
-5. Validate exact parity on the toy tests and full chr22 output before accepting the optimization.
-6. Benchmark hot landau runs against grouping disabled.
+4. Validate exact parity on the toy tests and full chr22 output before accepting the optimization.
+5. Benchmark hot landau runs against grouping disabled.
 
 Risk:
 
-- Reordering should be statistically neutral because each Firth lane is independent and results are scattered back by original variant index. The practical risk is extra sort overhead or unexpected XLA batching behavior, so the optimization must remain easy to disable.
+- Reordering is statistically neutral because each Firth lane is independent and results are scattered back by original variant index.
 
 Implementation notes:
 
-- Environment variable: `G_REGENIE2_BINARY_GROUP_FIRTH_CANDIDATES`
-- Default: enabled
-- Disable value examples: `0`, `false`, `no`, `off`
+- The temporary `G_REGENIE2_BINARY_GROUP_FIRTH_CANDIDATES` comparison switch was removed after parity and performance were measured.
 
 Landau measurement:
 
@@ -418,14 +416,13 @@ Detailed plan:
    - recode binary phenotypes from `1/2` to `0/1`;
    - preserve duplicate join expansion where duplicate `IID` rows exist.
 5. Convert the native result into the existing `AlignedSampleData` dataclass so downstream prediction loading, JAX state construction, and output schema stay unchanged.
-6. Enable the path by default after payload parity is proven, while retaining `G_REGENIE2_RUST_SAMPLE_ALIGNMENT=0` as an emergency fallback to Python/Polars alignment.
+6. Enable the path by default after payload parity is proven and remove the temporary comparison switch.
 
 Implementation notes:
 
-- Environment variable: `G_REGENIE2_RUST_SAMPLE_ALIGNMENT`
-- Default: enabled
+- The temporary `G_REGENIE2_RUST_SAMPLE_ALIGNMENT` comparison switch was removed after the Rust path became the default.
 - Public CLI/API unchanged.
-- External Oxford `.sample` parsing now also uses Rust when the switch is enabled.
+- External Oxford `.sample` parsing now also uses Rust.
 - Embedded BGEN samples still enter through Python as string identifiers before calling the Rust alignment core.
 - Prediction-source alignment remains a separate optimization candidate after this path is measured.
 

@@ -7,14 +7,13 @@ from unittest.mock import patch
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from g.compute import regenie2_binary_types, regenie2_linear, regenie2_linear_types
 from g.engine import regenie2_pipeline
 from g.io import models, output, source
 
 if typing.TYPE_CHECKING:
-    import polars as pl
+    import pytest
 
 
 class FakePredictionSource:
@@ -302,30 +301,9 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert prediction_source.sample_individual_identifiers == ["sample1", "sample2"]
 
 
-def test_binary_variant_major_pipeline_requires_trusted_bgen(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(regenie2_pipeline.BINARY_VARIANT_MAJOR_ENVIRONMENT_VARIABLE, "1")
-
-    with pytest.raises(ValueError, match="trusted-no-missing-diploid"):
-        regenie2_pipeline.run_regenie2_binary_bgen_pipeline(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
-            phenotype_path=Path("phenotype.tsv"),
-            phenotype_name="trait",
-            prediction_list_path=Path("pred.list"),
-            covariate_path=None,
-            covariate_names=None,
-            chunk_size=32,
-            variant_limit=100,
-            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
-            trusted_no_missing_diploid=False,
-        )
-
-
-def test_binary_variant_major_pipeline_invokes_variant_major_engine(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None:
     FakeRunEngine.instances.clear()
     FakePredictionSource.instances.clear()
-    monkeypatch.setenv(regenie2_pipeline.BINARY_VARIANT_MAJOR_ENVIRONMENT_VARIABLE, "1")
     writer_session = FakeWriterSession()
     aligned_sample_data = build_aligned_sample_data()
 
@@ -365,6 +343,43 @@ def test_binary_variant_major_pipeline_invokes_variant_major_engine(
     assert committed_chunk_identifiers == [0, 64]
 
 
+def test_binary_pipeline_uses_sample_major_engine_for_untrusted_bgen() -> None:
+    FakeRunEngine.instances.clear()
+    FakePredictionSource.instances.clear()
+    writer_session = FakeWriterSession()
+    aligned_sample_data = build_aligned_sample_data()
+
+    with (
+        patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.regenie2_pipeline.load_bgen_aligned_sample_data", return_value=aligned_sample_data),
+        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
+        patch(
+            "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_state",
+            return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
+        ),
+    ):
+        final_path = regenie2_pipeline.run_regenie2_binary_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
+            prefetch_chunks=3,
+            committed_chunk_identifiers={64, 0},
+            trusted_no_missing_diploid=False,
+        )
+
+    assert final_path == Path("results/final.parquet")
+    engine = FakeRunEngine.instances[0]
+    assert engine.validation_count == 0
+    assert engine.run_method == "buffered"
+
+
 def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -387,12 +402,6 @@ def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated(
     assert engine.validation_count == 0
 
 
-def test_rust_sample_alignment_is_enabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(regenie2_pipeline.RUST_SAMPLE_ALIGNMENT_ENVIRONMENT_VARIABLE, raising=False)
-
-    assert regenie2_pipeline.rust_sample_alignment_enabled() is True
-
-
 def test_load_bgen_aligned_sample_data_rejects_non_bgen_source_suffix() -> None:
     with np.testing.assert_raises_regex(ValueError, r"Expected a \.bgen source path"):
         regenie2_pipeline.load_bgen_aligned_sample_data(
@@ -406,49 +415,13 @@ def test_load_bgen_aligned_sample_data_rejects_non_bgen_source_suffix() -> None:
         )
 
 
-def test_load_bgen_aligned_sample_data_uses_shared_sample_alignment_when_rust_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_load_bgen_aligned_sample_data_uses_rust_alignment_for_embedded_samples() -> None:
     expected_aligned_sample_data = object()
     engine = SimpleNamespace(
         sample_count=2,
         contains_embedded_samples=True,
         sample_identifiers=lambda: ["sample1", "sample2"],
     )
-    monkeypatch.setenv(regenie2_pipeline.RUST_SAMPLE_ALIGNMENT_ENVIRONMENT_VARIABLE, "0")
-
-    with (
-        patch("g.engine.regenie2_pipeline.bgen.resolve_bgen_sample_path", return_value=None),
-        patch(
-            "g.engine.regenie2_pipeline.samples.load_aligned_sample_data_from_individual_identifier_table",
-            return_value=expected_aligned_sample_data,
-        ) as mock_load_from_sample_table,
-    ):
-        aligned_sample_data = regenie2_pipeline.load_bgen_aligned_sample_data(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
-            engine=typing.cast("typing.Any", engine),
-            phenotype_path=Path("phenotype.tsv"),
-            phenotype_name="trait",
-            covariate_path=Path("covariates.tsv"),
-            covariate_names=("age",),
-            is_binary_trait=True,
-        )
-
-    assert aligned_sample_data is expected_aligned_sample_data
-    sample_table = typing.cast("pl.DataFrame", mock_load_from_sample_table.call_args.kwargs["sample_table"])
-    assert sample_table.get_column("individual_identifier").to_list() == ["sample1", "sample2"]
-
-
-def test_load_bgen_aligned_sample_data_uses_rust_alignment_when_enabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    expected_aligned_sample_data = object()
-    engine = SimpleNamespace(
-        sample_count=2,
-        contains_embedded_samples=True,
-        sample_identifiers=lambda: ["sample1", "sample2"],
-    )
-    monkeypatch.setenv(regenie2_pipeline.RUST_SAMPLE_ALIGNMENT_ENVIRONMENT_VARIABLE, "1")
 
     with (
         patch("g.engine.regenie2_pipeline.bgen.resolve_bgen_sample_path", return_value=None),
@@ -456,9 +429,6 @@ def test_load_bgen_aligned_sample_data_uses_rust_alignment_when_enabled(
             "g.engine.regenie2_pipeline.load_rust_aligned_sample_data_from_individual_identifier_table",
             return_value=expected_aligned_sample_data,
         ) as mock_load_from_sample_table,
-        patch(
-            "g.engine.regenie2_pipeline.samples.load_aligned_sample_data_from_individual_identifier_table"
-        ) as mock_python_load,
     ):
         aligned_sample_data = regenie2_pipeline.load_bgen_aligned_sample_data(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
@@ -472,19 +442,15 @@ def test_load_bgen_aligned_sample_data_uses_rust_alignment_when_enabled(
 
     assert aligned_sample_data is expected_aligned_sample_data
     mock_load_from_sample_table.assert_called_once()
-    mock_python_load.assert_not_called()
 
 
-def test_load_bgen_aligned_sample_data_uses_rust_sample_file_alignment_when_enabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_load_bgen_aligned_sample_data_uses_rust_sample_file_alignment() -> None:
     expected_aligned_sample_data = object()
     engine = SimpleNamespace(
         sample_count=2,
         contains_embedded_samples=False,
     )
     sample_path = Path("study.sample")
-    monkeypatch.setenv(regenie2_pipeline.RUST_SAMPLE_ALIGNMENT_ENVIRONMENT_VARIABLE, "1")
 
     with (
         patch("g.engine.regenie2_pipeline.bgen.resolve_bgen_sample_path", return_value=sample_path),
@@ -492,7 +458,6 @@ def test_load_bgen_aligned_sample_data_uses_rust_sample_file_alignment_when_enab
             "g.engine.regenie2_pipeline.load_rust_aligned_sample_data_from_sample_file",
             return_value=expected_aligned_sample_data,
         ) as mock_rust_sample_file_load,
-        patch("g.engine.regenie2_pipeline.bgen.load_sample_identifier_table") as mock_python_sample_load,
     ):
         aligned_sample_data = regenie2_pipeline.load_bgen_aligned_sample_data(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
@@ -514,4 +479,3 @@ def test_load_bgen_aligned_sample_data_uses_rust_sample_file_alignment_when_enab
         covariate_names=("age",),
         is_binary_trait=True,
     )
-    mock_python_sample_load.assert_not_called()

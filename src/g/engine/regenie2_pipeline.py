@@ -20,13 +20,11 @@ import numpy.typing as npt
 from g import _core, types
 from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, regenie2_linear_types
 from g.engine import types as engine_types
-from g.io import bgen, genotype_processing, models, output, samples, source
+from g.io import bgen, genotype_processing, models, output, source
 
-BINARY_VARIANT_MAJOR_ENVIRONMENT_VARIABLE = "G_REGENIE2_BINARY_VARIANT_MAJOR"
 ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE = (
     "G_REGENIE2_ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED"
 )
-RUST_SAMPLE_ALIGNMENT_ENVIRONMENT_VARIABLE = "G_REGENIE2_RUST_SAMPLE_ALIGNMENT"
 
 
 @dataclass(frozen=True)
@@ -128,27 +126,11 @@ def build_stage_timing_recorder_from_environment() -> StageTimingRecorder | None
     return StageTimingRecorder()
 
 
-def binary_variant_major_enabled() -> bool:
-    """Return whether the internal binary variant-major path is enabled."""
-    raw_value = os.environ.get(BINARY_VARIANT_MAJOR_ENVIRONMENT_VARIABLE)
-    if raw_value is None:
-        return False
-    return raw_value.lower() in {"1", "true", "yes", "on"}
-
-
 def assume_trusted_no_missing_diploid_validated() -> bool:
     """Return whether trusted BGEN validation should be treated as already completed."""
     raw_value = os.environ.get(ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE)
     if raw_value is None:
         return False
-    return raw_value.lower() in {"1", "true", "yes", "on"}
-
-
-def rust_sample_alignment_enabled() -> bool:
-    """Return whether native sample alignment is enabled for the BGEN pipeline."""
-    raw_value = os.environ.get(RUST_SAMPLE_ALIGNMENT_ENVIRONMENT_VARIABLE)
-    if raw_value is None:
-        return True
     return raw_value.lower() in {"1", "true", "yes", "on"}
 
 
@@ -1012,18 +994,11 @@ def warm_regenie2_binary_bgen_cache(
             variant_count=shape.variant_count,
             is_binary_trait=True,
         )
-        if binary_variant_major_enabled():
-            result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
-                chromosome_state=chromosome_state,
-                genotype_matrix=jnp.transpose(genotype_matrix),
-                correction=correction,
-            )
-        else:
-            result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
-                chromosome_state=chromosome_state,
-                genotype_matrix=genotype_matrix,
-                correction=correction,
-            )
+        result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
+            chromosome_state=chromosome_state,
+            genotype_matrix=genotype_matrix,
+            correction=correction,
+        )
         block_until_ready(result.log10_p_value)
     return WarmCacheReport(warmed_shapes=shapes)
 
@@ -1132,13 +1107,7 @@ def run_regenie2_binary_bgen_pipeline(
 ) -> Path | None:
     """Run the native BGEN pipeline for binary REGENIE step 2."""
     stage_timing_recorder = stage_timing_recorder or build_stage_timing_recorder_from_environment()
-    use_variant_major = binary_variant_major_enabled()
-    if use_variant_major and not trusted_no_missing_diploid:
-        message = (
-            f"{BINARY_VARIANT_MAJOR_ENVIRONMENT_VARIABLE}=1 requires "
-            "--trusted-no-missing-diploid for the current native BGEN decoder."
-        )
-        raise ValueError(message)
+    use_variant_major = trusted_no_missing_diploid
     engine_start_time = time.perf_counter()
     engine = build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
@@ -1209,7 +1178,7 @@ def load_bgen_aligned_sample_data(
         genotype_source_config.source_path,
         genotype_source_config.sample_path,
     )
-    if rust_sample_alignment_enabled() and resolved_sample_path is not None:
+    if resolved_sample_path is not None:
         return load_rust_aligned_sample_data_from_sample_file(
             sample_path=resolved_sample_path,
             expected_sample_count=engine.sample_count,
@@ -1219,21 +1188,8 @@ def load_bgen_aligned_sample_data(
             covariate_names=covariate_names,
             is_binary_trait=is_binary_trait,
         )
-    if resolved_sample_path is not None:
-        sample_table = bgen.load_sample_identifier_table(resolved_sample_path)
-        if sample_table.height != engine.sample_count:
-            message = (
-                f"Expect number of samples in file to match BGEN sample count. "
-                f"Sample file '{resolved_sample_path}' contains {sample_table.height} rows, "
-                f"but '{genotype_source_config.source_path}' contains {engine.sample_count} samples."
-            )
-            raise ValueError(message)
-    elif engine.contains_embedded_samples:
+    if engine.contains_embedded_samples:
         sample_table = bgen.build_sample_identifier_table(np.asarray(engine.sample_identifiers(), dtype=np.str_))
-    else:
-        message = "BGEN file does not contain samples and no .sample file was found."
-        raise ValueError(message)
-    if rust_sample_alignment_enabled():
         return load_rust_aligned_sample_data_from_individual_identifier_table(
             sample_table=sample_table,
             phenotype_path=phenotype_path,
@@ -1242,14 +1198,8 @@ def load_bgen_aligned_sample_data(
             covariate_names=covariate_names,
             is_binary_trait=is_binary_trait,
         )
-    return samples.load_aligned_sample_data_from_individual_identifier_table(
-        sample_table=sample_table,
-        phenotype_path=phenotype_path,
-        phenotype_name=phenotype_name,
-        covariate_path=covariate_path,
-        covariate_names=covariate_names,
-        is_binary_trait=is_binary_trait,
-    )
+    message = "BGEN file does not contain samples and no .sample file was found."
+    raise ValueError(message)
 
 
 def build_regenie_prediction_source(

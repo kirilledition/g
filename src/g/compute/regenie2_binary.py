@@ -36,7 +36,6 @@ FIRTH_MAXIMUM_STEP_SIZE = 5.0
 FIRTH_MAXIMUM_ITERATIONS = 50
 DEFAULT_FIRTH_BATCH_SIZE = 64
 DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
-FIRTH_CANDIDATE_GROUPING_ENVIRONMENT_VARIABLE = "G_REGENIE2_BINARY_GROUP_FIRTH_CANDIDATES"
 BLOCK_FIRTH_MATH_ENVIRONMENT_VARIABLE = "G_REGENIE2_BINARY_USE_BLOCK_FIRTH_MATH"
 
 BinaryScoreTestChunkComputeFunction = typing.Callable[
@@ -77,15 +76,6 @@ def get_firth_candidate_capacity() -> int:
         message = "G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY must be positive."
         raise ValueError(message)
     return parsed_value
-
-
-@functools.cache
-def get_group_firth_candidates() -> bool:
-    """Resolve whether Firth candidates are grouped by expected iteration cost."""
-    raw_value = os.environ.get(FIRTH_CANDIDATE_GROUPING_ENVIRONMENT_VARIABLE)
-    if raw_value is None:
-        return True
-    return raw_value.lower() not in {"0", "false", "no", "off"}
 
 
 @functools.cache
@@ -1137,17 +1127,16 @@ def apply_device_candidate_corrections_firth(
                 )
                 & flat_active_mask
             )
-            if get_group_firth_candidates():
-                ordered_candidate_inputs = group_firth_candidate_batch_inputs(
-                    flat_fallback_indices=flat_fallback_indices,
-                    flat_active_mask=flat_active_mask,
-                    genotype_matrix_by_variant=genotype_matrix_by_variant,
-                    heuristic_firth_mask=heuristic_firth_mask,
-                )
-                flat_fallback_indices = ordered_candidate_inputs.flat_fallback_indices
-                flat_active_mask = ordered_candidate_inputs.flat_active_mask
-                genotype_matrix_by_variant = ordered_candidate_inputs.genotype_matrix_by_variant
-                heuristic_firth_mask = ordered_candidate_inputs.heuristic_firth_mask
+            ordered_candidate_inputs = group_firth_candidate_batch_inputs(
+                flat_fallback_indices=flat_fallback_indices,
+                flat_active_mask=flat_active_mask,
+                genotype_matrix_by_variant=genotype_matrix_by_variant,
+                heuristic_firth_mask=heuristic_firth_mask,
+            )
+            flat_fallback_indices = ordered_candidate_inputs.flat_fallback_indices
+            flat_active_mask = ordered_candidate_inputs.flat_active_mask
+            genotype_matrix_by_variant = ordered_candidate_inputs.genotype_matrix_by_variant
+            heuristic_firth_mask = ordered_candidate_inputs.heuristic_firth_mask
             standard_initial_coefficients = jnp.broadcast_to(
                 chromosome_state.null_logistic_coefficients[None, :],
                 (genotype_matrix_by_variant.shape[0], chromosome_state.null_logistic_coefficients.shape[0]),
@@ -1304,17 +1293,16 @@ def apply_device_candidate_corrections_firth_variant_major(
                 )
                 & flat_active_mask
             )
-            if get_group_firth_candidates():
-                ordered_candidate_inputs = group_firth_candidate_batch_inputs(
-                    flat_fallback_indices=flat_fallback_indices,
-                    flat_active_mask=flat_active_mask,
-                    genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
-                    heuristic_firth_mask=heuristic_firth_mask,
-                )
-                flat_fallback_indices = ordered_candidate_inputs.flat_fallback_indices
-                flat_active_mask = ordered_candidate_inputs.flat_active_mask
-                candidate_genotype_matrix_by_variant = ordered_candidate_inputs.genotype_matrix_by_variant
-                heuristic_firth_mask = ordered_candidate_inputs.heuristic_firth_mask
+            ordered_candidate_inputs = group_firth_candidate_batch_inputs(
+                flat_fallback_indices=flat_fallback_indices,
+                flat_active_mask=flat_active_mask,
+                genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
+                heuristic_firth_mask=heuristic_firth_mask,
+            )
+            flat_fallback_indices = ordered_candidate_inputs.flat_fallback_indices
+            flat_active_mask = ordered_candidate_inputs.flat_active_mask
+            candidate_genotype_matrix_by_variant = ordered_candidate_inputs.genotype_matrix_by_variant
+            heuristic_firth_mask = ordered_candidate_inputs.heuristic_firth_mask
             standard_initial_coefficients = jnp.broadcast_to(
                 chromosome_state.null_logistic_coefficients[None, :],
                 (
