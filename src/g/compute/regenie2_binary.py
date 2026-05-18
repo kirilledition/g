@@ -418,7 +418,12 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     genotype_matrix_by_variant: jax.Array,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
 ) -> regenie2_types.Regenie2BinaryChunkResult:
-    """Compute the uncorrected score test for one variant-major binary chunk."""
+    """Compute the experimental variant-major score test for one binary chunk.
+
+    This direct variant-major JAX path is not used by the production trusted
+    BGEN pipeline until full-data Firth parity is established.
+
+    """
     genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
     weighted_genotype_matrix_by_variant = (
         genotype_matrix_by_variant_float32 * chromosome_state.square_root_weight[None, :]
@@ -1553,7 +1558,12 @@ def compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     sparse_candidate_mask: jax.Array | None = None,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
-    """Compute REGENIE step 2 binary association from a variant-major genotype chunk."""
+    """Compute experimental binary association from a variant-major chunk.
+
+    This direct variant-major JAX path is not used by the production trusted
+    BGEN pipeline until full-data Firth parity is established.
+
+    """
     score_test_result = compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
         chromosome_state,
         genotype_matrix_by_variant,

@@ -253,6 +253,77 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
+def test_binary_variant_major_callback_transposes_into_sample_major_compute() -> None:
+    writer_session = FakeWriterSession()
+    result = regenie2_binary_types.Regenie2BinaryChunkResult(
+        beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4, 0.5], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0, 5.0], dtype=jnp.float32),
+        extra_code=jnp.asarray([0, 1, 1], dtype=jnp.int32),
+        valid_mask=jnp.asarray([True, True, True]),
+        firth_iteration_count=jnp.asarray([0, 2, 1], dtype=jnp.int32),
+        firth_failure_code=jnp.asarray([0, 0, 0], dtype=jnp.int32),
+    )
+    callback = regenie2_pipeline.BinaryRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+        correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
+    )
+    variant_major_genotype_matrix = np.asarray(
+        [
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+        ],
+        dtype=np.float32,
+    )
+    variant_metadata = SimpleNamespace(
+        variant_start_index=5,
+        variant_stop_index=8,
+        chromosome=["22", "22", "22"],
+        variant_identifiers=["variant5", "variant6", "variant7"],
+        position=np.asarray([100, 200, 300], dtype=np.int64),
+        allele_one=["A", "C", "G"],
+        allele_two=["G", "T", "A"],
+    )
+    chunk_stats = SimpleNamespace(is_sparse_candidate=np.asarray([True, False, True], dtype=np.bool_))
+
+    with (
+        patch(
+            "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_chromosome_state",
+            return_value="chromosome-state",
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
+            return_value=result,
+        ) as mock_compute,
+    ):
+        callback.compute_preprocessed_variant_major_dosage_chunk(
+            metadata=typing.cast("typing.Any", variant_metadata),
+            genotype_matrix_by_variant=variant_major_genotype_matrix,
+            chunk_stats=typing.cast("typing.Any", chunk_stats),
+        )
+        callback.finish()
+
+    genotype_matrix = mock_compute.call_args.kwargs["genotype_matrix"]
+    np.testing.assert_array_equal(
+        np.asarray(genotype_matrix),
+        np.asarray(
+            [
+                [1.0, 3.0, 5.0],
+                [2.0, 4.0, 6.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+    sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
+    np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False, True])
+    assert mock_compute.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
+    assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
+
+
 def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     FakeRunEngine.instances.clear()
     FakePredictionSource.instances.clear()
