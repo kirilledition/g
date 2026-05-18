@@ -40,6 +40,10 @@ binary_hot_benchmark = load_script_module(
     "binary_hot_benchmark_script",
     "scripts/benchmark_regenie2_binary_hot.py",
 )
+binary_firth_parity = load_script_module(
+    "binary_firth_parity_script",
+    "scripts/compare_binary_firth_paths.py",
+)
 tuning_benchmark = load_script_module(
     "tuning_benchmark_script",
     "scripts/tune_regenie2_gpu.py",
@@ -80,6 +84,35 @@ def test_bgen_reader_benchmark_parses_boolean_modes() -> None:
 
 def test_tuning_benchmark_builds_queue_depth_values() -> None:
     assert tuning_benchmark.build_queue_depth_values(4, (1, 2)) == (4, 8)
+
+
+def test_binary_firth_parity_harness_synthetic_fixture_passes() -> None:
+    comparison = binary_firth_parity.compare_binary_paths(
+        inputs=binary_firth_parity.build_synthetic_inputs(),
+        correction_plan=binary_firth_parity.types.BinaryCorrectionPlan(
+            method=binary_firth_parity.types.BinaryFallbackMethod.FIRTH_APPROXIMATE
+        ),
+    )
+
+    assert comparison.passed is True
+    assert comparison.production_metrics == comparison.experimental_metrics
+    assert comparison.production_metrics.firth_candidate_count >= 0
+
+
+def test_binary_firth_parity_harness_loads_npz_fixture(tmp_path: Path) -> None:
+    inputs = binary_firth_parity.build_synthetic_inputs()
+    fixture_path = tmp_path / "binary_fixture.npz"
+    binary_firth_parity.np.savez(
+        fixture_path,
+        covariate_matrix=binary_firth_parity.np.asarray(inputs.covariate_matrix),
+        phenotype_vector=binary_firth_parity.np.asarray(inputs.phenotype_vector),
+        genotype_matrix=binary_firth_parity.np.asarray(inputs.genotype_matrix),
+        loco_offset=binary_firth_parity.np.asarray(inputs.loco_offset),
+    )
+
+    loaded_inputs = binary_firth_parity.load_npz_inputs(fixture_path)
+
+    assert loaded_inputs.genotype_matrix.shape == inputs.genotype_matrix.shape
 
 
 def test_tuning_benchmark_builds_trial_environment_from_low_level_knobs() -> None:
