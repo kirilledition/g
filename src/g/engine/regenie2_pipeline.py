@@ -19,6 +19,7 @@ import numpy.typing as npt
 
 from g import _core, types
 from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, regenie2_linear_types
+import g.engine.preflight as preflight
 from g.io import output, source
 
 ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE = (
@@ -1007,6 +1008,15 @@ def run_regenie2_linear_bgen_pipeline(
         run_input=run_input,
     )
     record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
+    preflight_start_time = time.perf_counter()
+    preflight.run_regenie2_preflight(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        engine=engine,
+        is_binary_trait=False,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
+    record_stage_duration(stage_timing_recorder, "preflight_validation", preflight_start_time)
     callback = LinearRegenie2PipelineCallback(
         run_input=run_input,
         prediction_source=prediction_source,
@@ -1092,6 +1102,15 @@ def run_regenie2_binary_bgen_pipeline(
         run_input=run_input,
     )
     record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
+    preflight_start_time = time.perf_counter()
+    preflight.run_regenie2_preflight(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        engine=engine,
+        is_binary_trait=True,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
+    record_stage_duration(stage_timing_recorder, "preflight_validation", preflight_start_time)
     callback = BinaryRegenie2PipelineCallback(
         run_input=run_input,
         prediction_source=prediction_source,
