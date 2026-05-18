@@ -21,12 +21,19 @@ import numpy.typing as npt
 from g import _core, types
 from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, regenie2_linear_types
 import g.engine.preflight as preflight
+import g.engine.timing as timing
 from g.io import output, source
 
 ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE = (
     "G_REGENIE2_ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED"
 )
 TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION = 1
+
+StageTimingSnapshot = timing.StageTimingSnapshot
+StageTimingRecorder = timing.StageTimingRecorder
+build_stage_timing_recorder_from_environment = timing.build_stage_timing_recorder_from_environment
+record_stage_duration = timing.record_stage_duration
+write_stage_timing_snapshot_from_environment = timing.write_stage_timing_snapshot_from_environment
 
 
 @dataclass(frozen=True)
@@ -73,69 +80,6 @@ class NativeBgenRunInput:
     phenotype_vector: jax.Array
     covariate_matrix: jax.Array
     is_binary_trait: bool
-
-
-@dataclass(frozen=True)
-class StageTimingSnapshot:
-    """Diagnostic stage timing snapshot for one native REGENIE step 2 run.
-
-    Attributes:
-        stage_totals_seconds: Total wall time per measured stage.
-        stage_counts: Number of observations per measured stage.
-        native_bgen_profile: Native BGEN profile counters from the run engine.
-        binary_chunk_diagnostics: Binary score/Firth diagnostics per processed chunk.
-
-    """
-
-    stage_totals_seconds: dict[str, float]
-    stage_counts: dict[str, int]
-    native_bgen_profile: dict[str, int]
-    binary_chunk_diagnostics: tuple[dict[str, int | float], ...]
-
-
-class StageTimingRecorder:
-    """Thread-safe diagnostic wall-time collector for profiling harnesses."""
-
-    def __init__(self) -> None:
-        """Initialize empty stage timing state."""
-        self.stage_totals_seconds: dict[str, float] = {}
-        self.stage_counts: dict[str, int] = {}
-        self.native_bgen_profile: dict[str, int] = {}
-        self.binary_chunk_diagnostics: list[dict[str, int | float]] = []
-        self.lock = threading.Lock()
-
-    def add_stage_duration(self, stage_name: str, duration_seconds: float) -> None:
-        """Accumulate one measured duration."""
-        with self.lock:
-            self.stage_totals_seconds[stage_name] = self.stage_totals_seconds.get(stage_name, 0.0) + duration_seconds
-            self.stage_counts[stage_name] = self.stage_counts.get(stage_name, 0) + 1
-
-    def set_native_bgen_profile(self, profile_snapshot: dict[str, int]) -> None:
-        """Store native BGEN profiling counters."""
-        with self.lock:
-            self.native_bgen_profile = dict(profile_snapshot)
-
-    def add_binary_chunk_diagnostics(self, diagnostics: dict[str, int | float]) -> None:
-        """Store diagnostic counters for one binary chunk."""
-        with self.lock:
-            self.binary_chunk_diagnostics.append(dict(diagnostics))
-
-    def snapshot(self) -> StageTimingSnapshot:
-        """Return an immutable copy of the current timings."""
-        with self.lock:
-            return StageTimingSnapshot(
-                stage_totals_seconds=dict(self.stage_totals_seconds),
-                stage_counts=dict(self.stage_counts),
-                native_bgen_profile=dict(self.native_bgen_profile),
-                binary_chunk_diagnostics=tuple(dict(diagnostics) for diagnostics in self.binary_chunk_diagnostics),
-            )
-
-
-def build_stage_timing_recorder_from_environment() -> StageTimingRecorder | None:
-    """Create a diagnostic stage recorder when requested by the profiling harness."""
-    if not os.environ.get("G_REGENIE2_STAGE_TIMINGS_JSON"):
-        return None
-    return StageTimingRecorder()
 
 
 def assume_trusted_no_missing_diploid_validated() -> bool:
@@ -213,35 +157,6 @@ def validate_trusted_bgen_with_cache(
     temporary_cache_path = cache_path.with_suffix(".json.tmp")
     temporary_cache_path.write_text(json.dumps(cache_payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     temporary_cache_path.replace(cache_path)
-
-
-def write_stage_timing_snapshot_from_environment(stage_timing_recorder: StageTimingRecorder | None) -> None:
-    """Persist diagnostic stage timings when the profiling harness requests them."""
-    if stage_timing_recorder is None:
-        return
-    stage_timing_path = os.environ.get("G_REGENIE2_STAGE_TIMINGS_JSON")
-    if not stage_timing_path:
-        return
-    snapshot = stage_timing_recorder.snapshot()
-    payload = {
-        "stage_totals_seconds": snapshot.stage_totals_seconds,
-        "stage_counts": snapshot.stage_counts,
-        "native_bgen_profile": snapshot.native_bgen_profile,
-        "binary_chunk_diagnostics": snapshot.binary_chunk_diagnostics,
-    }
-    Path(stage_timing_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(stage_timing_path).write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
-
-
-def record_stage_duration(
-    stage_timing_recorder: StageTimingRecorder | None,
-    stage_name: str,
-    start_time: float,
-) -> None:
-    """Record elapsed wall time for a stage when diagnostics are active."""
-    if stage_timing_recorder is None:
-        return
-    stage_timing_recorder.add_stage_duration(stage_name, time.perf_counter() - start_time)
 
 
 def block_until_ready(value: typing.Any) -> None:
