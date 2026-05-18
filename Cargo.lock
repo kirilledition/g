@@ -2703,6 +2703,8 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "burn",
+ "burn-backend",
+ "burn-cubecl",
  "clap",
  "criterion",
  "crossbeam-channel",

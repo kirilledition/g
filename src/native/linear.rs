@@ -274,7 +274,7 @@ fn compute_linear_chunk_tensors<B: burn::tensor::backend::Backend>(
 }
 
 #[cfg(any(feature = "burn-wgpu", feature = "burn-cuda"))]
-fn materialize_tensor_data(
+pub(crate) fn materialize_tensor_data(
     tensor_data: &burn::tensor::TensorData,
     expected_value_count: usize,
     tensor_name: &str,
