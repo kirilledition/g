@@ -387,6 +387,12 @@ def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated(
     assert engine.validation_count == 0
 
 
+def test_rust_sample_alignment_is_enabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(regenie2_pipeline.RUST_SAMPLE_ALIGNMENT_ENVIRONMENT_VARIABLE, raising=False)
+
+    assert regenie2_pipeline.rust_sample_alignment_enabled() is True
+
+
 def test_load_bgen_aligned_sample_data_rejects_non_bgen_source_suffix() -> None:
     with np.testing.assert_raises_regex(ValueError, r"Expected a \.bgen source path"):
         regenie2_pipeline.load_bgen_aligned_sample_data(
@@ -400,13 +406,16 @@ def test_load_bgen_aligned_sample_data_rejects_non_bgen_source_suffix() -> None:
         )
 
 
-def test_load_bgen_aligned_sample_data_uses_shared_sample_alignment() -> None:
+def test_load_bgen_aligned_sample_data_uses_shared_sample_alignment_when_rust_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     expected_aligned_sample_data = object()
     engine = SimpleNamespace(
         sample_count=2,
         contains_embedded_samples=True,
         sample_identifiers=lambda: ["sample1", "sample2"],
     )
+    monkeypatch.setenv(regenie2_pipeline.RUST_SAMPLE_ALIGNMENT_ENVIRONMENT_VARIABLE, "0")
 
     with (
         patch("g.engine.regenie2_pipeline.bgen.resolve_bgen_sample_path", return_value=None),

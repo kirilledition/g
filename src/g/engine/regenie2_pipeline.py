@@ -148,7 +148,7 @@ def rust_sample_alignment_enabled() -> bool:
     """Return whether native sample alignment is enabled for the BGEN pipeline."""
     raw_value = os.environ.get(RUST_SAMPLE_ALIGNMENT_ENVIRONMENT_VARIABLE)
     if raw_value is None:
-        return False
+        return True
     return raw_value.lower() in {"1", "true", "yes", "on"}
 
 
