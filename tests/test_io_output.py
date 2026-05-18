@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typing
+import json
 from pathlib import Path
 
 import numpy as np
@@ -170,6 +171,57 @@ def test_prepare_output_run_resume_detects_native_chunks(tmp_path: Path) -> None
     assert resumed_output_run.committed_chunk_identifiers == frozenset({0, 2})
 
 
+def test_prepare_output_run_strict_resume_validates_manifest_chunks(tmp_path: Path) -> None:
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    write_native_chunks(prepared_output_run.output_run_paths, AssociationMode.REGENIE2_LINEAR)
+
+    resumed_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=True,
+        resume_mode=output.types.ResumeMode.STRICT,
+    )
+
+    assert resumed_output_run.committed_chunk_identifiers == frozenset({0, 2})
+
+
+def test_prepare_output_run_rejects_incompatible_manifest_even_in_fast_mode(tmp_path: Path) -> None:
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    manifest_path = output.get_run_manifest_path(prepared_output_run.output_run_paths)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["association_mode"] = AssociationMode.REGENIE2_BINARY.value
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="association mode is incompatible"):
+        output.prepare_output_run(
+            output_root=tmp_path / "output",
+            association_mode=AssociationMode.REGENIE2_LINEAR,
+            resume=True,
+        )
+
+
+def test_prepare_output_run_strict_resume_requires_manifest(tmp_path: Path) -> None:
+    run_directory = tmp_path / "output.regenie2_linear.run"
+    chunks_directory = run_directory / "chunks"
+    chunks_directory.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="Strict resume requires run_manifest.json"):
+        output.prepare_output_run(
+            output_root=tmp_path / "output",
+            association_mode=AssociationMode.REGENIE2_LINEAR,
+            resume=True,
+            resume_mode=output.types.ResumeMode.STRICT,
+        )
+
+
 def test_chunk_arrow_schema_is_shared_between_linear_and_binary(tmp_path: Path) -> None:
     linear_run_paths = output.OutputRunPaths(tmp_path / "linear", tmp_path / "linear")
     binary_run_paths = output.OutputRunPaths(tmp_path / "binary", tmp_path / "binary")
@@ -217,6 +269,11 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
     assert parquet_metadata[b"g.output.chunk_file_count"] == b"1"
     assert parquet_metadata[b"g.output.row_count"] == b"4"
     assert parquet_metadata[b"g.output.writer"] == b"rust"
+    manifest = json.loads(
+        output.get_run_manifest_path(prepared_output_run.output_run_paths).read_text(encoding="utf-8")
+    )
+    assert manifest["finalized"] is True
+    assert manifest["final_row_count"] == 4
 
 
 def test_finalize_chunks_to_parquet_writes_empty_schema_when_no_chunks_exist(tmp_path: Path) -> None:

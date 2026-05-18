@@ -608,6 +608,7 @@ dependencies = [
  "parquet",
  "pyo3",
  "rayon",
+ "serde_json",
  "thiserror",
 ]
 

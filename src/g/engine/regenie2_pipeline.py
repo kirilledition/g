@@ -981,6 +981,16 @@ def run_regenie2_linear_bgen_pipeline(
         is_binary_trait=False,
     )
     record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
+    output.write_run_manifest_header(
+        output_run_paths=output_run_paths,
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        bgen_path=genotype_source_config.source_path,
+        sample_count=int(engine.sample_count),
+        variant_count=int(engine.variant_count),
+        chunk_size=chunk_size,
+        binary_correction_plan=types.BinaryCorrectionPlan(),
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
     writer_start_time = time.perf_counter()
     writer_session = output.create_output_writer_session(
         output_run_paths,
@@ -1056,6 +1066,16 @@ def run_regenie2_binary_bgen_pipeline(
         is_binary_trait=True,
     )
     record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
+    output.write_run_manifest_header(
+        output_run_paths=output_run_paths,
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        bgen_path=genotype_source_config.source_path,
+        sample_count=int(engine.sample_count),
+        variant_count=int(engine.variant_count),
+        chunk_size=chunk_size,
+        binary_correction_plan=correction_plan,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
     writer_start_time = time.perf_counter()
     writer_session = output.create_output_writer_session(
         output_run_paths,

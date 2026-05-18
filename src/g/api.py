@@ -34,6 +34,7 @@ class ComputeConfig:
     prefetch_chunks: int | None = None
     output_run_directory: Path | None = None
     resume: bool = False
+    resume_mode: types.ResumeMode = types.ResumeMode.FAST
     finalize_parquet: bool = True
     output_writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT
     output_writer_queue_depth: int = DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
@@ -253,6 +254,7 @@ def regenie2(
             output_root=output_run_directory,
             association_mode=association_mode,
             resume=compute_config.resume,
+            resume_mode=compute_config.resume_mode,
         )
         engine.record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)
         output_run_paths = prepared_output_run.output_run_paths

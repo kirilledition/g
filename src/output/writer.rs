@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
@@ -19,12 +20,14 @@ use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
+use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 const REGENIE_STEP2_CHUNKS_PER_ARROW_FILE: usize = 4;
+const RUN_MANIFEST_FILE_NAME: &str = "run_manifest.json";
 
 #[derive(Debug, Error)]
 pub enum OutputWriterError {
@@ -359,10 +362,106 @@ fn run_output_writer_worker(
 fn write_regenie_step2_chunk_job(config: &OutputWriterConfig, job: RegenieStep2ChunkWriteBatch) -> Result<(), String> {
     let chunk_file_path = config.chunks_directory.join(&job.chunk_file_name);
     let temporary_chunk_file_path = chunk_file_path.with_extension("arrow.tmp");
+    let chunk_commits = build_run_manifest_chunk_commits(&job);
     let record_batch = build_regenie_step2_record_batch(job)?;
     write_record_batch_to_arrow_file(&record_batch, &temporary_chunk_file_path)?;
     std::fs::rename(&temporary_chunk_file_path, &chunk_file_path).map_err(|error| error.to_string())?;
+    record_run_manifest_chunk_commits(&config.run_directory, chunk_commits)?;
     Ok(())
+}
+
+fn build_run_manifest_chunk_commits(job: &RegenieStep2ChunkWriteBatch) -> Vec<Value> {
+    job.chunks
+        .iter()
+        .map(|chunk_job| {
+            json!({
+                "chunk_identifier": chunk_job.chunk_identifier,
+                "variant_start_index": chunk_job.variant_start_index,
+                "variant_stop_index": chunk_job.variant_stop_index,
+                "row_count": chunk_job.genpos.len(),
+                "chunk_file_name": job.chunk_file_name,
+            })
+        })
+        .collect()
+}
+
+fn record_run_manifest_chunk_commits(run_directory: &Path, chunk_commits: Vec<Value>) -> Result<(), String> {
+    update_run_manifest(run_directory, |manifest| {
+        let manifest_object = manifest
+            .as_object_mut()
+            .ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
+        let committed_chunks = manifest_object
+            .entry("committed_chunks")
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or_else(|| "Run manifest committed_chunks field must be a list.".to_string())?;
+        for chunk_commit in chunk_commits {
+            let chunk_identifier = chunk_commit
+                .get("chunk_identifier")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| "Manifest chunk commit is missing chunk_identifier.".to_string())?;
+            let already_committed = committed_chunks.iter().any(|committed_chunk| {
+                committed_chunk.get("chunk_identifier").and_then(Value::as_i64) == Some(chunk_identifier)
+            });
+            if !already_committed {
+                committed_chunks.push(chunk_commit);
+            }
+        }
+        committed_chunks.sort_by_key(|committed_chunk| {
+            committed_chunk.get("chunk_identifier").and_then(Value::as_i64).unwrap_or_default()
+        });
+        Ok(())
+    })
+}
+
+fn mark_run_manifest_finalized(
+    final_parquet_path: &Path,
+    row_count: usize,
+    chunk_file_count: usize,
+) -> Result<(), OutputWriterError> {
+    let Some(run_directory) = final_parquet_path.parent() else {
+        return Ok(());
+    };
+    update_run_manifest(run_directory, |manifest| {
+        let manifest_object = manifest
+            .as_object_mut()
+            .ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
+        manifest_object.insert("finalized".to_string(), Value::Bool(true));
+        manifest_object.insert("final_parquet".to_string(), Value::String(final_parquet_path.display().to_string()));
+        manifest_object.insert("final_row_count".to_string(), json!(row_count));
+        manifest_object.insert("final_chunk_file_count".to_string(), json!(chunk_file_count));
+        Ok(())
+    })
+    .map_err(OutputWriterError::runtime)
+}
+
+fn update_run_manifest(
+    run_directory: &Path,
+    update_manifest: impl FnOnce(&mut Value) -> Result<(), String>,
+) -> Result<(), String> {
+    let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
+    if !manifest_path.exists() {
+        return Ok(());
+    }
+    let manifest_lock = get_run_manifest_update_lock();
+    let _manifest_guard = manifest_lock
+        .lock()
+        .map_err(|_| "Run manifest update lock was poisoned.".to_string())?;
+    let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
+    let mut manifest = serde_json::from_str::<Value>(&manifest_text).map_err(|error| error.to_string())?;
+    update_manifest(&mut manifest)?;
+    let temporary_manifest_path = manifest_path.with_extension("json.tmp");
+    let mut temporary_manifest_file = File::create(&temporary_manifest_path).map_err(|error| error.to_string())?;
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
+    temporary_manifest_file.write_all(&manifest_bytes).map_err(|error| error.to_string())?;
+    temporary_manifest_file.write_all(b"\n").map_err(|error| error.to_string())?;
+    temporary_manifest_file.sync_all().map_err(|error| error.to_string())?;
+    std::fs::rename(&temporary_manifest_path, &manifest_path).map_err(|error| error.to_string())
+}
+
+fn get_run_manifest_update_lock() -> &'static Mutex<()> {
+    static RUN_MANIFEST_UPDATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    RUN_MANIFEST_UPDATE_LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn build_chunk_file_name(first_chunk_identifier: i64, last_chunk_identifier: i64) -> String {
@@ -565,6 +664,7 @@ fn write_final_parquet_from_chunk_files(
     }
     append_output_footer_metadata(&mut parquet_writer, association_mode, chunk_file_count, output_row_count);
     parquet_writer.close().map_err(OutputWriterError::runtime)?;
+    mark_run_manifest_finalized(final_parquet_path, output_row_count, chunk_file_count)?;
     Ok(())
 }
 

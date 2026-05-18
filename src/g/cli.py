@@ -93,6 +93,9 @@ def run_regenie2_linear_command(
         default=False,
         help="Resume a previous chunked run.",
     ),
+    resume_mode: types.ResumeMode = typer.Option(
+        types.ResumeMode.FAST, "--resume-mode", help="Resume validation mode."
+    ),
     finalize_parquet: bool = typer.Option(  # noqa: FBT001
         default=False,
         help="Compact committed Arrow chunks into Parquet.",
@@ -107,6 +110,7 @@ def run_regenie2_linear_command(
         prefetch_chunks=prefetch_chunks,
         output_run_directory=output_run_directory,
         resume=resume,
+        resume_mode=resume_mode,
         finalize_parquet=finalize_parquet,
         output_writer_thread_count=output_writer_thread_count,
         output_writer_queue_depth=output_writer_queue_depth,
@@ -198,6 +202,9 @@ def run_regenie2_command(
         default=False,
         help="Resume a previous chunked run.",
     ),
+    resume_mode: types.ResumeMode = typer.Option(
+        types.ResumeMode.FAST, "--resume-mode", help="Resume validation mode."
+    ),
     finalize_parquet: bool = typer.Option(  # noqa: FBT001
         default=False,
         help="Compact committed Arrow chunks into Parquet.",
@@ -212,6 +219,7 @@ def run_regenie2_command(
         prefetch_chunks=prefetch_chunks,
         output_run_directory=output_run_directory,
         resume=resume,
+        resume_mode=resume_mode,
         finalize_parquet=finalize_parquet,
         output_writer_thread_count=output_writer_thread_count,
         output_writer_queue_depth=output_writer_queue_depth,

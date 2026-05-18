@@ -18,6 +18,13 @@ class AssociationMode(enum.StrEnum):
     REGENIE2_BINARY = "regenie2_binary"
 
 
+class ResumeMode(enum.StrEnum):
+    """Resume validation mode."""
+
+    FAST = "fast"
+    STRICT = "strict"
+
+
 class RegenieTraitType(enum.StrEnum):
     """REGENIE trait family."""
 

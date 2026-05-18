@@ -80,6 +80,7 @@ class FakeRunEngine:
         self.chunk_size = chunk_size
         self.variant_limit = variant_limit
         self.trusted_no_missing_diploid = trusted_no_missing_diploid
+        self.sample_count = 2
         self.variant_count = 10
         self.run_arguments: tuple[np.ndarray, object, list[int] | None] | None = None
         self.run_method: str | None = None
@@ -335,6 +336,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
         patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
         patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
         patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
+        patch("g.engine.regenie2_pipeline.output.write_run_manifest_header"),
         patch.object(
             regenie2_linear,
             "prepare_regenie2_linear_state",
@@ -391,6 +393,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
         patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
         patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
         patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
+        patch("g.engine.regenie2_pipeline.output.write_run_manifest_header"),
         patch(
             "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_state",
             return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
@@ -433,6 +436,7 @@ def test_binary_pipeline_uses_sample_major_engine_for_untrusted_bgen() -> None:
         patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
         patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
         patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
+        patch("g.engine.regenie2_pipeline.output.write_run_manifest_header"),
         patch(
             "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_state",
             return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
