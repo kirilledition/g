@@ -1,6 +1,7 @@
 """Enumerated types for configuration and mode selection."""
 
 import enum
+from dataclasses import dataclass
 
 
 class Device(enum.StrEnum):
@@ -24,11 +25,29 @@ class RegenieTraitType(enum.StrEnum):
     BINARY = "binary"
 
 
-class RegenieBinaryCorrection(enum.StrEnum):
-    """Binary step 2 correction mode."""
+class BinaryFallbackMethod(enum.StrEnum):
+    """Internal binary fallback method."""
 
+    SCORE_ONLY = "score_only"
+    FIRTH = "firth"
     FIRTH_APPROXIMATE = "firth_approximate"
     SPA = "spa"
+
+
+@dataclass(frozen=True)
+class BinaryCorrectionPlan:
+    """Normalized binary fallback execution plan.
+
+    Attributes:
+        method: Binary fallback method to run.
+        p_threshold: Score-test p-value threshold for fallback candidates.
+        firth_se: Whether successful Firth rows use LRT-derived standard errors.
+
+    """
+
+    method: BinaryFallbackMethod = BinaryFallbackMethod.SCORE_ONLY
+    p_threshold: float = 0.05
+    firth_se: bool = False
 
 
 class SampleIdentifierSource(enum.StrEnum):

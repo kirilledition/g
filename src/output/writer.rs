@@ -491,8 +491,7 @@ fn build_extra_string_array(extra_code: Vec<Option<i32>>) -> Result<StringArray,
     for maybe_extra_code_value in extra_code {
         match maybe_extra_code_value {
             None | Some(0) => values.push(None),
-            Some(1) => values.push(Some("FIRTH")),
-            Some(2) => values.push(Some("SPA")),
+            Some(0..=2) => values.push(None),
             Some(3) => values.push(Some("TEST_FAIL")),
             Some(extra_code_value) => return Err(format!("Unsupported REGENIE step 2 extra code: {extra_code_value}")),
         }
@@ -766,11 +765,11 @@ mod tests {
     }
 
     #[test]
-    fn binary_record_batch_maps_extra_code_with_same_schema() {
+    fn binary_record_batch_maps_failure_extra_code_with_same_schema() {
         let linear_record_batch = build_regenie_step2_record_batch(build_test_batch(vec![build_test_chunk(0, None)]))
             .expect("linear record batch should build");
         let binary_record_batch =
-            build_regenie_step2_record_batch(build_test_batch(vec![build_test_chunk(1, Some(vec![1]))]))
+            build_regenie_step2_record_batch(build_test_batch(vec![build_test_chunk(1, Some(vec![3]))]))
                 .expect("binary record batch should build");
 
         assert_eq!(linear_record_batch.schema(), binary_record_batch.schema());
@@ -780,7 +779,7 @@ mod tests {
             .as_any()
             .downcast_ref::<StringArray>()
             .expect("EXTRA column should be a string array");
-        assert_eq!(extra_array.value(0), "FIRTH");
+        assert_eq!(extra_array.value(0), "TEST_FAIL");
     }
 
     #[test]

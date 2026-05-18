@@ -417,9 +417,7 @@ def build_g_step2_child_command(
         phenotype_path = baseline_paths.binary_phenotype_path
         phenotype_name = "phenotype_binary"
         prediction_path = baseline_paths.regenie_prediction_list_path
-        binary_config_expression = (
-            "api.Regenie2BinaryConfig(correction=types.RegenieBinaryCorrection.FIRTH_APPROXIMATE)"
-        )
+        binary_config_expression = "api.Regenie2BinaryConfig(firth=True, approx=True)"
     variant_limit_expression = "None" if variant_limit is None else str(variant_limit)
     child_code = textwrap.dedent(
         """
@@ -796,10 +794,10 @@ def summarize_bgen_case(case_report: typing.Any) -> BgenCandidateSummary:
     matching_results = [
         path_result
         for path_result in case_report.path_results
-        if path_result.path_mode == benchmark_bgen_reader.BenchmarkPathMode.READ_FLOAT32_INTO_PREPARED.value
+        if path_result.path_mode == benchmark_bgen_reader.BenchmarkPathMode.SAMPLE_MAJOR_BUFFERED.value
     ]
     if len(matching_results) != 1:
-        message = "Expected exactly one reusable-buffer BGEN result."
+        message = "Expected exactly one sample-major buffered BGEN result."
         raise ValueError(message)
     path_result = matching_results[0]
     return BgenCandidateSummary(
@@ -838,7 +836,7 @@ def run_bgen_sweep(
                     "--repeat-count",
                     str(arguments.tuning_trials),
                     "--path-modes",
-                    benchmark_bgen_reader.BenchmarkPathMode.READ_FLOAT32_INTO_PREPARED.value,
+                    benchmark_bgen_reader.BenchmarkPathMode.SAMPLE_MAJOR_BUFFERED.value,
                 ]
             )
             case_report = benchmark_bgen_reader.run_case_subprocess(

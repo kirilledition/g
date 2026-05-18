@@ -14,15 +14,10 @@ from g.engine.regenie2_pipeline import (
     warm_regenie2_linear_bgen_cache,
     write_stage_timing_snapshot_from_environment,
 )
-from g.engine.types import Regenie2ChunkPayload
-
-ChunkPayload = Regenie2ChunkPayload
 
 __all__ = [
     "BinaryRegenie2PipelineCallback",
-    "ChunkPayload",
     "LinearRegenie2PipelineCallback",
-    "Regenie2ChunkPayload",
     "StageTimingRecorder",
     "WarmCacheReport",
     "WarmCacheShape",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
+import warnings
 from pathlib import Path
 
 from g import engine, jax_setup, types
@@ -48,7 +49,11 @@ class Regenie2LinearConfig:
 class Regenie2BinaryConfig:
     """Configuration for REGENIE step 2 binary association."""
 
-    correction: types.RegenieBinaryCorrection = types.RegenieBinaryCorrection.FIRTH_APPROXIMATE
+    firth: bool = False
+    approx: bool = False
+    spa: bool = False
+    p_threshold: float = 0.05
+    firth_se: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -89,6 +94,47 @@ def validate_compute_config(compute_config: ComputeConfig) -> None:
     if compute_config.output_writer_queue_depth <= 0:
         message = "Output writer queue depth must be positive."
         raise ValueError(message)
+
+
+def normalize_binary_correction_config(binary_config: Regenie2BinaryConfig) -> types.BinaryCorrectionPlan:
+    """Normalize REGENIE-style binary correction flags into an internal plan."""
+    if not (0.0 < binary_config.p_threshold < 1.0):
+        message = "pThresh must be in (0, 1)."
+        raise ValueError(message)
+
+    firth = binary_config.firth
+    approx = binary_config.approx
+    spa = binary_config.spa
+    if firth and spa:
+        warnings.warn(
+            "Only one of --firth/--spa can be used. Mirroring REGENIE, Firth will be used.",
+            stacklevel=2,
+        )
+        spa = False
+    if approx and not firth:
+        warnings.warn(
+            "--approx only works with --firth. Mirroring REGENIE, --approx is ignored.",
+            stacklevel=2,
+        )
+        approx = False
+
+    if spa:
+        message = "SPA fallback is not implemented yet. Omit --spa for score-test-only output."
+        raise NotImplementedError(message)
+    if firth and approx:
+        return types.BinaryCorrectionPlan(
+            method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+            p_threshold=binary_config.p_threshold,
+            firth_se=binary_config.firth_se,
+        )
+    if firth:
+        message = "Exact REGENIE --firth without --approx is not implemented yet. Use --firth --approx."
+        raise NotImplementedError(message)
+    return types.BinaryCorrectionPlan(
+        method=types.BinaryFallbackMethod.SCORE_ONLY,
+        p_threshold=binary_config.p_threshold,
+        firth_se=False,
+    )
 
 
 def regenie2_linear(
@@ -146,6 +192,11 @@ def regenie2(
         covariate_name_list = parse_covariate_name_list(covar_names)
         genotype_source_config = source.build_bgen_source_config(bgen, sample)
         binary_config = binary or Regenie2BinaryConfig()
+        binary_correction_plan = (
+            normalize_binary_correction_config(binary_config)
+            if trait_type == types.RegenieTraitType.BINARY
+            else types.BinaryCorrectionPlan()
+        )
         if compute_config.warm_cache_first:
             warm_cache_start_time = time.perf_counter()
             if trait_type == types.RegenieTraitType.BINARY:
@@ -158,7 +209,7 @@ def regenie2(
                     covariate_names=covariate_name_list,
                     chunk_size=compute_config.chunk_size,
                     variant_limit=compute_config.variant_limit,
-                    correction=binary_config.correction,
+                    correction_plan=binary_correction_plan,
                     trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
                 )
             else:
@@ -207,7 +258,7 @@ def regenie2(
                 writer_thread_count=compute_config.output_writer_thread_count,
                 writer_queue_depth=compute_config.output_writer_queue_depth,
                 trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
-                correction=binary_config.correction,
+                correction_plan=binary_correction_plan,
                 stage_timing_recorder=stage_timing_recorder,
             )
         else:
@@ -260,6 +311,7 @@ def regenie2_warm_cache(
     genotype_source_config = source.build_bgen_source_config(bgen, sample)
     if trait_type == types.RegenieTraitType.BINARY:
         binary_config = binary or Regenie2BinaryConfig()
+        binary_correction_plan = normalize_binary_correction_config(binary_config)
         return warm_regenie2_binary_bgen_cache(
             genotype_source_config=genotype_source_config,
             phenotype_path=Path(pheno),
@@ -269,7 +321,7 @@ def regenie2_warm_cache(
             covariate_names=covariate_name_list,
             chunk_size=compute_config.chunk_size,
             variant_limit=compute_config.variant_limit,
-            correction=binary_config.correction,
+            correction_plan=binary_correction_plan,
             trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
         )
     return warm_regenie2_linear_bgen_cache(

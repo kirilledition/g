@@ -12,7 +12,7 @@ Reduce end-to-end runtime for `g regenie2-linear`, with emphasis on:
 
 Implemented so far:
 
-1. Cached normalized BGEN metadata arrays in `BgenReader`
+1. Moved BGEN chunk metadata and preprocessing into the native run engine
 2. Added a fast path for already chromosome-homogeneous chunks
 3. Replaced the chunk-wide probability-tensor read path with a direct host-side dosage reader
 4. Inlined dosage conversion inside the direct BGEN worker loop
@@ -22,7 +22,7 @@ Validated with focused quality checks:
 
 - `ruff check`
 - `ty check`
-- focused test suites for BGEN, engine iterators, and output persistence
+- focused test suites for native BGEN delivery, engine callbacks, and output persistence
 
 ## Profiling Basis
 
@@ -98,7 +98,7 @@ Latest profiled stage ranking from `full_chr22_gpu_chunk1024_direct_summary.json
 | Stage | Total | Share of wall |
 |---|---:|---:|
 | `bgen_read_host` | 9.216s | 50.91% |
-| `write_chunk_to_disk` | 1.264s | 6.98% |
+| `output_write` | 1.264s | 6.98% |
 | `get_variant_table_arrays` | 0.662s | 3.66% |
 | `device_put_genotypes` | 0.355s | 1.96% |
 | `write_regenie2_chunk` | 0.118s | 0.65% |
@@ -299,7 +299,7 @@ Continue measuring after each step:
 - `get_variant_table_arrays`
 - `device_put_genotypes`
 - `write_regenie2_chunk`
-- `write_chunk_to_disk`
+- `output_write`
 - variants per second
 
 ## Non-Goals For Now

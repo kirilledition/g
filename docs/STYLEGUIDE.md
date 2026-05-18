@@ -36,9 +36,9 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 * **Rule:** Relative imports are not allowed.
 * **Rule:** In production Python code under `src/g`, import first-party modules rather than first-party members.  
   * Good: `from g import api`; `api.ComputeConfig`  
-  * Good: `from g.io import bgen`; `bgen.split_sample_file_line()`  
+  * Good: `from g.io import source`; `source.split_sample_file_line()`  
   * Bad: `from g.api import ComputeConfig`  
-  * Bad: `from g.io.bgen import split_sample_file_line`
+  * Bad: `from g.io.source import split_sample_file_line`
 
 ### **Naming Conventions**
 

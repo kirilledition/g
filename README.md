@@ -23,10 +23,12 @@ The currently supported public interface is:
 - `--trait-type quantitative` (default)
 - `--trait-type binary`
 
-For binary traits, `--binary-correction` supports:
+For binary traits, fallback correction is controlled with REGENIE-style flags:
 
-- `firth_approximate` (default)
-- `firth`
+- default: score-test-only output
+- `--firth --approx`: approximate Firth fallback
+- `--pThresh FLOAT`: fallback p-value threshold, default `0.05`
+- `--firth-se`: use LRT-derived standard errors for successful Firth rows
 
 Current binary-mode status is **partial / evolving**. The binary pipeline is exposed as public, but behavior/performance parity with quantitative workflows is still under active development.
 
@@ -104,7 +106,9 @@ uv run g \
   --covar-names age,sex \
   --pred data/baselines/regenie_step1_bt_pred.list \
   --trait-type binary \
-  --binary-correction firth_approximate \
+  --firth \
+  --approx \
+  --pThresh 0.01 \
   --out data/example_regenie2_binary
 ```
 

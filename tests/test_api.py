@@ -28,6 +28,7 @@ def test_public_package_exports_include_general_and_linear_regenie2() -> None:
     assert "regenie2" in g.__all__
     assert "regenie2_linear" in g.__all__
     assert "Regenie2BinaryConfig" in g.__all__
+    assert "RegenieBinaryCorrection" not in g.__all__
     assert g.regenie2 is api.regenie2
     assert g.regenie2_linear is api.regenie2_linear
 
@@ -117,8 +118,10 @@ def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
     assert mock_prepare_output_run.call_args.kwargs["association_mode"] == AssociationMode.REGENIE2_BINARY
     assert mock_pipeline.call_args.kwargs["writer_thread_count"] == api.output.DEFAULT_WRITER_THREAD_COUNT
     assert mock_pipeline.call_args.kwargs["trusted_no_missing_diploid"] is True
+    assert mock_pipeline.call_args.kwargs["correction_plan"].method == api.types.BinaryFallbackMethod.SCORE_ONLY
     mock_warm_cache.assert_called_once()
     assert mock_warm_cache.call_args.kwargs["trusted_no_missing_diploid"] is True
+    assert mock_warm_cache.call_args.kwargs["correction_plan"].method == api.types.BinaryFallbackMethod.SCORE_ONLY
 
 
 @pytest.mark.parametrize(

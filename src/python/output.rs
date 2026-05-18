@@ -1,10 +1,9 @@
 use std::path::Path;
 
-use numpy::{PyReadonlyArray1, PyUntypedArrayMethods};
+use numpy::PyReadonlyArray1;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
 use crate::output::{
     OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
@@ -40,63 +39,6 @@ impl OutputWriterSession {
         )
         .map_err(output_writer_error_to_py)?;
         Ok(Self { inner })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (metadata, allele_one_frequency, observation_count, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
-    fn write_regenie2_chunk(
-        &self,
-        metadata: &Bound<'_, PyAny>,
-        allele_one_frequency: PyReadonlyArray1<'_, f32>,
-        observation_count: PyReadonlyArray1<'_, i32>,
-        beta: PyReadonlyArray1<'_, f32>,
-        standard_error: PyReadonlyArray1<'_, f32>,
-        chi_squared: PyReadonlyArray1<'_, f32>,
-        log10_p_value: PyReadonlyArray1<'_, f32>,
-        extra_code: Option<PyReadonlyArray1<'_, i32>>,
-    ) -> PyResult<()> {
-        let variant_start_index = metadata.getattr("variant_start_index")?.extract::<i64>()?;
-        let variant_stop_index = metadata.getattr("variant_stop_index")?.extract::<i64>()?;
-        let position_object = metadata.getattr("position")?;
-        let position = position_object.extract::<PyReadonlyArray1<'_, i64>>()?;
-        let metadata_columns = VariantMetadataColumns {
-            chromosome: extract_string_column(metadata, "chromosome")?,
-            variant_identifier: extract_string_column(metadata, "variant_identifiers")?,
-            position: position.as_slice()?.to_vec(),
-            allele_one: extract_string_column(metadata, "allele_one")?,
-            allele_two: extract_string_column(metadata, "allele_two")?,
-        };
-        let chunk_stats = NativeChunkStats {
-            allele_one_frequency: allele_one_frequency.as_slice()?.to_vec(),
-            observation_count: observation_count.as_slice()?.to_vec(),
-            has_missing_values: false,
-            dosage_sum: Vec::new(),
-            dosage_variance_numerator: Vec::new(),
-            info_score: vec![None; allele_one_frequency.len()],
-            allele_count: Vec::new(),
-            minor_allele_count: Vec::new(),
-            zero_count: Vec::new(),
-            nonzero_count: Vec::new(),
-            homozygous_reference_count: Vec::new(),
-            heterozygous_count: Vec::new(),
-            homozygous_alternate_count: Vec::new(),
-            is_sparse_candidate: Vec::new(),
-            is_rare_sparse_firth_candidate: Vec::new(),
-        };
-        let extra_code_slice = extra_code.as_ref().map(|array| array.as_slice()).transpose()?;
-        self.inner
-            .write_regenie2_native_chunk(
-                variant_start_index,
-                variant_stop_index,
-                &metadata_columns,
-                &chunk_stats,
-                beta.as_slice()?,
-                standard_error.as_slice()?,
-                chi_squared.as_slice()?,
-                log10_p_value.as_slice()?,
-                extra_code_slice,
-            )
-            .map_err(output_writer_error_to_py)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -159,14 +101,6 @@ pub(crate) fn finalize_output_run_chunks(
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn scan_committed_chunk_identifiers(chunks_directory: String) -> PyResult<Vec<i64>> {
     scan_native_committed_chunk_identifiers(Path::new(&chunks_directory)).map_err(output_writer_error_to_py)
-}
-
-fn extract_string_column(metadata: &Bound<'_, PyAny>, attribute_name: &str) -> PyResult<Vec<String>> {
-    let column_object = metadata.getattr(attribute_name)?;
-    if let Ok(values) = column_object.extract::<Vec<String>>() {
-        return Ok(values);
-    }
-    column_object.call_method0("tolist")?.extract::<Vec<String>>()
 }
 
 fn output_writer_error_to_py(error: OutputWriterError) -> PyErr {

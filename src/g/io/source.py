@@ -1,12 +1,13 @@
-"""BGEN genotype source orchestration."""
+"""BGEN genotype source configuration helpers."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 
-from g import types
-from g.io import bgen, models, reader, samples
+import numpy as np
+import numpy.typing as npt
+import polars as pl
 
 
 @dataclass(frozen=True)
@@ -15,14 +16,6 @@ class GenotypeSourceConfig:
 
     source_path: Path
     sample_path: Path | None = None
-
-
-resolve_bgen_sample_path = bgen.resolve_bgen_sample_path
-load_bgen_sample_table = bgen.load_bgen_sample_table
-build_sample_identifier_table = bgen.build_sample_identifier_table
-load_aligned_sample_data_from_individual_identifier_table = (
-    samples.load_aligned_sample_data_from_individual_identifier_table
-)
 
 
 def build_bgen_source_config(bgen_path: Path | str, sample_path: Path | str | None = None) -> GenotypeSourceConfig:
@@ -51,6 +44,83 @@ def validate_genotype_source_config(genotype_source_config: GenotypeSourceConfig
         raise ValueError(message)
 
 
+def split_sample_file_line(raw_line: str) -> list[str]:
+    """Split one Oxford sample-file line on arbitrary whitespace."""
+    return raw_line.strip().split()
+
+
+def resolve_bgen_sample_path(bgen_path: Path, sample_path: Path | None = None) -> Path | None:
+    """Resolve an explicit or adjacent Oxford sample file for one BGEN file."""
+    if sample_path is not None:
+        return sample_path
+    adjacent_sample_path = bgen_path.with_suffix(".sample")
+    return adjacent_sample_path if adjacent_sample_path.exists() else None
+
+
+def build_sample_identifier_table(sample_identifiers: npt.NDArray[np.str_]) -> pl.DataFrame:
+    """Build the normalized identifier table used by native alignment."""
+    normalized_sample_identifiers = np.asarray(sample_identifiers, dtype=np.str_)
+    return pl.DataFrame(
+        {
+            "family_identifier": normalized_sample_identifiers,
+            "individual_identifier": normalized_sample_identifiers,
+        }
+    ).with_row_index("sample_index")
+
+
+def load_sample_identifier_table(sample_path: Path) -> pl.DataFrame:
+    """Load normalized identifiers from an Oxford sample file."""
+    sample_lines = sample_path.read_text(encoding="utf-8").splitlines()
+    non_empty_lines = [line for line in sample_lines if line.strip()]
+    if len(non_empty_lines) < 2:
+        message = f"Sample file '{sample_path}' must contain at least two header lines."
+        raise ValueError(message)
+
+    column_names = split_sample_file_line(non_empty_lines[0])
+    column_types = split_sample_file_line(non_empty_lines[1])
+    if len(column_names) != len(column_types):
+        message = f"Sample file '{sample_path}' header and type lines have different column counts."
+        raise ValueError(message)
+    if not column_names:
+        message = f"Sample file '{sample_path}' does not contain any columns."
+        raise ValueError(message)
+    if column_types[0] != "0":
+        message = f"Sample file '{sample_path}' must mark the first identifier column with type '0'."
+        raise ValueError(message)
+    if "ID_2" in column_names and column_types[column_names.index("ID_2")] != "0":
+        message = f"Sample file '{sample_path}' must mark 'ID_2' with type '0'."
+        raise ValueError(message)
+
+    data_rows: list[list[str]] = []
+    for row_index, raw_line in enumerate(non_empty_lines[2:], start=3):
+        row_values = split_sample_file_line(raw_line)
+        if len(row_values) != len(column_names):
+            message = (
+                f"Sample file '{sample_path}' line {row_index} has {len(row_values)} values, "
+                f"but the header declares {len(column_names)} columns."
+            )
+            raise ValueError(message)
+        data_rows.append(row_values)
+
+    if not data_rows:
+        empty_identifiers = np.asarray([], dtype=np.str_)
+        return build_sample_identifier_table(empty_identifiers)
+
+    column_values = {
+        column_name: [row_values[column_index] for row_values in data_rows]
+        for column_index, column_name in enumerate(column_names)
+    }
+    sample_table = pl.DataFrame(column_values)
+    family_identifier_column_name = column_names[0]
+    individual_identifier_column_name = "ID_2" if "ID_2" in column_names else family_identifier_column_name
+    return pl.DataFrame(
+        {
+            "family_identifier": sample_table.get_column(family_identifier_column_name).cast(pl.String),
+            "individual_identifier": sample_table.get_column(individual_identifier_column_name).cast(pl.String),
+        }
+    ).with_row_index("sample_index")
+
+
 def build_genotype_source_signature_paths(genotype_source_config: GenotypeSourceConfig) -> tuple[Path, ...]:
     """Return the input files that define reproducibility for one source."""
     validate_genotype_source_config(genotype_source_config)
@@ -61,62 +131,3 @@ def build_genotype_source_signature_paths(genotype_source_config: GenotypeSource
     if resolved_sample_path is None:
         return (genotype_source_config.source_path,)
     return (genotype_source_config.source_path, resolved_sample_path)
-
-
-def open_genotype_reader(genotype_source_config: GenotypeSourceConfig) -> reader.GenotypeReader:
-    """Open a BGEN reader for one genotype source config."""
-    validate_genotype_source_config(genotype_source_config)
-    return bgen.BgenReader(
-        genotype_source_config.source_path,
-        sample_path=genotype_source_config.sample_path,
-    )
-
-
-def load_aligned_sample_data_from_source(
-    genotype_source_config: GenotypeSourceConfig,
-    phenotype_path: Path,
-    phenotype_name: str,
-    covariate_path: Path | None,
-    covariate_names: tuple[str, ...] | None,
-    *,
-    is_binary_trait: bool,
-    genotype_reader: reader.GenotypeReader | None = None,
-) -> models.AlignedSampleData:
-    """Load aligned sample data for a BGEN source."""
-    validate_genotype_source_config(genotype_source_config)
-    if genotype_reader is not None:
-        if genotype_source_config.sample_path is not None:
-            sample_table = load_bgen_sample_table(
-                genotype_source_config.source_path,
-                genotype_source_config.sample_path,
-            )
-            return load_aligned_sample_data_from_individual_identifier_table(
-                sample_table=sample_table,
-                phenotype_path=phenotype_path,
-                phenotype_name=phenotype_name,
-                covariate_path=covariate_path,
-                covariate_names=covariate_names,
-                is_binary_trait=is_binary_trait,
-            )
-        sample_identifier_source = getattr(
-            genotype_reader,
-            "sample_identifier_source",
-            types.SampleIdentifierSource.EMBEDDED,
-        )
-        if sample_identifier_source == types.SampleIdentifierSource.GENERATED:
-            message = "BGEN file does not contain samples and no .sample file was found."
-            raise ValueError(message)
-        sample_table = build_sample_identifier_table(genotype_reader.samples)
-    else:
-        sample_table = load_bgen_sample_table(
-            genotype_source_config.source_path,
-            genotype_source_config.sample_path,
-        )
-    return load_aligned_sample_data_from_individual_identifier_table(
-        sample_table=sample_table,
-        phenotype_path=phenotype_path,
-        phenotype_name=phenotype_name,
-        covariate_path=covariate_path,
-        covariate_names=covariate_names,
-        is_binary_trait=is_binary_trait,
-    )

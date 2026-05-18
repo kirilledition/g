@@ -42,7 +42,7 @@ benchmark_regenie_comparison = load_script_module(
 
 DEFAULT_OUTPUT_DIRECTORY = Path("data/benchmarks/regenie2_gpu_tuning")
 DEFAULT_BGEN_PRE_SWEEP_CHUNK_SIZE = 8192
-DEFAULT_BGEN_PATH_MODE = benchmark_bgen_reader.BenchmarkPathMode.READ_FLOAT32_INTO_PREPARED
+DEFAULT_BGEN_PATH_MODE = benchmark_bgen_reader.BenchmarkPathMode.SAMPLE_MAJOR_BUFFERED
 
 
 class TraitSelection(enum.StrEnum):
@@ -314,9 +314,7 @@ def build_step2_child_command(
     variant_limit_expression = "None" if variant_limit is None else str(variant_limit)
     binary_config_expression = "None"
     if candidate.trait_type == types.RegenieTraitType.BINARY:
-        binary_config_expression = (
-            "api.Regenie2BinaryConfig(correction=types.RegenieBinaryCorrection.FIRTH_APPROXIMATE)"
-        )
+        binary_config_expression = "api.Regenie2BinaryConfig(firth=True, approx=True)"
     child_code = textwrap.dedent(
         """
         import json

@@ -67,11 +67,10 @@ def test_bgen_reader_benchmark_parses_sweep_lists() -> None:
 
 
 def test_bgen_reader_benchmark_parses_path_modes() -> None:
-    path_modes = bgen_reader_benchmark.parse_path_modes("read_float32,read_float32_prepared,read_float32_into_prepared")
+    path_modes = bgen_reader_benchmark.parse_path_modes("sample_major_buffered,variant_major_buffered")
     assert [path_mode.value for path_mode in path_modes] == [
-        "read_float32",
-        "read_float32_prepared",
-        "read_float32_into_prepared",
+        "sample_major_buffered",
+        "variant_major_buffered",
     ]
 
 
@@ -559,7 +558,7 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
     assert "types.Device('cpu')" in command_text
     assert "chunk_size=4096" in command_text
     assert "variant_limit=1000" in command_text
-    assert "FIRTH_APPROXIMATE" in command_text
+    assert "Regenie2BinaryConfig(firth=True, approx=True)" in command_text
     assert "jax_probe_device_platform" in command_text
 
 

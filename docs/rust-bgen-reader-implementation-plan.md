@@ -2,7 +2,7 @@
 
 ## Summary
 
-Implement a Rust-backed BGEN reader with Python bindings optimized for REGENIE step-2 ingestion. The primary objective is throughput, not API compatibility. The hot path will be strict `float32` dosage chunk reads with direct JAX interoperability through contiguous host arrays.
+Implement a Rust-backed BGEN run engine optimized for REGENIE step-2 ingestion. The primary objective is throughput, not API compatibility. The hot path delivers native preprocessed `float32` dosage chunks directly to the active REGENIE2 callbacks.
 
 ## Target Scope (v1)
 
@@ -10,24 +10,24 @@ Implement a Rust-backed BGEN reader with Python bindings optimized for REGENIE s
 - Diploid biallelic variants only.
 - Support both unphased (`ncombinations == 3`) and phased (`ncombinations == 4`) layouts.
 - Output precision is always `float32`.
-- Keep sample alignment and phenotype/covariate joins in Python.
+- Keep sample alignment and phenotype/covariate joins in Rust through `_core`.
 
 ## Architecture
 
 - Rust extension module: `g._core`.
-- Python orchestration: `src/g/io/bgen.py` and `src/g/io/source.py`.
-- New strict hot-path API:
-  - `BgenReader.read_float32(sample_indices, variant_start, variant_stop) -> np.ndarray`
-- Compatibility shim remains during migration:
-  - `BgenReader.read(...)` continues to work, but hot-path callers should use `read_float32`.
+- Python orchestration: `src/g/engine/regenie2_pipeline.py` and `src/g/io/source.py`.
+- Native hot-path API:
+  - `Regenie2RunEngine.run_bgen_dosage_buffered_chunks(...)`
+  - `Regenie2RunEngine.run_bgen_variant_major_dosage_buffered_chunks(...)`
+- No Python reader compatibility shim remains in production.
 
 ## Implementation Phases
 
 ### Phase 1: API + Pipeline Reshape
 
-- Add strict `read_float32` API in Python BGEN reader.
-- Route chunk iterators to `read_float32` for `float32` contiguous reads.
-- Add tests for strict API parity against existing `read(...)` path.
+- Route REGENIE2 callbacks through native preprocessed buffered chunk delivery.
+- Remove production Python reader/chunk compatibility paths.
+- Add tests for native delivery and output-writer integration.
 
 ### Phase 2: Rust Compute Kernels in `g._core`
 
@@ -58,7 +58,7 @@ Success is measured against current pipeline behavior on local chr22 data:
 ## Risks and Mitigations
 
 - Risk: API breakage in callers.
-  - Mitigation: keep `read(...)` compatibility while migrating internal hot path.
+  - Mitigation: keep the public REGENIE-facing API small and remove unreleased compatibility shims instead of maintaining divergent reader behavior.
 - Risk: layout edge cases in non-UKB files.
   - Mitigation: explicit early validation and hard errors for unsupported layouts.
 - Risk: benchmark noise.

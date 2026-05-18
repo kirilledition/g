@@ -140,10 +140,27 @@ def run_regenie2_command(
     covar: Path | None = typer.Option(None, help="Optional covariate table path."),
     covar_names: str | None = typer.Option(None, "--covar-names", help="Comma-separated covariate column names."),
     pred: Path = typer.Option(..., help="REGENIE step 1 _pred.list file path."),
-    binary_correction: types.RegenieBinaryCorrection = typer.Option(
-        types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
-        "--binary-correction",
-        help="Correction path for binary score-test candidates.",
+    firth: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Use Firth fallback for binary score-test p-values below pThresh.",
+    ),
+    approx: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Use approximate Firth fallback when --firth is enabled.",
+    ),
+    spa: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Use SPA fallback for binary score-test p-values below pThresh.",
+    ),
+    p_threshold: float = typer.Option(
+        0.05,
+        "--pThresh",
+        "--p-thresh",
+        help="Score-test p-value threshold for binary fallback correction.",
+    ),
+    firth_se: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Use LRT-derived standard errors for successful Firth rows.",
     ),
     chunk_size: int | None = typer.Option(None, help="Variants per chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
@@ -200,7 +217,13 @@ def run_regenie2_command(
         pred=pred,
         trait_type=trait_type,
         compute=compute_config,
-        binary=api.Regenie2BinaryConfig(correction=binary_correction),
+        binary=api.Regenie2BinaryConfig(
+            firth=firth,
+            approx=approx,
+            spa=spa,
+            p_threshold=p_threshold,
+            firth_se=firth_se,
+        ),
     )
     print_success_message(artifacts)
 
@@ -222,10 +245,27 @@ def run_regenie2_warm_cache_command(
     covar: Path | None = typer.Option(None, help="Optional covariate table path."),
     covar_names: str | None = typer.Option(None, "--covar-names", help="Comma-separated covariate column names."),
     pred: Path = typer.Option(..., help="REGENIE step 1 _pred.list file path."),
-    binary_correction: types.RegenieBinaryCorrection = typer.Option(
-        types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
-        "--binary-correction",
-        help="Correction path for binary score-test candidates.",
+    firth: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Use Firth fallback for binary score-test p-values below pThresh.",
+    ),
+    approx: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Use approximate Firth fallback when --firth is enabled.",
+    ),
+    spa: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Use SPA fallback for binary score-test p-values below pThresh.",
+    ),
+    p_threshold: float = typer.Option(
+        0.05,
+        "--pThresh",
+        "--p-thresh",
+        help="Score-test p-value threshold for binary fallback correction.",
+    ),
+    firth_se: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Use LRT-derived standard errors for successful Firth rows.",
     ),
     chunk_size: int | None = typer.Option(None, help="Variants per chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
@@ -253,7 +293,13 @@ def run_regenie2_warm_cache_command(
         pred=pred,
         trait_type=trait_type,
         compute=compute_config,
-        binary=api.Regenie2BinaryConfig(correction=binary_correction),
+        binary=api.Regenie2BinaryConfig(
+            firth=firth,
+            approx=approx,
+            spa=spa,
+            p_threshold=p_threshold,
+            firth_se=firth_se,
+        ),
     )
     print_warm_cache_message(report)
 

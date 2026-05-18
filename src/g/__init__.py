@@ -25,7 +25,6 @@ def __getattr__(name: str) -> typing.Any:
         "ArrayMemoryOrder",
         "AssociationMode",
         "Device",
-        "RegenieBinaryCorrection",
         "RegenieTraitType",
         "SampleIdentifierSource",
     }:
@@ -42,7 +41,6 @@ __all__ = [
     "Device",
     "Regenie2BinaryConfig",
     "Regenie2LinearConfig",
-    "RegenieBinaryCorrection",
     "RegenieTraitType",
     "RunArtifacts",
     "SampleIdentifierSource",

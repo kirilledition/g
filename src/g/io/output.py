@@ -11,11 +11,6 @@ from pathlib import Path
 import polars as pl
 
 from g import _core, types
-from g.io import models
-
-if typing.TYPE_CHECKING:
-    from g.engine import types as engine_types
-
 
 logger = logging.getLogger(__name__)
 
@@ -123,46 +118,6 @@ def create_output_writer_session(
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
     )
-
-
-def write_chunk_to_disk(
-    chunk_payload: engine_types.Regenie2ChunkPayload,
-    chunks_directory: Path,
-    association_mode: types.AssociationMode,
-) -> None:
-    """Persist one chunk through the Rust writer."""
-    output_run_paths = OutputRunPaths(run_directory=chunks_directory.parent, chunks_directory=chunks_directory)
-    writer_session = create_output_writer_session(
-        output_run_paths,
-        association_mode,
-        writer_thread_count=1,
-        writer_queue_depth=1,
-        finalize_parquet=False,
-    )
-    metadata = models.VariantMetadata(
-        variant_start_index=chunk_payload.variant_start_index,
-        variant_stop_index=chunk_payload.variant_stop_index,
-        chromosome=chunk_payload.chromosome,
-        variant_identifiers=chunk_payload.variant_identifier,
-        position=chunk_payload.position,
-        allele_one=chunk_payload.allele_one,
-        allele_two=chunk_payload.allele_zero,
-    )
-    try:
-        writer_session.write_regenie2_chunk(
-            metadata=metadata,
-            allele_one_frequency=chunk_payload.allele_one_frequency,
-            observation_count=chunk_payload.observation_count,
-            beta=chunk_payload.beta,
-            standard_error=chunk_payload.standard_error,
-            chi_squared=chunk_payload.chi_squared,
-            log10_p_value=chunk_payload.log10_p_value,
-            extra_code=chunk_payload.extra_code,
-        )
-        writer_session.finish()
-    except Exception:
-        writer_session.abort()
-        raise
 
 
 def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:

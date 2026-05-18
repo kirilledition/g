@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import math
 import os
 import typing
 from dataclasses import dataclass
@@ -17,7 +18,6 @@ from g.compute import regenie2_linear
 MINIMUM_PROBABILITY = 1.0e-6
 MINIMUM_VARIANCE = 1.0e-8
 DEFAULT_MAXIMUM_NULL_ITERATIONS = 50
-REGENIE_SCORE_CHISQ_THRESHOLD = 3.841458820694124
 EXTRA_CODE_SCORE = 0
 EXTRA_CODE_FIRTH = 1
 EXTRA_CODE_SPA = 2
@@ -39,15 +39,15 @@ DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
 BLOCK_FIRTH_MATH_ENVIRONMENT_VARIABLE = "G_REGENIE2_BINARY_USE_BLOCK_FIRTH_MATH"
 
 BinaryScoreTestChunkComputeFunction = typing.Callable[
-    [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.RegenieBinaryCorrection],
+    [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan],
     regenie2_types.Regenie2BinaryChunkResult,
 ]
 BinaryChunkComputeFunction = typing.Callable[
-    [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.RegenieBinaryCorrection, jax.Array | None],
+    [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan, jax.Array | None],
     regenie2_types.Regenie2BinaryChunkResult,
 ]
 BinaryVariantMajorChunkComputeFunction = typing.Callable[
-    [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.RegenieBinaryCorrection, jax.Array | None],
+    [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan, jax.Array | None],
     regenie2_types.Regenie2BinaryChunkResult,
 ]
 
@@ -263,13 +263,26 @@ def solve_from_positive_definite_matrix(
 
 
 def build_extra_code(
-    chi_squared: jax.Array,
+    log10_p_value: jax.Array,
     valid_mask: jax.Array,
-    correction: types.RegenieBinaryCorrection,
+    correction_plan: types.BinaryCorrectionPlan,
 ) -> jax.Array:
     """Select correction labels from score-test statistics."""
-    candidate_mask = chi_squared >= REGENIE_SCORE_CHISQ_THRESHOLD
-    correction_code = EXTRA_CODE_SPA if correction == types.RegenieBinaryCorrection.SPA else EXTRA_CODE_FIRTH
+    if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
+        candidate_mask = jnp.zeros_like(valid_mask, dtype=jnp.bool_)
+        correction_code = EXTRA_CODE_SCORE
+    elif correction_plan.method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE:
+        fallback_log10p_threshold = -math.log10(correction_plan.p_threshold)
+        candidate_mask = log10_p_value > fallback_log10p_threshold
+        correction_code = EXTRA_CODE_FIRTH
+    elif correction_plan.method == types.BinaryFallbackMethod.FIRTH:
+        message = "Exact REGENIE --firth without --approx is not implemented yet. Use --firth --approx."
+        raise NotImplementedError(message)
+    elif correction_plan.method == types.BinaryFallbackMethod.SPA:
+        message = "SPA fallback is not implemented yet. Omit --spa for score-test-only output."
+        raise NotImplementedError(message)
+    else:
+        typing.assert_never(correction_plan.method)
     return jnp.where(
         valid_mask,
         jnp.where(candidate_mask, correction_code, EXTRA_CODE_SCORE),
@@ -359,11 +372,11 @@ def prepare_regenie2_binary_chromosome_state(
     )
 
 
-@functools.partial(jax.jit, static_argnames=("correction",))
+@functools.partial(jax.jit, static_argnames=("correction_plan",))
 def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     chromosome_state: regenie2_types.Regenie2BinaryChromosomeState,
     genotype_matrix: jax.Array,
-    correction: types.RegenieBinaryCorrection = types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Compute the uncorrected score-test result for one binary chunk."""
     genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
@@ -380,7 +393,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     chi_squared = jnp.where(positive_variance_mask, score * score * inverse_variance, 0.0)
     log10_p_value = regenie2_linear.chi_squared_to_log10_p_value(chi_squared)
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    extra_code = build_extra_code(chi_squared, valid_mask, correction)
+    extra_code = build_extra_code(log10_p_value, valid_mask, correction_plan)
     return regenie2_types.Regenie2BinaryChunkResult(
         beta=beta,
         standard_error=standard_error,
@@ -399,11 +412,11 @@ compute_regenie2_binary_score_test_chunk = typing.cast(
 )
 
 
-@functools.partial(jax.jit, static_argnames=("correction",))
+@functools.partial(jax.jit, static_argnames=("correction_plan",))
 def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
     chromosome_state: regenie2_types.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-    correction: types.RegenieBinaryCorrection = types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Compute the uncorrected score test for one variant-major binary chunk."""
     genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
@@ -428,7 +441,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     chi_squared = jnp.where(positive_variance_mask, score * score * inverse_variance, 0.0)
     log10_p_value = regenie2_linear.chi_squared_to_log10_p_value(chi_squared)
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    extra_code = build_extra_code(chi_squared, valid_mask, correction)
+    extra_code = build_extra_code(log10_p_value, valid_mask, correction_plan)
     return regenie2_types.Regenie2BinaryChunkResult(
         beta=beta,
         standard_error=standard_error,
@@ -1094,11 +1107,12 @@ def build_empty_firth_variant_result(
     )
 
 
-@jax.jit
+@functools.partial(jax.jit, static_argnames=("correction_plan",))
 def apply_device_candidate_corrections_firth(
     chromosome_state: regenie2_types.Regenie2BinaryChromosomeState,
     genotype_matrix: jax.Array,
     result: regenie2_types.Regenie2BinaryChunkResult,
+    correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Apply fully device-resident Firth corrections to score-test candidates."""
@@ -1221,10 +1235,19 @@ def apply_device_candidate_corrections_firth(
             current_chi_squared = jnp.take(result.chi_squared, active_fallback_indices, axis=0)
             current_log10_p_value = jnp.take(result.log10_p_value, active_fallback_indices, axis=0)
             active_valid_mask = firth_result.valid_mask[active_flat_positions]
+            active_firth_beta = firth_result.beta[active_flat_positions]
+            active_firth_chi_squared = firth_result.chi_squared[active_flat_positions]
+            active_firth_standard_error = firth_result.standard_error[active_flat_positions]
+            if correction_plan.firth_se:
+                active_firth_standard_error = jnp.where(
+                    active_firth_chi_squared > 0.0,
+                    jnp.abs(active_firth_beta) / jnp.sqrt(active_firth_chi_squared),
+                    active_firth_standard_error,
+                )
             merged_beta = jnp.where(active_valid_mask, firth_result.beta[active_flat_positions], current_beta)
             merged_standard_error = jnp.where(
                 active_valid_mask,
-                firth_result.standard_error[active_flat_positions],
+                active_firth_standard_error,
                 current_standard_error,
             )
             merged_chi_squared = jnp.where(
@@ -1264,11 +1287,12 @@ def apply_device_candidate_corrections_firth(
     return jax.lax.cond(fallback_count > 0, apply_candidate_corrections, no_candidate_corrections)
 
 
-@jax.jit
+@functools.partial(jax.jit, static_argnames=("correction_plan",))
 def apply_device_candidate_corrections_firth_variant_major(
     chromosome_state: regenie2_types.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     result: regenie2_types.Regenie2BinaryChunkResult,
+    correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Apply device-resident Firth corrections to variant-major score-test candidates."""
@@ -1398,10 +1422,19 @@ def apply_device_candidate_corrections_firth_variant_major(
             current_chi_squared = jnp.take(result.chi_squared, active_fallback_indices, axis=0)
             current_log10_p_value = jnp.take(result.log10_p_value, active_fallback_indices, axis=0)
             active_valid_mask = firth_result.valid_mask[active_flat_positions]
+            active_firth_beta = firth_result.beta[active_flat_positions]
+            active_firth_chi_squared = firth_result.chi_squared[active_flat_positions]
+            active_firth_standard_error = firth_result.standard_error[active_flat_positions]
+            if correction_plan.firth_se:
+                active_firth_standard_error = jnp.where(
+                    active_firth_chi_squared > 0.0,
+                    jnp.abs(active_firth_beta) / jnp.sqrt(active_firth_chi_squared),
+                    active_firth_standard_error,
+                )
             merged_beta = jnp.where(active_valid_mask, firth_result.beta[active_flat_positions], current_beta)
             merged_standard_error = jnp.where(
                 active_valid_mask,
-                firth_result.standard_error[active_flat_positions],
+                active_firth_standard_error,
                 current_standard_error,
             )
             merged_chi_squared = jnp.where(
@@ -1445,16 +1478,23 @@ def apply_device_candidate_corrections(
     chromosome_state: regenie2_types.Regenie2BinaryChromosomeState,
     genotype_matrix: jax.Array,
     result: regenie2_types.Regenie2BinaryChunkResult,
-    correction: types.RegenieBinaryCorrection,
+    correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Apply binary candidate corrections without leaving device memory."""
-    if correction == types.RegenieBinaryCorrection.SPA:
+    if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
         return result
+    if correction_plan.method == types.BinaryFallbackMethod.FIRTH:
+        message = "Exact REGENIE --firth without --approx is not implemented yet. Use --firth --approx."
+        raise NotImplementedError(message)
+    if correction_plan.method == types.BinaryFallbackMethod.SPA:
+        message = "SPA fallback is not implemented yet. Omit --spa for score-test-only output."
+        raise NotImplementedError(message)
     return apply_device_candidate_corrections_firth(
         chromosome_state=chromosome_state,
         genotype_matrix=genotype_matrix,
         result=result,
+        correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
     )
 
@@ -1463,60 +1503,67 @@ def apply_device_candidate_corrections_variant_major(
     chromosome_state: regenie2_types.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     result: regenie2_types.Regenie2BinaryChunkResult,
-    correction: types.RegenieBinaryCorrection,
+    correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Apply binary candidate corrections for variant-major genotype chunks."""
-    if correction == types.RegenieBinaryCorrection.SPA:
+    if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
         return result
+    if correction_plan.method == types.BinaryFallbackMethod.FIRTH:
+        message = "Exact REGENIE --firth without --approx is not implemented yet. Use --firth --approx."
+        raise NotImplementedError(message)
+    if correction_plan.method == types.BinaryFallbackMethod.SPA:
+        message = "SPA fallback is not implemented yet. Omit --spa for score-test-only output."
+        raise NotImplementedError(message)
     return apply_device_candidate_corrections_firth_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         result=result,
+        correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
     )
 
 
-@functools.partial(jax.jit, static_argnames=("correction",))
+@functools.partial(jax.jit, static_argnames=("correction_plan",))
 def compute_regenie2_binary_chunk_from_chromosome_state(
     chromosome_state: regenie2_types.Regenie2BinaryChromosomeState,
     genotype_matrix: jax.Array,
-    correction: types.RegenieBinaryCorrection = types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     sparse_candidate_mask: jax.Array | None = None,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association using cached null state."""
     score_test_result = compute_regenie2_binary_score_test_chunk(
         chromosome_state,
         genotype_matrix,
-        correction,
+        correction_plan,
     )
     return apply_device_candidate_corrections(
         chromosome_state=chromosome_state,
         genotype_matrix=genotype_matrix,
         result=score_test_result,
-        correction=correction,
+        correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
     )
 
 
-@functools.partial(jax.jit, static_argnames=("correction",))
+@functools.partial(jax.jit, static_argnames=("correction_plan",))
 def compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
     chromosome_state: regenie2_types.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-    correction: types.RegenieBinaryCorrection = types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     sparse_candidate_mask: jax.Array | None = None,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association from a variant-major genotype chunk."""
     score_test_result = compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
         chromosome_state,
         genotype_matrix_by_variant,
-        correction,
+        correction_plan,
     )
     return apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         result=score_test_result,
-        correction=correction,
+        correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
     )
 
@@ -1525,7 +1572,7 @@ def compute_regenie2_binary_chunk(
     state: regenie2_types.Regenie2BinaryState,
     genotype_matrix: jax.Array,
     loco_offset: jax.Array,
-    correction: types.RegenieBinaryCorrection = types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     sparse_candidate_mask: jax.Array | None = None,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association for a genotype chunk."""
@@ -1537,6 +1584,6 @@ def compute_regenie2_binary_chunk(
     return compute_regenie2_binary_chunk_from_state(
         chromosome_state,
         genotype_matrix,
-        correction,
+        correction_plan,
         sparse_candidate_mask,
     )

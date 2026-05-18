@@ -217,11 +217,11 @@ regenie2-linear:
 
 # Run binary REGENIE step 2 on chr22 with GPU JAX
 regenie2-binary-gpu:
-    {{server_env}} && uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu --trait-type binary --device gpu --finalize-parquet
+    {{server_env}} && uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu --trait-type binary --device gpu --firth --approx --finalize-parquet
 
 # Smoke test binary REGENIE step 2 on a small chr22 variant slice with GPU JAX
 regenie2-binary-gpu-smoke:
-    {{server_env}} && uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu_smoke --trait-type binary --device gpu --variant-limit 1000 --finalize-parquet
+    {{server_env}} && uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu_smoke --trait-type binary --device gpu --firth --approx --variant-limit 1000 --finalize-parquet
 
 # Run binary REGENIE step 2 through SLURM on the configured GPU node
 slurm-regenie2-binary-gpu:
@@ -361,7 +361,7 @@ typecheck-local:
 
 # Focused no-Nix smoke tests that also rebuild the native extension through maturin
 test-local-focused:
-    uv run pytest tests/test_core.py tests/test_io_bgen.py tests/test_io_output.py
+    uv run pytest tests/test_core.py tests/test_io_output.py
 
 # Non-heavy no-Nix test suite
 test-local:

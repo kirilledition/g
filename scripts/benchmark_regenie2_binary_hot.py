@@ -442,7 +442,7 @@ def run_regenie2_api_call(
             output_root=output_root,
             finalize_parquet=trial_spec.finalize_parquet,
         ),
-        binary=api.Regenie2BinaryConfig(correction=types.RegenieBinaryCorrection.FIRTH_APPROXIMATE),
+        binary=api.Regenie2BinaryConfig(firth=True, approx=True),
     )
 
 

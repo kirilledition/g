@@ -120,7 +120,12 @@ def test_regenie2_help_shows_binary_trait_and_correction_options() -> None:
     assert result.exit_code == 0
     assert "--trait-type" in result.output
     assert "binary" in result.output
-    assert "--binary-correction" in result.output
+    assert "--firth" in result.output
+    assert "--approx" in result.output
+    assert "--spa" in result.output
+    assert "--pThresh" in result.output
+    assert "--firth-se" in result.output
+    assert "--binary-correction" not in result.output
 
 
 def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
@@ -157,6 +162,11 @@ def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
                 "6",
                 "--trusted-no-missing-diploid",
                 "--warm-cache-first",
+                "--firth",
+                "--approx",
+                "--pThresh",
+                "0.01",
+                "--firth-se",
             ],
         )
 
@@ -168,6 +178,11 @@ def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
     assert compute_config.output_writer_queue_depth == 6
     assert compute_config.trusted_no_missing_diploid is True
     assert compute_config.warm_cache_first is True
+    binary_config = mock_run_regenie2_api.call_args.kwargs["binary"]
+    assert binary_config.firth is True
+    assert binary_config.approx is True
+    assert binary_config.p_threshold == 0.01
+    assert binary_config.firth_se is True
     assert str(Path("results/output.regenie2_binary.run")) in result.output
 
 
@@ -196,8 +211,8 @@ def test_regenie2_warm_cache_command_dispatches_api_call() -> None:
                 "predictions.list",
                 "--trait-type",
                 "binary",
-                "--binary-correction",
-                "firth_approximate",
+                "--firth",
+                "--approx",
                 "--chunk-size",
                 "4096",
                 "--device",
@@ -214,6 +229,9 @@ def test_regenie2_warm_cache_command_dispatches_api_call() -> None:
     assert compute_config.device == Device.GPU
     assert compute_config.chunk_size == 4096
     assert compute_config.trusted_no_missing_diploid is True
+    binary_config = mock_run_regenie2_warm_cache_api.call_args.kwargs["binary"]
+    assert binary_config.firth is True
+    assert binary_config.approx is True
 
 
 def test_print_success_message_reports_run_directory_and_parquet(capsys: typing.Any) -> None:
