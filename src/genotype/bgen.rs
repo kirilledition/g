@@ -540,43 +540,11 @@ impl BgenReaderCore {
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
         let selected_variant_count = variant_stop.saturating_sub(variant_start);
         if selected_variant_count == 0 {
-            return Ok(ChunkStats {
-                allele_one_frequency: Vec::new(),
-                observation_count: Vec::new(),
-                has_missing_values: false,
-            });
+            return Ok(preprocess::build_empty_chunk_stats(0, false));
         }
         let selected_sample_count = output_value_count.checked_div(selected_variant_count).ok_or_else(|| {
             BgenError::Range("Unable to resolve sample count for preprocessed BGEN dosage matrix.".to_string())
         })?;
-        if self.trusted_no_missing_diploid {
-            let selected_dosage_totals = self
-                .read_dosage_f32_into_address_with_selection_and_optional_stats(
-                    &sample_selection,
-                    variant_start,
-                    variant_stop,
-                    output_pointer_address,
-                    output_value_count,
-                    true,
-                )?
-                .ok_or_else(|| {
-                    BgenError::Range("Trusted BGEN stats collection unexpectedly returned no totals.".to_string())
-                })?;
-            let observation_count_value = i32::try_from(selected_sample_count).map_err(|_| {
-                BgenError::Range("Selected sample count does not fit into int32 observation_count output.".to_string())
-            })?;
-            let denominator = 2.0_f32 * selected_sample_count as f32;
-            let allele_one_frequency = if selected_sample_count == 0 {
-                vec![0.0_f32; selected_variant_count]
-            } else {
-                selected_dosage_totals.iter().map(|total| *total / denominator).collect()
-            };
-            return Ok(ChunkStats {
-                allele_one_frequency,
-                observation_count: vec![observation_count_value; selected_variant_count],
-                has_missing_values: false,
-            });
-        }
         self.read_dosage_f32_into_address_with_selection(
             &sample_selection,
             variant_start,
@@ -616,18 +584,10 @@ impl BgenReaderCore {
             )));
         }
         if selected_variant_count == 0 {
-            return Ok(ChunkStats {
-                allele_one_frequency: Vec::new(),
-                observation_count: Vec::new(),
-                has_missing_values: false,
-            });
+            return Ok(preprocess::build_empty_chunk_stats(0, false));
         }
         if selected_sample_count == 0 {
-            return Ok(ChunkStats {
-                allele_one_frequency: vec![0.0_f32; selected_variant_count],
-                observation_count: vec![0_i32; selected_variant_count],
-                has_missing_values: false,
-            });
+            return Ok(preprocess::build_empty_chunk_stats(selected_variant_count, false));
         }
 
         let profiling = &self.profiling;
@@ -652,21 +612,13 @@ impl BgenReaderCore {
                 )
             })
             .collect::<Result<Vec<DosageTileDecodeResult>, BgenError>>()?;
-        let mut selected_dosage_totals = Vec::with_capacity(selected_variant_count);
         for decode_result in decode_results {
             profiling.merge_thread_local_snapshot(&decode_result.profile_snapshot);
-            selected_dosage_totals.extend(decode_result.selected_dosage_totals);
         }
-        let observation_count_value = i32::try_from(selected_sample_count).map_err(|_| {
-            BgenError::Range("Selected sample count does not fit into int32 observation_count output.".to_string())
-        })?;
-        let denominator = 2.0_f32 * selected_sample_count as f32;
-        let allele_one_frequency = selected_dosage_totals.iter().map(|total| *total / denominator).collect();
-        Ok(ChunkStats {
-            allele_one_frequency,
-            observation_count: vec![observation_count_value; selected_variant_count],
-            has_missing_values: false,
-        })
+        let output_slice =
+            unsafe { std::slice::from_raw_parts(output_pointer_address as *const f32, output_value_count) };
+        preprocess::summarize_variant_major_dosage_matrix(output_slice, selected_sample_count, selected_variant_count)
+            .map_err(|error| BgenError::Range(error.to_string()))
     }
 
     pub fn bgen_path(&self) -> &Path {

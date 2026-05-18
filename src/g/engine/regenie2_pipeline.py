@@ -19,7 +19,6 @@ import numpy.typing as npt
 
 from g import _core, types
 from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, regenie2_linear_types
-from g.engine import types as engine_types
 from g.io import bgen, genotype_processing, models, output, source
 
 ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE = (
@@ -41,8 +40,7 @@ class PreprocessedDosageChunkWorkItem:
 
     metadata: typing.Any
     genotype_matrix: npt.NDArray[np.float32]
-    allele_one_frequency: npt.NDArray[np.float32]
-    observation_count: npt.NDArray[np.int32]
+    chunk_stats: _core.ChunkStats
 
 
 @dataclass(frozen=True)
@@ -51,8 +49,7 @@ class PreprocessedVariantMajorDosageChunkWorkItem:
 
     metadata: typing.Any
     genotype_matrix_by_variant: npt.NDArray[np.float32]
-    allele_one_frequency: npt.NDArray[np.float32]
-    observation_count: npt.NDArray[np.int32]
+    chunk_stats: _core.ChunkStats
 
 
 class RegeniePredictionSourceProtocol(typing.Protocol):
@@ -61,6 +58,26 @@ class RegeniePredictionSourceProtocol(typing.Protocol):
     def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]:
         """Return already-aligned LOCO predictions for one chromosome."""
         ...
+
+
+@dataclass(frozen=True)
+class NativeBgenRunInput:
+    """Sample-aligned inputs retained in native form for BGEN REGENIE step 2.
+
+    Attributes:
+        native_aligned_sample_data: Rust-owned aligned sample identifiers and matrices.
+        sample_indices: BGEN sample indices for native chunk delivery.
+        phenotype_vector: JAX phenotype vector.
+        covariate_matrix: JAX design matrix.
+        is_binary_trait: Whether the run is for a binary trait.
+
+    """
+
+    native_aligned_sample_data: _core.NativeAlignedSampleData
+    sample_indices: npt.NDArray[np.int64]
+    phenotype_vector: jax.Array
+    covariate_matrix: jax.Array
+    is_binary_trait: bool
 
 
 @dataclass(frozen=True)
@@ -240,34 +257,75 @@ def put_genotype_matrix_on_device(
     return genotype_device_array
 
 
-def write_regenie2_chunk_with_optional_timing(
+def write_regenie2_native_chunk_with_optional_timing(
     *,
     writer_session: typing.Any,
-    chunk_accumulator: engine_types.Regenie2ChunkAccumulator,
+    metadata: _core.VariantMetadata,
+    chunk_stats: _core.ChunkStats,
+    beta: jax.Array,
+    standard_error: jax.Array,
+    chi_squared: jax.Array,
+    log10_p_value: jax.Array,
+    extra_code: jax.Array | None,
     stage_timing_recorder: StageTimingRecorder | None,
 ) -> None:
-    """Write one REGENIE chunk while isolating device-get and native writer timings."""
-    if stage_timing_recorder is None:
-        output.write_regenie2_chunk(writer_session, chunk_accumulator)
-        return
-
+    """Write one native-metadata REGENIE chunk while timing JAX result materialization."""
     materialization_start_time = time.perf_counter()
     host_values = jax.device_get(
         {
-            "allele_one_frequency": chunk_accumulator.allele_one_frequency,
-            "observation_count": chunk_accumulator.observation_count,
-            "beta": chunk_accumulator.beta,
-            "standard_error": chunk_accumulator.standard_error,
-            "chi_squared": chunk_accumulator.chi_squared,
-            "log10_p_value": chunk_accumulator.log10_p_value,
-            "extra_code": chunk_accumulator.extra_code,
+            "beta": beta,
+            "standard_error": standard_error,
+            "chi_squared": chi_squared,
+            "log10_p_value": log10_p_value,
+            "extra_code": extra_code,
+        }
+    )
+    record_stage_duration(stage_timing_recorder, "device_to_host_materialization", materialization_start_time)
+
+    write_start_time = time.perf_counter()
+    writer_session.write_regenie2_native_chunk(
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        beta=host_values["beta"],
+        standard_error=host_values["standard_error"],
+        chi_squared=host_values["chi_squared"],
+        log10_p_value=host_values["log10_p_value"],
+        extra_code=host_values["extra_code"],
+    )
+    record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
+
+
+def write_regenie2_python_chunk_with_optional_timing(
+    *,
+    writer_session: typing.Any,
+    metadata: typing.Any,
+    allele_one_frequency: jax.Array | npt.NDArray[np.float32],
+    observation_count: jax.Array | npt.NDArray[np.int32],
+    beta: jax.Array,
+    standard_error: jax.Array,
+    chi_squared: jax.Array,
+    log10_p_value: jax.Array,
+    extra_code: jax.Array | None,
+    stage_timing_recorder: StageTimingRecorder | None,
+) -> None:
+    """Write one legacy Python-preprocessed chunk through the Rust writer."""
+    materialization_start_time = time.perf_counter()
+    host_values = jax.device_get(
+        {
+            "allele_one_frequency": allele_one_frequency,
+            "observation_count": observation_count,
+            "beta": beta,
+            "standard_error": standard_error,
+            "chi_squared": chi_squared,
+            "log10_p_value": log10_p_value,
+            "extra_code": extra_code,
         }
     )
     record_stage_duration(stage_timing_recorder, "device_to_host_materialization", materialization_start_time)
 
     write_start_time = time.perf_counter()
     writer_session.write_regenie2_chunk(
-        metadata=chunk_accumulator.metadata,
+        metadata=metadata,
         allele_one_frequency=host_values["allele_one_frequency"],
         observation_count=host_values["observation_count"],
         beta=host_values["beta"],
@@ -308,6 +366,19 @@ def build_aligned_sample_data_from_native(
     )
 
 
+def build_native_bgen_run_input(
+    native_aligned_sample_data: _core.NativeAlignedSampleData,
+) -> NativeBgenRunInput:
+    """Build Python/JAX views over Rust-owned aligned sample data."""
+    return NativeBgenRunInput(
+        native_aligned_sample_data=native_aligned_sample_data,
+        sample_indices=np.ascontiguousarray(native_aligned_sample_data.sample_indices, dtype=np.int64),
+        phenotype_vector=jnp.asarray(native_aligned_sample_data.phenotype_vector, dtype=jnp.float32),
+        covariate_matrix=jnp.asarray(native_aligned_sample_data.covariate_matrix, dtype=jnp.float32),
+        is_binary_trait=native_aligned_sample_data.is_binary_trait,
+    )
+
+
 def load_rust_aligned_sample_data_from_individual_identifier_table(
     *,
     sample_table: typing.Any,
@@ -318,7 +389,28 @@ def load_rust_aligned_sample_data_from_individual_identifier_table(
     is_binary_trait: bool,
 ) -> models.AlignedSampleData:
     """Load aligned sample data through the Rust TSV join implementation."""
-    native_aligned_sample_data = _core.align_sample_data(
+    native_aligned_sample_data = load_native_aligned_sample_data_from_individual_identifier_table(
+        sample_table=sample_table,
+        phenotype_path=phenotype_path,
+        phenotype_name=phenotype_name,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
+        is_binary_trait=is_binary_trait,
+    )
+    return build_aligned_sample_data_from_native(native_aligned_sample_data)
+
+
+def load_native_aligned_sample_data_from_individual_identifier_table(
+    *,
+    sample_table: typing.Any,
+    phenotype_path: Path,
+    phenotype_name: str,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    is_binary_trait: bool,
+) -> _core.NativeAlignedSampleData:
+    """Load Rust-owned aligned sample data from explicit sample identifiers."""
+    return _core.align_sample_data(
         np.ascontiguousarray(sample_table.get_column("sample_index").to_numpy(), dtype=np.int64),
         typing.cast("list[str]", sample_table.get_column("family_identifier").to_list()),
         typing.cast("list[str]", sample_table.get_column("individual_identifier").to_list()),
@@ -328,7 +420,6 @@ def load_rust_aligned_sample_data_from_individual_identifier_table(
         list(covariate_names) if covariate_names is not None else None,
         is_binary_trait,
     )
-    return build_aligned_sample_data_from_native(native_aligned_sample_data)
 
 
 def load_rust_aligned_sample_data_from_sample_file(
@@ -342,7 +433,30 @@ def load_rust_aligned_sample_data_from_sample_file(
     is_binary_trait: bool,
 ) -> models.AlignedSampleData:
     """Load aligned sample data through Rust, including Oxford sample-file parsing."""
-    native_aligned_sample_data = _core.align_sample_data_from_sample_file(
+    native_aligned_sample_data = load_native_aligned_sample_data_from_sample_file(
+        sample_path=sample_path,
+        expected_sample_count=expected_sample_count,
+        phenotype_path=phenotype_path,
+        phenotype_name=phenotype_name,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
+        is_binary_trait=is_binary_trait,
+    )
+    return build_aligned_sample_data_from_native(native_aligned_sample_data)
+
+
+def load_native_aligned_sample_data_from_sample_file(
+    *,
+    sample_path: Path,
+    expected_sample_count: int,
+    phenotype_path: Path,
+    phenotype_name: str,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    is_binary_trait: bool,
+) -> _core.NativeAlignedSampleData:
+    """Load Rust-owned aligned sample data through Oxford sample-file parsing."""
+    return _core.align_sample_data_from_sample_file(
         str(sample_path),
         expected_sample_count,
         str(phenotype_path),
@@ -351,7 +465,6 @@ def load_rust_aligned_sample_data_from_sample_file(
         list(covariate_names) if covariate_names is not None else None,
         is_binary_trait,
     )
-    return build_aligned_sample_data_from_native(native_aligned_sample_data)
 
 
 def get_metadata_chromosome(metadata: typing.Any) -> str:
@@ -395,7 +508,7 @@ class NativeBgenCallbackRunner:
         observation_count: npt.NDArray[np.int32],
     ) -> None:
         """Compute one Rust-provided chunk and write it through the native output sink."""
-        self.compute_preprocessed_chunk(
+        self.compute_python_preprocessed_chunk(
             variant_metadata=metadata,
             genotype_matrix=genotype_matrix,
             allele_one_frequency=allele_one_frequency,
@@ -406,23 +519,32 @@ class NativeBgenCallbackRunner:
     def compute_preprocessed_chunk(
         self,
         *,
+        variant_metadata: _core.VariantMetadata,
+        genotype_matrix: jax.Array | npt.NDArray[np.float32],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Compute one Rust-preprocessed chunk and write it."""
+        raise NotImplementedError
+
+    def compute_python_preprocessed_chunk(
+        self,
+        *,
         variant_metadata: typing.Any,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
         allele_one_frequency: jax.Array | npt.NDArray[np.float32],
         observation_count: jax.Array | npt.NDArray[np.int32],
     ) -> None:
-        """Compute one already-preprocessed chunk and write it."""
+        """Compute one Python-preprocessed compatibility chunk and write it."""
         raise NotImplementedError
 
     def compute_preprocessed_variant_major_chunk(
         self,
         *,
-        variant_metadata: typing.Any,
+        variant_metadata: _core.VariantMetadata,
         genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
-        allele_one_frequency: jax.Array | npt.NDArray[np.float32],
-        observation_count: jax.Array | npt.NDArray[np.int32],
+        chunk_stats: _core.ChunkStats,
     ) -> None:
-        """Compute one already-preprocessed variant-major chunk and write it."""
+        """Compute one Rust-preprocessed variant-major chunk and write it."""
         raise NotImplementedError
 
     def compute_dosage_chunk(
@@ -440,16 +562,11 @@ class NativeBgenCallbackRunner:
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed dosage chunk for JAX association."""
-        bridge_start_time = time.perf_counter()
-        allele_one_frequency = chunk_stats.allele_one_frequency
-        observation_count = chunk_stats.observation_count
-        record_stage_duration(self.stage_timing_recorder, "native_metadata_stats_bridge", bridge_start_time)
         self.put_dosage_work_item(
             PreprocessedDosageChunkWorkItem(
                 metadata=metadata,
                 genotype_matrix=genotype_matrix,
-                allele_one_frequency=allele_one_frequency,
-                observation_count=observation_count,
+                chunk_stats=chunk_stats,
             )
         )
 
@@ -460,16 +577,11 @@ class NativeBgenCallbackRunner:
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed variant-major dosage chunk for JAX association."""
-        bridge_start_time = time.perf_counter()
-        allele_one_frequency = chunk_stats.allele_one_frequency
-        observation_count = chunk_stats.observation_count
-        record_stage_duration(self.stage_timing_recorder, "native_metadata_stats_bridge", bridge_start_time)
         self.put_dosage_work_item(
             PreprocessedVariantMajorDosageChunkWorkItem(
                 metadata=metadata,
                 genotype_matrix_by_variant=genotype_matrix_by_variant,
-                allele_one_frequency=allele_one_frequency,
-                observation_count=observation_count,
+                chunk_stats=chunk_stats,
             )
         )
 
@@ -484,8 +596,7 @@ class NativeBgenCallbackRunner:
                     self.compute_preprocessed_variant_major_chunk(
                         variant_metadata=work_item.metadata,
                         genotype_matrix_by_variant=work_item.genotype_matrix_by_variant,
-                        allele_one_frequency=work_item.allele_one_frequency,
-                        observation_count=work_item.observation_count,
+                        chunk_stats=work_item.chunk_stats,
                     )
                     self.processed_chunk_count += 1
                     self.release_dosage_buffer(work_item.genotype_matrix_by_variant)
@@ -494,8 +605,7 @@ class NativeBgenCallbackRunner:
                     self.compute_preprocessed_chunk(
                         variant_metadata=work_item.metadata,
                         genotype_matrix=work_item.genotype_matrix,
-                        allele_one_frequency=work_item.allele_one_frequency,
-                        observation_count=work_item.observation_count,
+                        chunk_stats=work_item.chunk_stats,
                     )
                     self.processed_chunk_count += 1
                     self.release_dosage_buffer(work_item.genotype_matrix)
@@ -503,7 +613,7 @@ class NativeBgenCallbackRunner:
                 preprocessed_genotype_arrays = genotype_processing.preprocess_genotype_matrix_arrays(
                     jax.device_put(work_item.genotype_matrix)
                 )
-                self.compute_preprocessed_chunk(
+                self.compute_python_preprocessed_chunk(
                     variant_metadata=work_item.metadata,
                     genotype_matrix=preprocessed_genotype_arrays.genotypes,
                     allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,
@@ -589,19 +699,19 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
 
     def __init__(
         self,
-        aligned_sample_data: models.AlignedSampleData,
+        run_input: NativeBgenRunInput,
         prediction_source: RegeniePredictionSourceProtocol,
         writer_session: typing.Any,
         staging_depth: int = 1,
         stage_timing_recorder: StageTimingRecorder | None = None,
     ) -> None:
         """Initialize the callback state."""
-        self.aligned_sample_data = aligned_sample_data
+        self.run_input = run_input
         self.prediction_source = prediction_source
         self.writer_session = writer_session
         self.regenie_state = regenie2_linear.prepare_regenie2_linear_state(
-            covariate_matrix=aligned_sample_data.covariate_matrix,
-            phenotype_vector=aligned_sample_data.phenotype_vector,
+            covariate_matrix=run_input.covariate_matrix,
+            phenotype_vector=run_input.phenotype_vector,
         )
         self.current_chromosome: str | None = None
         self.current_chromosome_state: regenie2_linear_types.Regenie2LinearChromosomeState | None = None
@@ -614,12 +724,54 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def compute_preprocessed_chunk(
         self,
         *,
+        variant_metadata: _core.VariantMetadata,
+        genotype_matrix: jax.Array | npt.NDArray[np.float32],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Compute one Rust-preprocessed chunk and write it."""
+        result = self.compute_linear_result(variant_metadata=variant_metadata, genotype_matrix=genotype_matrix)
+        write_regenie2_native_chunk_with_optional_timing(
+            writer_session=self.writer_session,
+            metadata=variant_metadata,
+            chunk_stats=chunk_stats,
+            beta=result.beta,
+            standard_error=result.standard_error,
+            chi_squared=result.chi_squared,
+            log10_p_value=result.log10_p_value,
+            extra_code=None,
+            stage_timing_recorder=self.stage_timing_recorder,
+        )
+
+    def compute_python_preprocessed_chunk(
+        self,
+        *,
         variant_metadata: typing.Any,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
         allele_one_frequency: jax.Array | npt.NDArray[np.float32],
         observation_count: jax.Array | npt.NDArray[np.int32],
     ) -> None:
-        """Compute one already-preprocessed chunk and write it."""
+        """Compute one Python-preprocessed compatibility chunk and write it."""
+        result = self.compute_linear_result(variant_metadata=variant_metadata, genotype_matrix=genotype_matrix)
+        write_regenie2_python_chunk_with_optional_timing(
+            writer_session=self.writer_session,
+            metadata=variant_metadata,
+            allele_one_frequency=allele_one_frequency,
+            observation_count=observation_count,
+            beta=result.beta,
+            standard_error=result.standard_error,
+            chi_squared=result.chi_squared,
+            log10_p_value=result.log10_p_value,
+            extra_code=None,
+            stage_timing_recorder=self.stage_timing_recorder,
+        )
+
+    def compute_linear_result(
+        self,
+        *,
+        variant_metadata: typing.Any,
+        genotype_matrix: jax.Array | npt.NDArray[np.float32],
+    ) -> regenie2_linear_types.Regenie2LinearChunkResult:
+        """Compute quantitative REGENIE step 2 statistics for one chunk."""
         chromosome = get_metadata_chromosome(variant_metadata)
         if chromosome != self.current_chromosome:
             chromosome_start_time = time.perf_counter()
@@ -646,20 +798,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         )
         block_until_ready(result.log10_p_value)
         record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
-        write_regenie2_chunk_with_optional_timing(
-            writer_session=self.writer_session,
-            chunk_accumulator=build_chunk_accumulator(
-                metadata=variant_metadata,
-                allele_one_frequency=allele_one_frequency,
-                observation_count=observation_count,
-                beta=result.beta,
-                standard_error=result.standard_error,
-                chi_squared=result.chi_squared,
-                log10_p_value=result.log10_p_value,
-                extra_code=None,
-            ),
-            stage_timing_recorder=self.stage_timing_recorder,
-        )
+        return result
 
 
 class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
@@ -667,7 +806,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
 
     def __init__(
         self,
-        aligned_sample_data: models.AlignedSampleData,
+        run_input: NativeBgenRunInput,
         prediction_source: RegeniePredictionSourceProtocol,
         writer_session: typing.Any,
         correction: types.RegenieBinaryCorrection,
@@ -675,13 +814,13 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         stage_timing_recorder: StageTimingRecorder | None = None,
     ) -> None:
         """Initialize the callback state."""
-        self.aligned_sample_data = aligned_sample_data
+        self.run_input = run_input
         self.prediction_source = prediction_source
         self.writer_session = writer_session
         self.correction = correction
         self.regenie_state = regenie2_binary.prepare_regenie2_binary_state(
-            covariate_matrix=aligned_sample_data.covariate_matrix,
-            phenotype_vector=aligned_sample_data.phenotype_vector,
+            covariate_matrix=run_input.covariate_matrix,
+            phenotype_vector=run_input.phenotype_vector,
         )
         self.current_chromosome: str | None = None
         self.current_chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState | None = None
@@ -694,12 +833,59 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def compute_preprocessed_chunk(
         self,
         *,
+        variant_metadata: _core.VariantMetadata,
+        genotype_matrix: jax.Array | npt.NDArray[np.float32],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Compute one Rust-preprocessed chunk and write it."""
+        result = self.compute_binary_result(
+            variant_metadata=variant_metadata,
+            genotype_matrix=genotype_matrix,
+            sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
+        )
+        write_regenie2_native_chunk_with_optional_timing(
+            writer_session=self.writer_session,
+            metadata=variant_metadata,
+            chunk_stats=chunk_stats,
+            beta=result.beta,
+            standard_error=result.standard_error,
+            chi_squared=result.chi_squared,
+            log10_p_value=result.log10_p_value,
+            extra_code=result.extra_code,
+            stage_timing_recorder=self.stage_timing_recorder,
+        )
+
+    def compute_python_preprocessed_chunk(
+        self,
+        *,
         variant_metadata: typing.Any,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
         allele_one_frequency: jax.Array | npt.NDArray[np.float32],
         observation_count: jax.Array | npt.NDArray[np.int32],
     ) -> None:
-        """Compute one already-preprocessed chunk and write it."""
+        """Compute one Python-preprocessed compatibility chunk and write it."""
+        result = self.compute_binary_result(variant_metadata=variant_metadata, genotype_matrix=genotype_matrix)
+        write_regenie2_python_chunk_with_optional_timing(
+            writer_session=self.writer_session,
+            metadata=variant_metadata,
+            allele_one_frequency=allele_one_frequency,
+            observation_count=observation_count,
+            beta=result.beta,
+            standard_error=result.standard_error,
+            chi_squared=result.chi_squared,
+            log10_p_value=result.log10_p_value,
+            extra_code=result.extra_code,
+            stage_timing_recorder=self.stage_timing_recorder,
+        )
+
+    def compute_binary_result(
+        self,
+        *,
+        variant_metadata: typing.Any,
+        genotype_matrix: jax.Array | npt.NDArray[np.float32],
+        sparse_candidate_mask: jax.Array | None = None,
+    ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+        """Compute binary REGENIE step 2 statistics for one chunk."""
         chromosome = get_metadata_chromosome(variant_metadata)
         if chromosome != self.current_chromosome:
             chromosome_start_time = time.perf_counter()
@@ -724,34 +910,21 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             chromosome_state=self.current_chromosome_state,
             genotype_matrix=genotype_device_array,
             correction=self.correction,
+            sparse_candidate_mask=sparse_candidate_mask,
         )
         block_until_ready(result.log10_p_value)
         record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
         record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
-        write_regenie2_chunk_with_optional_timing(
-            writer_session=self.writer_session,
-            chunk_accumulator=build_chunk_accumulator(
-                metadata=variant_metadata,
-                allele_one_frequency=allele_one_frequency,
-                observation_count=observation_count,
-                beta=result.beta,
-                standard_error=result.standard_error,
-                chi_squared=result.chi_squared,
-                log10_p_value=result.log10_p_value,
-                extra_code=result.extra_code,
-            ),
-            stage_timing_recorder=self.stage_timing_recorder,
-        )
+        return result
 
     def compute_preprocessed_variant_major_chunk(
         self,
         *,
-        variant_metadata: typing.Any,
+        variant_metadata: _core.VariantMetadata,
         genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
-        allele_one_frequency: jax.Array | npt.NDArray[np.float32],
-        observation_count: jax.Array | npt.NDArray[np.int32],
+        chunk_stats: _core.ChunkStats,
     ) -> None:
-        """Compute one already-preprocessed variant-major chunk and write it."""
+        """Compute one Rust-preprocessed variant-major chunk and write it."""
         chromosome = get_metadata_chromosome(variant_metadata)
         if chromosome != self.current_chromosome:
             chromosome_start_time = time.perf_counter()
@@ -776,48 +949,22 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             chromosome_state=self.current_chromosome_state,
             genotype_matrix=jnp.transpose(genotype_device_array),
             correction=self.correction,
+            sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
         )
         block_until_ready(result.log10_p_value)
         record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
         record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
-        write_regenie2_chunk_with_optional_timing(
+        write_regenie2_native_chunk_with_optional_timing(
             writer_session=self.writer_session,
-            chunk_accumulator=build_chunk_accumulator(
-                metadata=variant_metadata,
-                allele_one_frequency=allele_one_frequency,
-                observation_count=observation_count,
-                beta=result.beta,
-                standard_error=result.standard_error,
-                chi_squared=result.chi_squared,
-                log10_p_value=result.log10_p_value,
-                extra_code=result.extra_code,
-            ),
+            metadata=variant_metadata,
+            chunk_stats=chunk_stats,
+            beta=result.beta,
+            standard_error=result.standard_error,
+            chi_squared=result.chi_squared,
+            log10_p_value=result.log10_p_value,
+            extra_code=result.extra_code,
             stage_timing_recorder=self.stage_timing_recorder,
         )
-
-
-def build_chunk_accumulator(
-    *,
-    metadata: typing.Any,
-    allele_one_frequency: jax.Array | npt.NDArray[np.float32],
-    observation_count: jax.Array | npt.NDArray[np.int32],
-    beta: jax.Array,
-    standard_error: jax.Array,
-    chi_squared: jax.Array,
-    log10_p_value: jax.Array,
-    extra_code: jax.Array | None,
-) -> engine_types.Regenie2ChunkAccumulator:
-    """Build one chunk accumulator from Rust-side metadata and JAX outputs."""
-    return engine_types.Regenie2ChunkAccumulator(
-        metadata=metadata,
-        allele_one_frequency=allele_one_frequency,
-        observation_count=observation_count,
-        beta=beta,
-        standard_error=standard_error,
-        chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
-        extra_code=extra_code,
-    )
 
 
 @dataclass(frozen=True)
@@ -896,7 +1043,7 @@ def warm_regenie2_linear_bgen_cache(
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
-    aligned_sample_data = load_bgen_aligned_sample_data(
+    run_input = load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
         phenotype_path=phenotype_path,
@@ -908,12 +1055,12 @@ def warm_regenie2_linear_bgen_cache(
     prediction_source = build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
-        aligned_sample_data=aligned_sample_data,
+        run_input=run_input,
     )
     chromosome = first_engine_chromosome(engine)
     regenie_state = regenie2_linear.prepare_regenie2_linear_state(
-        covariate_matrix=aligned_sample_data.covariate_matrix,
-        phenotype_vector=aligned_sample_data.phenotype_vector,
+        covariate_matrix=run_input.covariate_matrix,
+        phenotype_vector=run_input.phenotype_vector,
     )
     chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
         regenie_state,
@@ -923,11 +1070,11 @@ def warm_regenie2_linear_bgen_cache(
         engine=engine,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
-        sample_count=int(aligned_sample_data.sample_indices.shape[0]),
+        sample_count=int(run_input.sample_indices.shape[0]),
     )
     for shape in shapes:
         genotype_matrix = build_synthetic_genotype_matrix(
-            phenotype_vector=aligned_sample_data.phenotype_vector,
+            phenotype_vector=run_input.phenotype_vector,
             variant_count=shape.variant_count,
             is_binary_trait=False,
         )
@@ -959,7 +1106,7 @@ def warm_regenie2_binary_bgen_cache(
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
-    aligned_sample_data = load_bgen_aligned_sample_data(
+    run_input = load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
         phenotype_path=phenotype_path,
@@ -971,12 +1118,12 @@ def warm_regenie2_binary_bgen_cache(
     prediction_source = build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
-        aligned_sample_data=aligned_sample_data,
+        run_input=run_input,
     )
     chromosome = first_engine_chromosome(engine)
     regenie_state = regenie2_binary.prepare_regenie2_binary_state(
-        covariate_matrix=aligned_sample_data.covariate_matrix,
-        phenotype_vector=aligned_sample_data.phenotype_vector,
+        covariate_matrix=run_input.covariate_matrix,
+        phenotype_vector=run_input.phenotype_vector,
     )
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         regenie_state,
@@ -986,11 +1133,11 @@ def warm_regenie2_binary_bgen_cache(
         engine=engine,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
-        sample_count=int(aligned_sample_data.sample_indices.shape[0]),
+        sample_count=int(run_input.sample_indices.shape[0]),
     )
     for shape in shapes:
         genotype_matrix = build_synthetic_genotype_matrix(
-            phenotype_vector=aligned_sample_data.phenotype_vector,
+            phenotype_vector=run_input.phenotype_vector,
             variant_count=shape.variant_count,
             is_binary_trait=True,
         )
@@ -1042,7 +1189,7 @@ def run_regenie2_linear_bgen_pipeline(
     )
     record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
     alignment_start_time = time.perf_counter()
-    aligned_sample_data = load_bgen_aligned_sample_data(
+    run_input = load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
         phenotype_path=phenotype_path,
@@ -1065,11 +1212,11 @@ def run_regenie2_linear_bgen_pipeline(
     prediction_source = build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
-        aligned_sample_data=aligned_sample_data,
+        run_input=run_input,
     )
     record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
     callback = LinearRegenie2PipelineCallback(
-        aligned_sample_data=aligned_sample_data,
+        run_input=run_input,
         prediction_source=prediction_source,
         writer_session=writer_session,
         staging_depth=prefetch_chunks,
@@ -1077,7 +1224,7 @@ def run_regenie2_linear_bgen_pipeline(
     )
     return run_bgen_engine_with_callback(
         engine=engine,
-        aligned_sample_data=aligned_sample_data,
+        run_input=run_input,
         committed_chunk_identifiers=committed_chunk_identifiers,
         writer_session=writer_session,
         callback=callback,
@@ -1117,7 +1264,7 @@ def run_regenie2_binary_bgen_pipeline(
     )
     record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
     alignment_start_time = time.perf_counter()
-    aligned_sample_data = load_bgen_aligned_sample_data(
+    run_input = load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
         phenotype_path=phenotype_path,
@@ -1140,11 +1287,11 @@ def run_regenie2_binary_bgen_pipeline(
     prediction_source = build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
-        aligned_sample_data=aligned_sample_data,
+        run_input=run_input,
     )
     record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
     callback = BinaryRegenie2PipelineCallback(
-        aligned_sample_data=aligned_sample_data,
+        run_input=run_input,
         prediction_source=prediction_source,
         writer_session=writer_session,
         correction=correction,
@@ -1153,7 +1300,7 @@ def run_regenie2_binary_bgen_pipeline(
     )
     return run_bgen_engine_with_callback(
         engine=engine,
-        aligned_sample_data=aligned_sample_data,
+        run_input=run_input,
         committed_chunk_identifiers=committed_chunk_identifiers,
         writer_session=writer_session,
         callback=callback,
@@ -1173,13 +1320,36 @@ def load_bgen_aligned_sample_data(
     is_binary_trait: bool,
 ) -> models.AlignedSampleData:
     """Load aligned samples for the native BGEN pipeline."""
+    run_input = load_native_bgen_run_input(
+        genotype_source_config=genotype_source_config,
+        engine=engine,
+        phenotype_path=phenotype_path,
+        phenotype_name=phenotype_name,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
+        is_binary_trait=is_binary_trait,
+    )
+    return build_aligned_sample_data_from_native(run_input.native_aligned_sample_data)
+
+
+def load_native_bgen_run_input(
+    *,
+    genotype_source_config: source.GenotypeSourceConfig,
+    engine: _core.Regenie2RunEngine,
+    phenotype_path: Path,
+    phenotype_name: str,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    is_binary_trait: bool,
+) -> NativeBgenRunInput:
+    """Load native-aligned samples and JAX compute inputs for a native BGEN run."""
     source.validate_genotype_source_config(genotype_source_config)
     resolved_sample_path = bgen.resolve_bgen_sample_path(
         genotype_source_config.source_path,
         genotype_source_config.sample_path,
     )
     if resolved_sample_path is not None:
-        return load_rust_aligned_sample_data_from_sample_file(
+        native_aligned_sample_data = load_native_aligned_sample_data_from_sample_file(
             sample_path=resolved_sample_path,
             expected_sample_count=engine.sample_count,
             phenotype_path=phenotype_path,
@@ -1188,9 +1358,10 @@ def load_bgen_aligned_sample_data(
             covariate_names=covariate_names,
             is_binary_trait=is_binary_trait,
         )
+        return build_native_bgen_run_input(native_aligned_sample_data)
     if engine.contains_embedded_samples:
         sample_table = bgen.build_sample_identifier_table(np.asarray(engine.sample_identifiers(), dtype=np.str_))
-        return load_rust_aligned_sample_data_from_individual_identifier_table(
+        native_aligned_sample_data = load_native_aligned_sample_data_from_individual_identifier_table(
             sample_table=sample_table,
             phenotype_path=phenotype_path,
             phenotype_name=phenotype_name,
@@ -1198,6 +1369,7 @@ def load_bgen_aligned_sample_data(
             covariate_names=covariate_names,
             is_binary_trait=is_binary_trait,
         )
+        return build_native_bgen_run_input(native_aligned_sample_data)
     message = "BGEN file does not contain samples and no .sample file was found."
     raise ValueError(message)
 
@@ -1206,16 +1378,13 @@ def build_regenie_prediction_source(
     *,
     prediction_list_path: Path,
     phenotype_name: str,
-    aligned_sample_data: models.AlignedSampleData,
+    run_input: NativeBgenRunInput,
 ) -> _core.RegeniePredictionSource:
     """Load Rust-owned REGENIE step 1 predictions aligned to the run samples."""
-    sample_family_identifiers = typing.cast("list[str]", aligned_sample_data.family_identifiers.tolist())
-    sample_individual_identifiers = typing.cast("list[str]", aligned_sample_data.individual_identifiers.tolist())
-    return _core.RegeniePredictionSource(
+    return _core.RegeniePredictionSource.from_native_aligned_sample_data(
         str(prediction_list_path),
         phenotype_name,
-        sample_family_identifiers,
-        sample_individual_identifiers,
+        run_input.native_aligned_sample_data,
     )
 
 
@@ -1241,7 +1410,7 @@ def build_bgen_run_engine(
 def run_bgen_engine_with_callback(
     *,
     engine: _core.Regenie2RunEngine,
-    aligned_sample_data: models.AlignedSampleData,
+    run_input: NativeBgenRunInput,
     committed_chunk_identifiers: set[int] | None,
     writer_session: typing.Any,
     callback: object,
@@ -1253,7 +1422,7 @@ def run_bgen_engine_with_callback(
         if stage_timing_recorder is not None:
             engine.reset_profile()
         engine_delivery_start_time = time.perf_counter()
-        sample_indices = np.ascontiguousarray(aligned_sample_data.sample_indices, dtype=np.int64)
+        sample_indices = run_input.sample_indices
         committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
         if variant_major_dosage:
             engine.run_bgen_variant_major_dosage_buffered_chunks(

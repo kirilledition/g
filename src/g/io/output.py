@@ -8,7 +8,6 @@ import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-import jax
 import polars as pl
 
 from g import _core, types
@@ -164,31 +163,6 @@ def write_chunk_to_disk(
     except Exception:
         writer_session.abort()
         raise
-
-
-def write_regenie2_chunk(writer_session: typing.Any, chunk_accumulator: engine_types.Regenie2ChunkAccumulator) -> None:
-    """Move one computed chunk from device memory into the Rust output sink."""
-    host_values = jax.device_get(
-        {
-            "allele_one_frequency": chunk_accumulator.allele_one_frequency,
-            "observation_count": chunk_accumulator.observation_count,
-            "beta": chunk_accumulator.beta,
-            "standard_error": chunk_accumulator.standard_error,
-            "chi_squared": chunk_accumulator.chi_squared,
-            "log10_p_value": chunk_accumulator.log10_p_value,
-            "extra_code": chunk_accumulator.extra_code,
-        }
-    )
-    writer_session.write_regenie2_chunk(
-        metadata=chunk_accumulator.metadata,
-        allele_one_frequency=host_values["allele_one_frequency"],
-        observation_count=host_values["observation_count"],
-        beta=host_values["beta"],
-        standard_error=host_values["standard_error"],
-        chi_squared=host_values["chi_squared"],
-        log10_p_value=host_values["log10_p_value"],
-        extra_code=host_values["extra_code"],
-    )
 
 
 def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:

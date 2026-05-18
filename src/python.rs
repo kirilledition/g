@@ -41,8 +41,8 @@ impl ChunkSpec {
 }
 
 #[pyclass]
-struct ChunkStats {
-    stats: NativeChunkStats,
+pub(crate) struct ChunkStats {
+    pub(crate) stats: NativeChunkStats,
 }
 
 impl ChunkStats {
@@ -67,17 +67,52 @@ impl ChunkStats {
     fn has_missing_values(&self) -> bool {
         self.stats.has_missing_values
     }
+
+    #[getter]
+    fn info_score<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
+        self.stats
+            .info_score
+            .iter()
+            .map(|maybe_info_score| maybe_info_score.unwrap_or(f32::NAN))
+            .collect::<Vec<_>>()
+            .into_pyarray(py)
+    }
+
+    #[getter]
+    fn minor_allele_count<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
+        self.stats.minor_allele_count.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    fn zero_count<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i32>> {
+        self.stats.zero_count.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    fn nonzero_count<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i32>> {
+        self.stats.nonzero_count.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    fn is_sparse_candidate<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
+        self.stats.is_sparse_candidate.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    fn is_rare_sparse_firth_candidate<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
+        self.stats.is_rare_sparse_firth_candidate.clone().into_pyarray(py)
+    }
 }
 
 #[pyclass]
-struct VariantMetadata {
-    variant_start_index: usize,
-    variant_stop_index: usize,
-    metadata: VariantMetadataColumns,
+pub(crate) struct VariantMetadata {
+    pub(crate) variant_start_index: usize,
+    pub(crate) variant_stop_index: usize,
+    pub(crate) metadata: VariantMetadataColumns,
 }
 
 #[pyclass]
-struct NativeAlignedSampleData {
+pub(crate) struct NativeAlignedSampleData {
     sample_indices: Vec<i64>,
     family_identifiers: Vec<String>,
     individual_identifiers: Vec<String>,
@@ -675,6 +710,23 @@ impl RegeniePredictionSource {
             &phenotype_name,
             &sample_family_identifiers,
             &sample_individual_identifiers,
+        )
+        .map_err(convert_prediction_error)?;
+        Ok(Self { source })
+    }
+
+    #[staticmethod]
+    #[allow(clippy::needless_pass_by_value)]
+    fn from_native_aligned_sample_data(
+        prediction_list_path: String,
+        phenotype_name: String,
+        aligned_sample_data: PyRef<'_, NativeAlignedSampleData>,
+    ) -> PyResult<Self> {
+        let source = PredictionSource::load(
+            Path::new(&prediction_list_path),
+            &phenotype_name,
+            &aligned_sample_data.family_identifiers,
+            &aligned_sample_data.individual_identifiers,
         )
         .map_err(convert_prediction_error)?;
         Ok(Self { source })

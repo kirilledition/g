@@ -6,35 +6,8 @@ import typing
 from dataclasses import dataclass
 
 if typing.TYPE_CHECKING:
-    import jax
     import numpy as np
     import numpy.typing as npt
-
-
-@dataclass(frozen=True)
-class Regenie2ChunkAccumulator:
-    """Device-resident association results for one variant chunk.
-
-    Attributes:
-        metadata: Variant metadata for the accumulated chunk.
-        allele_one_frequency: Counted allele frequency per variant.
-        observation_count: Non-missing observation count per variant.
-        beta: Coefficient estimate per variant.
-        standard_error: Standard error per variant.
-        chi_squared: Chi-squared statistic per variant.
-        log10_p_value: Negative base-10 p-value per variant.
-        extra_code: Optional method/status code per variant.
-
-    """
-
-    metadata: typing.Any
-    allele_one_frequency: jax.Array | npt.NDArray[np.float32]
-    observation_count: jax.Array | npt.NDArray[np.int32]
-    beta: jax.Array
-    standard_error: jax.Array
-    chi_squared: jax.Array
-    log10_p_value: jax.Array
-    extra_code: jax.Array | None
 
 
 @dataclass(frozen=True)

@@ -173,6 +173,30 @@ def test_regenie_prediction_source_loads_aligned_loco_predictions(tmp_path: Path
     np.testing.assert_allclose(prediction_source.get_chromosome_predictions("1"), [3.0, 1.0], atol=1e-6)
 
 
+def test_regenie_prediction_source_loads_from_native_aligned_sample_data(tmp_path: Path) -> None:
+    loco_path = tmp_path / "trait.loco"
+    loco_path.write_text("FID_IID 0_A 0_B 0_C\nchr22 0.1 0.2 0.3\n")
+    prediction_list_path = tmp_path / "trait_pred.list"
+    prediction_list_path.write_text(f"trait {loco_path}\n")
+    phenotype_path = tmp_path / "phenotypes.tsv"
+    phenotype_path.write_text("IID\ttrait\nC\t1.0\nA\t2.0\n")
+    native_aligned_sample_data = _core.align_sample_data(
+        np.asarray([0, 1], dtype=np.int64),
+        ["0", "0"],
+        ["C", "A"],
+        str(phenotype_path),
+        "trait",
+    )
+
+    prediction_source = _core.RegeniePredictionSource.from_native_aligned_sample_data(
+        str(prediction_list_path),
+        "trait",
+        native_aligned_sample_data,
+    )
+
+    np.testing.assert_allclose(prediction_source.get_chromosome_predictions("chr22"), [0.3, 0.1], atol=1e-6)
+
+
 def test_regenie_prediction_source_reports_missing_samples(tmp_path: Path) -> None:
     loco_path = tmp_path / "trait.loco"
     loco_path.write_text("FID_IID 0_A\n22 0.1\n")

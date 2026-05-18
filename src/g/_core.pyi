@@ -11,6 +11,12 @@ class ChunkStats:
     allele_one_frequency: npt.NDArray[np.float32]
     observation_count: npt.NDArray[np.int32]
     has_missing_values: bool
+    info_score: npt.NDArray[np.float32]
+    minor_allele_count: npt.NDArray[np.float32]
+    zero_count: npt.NDArray[np.int32]
+    nonzero_count: npt.NDArray[np.int32]
+    is_sparse_candidate: npt.NDArray[np.bool_]
+    is_rare_sparse_firth_candidate: npt.NDArray[np.bool_]
 
 class VariantMetadata:
     variant_start_index: int
@@ -138,6 +144,12 @@ class RegeniePredictionSource:
         sample_family_identifiers: list[str],
         sample_individual_identifiers: list[str],
     ) -> None: ...
+    @staticmethod
+    def from_native_aligned_sample_data(
+        prediction_list_path: str,
+        phenotype_name: str,
+        aligned_sample_data: NativeAlignedSampleData,
+    ) -> RegeniePredictionSource: ...
     def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]: ...
 
 class OutputWriterSession:
@@ -156,6 +168,17 @@ class OutputWriterSession:
         metadata: object,
         allele_one_frequency: npt.NDArray[np.float32],
         observation_count: npt.NDArray[np.int32],
+        beta: npt.NDArray[np.float32],
+        standard_error: npt.NDArray[np.float32],
+        chi_squared: npt.NDArray[np.float32],
+        log10_p_value: npt.NDArray[np.float32],
+        extra_code: npt.NDArray[np.int32] | None = None,
+    ) -> None: ...
+    def write_regenie2_native_chunk(
+        self,
+        *,
+        metadata: VariantMetadata,
+        chunk_stats: ChunkStats,
         beta: npt.NDArray[np.float32],
         standard_error: npt.NDArray[np.float32],
         chi_squared: npt.NDArray[np.float32],

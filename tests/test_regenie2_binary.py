@@ -227,6 +227,27 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
     assert bool(np.asarray(result.valid_mask[0]))
 
 
+def test_sparse_candidate_mask_does_not_expand_score_candidates() -> None:
+    genotype_matrix, chromosome_state = build_chromosome_state()
+    low_score_genotype_matrix = genotype_matrix[:, :1]
+    score_result = compute_score_test_chunk(
+        chromosome_state,
+        low_score_genotype_matrix,
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    )
+    assert int(np.asarray(score_result.extra_code[0])) == regenie2_binary.EXTRA_CODE_SCORE
+
+    sparse_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
+        chromosome_state,
+        low_score_genotype_matrix,
+        RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+        jnp.asarray([True], dtype=jnp.bool_),
+    )
+
+    assert int(np.asarray(sparse_result.extra_code[0])) == regenie2_binary.EXTRA_CODE_SCORE
+    assert int(np.asarray(sparse_result.firth_iteration_count[0])) == 0
+
+
 def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     genotype_matrix, chromosome_state = build_chromosome_state()
     score_result = compute_score_test_chunk(

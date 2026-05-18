@@ -8,6 +8,7 @@ from unittest.mock import patch
 import jax.numpy as jnp
 import numpy as np
 
+from g import types
 from g.compute import regenie2_binary_types, regenie2_linear, regenie2_linear_types
 from g.engine import regenie2_pipeline
 from g.io import models, output, source
@@ -30,7 +31,18 @@ class FakePredictionSource:
         self.phenotype_name = phenotype_name
         self.sample_family_identifiers = sample_family_identifiers
         self.sample_individual_identifiers = sample_individual_identifiers
+        self.native_aligned_sample_data: object | None = None
         FakePredictionSource.instances.append(self)
+
+    @staticmethod
+    def from_native_aligned_sample_data(
+        prediction_list_path: str,
+        phenotype_name: str,
+        aligned_sample_data: object,
+    ) -> FakePredictionSource:
+        prediction_source = FakePredictionSource(prediction_list_path, phenotype_name)
+        prediction_source.native_aligned_sample_data = aligned_sample_data
+        return prediction_source
 
     def get_chromosome_predictions(self, chromosome: str) -> np.ndarray:
         del chromosome
@@ -41,6 +53,14 @@ class FakeWriterSession:
     def __init__(self) -> None:
         self.finished = False
         self.aborted = False
+        self.python_chunks: list[dict[str, object]] = []
+        self.native_chunks: list[dict[str, object]] = []
+
+    def write_regenie2_chunk(self, **kwargs: object) -> None:
+        self.python_chunks.append(kwargs)
+
+    def write_regenie2_native_chunk(self, **kwargs: object) -> None:
+        self.native_chunks.append(kwargs)
 
     def finish(self) -> str:
         self.finished = True
@@ -143,6 +163,25 @@ def build_aligned_sample_data() -> models.AlignedSampleData:
     )
 
 
+def build_native_aligned_sample_data() -> SimpleNamespace:
+    return SimpleNamespace(
+        sample_indices=np.asarray([1, 0], dtype=np.int64),
+        phenotype_vector=np.asarray([0.0, 1.0], dtype=np.float32),
+        covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
+        is_binary_trait=False,
+    )
+
+
+def build_native_run_input() -> regenie2_pipeline.NativeBgenRunInput:
+    return regenie2_pipeline.NativeBgenRunInput(
+        native_aligned_sample_data=typing.cast("typing.Any", build_native_aligned_sample_data()),
+        sample_indices=np.asarray([1, 0], dtype=np.int64),
+        phenotype_vector=jnp.asarray([0.0, 1.0], dtype=jnp.float32),
+        covariate_matrix=jnp.asarray([[1.0], [1.0]], dtype=jnp.float32),
+        is_binary_trait=False,
+    )
+
+
 def build_native_metadata() -> typing.Any:
     return SimpleNamespace(
         variant_start_index=5,
@@ -153,6 +192,24 @@ def build_native_metadata() -> typing.Any:
         allele_one=["A", "C"],
         allele_two=["G", "T"],
     )
+
+
+class ExplodingChunkStats:
+    @property
+    def allele_one_frequency(self) -> np.ndarray:
+        message = "Python must not unwrap allele_one_frequency from native chunk stats."
+        raise AssertionError(message)
+
+    @property
+    def observation_count(self) -> np.ndarray:
+        message = "Python must not unwrap observation_count from native chunk stats."
+        raise AssertionError(message)
+
+
+class SparseOnlyChunkStats(ExplodingChunkStats):
+    @property
+    def is_sparse_candidate(self) -> np.ndarray:
+        return np.asarray([True, False], dtype=np.bool_)
 
 
 def test_build_variant_metadata_converts_native_columns() -> None:
@@ -167,7 +224,7 @@ def test_build_variant_metadata_converts_native_columns() -> None:
 
 
 def test_linear_callback_computes_and_writes_chunk() -> None:
-    writer_session = object()
+    writer_session = FakeWriterSession()
     result = regenie2_linear_types.Regenie2LinearChunkResult(
         beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
@@ -176,7 +233,7 @@ def test_linear_callback_computes_and_writes_chunk() -> None:
         valid_mask=jnp.asarray([True, True]),
     )
     callback = regenie2_pipeline.LinearRegenie2PipelineCallback(
-        aligned_sample_data=build_aligned_sample_data(),
+        run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
     )
@@ -190,7 +247,6 @@ def test_linear_callback_computes_and_writes_chunk() -> None:
             "g.engine.regenie2_pipeline.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ) as mock_compute,
-        patch("g.engine.regenie2_pipeline.output.write_regenie2_chunk") as mock_write,
     ):
         callback.compute_chunk(
             metadata=build_native_metadata(),
@@ -202,13 +258,14 @@ def test_linear_callback_computes_and_writes_chunk() -> None:
 
     assert callback.processed_chunk_count == 1
     mock_compute.assert_called_once()
-    written_accumulator = mock_write.call_args.args[1]
-    assert written_accumulator.metadata.variant_start_index == 5
-    np.testing.assert_allclose(np.asarray(written_accumulator.allele_one_frequency), [0.25, 0.75])
+    assert len(writer_session.python_chunks) == 1
+    written_chunk = writer_session.python_chunks[0]
+    assert typing.cast("typing.Any", written_chunk["metadata"]).variant_start_index == 5
+    np.testing.assert_allclose(np.asarray(written_chunk["allele_one_frequency"]), [0.25, 0.75])
 
 
 def test_linear_callback_preprocesses_dosage_chunk_on_device() -> None:
-    writer_session = object()
+    writer_session = FakeWriterSession()
     result = regenie2_linear_types.Regenie2LinearChunkResult(
         beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
@@ -217,7 +274,7 @@ def test_linear_callback_preprocesses_dosage_chunk_on_device() -> None:
         valid_mask=jnp.asarray([True, True]),
     )
     callback = regenie2_pipeline.LinearRegenie2PipelineCallback(
-        aligned_sample_data=build_aligned_sample_data(),
+        run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
     )
@@ -231,7 +288,6 @@ def test_linear_callback_preprocesses_dosage_chunk_on_device() -> None:
             "g.engine.regenie2_pipeline.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ),
-        patch("g.engine.regenie2_pipeline.output.write_regenie2_chunk") as mock_write,
     ):
         callback.compute_dosage_chunk(
             metadata=build_native_metadata(),
@@ -239,21 +295,100 @@ def test_linear_callback_preprocesses_dosage_chunk_on_device() -> None:
         )
         callback.finish()
 
-    written_accumulator = mock_write.call_args.args[1]
-    np.testing.assert_allclose(np.asarray(written_accumulator.allele_one_frequency), [0.5, 0.5])
-    np.testing.assert_array_equal(np.asarray(written_accumulator.observation_count), [2, 1])
+    written_chunk = writer_session.python_chunks[0]
+    np.testing.assert_allclose(np.asarray(written_chunk["allele_one_frequency"]), [0.5, 0.5])
+    np.testing.assert_array_equal(np.asarray(written_chunk["observation_count"]), [2, 1])
+
+
+def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -> None:
+    writer_session = FakeWriterSession()
+    result = regenie2_linear_types.Regenie2LinearChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    callback = regenie2_pipeline.LinearRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+    )
+    chunk_stats = typing.cast("typing.Any", ExplodingChunkStats())
+
+    with (
+        patch(
+            "g.engine.regenie2_pipeline.regenie2_linear.prepare_regenie2_linear_chromosome_state",
+            return_value="chromosome-state",
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
+            return_value=result,
+        ),
+    ):
+        callback.compute_preprocessed_dosage_chunk(
+            metadata=build_native_metadata(),
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=chunk_stats,
+        )
+        callback.finish()
+
+    assert len(writer_session.native_chunks) == 1
+    assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
+
+
+def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats() -> None:
+    writer_session = FakeWriterSession()
+    result = regenie2_binary_types.Regenie2BinaryChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        extra_code=jnp.asarray([0, 1], dtype=jnp.int32),
+        valid_mask=jnp.asarray([True, True]),
+        firth_iteration_count=jnp.asarray([0, 2], dtype=jnp.int32),
+        firth_failure_code=jnp.asarray([0, 0], dtype=jnp.int32),
+    )
+    callback = regenie2_pipeline.BinaryRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+        correction=types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    )
+    chunk_stats = typing.cast("typing.Any", SparseOnlyChunkStats())
+
+    with (
+        patch(
+            "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_chromosome_state",
+            return_value="chromosome-state",
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
+            return_value=result,
+        ) as mock_compute,
+    ):
+        callback.compute_preprocessed_dosage_chunk(
+            metadata=build_native_metadata(),
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=chunk_stats,
+        )
+        callback.finish()
+
+    sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
+    np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False])
+    assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
 def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     FakeRunEngine.instances.clear()
     FakePredictionSource.instances.clear()
     writer_session = FakeWriterSession()
-    aligned_sample_data = build_aligned_sample_data()
+    run_input = build_native_run_input()
 
     with (
         patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
-        patch("g.engine.regenie2_pipeline.load_bgen_aligned_sample_data", return_value=aligned_sample_data),
+        patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
         patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
         patch.object(
             regenie2_linear,
@@ -297,20 +432,19 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     prediction_source = FakePredictionSource.instances[0]
     assert prediction_source.prediction_list_path == "pred.list"
     assert prediction_source.phenotype_name == "trait"
-    assert prediction_source.sample_family_identifiers == ["family1", "family2"]
-    assert prediction_source.sample_individual_identifiers == ["sample1", "sample2"]
+    assert prediction_source.native_aligned_sample_data is run_input.native_aligned_sample_data
 
 
 def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None:
     FakeRunEngine.instances.clear()
     FakePredictionSource.instances.clear()
     writer_session = FakeWriterSession()
-    aligned_sample_data = build_aligned_sample_data()
+    run_input = build_native_run_input()
 
     with (
         patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
-        patch("g.engine.regenie2_pipeline.load_bgen_aligned_sample_data", return_value=aligned_sample_data),
+        patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
         patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
         patch(
             "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_state",
@@ -347,12 +481,12 @@ def test_binary_pipeline_uses_sample_major_engine_for_untrusted_bgen() -> None:
     FakeRunEngine.instances.clear()
     FakePredictionSource.instances.clear()
     writer_session = FakeWriterSession()
-    aligned_sample_data = build_aligned_sample_data()
+    run_input = build_native_run_input()
 
     with (
         patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
-        patch("g.engine.regenie2_pipeline.load_bgen_aligned_sample_data", return_value=aligned_sample_data),
+        patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
         patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
         patch(
             "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_state",
@@ -415,8 +549,8 @@ def test_load_bgen_aligned_sample_data_rejects_non_bgen_source_suffix() -> None:
         )
 
 
-def test_load_bgen_aligned_sample_data_uses_rust_alignment_for_embedded_samples() -> None:
-    expected_aligned_sample_data = object()
+def test_load_native_bgen_run_input_uses_rust_alignment_for_embedded_samples() -> None:
+    native_aligned_sample_data = build_native_aligned_sample_data()
     engine = SimpleNamespace(
         sample_count=2,
         contains_embedded_samples=True,
@@ -426,11 +560,11 @@ def test_load_bgen_aligned_sample_data_uses_rust_alignment_for_embedded_samples(
     with (
         patch("g.engine.regenie2_pipeline.bgen.resolve_bgen_sample_path", return_value=None),
         patch(
-            "g.engine.regenie2_pipeline.load_rust_aligned_sample_data_from_individual_identifier_table",
-            return_value=expected_aligned_sample_data,
+            "g.engine.regenie2_pipeline.load_native_aligned_sample_data_from_individual_identifier_table",
+            return_value=native_aligned_sample_data,
         ) as mock_load_from_sample_table,
     ):
-        aligned_sample_data = regenie2_pipeline.load_bgen_aligned_sample_data(
+        run_input = regenie2_pipeline.load_native_bgen_run_input(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
             engine=typing.cast("typing.Any", engine),
             phenotype_path=Path("phenotype.tsv"),
@@ -440,12 +574,13 @@ def test_load_bgen_aligned_sample_data_uses_rust_alignment_for_embedded_samples(
             is_binary_trait=True,
         )
 
-    assert aligned_sample_data is expected_aligned_sample_data
+    assert run_input.native_aligned_sample_data is native_aligned_sample_data
+    np.testing.assert_array_equal(run_input.sample_indices, np.asarray([1, 0], dtype=np.int64))
     mock_load_from_sample_table.assert_called_once()
 
 
-def test_load_bgen_aligned_sample_data_uses_rust_sample_file_alignment() -> None:
-    expected_aligned_sample_data = object()
+def test_load_native_bgen_run_input_uses_rust_sample_file_alignment() -> None:
+    native_aligned_sample_data = build_native_aligned_sample_data()
     engine = SimpleNamespace(
         sample_count=2,
         contains_embedded_samples=False,
@@ -455,11 +590,11 @@ def test_load_bgen_aligned_sample_data_uses_rust_sample_file_alignment() -> None
     with (
         patch("g.engine.regenie2_pipeline.bgen.resolve_bgen_sample_path", return_value=sample_path),
         patch(
-            "g.engine.regenie2_pipeline.load_rust_aligned_sample_data_from_sample_file",
-            return_value=expected_aligned_sample_data,
+            "g.engine.regenie2_pipeline.load_native_aligned_sample_data_from_sample_file",
+            return_value=native_aligned_sample_data,
         ) as mock_rust_sample_file_load,
     ):
-        aligned_sample_data = regenie2_pipeline.load_bgen_aligned_sample_data(
+        run_input = regenie2_pipeline.load_native_bgen_run_input(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
             engine=typing.cast("typing.Any", engine),
             phenotype_path=Path("phenotype.tsv"),
@@ -469,7 +604,7 @@ def test_load_bgen_aligned_sample_data_uses_rust_sample_file_alignment() -> None
             is_binary_trait=True,
         )
 
-    assert aligned_sample_data is expected_aligned_sample_data
+    assert run_input.native_aligned_sample_data is native_aligned_sample_data
     mock_rust_sample_file_load.assert_called_once_with(
         sample_path=sample_path,
         expected_sample_count=2,

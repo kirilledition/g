@@ -8,7 +8,6 @@ use std::thread::JoinHandle;
 
 use arrow::array::{
     Array, ArrayRef, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray, StringDictionaryBuilder,
-    new_null_array,
 };
 use arrow::datatypes::{DataType, Field, Int8Type, Int32Type, Schema};
 use arrow::ipc::CompressionType;
@@ -23,6 +22,9 @@ use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+
+use crate::genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
+use crate::python::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata};
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 const REGENIE_STEP2_CHUNKS_PER_ARROW_FILE: usize = 4;
@@ -45,6 +47,7 @@ struct RegenieStep2ChunkJob {
     allele0: Vec<String>,
     allele1: Vec<String>,
     a1freq: Vec<f32>,
+    info: Vec<Option<f32>>,
     n: Vec<i32>,
     beta: Vec<f32>,
     se: Vec<f32>,
@@ -137,11 +140,6 @@ impl OutputWriterSession {
         log10_p_value: PyReadonlyArray1<'_, f32>,
         extra_code: Option<PyReadonlyArray1<'_, i32>>,
     ) -> PyResult<()> {
-        if self.config.association_mode != "regenie2_linear" && self.config.association_mode != "regenie2_binary" {
-            return Err(PyValueError::new_err(
-                "Rust output backend only supports REGENIE step 2 quantitative and binary output.",
-            ));
-        }
         let variant_start_index = metadata.getattr("variant_start_index")?.extract::<i64>()?;
         let variant_stop_index = metadata.getattr("variant_stop_index")?.extract::<i64>()?;
         let chromosome = extract_string_column(metadata, "chromosome")?;
@@ -150,53 +148,70 @@ impl OutputWriterSession {
         let variant_identifier = extract_string_column(metadata, "variant_identifiers")?;
         let allele_one = extract_string_column(metadata, "allele_one")?;
         let allele_zero = extract_string_column(metadata, "allele_two")?;
-
-        let row_count = position.len();
-        let observed_lengths = [
-            chromosome.len(),
-            variant_identifier.len(),
-            allele_zero.len(),
-            allele_one.len(),
-            allele_one_frequency.len(),
-            observation_count.len(),
-            beta.len(),
-            standard_error.len(),
-            chi_squared.len(),
-            log10_p_value.len(),
-        ];
-        validate_column_lengths(row_count, observed_lengths.as_slice())?;
-        if let Some(extra_code_values) = extra_code.as_ref() {
-            validate_column_lengths(row_count, &[extra_code_values.len()])?;
-        }
-        let job = RegenieStep2ChunkJob {
-            chunk_identifier: variant_start_index,
+        let metadata_columns = VariantMetadataColumns {
+            chromosome,
+            variant_identifier,
+            position: position.as_slice()?.to_vec(),
+            allele_one,
+            allele_two: allele_zero,
+        };
+        let chunk_stats = NativeChunkStats {
+            allele_one_frequency: allele_one_frequency.as_slice()?.to_vec(),
+            observation_count: observation_count.as_slice()?.to_vec(),
+            has_missing_values: false,
+            dosage_sum: Vec::new(),
+            dosage_variance_numerator: Vec::new(),
+            info_score: vec![None; allele_one_frequency.len()],
+            allele_count: Vec::new(),
+            minor_allele_count: Vec::new(),
+            zero_count: Vec::new(),
+            nonzero_count: Vec::new(),
+            homozygous_reference_count: Vec::new(),
+            heterozygous_count: Vec::new(),
+            homozygous_alternate_count: Vec::new(),
+            is_sparse_candidate: Vec::new(),
+            is_rare_sparse_firth_candidate: Vec::new(),
+        };
+        self.write_regenie2_chunk_from_native_parts(
             variant_start_index,
             variant_stop_index,
-            chrom: chromosome,
-            genpos: position.as_slice()?.to_vec(),
-            id: variant_identifier,
-            allele0: allele_zero,
-            allele1: allele_one,
-            a1freq: allele_one_frequency.as_slice()?.to_vec(),
-            n: observation_count.as_slice()?.to_vec(),
-            beta: beta.as_slice()?.to_vec(),
-            se: standard_error.as_slice()?.to_vec(),
-            chisq: chi_squared.as_slice()?.to_vec(),
-            log10p: log10_p_value.as_slice()?.to_vec(),
-            extra_code: extra_code
-                .map(|extra_code_array| extra_code_array.as_slice().map(<[i32]>::to_vec))
-                .transpose()?,
-        };
-        self.raise_if_worker_failed()?;
-        let sender_guard =
-            self.sender.lock().map_err(|_| PyRuntimeError::new_err("Rust output writer sender lock was poisoned."))?;
-        let sender = sender_guard
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("Rust output writer session is already closed."))?;
-        sender
-            .send(OutputCoordinatorJob::RegenieStep2(Box::new(job)))
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        Ok(())
+            &metadata_columns,
+            &chunk_stats,
+            beta,
+            standard_error,
+            chi_squared,
+            log10_p_value,
+            extra_code,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (metadata, chunk_stats, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
+    fn write_regenie2_native_chunk(
+        &self,
+        metadata: PyRef<'_, PyVariantMetadata>,
+        chunk_stats: PyRef<'_, PyChunkStats>,
+        beta: PyReadonlyArray1<'_, f32>,
+        standard_error: PyReadonlyArray1<'_, f32>,
+        chi_squared: PyReadonlyArray1<'_, f32>,
+        log10_p_value: PyReadonlyArray1<'_, f32>,
+        extra_code: Option<PyReadonlyArray1<'_, i32>>,
+    ) -> PyResult<()> {
+        let variant_start_index = i64::try_from(metadata.variant_start_index)
+            .map_err(|_| PyValueError::new_err("Variant start index does not fit into int64 output."))?;
+        let variant_stop_index = i64::try_from(metadata.variant_stop_index)
+            .map_err(|_| PyValueError::new_err("Variant stop index does not fit into int64 output."))?;
+        self.write_regenie2_chunk_from_native_parts(
+            variant_start_index,
+            variant_stop_index,
+            &metadata.metadata,
+            &chunk_stats.stats,
+            beta,
+            standard_error,
+            chi_squared,
+            log10_p_value,
+            extra_code,
+        )
     }
 
     fn finish(&self) -> PyResult<Option<String>> {
@@ -245,6 +260,74 @@ pub fn scan_committed_chunk_identifiers(chunks_directory: String) -> PyResult<Ve
 }
 
 impl OutputWriterSession {
+    #[allow(clippy::too_many_arguments)]
+    fn write_regenie2_chunk_from_native_parts(
+        &self,
+        variant_start_index: i64,
+        variant_stop_index: i64,
+        metadata: &VariantMetadataColumns,
+        chunk_stats: &NativeChunkStats,
+        beta: PyReadonlyArray1<'_, f32>,
+        standard_error: PyReadonlyArray1<'_, f32>,
+        chi_squared: PyReadonlyArray1<'_, f32>,
+        log10_p_value: PyReadonlyArray1<'_, f32>,
+        extra_code: Option<PyReadonlyArray1<'_, i32>>,
+    ) -> PyResult<()> {
+        if self.config.association_mode != "regenie2_linear" && self.config.association_mode != "regenie2_binary" {
+            return Err(PyValueError::new_err(
+                "Rust output backend only supports REGENIE step 2 quantitative and binary output.",
+            ));
+        }
+        let row_count = metadata.position.len();
+        let observed_lengths = [
+            metadata.chromosome.len(),
+            metadata.variant_identifier.len(),
+            metadata.allele_two.len(),
+            metadata.allele_one.len(),
+            chunk_stats.allele_one_frequency.len(),
+            chunk_stats.info_score.len(),
+            chunk_stats.observation_count.len(),
+            beta.len(),
+            standard_error.len(),
+            chi_squared.len(),
+            log10_p_value.len(),
+        ];
+        validate_column_lengths(row_count, observed_lengths.as_slice())?;
+        if let Some(extra_code_values) = extra_code.as_ref() {
+            validate_column_lengths(row_count, &[extra_code_values.len()])?;
+        }
+        let job = RegenieStep2ChunkJob {
+            chunk_identifier: variant_start_index,
+            variant_start_index,
+            variant_stop_index,
+            chrom: metadata.chromosome.clone(),
+            genpos: metadata.position.clone(),
+            id: metadata.variant_identifier.clone(),
+            allele0: metadata.allele_two.clone(),
+            allele1: metadata.allele_one.clone(),
+            a1freq: chunk_stats.allele_one_frequency.clone(),
+            info: chunk_stats.info_score.clone(),
+            n: chunk_stats.observation_count.clone(),
+            beta: beta.as_slice()?.to_vec(),
+            se: standard_error.as_slice()?.to_vec(),
+            chisq: chi_squared.as_slice()?.to_vec(),
+            log10p: log10_p_value.as_slice()?.to_vec(),
+            extra_code: extra_code
+                .map(|extra_code_array| extra_code_array.as_slice().map(<[i32]>::to_vec))
+                .transpose()?,
+        };
+        self.raise_if_worker_failed()?;
+        let sender_guard =
+            self.sender.lock().map_err(|_| PyRuntimeError::new_err("Rust output writer sender lock was poisoned."))?;
+        let sender = sender_guard
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("Rust output writer session is already closed."))?;
+        sender
+            .send(OutputCoordinatorJob::RegenieStep2(Box::new(job)))
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(())
+    }
+
     fn raise_if_worker_failed(&self) -> PyResult<()> {
         let worker_errors = self
             .worker_errors
@@ -409,6 +492,7 @@ fn build_regenie_step2_record_batch(job: RegenieStep2ChunkWriteBatch) -> Result<
     let mut allele0 = Vec::with_capacity(row_count);
     let mut allele1 = Vec::with_capacity(row_count);
     let mut a1freq = Vec::with_capacity(row_count);
+    let mut info = Vec::with_capacity(row_count);
     let mut n = Vec::with_capacity(row_count);
     let mut beta = Vec::with_capacity(row_count);
     let mut se = Vec::with_capacity(row_count);
@@ -427,6 +511,7 @@ fn build_regenie_step2_record_batch(job: RegenieStep2ChunkWriteBatch) -> Result<
         allele0.extend(chunk_job.allele0);
         allele1.extend(chunk_job.allele1);
         a1freq.extend(chunk_job.a1freq);
+        info.extend(chunk_job.info);
         n.extend(chunk_job.n);
         beta.extend(chunk_job.beta);
         se.extend(chunk_job.se);
@@ -449,7 +534,7 @@ fn build_regenie_step2_record_batch(job: RegenieStep2ChunkWriteBatch) -> Result<
         Arc::new(build_dictionary_string_array(&allele0)?),
         Arc::new(build_dictionary_string_array(&allele1)?),
         Arc::new(Float32Array::from(a1freq)),
-        new_null_array(&DataType::Float32, row_count),
+        Arc::new(Float32Array::from(info)),
         Arc::new(Int32Array::from(n)),
         Arc::new(build_constant_dictionary_string_array(row_count, "ADD")?),
         Arc::new(Float32Array::from(beta)),
@@ -729,6 +814,7 @@ mod tests {
             allele0: vec!["G".to_string()],
             allele1: vec!["A".to_string()],
             a1freq: vec![0.5],
+            info: vec![Some(0.9)],
             n: vec![100],
             beta: vec![0.1],
             se: vec![0.01],
@@ -765,6 +851,13 @@ mod tests {
         assert!(record_batch.schema().field_with_name("INFO").expect("INFO field should exist").is_nullable());
         assert!(record_batch.schema().field_with_name("EXTRA").expect("EXTRA field should exist").is_nullable());
         assert_eq!(record_batch.num_rows(), 1);
+        let info_array = record_batch
+            .column_by_name("INFO")
+            .expect("INFO column should exist")
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .expect("INFO column should be a float32 array");
+        assert_eq!(info_array.value(0), 0.9);
         assert_eq!(record_batch.column_by_name("EXTRA").expect("EXTRA column should exist").null_count(), 1);
     }
 
