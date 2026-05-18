@@ -14,23 +14,34 @@ use arrow::ipc::CompressionType;
 use arrow::ipc::reader::FileReader as ArrowFileReader;
 use arrow::ipc::writer::{FileWriter, IpcWriteOptions};
 use crossbeam_channel::{Receiver, Sender, bounded};
-use numpy::{PyReadonlyArray1, PyUntypedArrayMethods};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
-use pyo3::prelude::*;
+use thiserror::Error;
 
 use crate::genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
-use crate::python::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata};
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 const REGENIE_STEP2_CHUNKS_PER_ARROW_FILE: usize = 4;
 
+#[derive(Debug, Error)]
+pub enum OutputWriterError {
+    #[error("{0}")]
+    InvalidInput(String),
+    #[error("{0}")]
+    Runtime(String),
+}
+
+impl OutputWriterError {
+    fn runtime(error: impl ToString) -> Self {
+        Self::Runtime(error.to_string())
+    }
+}
+
 #[derive(Clone)]
-struct RustOutputWriterConfig {
+struct OutputWriterConfig {
     run_directory: PathBuf,
     chunks_directory: PathBuf,
     association_mode: String,
@@ -72,31 +83,27 @@ enum OutputWriteJob {
     Shutdown,
 }
 
-#[pyclass]
 pub struct OutputWriterSession {
     sender: Mutex<Option<Sender<OutputCoordinatorJob>>>,
     coordinator_handle: Mutex<Option<JoinHandle<()>>>,
     worker_handles: Mutex<Vec<JoinHandle<()>>>,
     worker_errors: Arc<Mutex<Vec<String>>>,
-    config: RustOutputWriterConfig,
+    config: OutputWriterConfig,
 }
 
-#[pymethods]
 impl OutputWriterSession {
-    #[new]
-    #[pyo3(signature = (run_directory, chunks_directory, association_mode, writer_thread_count=1, writer_queue_depth=1, finalize_parquet=true))]
-    fn new(
+    pub fn new(
         run_directory: String,
         chunks_directory: String,
         association_mode: String,
         writer_thread_count: usize,
         writer_queue_depth: usize,
         finalize_parquet: bool,
-    ) -> PyResult<Self> {
+    ) -> Result<Self, OutputWriterError> {
         if writer_thread_count == 0 {
-            return Err(PyValueError::new_err("Writer thread count must be at least 1."));
+            return Err(OutputWriterError::InvalidInput("Writer thread count must be at least 1.".to_string()));
         }
-        let config = RustOutputWriterConfig {
+        let config = OutputWriterConfig {
             run_directory: PathBuf::from(run_directory),
             chunks_directory: PathBuf::from(chunks_directory),
             association_mode,
@@ -127,97 +134,10 @@ impl OutputWriterSession {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (metadata, allele_one_frequency, observation_count, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
-    fn write_regenie2_chunk(
-        &self,
-        metadata: &Bound<'_, PyAny>,
-        allele_one_frequency: PyReadonlyArray1<'_, f32>,
-        observation_count: PyReadonlyArray1<'_, i32>,
-        beta: PyReadonlyArray1<'_, f32>,
-        standard_error: PyReadonlyArray1<'_, f32>,
-        chi_squared: PyReadonlyArray1<'_, f32>,
-        log10_p_value: PyReadonlyArray1<'_, f32>,
-        extra_code: Option<PyReadonlyArray1<'_, i32>>,
-    ) -> PyResult<()> {
-        let variant_start_index = metadata.getattr("variant_start_index")?.extract::<i64>()?;
-        let variant_stop_index = metadata.getattr("variant_stop_index")?.extract::<i64>()?;
-        let chromosome = extract_string_column(metadata, "chromosome")?;
-        let position_object = metadata.getattr("position")?;
-        let position = position_object.extract::<PyReadonlyArray1<'_, i64>>()?;
-        let variant_identifier = extract_string_column(metadata, "variant_identifiers")?;
-        let allele_one = extract_string_column(metadata, "allele_one")?;
-        let allele_zero = extract_string_column(metadata, "allele_two")?;
-        let metadata_columns = VariantMetadataColumns {
-            chromosome,
-            variant_identifier,
-            position: position.as_slice()?.to_vec(),
-            allele_one,
-            allele_two: allele_zero,
-        };
-        let chunk_stats = NativeChunkStats {
-            allele_one_frequency: allele_one_frequency.as_slice()?.to_vec(),
-            observation_count: observation_count.as_slice()?.to_vec(),
-            has_missing_values: false,
-            dosage_sum: Vec::new(),
-            dosage_variance_numerator: Vec::new(),
-            info_score: vec![None; allele_one_frequency.len()],
-            allele_count: Vec::new(),
-            minor_allele_count: Vec::new(),
-            zero_count: Vec::new(),
-            nonzero_count: Vec::new(),
-            homozygous_reference_count: Vec::new(),
-            heterozygous_count: Vec::new(),
-            homozygous_alternate_count: Vec::new(),
-            is_sparse_candidate: Vec::new(),
-            is_rare_sparse_firth_candidate: Vec::new(),
-        };
-        self.write_regenie2_chunk_from_native_parts(
-            variant_start_index,
-            variant_stop_index,
-            &metadata_columns,
-            &chunk_stats,
-            beta,
-            standard_error,
-            chi_squared,
-            log10_p_value,
-            extra_code,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (metadata, chunk_stats, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
-    fn write_regenie2_native_chunk(
-        &self,
-        metadata: PyRef<'_, PyVariantMetadata>,
-        chunk_stats: PyRef<'_, PyChunkStats>,
-        beta: PyReadonlyArray1<'_, f32>,
-        standard_error: PyReadonlyArray1<'_, f32>,
-        chi_squared: PyReadonlyArray1<'_, f32>,
-        log10_p_value: PyReadonlyArray1<'_, f32>,
-        extra_code: Option<PyReadonlyArray1<'_, i32>>,
-    ) -> PyResult<()> {
-        let variant_start_index = i64::try_from(metadata.variant_start_index)
-            .map_err(|_| PyValueError::new_err("Variant start index does not fit into int64 output."))?;
-        let variant_stop_index = i64::try_from(metadata.variant_stop_index)
-            .map_err(|_| PyValueError::new_err("Variant stop index does not fit into int64 output."))?;
-        self.write_regenie2_chunk_from_native_parts(
-            variant_start_index,
-            variant_stop_index,
-            &metadata.metadata,
-            &chunk_stats.stats,
-            beta,
-            standard_error,
-            chi_squared,
-            log10_p_value,
-            extra_code,
-        )
-    }
-
-    fn finish(&self) -> PyResult<Option<String>> {
-        close_writer_sender(&self.sender, OutputCoordinatorJob::Finish)?;
-        join_coordinator_thread(&self.coordinator_handle)?;
-        join_writer_threads(&self.worker_handles)?;
+    pub fn finish(&self) -> Result<Option<PathBuf>, OutputWriterError> {
+        self.close_writer_sender(OutputCoordinatorJob::Finish)?;
+        self.join_coordinator_thread()?;
+        self.join_writer_threads()?;
         self.raise_if_worker_failed()?;
         if !self.config.finalize_parquet {
             return Ok(None);
@@ -228,54 +148,32 @@ impl OutputWriterSession {
             &final_parquet_path,
             &self.config.association_mode,
         )?;
-        Ok(Some(final_parquet_path.display().to_string()))
+        Ok(Some(final_parquet_path))
     }
 
-    fn abort(&self) -> PyResult<()> {
-        close_writer_sender(&self.sender, OutputCoordinatorJob::Abort)?;
-        join_coordinator_thread(&self.coordinator_handle)?;
-        join_writer_threads(&self.worker_handles)?;
+    pub fn abort(&self) -> Result<(), OutputWriterError> {
+        self.close_writer_sender(OutputCoordinatorJob::Abort)?;
+        self.join_coordinator_thread()?;
+        self.join_writer_threads()?;
         Ok(())
     }
-}
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-#[allow(clippy::missing_errors_doc)]
-pub fn finalize_output_run_chunks(
-    run_directory: String,
-    chunks_directory: String,
-    association_mode: String,
-) -> PyResult<String> {
-    let final_parquet_path = PathBuf::from(run_directory).join("final.parquet");
-    write_final_parquet_from_chunk_files(Path::new(&chunks_directory), &final_parquet_path, &association_mode)?;
-    Ok(final_parquet_path.display().to_string())
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-#[allow(clippy::missing_errors_doc)]
-pub fn scan_committed_chunk_identifiers(chunks_directory: String) -> PyResult<Vec<i64>> {
-    scan_committed_chunk_identifiers_from_arrow_files(Path::new(&chunks_directory))
-}
-
-impl OutputWriterSession {
     #[allow(clippy::too_many_arguments)]
-    fn write_regenie2_chunk_from_native_parts(
+    pub fn write_regenie2_native_chunk(
         &self,
         variant_start_index: i64,
         variant_stop_index: i64,
         metadata: &VariantMetadataColumns,
         chunk_stats: &NativeChunkStats,
-        beta: PyReadonlyArray1<'_, f32>,
-        standard_error: PyReadonlyArray1<'_, f32>,
-        chi_squared: PyReadonlyArray1<'_, f32>,
-        log10_p_value: PyReadonlyArray1<'_, f32>,
-        extra_code: Option<PyReadonlyArray1<'_, i32>>,
-    ) -> PyResult<()> {
+        beta: &[f32],
+        standard_error: &[f32],
+        chi_squared: &[f32],
+        log10_p_value: &[f32],
+        extra_code: Option<&[i32]>,
+    ) -> Result<(), OutputWriterError> {
         if self.config.association_mode != "regenie2_linear" && self.config.association_mode != "regenie2_binary" {
-            return Err(PyValueError::new_err(
-                "Rust output backend only supports REGENIE step 2 quantitative and binary output.",
+            return Err(OutputWriterError::InvalidInput(
+                "Rust output backend only supports REGENIE step 2 quantitative and binary output.".to_string(),
             ));
         }
         let row_count = metadata.position.len();
@@ -293,7 +191,7 @@ impl OutputWriterSession {
             log10_p_value.len(),
         ];
         validate_column_lengths(row_count, observed_lengths.as_slice())?;
-        if let Some(extra_code_values) = extra_code.as_ref() {
+        if let Some(extra_code_values) = extra_code {
             validate_column_lengths(row_count, &[extra_code_values.len()])?;
         }
         let job = RegenieStep2ChunkJob {
@@ -308,82 +206,79 @@ impl OutputWriterSession {
             a1freq: chunk_stats.allele_one_frequency.clone(),
             info: chunk_stats.info_score.clone(),
             n: chunk_stats.observation_count.clone(),
-            beta: beta.as_slice()?.to_vec(),
-            se: standard_error.as_slice()?.to_vec(),
-            chisq: chi_squared.as_slice()?.to_vec(),
-            log10p: log10_p_value.as_slice()?.to_vec(),
-            extra_code: extra_code
-                .map(|extra_code_array| extra_code_array.as_slice().map(<[i32]>::to_vec))
-                .transpose()?,
+            beta: beta.to_vec(),
+            se: standard_error.to_vec(),
+            chisq: chi_squared.to_vec(),
+            log10p: log10_p_value.to_vec(),
+            extra_code: extra_code.map(<[i32]>::to_vec),
         };
         self.raise_if_worker_failed()?;
-        let sender_guard =
-            self.sender.lock().map_err(|_| PyRuntimeError::new_err("Rust output writer sender lock was poisoned."))?;
+        let sender_guard = self
+            .sender
+            .lock()
+            .map_err(|_| OutputWriterError::Runtime("Rust output writer sender lock was poisoned.".to_string()))?;
         let sender = sender_guard
             .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("Rust output writer session is already closed."))?;
-        sender
-            .send(OutputCoordinatorJob::RegenieStep2(Box::new(job)))
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            .ok_or_else(|| OutputWriterError::Runtime("Rust output writer session is already closed.".to_string()))?;
+        sender.send(OutputCoordinatorJob::RegenieStep2(Box::new(job))).map_err(OutputWriterError::runtime)?;
         Ok(())
     }
 
-    fn raise_if_worker_failed(&self) -> PyResult<()> {
+    fn raise_if_worker_failed(&self) -> Result<(), OutputWriterError> {
         let worker_errors = self
             .worker_errors
             .lock()
-            .map_err(|_| PyRuntimeError::new_err("Rust output writer error lock was poisoned."))?;
+            .map_err(|_| OutputWriterError::Runtime("Rust output writer error lock was poisoned.".to_string()))?;
         if let Some(first_error) = worker_errors.first() {
-            return Err(PyRuntimeError::new_err(first_error.clone()));
+            return Err(OutputWriterError::Runtime(first_error.clone()));
+        }
+        Ok(())
+    }
+
+    fn close_writer_sender(&self, close_job: OutputCoordinatorJob) -> Result<(), OutputWriterError> {
+        let mut sender_guard = self
+            .sender
+            .lock()
+            .map_err(|_| OutputWriterError::Runtime("Rust output writer sender lock was poisoned.".to_string()))?;
+        if let Some(active_sender) = sender_guard.take() {
+            active_sender.send(close_job).map_err(OutputWriterError::runtime)?;
+        }
+        Ok(())
+    }
+
+    fn join_coordinator_thread(&self) -> Result<(), OutputWriterError> {
+        let mut coordinator_handle_guard = self.coordinator_handle.lock().map_err(|_| {
+            OutputWriterError::Runtime("Rust output writer coordinator handle lock was poisoned.".to_string())
+        })?;
+        if let Some(handle) = coordinator_handle_guard.take() {
+            handle.join().map_err(|_| {
+                OutputWriterError::Runtime("Rust output writer coordinator thread panicked.".to_string())
+            })?;
+        }
+        Ok(())
+    }
+
+    fn join_writer_threads(&self) -> Result<(), OutputWriterError> {
+        let mut worker_handles_guard = self
+            .worker_handles
+            .lock()
+            .map_err(|_| OutputWriterError::Runtime("Rust output writer handle lock was poisoned.".to_string()))?;
+        while let Some(worker_handle) = worker_handles_guard.pop() {
+            worker_handle
+                .join()
+                .map_err(|_| OutputWriterError::Runtime("Rust output writer worker thread panicked.".to_string()))?;
         }
         Ok(())
     }
 }
 
-fn extract_string_column(metadata: &Bound<'_, PyAny>, attribute_name: &str) -> PyResult<Vec<String>> {
-    let column_object = metadata.getattr(attribute_name)?;
-    if let Ok(values) = column_object.extract::<Vec<String>>() {
-        return Ok(values);
-    }
-    column_object.call_method0("tolist")?.extract::<Vec<String>>()
-}
-
-fn close_writer_sender(
-    sender: &Mutex<Option<Sender<OutputCoordinatorJob>>>,
-    close_job: OutputCoordinatorJob,
-) -> PyResult<()> {
-    let mut sender_guard =
-        sender.lock().map_err(|_| PyRuntimeError::new_err("Rust output writer sender lock was poisoned."))?;
-    if let Some(active_sender) = sender_guard.take() {
-        active_sender.send(close_job).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-    }
-    Ok(())
-}
-
-fn join_coordinator_thread(coordinator_handle: &Mutex<Option<JoinHandle<()>>>) -> PyResult<()> {
-    let mut coordinator_handle_guard = coordinator_handle
-        .lock()
-        .map_err(|_| PyRuntimeError::new_err("Rust output writer coordinator handle lock was poisoned."))?;
-    if let Some(handle) = coordinator_handle_guard.take() {
-        handle.join().map_err(|_| PyRuntimeError::new_err("Rust output writer coordinator thread panicked."))?;
-    }
-    Ok(())
-}
-
-fn join_writer_threads(worker_handles: &Mutex<Vec<JoinHandle<()>>>) -> PyResult<()> {
-    let mut worker_handles_guard =
-        worker_handles.lock().map_err(|_| PyRuntimeError::new_err("Rust output writer handle lock was poisoned."))?;
-    while let Some(worker_handle) = worker_handles_guard.pop() {
-        worker_handle.join().map_err(|_| PyRuntimeError::new_err("Rust output writer worker thread panicked."))?;
-    }
-    Ok(())
-}
-
-fn validate_column_lengths(expected_row_count: usize, observed_lengths: &[usize]) -> PyResult<()> {
+fn validate_column_lengths(expected_row_count: usize, observed_lengths: &[usize]) -> Result<(), OutputWriterError> {
     if observed_lengths.iter().all(|observed_length| *observed_length == expected_row_count) {
         return Ok(());
     }
-    Err(PyValueError::new_err("Rust output writer batch column lengths do not all match the expected row count."))
+    Err(OutputWriterError::InvalidInput(
+        "Rust output writer batch column lengths do not all match the expected row count.".to_string(),
+    ))
 }
 
 fn run_output_writer_coordinator(
@@ -444,7 +339,7 @@ fn push_worker_error(worker_errors: &Arc<Mutex<Vec<String>>>, error: String) {
 
 fn run_output_writer_worker(
     receiver: Receiver<OutputWriteJob>,
-    config: RustOutputWriterConfig,
+    config: OutputWriterConfig,
     worker_errors: Arc<Mutex<Vec<String>>>,
 ) {
     while let Ok(job) = receiver.recv() {
@@ -461,10 +356,7 @@ fn run_output_writer_worker(
     }
 }
 
-fn write_regenie_step2_chunk_job(
-    config: &RustOutputWriterConfig,
-    job: RegenieStep2ChunkWriteBatch,
-) -> Result<(), String> {
+fn write_regenie_step2_chunk_job(config: &OutputWriterConfig, job: RegenieStep2ChunkWriteBatch) -> Result<(), String> {
     let chunk_file_path = config.chunks_directory.join(&job.chunk_file_name);
     let temporary_chunk_file_path = chunk_file_path.with_extension("arrow.tmp");
     let record_batch = build_regenie_step2_record_batch(job)?;
@@ -629,42 +521,51 @@ fn get_regenie_step2_ipc_write_options() -> &'static IpcWriteOptions {
     })
 }
 
+pub fn finalize_output_run_chunks(
+    run_directory: &Path,
+    chunks_directory: &Path,
+    association_mode: &str,
+) -> Result<PathBuf, OutputWriterError> {
+    let final_parquet_path = run_directory.join("final.parquet");
+    write_final_parquet_from_chunk_files(chunks_directory, &final_parquet_path, association_mode)?;
+    Ok(final_parquet_path)
+}
+
 fn write_final_parquet_from_chunk_files(
     chunks_directory: &Path,
     final_parquet_path: &Path,
     association_mode: &str,
-) -> PyResult<()> {
+) -> Result<(), OutputWriterError> {
     if association_mode != "regenie2_linear" && association_mode != "regenie2_binary" {
-        return Err(PyRuntimeError::new_err(format!(
+        return Err(OutputWriterError::InvalidInput(format!(
             "Unsupported association mode for Rust output writer finalization: {association_mode}",
         )));
     }
     let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
-        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+        .map_err(OutputWriterError::runtime)?
         .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
         .filter(|chunk_file_path| chunk_file_path.extension().is_some_and(|extension| extension == "arrow"))
         .collect::<Vec<_>>();
     chunk_file_paths.sort();
     let writer_properties = get_regenie_step2_parquet_writer_properties().clone();
-    let output_file = File::create(final_parquet_path).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    let output_file = File::create(final_parquet_path).map_err(OutputWriterError::runtime)?;
     let final_schema = Arc::clone(get_regenie_step2_final_schema());
-    let mut parquet_writer = ArrowWriter::try_new(output_file, final_schema, Some(writer_properties))
-        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    let mut parquet_writer =
+        ArrowWriter::try_new(output_file, final_schema, Some(writer_properties)).map_err(OutputWriterError::runtime)?;
     let chunk_file_count = chunk_file_paths.len();
     let mut output_row_count = 0usize;
     for chunk_file_path in chunk_file_paths {
-        let input_file = File::open(&chunk_file_path).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        let file_reader =
-            ArrowFileReader::try_new(input_file, None).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let input_file = File::open(&chunk_file_path).map_err(OutputWriterError::runtime)?;
+        let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
         for maybe_batch in file_reader {
-            let batch = maybe_batch.map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
             let projected_batch = project_chunk_batch_to_final_batch(batch)?;
             output_row_count += projected_batch.num_rows();
-            parquet_writer.write(&projected_batch).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            parquet_writer.write(&projected_batch).map_err(OutputWriterError::runtime)?;
         }
     }
     append_output_footer_metadata(&mut parquet_writer, association_mode, chunk_file_count, output_row_count);
-    parquet_writer.close().map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    parquet_writer.close().map_err(OutputWriterError::runtime)?;
     Ok(())
 }
 
@@ -731,7 +632,7 @@ fn get_regenie_step2_final_schema() -> &'static Arc<Schema> {
     REGENIE_STEP2_FINAL_SCHEMA.get_or_init(|| Arc::new(build_regenie_step2_final_schema()))
 }
 
-fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> PyResult<RecordBatch> {
+fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> Result<RecordBatch, OutputWriterError> {
     let final_column_names = [
         "CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1", "A1FREQ", "INFO", "N", "TEST", "BETA", "SE", "CHISQ", "LOG10P",
         "EXTRA",
@@ -740,18 +641,20 @@ fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> PyResult<RecordBatc
         .iter()
         .map(|column_name| batch.column_by_name(column_name).cloned())
         .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| PyRuntimeError::new_err("Rust output writer could not project chunk batch to final schema."))?;
+        .ok_or_else(|| {
+            OutputWriterError::Runtime("Rust output writer could not project chunk batch to final schema.".to_string())
+        })?;
     RecordBatch::try_new(Arc::clone(get_regenie_step2_final_schema()), projected_columns)
-        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+        .map_err(OutputWriterError::runtime)
 }
 
-fn scan_committed_chunk_identifiers_from_arrow_files(chunks_directory: &Path) -> PyResult<Vec<i64>> {
+pub fn scan_committed_chunk_identifiers(chunks_directory: &Path) -> Result<Vec<i64>, OutputWriterError> {
     if !chunks_directory.exists() {
         return Ok(Vec::new());
     }
     let mut committed_identifiers = BTreeSet::new();
     let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
-        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+        .map_err(OutputWriterError::runtime)?
         .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
         .filter(|chunk_file_path| chunk_file_path.extension().is_some_and(|extension| extension == "arrow"))
         .collect::<Vec<_>>();
@@ -761,16 +664,17 @@ fn scan_committed_chunk_identifiers_from_arrow_files(chunks_directory: &Path) ->
             committed_identifiers.insert(first_chunk_identifier);
             continue;
         }
-        let input_file = File::open(&chunk_file_path).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        let file_reader =
-            ArrowFileReader::try_new(input_file, None).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let input_file = File::open(&chunk_file_path).map_err(OutputWriterError::runtime)?;
+        let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
         for maybe_batch in file_reader {
-            let batch = maybe_batch.map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
             let chunk_identifier_array = batch
                 .column_by_name("chunk_identifier")
                 .and_then(|column| column.as_any().downcast_ref::<Int64Array>())
                 .ok_or_else(|| {
-                    PyRuntimeError::new_err("Rust output writer could not read chunk identifiers from Arrow chunk.")
+                    OutputWriterError::Runtime(
+                        "Rust output writer could not read chunk identifiers from Arrow chunk.".to_string(),
+                    )
                 })?;
             for row_index in 0..chunk_identifier_array.len() {
                 if !chunk_identifier_array.is_null(row_index) {
@@ -884,7 +788,7 @@ mod tests {
         let run_directory = create_test_directory();
         let chunks_directory = run_directory.join("chunks");
         std::fs::create_dir_all(&chunks_directory).expect("chunk directory should be created");
-        let config = RustOutputWriterConfig {
+        let config = OutputWriterConfig {
             run_directory: run_directory.clone(),
             chunks_directory: chunks_directory.clone(),
             association_mode: "regenie2_binary".to_string(),

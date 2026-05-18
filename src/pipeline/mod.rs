@@ -9,6 +9,8 @@ use crate::genotype::bgen::{BgenError, BgenReaderCore};
 use crate::genotype::common::{ChunkSpec, GenotypeError};
 use crate::genotype::planner;
 
+pub mod backend;
+
 pub struct Regenie2RunEngineCore {
     reader: BgenReaderCore,
     chunk_size: usize,

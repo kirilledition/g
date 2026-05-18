@@ -5,6 +5,7 @@ pub mod output;
 pub mod pipeline;
 pub mod python;
 pub mod regenie;
+pub mod sample;
 
 use pyo3::prelude::*;
 
