@@ -367,3 +367,32 @@ Interpretation:
 
 - Larger batches are faster, but batch size currently affects the Firth numerical trajectory enough to change output classifications. This is not acceptable for the default workflow.
 - Any future larger-batch optimization must first make Firth numerics batch-size invariant, likely by refactoring the batched IRLS solve and convergence logic rather than only changing the environment default.
+
+Block-math refactor result:
+
+Status: implemented as an experimental switch, rejected as default.
+
+The first Firth math refactor removed repeated `full_design_matrix` materialization from the IRLS loop. It computes leverage, adjusted scores, and Hessian blocks directly from covariate and genotype parts. The default path remains the previous full-design-matrix math because full-data parity was not preserved.
+
+Implementation notes:
+
+- Environment variable: `G_REGENIE2_BINARY_USE_BLOCK_FIRTH_MATH=1`
+- Default: disabled
+- Public output schema unchanged.
+
+Landau measurement:
+
+| Scenario | Hot wall | JAX compute | Firth failures | Output parity vs accepted grouping-enabled run |
+|---|---:|---:|---:|---|
+| Full-design-matrix math | 7.460s | 4.935s | 2,305 | reference |
+| Experimental block math | 6.655s | 4.123s | 2,227 | rejected |
+
+Parity notes:
+
+- Row count, allele frequency, and `N` matched.
+- Experimental block math changed thousands of Firth beta/SE/chi-square/log10p values and `3,860` `EXTRA` labels.
+
+Interpretation:
+
+- The block formulation is faster, but the current implementation changes enough floating-point behavior to alter Firth convergence and output classification.
+- It is useful as a profiling probe, but not acceptable as a default optimization until the Firth solver is made numerically invariant across equivalent formulations.

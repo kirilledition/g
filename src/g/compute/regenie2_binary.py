@@ -37,6 +37,7 @@ FIRTH_MAXIMUM_ITERATIONS = 50
 DEFAULT_FIRTH_BATCH_SIZE = 64
 DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
 FIRTH_CANDIDATE_GROUPING_ENVIRONMENT_VARIABLE = "G_REGENIE2_BINARY_GROUP_FIRTH_CANDIDATES"
+BLOCK_FIRTH_MATH_ENVIRONMENT_VARIABLE = "G_REGENIE2_BINARY_USE_BLOCK_FIRTH_MATH"
 
 BinaryScoreTestChunkComputeFunction = typing.Callable[
     [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.RegenieBinaryCorrection],
@@ -85,6 +86,15 @@ def get_group_firth_candidates() -> bool:
     if raw_value is None:
         return True
     return raw_value.lower() not in {"0", "false", "no", "off"}
+
+
+@functools.cache
+def get_use_block_firth_math() -> bool:
+    """Resolve whether experimental block Firth math is enabled."""
+    raw_value = os.environ.get(BLOCK_FIRTH_MATH_ENVIRONMENT_VARIABLE)
+    if raw_value is None:
+        return False
+    return raw_value.lower() in {"1", "true", "yes", "on"}
 
 
 @jax.tree_util.register_dataclass
@@ -142,6 +152,21 @@ class AdjustedWeightComponents:
     leverage_vector: jax.Array
     adjusted_weight_vector: jax.Array
     second_weight_vector: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class FullModelScoreComponents:
+    """Score components for one full Firth model.
+
+    Attributes:
+        covariate_score: Covariate score vector.
+        genotype_score: Genotype score scalar.
+
+    """
+
+    covariate_score: jax.Array
+    genotype_score: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -454,6 +479,28 @@ def compute_information_components(
     )
 
 
+def compute_weighted_full_model_information_components(
+    covariate_matrix: jax.Array,
+    genotype_vector: jax.Array,
+    weight_vector: jax.Array,
+) -> InformationComponents:
+    """Compute full-model information blocks for one explicit weight vector."""
+    weighted_genotype_vector = weight_vector * genotype_vector
+    covariate_information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
+    cross_information_vector = weighted_genotype_vector @ covariate_matrix
+    genotype_information = jnp.dot(weighted_genotype_vector, genotype_vector)
+    return InformationComponents(
+        covariate_information_matrix=covariate_information_matrix,
+        cross_information_vector=cross_information_vector,
+        genotype_information=genotype_information,
+        information_matrix=build_full_model_information_matrix(
+            covariate_information_matrix=covariate_information_matrix,
+            cross_information_vector=cross_information_vector,
+            genotype_information=genotype_information,
+        ),
+    )
+
+
 def compute_firth_penalized_log_likelihood_from_cholesky(
     probability_vector: jax.Array,
     phenotype_vector: jax.Array,
@@ -488,6 +535,70 @@ def compute_full_model_adjusted_weight_components(
         adjusted_weight_vector=adjusted_weight_vector,
         second_weight_vector=second_weight_vector,
     )
+
+
+def compute_full_model_adjusted_weight_components_from_parts(
+    covariate_matrix: jax.Array,
+    genotype_vector: jax.Array,
+    probability_vector: jax.Array,
+    information_matrix: jax.Array,
+    phenotype_vector: jax.Array,
+) -> AdjustedWeightComponents:
+    """Compute full-model Firth weights without materializing a full design matrix."""
+    variance_vector = jnp.maximum(probability_vector * (1.0 - probability_vector), MINIMUM_VARIANCE)
+    stacked_design_transpose = jnp.concatenate([covariate_matrix.T, genotype_vector[None, :]], axis=0)
+    projected_design_transpose = solve_from_positive_definite_matrix(information_matrix, stacked_design_transpose)
+    projected_covariate_matrix = projected_design_transpose[:-1, :].T
+    projected_genotype_vector = projected_design_transpose[-1, :]
+    leverage_vector = variance_vector * (
+        jnp.einsum("ij,ij->i", projected_covariate_matrix, covariate_matrix)
+        + projected_genotype_vector * genotype_vector
+    )
+    adjusted_weight_vector = (phenotype_vector - probability_vector) + leverage_vector * (
+        BINARY_CASE_THRESHOLD - probability_vector
+    )
+    second_weight_vector = (1.0 + leverage_vector) * variance_vector
+    return AdjustedWeightComponents(
+        leverage_vector=leverage_vector,
+        adjusted_weight_vector=adjusted_weight_vector,
+        second_weight_vector=second_weight_vector,
+    )
+
+
+def compute_full_model_score_components(
+    covariate_matrix: jax.Array,
+    genotype_vector: jax.Array,
+    score_weight_vector: jax.Array,
+) -> FullModelScoreComponents:
+    """Compute covariate and genotype score blocks without a full design matrix."""
+    return FullModelScoreComponents(
+        covariate_score=covariate_matrix.T @ score_weight_vector,
+        genotype_score=jnp.dot(genotype_vector, score_weight_vector),
+    )
+
+
+def build_full_model_information_matrix(
+    *,
+    covariate_information_matrix: jax.Array,
+    cross_information_vector: jax.Array,
+    genotype_information: jax.Array,
+) -> jax.Array:
+    """Build a full-model information matrix from block components."""
+    top_block = jnp.concatenate(
+        [
+            covariate_information_matrix,
+            cross_information_vector[:, None],
+        ],
+        axis=1,
+    )
+    bottom_block = jnp.concatenate(
+        [
+            cross_information_vector[None, :],
+            genotype_information[None, None],
+        ],
+        axis=1,
+    )
+    return jnp.concatenate([top_block, bottom_block], axis=0)
 
 
 def compute_covariate_only_adjusted_weight_components(
@@ -624,8 +735,13 @@ def fit_single_variant_firth_logistic_regression(
     null_penalized_log_likelihood: jax.Array,
 ) -> FirthVariantResult:
     """Fit one Firth logistic model for a candidate variant."""
-    full_design_matrix = jnp.concatenate([covariate_matrix, genotype_vector[:, None]], axis=1)
-    unit_genotype_vector = jnp.zeros((full_design_matrix.shape[1],), dtype=jnp.float32).at[-1].set(1.0)
+    use_block_firth_math = get_use_block_firth_math()
+    if use_block_firth_math:
+        coefficient_count = covariate_matrix.shape[1] + 1
+    else:
+        full_design_matrix = jnp.concatenate([covariate_matrix, genotype_vector[:, None]], axis=1)
+        coefficient_count = full_design_matrix.shape[1]
+    unit_genotype_vector = jnp.zeros((coefficient_count,), dtype=jnp.float32).at[-1].set(1.0)
 
     def compute_probability_vector(coefficients: jax.Array) -> jax.Array:
         linear_predictor = covariate_matrix @ coefficients[:-1] + genotype_vector * coefficients[-1] + loco_offset
@@ -658,14 +774,40 @@ def fit_single_variant_firth_logistic_regression(
         current_failed = (~jnp.isfinite(current_penalized_log_likelihood)) | (
             ~jnp.all(jnp.isfinite(state.coefficients))
         )
-        adjusted_weight_components = compute_full_model_adjusted_weight_components(
-            full_design_matrix=full_design_matrix,
-            probability_vector=probability_vector,
-            information_matrix=information_matrix,
-            phenotype_vector=phenotype_vector,
-        )
-        adjusted_score = full_design_matrix.T @ adjusted_weight_components.adjusted_weight_vector
-        second_hessian = (full_design_matrix.T * adjusted_weight_components.second_weight_vector) @ full_design_matrix
+        if use_block_firth_math:
+            adjusted_weight_components = compute_full_model_adjusted_weight_components_from_parts(
+                covariate_matrix=covariate_matrix,
+                genotype_vector=genotype_vector,
+                probability_vector=probability_vector,
+                information_matrix=information_matrix,
+                phenotype_vector=phenotype_vector,
+            )
+            adjusted_score_components = compute_full_model_score_components(
+                covariate_matrix=covariate_matrix,
+                genotype_vector=genotype_vector,
+                score_weight_vector=adjusted_weight_components.adjusted_weight_vector,
+            )
+            adjusted_score = jnp.concatenate(
+                [adjusted_score_components.covariate_score, adjusted_score_components.genotype_score[None]],
+                axis=0,
+            )
+            second_hessian_components = compute_weighted_full_model_information_components(
+                covariate_matrix=covariate_matrix,
+                genotype_vector=genotype_vector,
+                weight_vector=adjusted_weight_components.second_weight_vector,
+            )
+            second_hessian = second_hessian_components.information_matrix
+        else:
+            adjusted_weight_components = compute_full_model_adjusted_weight_components(
+                full_design_matrix=full_design_matrix,
+                probability_vector=probability_vector,
+                information_matrix=information_matrix,
+                phenotype_vector=phenotype_vector,
+            )
+            adjusted_score = full_design_matrix.T @ adjusted_weight_components.adjusted_weight_vector
+            second_hessian = (
+                full_design_matrix.T * adjusted_weight_components.second_weight_vector
+            ) @ full_design_matrix
         second_hessian = second_hessian + jnp.eye(second_hessian.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
         coefficient_step = solve_from_positive_definite_matrix(second_hessian, adjusted_score)
         maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
@@ -745,15 +887,30 @@ def fit_single_variant_firth_logistic_regression(
         phenotype_vector=phenotype_vector,
         information_cholesky_factor=final_information_cholesky_factor,
     )
-    final_adjusted_weight_components = compute_full_model_adjusted_weight_components(
-        full_design_matrix=full_design_matrix,
-        probability_vector=final_probability_vector,
-        information_matrix=final_information_matrix,
-        phenotype_vector=phenotype_vector,
-    )
-    final_second_hessian = (
-        full_design_matrix.T * final_adjusted_weight_components.second_weight_vector
-    ) @ full_design_matrix
+    if use_block_firth_math:
+        final_adjusted_weight_components = compute_full_model_adjusted_weight_components_from_parts(
+            covariate_matrix=covariate_matrix,
+            genotype_vector=genotype_vector,
+            probability_vector=final_probability_vector,
+            information_matrix=final_information_matrix,
+            phenotype_vector=phenotype_vector,
+        )
+        final_second_hessian_components = compute_weighted_full_model_information_components(
+            covariate_matrix=covariate_matrix,
+            genotype_vector=genotype_vector,
+            weight_vector=final_adjusted_weight_components.second_weight_vector,
+        )
+        final_second_hessian = final_second_hessian_components.information_matrix
+    else:
+        final_adjusted_weight_components = compute_full_model_adjusted_weight_components(
+            full_design_matrix=full_design_matrix,
+            probability_vector=final_probability_vector,
+            information_matrix=final_information_matrix,
+            phenotype_vector=phenotype_vector,
+        )
+        final_second_hessian = (
+            full_design_matrix.T * final_adjusted_weight_components.second_weight_vector
+        ) @ full_design_matrix
     final_second_hessian = (
         final_second_hessian + jnp.eye(final_second_hessian.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
     )

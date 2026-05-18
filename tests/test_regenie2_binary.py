@@ -36,6 +36,7 @@ def clear_binary_compute_caches() -> None:
     """Clear cached binary configuration and JAX traces."""
     regenie2_binary.get_firth_batch_size.cache_clear()
     regenie2_binary.get_firth_candidate_capacity.cache_clear()
+    regenie2_binary.get_use_block_firth_math.cache_clear()
     jax.clear_caches()
 
 
@@ -138,6 +139,57 @@ def test_group_firth_candidate_batch_inputs_places_heuristic_lanes_after_regular
     np.testing.assert_array_equal(
         np.asarray(ordered_inputs.genotype_matrix_by_variant),
         [[11.0, 11.0], [10.0, 10.0], [12.0, 12.0], [0.0, 0.0]],
+    )
+
+
+def test_full_model_adjusted_weight_components_match_design_matrix_path() -> None:
+    genotype_matrix, chromosome_state = build_chromosome_state()
+    genotype_vector = genotype_matrix[:, 1]
+    coefficients = jnp.asarray([0.1, -0.01, 0.25], dtype=jnp.float32)
+    linear_predictor = (
+        chromosome_state.covariate_matrix @ coefficients[:-1]
+        + genotype_vector * coefficients[-1]
+        + chromosome_state.loco_offset
+    )
+    probability_vector = regenie2_binary.compute_logistic_probability(linear_predictor)
+    information_components = regenie2_binary.compute_information_components(
+        chromosome_state.covariate_matrix,
+        genotype_vector,
+        probability_vector,
+    )
+    full_design_matrix = jnp.concatenate([chromosome_state.covariate_matrix, genotype_vector[:, None]], axis=1)
+
+    existing_components = regenie2_binary.compute_full_model_adjusted_weight_components(
+        full_design_matrix=full_design_matrix,
+        probability_vector=probability_vector,
+        information_matrix=information_components.information_matrix,
+        phenotype_vector=chromosome_state.phenotype_vector,
+    )
+    block_components = regenie2_binary.compute_full_model_adjusted_weight_components_from_parts(
+        covariate_matrix=chromosome_state.covariate_matrix,
+        genotype_vector=genotype_vector,
+        probability_vector=probability_vector,
+        information_matrix=information_components.information_matrix,
+        phenotype_vector=chromosome_state.phenotype_vector,
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(block_components.leverage_vector),
+        np.asarray(existing_components.leverage_vector),
+        rtol=1.0e-6,
+        atol=1.0e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(block_components.adjusted_weight_vector),
+        np.asarray(existing_components.adjusted_weight_vector),
+        rtol=1.0e-6,
+        atol=1.0e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(block_components.second_weight_vector),
+        np.asarray(existing_components.second_weight_vector),
+        rtol=1.0e-6,
+        atol=1.0e-6,
     )
 
 
