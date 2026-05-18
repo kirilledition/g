@@ -10,6 +10,8 @@ import numpy as np
 import polars as pl
 import pytest
 
+from g import _core
+from g.engine import regenie2_pipeline
 from g.io import samples
 
 
@@ -21,6 +23,61 @@ def build_sample_table(sample_identifiers: tuple[str, ...]) -> pl.DataFrame:
             "individual_identifier": list(sample_identifiers),
         }
     ).with_row_index("sample_index")
+
+
+def assert_native_alignment_matches_python(
+    sample_table: pl.DataFrame,
+    phenotype_path: Path,
+    phenotype_name: str,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    *,
+    is_binary_trait: bool,
+) -> None:
+    """Compare native and Python sample alignment outputs."""
+    python_aligned_sample_data = samples.load_aligned_sample_data_from_individual_identifier_table(
+        sample_table=sample_table,
+        phenotype_path=phenotype_path,
+        phenotype_name=phenotype_name,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
+        is_binary_trait=is_binary_trait,
+    )
+    native_aligned_sample_data = regenie2_pipeline.build_aligned_sample_data_from_native(
+        _core.align_sample_data(
+            np.ascontiguousarray(sample_table.get_column("sample_index").to_numpy(), dtype=np.int64),
+            typing.cast("list[str]", sample_table.get_column("family_identifier").to_list()),
+            typing.cast("list[str]", sample_table.get_column("individual_identifier").to_list()),
+            str(phenotype_path),
+            phenotype_name,
+            str(covariate_path) if covariate_path is not None else None,
+            list(covariate_names) if covariate_names is not None else None,
+            is_binary_trait,
+        )
+    )
+
+    np.testing.assert_array_equal(native_aligned_sample_data.sample_indices, python_aligned_sample_data.sample_indices)
+    np.testing.assert_array_equal(
+        native_aligned_sample_data.family_identifiers,
+        python_aligned_sample_data.family_identifiers,
+    )
+    np.testing.assert_array_equal(
+        native_aligned_sample_data.individual_identifiers,
+        python_aligned_sample_data.individual_identifiers,
+    )
+    np.testing.assert_allclose(
+        np.asarray(native_aligned_sample_data.phenotype_vector),
+        np.asarray(python_aligned_sample_data.phenotype_vector),
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        np.asarray(native_aligned_sample_data.covariate_matrix),
+        np.asarray(python_aligned_sample_data.covariate_matrix),
+        atol=0.0,
+    )
+    assert native_aligned_sample_data.phenotype_name == python_aligned_sample_data.phenotype_name
+    assert native_aligned_sample_data.covariate_names == python_aligned_sample_data.covariate_names
+    assert native_aligned_sample_data.is_binary_trait is python_aligned_sample_data.is_binary_trait
 
 
 def test_load_phenotype_or_covariate_table(tmp_path: Path) -> None:
@@ -303,4 +360,36 @@ def test_load_aligned_sample_data_sorts_by_sample_order_and_drops_null_rows(tmp_
         np.asarray(aligned_sample_data.covariate_matrix),
         np.array([[1.0, 25.0, 1.0], [1.0, 35.0, 1.0]]),
         atol=0.0,
+    )
+
+
+def test_native_aligned_sample_data_matches_python_continuous(tmp_path: Path) -> None:
+    sample_table = build_sample_table(("s2", "s1", "s3"))
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts3\t3.0\nf1\ts1\t1.0\nf1\ts2\t2.0\n")
+    covariate_path = tmp_path / "covar.txt"
+    covariate_path.write_text("FID\tIID\tage\tsex\nf1\ts1\t25\t1\nf1\ts2\tNA\t2\nf1\ts3\t35\t1\n")
+
+    assert_native_alignment_matches_python(
+        sample_table=sample_table,
+        phenotype_path=phenotype_path,
+        phenotype_name="trait",
+        covariate_path=covariate_path,
+        covariate_names=None,
+        is_binary_trait=False,
+    )
+
+
+def test_native_aligned_sample_data_matches_python_binary_intercept_only(tmp_path: Path) -> None:
+    sample_table = build_sample_table(("s1", "s2"))
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\t1\nf2\ts2\t2\n")
+
+    assert_native_alignment_matches_python(
+        sample_table=sample_table,
+        phenotype_path=phenotype_path,
+        phenotype_name="trait",
+        covariate_path=None,
+        covariate_names=None,
+        is_binary_trait=True,
     )

@@ -76,9 +76,142 @@ struct VariantMetadata {
     metadata: VariantMetadataColumns,
 }
 
+#[pyclass]
+struct NativeAlignedSampleData {
+    sample_indices: Vec<i64>,
+    family_identifiers: Vec<String>,
+    individual_identifiers: Vec<String>,
+    phenotype_name: String,
+    phenotype_vector: Vec<f32>,
+    covariate_names: Vec<String>,
+    covariate_matrix_values: Vec<f32>,
+    covariate_row_count: usize,
+    covariate_column_count: usize,
+    is_binary_trait: bool,
+}
+
+struct TabularTable {
+    headers: Vec<String>,
+    rows: Vec<Vec<String>>,
+}
+
+struct RawPhenotypeRecord {
+    phenotype_value: String,
+}
+
+struct RawCovariateRecord {
+    covariate_values: Vec<String>,
+}
+
+struct NativeAlignmentInputs {
+    sample_indices: Vec<i64>,
+    family_identifiers: Vec<String>,
+    individual_identifiers: Vec<String>,
+    phenotype_path: String,
+    phenotype_name: String,
+    covariate_path: Option<String>,
+    covariate_names: Option<Vec<String>>,
+    is_binary_trait: bool,
+}
+
+struct NativeAlignedSampleRow {
+    sample_index: i64,
+    family_identifier: String,
+    individual_identifier: String,
+    phenotype_value: f32,
+    covariate_values: Vec<f32>,
+}
+
 impl VariantMetadata {
     fn new(variant_start_index: usize, variant_stop_index: usize, metadata: VariantMetadataColumns) -> Self {
         Self { variant_start_index, variant_stop_index, metadata }
+    }
+}
+
+impl NativeAlignedSampleData {
+    fn new(
+        phenotype_name: String,
+        covariate_names: Vec<String>,
+        rows: Vec<NativeAlignedSampleRow>,
+        is_binary_trait: bool,
+    ) -> Self {
+        let covariate_column_count = covariate_names.len();
+        let covariate_row_count = rows.len();
+        let mut sample_indices = Vec::with_capacity(covariate_row_count);
+        let mut family_identifiers = Vec::with_capacity(covariate_row_count);
+        let mut individual_identifiers = Vec::with_capacity(covariate_row_count);
+        let mut phenotype_vector = Vec::with_capacity(covariate_row_count);
+        let mut covariate_matrix_values = Vec::with_capacity(covariate_row_count * covariate_column_count);
+
+        for row in rows {
+            sample_indices.push(row.sample_index);
+            family_identifiers.push(row.family_identifier);
+            individual_identifiers.push(row.individual_identifier);
+            phenotype_vector.push(row.phenotype_value);
+            covariate_matrix_values.push(1.0);
+            covariate_matrix_values.extend(row.covariate_values);
+        }
+
+        Self {
+            sample_indices,
+            family_identifiers,
+            individual_identifiers,
+            phenotype_name,
+            phenotype_vector,
+            covariate_names,
+            covariate_matrix_values,
+            covariate_row_count,
+            covariate_column_count,
+            is_binary_trait,
+        }
+    }
+}
+
+#[pymethods]
+impl NativeAlignedSampleData {
+    #[getter]
+    fn sample_indices<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i64>> {
+        self.sample_indices.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    fn family_identifiers(&self) -> Vec<String> {
+        self.family_identifiers.clone()
+    }
+
+    #[getter]
+    fn individual_identifiers(&self) -> Vec<String> {
+        self.individual_identifiers.clone()
+    }
+
+    #[getter]
+    fn phenotype_name(&self) -> String {
+        self.phenotype_name.clone()
+    }
+
+    #[getter]
+    fn phenotype_vector<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
+        self.phenotype_vector.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    fn covariate_names(&self) -> Vec<String> {
+        self.covariate_names.clone()
+    }
+
+    #[getter]
+    fn covariate_matrix<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f32>>> {
+        let covariate_matrix = Array2::from_shape_vec(
+            (self.covariate_row_count, self.covariate_column_count),
+            self.covariate_matrix_values.clone(),
+        )
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(covariate_matrix.into_pyarray(py))
+    }
+
+    #[getter]
+    fn is_binary_trait(&self) -> bool {
+        self.is_binary_trait
     }
 }
 
@@ -876,6 +1009,334 @@ fn call_dosage_chunk_callback<'py>(
 }
 
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value)]
+#[pyo3(signature = (
+    sample_indices,
+    family_identifiers,
+    individual_identifiers,
+    phenotype_path,
+    phenotype_name,
+    covariate_path=None,
+    covariate_names=None,
+    is_binary_trait=false
+))]
+fn align_sample_data<'py>(
+    py: Python<'py>,
+    sample_indices: PyReadonlyArray1<'py, i64>,
+    family_identifiers: Vec<String>,
+    individual_identifiers: Vec<String>,
+    phenotype_path: String,
+    phenotype_name: String,
+    covariate_path: Option<String>,
+    covariate_names: Option<Vec<String>>,
+    is_binary_trait: bool,
+) -> PyResult<NativeAlignedSampleData> {
+    let sample_index_values = sample_indices.as_slice()?.to_vec();
+    let inputs = NativeAlignmentInputs {
+        sample_indices: sample_index_values,
+        family_identifiers,
+        individual_identifiers,
+        phenotype_path,
+        phenotype_name,
+        covariate_path,
+        covariate_names,
+        is_binary_trait,
+    };
+    py.detach(|| align_sample_data_native(inputs)).map_err(PyValueError::new_err)
+}
+
+fn align_sample_data_native(inputs: NativeAlignmentInputs) -> Result<NativeAlignedSampleData, String> {
+    validate_native_alignment_input_lengths(&inputs)?;
+
+    let phenotype_table = read_tabular_table(Path::new(&inputs.phenotype_path))?;
+    validate_required_column(&phenotype_table, "IID", &inputs.phenotype_path)?;
+    validate_required_column(&phenotype_table, &inputs.phenotype_name, &inputs.phenotype_path)?;
+    let phenotype_records_by_identifier =
+        build_phenotype_records_by_identifier(&phenotype_table, &inputs.phenotype_name)?;
+
+    let (selected_covariate_names, covariate_records_by_identifier) = match inputs.covariate_path.as_ref() {
+        Some(covariate_path) => {
+            let covariate_table = read_tabular_table(Path::new(covariate_path))?;
+            validate_required_column(&covariate_table, "IID", covariate_path)?;
+            let selected_covariate_names =
+                select_covariate_names(&covariate_table, inputs.covariate_names.as_deref(), covariate_path)?;
+            let covariate_records_by_identifier =
+                build_covariate_records_by_identifier(&covariate_table, &selected_covariate_names)?;
+            (selected_covariate_names, covariate_records_by_identifier)
+        }
+        None => {
+            if inputs.covariate_names.is_some() {
+                return Err("Covariate names cannot be provided without a covariate table.".to_string());
+            }
+            (Vec::new(), HashMap::new())
+        }
+    };
+
+    let mut aligned_rows = Vec::new();
+    for sample_array_index in 0..inputs.sample_indices.len() {
+        let individual_identifier = &inputs.individual_identifiers[sample_array_index];
+        let Some(phenotype_records) = phenotype_records_by_identifier.get(individual_identifier) else {
+            continue;
+        };
+        if inputs.covariate_path.is_none() {
+            append_intercept_only_aligned_rows(&inputs, sample_array_index, phenotype_records, &mut aligned_rows)?;
+            continue;
+        }
+        let Some(covariate_records) = covariate_records_by_identifier.get(individual_identifier) else {
+            continue;
+        };
+        append_covariate_aligned_rows(
+            &inputs,
+            sample_array_index,
+            phenotype_records,
+            covariate_records,
+            &mut aligned_rows,
+        )?;
+    }
+
+    aligned_rows.sort_by_key(|row| row.sample_index);
+    if aligned_rows.is_empty() {
+        return Err("No aligned samples remain after joining phenotype and covariate tables.".to_string());
+    }
+
+    let mut returned_covariate_names = Vec::with_capacity(selected_covariate_names.len() + 1);
+    returned_covariate_names.push("intercept".to_string());
+    returned_covariate_names.extend(selected_covariate_names);
+    Ok(NativeAlignedSampleData::new(
+        inputs.phenotype_name,
+        returned_covariate_names,
+        aligned_rows,
+        inputs.is_binary_trait,
+    ))
+}
+
+fn validate_native_alignment_input_lengths(inputs: &NativeAlignmentInputs) -> Result<(), String> {
+    if inputs.sample_indices.len() != inputs.family_identifiers.len()
+        || inputs.sample_indices.len() != inputs.individual_identifiers.len()
+    {
+        return Err(format!(
+            "Sample alignment arrays must have equal length: sample_indices={}, family_identifiers={}, individual_identifiers={}.",
+            inputs.sample_indices.len(),
+            inputs.family_identifiers.len(),
+            inputs.individual_identifiers.len(),
+        ));
+    }
+    Ok(())
+}
+
+fn read_tabular_table(table_path: &Path) -> Result<TabularTable, String> {
+    let table_content = std::fs::read_to_string(table_path)
+        .map_err(|error| format!("Failed to read table '{}': {error}.", table_path.display()))?;
+    let mut lines = table_content.lines();
+    let Some(header_line) = lines.next() else {
+        return Err(format!("Table '{}' is empty.", table_path.display()));
+    };
+    let headers = split_tabular_line(header_line);
+    if headers.is_empty() {
+        return Err(format!("Table '{}' must contain a header row.", table_path.display()));
+    }
+    let rows = lines.map(split_tabular_line).collect();
+    Ok(TabularTable { headers, rows })
+}
+
+fn split_tabular_line(line: &str) -> Vec<String> {
+    line.trim_end_matches('\r').split('\t').map(ToString::to_string).collect()
+}
+
+fn validate_required_column(table: &TabularTable, column_name: &str, table_path: &str) -> Result<(), String> {
+    column_index(table, column_name).map(|_| ()).ok_or_else(|| {
+        if column_name == "IID" {
+            format!("Identifier column 'IID' was not found in {table_path}.")
+        } else {
+            format!("Phenotype column '{column_name}' was not found in {table_path}.")
+        }
+    })
+}
+
+fn column_index(table: &TabularTable, column_name: &str) -> Option<usize> {
+    table.headers.iter().position(|header| header == column_name)
+}
+
+fn row_value(row: &[String], column_index: usize) -> &str {
+    row.get(column_index).map_or("", String::as_str)
+}
+
+fn is_tabular_null_value(value: &str) -> bool {
+    matches!(value, "" | "NA" | "NaN" | "nan" | "-9")
+}
+
+fn build_phenotype_records_by_identifier(
+    phenotype_table: &TabularTable,
+    phenotype_name: &str,
+) -> Result<HashMap<String, Vec<RawPhenotypeRecord>>, String> {
+    let individual_identifier_index = column_index(phenotype_table, "IID")
+        .ok_or_else(|| "Identifier column 'IID' was not found in phenotype table.".to_string())?;
+    let phenotype_index = column_index(phenotype_table, phenotype_name)
+        .ok_or_else(|| format!("Phenotype column '{phenotype_name}' was not found in phenotype table."))?;
+    let mut records_by_identifier: HashMap<String, Vec<RawPhenotypeRecord>> = HashMap::new();
+    for row in &phenotype_table.rows {
+        let individual_identifier = row_value(row, individual_identifier_index);
+        let phenotype_value = row_value(row, phenotype_index);
+        if individual_identifier.is_empty() || is_tabular_null_value(phenotype_value) {
+            continue;
+        }
+        records_by_identifier
+            .entry(individual_identifier.to_string())
+            .or_default()
+            .push(RawPhenotypeRecord { phenotype_value: phenotype_value.to_string() });
+    }
+    Ok(records_by_identifier)
+}
+
+fn select_covariate_names(
+    covariate_table: &TabularTable,
+    requested_covariate_names: Option<&[String]>,
+    covariate_path: &str,
+) -> Result<Vec<String>, String> {
+    match requested_covariate_names {
+        Some(covariate_names) => {
+            let missing_covariates: Vec<String> = covariate_names
+                .iter()
+                .filter(|covariate_name| column_index(covariate_table, covariate_name).is_none())
+                .cloned()
+                .collect();
+            if !missing_covariates.is_empty() {
+                return Err(format!("Covariate columns are missing from {covariate_path}: {missing_covariates:?}."));
+            }
+            Ok(covariate_names.to_vec())
+        }
+        None => {
+            let inferred_covariate_names: Vec<String> = covariate_table
+                .headers
+                .iter()
+                .filter(|column_name| column_name.as_str() != "FID" && column_name.as_str() != "IID")
+                .cloned()
+                .collect();
+            if inferred_covariate_names.is_empty() {
+                return Err("Covariate table must contain at least one non-identifier column.".to_string());
+            }
+            Ok(inferred_covariate_names)
+        }
+    }
+}
+
+fn build_covariate_records_by_identifier(
+    covariate_table: &TabularTable,
+    selected_covariate_names: &[String],
+) -> Result<HashMap<String, Vec<RawCovariateRecord>>, String> {
+    let individual_identifier_index = column_index(covariate_table, "IID")
+        .ok_or_else(|| "Identifier column 'IID' was not found in covariate table.".to_string())?;
+    let covariate_indices: Vec<usize> = selected_covariate_names
+        .iter()
+        .map(|covariate_name| {
+            column_index(covariate_table, covariate_name)
+                .ok_or_else(|| format!("Covariate column '{covariate_name}' was not found."))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut records_by_identifier: HashMap<String, Vec<RawCovariateRecord>> = HashMap::new();
+    for row in &covariate_table.rows {
+        let individual_identifier = row_value(row, individual_identifier_index);
+        if individual_identifier.is_empty() {
+            continue;
+        }
+        let covariate_values: Vec<String> = covariate_indices
+            .iter()
+            .map(|covariate_index| row_value(row, *covariate_index))
+            .filter(|covariate_value| !is_tabular_null_value(covariate_value))
+            .map(ToString::to_string)
+            .collect();
+        if covariate_values.len() != selected_covariate_names.len() {
+            continue;
+        }
+        records_by_identifier
+            .entry(individual_identifier.to_string())
+            .or_default()
+            .push(RawCovariateRecord { covariate_values });
+    }
+    Ok(records_by_identifier)
+}
+
+fn append_intercept_only_aligned_rows(
+    inputs: &NativeAlignmentInputs,
+    sample_array_index: usize,
+    phenotype_records: &[RawPhenotypeRecord],
+    aligned_rows: &mut Vec<NativeAlignedSampleRow>,
+) -> Result<(), String> {
+    for phenotype_record in phenotype_records {
+        let phenotype_value =
+            parse_phenotype_value(&phenotype_record.phenotype_value, &inputs.phenotype_name, inputs.is_binary_trait)?;
+        aligned_rows.push(build_native_aligned_sample_row(inputs, sample_array_index, phenotype_value, Vec::new()));
+    }
+    Ok(())
+}
+
+fn append_covariate_aligned_rows(
+    inputs: &NativeAlignmentInputs,
+    sample_array_index: usize,
+    phenotype_records: &[RawPhenotypeRecord],
+    covariate_records: &[RawCovariateRecord],
+    aligned_rows: &mut Vec<NativeAlignedSampleRow>,
+) -> Result<(), String> {
+    for phenotype_record in phenotype_records {
+        let phenotype_value =
+            parse_phenotype_value(&phenotype_record.phenotype_value, &inputs.phenotype_name, inputs.is_binary_trait)?;
+        for covariate_record in covariate_records {
+            let covariate_values = parse_covariate_values(&covariate_record.covariate_values)?;
+            aligned_rows.push(build_native_aligned_sample_row(
+                inputs,
+                sample_array_index,
+                phenotype_value,
+                covariate_values,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn build_native_aligned_sample_row(
+    inputs: &NativeAlignmentInputs,
+    sample_array_index: usize,
+    phenotype_value: f32,
+    covariate_values: Vec<f32>,
+) -> NativeAlignedSampleRow {
+    NativeAlignedSampleRow {
+        sample_index: inputs.sample_indices[sample_array_index],
+        family_identifier: inputs.family_identifiers[sample_array_index].clone(),
+        individual_identifier: inputs.individual_identifiers[sample_array_index].clone(),
+        phenotype_value,
+        covariate_values,
+    }
+}
+
+fn parse_phenotype_value(phenotype_value: &str, phenotype_name: &str, is_binary_trait: bool) -> Result<f32, String> {
+    let parsed_value = phenotype_value.parse::<f32>().map_err(|error| {
+        format!("Failed to parse phenotype column '{phenotype_name}' value '{phenotype_value}': {error}.")
+    })?;
+    if !is_binary_trait {
+        return Ok(parsed_value);
+    }
+    if parsed_value == 1.0 {
+        return Ok(0.0);
+    }
+    if parsed_value == 2.0 {
+        return Ok(1.0);
+    }
+    Err(format!("Binary phenotype must contain only values 1 and 2, found value {parsed_value}."))
+}
+
+fn parse_covariate_values(covariate_values: &[String]) -> Result<Vec<f32>, String> {
+    covariate_values
+        .iter()
+        .map(|covariate_value| {
+            covariate_value
+                .parse::<f32>()
+                .map_err(|error| format!("Failed to parse covariate value '{covariate_value}': {error}."))
+        })
+        .collect()
+}
+
+#[pyfunction]
 fn hello_from_bin() -> String {
     "Hello from g!".to_string()
 }
@@ -1075,6 +1536,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<BgenReader>()?;
     module.add_class::<ChunkSpec>()?;
     module.add_class::<ChunkStats>()?;
+    module.add_class::<NativeAlignedSampleData>()?;
     module.add_class::<OutputWriterSession>()?;
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;
@@ -1083,6 +1545,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
     module.add_function(wrap_pyfunction!(hello_from_bin, module)?)?;
     module.add_function(wrap_pyfunction!(plan_genotype_chunks, module)?)?;
+    module.add_function(wrap_pyfunction!(align_sample_data, module)?)?;
     module.add_function(wrap_pyfunction!(convert_probability_tensor_to_dosage_f32, module)?)?;
     module.add_function(wrap_pyfunction!(convert_probability_matrix_to_dosage_f32, module)?)?;
     Ok(())

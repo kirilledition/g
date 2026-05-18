@@ -21,6 +21,16 @@ class VariantMetadata:
     allele_one: list[str]
     allele_two: list[str]
 
+class NativeAlignedSampleData:
+    sample_indices: npt.NDArray[np.int64]
+    family_identifiers: list[str]
+    individual_identifiers: list[str]
+    phenotype_name: str
+    phenotype_vector: npt.NDArray[np.float32]
+    covariate_names: list[str]
+    covariate_matrix: npt.NDArray[np.float32]
+    is_binary_trait: bool
+
 class BgenReader:
     sample_count: int
     variant_count: int
@@ -169,6 +179,16 @@ def plan_genotype_chunks(
     variant_limit: int | None = None,
     committed_chunk_identifiers: list[int] | None = None,
 ) -> list[ChunkSpec]: ...
+def align_sample_data(
+    sample_indices: npt.NDArray[np.int64],
+    family_identifiers: list[str],
+    individual_identifiers: list[str],
+    phenotype_path: str,
+    phenotype_name: str,
+    covariate_path: str | None = None,
+    covariate_names: list[str] | None = None,
+    is_binary_trait: bool = False,
+) -> NativeAlignedSampleData: ...
 def convert_probability_tensor_to_dosage_f32(
     probability_tensor: npt.NDArray[np.float32],
     combination_count: int,

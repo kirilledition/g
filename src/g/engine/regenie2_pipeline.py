@@ -26,6 +26,7 @@ BINARY_VARIANT_MAJOR_ENVIRONMENT_VARIABLE = "G_REGENIE2_BINARY_VARIANT_MAJOR"
 ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE = (
     "G_REGENIE2_ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED"
 )
+RUST_SAMPLE_ALIGNMENT_ENVIRONMENT_VARIABLE = "G_REGENIE2_RUST_SAMPLE_ALIGNMENT"
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,14 @@ def binary_variant_major_enabled() -> bool:
 def assume_trusted_no_missing_diploid_validated() -> bool:
     """Return whether trusted BGEN validation should be treated as already completed."""
     raw_value = os.environ.get(ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE)
+    if raw_value is None:
+        return False
+    return raw_value.lower() in {"1", "true", "yes", "on"}
+
+
+def rust_sample_alignment_enabled() -> bool:
+    """Return whether native sample alignment is enabled for the BGEN pipeline."""
+    raw_value = os.environ.get(RUST_SAMPLE_ALIGNMENT_ENVIRONMENT_VARIABLE)
     if raw_value is None:
         return False
     return raw_value.lower() in {"1", "true", "yes", "on"}
@@ -299,6 +308,45 @@ def build_variant_metadata(native_metadata: _core.VariantMetadata) -> models.Var
         allele_one=np.asarray(native_metadata.allele_one, dtype=np.str_),
         allele_two=np.asarray(native_metadata.allele_two, dtype=np.str_),
     )
+
+
+def build_aligned_sample_data_from_native(
+    native_aligned_sample_data: _core.NativeAlignedSampleData,
+) -> models.AlignedSampleData:
+    """Convert native Rust sample alignment output into the shared Python model."""
+    return models.AlignedSampleData(
+        sample_indices=np.asarray(native_aligned_sample_data.sample_indices, dtype=np.int64),
+        family_identifiers=np.asarray(native_aligned_sample_data.family_identifiers, dtype=np.str_),
+        individual_identifiers=np.asarray(native_aligned_sample_data.individual_identifiers, dtype=np.str_),
+        phenotype_name=native_aligned_sample_data.phenotype_name,
+        phenotype_vector=jnp.asarray(native_aligned_sample_data.phenotype_vector, dtype=jnp.float32),
+        covariate_names=tuple(native_aligned_sample_data.covariate_names),
+        covariate_matrix=jnp.asarray(native_aligned_sample_data.covariate_matrix, dtype=jnp.float32),
+        is_binary_trait=native_aligned_sample_data.is_binary_trait,
+    )
+
+
+def load_rust_aligned_sample_data_from_individual_identifier_table(
+    *,
+    sample_table: typing.Any,
+    phenotype_path: Path,
+    phenotype_name: str,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    is_binary_trait: bool,
+) -> models.AlignedSampleData:
+    """Load aligned sample data through the Rust TSV join implementation."""
+    native_aligned_sample_data = _core.align_sample_data(
+        np.ascontiguousarray(sample_table.get_column("sample_index").to_numpy(), dtype=np.int64),
+        typing.cast("list[str]", sample_table.get_column("family_identifier").to_list()),
+        typing.cast("list[str]", sample_table.get_column("individual_identifier").to_list()),
+        str(phenotype_path),
+        phenotype_name,
+        str(covariate_path) if covariate_path is not None else None,
+        list(covariate_names) if covariate_names is not None else None,
+        is_binary_trait,
+    )
+    return build_aligned_sample_data_from_native(native_aligned_sample_data)
 
 
 def get_metadata_chromosome(metadata: typing.Any) -> str:
@@ -1152,6 +1200,15 @@ def load_bgen_aligned_sample_data(
     else:
         message = "BGEN file does not contain samples and no .sample file was found."
         raise ValueError(message)
+    if rust_sample_alignment_enabled():
+        return load_rust_aligned_sample_data_from_individual_identifier_table(
+            sample_table=sample_table,
+            phenotype_path=phenotype_path,
+            phenotype_name=phenotype_name,
+            covariate_path=covariate_path,
+            covariate_names=covariate_names,
+            is_binary_trait=is_binary_trait,
+        )
     return samples.load_aligned_sample_data_from_individual_identifier_table(
         sample_table=sample_table,
         phenotype_path=phenotype_path,

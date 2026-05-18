@@ -396,3 +396,52 @@ Interpretation:
 
 - The block formulation is faster, but the current implementation changes enough floating-point behavior to alter Firth convergence and output classification.
 - It is useful as a profiling probe, but not acceptable as a default optimization until the Firth solver is made numerically invariant across equivalent formulations.
+
+### 7. Rust-Backed Sample Alignment
+
+Status: first slice implemented behind an internal switch.
+
+The native BGEN path still enters Python/Polars for phenotype and covariate alignment before chunk delivery. Earlier timings showed several seconds of setup around alignment, prediction loading, and output preparation. The first alignment slice keeps sample identifier resolution in Python, then moves the TSV join/filter/recode/design-matrix construction to Rust.
+
+Detailed plan:
+
+1. Keep `.sample` and embedded BGEN sample identifier resolution unchanged in Python.
+2. Add `_core.align_sample_data(...)` that accepts already-resolved sample indices, family identifiers, and individual identifiers.
+3. Parse phenotype and covariate TSV files in Rust.
+4. Match the existing Python semantics:
+   - join by `IID` only;
+   - ignore `FID` for matching;
+   - infer covariates from non-`FID`/`IID` columns when names are not supplied;
+   - drop rows with null phenotype or selected covariates;
+   - sort aligned rows by `sample_index`;
+   - add an intercept column;
+   - recode binary phenotypes from `1/2` to `0/1`;
+   - preserve duplicate join expansion where duplicate `IID` rows exist.
+5. Convert the native result into the existing `AlignedSampleData` dataclass so downstream prediction loading, JAX state construction, and output schema stay unchanged.
+6. Gate the path with `G_REGENIE2_RUST_SAMPLE_ALIGNMENT=1` until parity and setup timing are proven on the full landau workflow.
+
+Implementation notes:
+
+- Environment variable: `G_REGENIE2_RUST_SAMPLE_ALIGNMENT`
+- Default: disabled
+- Public CLI/API unchanged.
+- Current scope intentionally does not move `.sample` parsing or prediction-source alignment; those remain separate optimization candidates after this path is measured.
+
+Validation plan:
+
+- Unit parity against Python alignment for continuous and binary traits.
+- Pipeline dispatch test proving the native alignment path is used only when the internal switch is enabled.
+- Landau timing with stage diagnostics to compare `sample_phenotype_covariate_alignment` before and after enabling the switch.
+
+Initial landau smoke measurement:
+
+| Scenario | Variant limit | Alignment stage | Python API entry | Output note |
+|---|---:|---:|---:|---|
+| Python/Polars alignment | 1,000 | 1.936s | 28.262s | reference process |
+| Rust TSV alignment | 1,000 | 0.415s | 23.040s | alignment payload exact |
+
+Interpretation:
+
+- The measured alignment stage is `1.52s` faster on the smoke run, a `~79%` reduction for this setup slice.
+- Direct payload comparison on the real chr22 sample, phenotype, and covariate inputs matched exactly for sample indices, family identifiers, individual identifiers, binary phenotype vector, covariate names, and covariate matrix.
+- Separate GPU process outputs still showed small Firth-level differences on the smoke run. That is consistent with the already-observed cross-process Firth variability, so this slice remains gated until same-process or full-run parity is rechecked under the accepted benchmark harness.
