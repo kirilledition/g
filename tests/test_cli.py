@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from g.api import DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE, RunArtifacts, WarmCacheReport
 from g.cli import app, main, print_success_message, resolve_chunk_size
 from g.engine.regenie2_pipeline import WarmCacheShape
-from g.types import Device, RegenieTraitType
+from g.types import Device, RegenieTraitType, TrustedBgenValidationMode
 
 runner = CliRunner()
 
@@ -97,6 +97,7 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
                 "--output-writer-queue-depth",
                 "5",
                 "--trusted-no-missing-diploid",
+                "--validate-trusted-bgen",
                 "--warm-cache-first",
             ],
         )
@@ -113,6 +114,7 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
     assert compute_config.output_writer_thread_count == 3
     assert compute_config.output_writer_queue_depth == 5
     assert compute_config.trusted_no_missing_diploid is True
+    assert compute_config.trusted_bgen_validation_mode == TrustedBgenValidationMode.FORCE_VALIDATE
     assert compute_config.warm_cache_first is True
 
 
@@ -126,6 +128,8 @@ def test_regenie2_help_shows_binary_trait_and_correction_options() -> None:
     assert "--spa" in result.output
     assert "--pThresh" in result.output
     assert "--firth-se" in result.output
+    assert "--validate-trusted-bgen" in result.output
+    assert "--assume-trusted-bgen-validated" in result.output
     assert "--binary-correction" not in result.output
 
 
@@ -192,6 +196,7 @@ def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
                 "--output-writer-queue-depth",
                 "6",
                 "--trusted-no-missing-diploid",
+                "--assume-trusted-bgen-validated",
                 "--warm-cache-first",
                 "--firth",
                 "--approx",
@@ -209,6 +214,7 @@ def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
     assert compute_config.output_writer_thread_count == 2
     assert compute_config.output_writer_queue_depth == 6
     assert compute_config.trusted_no_missing_diploid is True
+    assert compute_config.trusted_bgen_validation_mode == TrustedBgenValidationMode.ASSUME_VALIDATED
     assert compute_config.warm_cache_first is True
     binary_config = mock_run_regenie2_api.call_args.kwargs["binary"]
     assert binary_config.firth is True

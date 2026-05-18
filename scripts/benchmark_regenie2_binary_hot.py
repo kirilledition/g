@@ -422,6 +422,11 @@ def build_compute_config(
         output_writer_thread_count=configuration.output_writer_thread_count,
         output_writer_queue_depth=configuration.output_writer_queue_depth,
         trusted_no_missing_diploid=configuration.trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=(
+            types.TrustedBgenValidationMode.ASSUME_VALIDATED
+            if configuration.assume_trusted_validated
+            else types.TrustedBgenValidationMode.CACHE_ON_MISS
+        ),
     )
 
 

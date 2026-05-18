@@ -50,6 +50,22 @@ def print_warm_cache_message(report: api.WarmCacheReport) -> None:
     typer.echo(f"Success. Warmed JAX cache shapes: {warmed_shape_descriptions}")
 
 
+def resolve_trusted_bgen_validation_mode(
+    *,
+    validate_trusted_bgen: bool,
+    assume_trusted_bgen_validated: bool,
+) -> types.TrustedBgenValidationMode:
+    """Resolve trusted BGEN validation mode from CLI flags."""
+    if validate_trusted_bgen and assume_trusted_bgen_validated:
+        message = "--validate-trusted-bgen and --assume-trusted-bgen-validated are mutually exclusive."
+        raise typer.BadParameter(message)
+    if assume_trusted_bgen_validated:
+        return types.TrustedBgenValidationMode.ASSUME_VALIDATED
+    if validate_trusted_bgen:
+        return types.TrustedBgenValidationMode.FORCE_VALIDATE
+    return types.TrustedBgenValidationMode.CACHE_ON_MISS
+
+
 @app.command("regenie2-linear", no_args_is_help=True)
 def run_regenie2_linear_command(
     bgen: Path = typer.Option(..., help="BGEN file path."),
@@ -85,6 +101,14 @@ def run_regenie2_linear_command(
         default=False,
         help="Use the native fast path for validated BGENs with no missing diploid genotypes.",
     ),
+    validate_trusted_bgen: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Force trusted BGEN validation even when a cache entry exists.",
+    ),
+    assume_trusted_bgen_validated: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Assume trusted BGEN validation has already been completed.",
+    ),
     warm_cache_first: bool = typer.Option(  # noqa: FBT001
         default=False,
         help="Warm exact JAX cache shapes in this process before running.",
@@ -115,6 +139,10 @@ def run_regenie2_linear_command(
         output_writer_thread_count=output_writer_thread_count,
         output_writer_queue_depth=output_writer_queue_depth,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=resolve_trusted_bgen_validation_mode(
+            validate_trusted_bgen=validate_trusted_bgen,
+            assume_trusted_bgen_validated=assume_trusted_bgen_validated,
+        ),
         warm_cache_first=warm_cache_first,
     )
     artifacts = run_regenie2_linear_api(
@@ -194,6 +222,14 @@ def run_regenie2_command(
         default=False,
         help="Use the native fast path for validated BGENs with no missing diploid genotypes.",
     ),
+    validate_trusted_bgen: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Force trusted BGEN validation even when a cache entry exists.",
+    ),
+    assume_trusted_bgen_validated: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Assume trusted BGEN validation has already been completed.",
+    ),
     warm_cache_first: bool = typer.Option(  # noqa: FBT001
         default=False,
         help="Warm exact JAX cache shapes in this process before running.",
@@ -224,6 +260,10 @@ def run_regenie2_command(
         output_writer_thread_count=output_writer_thread_count,
         output_writer_queue_depth=output_writer_queue_depth,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=resolve_trusted_bgen_validation_mode(
+            validate_trusted_bgen=validate_trusted_bgen,
+            assume_trusted_bgen_validated=assume_trusted_bgen_validated,
+        ),
         warm_cache_first=warm_cache_first,
     )
     artifacts = run_regenie2_api(
@@ -294,6 +334,14 @@ def run_regenie2_warm_cache_command(
         default=False,
         help="Use the native fast path for validated BGENs with no missing diploid genotypes.",
     ),
+    validate_trusted_bgen: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Force trusted BGEN validation even when a cache entry exists.",
+    ),
+    assume_trusted_bgen_validated: bool = typer.Option(  # noqa: FBT001
+        default=False,
+        help="Assume trusted BGEN validation has already been completed.",
+    ),
 ) -> None:
     """Warm JAX compilation-cache entries for a REGENIE step 2 association scan."""
     compute_config = api.ComputeConfig(
@@ -302,6 +350,10 @@ def run_regenie2_warm_cache_command(
         variant_limit=variant_limit,
         finalize_parquet=False,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=resolve_trusted_bgen_validation_mode(
+            validate_trusted_bgen=validate_trusted_bgen,
+            assume_trusted_bgen_validated=assume_trusted_bgen_validated,
+        ),
     )
     report = run_regenie2_warm_cache_api(
         bgen=bgen,

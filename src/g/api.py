@@ -39,6 +39,7 @@ class ComputeConfig:
     output_writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT
     output_writer_queue_depth: int = DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
     trusted_no_missing_diploid: bool = False
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS
     warm_cache_first: bool = False
 
 
@@ -229,6 +230,7 @@ def regenie2(
                     variant_limit=compute_config.variant_limit,
                     correction_plan=binary_correction_plan,
                     trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
+                    trusted_bgen_validation_mode=compute_config.trusted_bgen_validation_mode,
                 )
             else:
                 warm_regenie2_linear_bgen_cache(
@@ -241,6 +243,7 @@ def regenie2(
                     chunk_size=compute_config.chunk_size,
                     variant_limit=compute_config.variant_limit,
                     trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
+                    trusted_bgen_validation_mode=compute_config.trusted_bgen_validation_mode,
                 )
             engine.record_stage_duration(stage_timing_recorder, "jax_cache_warmup", warm_cache_start_time)
         output_run_directory = compute_config.output_run_directory or Path(out)
@@ -277,6 +280,7 @@ def regenie2(
                 writer_thread_count=compute_config.output_writer_thread_count,
                 writer_queue_depth=compute_config.output_writer_queue_depth,
                 trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
+                trusted_bgen_validation_mode=compute_config.trusted_bgen_validation_mode,
                 correction_plan=binary_correction_plan,
                 stage_timing_recorder=stage_timing_recorder,
             )
@@ -297,6 +301,7 @@ def regenie2(
                 writer_thread_count=compute_config.output_writer_thread_count,
                 writer_queue_depth=compute_config.output_writer_queue_depth,
                 trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
+                trusted_bgen_validation_mode=compute_config.trusted_bgen_validation_mode,
                 stage_timing_recorder=stage_timing_recorder,
             )
 
@@ -342,6 +347,7 @@ def regenie2_warm_cache(
             variant_limit=compute_config.variant_limit,
             correction_plan=binary_correction_plan,
             trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
+            trusted_bgen_validation_mode=compute_config.trusted_bgen_validation_mode,
         )
     return warm_regenie2_linear_bgen_cache(
         genotype_source_config=genotype_source_config,
@@ -353,4 +359,5 @@ def regenie2_warm_cache(
         chunk_size=compute_config.chunk_size,
         variant_limit=compute_config.variant_limit,
         trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=compute_config.trusted_bgen_validation_mode,
     )

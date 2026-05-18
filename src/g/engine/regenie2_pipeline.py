@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import queue
@@ -25,6 +26,7 @@ from g.io import output, source
 ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE = (
     "G_REGENIE2_ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED"
 )
+TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -142,6 +144,75 @@ def assume_trusted_no_missing_diploid_validated() -> bool:
     if raw_value is None:
         return False
     return raw_value.lower() in {"1", "true", "yes", "on"}
+
+
+def trusted_bgen_validation_cache_directory() -> Path:
+    """Return the trusted BGEN validation cache directory."""
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+    cache_home = Path(xdg_cache_home) if xdg_cache_home else Path.home() / ".cache"
+    return cache_home / "g" / "bgen_validation"
+
+
+def build_trusted_bgen_validation_fingerprint(
+    *,
+    bgen_path: Path,
+    sample_count: int,
+    variant_count: int,
+    trusted_no_missing_diploid: bool,
+) -> str:
+    """Build a stable trusted BGEN validation fingerprint."""
+    bgen_stat = bgen_path.stat()
+    fingerprint_payload = {
+        "schema_version": TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION,
+        "bgen_path": str(bgen_path.resolve()),
+        "size": bgen_stat.st_size,
+        "mtime_ns": bgen_stat.st_mtime_ns,
+        "sample_count": sample_count,
+        "variant_count": variant_count,
+        "trusted_no_missing_diploid": trusted_no_missing_diploid,
+    }
+    fingerprint_json = json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(fingerprint_json.encode("utf-8")).hexdigest()
+
+
+def trusted_bgen_validation_cache_path(fingerprint: str) -> Path:
+    """Return the validation cache path for a fingerprint."""
+    return trusted_bgen_validation_cache_directory() / f"{fingerprint}.json"
+
+
+def validate_trusted_bgen_with_cache(
+    *,
+    engine: _core.Regenie2RunEngine,
+    bgen_path: Path,
+    validation_mode: types.TrustedBgenValidationMode,
+) -> None:
+    """Validate or trust the no-missing diploid BGEN path according to mode."""
+    if (
+        assume_trusted_no_missing_diploid_validated()
+        or validation_mode == types.TrustedBgenValidationMode.ASSUME_VALIDATED
+    ):
+        return
+    fingerprint = build_trusted_bgen_validation_fingerprint(
+        bgen_path=bgen_path,
+        sample_count=int(engine.sample_count),
+        variant_count=int(engine.variant_count),
+        trusted_no_missing_diploid=True,
+    )
+    cache_path = trusted_bgen_validation_cache_path(fingerprint)
+    if validation_mode == types.TrustedBgenValidationMode.CACHE_ON_MISS and cache_path.exists():
+        return
+    engine.validate_trusted_no_missing_diploid()
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_payload = {
+        "schema_version": TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION,
+        "fingerprint": fingerprint,
+        "bgen_path": str(bgen_path.resolve()),
+        "sample_count": int(engine.sample_count),
+        "variant_count": int(engine.variant_count),
+    }
+    temporary_cache_path = cache_path.with_suffix(".json.tmp")
+    temporary_cache_path.write_text(json.dumps(cache_payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    temporary_cache_path.replace(cache_path)
 
 
 def write_stage_timing_snapshot_from_environment(stage_timing_recorder: StageTimingRecorder | None) -> None:
@@ -818,6 +889,7 @@ def warm_regenie2_linear_bgen_cache(
     chunk_size: int,
     variant_limit: int | None,
     trusted_no_missing_diploid: bool = False,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for quantitative REGENIE step 2."""
     engine = build_bgen_run_engine(
@@ -825,6 +897,7 @@ def warm_regenie2_linear_bgen_cache(
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
     run_input = load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
@@ -881,6 +954,7 @@ def warm_regenie2_binary_bgen_cache(
     variant_limit: int | None,
     correction_plan: types.BinaryCorrectionPlan,
     trusted_no_missing_diploid: bool = False,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for binary REGENIE step 2."""
     engine = build_bgen_run_engine(
@@ -888,6 +962,7 @@ def warm_regenie2_binary_bgen_cache(
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
     run_input = load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
@@ -959,6 +1034,7 @@ def run_regenie2_linear_bgen_pipeline(
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
     trusted_no_missing_diploid: bool = False,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     stage_timing_recorder: StageTimingRecorder | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
@@ -969,6 +1045,7 @@ def run_regenie2_linear_bgen_pipeline(
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
     record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
     alignment_start_time = time.perf_counter()
@@ -1051,6 +1128,7 @@ def run_regenie2_binary_bgen_pipeline(
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
     trusted_no_missing_diploid: bool = False,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     stage_timing_recorder: StageTimingRecorder | None = None,
 ) -> Path | None:
@@ -1063,6 +1141,7 @@ def run_regenie2_binary_bgen_pipeline(
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
     record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
     alignment_start_time = time.perf_counter()
@@ -1192,6 +1271,7 @@ def build_bgen_run_engine(
     chunk_size: int,
     variant_limit: int | None,
     trusted_no_missing_diploid: bool = False,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN run engine once for alignment and chunk delivery."""
     engine = _core.Regenie2RunEngine(
@@ -1200,8 +1280,12 @@ def build_bgen_run_engine(
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
-    if trusted_no_missing_diploid and not assume_trusted_no_missing_diploid_validated():
-        engine.validate_trusted_no_missing_diploid()
+    if trusted_no_missing_diploid:
+        validate_trusted_bgen_with_cache(
+            engine=engine,
+            bgen_path=genotype_source_config.source_path,
+            validation_mode=trusted_bgen_validation_mode,
+        )
     return engine
 
 

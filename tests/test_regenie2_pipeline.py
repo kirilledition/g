@@ -334,6 +334,10 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     with (
         patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
+        patch(
+            "g.engine.regenie2_pipeline.validate_trusted_bgen_with_cache",
+            side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
+        ),
         patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
         patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
         patch("g.engine.regenie2_pipeline.output.write_run_manifest_header"),
@@ -391,6 +395,10 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     with (
         patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
+        patch(
+            "g.engine.regenie2_pipeline.validate_trusted_bgen_with_cache",
+            side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
+        ),
         patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
         patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
         patch("g.engine.regenie2_pipeline.output.write_run_manifest_header"),
@@ -483,6 +491,48 @@ def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated(
     assert isinstance(engine, FakeRunEngine)
     assert engine.trusted_no_missing_diploid is True
     assert engine.validation_count == 0
+
+
+def test_build_bgen_run_engine_caches_trusted_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeRunEngine.instances.clear()
+    bgen_path = tmp_path / "study.bgen"
+    bgen_path.write_bytes(b"bgen")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    with patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine):
+        first_engine = regenie2_pipeline.build_bgen_run_engine(
+            genotype_source_config=source.build_bgen_source_config(bgen_path),
+            chunk_size=32,
+            variant_limit=100,
+            trusted_no_missing_diploid=True,
+        )
+        second_engine = regenie2_pipeline.build_bgen_run_engine(
+            genotype_source_config=source.build_bgen_source_config(bgen_path),
+            chunk_size=32,
+            variant_limit=100,
+            trusted_no_missing_diploid=True,
+        )
+
+    assert first_engine.validation_count == 1
+    assert second_engine.validation_count == 0
+
+
+def test_build_bgen_run_engine_force_validates_trusted_bgen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeRunEngine.instances.clear()
+    bgen_path = tmp_path / "study.bgen"
+    bgen_path.write_bytes(b"bgen")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    with patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine):
+        engine = regenie2_pipeline.build_bgen_run_engine(
+            genotype_source_config=source.build_bgen_source_config(bgen_path),
+            chunk_size=32,
+            variant_limit=100,
+            trusted_no_missing_diploid=True,
+            trusted_bgen_validation_mode=types.TrustedBgenValidationMode.FORCE_VALIDATE,
+        )
+
+    assert engine.validation_count == 1
 
 
 def test_load_native_bgen_run_input_rejects_non_bgen_source_suffix() -> None:

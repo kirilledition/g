@@ -25,6 +25,14 @@ class ResumeMode(enum.StrEnum):
     STRICT = "strict"
 
 
+class TrustedBgenValidationMode(enum.StrEnum):
+    """Trusted BGEN validation behavior."""
+
+    CACHE_ON_MISS = "cache_on_miss"
+    FORCE_VALIDATE = "force_validate"
+    ASSUME_VALIDATED = "assume_validated"
+
+
 class RegenieTraitType(enum.StrEnum):
     """REGENIE trait family."""
 

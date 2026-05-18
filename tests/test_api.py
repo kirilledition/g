@@ -107,7 +107,12 @@ def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
             covar_names="age,sex",
             pred="predictions.list",
             trait_type=RegenieTraitType.BINARY,
-            compute=ComputeConfig(resume=True, warm_cache_first=True, trusted_no_missing_diploid=True),
+            compute=ComputeConfig(
+                resume=True,
+                warm_cache_first=True,
+                trusted_no_missing_diploid=True,
+                trusted_bgen_validation_mode=api.types.TrustedBgenValidationMode.ASSUME_VALIDATED,
+            ),
         )
 
     assert artifacts == RunArtifacts(
@@ -119,9 +124,17 @@ def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
     assert mock_prepare_output_run.call_args.kwargs["association_mode"] == AssociationMode.REGENIE2_BINARY
     assert mock_pipeline.call_args.kwargs["writer_thread_count"] == api.output.DEFAULT_WRITER_THREAD_COUNT
     assert mock_pipeline.call_args.kwargs["trusted_no_missing_diploid"] is True
+    assert (
+        mock_pipeline.call_args.kwargs["trusted_bgen_validation_mode"]
+        == api.types.TrustedBgenValidationMode.ASSUME_VALIDATED
+    )
     assert mock_pipeline.call_args.kwargs["correction_plan"].method == api.types.BinaryFallbackMethod.SCORE_ONLY
     mock_warm_cache.assert_called_once()
     assert mock_warm_cache.call_args.kwargs["trusted_no_missing_diploid"] is True
+    assert (
+        mock_warm_cache.call_args.kwargs["trusted_bgen_validation_mode"]
+        == api.types.TrustedBgenValidationMode.ASSUME_VALIDATED
+    )
     assert mock_warm_cache.call_args.kwargs["correction_plan"].method == api.types.BinaryFallbackMethod.SCORE_ONLY
 
 
