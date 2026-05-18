@@ -36,6 +36,10 @@ fresh_process_benchmark = load_script_module(
     "fresh_process_benchmark_script",
     "scripts/benchmark_regenie2_linear_fresh_process.py",
 )
+binary_hot_benchmark = load_script_module(
+    "binary_hot_benchmark_script",
+    "scripts/benchmark_regenie2_binary_hot.py",
+)
 tuning_benchmark = load_script_module(
     "tuning_benchmark_script",
     "scripts/tune_regenie2_gpu.py",
@@ -390,6 +394,117 @@ def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
     assert summary.mean_rows_per_second == 75.0
     assert summary.mean_chunk_bytes == 1536.0
     assert summary.mean_final_parquet_bytes == 768.0
+
+
+def test_binary_hot_benchmark_defaults_to_comparable_modes() -> None:
+    arguments = binary_hot_benchmark.build_argument_parser().parse_args([])
+    assert arguments.device == "gpu"
+    assert arguments.chunk_size == 8192
+    assert arguments.output_writer_thread_count == 8
+    assert arguments.trusted_no_missing_diploid is True
+    trial_specs = binary_hot_benchmark.build_trial_specs(
+        include_cold_process=arguments.include_cold_process,
+        include_no_final_hot=arguments.include_no_final_hot,
+        include_finalized_hot=arguments.include_finalized_hot,
+    )
+    assert [trial_spec.mode.value for trial_spec in trial_specs] == [
+        "cold_process_finalized",
+        "warm_same_process_no_final",
+        "hot_same_process_no_final",
+        "warm_same_process_finalized",
+        "hot_same_process_finalized",
+    ]
+
+
+def test_binary_hot_child_process_command_contains_binary_controls(tmp_path: Path) -> None:
+    configuration = binary_hot_benchmark.BenchmarkConfiguration(
+        data_directory=Path("data"),
+        output_directory=tmp_path / "profile",
+        device=binary_hot_benchmark.types.Device.CPU,
+        chunk_size=4096,
+        prefetch_chunks=2,
+        output_writer_thread_count=4,
+        output_writer_queue_depth=8,
+        trusted_no_missing_diploid=True,
+        assume_trusted_validated=True,
+        firth_batch_size=64,
+        variant_limit=1000,
+        python_executable=sys.executable,
+        jax_cache_directory=tmp_path / "jax-cache",
+    )
+    trial_spec = binary_hot_benchmark.TrialSpec(
+        name="cold_process_finalized",
+        mode=binary_hot_benchmark.BenchmarkMode.COLD_PROCESS_FINALIZED,
+        finalize_parquet=True,
+        fresh_process=True,
+        same_process_group=None,
+    )
+    child_command = binary_hot_benchmark.build_fresh_process_command(
+        configuration=configuration,
+        trial_spec=trial_spec,
+        stage_timing_path=tmp_path / "stages.json",
+    )
+    command_text = child_command.command_arguments[2]
+    assert child_command.command_arguments[:2] == [sys.executable, "-c"]
+    assert "benchmark_regenie2_binary_hot" in command_text
+    assert "trusted_no_missing_diploid" in command_text
+    assert "variant_limit" in command_text
+    assert child_command.environment_overrides["G_REGENIE2_BINARY_FIRTH_BATCH_SIZE"] == "64"
+    assert child_command.environment_overrides["G_REGENIE2_ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED"] == "1"
+    assert child_command.environment_overrides["JAX_PLATFORMS"] == "cpu"
+
+
+def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
+    configuration = binary_hot_benchmark.BenchmarkConfiguration(
+        data_directory=Path("data"),
+        output_directory=tmp_path / "profile",
+        device=binary_hot_benchmark.types.Device.GPU,
+        chunk_size=8192,
+        prefetch_chunks=1,
+        output_writer_thread_count=8,
+        output_writer_queue_depth=8,
+        trusted_no_missing_diploid=True,
+        assume_trusted_validated=True,
+        firth_batch_size=64,
+        variant_limit=None,
+        python_executable=sys.executable,
+        jax_cache_directory=tmp_path / "jax-cache",
+    )
+    output_metrics = binary_hot_benchmark.OutputMetrics(
+        output_run_directory="run",
+        final_parquet=None,
+        output_row_count=100,
+        info_non_null_count=100,
+        chunk_file_count=2,
+        chunk_bytes=1024,
+        final_parquet_bytes=None,
+    )
+    trial_results = [
+        binary_hot_benchmark.TrialResult(
+            name="hot_same_process_no_final",
+            mode=binary_hot_benchmark.BenchmarkMode.HOT_SAME_PROCESS_NO_FINAL,
+            fresh_process=False,
+            finalize_parquet=False,
+            same_process_group="no_final",
+            wall_time_seconds=7.25,
+            stage_timing_path="hot_no_final.json",
+            output_metrics=output_metrics,
+        ),
+        binary_hot_benchmark.TrialResult(
+            name="hot_same_process_finalized",
+            mode=binary_hot_benchmark.BenchmarkMode.HOT_SAME_PROCESS_FINALIZED,
+            fresh_process=False,
+            finalize_parquet=True,
+            same_process_group="finalized",
+            wall_time_seconds=7.85,
+            stage_timing_path="hot_finalized.json",
+            output_metrics=output_metrics,
+        ),
+    ]
+    summary = binary_hot_benchmark.build_summary(configuration=configuration, trial_results=trial_results)
+    assert summary["headline"]["hot_same_process_no_final_seconds"] == 7.25
+    assert summary["headline"]["hot_same_process_finalized_seconds"] == 7.85
+    assert summary["metadata"]["configuration"]["trusted_no_missing_diploid"] is True
 
 
 def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

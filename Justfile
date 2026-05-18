@@ -267,6 +267,18 @@ benchmark-regenie2-linear-fresh-gpu: install-perf-extension
 benchmark-regenie2-linear-fresh-gpu-parquet: install-perf-extension
     {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --finalize-parquet
 
+# Benchmark binary REGENIE step 2 with cold, same-process hot, chunk-only, and finalized timings
+benchmark-regenie2-binary-hot-gpu: install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_binary_hot.py --device gpu
+
+# Smoke test binary REGENIE step 2 benchmark harness on a small variant slice
+benchmark-regenie2-binary-hot-gpu-smoke: install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_binary_hot.py --device gpu --variant-limit 1000 --no-include-cold-process --no-include-finalized-hot
+
+# Submit binary hot benchmark to the configured GPU node
+slurm-benchmark-regenie2-binary-hot-gpu:
+    {{server_env}} && just slurm-gpu-just benchmark-regenie2-binary-hot-gpu
+
 # Sequentially tune GPU REGENIE step 2 and active BGEN reader knobs
 tune-regenie2-gpu: install-perf-extension
     {{server_env}} && uv run --no-sync python scripts/tune_regenie2_gpu.py
