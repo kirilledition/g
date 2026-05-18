@@ -189,6 +189,15 @@ def align_sample_data(
     covariate_names: list[str] | None = None,
     is_binary_trait: bool = False,
 ) -> NativeAlignedSampleData: ...
+def align_sample_data_from_sample_file(
+    sample_path: str,
+    expected_sample_count: int,
+    phenotype_path: str,
+    phenotype_name: str,
+    covariate_path: str | None = None,
+    covariate_names: list[str] | None = None,
+    is_binary_trait: bool = False,
+) -> NativeAlignedSampleData: ...
 def convert_probability_tensor_to_dosage_f32(
     probability_tensor: npt.NDArray[np.float32],
     combination_count: int,

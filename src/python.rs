@@ -114,6 +114,12 @@ struct NativeAlignmentInputs {
     is_binary_trait: bool,
 }
 
+struct NativeSampleIdentifierData {
+    sample_indices: Vec<i64>,
+    family_identifiers: Vec<String>,
+    individual_identifiers: Vec<String>,
+}
+
 struct NativeAlignedSampleRow {
     sample_index: i64,
     family_identifier: String,
@@ -1046,6 +1052,46 @@ fn align_sample_data<'py>(
     py.detach(|| align_sample_data_native(inputs)).map_err(PyValueError::new_err)
 }
 
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value)]
+#[pyo3(signature = (
+    sample_path,
+    expected_sample_count,
+    phenotype_path,
+    phenotype_name,
+    covariate_path=None,
+    covariate_names=None,
+    is_binary_trait=false
+))]
+fn align_sample_data_from_sample_file<'py>(
+    py: Python<'py>,
+    sample_path: String,
+    expected_sample_count: usize,
+    phenotype_path: String,
+    phenotype_name: String,
+    covariate_path: Option<String>,
+    covariate_names: Option<Vec<String>>,
+    is_binary_trait: bool,
+) -> PyResult<NativeAlignedSampleData> {
+    py.detach(move || {
+        let sample_identifier_data =
+            load_sample_identifier_data_from_sample_file(Path::new(&sample_path), expected_sample_count)?;
+        let inputs = NativeAlignmentInputs {
+            sample_indices: sample_identifier_data.sample_indices,
+            family_identifiers: sample_identifier_data.family_identifiers,
+            individual_identifiers: sample_identifier_data.individual_identifiers,
+            phenotype_path,
+            phenotype_name,
+            covariate_path,
+            covariate_names,
+            is_binary_trait,
+        };
+        align_sample_data_native(inputs)
+    })
+    .map_err(PyValueError::new_err)
+}
+
 fn align_sample_data_native(inputs: NativeAlignmentInputs) -> Result<NativeAlignedSampleData, String> {
     validate_native_alignment_input_lengths(&inputs)?;
 
@@ -1121,6 +1167,89 @@ fn validate_native_alignment_input_lengths(inputs: &NativeAlignmentInputs) -> Re
             inputs.family_identifiers.len(),
             inputs.individual_identifiers.len(),
         ));
+    }
+    Ok(())
+}
+
+fn load_sample_identifier_data_from_sample_file(
+    sample_path: &Path,
+    expected_sample_count: usize,
+) -> Result<NativeSampleIdentifierData, String> {
+    let sample_content = std::fs::read_to_string(sample_path)
+        .map_err(|error| format!("Failed to read sample file '{}': {error}.", sample_path.display()))?;
+    let non_empty_lines: Vec<String> = sample_content
+        .lines()
+        .map(|line| line.trim_end_matches('\r').to_string())
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if non_empty_lines.len() < 2 {
+        return Err(format!("Sample file '{}' must contain at least two header lines.", sample_path.display()));
+    }
+
+    let column_names = split_sample_file_line(&non_empty_lines[0]);
+    let column_types = split_sample_file_line(&non_empty_lines[1]);
+    validate_sample_file_header(sample_path, &column_names, &column_types)?;
+    let family_identifier_column_index = 0;
+    let individual_identifier_column_index =
+        column_names.iter().position(|column_name| column_name == "ID_2").unwrap_or(family_identifier_column_index);
+    let sample_count = non_empty_lines.len() - 2;
+    if sample_count != expected_sample_count {
+        return Err(format!(
+            "Expect number of samples in file to match BGEN sample count. Sample file '{}' contains {sample_count} rows, but the BGEN contains {expected_sample_count} samples.",
+            sample_path.display()
+        ));
+    }
+
+    let mut sample_indices = Vec::with_capacity(sample_count);
+    let mut family_identifiers = Vec::with_capacity(sample_count);
+    let mut individual_identifiers = Vec::with_capacity(sample_count);
+    for (line_index, raw_line) in non_empty_lines[2..].iter().enumerate() {
+        let row_values = split_sample_file_line(raw_line);
+        if row_values.len() != column_names.len() {
+            return Err(format!(
+                "Sample file '{}' line {} has {} values, but the header declares {} columns.",
+                sample_path.display(),
+                line_index + 3,
+                row_values.len(),
+                column_names.len(),
+            ));
+        }
+        sample_indices.push(i64::try_from(line_index).map_err(|error| error.to_string())?);
+        family_identifiers.push(row_values[family_identifier_column_index].clone());
+        individual_identifiers.push(row_values[individual_identifier_column_index].clone());
+    }
+    Ok(NativeSampleIdentifierData { sample_indices, family_identifiers, individual_identifiers })
+}
+
+fn split_sample_file_line(raw_line: &str) -> Vec<String> {
+    raw_line.split_whitespace().map(ToString::to_string).collect()
+}
+
+fn validate_sample_file_header(
+    sample_path: &Path,
+    column_names: &[String],
+    column_types: &[String],
+) -> Result<(), String> {
+    if column_names.len() != column_types.len() {
+        return Err(format!(
+            "Sample file '{}' header and type lines have different column counts.",
+            sample_path.display()
+        ));
+    }
+    if column_names.is_empty() {
+        return Err(format!("Sample file '{}' does not contain any columns.", sample_path.display()));
+    }
+    if column_types[0] != "0" {
+        return Err(format!(
+            "Sample file '{}' must mark the first identifier column with type '0'.",
+            sample_path.display()
+        ));
+    }
+    if let Some(individual_identifier_column_index) = column_names.iter().position(|column_name| column_name == "ID_2")
+    {
+        if column_types[individual_identifier_column_index] != "0" {
+            return Err(format!("Sample file '{}' must mark 'ID_2' with type '0'.", sample_path.display()));
+        }
     }
     Ok(())
 }
@@ -1546,6 +1675,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(hello_from_bin, module)?)?;
     module.add_function(wrap_pyfunction!(plan_genotype_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(align_sample_data, module)?)?;
+    module.add_function(wrap_pyfunction!(align_sample_data_from_sample_file, module)?)?;
     module.add_function(wrap_pyfunction!(convert_probability_tensor_to_dosage_f32, module)?)?;
     module.add_function(wrap_pyfunction!(convert_probability_matrix_to_dosage_f32, module)?)?;
     Ok(())

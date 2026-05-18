@@ -425,7 +425,9 @@ Implementation notes:
 - Environment variable: `G_REGENIE2_RUST_SAMPLE_ALIGNMENT`
 - Default: disabled
 - Public CLI/API unchanged.
-- Current scope intentionally does not move `.sample` parsing or prediction-source alignment; those remain separate optimization candidates after this path is measured.
+- External Oxford `.sample` parsing now also uses Rust when the switch is enabled.
+- Embedded BGEN samples still enter through Python as string identifiers before calling the Rust alignment core.
+- Prediction-source alignment remains a separate optimization candidate after this path is measured.
 
 Validation plan:
 
@@ -438,10 +440,11 @@ Initial landau smoke measurement:
 | Scenario | Variant limit | Alignment stage | Python API entry | Output note |
 |---|---:|---:|---:|---|
 | Python/Polars alignment | 1,000 | 1.936s | 28.262s | reference process |
-| Rust TSV alignment | 1,000 | 0.415s | 23.040s | alignment payload exact |
+| Rust TSV alignment, Python `.sample` parsing | 1,000 | 0.415s | 23.040s | alignment payload exact |
+| Rust TSV alignment and Rust `.sample` parsing | 1,000 | 0.189s | 22.359s | current gated path |
 
 Interpretation:
 
-- The measured alignment stage is `1.52s` faster on the smoke run, a `~79%` reduction for this setup slice.
+- The measured alignment stage is `1.75s` faster on the smoke run after moving external `.sample` parsing too, a `~90%` reduction for this setup slice.
 - Direct payload comparison on the real chr22 sample, phenotype, and covariate inputs matched exactly for sample indices, family identifiers, individual identifiers, binary phenotype vector, covariate names, and covariate matrix.
 - Separate GPU process outputs still showed small Firth-level differences on the smoke run. That is consistent with the already-observed cross-process Firth variability, so this slice remains gated until same-process or full-run parity is rechecked under the accepted benchmark harness.

@@ -349,6 +349,29 @@ def load_rust_aligned_sample_data_from_individual_identifier_table(
     return build_aligned_sample_data_from_native(native_aligned_sample_data)
 
 
+def load_rust_aligned_sample_data_from_sample_file(
+    *,
+    sample_path: Path,
+    expected_sample_count: int,
+    phenotype_path: Path,
+    phenotype_name: str,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    is_binary_trait: bool,
+) -> models.AlignedSampleData:
+    """Load aligned sample data through Rust, including Oxford sample-file parsing."""
+    native_aligned_sample_data = _core.align_sample_data_from_sample_file(
+        str(sample_path),
+        expected_sample_count,
+        str(phenotype_path),
+        phenotype_name,
+        str(covariate_path) if covariate_path is not None else None,
+        list(covariate_names) if covariate_names is not None else None,
+        is_binary_trait,
+    )
+    return build_aligned_sample_data_from_native(native_aligned_sample_data)
+
+
 def get_metadata_chromosome(metadata: typing.Any) -> str:
     """Return the first chromosome label from native or Python metadata."""
     return str(metadata.chromosome[0])
@@ -1186,6 +1209,16 @@ def load_bgen_aligned_sample_data(
         genotype_source_config.source_path,
         genotype_source_config.sample_path,
     )
+    if rust_sample_alignment_enabled() and resolved_sample_path is not None:
+        return load_rust_aligned_sample_data_from_sample_file(
+            sample_path=resolved_sample_path,
+            expected_sample_count=engine.sample_count,
+            phenotype_path=phenotype_path,
+            phenotype_name=phenotype_name,
+            covariate_path=covariate_path,
+            covariate_names=covariate_names,
+            is_binary_trait=is_binary_trait,
+        )
     if resolved_sample_path is not None:
         sample_table = bgen.load_sample_identifier_table(resolved_sample_path)
         if sample_table.height != engine.sample_count:

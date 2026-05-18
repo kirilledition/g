@@ -12,7 +12,7 @@ import pytest
 
 from g import _core
 from g.engine import regenie2_pipeline
-from g.io import samples
+from g.io import bgen, samples
 
 
 def build_sample_table(sample_identifiers: tuple[str, ...]) -> pl.DataFrame:
@@ -392,4 +392,53 @@ def test_native_aligned_sample_data_matches_python_binary_intercept_only(tmp_pat
         covariate_path=None,
         covariate_names=None,
         is_binary_trait=True,
+    )
+
+
+def test_native_sample_file_alignment_matches_python(tmp_path: Path) -> None:
+    sample_path = tmp_path / "study.sample"
+    sample_path.write_text("ID_1 ID_2 missing\n0 0 0\nf2 s2 0\nf1 s1 0\nf3 s3 0\n")
+    sample_table = bgen.load_sample_identifier_table(sample_path)
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts3\t3.0\nf1\ts1\t1.0\nf1\ts2\t2.0\n")
+    covariate_path = tmp_path / "covar.txt"
+    covariate_path.write_text("FID\tIID\tage\tsex\nf1\ts1\t25\t1\nf1\ts2\tNA\t2\nf1\ts3\t35\t1\n")
+    python_aligned_sample_data = samples.load_aligned_sample_data_from_individual_identifier_table(
+        sample_table=sample_table,
+        phenotype_path=phenotype_path,
+        phenotype_name="trait",
+        covariate_path=covariate_path,
+        covariate_names=None,
+        is_binary_trait=False,
+    )
+    native_aligned_sample_data = regenie2_pipeline.build_aligned_sample_data_from_native(
+        _core.align_sample_data_from_sample_file(
+            str(sample_path),
+            3,
+            str(phenotype_path),
+            "trait",
+            covariate_path=str(covariate_path),
+            covariate_names=None,
+            is_binary_trait=False,
+        )
+    )
+
+    np.testing.assert_array_equal(native_aligned_sample_data.sample_indices, python_aligned_sample_data.sample_indices)
+    np.testing.assert_array_equal(
+        native_aligned_sample_data.family_identifiers,
+        python_aligned_sample_data.family_identifiers,
+    )
+    np.testing.assert_array_equal(
+        native_aligned_sample_data.individual_identifiers,
+        python_aligned_sample_data.individual_identifiers,
+    )
+    np.testing.assert_allclose(
+        np.asarray(native_aligned_sample_data.phenotype_vector),
+        np.asarray(python_aligned_sample_data.phenotype_vector),
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        np.asarray(native_aligned_sample_data.covariate_matrix),
+        np.asarray(python_aligned_sample_data.covariate_matrix),
+        atol=0.0,
     )

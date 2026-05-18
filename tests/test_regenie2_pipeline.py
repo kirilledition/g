@@ -464,3 +464,45 @@ def test_load_bgen_aligned_sample_data_uses_rust_alignment_when_enabled(
     assert aligned_sample_data is expected_aligned_sample_data
     mock_load_from_sample_table.assert_called_once()
     mock_python_load.assert_not_called()
+
+
+def test_load_bgen_aligned_sample_data_uses_rust_sample_file_alignment_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_aligned_sample_data = object()
+    engine = SimpleNamespace(
+        sample_count=2,
+        contains_embedded_samples=False,
+    )
+    sample_path = Path("study.sample")
+    monkeypatch.setenv(regenie2_pipeline.RUST_SAMPLE_ALIGNMENT_ENVIRONMENT_VARIABLE, "1")
+
+    with (
+        patch("g.engine.regenie2_pipeline.bgen.resolve_bgen_sample_path", return_value=sample_path),
+        patch(
+            "g.engine.regenie2_pipeline.load_rust_aligned_sample_data_from_sample_file",
+            return_value=expected_aligned_sample_data,
+        ) as mock_rust_sample_file_load,
+        patch("g.engine.regenie2_pipeline.bgen.load_sample_identifier_table") as mock_python_sample_load,
+    ):
+        aligned_sample_data = regenie2_pipeline.load_bgen_aligned_sample_data(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            engine=typing.cast("typing.Any", engine),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            is_binary_trait=True,
+        )
+
+    assert aligned_sample_data is expected_aligned_sample_data
+    mock_rust_sample_file_load.assert_called_once_with(
+        sample_path=sample_path,
+        expected_sample_count=2,
+        phenotype_path=Path("phenotype.tsv"),
+        phenotype_name="trait",
+        covariate_path=Path("covariates.tsv"),
+        covariate_names=("age",),
+        is_binary_trait=True,
+    )
+    mock_python_sample_load.assert_not_called()
