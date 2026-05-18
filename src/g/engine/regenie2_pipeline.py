@@ -952,7 +952,7 @@ def run_regenie2_linear_bgen_pipeline(
     chunk_size: int,
     variant_limit: int | None,
     output_run_paths: output.OutputRunPaths,
-    prefetch_chunks: int = 1,
+    staging_depth: int = 1,
     committed_chunk_identifiers: set[int] | None = None,
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
@@ -1001,7 +1001,7 @@ def run_regenie2_linear_bgen_pipeline(
         run_input=run_input,
         prediction_source=prediction_source,
         writer_session=writer_session,
-        staging_depth=prefetch_chunks,
+        staging_depth=staging_depth,
         stage_timing_recorder=stage_timing_recorder,
     )
     return run_bgen_engine_with_callback(
@@ -1025,7 +1025,7 @@ def run_regenie2_binary_bgen_pipeline(
     chunk_size: int,
     variant_limit: int | None,
     output_run_paths: output.OutputRunPaths,
-    prefetch_chunks: int = 1,
+    staging_depth: int = 1,
     committed_chunk_identifiers: set[int] | None = None,
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
@@ -1077,7 +1077,7 @@ def run_regenie2_binary_bgen_pipeline(
         prediction_source=prediction_source,
         writer_session=writer_session,
         correction_plan=correction_plan,
-        staging_depth=prefetch_chunks,
+        staging_depth=staging_depth,
         stage_timing_recorder=stage_timing_recorder,
     )
     return run_bgen_engine_with_callback(

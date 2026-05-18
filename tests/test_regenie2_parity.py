@@ -71,7 +71,7 @@ def regenie2_parity_results(tmp_path_factory: pytest.TempPathFactory) -> Regenie
             chunk_size=512,
             device=types.Device.CPU,
             variant_limit=PARITY_VARIANT_LIMIT,
-            prefetch_chunks=0,
+            staging_depth=0,
             output_run_directory=output_directory / "regenie2_parity",
             finalize_parquet=True,
         ),

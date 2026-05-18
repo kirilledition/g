@@ -47,7 +47,7 @@ class BenchmarkConfiguration:
     output_directory: Path
     device: types.Device
     chunk_size: int
-    prefetch_chunks: int
+    staging_depth: int
     output_writer_thread_count: int
     output_writer_queue_depth: int
     trusted_no_missing_diploid: bool
@@ -116,7 +116,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path, help="Benchmark output directory.")
     parser.add_argument("--device", default=types.Device.GPU.value, choices=[device.value for device in types.Device])
     parser.add_argument("--chunk-size", type=int, default=8192, help="Variants per chunk.")
-    parser.add_argument("--prefetch-chunks", type=int, default=1, help="Native decode prefetch depth.")
+    parser.add_argument(
+        "--staging-depth",
+        "--prefetch-chunks",
+        type=int,
+        default=1,
+        help="Native callback staging depth.",
+    )
     parser.add_argument("--output-writer-thread-count", type=int, default=8, help="Background writer threads.")
     parser.add_argument("--output-writer-queue-depth", type=int, default=8, help="Background writer queue depth.")
     parser.add_argument(
@@ -176,7 +182,7 @@ def build_configuration(arguments: argparse.Namespace) -> BenchmarkConfiguration
         output_directory=output_directory,
         device=types.Device(arguments.device),
         chunk_size=int(arguments.chunk_size),
-        prefetch_chunks=int(arguments.prefetch_chunks),
+        staging_depth=int(arguments.staging_depth),
         output_writer_thread_count=int(arguments.output_writer_thread_count),
         output_writer_queue_depth=int(arguments.output_writer_queue_depth),
         trusted_no_missing_diploid=bool(arguments.trusted_no_missing_diploid),
@@ -254,7 +260,7 @@ def configuration_to_json_dict(configuration: BenchmarkConfiguration) -> dict[st
         "output_directory": str(configuration.output_directory),
         "device": configuration.device.value,
         "chunk_size": configuration.chunk_size,
-        "prefetch_chunks": configuration.prefetch_chunks,
+        "staging_depth": configuration.staging_depth,
         "output_writer_thread_count": configuration.output_writer_thread_count,
         "output_writer_queue_depth": configuration.output_writer_queue_depth,
         "trusted_no_missing_diploid": configuration.trusted_no_missing_diploid,
@@ -273,7 +279,7 @@ def configuration_from_json_dict(payload: dict[str, typing.Any]) -> BenchmarkCon
         output_directory=Path(str(payload["output_directory"])),
         device=types.Device(str(payload["device"])),
         chunk_size=int(payload["chunk_size"]),
-        prefetch_chunks=int(payload["prefetch_chunks"]),
+        staging_depth=int(payload.get("staging_depth", payload.get("prefetch_chunks", 1))),
         output_writer_thread_count=int(payload["output_writer_thread_count"]),
         output_writer_queue_depth=int(payload["output_writer_queue_depth"]),
         trusted_no_missing_diploid=bool(payload["trusted_no_missing_diploid"]),
@@ -410,7 +416,7 @@ def build_compute_config(
         device=configuration.device,
         chunk_size=configuration.chunk_size,
         variant_limit=configuration.variant_limit,
-        prefetch_chunks=configuration.prefetch_chunks,
+        staging_depth=configuration.staging_depth,
         output_run_directory=output_root,
         finalize_parquet=finalize_parquet,
         output_writer_thread_count=configuration.output_writer_thread_count,

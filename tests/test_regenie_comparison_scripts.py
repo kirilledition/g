@@ -86,7 +86,7 @@ def test_tuning_benchmark_builds_trial_environment_from_low_level_knobs() -> Non
     candidate = tuning_benchmark.Step2TuningCandidate(
         trait_type=tuning_benchmark.types.RegenieTraitType.BINARY,
         chunk_size=8192,
-        prefetch_chunks=1,
+        staging_depth=1,
         output_writer_thread_count=8,
         output_writer_queue_depth=16,
         bgen_decode_tile_variant_count=128,
@@ -113,7 +113,7 @@ def test_tuning_benchmark_builds_shared_compute_candidates() -> None:
     candidates = tuning_benchmark.build_compute_stage_candidates(
         trait_type=tuning_benchmark.types.RegenieTraitType.QUANTITATIVE,
         chunk_sizes=(4096, 8192),
-        prefetch_chunk_values=(0, 1),
+        staging_depth_values=(0, 1),
         bgen_candidates=(bgen_candidate_summary,),
         firth_batch_sizes=(32, 64),
     )
@@ -135,7 +135,7 @@ def test_tuning_benchmark_builds_binary_compute_candidates_with_firth_sizes() ->
     candidates = tuning_benchmark.build_compute_stage_candidates(
         trait_type=tuning_benchmark.types.RegenieTraitType.BINARY,
         chunk_sizes=(8192,),
-        prefetch_chunk_values=(1,),
+        staging_depth_values=(1,),
         bgen_candidates=(bgen_candidate_summary,),
         firth_batch_sizes=(32, 64),
     )
@@ -421,7 +421,7 @@ def test_binary_hot_child_process_command_contains_binary_controls(tmp_path: Pat
         output_directory=tmp_path / "profile",
         device=binary_hot_benchmark.types.Device.CPU,
         chunk_size=4096,
-        prefetch_chunks=2,
+        staging_depth=2,
         output_writer_thread_count=4,
         output_writer_queue_depth=8,
         trusted_no_missing_diploid=True,
@@ -459,7 +459,7 @@ def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
         output_directory=tmp_path / "profile",
         device=binary_hot_benchmark.types.Device.GPU,
         chunk_size=8192,
-        prefetch_chunks=1,
+        staging_depth=1,
         output_writer_thread_count=8,
         output_writer_queue_depth=8,
         trusted_no_missing_diploid=True,
@@ -513,7 +513,7 @@ def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pyte
         trait_type="binary",
         device="gpu",
         chunk_size=8192,
-        prefetch_chunks=1,
+        staging_depth=1,
         output_writer_thread_count=4,
         output_writer_queue_depth=8,
         bgen_decode_tile_variant_count=128,
@@ -539,7 +539,7 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
         trait_type="binary",
         device="cpu",
         chunk_size=4096,
-        prefetch_chunks=2,
+        staging_depth=2,
         output_writer_thread_count=1,
         output_writer_queue_depth=2,
         bgen_decode_tile_variant_count=None,

@@ -13,6 +13,7 @@ from g.api import (
     parse_covariate_name_list,
     regenie2,
     regenie2_linear,
+    resolve_compute_staging_depth,
     validate_compute_config,
 )
 from g.io.output import OutputRunPaths, PreparedOutputRun
@@ -129,6 +130,7 @@ def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
     [
         (ComputeConfig(chunk_size=0), "Chunk size must be positive"),
         (ComputeConfig(variant_limit=0), "Variant limit must be positive"),
+        (ComputeConfig(staging_depth=-1), "Staging depth must be zero or positive"),
         (ComputeConfig(prefetch_chunks=-1), "Prefetch chunk count must be zero or positive"),
         (ComputeConfig(output_writer_thread_count=0), "Output writer thread count must be positive"),
         (ComputeConfig(output_writer_queue_depth=0), "Output writer queue depth must be positive"),
@@ -140,6 +142,15 @@ def test_validate_compute_config_rejects_invalid_values(
 ) -> None:
     with pytest.raises(ValueError, match=expected_message):
         validate_compute_config(compute_config)
+
+
+def test_prefetch_chunks_is_deprecated_alias_for_staging_depth() -> None:
+    compute_config = ComputeConfig(staging_depth=2, prefetch_chunks=4)
+
+    with pytest.warns(DeprecationWarning, match="prefetch_chunks is deprecated"):
+        staging_depth = resolve_compute_staging_depth(compute_config)
+
+    assert staging_depth == 4
 
 
 def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalization() -> None:

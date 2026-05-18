@@ -351,7 +351,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             chunk_size=32,
             variant_limit=100,
             output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
-            prefetch_chunks=3,
+            staging_depth=3,
             committed_chunk_identifiers={64, 0},
             finalize_parquet=True,
             writer_thread_count=2,
@@ -406,7 +406,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             chunk_size=32,
             variant_limit=100,
             output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
-            prefetch_chunks=3,
+            staging_depth=3,
             committed_chunk_identifiers={64, 0},
             trusted_no_missing_diploid=True,
         )
@@ -448,7 +448,7 @@ def test_binary_pipeline_uses_sample_major_engine_for_untrusted_bgen() -> None:
             chunk_size=32,
             variant_limit=100,
             output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
-            prefetch_chunks=3,
+            staging_depth=3,
             committed_chunk_identifiers={64, 0},
             trusted_no_missing_diploid=False,
         )

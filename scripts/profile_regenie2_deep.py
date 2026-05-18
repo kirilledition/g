@@ -43,7 +43,9 @@ def load_script_module(module_name: str, relative_path: str) -> typing.Any:
 
 baseline_benchmark = load_script_module("deep_profile_baseline_benchmark", "scripts/benchmark.py")
 benchmark_bgen_reader = load_script_module("deep_profile_bgen_reader", "scripts/benchmark_bgen_reader.py")
-comparison_benchmark = load_script_module("deep_profile_comparison_benchmark", "scripts/benchmark_regenie_comparison.py")
+comparison_benchmark = load_script_module(
+    "deep_profile_comparison_benchmark", "scripts/benchmark_regenie_comparison.py"
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -53,7 +55,7 @@ class Step2Candidate:
     trait_type: str
     device: str
     chunk_size: int
-    prefetch_chunks: int
+    staging_depth: int
     output_writer_thread_count: int
     output_writer_queue_depth: int
     bgen_decode_tile_variant_count: int | None
@@ -121,7 +123,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--smoke", action="store_true", help="Use a fast smoke configuration.")
     parser.add_argument("--skip-deep-profiles", action="store_true", help="Skip perf/py-spy/cProfile/JAX trace runs.")
     parser.add_argument("--chunk-sizes", default="2048,4096,8192,16384")
-    parser.add_argument("--prefetch-chunks", default="0,1,2")
+    parser.add_argument("--staging-depths", "--prefetch-chunks", default="0,1,2")
     parser.add_argument("--output-writer-thread-counts", default="1,2,4,8")
     parser.add_argument("--writer-queue-depth-multipliers", default="1,2")
     parser.add_argument("--firth-batch-sizes", default="32,64,128")
@@ -304,7 +306,7 @@ def build_candidate_slug(candidate: Step2Candidate) -> str:
         candidate.trait_type,
         candidate.device,
         f"chunk{candidate.chunk_size}",
-        f"prefetch{candidate.prefetch_chunks}",
+        f"staging{candidate.staging_depth}",
         f"writer{candidate.output_writer_thread_count}",
         f"queue{candidate.output_writer_queue_depth}",
         f"tile{candidate.bgen_decode_tile_variant_count if candidate.bgen_decode_tile_variant_count is not None else 'default'}",
@@ -321,7 +323,7 @@ def build_step2_candidates(
     device: str,
     bgen_candidates: tuple[BgenCandidateSummary, ...],
     chunk_sizes: tuple[int, ...],
-    prefetch_chunks: tuple[int, ...],
+    staging_depths: tuple[int, ...],
     writer_thread_counts: tuple[int, ...],
     queue_depth_multipliers: tuple[int, ...],
     firth_batch_sizes: tuple[int, ...],
@@ -330,7 +332,7 @@ def build_step2_candidates(
     candidates: list[Step2Candidate] = []
     for bgen_candidate in bgen_candidates:
         for chunk_size in chunk_sizes:
-            for prefetch_count in prefetch_chunks:
+            for staging_depth in staging_depths:
                 for writer_thread_count in writer_thread_counts:
                     for queue_depth in build_queue_depth_values(writer_thread_count, queue_depth_multipliers):
                         if trait_type == "binary":
@@ -340,7 +342,7 @@ def build_step2_candidates(
                                         trait_type=trait_type,
                                         device=device,
                                         chunk_size=chunk_size,
-                                        prefetch_chunks=prefetch_count,
+                                        staging_depth=staging_depth,
                                         output_writer_thread_count=writer_thread_count,
                                         output_writer_queue_depth=queue_depth,
                                         bgen_decode_tile_variant_count=bgen_candidate.decode_tile_variant_count,
@@ -354,7 +356,7 @@ def build_step2_candidates(
                                 trait_type=trait_type,
                                 device=device,
                                 chunk_size=chunk_size,
-                                prefetch_chunks=prefetch_count,
+                                staging_depth=staging_depth,
                                 output_writer_thread_count=writer_thread_count,
                                 output_writer_queue_depth=queue_depth,
                                 bgen_decode_tile_variant_count=bgen_candidate.decode_tile_variant_count,
@@ -449,7 +451,7 @@ def build_g_step2_child_command(
                     device=types.Device({device!r}),
                     chunk_size={chunk_size},
                     variant_limit={variant_limit_expression},
-                    prefetch_chunks={prefetch_chunks},
+                    staging_depth={staging_depth},
                     finalize_parquet=True,
                     output_writer_thread_count={writer_thread_count},
                     output_writer_queue_depth={writer_queue_depth},
@@ -488,7 +490,7 @@ def build_g_step2_child_command(
         device=candidate.device,
         chunk_size=candidate.chunk_size,
         variant_limit_expression=variant_limit_expression,
-        prefetch_chunks=candidate.prefetch_chunks,
+        staging_depth=candidate.staging_depth,
         writer_thread_count=candidate.output_writer_thread_count,
         writer_queue_depth=candidate.output_writer_queue_depth,
         binary_config_expression=binary_config_expression,
@@ -673,9 +675,7 @@ def aggregate_trial_results(
         )
     wall_times = [typing.cast("float", trial_result.wall_time_seconds) for trial_result in successful_trials]
     row_counts = [
-        trial_result.output_row_count
-        for trial_result in successful_trials
-        if trial_result.output_row_count is not None
+        trial_result.output_row_count for trial_result in successful_trials if trial_result.output_row_count is not None
     ]
     median_wall_time = statistics.median(wall_times)
     rows_per_second = None
@@ -866,7 +866,7 @@ def run_candidate_tuning(
     """Tune g candidates for each trait/device and return winners."""
     winners: dict[str, AggregateResult] = {}
     chunk_sizes = parse_int_list(arguments.chunk_sizes)
-    prefetch_chunks = parse_int_list(arguments.prefetch_chunks)
+    staging_depths = parse_int_list(arguments.staging_depths)
     writer_thread_counts = parse_int_list(arguments.output_writer_thread_counts)
     queue_depth_multipliers = parse_int_list(arguments.writer_queue_depth_multipliers)
     firth_batch_sizes = parse_int_list(arguments.firth_batch_sizes)
@@ -878,7 +878,7 @@ def run_candidate_tuning(
                 device=device,
                 bgen_candidates=selected_bgen_summaries,
                 chunk_sizes=chunk_sizes,
-                prefetch_chunks=prefetch_chunks,
+                staging_depths=staging_depths,
                 writer_thread_counts=writer_thread_counts,
                 queue_depth_multipliers=queue_depth_multipliers,
                 firth_batch_sizes=firth_batch_sizes,
@@ -1018,7 +1018,7 @@ def candidate_from_aggregate_name(winner_key: str, aggregate_result: AggregateRe
         trait_type=trait_type,
         device=device,
         chunk_size=read_int("chunk_size=", 8192),
-        prefetch_chunks=read_int("prefetch_chunks=", 1),
+        staging_depth=read_int("staging_depth=", 1),
         output_writer_thread_count=read_int("output_writer_thread_count=", 8),
         output_writer_queue_depth=read_int("output_writer_queue_depth=", 4),
         bgen_decode_tile_variant_count=(
@@ -1048,7 +1048,11 @@ def build_runtime_comparisons(aggregate_results: list[AggregateResult]) -> dict[
         if baseline is None or baseline.median_wall_time_seconds is None:
             continue
         for result in aggregate_results:
-            if result.implementation != "g" or result.trait_type != trait_type or result.median_wall_time_seconds is None:
+            if (
+                result.implementation != "g"
+                or result.trait_type != trait_type
+                or result.median_wall_time_seconds is None
+            ):
                 continue
             comparison_name = f"{result.name}_vs_regenie_{trait_type}"
             comparisons[comparison_name] = {
@@ -1237,7 +1241,7 @@ def apply_smoke_overrides(arguments: argparse.Namespace) -> None:
     if arguments.variant_limit is None:
         arguments.variant_limit = 1000
     arguments.chunk_sizes = "2048"
-    arguments.prefetch_chunks = "0"
+    arguments.staging_depths = "0"
     arguments.output_writer_thread_counts = "1"
     arguments.writer_queue_depth_multipliers = "1"
     arguments.firth_batch_sizes = "32"

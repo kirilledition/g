@@ -90,7 +90,7 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
                 "results/output",
                 "--device",
                 "gpu",
-                "--prefetch-chunks",
+                "--staging-depth",
                 "2",
                 "--output-writer-thread-count",
                 "3",
@@ -108,7 +108,8 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
     compute_config = mock_run_regenie2_linear_api.call_args.kwargs["compute"]
     assert compute_config.device == Device.GPU
     assert compute_config.chunk_size == DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE
-    assert compute_config.prefetch_chunks == 2
+    assert compute_config.staging_depth == 2
+    assert compute_config.prefetch_chunks is None
     assert compute_config.output_writer_thread_count == 3
     assert compute_config.output_writer_queue_depth == 5
     assert compute_config.trusted_no_missing_diploid is True
@@ -126,6 +127,36 @@ def test_regenie2_help_shows_binary_trait_and_correction_options() -> None:
     assert "--pThresh" in result.output
     assert "--firth-se" in result.output
     assert "--binary-correction" not in result.output
+
+
+def test_regenie2_prefetch_chunks_remains_cli_alias() -> None:
+    with patch(
+        "g.cli.run_regenie2_api",
+        return_value=RunArtifacts(output_run_directory=Path("results/output.regenie2_linear.run")),
+    ) as mock_run_regenie2_api:
+        result = runner.invoke(
+            app,
+            [
+                "regenie2",
+                "--bgen",
+                "dataset.bgen",
+                "--pheno",
+                "phenotype.tsv",
+                "--pheno-name",
+                "trait",
+                "--pred",
+                "predictions.list",
+                "--out",
+                "results/output",
+                "--prefetch-chunks",
+                "3",
+            ],
+        )
+
+    assert result.exit_code == 0
+    compute_config = mock_run_regenie2_api.call_args.kwargs["compute"]
+    assert compute_config.staging_depth == 1
+    assert compute_config.prefetch_chunks == 3
 
 
 def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
@@ -154,7 +185,7 @@ def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
                 "results/output",
                 "--trait-type",
                 "binary",
-                "--prefetch-chunks",
+                "--staging-depth",
                 "4",
                 "--output-writer-thread-count",
                 "2",
@@ -173,7 +204,8 @@ def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
     assert result.exit_code == 0
     assert mock_run_regenie2_api.call_args.kwargs["trait_type"] == RegenieTraitType.BINARY
     compute_config = mock_run_regenie2_api.call_args.kwargs["compute"]
-    assert compute_config.prefetch_chunks == 4
+    assert compute_config.staging_depth == 4
+    assert compute_config.prefetch_chunks is None
     assert compute_config.output_writer_thread_count == 2
     assert compute_config.output_writer_queue_depth == 6
     assert compute_config.trusted_no_missing_diploid is True

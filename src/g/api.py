@@ -30,7 +30,8 @@ class ComputeConfig:
     chunk_size: int = DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE
     device: types.Device = types.Device.CPU
     variant_limit: int | None = None
-    prefetch_chunks: int = 1
+    staging_depth: int = 1
+    prefetch_chunks: int | None = None
     output_run_directory: Path | None = None
     resume: bool = False
     finalize_parquet: bool = True
@@ -85,7 +86,10 @@ def validate_compute_config(compute_config: ComputeConfig) -> None:
     if compute_config.variant_limit is not None and compute_config.variant_limit <= 0:
         message = "Variant limit must be positive when provided."
         raise ValueError(message)
-    if compute_config.prefetch_chunks < 0:
+    if compute_config.staging_depth < 0:
+        message = "Staging depth must be zero or positive."
+        raise ValueError(message)
+    if compute_config.prefetch_chunks is not None and compute_config.prefetch_chunks < 0:
         message = "Prefetch chunk count must be zero or positive."
         raise ValueError(message)
     if compute_config.output_writer_thread_count <= 0:
@@ -94,6 +98,18 @@ def validate_compute_config(compute_config: ComputeConfig) -> None:
     if compute_config.output_writer_queue_depth <= 0:
         message = "Output writer queue depth must be positive."
         raise ValueError(message)
+
+
+def resolve_compute_staging_depth(compute_config: ComputeConfig) -> int:
+    """Resolve the effective native callback staging depth."""
+    if compute_config.prefetch_chunks is None:
+        return compute_config.staging_depth
+    warnings.warn(
+        "ComputeConfig.prefetch_chunks is deprecated; use staging_depth.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return compute_config.prefetch_chunks
 
 
 def normalize_binary_correction_config(binary_config: Regenie2BinaryConfig) -> types.BinaryCorrectionPlan:
@@ -186,6 +202,7 @@ def regenie2(
     compute_config = compute or ComputeConfig()
     try:
         validate_compute_config(compute_config)
+        staging_depth = resolve_compute_staging_depth(compute_config)
         device_start_time = time.perf_counter()
         configure_jax_device(compute_config.device)
         engine.record_stage_duration(stage_timing_recorder, "jax_device_configuration_backend_init", device_start_time)
@@ -251,7 +268,7 @@ def regenie2(
                 covariate_names=covariate_name_list,
                 chunk_size=compute_config.chunk_size,
                 variant_limit=compute_config.variant_limit,
-                prefetch_chunks=compute_config.prefetch_chunks,
+                staging_depth=staging_depth,
                 output_run_paths=output_run_paths,
                 committed_chunk_identifiers=committed_chunk_identifiers,
                 finalize_parquet=compute_config.finalize_parquet,
@@ -271,7 +288,7 @@ def regenie2(
                 covariate_names=covariate_name_list,
                 chunk_size=compute_config.chunk_size,
                 variant_limit=compute_config.variant_limit,
-                prefetch_chunks=compute_config.prefetch_chunks,
+                staging_depth=staging_depth,
                 output_run_paths=output_run_paths,
                 committed_chunk_identifiers=committed_chunk_identifiers,
                 finalize_parquet=compute_config.finalize_parquet,

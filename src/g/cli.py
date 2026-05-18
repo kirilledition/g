@@ -65,7 +65,12 @@ def run_regenie2_linear_command(
     pred: Path = typer.Option(..., help="REGENIE step 1 _pred.list file path."),
     chunk_size: int | None = typer.Option(None, help="Variants per chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
-    prefetch_chunks: int = typer.Option(1, help="Number of genotype chunks to prefetch on the host."),
+    staging_depth: int = typer.Option(1, "--staging-depth", help="Native callback staging depth."),
+    prefetch_chunks: int | None = typer.Option(
+        None,
+        "--prefetch-chunks",
+        help="Deprecated compatibility alias for --staging-depth.",
+    ),
     device: types.Device = typer.Option(types.Device.CPU, help="JAX execution device."),
     output_run_directory: Path | None = typer.Option(None, help="Run directory for Arrow chunked output."),
     output_writer_thread_count: int = typer.Option(
@@ -98,6 +103,7 @@ def run_regenie2_linear_command(
         chunk_size=resolve_chunk_size(chunk_size),
         device=device,
         variant_limit=variant_limit,
+        staging_depth=staging_depth,
         prefetch_chunks=prefetch_chunks,
         output_run_directory=output_run_directory,
         resume=resume,
@@ -164,7 +170,12 @@ def run_regenie2_command(
     ),
     chunk_size: int | None = typer.Option(None, help="Variants per chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
-    prefetch_chunks: int = typer.Option(1, help="Number of genotype chunks to prefetch on the host."),
+    staging_depth: int = typer.Option(1, "--staging-depth", help="Native callback staging depth."),
+    prefetch_chunks: int | None = typer.Option(
+        None,
+        "--prefetch-chunks",
+        help="Deprecated compatibility alias for --staging-depth.",
+    ),
     device: types.Device = typer.Option(types.Device.CPU, help="JAX execution device."),
     output_run_directory: Path | None = typer.Option(None, help="Run directory for Arrow chunked output."),
     output_writer_thread_count: int = typer.Option(
@@ -197,6 +208,7 @@ def run_regenie2_command(
         chunk_size=resolve_chunk_size(chunk_size),
         device=device,
         variant_limit=variant_limit,
+        staging_depth=staging_depth,
         prefetch_chunks=prefetch_chunks,
         output_run_directory=output_run_directory,
         resume=resume,
