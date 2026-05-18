@@ -387,9 +387,8 @@ fn build_run_manifest_chunk_commits(job: &RegenieStep2ChunkWriteBatch) -> Vec<Va
 
 fn record_run_manifest_chunk_commits(run_directory: &Path, chunk_commits: Vec<Value>) -> Result<(), String> {
     update_run_manifest(run_directory, |manifest| {
-        let manifest_object = manifest
-            .as_object_mut()
-            .ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
+        let manifest_object =
+            manifest.as_object_mut().ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
         let committed_chunks = manifest_object
             .entry("committed_chunks")
             .or_insert_with(|| Value::Array(Vec::new()))
@@ -423,9 +422,8 @@ fn mark_run_manifest_finalized(
         return Ok(());
     };
     update_run_manifest(run_directory, |manifest| {
-        let manifest_object = manifest
-            .as_object_mut()
-            .ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
+        let manifest_object =
+            manifest.as_object_mut().ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
         manifest_object.insert("finalized".to_string(), Value::Bool(true));
         manifest_object.insert("final_parquet".to_string(), Value::String(final_parquet_path.display().to_string()));
         manifest_object.insert("final_row_count".to_string(), json!(row_count));
@@ -444,9 +442,7 @@ fn update_run_manifest(
         return Ok(());
     }
     let manifest_lock = get_run_manifest_update_lock();
-    let _manifest_guard = manifest_lock
-        .lock()
-        .map_err(|_| "Run manifest update lock was poisoned.".to_string())?;
+    let _manifest_guard = manifest_lock.lock().map_err(|_| "Run manifest update lock was poisoned.".to_string())?;
     let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
     let mut manifest = serde_json::from_str::<Value>(&manifest_text).map_err(|error| error.to_string())?;
     update_manifest(&mut manifest)?;
@@ -590,7 +586,8 @@ fn build_extra_string_array(extra_code: Vec<Option<i32>>) -> Result<StringArray,
     for maybe_extra_code_value in extra_code {
         match maybe_extra_code_value {
             None | Some(0) => values.push(None),
-            Some(0..=2) => values.push(None),
+            Some(1) => values.push(Some("FIRTH")),
+            Some(2) => values.push(Some("SPA")),
             Some(3) => values.push(Some("TEST_FAIL")),
             Some(extra_code_value) => return Err(format!("Unsupported REGENIE step 2 extra code: {extra_code_value}")),
         }
@@ -865,12 +862,15 @@ mod tests {
     }
 
     #[test]
-    fn binary_record_batch_maps_failure_extra_code_with_same_schema() {
+    fn binary_record_batch_maps_extra_codes_with_same_schema() {
         let linear_record_batch = build_regenie_step2_record_batch(build_test_batch(vec![build_test_chunk(0, None)]))
             .expect("linear record batch should build");
-        let binary_record_batch =
-            build_regenie_step2_record_batch(build_test_batch(vec![build_test_chunk(1, Some(vec![3]))]))
-                .expect("binary record batch should build");
+        let binary_record_batch = build_regenie_step2_record_batch(build_test_batch(vec![
+            build_test_chunk(1, Some(vec![1])),
+            build_test_chunk(2, Some(vec![2])),
+            build_test_chunk(3, Some(vec![3])),
+        ]))
+        .expect("binary record batch should build");
 
         assert_eq!(linear_record_batch.schema(), binary_record_batch.schema());
         let extra_array = binary_record_batch
@@ -879,7 +879,9 @@ mod tests {
             .as_any()
             .downcast_ref::<StringArray>()
             .expect("EXTRA column should be a string array");
-        assert_eq!(extra_array.value(0), "TEST_FAIL");
+        assert_eq!(extra_array.value(0), "FIRTH");
+        assert_eq!(extra_array.value(1), "SPA");
+        assert_eq!(extra_array.value(2), "TEST_FAIL");
     }
 
     #[test]

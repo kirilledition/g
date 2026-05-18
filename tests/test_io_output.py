@@ -143,7 +143,7 @@ def test_native_binary_writer_maps_extra_code_to_label(tmp_path: Path) -> None:
 
     frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
     assert frame.columns == EXPECTED_CHUNK_COLUMNS
-    assert frame.get_column("EXTRA").to_list() == [None, None, None, None]
+    assert frame.get_column("EXTRA").to_list() == ["FIRTH", "FIRTH", "FIRTH", "FIRTH"]
 
 
 def test_native_binary_writer_maps_test_fail_extra_code_to_label(tmp_path: Path) -> None:
@@ -257,7 +257,7 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
 
     parquet_frame = pl.read_parquet(parquet_path)
     assert parquet_frame.columns == EXPECTED_FINAL_COLUMNS
-    assert parquet_frame.get_column("EXTRA").to_list() == [None, None, None, None]
+    assert parquet_frame.get_column("EXTRA").to_list() == ["FIRTH", "FIRTH", "FIRTH", "FIRTH"]
     parquet_schema = pq.ParquetFile(parquet_path).schema_arrow
     assert parquet_schema.names == EXPECTED_FINAL_COLUMNS
     assert parquet_schema.field("INFO").nullable
