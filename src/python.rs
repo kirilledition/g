@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use crossbeam_channel::{Receiver, bounded};
 use numpy::ndarray::{Array1, Array2};
@@ -19,7 +20,7 @@ use crate::genotype::common::{
 use crate::genotype::planner;
 use crate::output::{OutputWriterSession, finalize_output_run_chunks, scan_committed_chunk_identifiers};
 use crate::pipeline::Regenie2RunEngineCore;
-use crate::regenie::{PredictionError, PredictionSource};
+use crate::regenie::{PredictionError, PredictionSource, linear_burn};
 
 #[pyclass(skip_from_py_object)]
 #[derive(Clone)]
@@ -486,6 +487,56 @@ impl Regenie2RunEngine {
             (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
         }
     }
+
+    #[allow(clippy::needless_pass_by_value)]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (sample_indices, covariate_matrix, phenotype_vector, prediction_source, writer_session, committed_chunk_identifiers=None))]
+    fn run_regenie2_linear_burn_wgpu_chunks<'py>(
+        &self,
+        py: Python<'py>,
+        sample_indices: PyReadonlyArray1<'py, i64>,
+        covariate_matrix: PyReadonlyArray2<'py, f32>,
+        phenotype_vector: PyReadonlyArray1<'py, f32>,
+        prediction_source: PyRef<'py, RegeniePredictionSource>,
+        writer_session: PyRef<'py, OutputWriterSession>,
+        committed_chunk_identifiers: Option<Vec<usize>>,
+    ) -> PyResult<HashMap<String, u64>> {
+        let sample_index_values = sample_indices.as_slice()?.to_vec();
+        let covariate_shape = covariate_matrix.shape();
+        let phenotype_values = phenotype_vector.as_slice()?;
+        if covariate_shape[0] != sample_index_values.len() {
+            return Err(PyValueError::new_err(format!(
+                "Covariate matrix sample count mismatch: expected {}, observed {}.",
+                sample_index_values.len(),
+                covariate_shape[0],
+            )));
+        }
+        if phenotype_values.len() != sample_index_values.len() {
+            return Err(PyValueError::new_err(format!(
+                "Phenotype vector sample count mismatch: expected {}, observed {}.",
+                sample_index_values.len(),
+                phenotype_values.len(),
+            )));
+        }
+        let covariate_values = covariate_matrix.as_slice()?;
+        self.engine.reader().prepare_sample_selection(&sample_index_values).map_err(convert_bgen_error)?;
+
+        let run_result = self.run_prepared_regenie2_linear_burn_wgpu_chunks(
+            py,
+            sample_index_values.len(),
+            covariate_values,
+            covariate_shape[1],
+            phenotype_values,
+            &prediction_source,
+            &writer_session,
+            committed_chunk_identifiers,
+        );
+        let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
+        match (run_result, clear_result) {
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+            (Ok(timing_profile), Ok(())) => Ok(timing_profile),
+        }
+    }
 }
 
 #[pymethods]
@@ -695,6 +746,97 @@ impl Regenie2RunEngine {
             callback.call_method1("compute_preprocessed_dosage_chunk", (metadata, output_array_object, stats))?;
         }
         Ok(chunk_specs.len())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_prepared_regenie2_linear_burn_wgpu_chunks(
+        &self,
+        py: Python<'_>,
+        selected_sample_count: usize,
+        covariate_values: &[f32],
+        covariate_count: usize,
+        phenotype_values: &[f32],
+        prediction_source: &RegeniePredictionSource,
+        writer_session: &OutputWriterSession,
+        committed_chunk_identifiers: Option<Vec<usize>>,
+    ) -> PyResult<HashMap<String, u64>> {
+        let committed_identifier_set = build_committed_identifier_set(committed_chunk_identifiers);
+        let chunk_specs = self.engine.plan_chunks(&committed_identifier_set).map_err(convert_genotype_error)?;
+        let burn_state = linear_burn::prepare_linear_burn_state(
+            covariate_values,
+            phenotype_values,
+            selected_sample_count,
+            covariate_count,
+        )
+        .map_err(PyValueError::new_err)?;
+        let mut current_chromosome: Option<String> = None;
+        let mut burn_session = linear_burn::LinearBurnWgpuSession::new();
+        let mut timing_profile = linear_burn::BurnLinearTimingProfile::default();
+        let mut output_write_enqueue_ns = 0_u64;
+        let mut processed_chunk_count = 0_u64;
+
+        for chunk_spec in &chunk_specs {
+            let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
+            let mut dosage_values = vec![0.0_f32; selected_sample_count * selected_variant_count];
+            let output_pointer_address = dosage_values.as_mut_ptr() as usize;
+            let output_value_count = dosage_values.len();
+            let chunk_stats = py
+                .detach(|| {
+                    self.engine.reader().read_preprocessed_dosage_f32_into_address_prepared(
+                        chunk_spec.variant_start_index,
+                        chunk_spec.variant_stop_index,
+                        output_pointer_address,
+                        output_value_count,
+                    )
+                })
+                .map_err(convert_bgen_error)?;
+            let metadata_tuple = self
+                .engine
+                .reader()
+                .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
+                .map_err(convert_bgen_error)?;
+            let metadata = convert_variant_metadata_tuple(metadata_tuple);
+            let chromosome = metadata
+                .chromosome
+                .first()
+                .ok_or_else(|| PyRuntimeError::new_err("BGEN chunk metadata contained no chromosome values."))?
+                .clone();
+            if current_chromosome.as_deref() != Some(chromosome.as_str()) {
+                let loco_predictions =
+                    prediction_source.source.chromosome_predictions(&chromosome).map_err(convert_prediction_error)?;
+                let chromosome_state = linear_burn::prepare_linear_burn_chromosome_state(&burn_state, loco_predictions)
+                    .map_err(PyValueError::new_err)?;
+                burn_session.set_chromosome_state(chromosome_state);
+                current_chromosome = Some(chromosome);
+            }
+            let result =
+                burn_session.compute_chunk(dosage_values, selected_variant_count).map_err(PyRuntimeError::new_err)?;
+            let output_write_start = Instant::now();
+            writer_session.write_regenie2_chunk_values(
+                i64::try_from(chunk_spec.variant_start_index)
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?,
+                i64::try_from(chunk_spec.variant_stop_index)
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?,
+                metadata,
+                chunk_stats.allele_one_frequency,
+                chunk_stats.observation_count,
+                result.beta,
+                result.standard_error,
+                result.chi_squared,
+                result.log10_p_value,
+                None,
+            )?;
+            output_write_enqueue_ns = output_write_enqueue_ns.saturating_add(elapsed_ns(output_write_start));
+            processed_chunk_count = processed_chunk_count.saturating_add(1);
+        }
+        timing_profile.add(&burn_session.timing_profile());
+        Ok(HashMap::from([
+            ("burn_tensor_upload_ns".to_string(), timing_profile.tensor_upload_ns),
+            ("burn_compute_ns".to_string(), timing_profile.compute_ns),
+            ("burn_materialization_ns".to_string(), timing_profile.materialization_ns),
+            ("burn_output_write_enqueue_ns".to_string(), output_write_enqueue_ns),
+            ("burn_processed_chunk_count".to_string(), processed_chunk_count),
+        ]))
     }
 }
 
@@ -964,6 +1106,10 @@ fn build_profile_snapshot_dict(profile_snapshot: &ReaderProfileSnapshot) -> Hash
         ("metadata_slice_ns".to_string(), profile_snapshot.metadata_slice_ns),
         ("metadata_slice_count".to_string(), profile_snapshot.metadata_slice_count),
     ])
+}
+
+fn elapsed_ns(start: Instant) -> u64 {
+    u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
 #[allow(clippy::missing_errors_doc)]

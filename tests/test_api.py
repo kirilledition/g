@@ -16,7 +16,7 @@ from g.api import (
     validate_compute_config,
 )
 from g.io.output import OutputRunPaths, PreparedOutputRun
-from g.types import AssociationMode, Device, RegenieTraitType
+from g.types import AssociationMode, ComputeEngine, Device, RegenieTraitType
 
 
 def test_public_package_no_longer_exposes_direct_linear_or_logistic() -> None:
@@ -73,10 +73,39 @@ def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
     mock_configure_jax_device.assert_called_once_with(Device.CPU)
     assert mock_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_pipeline.call_args.kwargs["prediction_list_path"] == Path("predictions.list")
+    assert mock_pipeline.call_args.kwargs["compute_engine"] == ComputeEngine.JAX
     genotype_source_config = mock_pipeline.call_args.kwargs["genotype_source_config"]
     assert genotype_source_config.source_path == Path("dataset.bgen")
     assert genotype_source_config.sample_path == Path("dataset.sample")
     mock_pipeline.assert_called_once()
+
+
+def test_regenie2_linear_burn_wgpu_skips_jax_device_configuration() -> None:
+    with (
+        patch("g.api.configure_jax_device") as mock_configure_jax_device,
+        patch(
+            "g.api.prepare_output_run",
+            return_value=PreparedOutputRun(
+                output_run_paths=OutputRunPaths(
+                    run_directory=Path("results/output.regenie2_linear.run"),
+                    chunks_directory=Path("results/output.regenie2_linear.run/chunks"),
+                ),
+                committed_chunk_identifiers=frozenset(),
+            ),
+        ),
+        patch("g.api.run_regenie2_linear_bgen_pipeline") as mock_pipeline,
+    ):
+        regenie2_linear(
+            bgen="dataset.bgen",
+            pheno="phenotype.tsv",
+            pheno_name="trait",
+            out="results/output",
+            pred="predictions.list",
+            compute=ComputeConfig(compute_engine=ComputeEngine.BURN_WGPU),
+        )
+
+    mock_configure_jax_device.assert_not_called()
+    assert mock_pipeline.call_args.kwargs["compute_engine"] == ComputeEngine.BURN_WGPU
 
 
 def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
@@ -115,6 +144,19 @@ def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
     assert mock_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_prepare_output_run.call_args.kwargs["association_mode"] == AssociationMode.REGENIE2_BINARY
     assert mock_pipeline.call_args.kwargs["writer_thread_count"] == api.output.DEFAULT_WRITER_THREAD_COUNT
+
+
+def test_regenie2_binary_rejects_burn_wgpu_compute_engine() -> None:
+    with pytest.raises(ValueError, match="Only the JAX compute engine supports binary"):
+        regenie2(
+            bgen="dataset.bgen",
+            pheno="phenotype.tsv",
+            pheno_name="trait",
+            out="results/output",
+            pred="predictions.list",
+            trait_type=RegenieTraitType.BINARY,
+            compute=ComputeConfig(compute_engine=ComputeEngine.BURN_WGPU),
+        )
 
 
 @pytest.mark.parametrize(

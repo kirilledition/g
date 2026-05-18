@@ -11,19 +11,29 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # "extension-module" tells pyo3 we want to build an extension module (skips linking against libpython.so)
 # "abi3-py314" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.14.
-pyo3 = { version = "0.28.3", features = ["abi3-py314"] }
-numpy = "0.28.0"
+pyo3 = { version = "0.28.3", features = ["abi3-py314"], optional = true }
+numpy = { version = "0.28.0", optional = true }
 arrow = { version = "58.3.0", features = ["ipc_compression"] }
 parquet = { version = "58.3.0", default-features = false, features = ["arrow", "zstd"] }
 crossbeam-channel = "0.5.15"
+burn = { version = "0.21.0", default-features = false, features = ["std"], optional = true }
+clap = { version = "4.5.53", features = ["derive"] }
+cudarc = { version = "0.19.7", default-features = false, features = ["std", "driver", "nvrtc", "cuda-12020", "dynamic-loading", "fallback-dynamic-loading"], optional = true }
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 memmap2 = "0.9.10"
 rayon = "1.12.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+statrs = "0.18.0"
 thiserror = "2.0.18"
 
 [features]
 default = []
-extension-module = ["pyo3/extension-module"]
+python = ["dep:numpy", "dep:pyo3", "burn-wgpu"]
+extension-module = ["python", "pyo3/extension-module"]
+burn-wgpu = ["dep:burn", "burn/fusion", "burn/wgpu"]
+burn-cuda = ["dep:burn", "burn/cuda", "burn/fusion"]
+cuda-kernel = ["dep:cudarc"]
 
 [dev-dependencies]
 criterion = "0.8.2"
@@ -32,6 +42,11 @@ criterion = "0.8.2"
 name = "bgen_read"
 harness = false
 
+[[bin]]
+name = "regenie2-linear-burn-native"
+path = "src/bin/regenie2-linear-burn-native.rs"
+required-features = ["burn-wgpu"]
+
 [profile.perf]
 inherits = "release"
 opt-level = 3
@@ -39,6 +54,14 @@ codegen-units = 1
 debug = 1
 lto = "fat"
 strip = "none"
+
+[profile.perf-dev]
+inherits = "release"
+opt-level = 3
+codegen-units = 16
+debug = 0
+lto = "thin"
+strip = "symbols"
 
 [profile.bench]
 opt-level = 3

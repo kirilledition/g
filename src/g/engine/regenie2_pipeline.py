@@ -550,6 +550,7 @@ def run_regenie2_linear_bgen_pipeline(
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
+    compute_engine: types.ComputeEngine = types.ComputeEngine.JAX,
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
     engine = build_bgen_run_engine(
@@ -574,6 +575,22 @@ def run_regenie2_linear_bgen_pipeline(
         finalize_parquet=finalize_parquet,
     )
     stage_timing_recorder = build_stage_timing_recorder_from_environment()
+    if compute_engine == types.ComputeEngine.BURN_WGPU:
+        return run_bgen_engine_with_burn_wgpu_linear(
+            engine=engine,
+            aligned_sample_data=aligned_sample_data,
+            prediction_source=build_regenie_prediction_source(
+                prediction_list_path=prediction_list_path,
+                phenotype_name=phenotype_name,
+                aligned_sample_data=aligned_sample_data,
+            ),
+            committed_chunk_identifiers=committed_chunk_identifiers,
+            writer_session=writer_session,
+            stage_timing_recorder=stage_timing_recorder,
+        )
+    if compute_engine != types.ComputeEngine.JAX:
+        message = f"Unsupported quantitative REGENIE step 2 compute engine: {compute_engine}."
+        raise ValueError(message)
     callback = LinearRegenie2PipelineCallback(
         aligned_sample_data=aligned_sample_data,
         prediction_source=build_regenie_prediction_source(
@@ -593,6 +610,46 @@ def run_regenie2_linear_bgen_pipeline(
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
     )
+
+
+def run_bgen_engine_with_burn_wgpu_linear(
+    *,
+    engine: _core.Regenie2RunEngine,
+    aligned_sample_data: models.AlignedSampleData,
+    prediction_source: _core.RegeniePredictionSource,
+    committed_chunk_identifiers: set[int] | None,
+    writer_session: typing.Any,
+    stage_timing_recorder: StageTimingRecorder | None,
+) -> Path | None:
+    """Run quantitative step 2 through the native Burn WGPU backend."""
+    try:
+        if stage_timing_recorder is not None:
+            engine.reset_profile()
+        engine_delivery_start_time = time.perf_counter()
+        burn_profile = engine.run_regenie2_linear_burn_wgpu_chunks(
+            np.ascontiguousarray(aligned_sample_data.sample_indices, dtype=np.int64),
+            np.ascontiguousarray(aligned_sample_data.covariate_matrix, dtype=np.float32),
+            np.ascontiguousarray(aligned_sample_data.phenotype_vector, dtype=np.float32),
+            prediction_source,
+            writer_session,
+            committed_chunk_identifiers=sorted(committed_chunk_identifiers or set()),
+        )
+        record_stage_duration(stage_timing_recorder, "native_burn_engine_delivery", engine_delivery_start_time)
+        if stage_timing_recorder is not None:
+            native_profile = engine.profile_snapshot()
+            native_profile.update(burn_profile)
+            stage_timing_recorder.set_native_bgen_profile(native_profile)
+        writer_finish_start_time = time.perf_counter()
+        final_parquet_path = writer_session.finish()
+        record_stage_duration(stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time)
+    except Exception:
+        writer_session.abort()
+        write_stage_timing_snapshot_from_environment(stage_timing_recorder)
+        raise
+    write_stage_timing_snapshot_from_environment(stage_timing_recorder)
+    if final_parquet_path is None:
+        return None
+    return Path(final_parquet_path)
 
 
 def run_regenie2_binary_bgen_pipeline(

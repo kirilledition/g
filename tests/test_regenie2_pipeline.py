@@ -8,6 +8,7 @@ from unittest.mock import patch
 import jax.numpy as jnp
 import numpy as np
 
+from g import types
 from g.compute import regenie2_linear, regenie2_linear_types
 from g.engine import regenie2_pipeline
 from g.io import models, output, source
@@ -59,6 +60,17 @@ class FakeRunEngine:
         self.variant_limit = variant_limit
         self.variant_count = 10
         self.run_arguments: tuple[np.ndarray, object, list[int] | None] | None = None
+        self.burn_arguments: (
+            tuple[
+                np.ndarray,
+                np.ndarray,
+                np.ndarray,
+                object,
+                object,
+                list[int] | None,
+            ]
+            | None
+        ) = None
         FakeRunEngine.instances.append(self)
 
     def variant_metadata_slice(
@@ -103,6 +115,25 @@ class FakeRunEngine:
     ) -> int:
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
         return 0
+
+    def run_regenie2_linear_burn_wgpu_chunks(
+        self,
+        sample_indices: np.ndarray,
+        covariate_matrix: np.ndarray,
+        phenotype_vector: np.ndarray,
+        prediction_source: object,
+        writer_session: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> dict[str, int]:
+        self.burn_arguments = (
+            sample_indices,
+            covariate_matrix,
+            phenotype_vector,
+            prediction_source,
+            writer_session,
+            committed_chunk_identifiers,
+        )
+        return {"burn_compute_ns": 7}
 
 
 def build_aligned_sample_data() -> models.AlignedSampleData:
@@ -271,6 +302,49 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert prediction_source.phenotype_name == "trait"
     assert prediction_source.sample_family_identifiers == ["family1", "family2"]
     assert prediction_source.sample_individual_identifiers == ["sample1", "sample2"]
+
+
+def test_run_linear_bgen_pipeline_invokes_burn_wgpu_native_engine() -> None:
+    FakeRunEngine.instances.clear()
+    FakePredictionSource.instances.clear()
+    writer_session = FakeWriterSession()
+    aligned_sample_data = build_aligned_sample_data()
+
+    with (
+        patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.regenie2_pipeline.load_bgen_aligned_sample_data", return_value=aligned_sample_data),
+        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
+    ):
+        final_path = regenie2_pipeline.run_regenie2_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
+            committed_chunk_identifiers={64, 0},
+            finalize_parquet=True,
+            compute_engine=types.ComputeEngine.BURN_WGPU,
+        )
+
+    assert final_path == Path("results/final.parquet")
+    assert writer_session.finished is True
+    engine = FakeRunEngine.instances[0]
+    assert engine.run_arguments is None
+    assert engine.burn_arguments is not None
+    sample_indices, covariate_matrix, phenotype_vector, prediction_source, writer, committed_chunk_identifiers = (
+        engine.burn_arguments
+    )
+    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(covariate_matrix, np.asarray([[1.0], [1.0]], dtype=np.float32))
+    np.testing.assert_array_equal(phenotype_vector, np.asarray([0.0, 1.0], dtype=np.float32))
+    assert prediction_source is FakePredictionSource.instances[0]
+    assert writer is writer_session
+    assert committed_chunk_identifiers == [0, 64]
 
 
 def test_load_bgen_aligned_sample_data_rejects_non_bgen_source_suffix() -> None:

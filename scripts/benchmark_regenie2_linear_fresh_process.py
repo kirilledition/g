@@ -30,6 +30,8 @@ class TrialResult:
     chunk_file_count: int
     chunk_bytes: int
     final_parquet_bytes: int | None
+    stage_timing_path: str
+    stage_timings: dict[str, object] | None
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class BenchmarkSummary:
     """Aggregate summary for one fresh-process benchmark run."""
 
     device: str
+    compute_engine: str
     chunk_size: int
     finalize_parquet: bool
     output_writer_thread_count: int
@@ -57,6 +60,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
     parser = argparse.ArgumentParser(description="Benchmark g REGENIE step 2 in fresh Python processes.")
     parser.add_argument("--device", default="gpu", choices=("cpu", "gpu"), help="Execution device.")
+    parser.add_argument(
+        "--compute-engine",
+        default="jax",
+        choices=("jax", "burn-wgpu"),
+        help="Step 2 compute backend.",
+    )
     parser.add_argument("--chunk-size", type=int, default=8192, help="Variants per chunk.")
     parser.add_argument(
         "--finalize-parquet",
@@ -88,14 +97,19 @@ def build_child_command(
     data_directory: Path,
     output_path: Path,
     device: str,
+    compute_engine: str,
     chunk_size: int,
     finalize_parquet: bool,
     output_writer_thread_count: int,
+    force_os_exit: bool,
 ) -> list[str]:
     """Build the child Python command for one isolated trial."""
+    exit_statement = "os._exit(0)" if force_os_exit else ""
     child_code = textwrap.dedent(
         """
         import json
+        import os
+        import sys
         import time
 
         import polars as pl
@@ -114,6 +128,7 @@ def build_child_command(
             pred={prediction_path!r},
             compute=api.ComputeConfig(
                 device=types.Device({device!r}),
+                compute_engine=types.ComputeEngine({compute_engine!r}),
                 chunk_size={chunk_size},
                 finalize_parquet={finalize_parquet},
                 output_writer_thread_count={output_writer_thread_count},
@@ -144,6 +159,9 @@ def build_child_command(
                 }}
             )
         )
+        sys.stdout.flush()
+        sys.stderr.flush()
+        {exit_statement}
         """
     ).format(
         bgen_path=str(data_directory / "1kg_chr22_full.bgen"),
@@ -153,9 +171,11 @@ def build_child_command(
         covariate_path=str(data_directory / "covariates.txt"),
         prediction_path=str(data_directory / "baselines/regenie_step1_qt_pred.list"),
         device=device,
+        compute_engine=compute_engine,
         chunk_size=chunk_size,
         finalize_parquet="True" if finalize_parquet else "False",
         output_writer_thread_count=output_writer_thread_count,
+        exit_statement=exit_statement,
     )
     return [sys.executable, "-c", child_code]
 
@@ -166,37 +186,50 @@ def run_fresh_process_trial(
     data_directory: Path,
     output_directory: Path,
     device: str,
+    compute_engine: str,
     chunk_size: int,
     finalize_parquet: bool,
     output_writer_thread_count: int,
 ) -> TrialResult:
     """Run one isolated fresh-process trial."""
     output_prefix = output_directory / (
-        f"{device}_finalize{int(finalize_parquet)}_"
+        f"{compute_engine}_{device}_finalize{int(finalize_parquet)}_"
         f"chunk{chunk_size}_"
         f"writer{output_writer_thread_count}_"
         f"trial{trial_index:02d}"
     )
+    stage_timing_path = output_prefix.with_suffix(".stage_timings.json")
+    force_os_exit = compute_engine == "burn-wgpu"
     command_arguments = build_child_command(
         data_directory=data_directory,
         output_path=output_prefix,
         device=device,
+        compute_engine=compute_engine,
         chunk_size=chunk_size,
         finalize_parquet=finalize_parquet,
         output_writer_thread_count=output_writer_thread_count,
+        force_os_exit=force_os_exit,
     )
     child_environment = os.environ.copy()
     child_environment.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     child_environment.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", ".50")
+    child_environment["G_REGENIE2_STAGE_TIMINGS_JSON"] = str(stage_timing_path)
+    if compute_engine == "burn-wgpu":
+        child_environment.setdefault("JAX_PLATFORMS", "cpu")
+        child_environment.setdefault("WGPU_BACKEND", "vulkan")
     completed_process = subprocess.run(
         command_arguments,
-        check=True,
         capture_output=True,
         text=True,
         env=child_environment,
     )
+    if completed_process.returncode != 0:
+        print(completed_process.stdout, file=sys.stdout, end="")
+        print(completed_process.stderr, file=sys.stderr, end="")
+        completed_process.check_returncode()
     result_line = completed_process.stdout.strip().splitlines()[-1]
     result_payload = json.loads(result_line)
+    stage_timings = json.loads(stage_timing_path.read_text(encoding="utf-8")) if stage_timing_path.exists() else None
     return TrialResult(
         trial_index=trial_index,
         wall_time_seconds=float(result_payload["wall_time_seconds"]),
@@ -207,12 +240,15 @@ def run_fresh_process_trial(
         final_parquet_bytes=(
             int(result_payload["final_parquet_bytes"]) if result_payload["final_parquet_bytes"] is not None else None
         ),
+        stage_timing_path=str(stage_timing_path),
+        stage_timings=stage_timings,
     )
 
 
 def build_summary(
     *,
     device: str,
+    compute_engine: str,
     chunk_size: int,
     finalize_parquet: bool,
     output_writer_thread_count: int,
@@ -229,6 +265,7 @@ def build_summary(
     ]
     return BenchmarkSummary(
         device=device,
+        compute_engine=compute_engine,
         chunk_size=chunk_size,
         finalize_parquet=finalize_parquet,
         output_writer_thread_count=output_writer_thread_count,
@@ -258,6 +295,7 @@ def main() -> None:
             data_directory=arguments.data_dir,
             output_directory=arguments.output_dir,
             device=arguments.device,
+            compute_engine=arguments.compute_engine,
             chunk_size=arguments.chunk_size,
             finalize_parquet=arguments.finalize_parquet,
             output_writer_thread_count=arguments.output_writer_thread_count,
@@ -269,6 +307,7 @@ def main() -> None:
             data_directory=arguments.data_dir,
             output_directory=arguments.output_dir,
             device=arguments.device,
+            compute_engine=arguments.compute_engine,
             chunk_size=arguments.chunk_size,
             finalize_parquet=arguments.finalize_parquet,
             output_writer_thread_count=arguments.output_writer_thread_count,
@@ -278,6 +317,7 @@ def main() -> None:
 
     benchmark_summary = build_summary(
         device=arguments.device,
+        compute_engine=arguments.compute_engine,
         chunk_size=arguments.chunk_size,
         finalize_parquet=arguments.finalize_parquet,
         output_writer_thread_count=arguments.output_writer_thread_count,
@@ -285,7 +325,7 @@ def main() -> None:
         trial_results=measured_trial_results,
     )
     default_summary_filename = (
-        f"{arguments.device}_finalize{int(arguments.finalize_parquet)}_"
+        f"{arguments.compute_engine}_{arguments.device}_finalize{int(arguments.finalize_parquet)}_"
         f"chunk{arguments.chunk_size}_"
         f"writer{arguments.output_writer_thread_count}.json"
     )

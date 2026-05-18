@@ -57,6 +57,7 @@ def run_regenie2_linear_command(
     chunk_size: int | None = typer.Option(None, help="Variants per chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
     prefetch_chunks: int = typer.Option(1, help="Number of genotype chunks to prefetch on the host."),
+    compute_engine: types.ComputeEngine = typer.Option(types.ComputeEngine.JAX, help="Step 2 compute backend."),
     device: types.Device = typer.Option(types.Device.CPU, help="JAX execution device."),
     output_run_directory: Path | None = typer.Option(None, help="Run directory for Arrow chunked output."),
     output_writer_thread_count: int = typer.Option(
@@ -79,6 +80,7 @@ def run_regenie2_linear_command(
     """Run a REGENIE step 2 linear association scan."""
     compute_config = api.ComputeConfig(
         chunk_size=resolve_chunk_size(chunk_size),
+        compute_engine=compute_engine,
         device=device,
         variant_limit=variant_limit,
         prefetch_chunks=prefetch_chunks,
@@ -129,6 +131,7 @@ def run_regenie2_command(
     chunk_size: int | None = typer.Option(None, help="Variants per chunk."),
     variant_limit: int | None = typer.Option(None, help="Optional variant cap for debugging or tests."),
     prefetch_chunks: int = typer.Option(1, help="Number of genotype chunks to prefetch on the host."),
+    compute_engine: types.ComputeEngine = typer.Option(types.ComputeEngine.JAX, help="Step 2 compute backend."),
     device: types.Device = typer.Option(types.Device.CPU, help="JAX execution device."),
     output_run_directory: Path | None = typer.Option(None, help="Run directory for Arrow chunked output."),
     output_writer_thread_count: int = typer.Option(
@@ -151,6 +154,7 @@ def run_regenie2_command(
     """Run a REGENIE step 2 association scan."""
     compute_config = api.ComputeConfig(
         chunk_size=resolve_chunk_size(chunk_size),
+        compute_engine=compute_engine,
         device=device,
         variant_limit=variant_limit,
         prefetch_chunks=prefetch_chunks,

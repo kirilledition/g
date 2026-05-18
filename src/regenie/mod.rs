@@ -1,5 +1,8 @@
 #![allow(clippy::missing_errors_doc)]
 
+#[cfg(feature = "burn-wgpu")]
+pub mod linear_burn;
+
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs::File;

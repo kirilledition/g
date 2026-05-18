@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from g.api import DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE, RunArtifacts
 from g.cli import app, main, print_success_message, resolve_chunk_size
-from g.types import Device, RegenieTraitType
+from g.types import ComputeEngine, Device, RegenieTraitType
 
 runner = CliRunner()
 
@@ -91,6 +91,8 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
                 "gpu",
                 "--prefetch-chunks",
                 "2",
+                "--compute-engine",
+                "burn-wgpu",
                 "--output-writer-thread-count",
                 "3",
                 "--output-writer-queue-depth",
@@ -103,6 +105,7 @@ def test_regenie2_linear_command_dispatches_api_call() -> None:
     assert str(Path("results/output.regenie2_linear.run/final.parquet")) in result.output
     assert mock_run_regenie2_linear_api.call_args.kwargs["covar_names"] == ("age", "sex")
     compute_config = mock_run_regenie2_linear_api.call_args.kwargs["compute"]
+    assert compute_config.compute_engine == ComputeEngine.BURN_WGPU
     assert compute_config.device == Device.GPU
     assert compute_config.chunk_size == DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE
     assert compute_config.prefetch_chunks == 2

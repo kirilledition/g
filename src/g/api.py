@@ -23,6 +23,7 @@ class ComputeConfig:
     """Hardware and batching settings for REGENIE step 2 execution."""
 
     chunk_size: int = DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE
+    compute_engine: types.ComputeEngine = types.ComputeEngine.JAX
     device: types.Device = types.Device.CPU
     variant_limit: int | None = None
     prefetch_chunks: int = 1
@@ -131,7 +132,11 @@ def regenie2(
     """Run a REGENIE step 2 association scan and write results to disk."""
     compute_config = compute or ComputeConfig()
     validate_compute_config(compute_config)
-    configure_jax_device(compute_config.device)
+    if trait_type == types.RegenieTraitType.BINARY and compute_config.compute_engine != types.ComputeEngine.JAX:
+        message = "Only the JAX compute engine supports binary REGENIE step 2."
+        raise ValueError(message)
+    if compute_config.compute_engine == types.ComputeEngine.JAX:
+        configure_jax_device(compute_config.device)
     covariate_name_list = parse_covariate_name_list(covar_names)
     genotype_source_config = source.build_bgen_source_config(bgen, sample)
     output_run_directory = compute_config.output_run_directory or Path(out)
@@ -183,6 +188,7 @@ def regenie2(
             finalize_parquet=compute_config.finalize_parquet,
             writer_thread_count=compute_config.output_writer_thread_count,
             writer_queue_depth=compute_config.output_writer_queue_depth,
+            compute_engine=compute_config.compute_engine,
         )
 
     return RunArtifacts(

@@ -111,6 +111,15 @@ class Regenie2RunEngine:
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
     ) -> int: ...
+    def run_regenie2_linear_burn_wgpu_chunks(
+        self,
+        sample_indices: npt.NDArray[np.int64],
+        covariate_matrix: npt.NDArray[np.float32],
+        phenotype_vector: npt.NDArray[np.float32],
+        prediction_source: RegeniePredictionSource,
+        writer_session: OutputWriterSession,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> dict[str, int]: ...
 
 class RegeniePredictionSource:
     def __init__(

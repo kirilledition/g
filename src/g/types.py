@@ -10,6 +10,13 @@ class Device(enum.StrEnum):
     GPU = "gpu"
 
 
+class ComputeEngine(enum.StrEnum):
+    """REGENIE step 2 compute backend."""
+
+    JAX = "jax"
+    BURN_WGPU = "burn-wgpu"
+
+
 class AssociationMode(enum.StrEnum):
     """Statistical association model."""
 
