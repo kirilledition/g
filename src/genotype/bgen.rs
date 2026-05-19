@@ -13,7 +13,11 @@ use thiserror::Error;
 use crate::genotype::common::{ChunkStats, GenotypeError, GenotypeReaderCore, VariantMetadataColumns};
 use crate::genotype::preprocess;
 
+mod index;
+mod metadata;
 mod profile;
+pub use metadata::VariantMetadataLists;
+use metadata::VariantRecord;
 pub use profile::ReaderProfileSnapshot;
 use profile::{ReaderProfiling, ThreadLocalProfileSnapshot, elapsed_nanoseconds};
 
@@ -60,18 +64,6 @@ pub struct BgenReaderCore {
 }
 
 #[derive(Debug)]
-struct VariantRecord {
-    probability_payload_offset: usize,
-    probability_payload_length: usize,
-    declared_uncompressed_block_length: usize,
-    chromosome: String,
-    resolved_variant_identifier: String,
-    position: i64,
-    counted_allele: String,
-    reference_allele: String,
-}
-
-#[derive(Debug)]
 struct VariantDecodeResult {
     profile_snapshot: ThreadLocalProfileSnapshot,
     selected_dosage_total: f32,
@@ -94,8 +86,6 @@ pub enum BgenError {
     #[error("I/O error while reading BGEN file: {0}")]
     Io(#[from] std::io::Error),
 }
-
-pub type VariantMetadataLists = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
 
 fn decode_tile_variant_count() -> usize {
     static DECODE_TILE_VARIANT_COUNT: OnceLock<usize> = OnceLock::new();
@@ -172,14 +162,14 @@ impl BgenReaderCore {
 
         let sample_block_offset = 4 + header_block_length;
         let sample_identifiers = if contains_embedded_samples {
-            parse_sample_identifier_block(&mmap, sample_block_offset, first_variant_offset, sample_count)?
+            index::parse_sample_identifier_block(&mmap, sample_block_offset, first_variant_offset, sample_count)?
         } else {
             Vec::new()
         };
 
         let variant_records =
-            parse_variant_records(&mmap, first_variant_offset, variant_count, sample_count, compression_type)?;
-        let chromosome_boundary_indices = build_chromosome_boundary_indices(&variant_records);
+            index::parse_variant_records(&mmap, first_variant_offset, variant_count, sample_count, compression_type)?;
+        let chromosome_boundary_indices = metadata::build_chromosome_boundary_indices(&variant_records);
 
         Ok(Self {
             bgen_path: bgen_path.to_path_buf(),
@@ -271,20 +261,7 @@ impl BgenReaderCore {
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
 
         let selected_variant_records = &self.variant_records[variant_start..variant_stop];
-        let chromosome_values =
-            selected_variant_records.iter().map(|variant_record| variant_record.chromosome.clone()).collect();
-        let variant_identifier_values = selected_variant_records
-            .iter()
-            .map(|variant_record| variant_record.resolved_variant_identifier.clone())
-            .collect();
-        let position_values = selected_variant_records.iter().map(|variant_record| variant_record.position).collect();
-        let allele_one_values =
-            selected_variant_records.iter().map(|variant_record| variant_record.counted_allele.clone()).collect();
-        let allele_two_values =
-            selected_variant_records.iter().map(|variant_record| variant_record.reference_allele.clone()).collect();
-
-        let variant_metadata_lists =
-            (chromosome_values, variant_identifier_values, position_values, allele_one_values, allele_two_values);
+        let variant_metadata_lists = metadata::build_variant_metadata_lists(selected_variant_records);
         self.profiling.record_metadata_slice(elapsed_nanoseconds(metadata_slice_start_time));
         Ok(variant_metadata_lists)
     }
@@ -810,169 +787,6 @@ fn build_sample_selection(sample_count: usize, sample_indices: &[i64]) -> Result
         }
     }
     Ok(SampleSelection { selected_sample_count: sample_indices.len(), file_to_selected_index, is_identity })
-}
-
-fn parse_sample_identifier_block(
-    mmap: &[u8],
-    sample_block_offset: usize,
-    first_variant_offset: usize,
-    expected_sample_count: usize,
-) -> Result<Vec<String>, BgenError> {
-    let block_length = u32_to_usize(read_u32_at(mmap, sample_block_offset)?)?;
-    let sample_block_stop = sample_block_offset + block_length;
-    if sample_block_stop > first_variant_offset {
-        return Err(BgenError::InvalidFormat(
-            "Embedded BGEN sample block overlaps the first variant block.".to_string(),
-        ));
-    }
-
-    let observed_sample_count = u32_to_usize(read_u32_at(mmap, sample_block_offset + 4)?)?;
-    if observed_sample_count != expected_sample_count {
-        return Err(BgenError::InvalidFormat(format!(
-            "Embedded BGEN sample block reports {observed_sample_count} samples, but the header reports {expected_sample_count}.",
-        )));
-    }
-
-    let mut cursor = sample_block_offset + 8;
-    let mut sample_identifiers = Vec::with_capacity(expected_sample_count);
-    for _sample_index in 0..expected_sample_count {
-        let identifier_length = usize::from(read_u16_at(mmap, cursor)?);
-        cursor += VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES;
-        let identifier_bytes = read_exact_bytes(mmap, cursor, identifier_length)?;
-        sample_identifiers.push(String::from_utf8_lossy(identifier_bytes).into_owned());
-        cursor += identifier_length;
-    }
-    if cursor != sample_block_stop {
-        return Err(BgenError::InvalidFormat(
-            "Embedded BGEN sample block length does not match the encoded sample identifiers.".to_string(),
-        ));
-    }
-
-    Ok(sample_identifiers)
-}
-
-fn parse_variant_records(
-    mmap: &[u8],
-    first_variant_offset: usize,
-    variant_count: usize,
-    sample_count: usize,
-    compression_type: CompressionType,
-) -> Result<Vec<VariantRecord>, BgenError> {
-    let mut cursor = first_variant_offset;
-    let mut variant_records = Vec::with_capacity(variant_count);
-
-    for variant_index in 0..variant_count {
-        let variant_identifier_length = usize::from(read_u16_at(mmap, cursor)?);
-        cursor += VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES;
-        let variant_identifier =
-            String::from_utf8_lossy(read_exact_bytes(mmap, cursor, variant_identifier_length)?).into_owned();
-        cursor += variant_identifier_length;
-
-        let rsid_length = usize::from(read_u16_at(mmap, cursor)?);
-        cursor += VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES;
-        let rsid = String::from_utf8_lossy(read_exact_bytes(mmap, cursor, rsid_length)?).into_owned();
-        cursor += rsid_length;
-
-        let chromosome_length = usize::from(read_u16_at(mmap, cursor)?);
-        cursor += VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES;
-        let chromosome = String::from_utf8_lossy(read_exact_bytes(mmap, cursor, chromosome_length)?).into_owned();
-        cursor += chromosome_length;
-
-        let position = i64::from(read_u32_at(mmap, cursor)?);
-        cursor += 4;
-
-        let allele_count = read_u16_at(mmap, cursor)?;
-        cursor += 2;
-        if allele_count != 2 {
-            return Err(BgenError::UnsupportedFormat(format!(
-                "Only diploid biallelic BGEN variants are supported. Variant index {variant_index} reports {allele_count} alleles.",
-            )));
-        }
-
-        let mut allele_values = Vec::with_capacity(usize::from(allele_count));
-        for _allele_index in 0..usize::from(allele_count) {
-            let allele_length = u32_to_usize(read_u32_at(mmap, cursor)?)?;
-            cursor += ALLELE_LENGTH_SIZE_IN_BYTES;
-            let allele_value = String::from_utf8_lossy(read_exact_bytes(mmap, cursor, allele_length)?).into_owned();
-            cursor += allele_length;
-            allele_values.push(allele_value);
-        }
-
-        let genotype_block_offset = cursor;
-        let total_block_length = u32_to_usize(read_u32_at(mmap, genotype_block_offset)?)?;
-        let block_payload_offset = genotype_block_offset + 4;
-        let (probability_payload_offset, probability_payload_length, declared_uncompressed_block_length) =
-            match compression_type {
-                CompressionType::None => (block_payload_offset, total_block_length, total_block_length),
-                CompressionType::Zlib => {
-                    let declared_uncompressed_block_length = u32_to_usize(read_u32_at(mmap, block_payload_offset)?)?;
-                    let probability_payload_length = total_block_length.checked_sub(4).ok_or_else(|| {
-                        BgenError::InvalidFormat(
-                            "Compressed BGEN blocks must include a four-byte uncompressed length prefix.".to_string(),
-                        )
-                    })?;
-                    (block_payload_offset + 4, probability_payload_length, declared_uncompressed_block_length)
-                }
-            };
-        cursor += 4 + total_block_length;
-        if cursor > mmap.len() {
-            return Err(BgenError::InvalidFormat(format!(
-                "Variant index {variant_index} points beyond the end of the BGEN file.",
-            )));
-        }
-
-        if variant_index == 0 {
-            validate_variant_probability_block(
-                mmap,
-                compression_type,
-                &VariantRecord {
-                    probability_payload_offset,
-                    probability_payload_length,
-                    declared_uncompressed_block_length,
-                    chromosome: chromosome.clone(),
-                    resolved_variant_identifier: if rsid.is_empty() {
-                        variant_identifier.clone()
-                    } else {
-                        rsid.clone()
-                    },
-                    position,
-                    counted_allele: allele_values[1].clone(),
-                    reference_allele: allele_values[0].clone(),
-                },
-                sample_count,
-                "first variant",
-            )?;
-        }
-
-        let reference_allele = allele_values[0].clone();
-        let counted_allele = allele_values[1].clone();
-        let resolved_variant_identifier = if rsid.is_empty() { variant_identifier } else { rsid.clone() };
-
-        variant_records.push(VariantRecord {
-            probability_payload_offset,
-            probability_payload_length,
-            declared_uncompressed_block_length,
-            chromosome,
-            resolved_variant_identifier,
-            position,
-            counted_allele,
-            reference_allele,
-        });
-    }
-
-    Ok(variant_records)
-}
-
-fn build_chromosome_boundary_indices(variant_records: &[VariantRecord]) -> Vec<usize> {
-    let mut chromosome_boundary_indices = Vec::with_capacity(variant_records.len().min(256) + 1);
-    chromosome_boundary_indices.push(0);
-    for variant_index in 1..variant_records.len() {
-        if variant_records[variant_index].chromosome != variant_records[variant_index - 1].chromosome {
-            chromosome_boundary_indices.push(variant_index);
-        }
-    }
-    chromosome_boundary_indices.push(variant_records.len());
-    chromosome_boundary_indices
 }
 
 fn validate_variant_probability_block(
