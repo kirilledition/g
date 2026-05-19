@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from g import _core
-from g.io import source
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -159,7 +158,6 @@ def test_native_sample_file_alignment_uses_oxford_id_2_column(tmp_path: Path) ->
     covariate_path = tmp_path / "covar.txt"
     covariate_path.write_text("FID\tIID\tage\tsex\nf1\ts1\t25\t1\nf1\ts2\tNA\t2\nf1\ts3\t35\t1\n")
 
-    sample_table = source.load_sample_identifier_table(sample_path)
     native_aligned_sample_data = _core.align_sample_data_from_sample_file(
         str(sample_path),
         3,
@@ -170,8 +168,8 @@ def test_native_sample_file_alignment_uses_oxford_id_2_column(tmp_path: Path) ->
         is_binary_trait=False,
     )
 
-    assert sample_table.get_column("individual_identifier").to_list() == ["s2", "s1", "s3"]
     np.testing.assert_array_equal(native_aligned_sample_data.sample_indices, np.asarray([1, 2], dtype=np.int64))
+    assert native_aligned_sample_data.family_identifiers == ["f1", "f3"]
     assert native_aligned_sample_data.individual_identifiers == ["s1", "s3"]
     np.testing.assert_allclose(
         native_aligned_sample_data.covariate_matrix,

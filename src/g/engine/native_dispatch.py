@@ -76,9 +76,10 @@ def resolve_allow_duplicate_iid_alignment(alignment_config: SampleAlignmentConfi
     return alignment_config.allow_duplicate_iid_alignment
 
 
-def load_native_aligned_sample_data_from_individual_identifier_table(
+def load_native_aligned_sample_data(
     *,
-    sample_table: typing.Any,
+    engine: core.Regenie2RunEngine,
+    sample_path: Path | None,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
@@ -86,36 +87,9 @@ def load_native_aligned_sample_data_from_individual_identifier_table(
     is_binary_trait: bool,
     alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> core.NativeAlignedSampleData:
-    """Load Rust-owned aligned sample data from explicit sample identifiers."""
-    return core.align_sample_data(
-        np.ascontiguousarray(sample_table.get_column("sample_index").to_numpy(), dtype=np.int64),
-        typing.cast("list[str]", sample_table.get_column("family_identifier").to_list()),
-        typing.cast("list[str]", sample_table.get_column("individual_identifier").to_list()),
-        str(phenotype_path),
-        phenotype_name,
-        str(covariate_path) if covariate_path is not None else None,
-        list(covariate_names) if covariate_names is not None else None,
-        is_binary_trait,
-        sample_key_mode=resolve_sample_key_mode(alignment_config).value,
-        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
-    )
-
-
-def load_native_aligned_sample_data_from_sample_file(
-    *,
-    sample_path: Path,
-    expected_sample_count: int,
-    phenotype_path: Path,
-    phenotype_name: str,
-    covariate_path: Path | None,
-    covariate_names: tuple[str, ...] | None,
-    is_binary_trait: bool,
-    alignment_config: SampleAlignmentConfigProtocol | None = None,
-) -> core.NativeAlignedSampleData:
-    """Load Rust-owned aligned sample data through Oxford sample-file parsing."""
-    return core.align_sample_data_from_sample_file(
-        str(sample_path),
-        expected_sample_count,
+    """Load Rust-owned aligned sample data from a sample file or embedded BGEN samples."""
+    return engine.align_sample_data(
+        str(sample_path) if sample_path is not None else None,
         str(phenotype_path),
         phenotype_name,
         str(covariate_path) if covariate_path is not None else None,
@@ -139,12 +113,9 @@ def load_native_bgen_run_input(
     build_native_bgen_run_input_callable: typing.Callable[
         [core.NativeAlignedSampleData], NativeBgenRunInput
     ] = build_native_bgen_run_input,
-    load_from_individual_identifier_table_callable: typing.Callable[
+    load_aligned_sample_data_callable: typing.Callable[
         ..., core.NativeAlignedSampleData
-    ] = load_native_aligned_sample_data_from_individual_identifier_table,
-    load_from_sample_file_callable: typing.Callable[
-        ..., core.NativeAlignedSampleData
-    ] = load_native_aligned_sample_data_from_sample_file,
+    ] = load_native_aligned_sample_data,
 ) -> NativeBgenRunInput:
     """Load native-aligned samples and JAX compute inputs for a native BGEN run."""
     source.validate_genotype_source_config(genotype_source_config)
@@ -152,32 +123,17 @@ def load_native_bgen_run_input(
         genotype_source_config.source_path,
         genotype_source_config.sample_path,
     )
-    if resolved_sample_path is not None:
-        native_aligned_sample_data = load_from_sample_file_callable(
-            sample_path=resolved_sample_path,
-            expected_sample_count=engine.sample_count,
-            phenotype_path=phenotype_path,
-            phenotype_name=phenotype_name,
-            covariate_path=covariate_path,
-            covariate_names=covariate_names,
-            is_binary_trait=is_binary_trait,
-            alignment_config=alignment_config,
-        )
-        return build_native_bgen_run_input_callable(native_aligned_sample_data)
-    if engine.contains_embedded_samples:
-        sample_table = source.build_sample_identifier_table(np.asarray(engine.sample_identifiers(), dtype=np.str_))
-        native_aligned_sample_data = load_from_individual_identifier_table_callable(
-            sample_table=sample_table,
-            phenotype_path=phenotype_path,
-            phenotype_name=phenotype_name,
-            covariate_path=covariate_path,
-            covariate_names=covariate_names,
-            is_binary_trait=is_binary_trait,
-            alignment_config=alignment_config,
-        )
-        return build_native_bgen_run_input_callable(native_aligned_sample_data)
-    message = "BGEN file does not contain samples and no .sample file was found."
-    raise ValueError(message)
+    native_aligned_sample_data = load_aligned_sample_data_callable(
+        engine=engine,
+        sample_path=resolved_sample_path,
+        phenotype_path=phenotype_path,
+        phenotype_name=phenotype_name,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
+        is_binary_trait=is_binary_trait,
+        alignment_config=alignment_config,
+    )
+    return build_native_bgen_run_input_callable(native_aligned_sample_data)
 
 
 def build_regenie_prediction_source(

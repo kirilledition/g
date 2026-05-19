@@ -624,15 +624,14 @@ def test_load_native_bgen_run_input_uses_rust_alignment_for_embedded_samples() -
     engine = SimpleNamespace(
         sample_count=2,
         contains_embedded_samples=True,
-        sample_identifiers=lambda: ["sample1", "sample2"],
     )
 
     with (
         patch("g.engine.regenie2_pipeline.source.resolve_bgen_sample_path", return_value=None),
         patch(
-            "g.engine.regenie2_pipeline.load_native_aligned_sample_data_from_individual_identifier_table",
+            "g.engine.regenie2_pipeline.load_native_aligned_sample_data",
             return_value=native_aligned_sample_data,
-        ) as mock_load_from_sample_table,
+        ) as mock_load_aligned_sample_data,
     ):
         run_input = regenie2_pipeline.load_native_bgen_run_input(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
@@ -646,7 +645,9 @@ def test_load_native_bgen_run_input_uses_rust_alignment_for_embedded_samples() -
 
     assert run_input.native_aligned_sample_data is native_aligned_sample_data
     np.testing.assert_array_equal(run_input.sample_indices, np.asarray([1, 0], dtype=np.int64))
-    mock_load_from_sample_table.assert_called_once()
+    mock_load_aligned_sample_data.assert_called_once()
+    assert mock_load_aligned_sample_data.call_args.kwargs["engine"] is engine
+    assert mock_load_aligned_sample_data.call_args.kwargs["sample_path"] is None
 
 
 def test_load_native_bgen_run_input_uses_rust_sample_file_alignment() -> None:
@@ -660,9 +661,9 @@ def test_load_native_bgen_run_input_uses_rust_sample_file_alignment() -> None:
     with (
         patch("g.engine.regenie2_pipeline.source.resolve_bgen_sample_path", return_value=sample_path),
         patch(
-            "g.engine.regenie2_pipeline.load_native_aligned_sample_data_from_sample_file",
+            "g.engine.regenie2_pipeline.load_native_aligned_sample_data",
             return_value=native_aligned_sample_data,
-        ) as mock_rust_sample_file_load,
+        ) as mock_load_aligned_sample_data,
     ):
         run_input = regenie2_pipeline.load_native_bgen_run_input(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
@@ -675,9 +676,9 @@ def test_load_native_bgen_run_input_uses_rust_sample_file_alignment() -> None:
         )
 
     assert run_input.native_aligned_sample_data is native_aligned_sample_data
-    mock_rust_sample_file_load.assert_called_once_with(
+    mock_load_aligned_sample_data.assert_called_once_with(
+        engine=engine,
         sample_path=sample_path,
-        expected_sample_count=2,
         phenotype_path=Path("phenotype.tsv"),
         phenotype_name="trait",
         covariate_path=Path("covariates.tsv"),
@@ -696,15 +697,14 @@ def test_alignment_config_reaches_native_alignment_and_prediction_source() -> No
     engine = SimpleNamespace(
         sample_count=2,
         contains_embedded_samples=True,
-        sample_identifiers=lambda: ["sample1", "sample2"],
     )
 
     with (
         patch("g.engine.regenie2_pipeline.source.resolve_bgen_sample_path", return_value=None),
         patch(
-            "g.engine.regenie2_pipeline.load_native_aligned_sample_data_from_individual_identifier_table",
+            "g.engine.regenie2_pipeline.load_native_aligned_sample_data",
             return_value=native_aligned_sample_data,
-        ) as mock_load_from_sample_table,
+        ) as mock_load_aligned_sample_data,
         patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
     ):
         run_input = regenie2_pipeline.load_native_bgen_run_input(
@@ -725,6 +725,6 @@ def test_alignment_config_reaches_native_alignment_and_prediction_source() -> No
         )
 
     fake_prediction_source = typing.cast("FakePredictionSource", prediction_source)
-    assert mock_load_from_sample_table.call_args.kwargs["alignment_config"] is alignment_config
+    assert mock_load_aligned_sample_data.call_args.kwargs["alignment_config"] is alignment_config
     assert fake_prediction_source.sample_key_mode == "fid_iid"
     assert fake_prediction_source.allow_duplicate_iid_alignment is False

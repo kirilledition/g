@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import numpy as np
 import pytest
 
 from g.io import source
@@ -39,12 +38,3 @@ def test_build_bgen_source_config_preserves_sample_path() -> None:
     genotype_source_config = source.build_bgen_source_config(Path("study.bgen"), sample_path=Path("study.sample"))
 
     assert genotype_source_config.sample_path == Path("study.sample")
-
-
-def test_build_sample_identifier_table_uses_file_order() -> None:
-    """Ensure embedded sample identifiers become native-alignment sample tables."""
-    sample_table = source.build_sample_identifier_table(np.asarray(["sample2", "sample1"], dtype=np.str_))
-
-    assert sample_table.get_column("sample_index").to_list() == [0, 1]
-    assert sample_table.get_column("family_identifier").to_list() == ["sample2", "sample1"]
-    assert sample_table.get_column("individual_identifier").to_list() == ["sample2", "sample1"]

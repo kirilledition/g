@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,6 +40,45 @@ def test_public_package_exports_include_general_and_linear_regenie2() -> None:
     assert g.regenie2 is api.regenie2
     assert g.regenie2_linear is api.regenie2_linear
     assert g.SampleAlignmentConfig is api.SampleAlignmentConfig
+
+
+def test_importing_api_does_not_import_polars() -> None:
+    completed_process = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import g.api; raise SystemExit('polars' in sys.modules)",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed_process.returncode == 0, completed_process.stderr
+
+
+def test_cli_help_does_not_import_polars() -> None:
+    command = textwrap.dedent(
+        """
+        import sys
+        from typer.testing import CliRunner
+        from g.cli import app
+
+        result = CliRunner().invoke(app, ["--help"])
+        if result.exit_code != 0:
+            print(result.output)
+            raise SystemExit(result.exit_code)
+        raise SystemExit("polars" in sys.modules)
+        """
+    )
+    completed_process = subprocess.run(
+        [sys.executable, "-c", command],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed_process.returncode == 0, completed_process.stderr
 
 
 def test_parse_covariate_name_list_handles_string_input() -> None:

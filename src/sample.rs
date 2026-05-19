@@ -1,6 +1,9 @@
 //! Native sample alignment and Oxford sample-file parsing.
 
 #![allow(clippy::missing_errors_doc)]
+#![allow(clippy::float_cmp)]
+#![allow(clippy::single_match_else)]
+#![allow(clippy::too_many_arguments)]
 
 use std::collections::HashMap;
 use std::path::Path;

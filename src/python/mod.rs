@@ -17,7 +17,9 @@ use crate::sample::{AlignedSampleData, AlignmentInputs, SampleKeyMode};
 
 mod output;
 
-use output::{OutputWriterSession, finalize_output_run_chunks, scan_committed_chunk_identifiers};
+use output::{
+    OutputWriterSession, finalize_output_run_chunks, scan_committed_chunk_identifiers, validate_strict_manifest_chunks,
+};
 
 #[pyclass(skip_from_py_object)]
 #[derive(Clone)]
@@ -270,6 +272,75 @@ impl Regenie2RunEngine {
 
     fn sample_identifiers(&self) -> Vec<String> {
         self.engine.reader().sample_identifiers()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (
+        sample_path,
+        phenotype_path,
+        phenotype_name,
+        covariate_path=None,
+        covariate_names=None,
+        is_binary_trait=false,
+        sample_key_mode="iid".to_string(),
+        allow_duplicate_iid_alignment=false
+    ))]
+    fn align_sample_data(
+        &self,
+        py: Python<'_>,
+        sample_path: Option<String>,
+        phenotype_path: String,
+        phenotype_name: String,
+        covariate_path: Option<String>,
+        covariate_names: Option<Vec<String>>,
+        is_binary_trait: bool,
+        sample_key_mode: String,
+        allow_duplicate_iid_alignment: bool,
+    ) -> PyResult<NativeAlignedSampleData> {
+        let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
+        if let Some(sample_path) = sample_path {
+            let expected_sample_count = self.engine.reader().sample_count();
+            return py
+                .detach(move || {
+                    crate::sample::align_sample_data_from_sample_file(
+                        Path::new(&sample_path),
+                        expected_sample_count,
+                        phenotype_path,
+                        phenotype_name,
+                        covariate_path,
+                        covariate_names,
+                        is_binary_trait,
+                        parsed_sample_key_mode,
+                        allow_duplicate_iid_alignment,
+                    )
+                })
+                .map(NativeAlignedSampleData::new)
+                .map_err(PyValueError::new_err);
+        }
+        if !self.engine.reader().contains_embedded_samples() {
+            return Err(PyValueError::new_err("BGEN file does not contain samples and no .sample file was found."));
+        }
+        let sample_identifiers = self.engine.reader().sample_identifiers();
+        let sample_indices = (0..sample_identifiers.len())
+            .map(|sample_index| i64::try_from(sample_index).map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(PyValueError::new_err)?;
+        let inputs = AlignmentInputs {
+            sample_indices,
+            family_identifiers: sample_identifiers.clone(),
+            individual_identifiers: sample_identifiers,
+            phenotype_path,
+            phenotype_name,
+            covariate_path,
+            covariate_names,
+            is_binary_trait,
+            sample_key_mode: parsed_sample_key_mode,
+            allow_duplicate_iid_alignment,
+        };
+        py.detach(move || crate::sample::align_sample_data(inputs))
+            .map(NativeAlignedSampleData::new)
+            .map_err(PyValueError::new_err)
     }
 
     fn chromosome_boundary_indices(&self) -> Vec<usize> {
@@ -612,8 +683,8 @@ fn align_sample_data<'py>(
     sample_key_mode="iid".to_string(),
     allow_duplicate_iid_alignment=false
 ))]
-fn align_sample_data_from_sample_file<'py>(
-    py: Python<'py>,
+fn align_sample_data_from_sample_file(
+    py: Python<'_>,
     sample_path: String,
     expected_sample_count: usize,
     phenotype_path: String,
@@ -753,6 +824,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(hello_from_bin, module)?)?;
     module.add_function(wrap_pyfunction!(plan_genotype_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(align_sample_data, module)?)?;

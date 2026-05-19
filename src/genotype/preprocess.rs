@@ -2,6 +2,9 @@
 
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::missing_errors_doc)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::unreadable_literal)]
 
 use crate::genotype::common::{ChunkStats, GenotypeError};
 

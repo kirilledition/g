@@ -1,3 +1,5 @@
+#![allow(clippy::needless_pass_by_value)]
+
 use std::path::Path;
 
 use numpy::PyReadonlyArray1;
@@ -8,6 +10,7 @@ use crate::output::{
     OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
     scan_committed_chunk_identifiers as scan_native_committed_chunk_identifiers,
+    validate_strict_manifest_chunks as validate_native_strict_manifest_chunks,
 };
 
 use super::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata};
@@ -101,6 +104,13 @@ pub(crate) fn finalize_output_run_chunks(
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn scan_committed_chunk_identifiers(chunks_directory: String) -> PyResult<Vec<i64>> {
     scan_native_committed_chunk_identifiers(Path::new(&chunks_directory)).map_err(output_writer_error_to_py)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn validate_strict_manifest_chunks(chunks_directory: String, manifest_json: String) -> PyResult<Vec<i64>> {
+    validate_native_strict_manifest_chunks(Path::new(&chunks_directory), &manifest_json)
+        .map_err(output_writer_error_to_py)
 }
 
 fn output_writer_error_to_py(error: OutputWriterError) -> PyErr {

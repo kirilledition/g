@@ -1,4 +1,6 @@
 #![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::float_cmp)]
 
 use std::env;
 use std::fs::File;

@@ -107,7 +107,7 @@ def validate_covariate_matrix(covariate_matrix: np.ndarray, sample_count: int) -
 
 def validate_binary_phenotype(phenotype_vector: np.ndarray) -> None:
     """Validate binary phenotype coding and case/control counts."""
-    unique_values = set(float(value) for value in np.unique(phenotype_vector))
+    unique_values = {float(value) for value in np.unique(phenotype_vector)}
     if not unique_values.issubset({0.0, 1.0}):
         message = "Binary phenotype must be coded as 0/1 after alignment."
         raise ValueError(message)

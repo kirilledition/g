@@ -55,10 +55,7 @@ warm_regenie2_binary_bgen_cache = warm_cache.warm_regenie2_binary_bgen_cache
 first_engine_chromosome = warm_cache.first_engine_chromosome
 NativeBgenRunInput = native_dispatch.NativeBgenRunInput
 build_native_bgen_run_input = native_dispatch.build_native_bgen_run_input
-load_native_aligned_sample_data_from_individual_identifier_table = (
-    native_dispatch.load_native_aligned_sample_data_from_individual_identifier_table
-)
-load_native_aligned_sample_data_from_sample_file = native_dispatch.load_native_aligned_sample_data_from_sample_file
+load_native_aligned_sample_data = native_dispatch.load_native_aligned_sample_data
 build_regenie_prediction_source = native_dispatch.build_regenie_prediction_source
 SampleAlignmentConfigProtocol = native_dispatch.SampleAlignmentConfigProtocol
 resolve_sample_key_mode = native_dispatch.resolve_sample_key_mode
@@ -287,8 +284,7 @@ def load_native_bgen_run_input(
         is_binary_trait=is_binary_trait,
         alignment_config=alignment_config,
         build_native_bgen_run_input_callable=build_native_bgen_run_input,
-        load_from_individual_identifier_table_callable=load_native_aligned_sample_data_from_individual_identifier_table,
-        load_from_sample_file_callable=load_native_aligned_sample_data_from_sample_file,
+        load_aligned_sample_data_callable=load_native_aligned_sample_data,
     )
 
 

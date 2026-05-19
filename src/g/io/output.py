@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import re
 import typing
 from dataclasses import dataclass
 from pathlib import Path
-
-import polars as pl
 
 from g import _core, types
 
@@ -54,28 +52,6 @@ def resolve_output_run_paths(output_root: Path, association_mode: types.Associat
 def build_chunk_file_name(chunk_identifier: int) -> str:
     """Build a deterministic chunk file name from a chunk identifier."""
     return f"chunk_{chunk_identifier:09d}.arrow"
-
-
-def read_chunk_file(chunk_file_path: Path) -> pl.DataFrame:
-    """Read one persisted chunk file into memory."""
-    if chunk_file_path.suffix != ".arrow":
-        message = f"Unsupported chunk file suffix: {chunk_file_path.suffix}"
-        raise ValueError(message)
-    return pl.read_ipc(chunk_file_path)
-
-
-def scan_chunk_file(chunk_file_path: Path) -> pl.LazyFrame:
-    """Open one persisted chunk file as a lazy frame."""
-    if chunk_file_path.suffix != ".arrow":
-        message = f"Unsupported chunk file suffix: {chunk_file_path.suffix}"
-        raise ValueError(message)
-    return pl.scan_ipc(chunk_file_path, rechunk=False)
-
-
-def load_committed_chunk_identifiers_from_chunk_file(chunk_file_path: Path) -> frozenset[int]:
-    """Load committed chunk identifiers from one chunk file."""
-    chunk_identifier_values = read_chunk_file(chunk_file_path).get_column("chunk_identifier").unique().to_list()
-    return frozenset(int(chunk_identifier_value) for chunk_identifier_value in chunk_identifier_values)
 
 
 def scan_committed_chunk_identifiers(chunks_directory: Path) -> frozenset[int]:
@@ -156,42 +132,11 @@ def validate_strict_manifest_chunks(
     manifest: dict[str, typing.Any],
 ) -> frozenset[int]:
     """Validate committed manifest chunks against Arrow files."""
-    committed_chunks = manifest.get("committed_chunks", [])
-    if not isinstance(committed_chunks, list):
-        message = "Run manifest committed_chunks field must be a list."
-        raise ValueError(message)
-    committed_identifiers = set[int]()
-    expected_columns = None
-    for committed_chunk in committed_chunks:
-        if not isinstance(committed_chunk, dict):
-            message = "Run manifest committed chunk entries must be objects."
-            raise ValueError(message)
-        chunk_identifier = int(committed_chunk["chunk_identifier"])
-        variant_start_index = int(committed_chunk["variant_start_index"])
-        variant_stop_index = int(committed_chunk["variant_stop_index"])
-        row_count = int(committed_chunk["row_count"])
-        chunk_file_name = str(committed_chunk["chunk_file_name"])
-        chunk_file_path = output_run_paths.chunks_directory / chunk_file_name
-        if not chunk_file_path.exists():
-            message = f"Strict resume manifest references missing chunk file: {chunk_file_path}"
-            raise ValueError(message)
-        chunk_frame = read_chunk_file(chunk_file_path)
-        if expected_columns is None:
-            expected_columns = chunk_frame.columns
-        elif chunk_frame.columns != expected_columns:
-            message = f"Strict resume found incompatible Arrow schema in {chunk_file_path}."
-            raise ValueError(message)
-        chunk_rows = chunk_frame.filter(pl.col("chunk_identifier") == chunk_identifier)
-        if chunk_rows.height != row_count:
-            message = f"Strict resume row count mismatch for chunk {chunk_identifier}."
-            raise ValueError(message)
-        observed_start = int(chunk_rows.get_column("variant_start_index").min())
-        observed_stop = int(chunk_rows.get_column("variant_stop_index").max())
-        if observed_start != variant_start_index or observed_stop != variant_stop_index:
-            message = f"Strict resume variant range mismatch for chunk {chunk_identifier}."
-            raise ValueError(message)
-        committed_identifiers.add(chunk_identifier)
-    return frozenset(committed_identifiers)
+    chunk_identifiers = _core.validate_strict_manifest_chunks(
+        str(output_run_paths.chunks_directory),
+        json.dumps(manifest),
+    )
+    return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
 
 
 def write_run_manifest_header(
