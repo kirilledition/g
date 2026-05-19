@@ -10,6 +10,7 @@ import jax.numpy as jnp
 
 import g._core as core
 import g.compute.regenie2_binary as regenie2_binary
+import g.compute.regenie2_binary_types as regenie2_binary_types
 import g.compute.regenie2_linear as regenie2_linear
 import g.engine.callbacks as callbacks
 import g.engine.native_dispatch as native_dispatch
@@ -158,8 +159,10 @@ def warm_regenie2_binary_bgen_cache(
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: g_types.TrustedBgenValidationMode = g_types.TrustedBgenValidationMode.CACHE_ON_MISS,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
+    kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for binary REGENIE step 2."""
+    resolved_kernel_config = kernel_config or regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
     engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
@@ -189,9 +192,10 @@ def warm_regenie2_binary_bgen_cache(
         phenotype_vector=run_input.phenotype_vector,
     )
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
-        regenie_state,
-        jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
-        correction_plan,
+        state=regenie_state,
+        loco_offset=jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
+        correction_plan=correction_plan,
+        kernel_config=resolved_kernel_config,
     )
     shapes = build_warm_cache_shapes(
         engine=engine,
@@ -209,6 +213,7 @@ def warm_regenie2_binary_bgen_cache(
             chromosome_state=chromosome_state,
             genotype_matrix=genotype_matrix,
             correction_plan=correction_plan,
+            kernel_config=resolved_kernel_config,
         )
         callbacks.block_until_ready(result.log10_p_value)
     return WarmCacheReport(warmed_shapes=shapes)

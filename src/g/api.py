@@ -14,6 +14,9 @@ from g import types
 from g.interface import config as interface_config
 from g.io import output, source
 
+if typing.TYPE_CHECKING:
+    from g.compute import regenie2_binary_types
+
 InputConfig = interface_config.InputConfig
 TraitConfig = interface_config.TraitConfig
 BinaryConfig = interface_config.BinaryConfig
@@ -41,6 +44,7 @@ class EngineRunConfig:
     trusted_no_missing_diploid: bool
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
     alignment_config: GComputeConfig
+    binary_kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None
     variant_limit: int | None = None
 
 
@@ -135,6 +139,23 @@ def normalize_binary_correction_config(binary_config: BinaryConfig) -> types.Bin
     )
 
 
+def build_binary_kernel_config(compute_config: GComputeConfig) -> regenie2_binary_types.BinaryKernelConfig:
+    """Build immutable binary JAX kernel settings from public compute config."""
+    binary_types_module = importlib.import_module("g.compute.regenie2_binary_types")
+    return binary_types_module.BinaryKernelConfig(
+        maximum_null_iterations=compute_config.binary_null_maximum_iterations,
+        null_logistic_coefficient_tolerance=compute_config.binary_null_coefficient_tolerance,
+        firth_batch_size=compute_config.firth_batch_size,
+        firth_candidate_capacity=compute_config.firth_candidate_capacity,
+        firth_maximum_iterations=compute_config.firth_maximum_iterations,
+        firth_gradient_tolerance=compute_config.firth_gradient_tolerance,
+        firth_coefficient_tolerance=compute_config.firth_coefficient_tolerance,
+        firth_likelihood_tolerance=compute_config.firth_likelihood_tolerance,
+        firth_maximum_step_size=compute_config.firth_maximum_step_size,
+        use_block_firth_math=compute_config.use_block_firth_math,
+    )
+
+
 def configure_runtime(compute_config: GComputeConfig, trait_config: TraitConfig) -> None:
     """Apply runtime knobs before engine execution."""
     configure_jax_runtime(compute_config)
@@ -143,22 +164,6 @@ def configure_runtime(compute_config: GComputeConfig, trait_config: TraitConfig)
     if trait_config.threads is not None:
         with contextlib.suppress(RuntimeError):
             core_module.configure_rayon_global_thread_pool(trait_config.threads)
-    candidate_planning_module = importlib.import_module("g.compute.regenie2_binary_candidate_planning")
-    candidate_planning_module.configure_firth_candidate_planning(
-        firth_batch_size=compute_config.firth_batch_size,
-        firth_candidate_capacity=compute_config.firth_candidate_capacity,
-    )
-    binary_module = importlib.import_module("g.compute.regenie2_binary")
-    binary_module.configure_binary_runtime(
-        maximum_null_iterations=compute_config.binary_null_maximum_iterations,
-        null_logistic_coefficient_tolerance=compute_config.binary_null_coefficient_tolerance,
-        firth_maximum_iterations=compute_config.firth_maximum_iterations,
-        firth_gradient_tolerance=compute_config.firth_gradient_tolerance,
-        firth_coefficient_tolerance=compute_config.firth_coefficient_tolerance,
-        firth_likelihood_tolerance=compute_config.firth_likelihood_tolerance,
-        firth_maximum_step_size=compute_config.firth_maximum_step_size,
-        use_block_firth_math=compute_config.use_block_firth_math,
-    )
 
 
 def run_regenie_config(regenie_config: RegenieConfig) -> RunArtifacts:
@@ -177,6 +182,11 @@ def run_one_phenotype_config(regenie_config: RegenieConfig, phenotype_name: str)
     """Run one phenotype through the existing engine."""
     output_prefix = typing.cast("Path", regenie_config.g_output.out)
     output_run_root = regenie_config.g_output.output_run_directory or output_prefix.with_name(f"{output_prefix.name}.g")
+    binary_kernel_config = (
+        build_binary_kernel_config(regenie_config.g_compute)
+        if regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
+        else None
+    )
     engine_config = EngineRunConfig(
         chunk_size=regenie_config.trait.bsize,
         device=regenie_config.g_compute.device,
@@ -194,6 +204,7 @@ def run_one_phenotype_config(regenie_config: RegenieConfig, phenotype_name: str)
         trusted_no_missing_diploid=regenie_config.g_compute.trusted_no_missing_diploid,
         trusted_bgen_validation_mode=regenie_config.g_compute.trusted_bgen_validation_mode,
         alignment_config=regenie_config.g_compute,
+        binary_kernel_config=binary_kernel_config,
     )
     artifacts = run_existing_engine(
         regenie_config=regenie_config,
@@ -322,6 +333,7 @@ def dispatch_engine_pipeline(
         return run_regenie2_binary_bgen_pipeline(
             **common_arguments,
             correction_plan=binary_correction_plan,
+            kernel_config=engine_config.binary_kernel_config,
         )
     return run_regenie2_linear_bgen_pipeline(**common_arguments)
 

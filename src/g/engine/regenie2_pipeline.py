@@ -6,6 +6,7 @@ import time
 import typing
 
 import g.compute.regenie2_binary as regenie2_binary
+import g.compute.regenie2_binary_types as regenie2_binary_types
 import g.compute.regenie2_linear as regenie2_linear
 import g.engine.callbacks as callbacks
 import g.engine.native_dispatch as native_dispatch
@@ -183,11 +184,13 @@ def run_regenie2_binary_bgen_pipeline(
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
+    kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None,
     stage_timing_recorder: StageTimingRecorder | None = None,
     alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for binary REGENIE step 2."""
     stage_timing_recorder = stage_timing_recorder or build_stage_timing_recorder()
+    resolved_kernel_config = kernel_config or regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
     use_variant_major = trusted_no_missing_diploid
     engine_start_time = time.perf_counter()
     engine = build_bgen_run_engine(
@@ -253,6 +256,7 @@ def run_regenie2_binary_bgen_pipeline(
         prediction_source=prediction_source,
         writer_session=writer_session,
         correction_plan=correction_plan,
+        kernel_config=resolved_kernel_config,
         staging_depth=staging_depth,
         stage_timing_recorder=stage_timing_recorder,
     )

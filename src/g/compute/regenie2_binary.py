@@ -37,113 +37,43 @@ FIRTH_MAXIMUM_STEP_SIZE = 5.0
 FIRTH_MAXIMUM_ITERATIONS = 50
 DEFAULT_FIRTH_BATCH_SIZE = regenie2_binary_candidate_planning.DEFAULT_FIRTH_BATCH_SIZE
 DEFAULT_FIRTH_CANDIDATE_CAPACITY = regenie2_binary_candidate_planning.DEFAULT_FIRTH_CANDIDATE_CAPACITY
-configured_maximum_null_iterations = DEFAULT_MAXIMUM_NULL_ITERATIONS
-configured_null_logistic_coefficient_tolerance = NULL_LOGISTIC_COEFFICIENT_TOLERANCE
-configured_firth_gradient_tolerance = FIRTH_GRADIENT_TOLERANCE
-configured_firth_coefficient_tolerance = FIRTH_COEFFICIENT_TOLERANCE
-configured_firth_likelihood_tolerance = FIRTH_LIKELIHOOD_TOLERANCE
-configured_firth_maximum_step_size = FIRTH_MAXIMUM_STEP_SIZE
-configured_firth_maximum_iterations = FIRTH_MAXIMUM_ITERATIONS
-configured_use_block_firth_math = False
+DEFAULT_BINARY_KERNEL_CONFIG = regenie2_types.BinaryKernelConfig(
+    maximum_null_iterations=DEFAULT_MAXIMUM_NULL_ITERATIONS,
+    null_logistic_coefficient_tolerance=NULL_LOGISTIC_COEFFICIENT_TOLERANCE,
+    firth_batch_size=DEFAULT_FIRTH_BATCH_SIZE,
+    firth_candidate_capacity=DEFAULT_FIRTH_CANDIDATE_CAPACITY,
+    firth_maximum_iterations=FIRTH_MAXIMUM_ITERATIONS,
+    firth_gradient_tolerance=FIRTH_GRADIENT_TOLERANCE,
+    firth_coefficient_tolerance=FIRTH_COEFFICIENT_TOLERANCE,
+    firth_likelihood_tolerance=FIRTH_LIKELIHOOD_TOLERANCE,
+    firth_maximum_step_size=FIRTH_MAXIMUM_STEP_SIZE,
+    use_block_firth_math=False,
+)
 
 BinaryScoreTestChunkComputeFunction = typing.Callable[
     [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan],
     regenie2_types.Regenie2BinaryChunkResult,
 ]
 BinaryChunkComputeFunction = typing.Callable[
-    [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan, jax.Array | None],
+    [
+        regenie2_types.Regenie2BinaryChromosomeState,
+        jax.Array,
+        types.BinaryCorrectionPlan,
+        jax.Array | None,
+        regenie2_types.BinaryKernelConfig,
+    ],
     regenie2_types.Regenie2BinaryChunkResult,
 ]
 BinaryVariantMajorChunkComputeFunction = typing.Callable[
-    [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan, jax.Array | None],
+    [
+        regenie2_types.Regenie2BinaryChromosomeState,
+        jax.Array,
+        types.BinaryCorrectionPlan,
+        jax.Array | None,
+        regenie2_types.BinaryKernelConfig,
+    ],
     regenie2_types.Regenie2BinaryChunkResult,
 ]
-
-
-get_firth_batch_size = regenie2_binary_candidate_planning.get_firth_batch_size
-get_firth_candidate_capacity = regenie2_binary_candidate_planning.get_firth_candidate_capacity
-
-
-def configure_binary_runtime(
-    *,
-    maximum_null_iterations: int,
-    null_logistic_coefficient_tolerance: float,
-    firth_maximum_iterations: int,
-    firth_gradient_tolerance: float,
-    firth_coefficient_tolerance: float,
-    firth_likelihood_tolerance: float,
-    firth_maximum_step_size: float,
-    use_block_firth_math: bool,
-) -> None:
-    """Configure binary solver settings used when kernels are traced."""
-    global configured_maximum_null_iterations, configured_null_logistic_coefficient_tolerance
-    global configured_firth_gradient_tolerance, configured_firth_coefficient_tolerance
-    global configured_firth_likelihood_tolerance, configured_firth_maximum_step_size
-    global configured_firth_maximum_iterations, configured_use_block_firth_math
-    configured_maximum_null_iterations = maximum_null_iterations
-    configured_null_logistic_coefficient_tolerance = null_logistic_coefficient_tolerance
-    configured_firth_maximum_iterations = firth_maximum_iterations
-    configured_firth_gradient_tolerance = firth_gradient_tolerance
-    configured_firth_coefficient_tolerance = firth_coefficient_tolerance
-    configured_firth_likelihood_tolerance = firth_likelihood_tolerance
-    configured_firth_maximum_step_size = firth_maximum_step_size
-    configured_use_block_firth_math = use_block_firth_math
-    get_maximum_null_iterations.cache_clear()
-    get_null_logistic_coefficient_tolerance.cache_clear()
-    get_firth_maximum_iterations.cache_clear()
-    get_firth_gradient_tolerance.cache_clear()
-    get_firth_coefficient_tolerance.cache_clear()
-    get_firth_likelihood_tolerance.cache_clear()
-    get_firth_maximum_step_size.cache_clear()
-    get_use_block_firth_math.cache_clear()
-
-
-@functools.cache
-def get_maximum_null_iterations() -> int:
-    """Return the configured null logistic iteration cap."""
-    return configured_maximum_null_iterations
-
-
-@functools.cache
-def get_null_logistic_coefficient_tolerance() -> float:
-    """Return the configured null logistic coefficient tolerance."""
-    return configured_null_logistic_coefficient_tolerance
-
-
-@functools.cache
-def get_firth_gradient_tolerance() -> float:
-    """Return the configured Firth gradient tolerance."""
-    return configured_firth_gradient_tolerance
-
-
-@functools.cache
-def get_firth_coefficient_tolerance() -> float:
-    """Return the configured Firth coefficient tolerance."""
-    return configured_firth_coefficient_tolerance
-
-
-@functools.cache
-def get_firth_likelihood_tolerance() -> float:
-    """Return the configured Firth likelihood tolerance."""
-    return configured_firth_likelihood_tolerance
-
-
-@functools.cache
-def get_firth_maximum_step_size() -> float:
-    """Return the configured Firth maximum step size."""
-    return configured_firth_maximum_step_size
-
-
-@functools.cache
-def get_firth_maximum_iterations() -> int:
-    """Return the configured Firth iteration cap."""
-    return configured_firth_maximum_iterations
-
-
-@functools.cache
-def get_use_block_firth_math() -> bool:
-    """Resolve whether experimental block Firth math is enabled."""
-    return configured_use_block_firth_math
 
 
 @jax.tree_util.register_dataclass
@@ -309,17 +239,20 @@ def solve_from_positive_definite_matrix(
 build_extra_code = regenie2_binary_candidate_planning.build_extra_code
 
 
-@jax.jit
+@functools.partial(jax.jit, static_argnames=("maximum_iterations", "kernel_config"))
 def fit_null_logistic_coefficients(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
     loco_offset: jax.Array,
     maximum_iterations: int | None = None,
+    kernel_config: regenie2_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> NullLogisticFitState:
     """Fit a covariate-only logistic null model with a fixed LOCO offset."""
     covariate_count = covariate_matrix.shape[1]
-    resolved_maximum_iterations = get_maximum_null_iterations() if maximum_iterations is None else maximum_iterations
-    coefficient_tolerance = get_null_logistic_coefficient_tolerance()
+    resolved_maximum_iterations = (
+        kernel_config.maximum_null_iterations if maximum_iterations is None else maximum_iterations
+    )
+    coefficient_tolerance = kernel_config.null_logistic_coefficient_tolerance
 
     def condition_function(state: NullLogisticFitState) -> jax.Array:
         return (state.iteration_count < resolved_maximum_iterations) & (~state.converged)
@@ -354,11 +287,12 @@ def fit_null_logistic_coefficients(
     )
 
 
-@functools.partial(jax.jit, static_argnames=("correction_plan",))
+@functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config"))
 def prepare_regenie2_binary_chromosome_state(
     state: regenie2_types.Regenie2BinaryState,
     loco_offset: jax.Array,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
+    kernel_config: regenie2_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_types.Regenie2BinaryChromosomeState:
     """Prepare chromosome-specific null logistic state reused across chunks."""
     loco_offset_float32 = jnp.asarray(loco_offset, dtype=jnp.float32)
@@ -366,6 +300,7 @@ def prepare_regenie2_binary_chromosome_state(
         state.covariate_matrix,
         state.phenotype_vector,
         loco_offset_float32,
+        kernel_config=kernel_config,
     )
     null_logistic_coefficients = null_logistic_fit_state.coefficients
     fitted_probability = compute_logistic_probability(
@@ -396,6 +331,7 @@ def prepare_regenie2_binary_chromosome_state(
             phenotype_vector=state.phenotype_vector,
             loco_offset=loco_offset_float32,
             initial_coefficients=null_logistic_coefficients,
+            kernel_config=kernel_config,
         )
     return regenie2_types.Regenie2BinaryChromosomeState(
         covariate_matrix=state.covariate_matrix,
@@ -622,11 +558,12 @@ def fit_covariate_only_firth_null_model(
     phenotype_vector: jax.Array,
     loco_offset: jax.Array,
     initial_coefficients: jax.Array,
+    kernel_config: regenie2_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> jax.Array:
     """Fit the covariate-only Firth null model and return its penalized log-likelihood."""
 
     def condition_function(state: FirthState) -> jax.Array:
-        return (state.iteration_count < get_firth_maximum_iterations()) & (~state.converged) & (~state.failed)
+        return (state.iteration_count < kernel_config.firth_maximum_iterations) & (~state.converged) & (~state.failed)
 
     def body_function(state: FirthState) -> FirthState:
         linear_predictor = covariate_matrix @ state.coefficients + loco_offset
@@ -657,16 +594,16 @@ def fit_covariate_only_firth_null_model(
         coefficient_step = solve_from_positive_definite_matrix(second_hessian, adjusted_score)
         maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
         step_scale = jnp.minimum(
-            1.0, get_firth_maximum_step_size() / jnp.maximum(maximum_coefficient_step, MINIMUM_VARIANCE)
+            1.0, kernel_config.firth_maximum_step_size / jnp.maximum(maximum_coefficient_step, MINIMUM_VARIANCE)
         )
         scaled_coefficient_step = coefficient_step * step_scale
         updated_converged = (
             (state.iteration_count > 0)
-            & (jnp.max(jnp.abs(scaled_coefficient_step)) <= get_firth_coefficient_tolerance())
-            & (jnp.max(jnp.abs(adjusted_score)) <= get_firth_gradient_tolerance())
+            & (jnp.max(jnp.abs(scaled_coefficient_step)) <= kernel_config.firth_coefficient_tolerance)
+            & (jnp.max(jnp.abs(adjusted_score)) <= kernel_config.firth_gradient_tolerance)
             & (
                 (current_penalized_log_likelihood - state.previous_penalized_log_likelihood)
-                < get_firth_likelihood_tolerance()
+                < kernel_config.firth_likelihood_tolerance
             )
             & (~current_failed)
         )
@@ -730,9 +667,10 @@ def fit_single_variant_firth_logistic_regression(
     initial_coefficients: jax.Array,
     skip_firth: jax.Array,
     null_penalized_log_likelihood: jax.Array,
+    kernel_config: regenie2_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> FirthVariantResult:
     """Fit one Firth logistic model for a candidate variant."""
-    use_block_firth_math = get_use_block_firth_math()
+    use_block_firth_math = kernel_config.use_block_firth_math
     if use_block_firth_math:
         coefficient_count = covariate_matrix.shape[1] + 1
     else:
@@ -746,7 +684,7 @@ def fit_single_variant_firth_logistic_regression(
 
     def condition_function(state: FirthState) -> jax.Array:
         return (
-            (state.iteration_count < get_firth_maximum_iterations())
+            (state.iteration_count < kernel_config.firth_maximum_iterations)
             & (~state.converged)
             & (~state.failed)
             & (~skip_firth)
@@ -814,16 +752,16 @@ def fit_single_variant_firth_logistic_regression(
         coefficient_step = solve_from_positive_definite_matrix(second_hessian, adjusted_score)
         maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
         step_scale = jnp.minimum(
-            1.0, get_firth_maximum_step_size() / jnp.maximum(maximum_coefficient_step, MINIMUM_VARIANCE)
+            1.0, kernel_config.firth_maximum_step_size / jnp.maximum(maximum_coefficient_step, MINIMUM_VARIANCE)
         )
         scaled_coefficient_step = coefficient_step * step_scale
         updated_converged = (
             (state.iteration_count > 0)
-            & (jnp.max(jnp.abs(scaled_coefficient_step)) <= get_firth_coefficient_tolerance())
-            & (jnp.max(jnp.abs(adjusted_score)) <= get_firth_gradient_tolerance())
+            & (jnp.max(jnp.abs(scaled_coefficient_step)) <= kernel_config.firth_coefficient_tolerance)
+            & (jnp.max(jnp.abs(adjusted_score)) <= kernel_config.firth_gradient_tolerance)
             & (
                 (current_penalized_log_likelihood - state.previous_penalized_log_likelihood)
-                < get_firth_likelihood_tolerance()
+                < kernel_config.firth_likelihood_tolerance
             )
             & (~current_failed)
         )
@@ -938,7 +876,7 @@ def fit_single_variant_firth_logistic_regression(
         (~skip_firth)
         & (~final_state.converged)
         & (~final_state.failed)
-        & (final_state.iteration_count >= get_firth_maximum_iterations())
+        & (final_state.iteration_count >= kernel_config.firth_maximum_iterations)
     )
     invalid_statistic_failure_mask = (~skip_firth) & final_state.converged & (~final_state.failed) & (~valid_mask)
     failure_code = jnp.where(
@@ -1032,19 +970,30 @@ def compute_firth_variantwise(
     initial_coefficients: jax.Array,
     skip_firth_mask: jax.Array,
     null_penalized_log_likelihood: jax.Array,
+    kernel_config: regenie2_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> FirthVariantResult:
     """Compute device-side Firth fits for a padded set of candidate lanes."""
-    return jax.vmap(
-        fit_single_variant_firth_logistic_regression,
-        in_axes=(None, None, 0, None, 0, 0, None),
-    )(
-        covariate_matrix,
-        phenotype_vector,
+
+    def fit_variant(
+        genotype_vector: jax.Array,
+        variant_initial_coefficients: jax.Array,
+        skip_firth: jax.Array,
+    ) -> FirthVariantResult:
+        return fit_single_variant_firth_logistic_regression(
+            covariate_matrix=covariate_matrix,
+            phenotype_vector=phenotype_vector,
+            genotype_vector=genotype_vector,
+            loco_offset=loco_offset,
+            initial_coefficients=variant_initial_coefficients,
+            skip_firth=skip_firth,
+            null_penalized_log_likelihood=null_penalized_log_likelihood,
+            kernel_config=kernel_config,
+        )
+
+    return jax.vmap(fit_variant, in_axes=(0, 0, 0))(
         genotype_matrix_by_variant,
-        loco_offset,
         initial_coefficients,
         skip_firth_mask,
-        null_penalized_log_likelihood,
     )
 
 
@@ -1065,13 +1014,14 @@ def build_empty_firth_variant_result(
     )
 
 
-@functools.partial(jax.jit, static_argnames=("correction_plan",))
+@functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config"))
 def apply_device_candidate_corrections_firth(
     chromosome_state: regenie2_types.Regenie2BinaryChromosomeState,
     genotype_matrix: jax.Array,
     result: regenie2_types.Regenie2BinaryChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
+    kernel_config: regenie2_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Apply fully device-resident Firth corrections to score-test candidates."""
     candidate_mask = result.extra_code == EXTRA_CODE_FIRTH
@@ -1081,15 +1031,15 @@ def apply_device_candidate_corrections_firth(
         return result
 
     def apply_candidate_corrections() -> regenie2_types.Regenie2BinaryChunkResult:
-        firth_batch_size = get_firth_batch_size()
-        configured_candidate_capacity = get_firth_candidate_capacity()
+        firth_batch_size = kernel_config.firth_batch_size
+        kernel_candidate_capacity = kernel_config.firth_candidate_capacity
         genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
         variant_count = genotype_matrix_float32.shape[1]
 
         def apply_candidate_corrections_with_capacity(
             candidate_capacity: int,
         ) -> regenie2_types.Regenie2BinaryChunkResult:
-            batch_plan = build_device_firth_batch_plan(candidate_mask, candidate_capacity)
+            batch_plan = build_device_firth_batch_plan(candidate_mask, candidate_capacity, firth_batch_size)
             flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
             flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
             genotype_matrix_by_variant = jnp.take(genotype_matrix_float32, flat_fallback_indices, axis=1).T
@@ -1160,6 +1110,7 @@ def apply_device_candidate_corrections_firth(
                         initial_coefficients=initial_coefficient_batches[batch_index],
                         skip_firth_mask=~active_mask_batches[batch_index],
                         null_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood,
+                        kernel_config=kernel_config,
                     )
 
                 batch_result = jax.lax.cond(
@@ -1234,7 +1185,7 @@ def apply_device_candidate_corrections_firth(
                 ),
             )
 
-        bounded_candidate_capacity = min(configured_candidate_capacity, variant_count)
+        bounded_candidate_capacity = min(kernel_candidate_capacity, variant_count)
         return jax.lax.cond(
             fallback_count <= bounded_candidate_capacity,
             lambda _: apply_candidate_corrections_with_capacity(bounded_candidate_capacity),
@@ -1251,6 +1202,7 @@ def apply_device_candidate_corrections(
     result: regenie2_types.Regenie2BinaryChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
+    kernel_config: regenie2_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Apply binary candidate corrections without leaving device memory."""
     if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
@@ -1267,15 +1219,17 @@ def apply_device_candidate_corrections(
         result=result,
         correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
+        kernel_config=kernel_config,
     )
 
 
-@functools.partial(jax.jit, static_argnames=("correction_plan",))
+@functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config"))
 def compute_regenie2_binary_chunk_from_chromosome_state(
     chromosome_state: regenie2_types.Regenie2BinaryChromosomeState,
     genotype_matrix: jax.Array,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     sparse_candidate_mask: jax.Array | None = None,
+    kernel_config: regenie2_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association using cached null state."""
     score_test_result = compute_regenie2_binary_score_test_chunk(
@@ -1289,6 +1243,7 @@ def compute_regenie2_binary_chunk_from_chromosome_state(
         result=score_test_result,
         correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
+        kernel_config=kernel_config,
     )
 
 
@@ -1298,9 +1253,10 @@ def compute_regenie2_binary_chunk(
     loco_offset: jax.Array,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     sparse_candidate_mask: jax.Array | None = None,
+    kernel_config: regenie2_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association for a genotype chunk."""
-    chromosome_state = prepare_regenie2_binary_chromosome_state(state, loco_offset, correction_plan)
+    chromosome_state = prepare_regenie2_binary_chromosome_state(state, loco_offset, correction_plan, kernel_config)
     compute_regenie2_binary_chunk_from_state = typing.cast(
         "BinaryChunkComputeFunction",
         compute_regenie2_binary_chunk_from_chromosome_state,
@@ -1310,6 +1266,7 @@ def compute_regenie2_binary_chunk(
         genotype_matrix,
         correction_plan,
         sparse_candidate_mask,
+        kernel_config,
     )
 
 

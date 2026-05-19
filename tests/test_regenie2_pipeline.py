@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from g import types
-from g.compute import regenie2_binary_types, regenie2_linear, regenie2_linear_types
+from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, regenie2_linear_types
 from g.engine import regenie2_pipeline
 from g.io import output, source
 
@@ -224,6 +224,7 @@ def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -
 
 def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats() -> None:
     writer_session = FakeWriterSession()
+    kernel_config = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
     result = regenie2_binary_types.Regenie2BinaryChunkResult(
         beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
@@ -239,6 +240,7 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
         correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
+        kernel_config=kernel_config,
     )
     chunk_stats = typing.cast("typing.Any", SparseOnlyChunkStats())
 
@@ -246,7 +248,7 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
         patch(
             "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_chromosome_state",
             return_value="chromosome-state",
-        ),
+        ) as mock_prepare,
         patch(
             "g.engine.regenie2_pipeline.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
             return_value=result,
@@ -261,12 +263,16 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
 
     sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
     np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False])
+    assert mock_prepare.call_args.kwargs["kernel_config"] is kernel_config
     assert mock_compute.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
+    assert mock_compute.call_args.kwargs["kernel_config"] is kernel_config
+    assert mock_compute.call_args.kwargs["chromosome_state"] == "chromosome-state"
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
 def test_binary_variant_major_callback_transposes_into_sample_major_compute() -> None:
     writer_session = FakeWriterSession()
+    kernel_config = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
     result = regenie2_binary_types.Regenie2BinaryChunkResult(
         beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4, 0.5], dtype=jnp.float32),
@@ -282,6 +288,7 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
         correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
+        kernel_config=kernel_config,
     )
     variant_major_genotype_matrix = np.asarray(
         [
@@ -333,11 +340,13 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
     sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
     np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False, True])
     assert mock_compute.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
+    assert mock_compute.call_args.kwargs["kernel_config"] is kernel_config
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
 def test_binary_score_only_variant_major_callback_uses_direct_variant_major_compute() -> None:
     writer_session = FakeWriterSession()
+    kernel_config = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
     result = regenie2_binary_types.Regenie2BinaryChunkResult(
         beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4, 0.5], dtype=jnp.float32),
@@ -353,6 +362,7 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
         correction_plan=types.BinaryCorrectionPlan(),
+        kernel_config=kernel_config,
     )
     variant_major_genotype_matrix = np.asarray(
         [
@@ -387,6 +397,7 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
     genotype_matrix_by_variant = mock_variant_major_compute.call_args.kwargs["genotype_matrix_by_variant"]
     np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant), variant_major_genotype_matrix)
     assert mock_variant_major_compute.call_args.kwargs["sparse_candidate_mask"] is None
+    assert mock_variant_major_compute.call_args.kwargs["kernel_config"] is kernel_config
     mock_sample_major_compute.assert_not_called()
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
@@ -459,6 +470,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     FakePredictionSource.instances.clear()
     writer_session = FakeWriterSession()
     run_input = build_native_run_input()
+    kernel_config = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
 
     with (
         patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
@@ -488,6 +500,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             staging_depth=3,
             committed_chunk_identifiers={64, 0},
             trusted_no_missing_diploid=True,
+            kernel_config=kernel_config,
         )
 
     assert final_path == Path("results/final.parquet")
@@ -498,6 +511,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
     assert isinstance(callback, regenie2_pipeline.BinaryRegenie2PipelineCallback)
+    assert callback.kernel_config is kernel_config
     assert committed_chunk_identifiers == [0, 64]
 
 

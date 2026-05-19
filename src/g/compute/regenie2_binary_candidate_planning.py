@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import math
 import typing
 from dataclasses import dataclass
@@ -15,35 +14,6 @@ import g.types as g_types
 
 DEFAULT_FIRTH_BATCH_SIZE = 64
 DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
-configured_firth_batch_size = DEFAULT_FIRTH_BATCH_SIZE
-configured_firth_candidate_capacity = DEFAULT_FIRTH_CANDIDATE_CAPACITY
-
-
-def configure_firth_candidate_planning(*, firth_batch_size: int, firth_candidate_capacity: int) -> None:
-    """Configure fixed-shape Firth planning settings."""
-    if firth_batch_size <= 0:
-        message = "Firth batch size must be positive."
-        raise ValueError(message)
-    if firth_candidate_capacity <= 0:
-        message = "Firth candidate capacity must be positive."
-        raise ValueError(message)
-    global configured_firth_batch_size, configured_firth_candidate_capacity
-    configured_firth_batch_size = firth_batch_size
-    configured_firth_candidate_capacity = firth_candidate_capacity
-    get_firth_batch_size.cache_clear()
-    get_firth_candidate_capacity.cache_clear()
-
-
-@functools.cache
-def get_firth_batch_size() -> int:
-    """Resolve the active fixed Firth batch size."""
-    return configured_firth_batch_size
-
-
-@functools.cache
-def get_firth_candidate_capacity() -> int:
-    """Resolve the active fixed Firth candidate lane capacity."""
-    return configured_firth_candidate_capacity
 
 
 @jax.tree_util.register_dataclass
@@ -113,9 +83,9 @@ def build_extra_code(
 def build_device_firth_batch_plan(
     fallback_mask: jax.Array,
     candidate_capacity: int,
+    firth_batch_size: int,
 ) -> FirthBatchPlan:
     """Build fixed-shape Firth index batches on device."""
-    firth_batch_size = get_firth_batch_size()
     max_batch_count = (candidate_capacity + firth_batch_size - 1) // firth_batch_size
     padded_variant_count = max_batch_count * firth_batch_size
     fallback_index_vector = jnp.nonzero(fallback_mask, size=candidate_capacity, fill_value=0)[0]

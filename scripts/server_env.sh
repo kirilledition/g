@@ -8,12 +8,19 @@ else
   repository_root="$(pwd)"
 fi
 tools_directory="${GWAS_ENGINE_TOOLS_DIR:-${repository_root}/.tools}"
+repo_rust_directory="${tools_directory}/rust"
+repo_cargo_home="${repo_rust_directory}/cargo"
+repo_rustup_home="${repo_rust_directory}/rustup"
 
-export PATH="${tools_directory}/bin:${tools_directory}/rust/cargo/bin:${PATH}"
+export PATH="${tools_directory}/bin:${repo_cargo_home}/bin:${PATH}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/g-uv-cache}"
 export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
-export CARGO_HOME="${CARGO_HOME:-${tools_directory}/rust/cargo}"
-export RUSTUP_HOME="${RUSTUP_HOME:-${tools_directory}/rust/rustup}"
+if [ -z "${CARGO_HOME:-}" ] && [ -x "${repo_cargo_home}/bin/cargo" ]; then
+  export CARGO_HOME="${repo_cargo_home}"
+fi
+if [ -z "${RUSTUP_HOME:-}" ] && [ -x "${repo_cargo_home}/bin/rustup" ]; then
+  export RUSTUP_HOME="${repo_rustup_home}"
+fi
 export PYO3_PYTHON="${PYO3_PYTHON:-python3.14}"
 
 if command -v "${PYO3_PYTHON}" >/dev/null 2>&1; then

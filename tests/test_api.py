@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import g
 from g import api, types
-from g.io import output
+from g.io import output, source
 from g.io.output import OutputRunPaths, PreparedOutputRun
 
 
@@ -69,6 +69,28 @@ def test_regenie_config_from_options_maps_regenie_names() -> None:
     assert regenie_config.g_output.format == types.OutputFormat.BOTH
 
 
+def test_build_binary_kernel_config_maps_compute_options() -> None:
+    kernel_config = api.build_binary_kernel_config(
+        api.GComputeConfig(
+            firth_batch_size=7,
+            firth_candidate_capacity=11,
+            binary_null_maximum_iterations=13,
+            binary_null_coefficient_tolerance=1.0e-5,
+            firth_maximum_iterations=17,
+            firth_gradient_tolerance=2.0e-5,
+            firth_coefficient_tolerance=3.0e-5,
+            firth_likelihood_tolerance=4.0e-5,
+            firth_maximum_step_size=6.0,
+            use_block_firth_math=True,
+        )
+    )
+
+    assert kernel_config.firth_batch_size == 7
+    assert kernel_config.firth_candidate_capacity == 11
+    assert kernel_config.maximum_null_iterations == 13
+    assert kernel_config.use_block_firth_math is True
+
+
 def test_normalize_binary_correction_config_maps_approximate_firth() -> None:
     plan = api.normalize_binary_correction_config(api.BinaryConfig(firth=True, approx=True, p_threshold=0.01))
 
@@ -112,6 +134,114 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     mock_finalize_regenie.assert_not_called()
     mock_extend_run_manifest.assert_called_once()
     mock_write_toml.assert_called_once()
+
+
+def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_config() -> None:
+    run_paths = OutputRunPaths(
+        run_directory=Path("results/output.g/trait.regenie2_binary.run"),
+        chunks_directory=Path("results/output.g/trait.regenie2_binary.run/chunks"),
+    )
+    regenie_config = api.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "bt": True,
+            "bgen": "dataset.bgen",
+            "sample": "dataset.sample",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "firth": True,
+            "approx": True,
+            "g-output-format": "parquet",
+            "g-firth-batch-size": 7,
+            "g-firth-candidate-capacity": 11,
+            "g-binary-null-maximum-iterations": 13,
+            "g-binary-null-coefficient-tolerance": 1.0e-5,
+            "g-firth-maximum-iterations": 17,
+            "g-firth-gradient-tolerance": 2.0e-5,
+            "g-firth-coefficient-tolerance": 3.0e-5,
+            "g-firth-likelihood-tolerance": 4.0e-5,
+            "g-firth-maximum-step-size": 6.0,
+            "g-use-block-firth-math": True,
+        }
+    )
+
+    with (
+        patch("g.api.configure_jax_device"),
+        patch(
+            "g.api.output.prepare_output_run",
+            return_value=PreparedOutputRun(output_run_paths=run_paths, committed_chunk_identifiers=frozenset()),
+        ),
+        patch("g.api.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
+        patch("g.api.extend_run_manifest"),
+        patch("g.interface.config.write_toml"),
+    ):
+        mock_binary_pipeline.return_value = Path("results/output.g/trait.regenie2_binary.run/final.parquet")
+        api.regenie(regenie_config)
+
+    kernel_config = mock_binary_pipeline.call_args.kwargs["kernel_config"]
+    assert kernel_config.firth_batch_size == 7
+    assert kernel_config.firth_candidate_capacity == 11
+    assert kernel_config.maximum_null_iterations == 13
+    assert kernel_config.null_logistic_coefficient_tolerance == 1.0e-5
+    assert kernel_config.firth_maximum_iterations == 17
+    assert kernel_config.firth_gradient_tolerance == 2.0e-5
+    assert kernel_config.firth_coefficient_tolerance == 3.0e-5
+    assert kernel_config.firth_likelihood_tolerance == 4.0e-5
+    assert kernel_config.firth_maximum_step_size == 6.0
+    assert kernel_config.use_block_firth_math is True
+    assert (
+        mock_binary_pipeline.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
+    )
+
+
+def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
+    regenie_config = api.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "bt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "firth": True,
+            "approx": True,
+        }
+    )
+    kernel_config = api.build_binary_kernel_config(api.GComputeConfig(firth_batch_size=5))
+    engine_config = api.EngineRunConfig(
+        chunk_size=32,
+        device=types.Device.CPU,
+        staging_depth=1,
+        output_run_directory=Path("run"),
+        resume=False,
+        resume_mode=types.ResumeMode.FAST,
+        finalize_parquet=True,
+        writer_threads=1,
+        writer_queue_depth=1,
+        chunks_per_arrow_file=1,
+        arrow_compression=types.ArrowCompression.ZSTD,
+        trusted_no_missing_diploid=False,
+        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
+        alignment_config=regenie_config.g_compute,
+        binary_kernel_config=kernel_config,
+    )
+
+    with patch("g.api.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline:
+        api.dispatch_engine_pipeline(
+            regenie_config=regenie_config,
+            phenotype_name="trait",
+            genotype_source_config=source.build_bgen_source_config(Path("dataset.bgen")),
+            engine_config=engine_config,
+            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
+            committed_chunk_identifiers=set(),
+            binary_correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
+            stage_timing_recorder=None,
+        )
+
+    assert mock_binary_pipeline.call_args.kwargs["kernel_config"] is kernel_config
 
 
 def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:

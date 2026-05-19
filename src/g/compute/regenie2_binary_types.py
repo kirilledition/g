@@ -7,6 +7,66 @@ from dataclasses import dataclass
 import jax
 
 
+@dataclass(frozen=True)
+class BinaryKernelConfig:
+    """Static binary-kernel settings that affect traced JAX programs.
+
+    Attributes:
+        maximum_null_iterations: Maximum IRLS iterations for the null logistic model.
+        null_logistic_coefficient_tolerance: Coefficient convergence tolerance for the null logistic model.
+        firth_batch_size: Fixed batch size for device-resident Firth fallback lanes.
+        firth_candidate_capacity: Preferred fixed candidate capacity before falling back to full chunk capacity.
+        firth_maximum_iterations: Maximum Firth solver iterations.
+        firth_gradient_tolerance: Firth adjusted-score convergence tolerance.
+        firth_coefficient_tolerance: Firth coefficient-step convergence tolerance.
+        firth_likelihood_tolerance: Firth penalized-likelihood convergence tolerance.
+        firth_maximum_step_size: Maximum absolute Firth coefficient update before step scaling.
+        use_block_firth_math: Whether to use the experimental block-matrix Firth path.
+
+    """
+
+    maximum_null_iterations: int
+    null_logistic_coefficient_tolerance: float
+    firth_batch_size: int
+    firth_candidate_capacity: int
+    firth_maximum_iterations: int
+    firth_gradient_tolerance: float
+    firth_coefficient_tolerance: float
+    firth_likelihood_tolerance: float
+    firth_maximum_step_size: float
+    use_block_firth_math: bool
+
+    def __post_init__(self) -> None:
+        """Validate positive static kernel settings."""
+        if self.maximum_null_iterations <= 0:
+            message = "Maximum null iterations must be positive."
+            raise ValueError(message)
+        if self.null_logistic_coefficient_tolerance <= 0.0:
+            message = "Null logistic coefficient tolerance must be positive."
+            raise ValueError(message)
+        if self.firth_batch_size <= 0:
+            message = "Firth batch size must be positive."
+            raise ValueError(message)
+        if self.firth_candidate_capacity <= 0:
+            message = "Firth candidate capacity must be positive."
+            raise ValueError(message)
+        if self.firth_maximum_iterations <= 0:
+            message = "Firth maximum iterations must be positive."
+            raise ValueError(message)
+        if self.firth_gradient_tolerance <= 0.0:
+            message = "Firth gradient tolerance must be positive."
+            raise ValueError(message)
+        if self.firth_coefficient_tolerance <= 0.0:
+            message = "Firth coefficient tolerance must be positive."
+            raise ValueError(message)
+        if self.firth_likelihood_tolerance <= 0.0:
+            message = "Firth likelihood tolerance must be positive."
+            raise ValueError(message)
+        if self.firth_maximum_step_size <= 0.0:
+            message = "Firth maximum step size must be positive."
+            raise ValueError(message)
+
+
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class Regenie2BinaryState:

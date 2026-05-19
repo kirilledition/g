@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import typing
 
 import jax
@@ -39,10 +40,7 @@ compute_binary_chunk_variant_major = typing.cast(
 
 
 def clear_binary_compute_caches() -> None:
-    """Clear cached binary configuration and JAX traces."""
-    regenie2_binary.get_firth_batch_size.cache_clear()
-    regenie2_binary.get_firth_candidate_capacity.cache_clear()
-    regenie2_binary.get_use_block_firth_math.cache_clear()
+    """Clear cached JAX traces."""
     jax.clear_caches()
 
 
@@ -98,36 +96,63 @@ def build_chromosome_state() -> tuple[
 
 
 def test_firth_candidate_capacity_uses_default() -> None:
-    regenie2_binary.get_firth_candidate_capacity.cache_clear()
-
-    assert regenie2_binary.get_firth_candidate_capacity() == regenie2_binary.DEFAULT_FIRTH_CANDIDATE_CAPACITY
+    assert (
+        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG.firth_candidate_capacity
+        == regenie2_binary.DEFAULT_FIRTH_CANDIDATE_CAPACITY
+    )
 
 
 def test_firth_candidate_capacity_rejects_invalid_config() -> None:
     with pytest.raises(ValueError, match="Firth candidate capacity"):
-        regenie2_binary.regenie2_binary_candidate_planning.configure_firth_candidate_planning(
-            firth_batch_size=64,
+        dataclasses.replace(
+            regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
             firth_candidate_capacity=0,
         )
 
 
 def test_device_firth_batch_plan_uses_candidate_capacity() -> None:
-    regenie2_binary.regenie2_binary_candidate_planning.configure_firth_candidate_planning(
-        firth_batch_size=2,
-        firth_candidate_capacity=1024,
-    )
     clear_binary_compute_caches()
     fallback_mask = jnp.asarray([True, False, True, False, True], dtype=jnp.bool_)
 
-    batch_plan = regenie2_binary.build_device_firth_batch_plan(fallback_mask, candidate_capacity=4)
+    batch_plan = regenie2_binary.build_device_firth_batch_plan(
+        fallback_mask,
+        candidate_capacity=4,
+        firth_batch_size=2,
+    )
 
     np.testing.assert_array_equal(np.asarray(batch_plan.fallback_index_matrix), [[0, 2], [4, 0]])
     np.testing.assert_array_equal(np.asarray(batch_plan.fallback_active_mask_matrix), [[True, True], [True, False]])
     np.testing.assert_array_equal(np.asarray(batch_plan.active_flat_position_vector), [0, 1, 2, 0])
-    regenie2_binary.regenie2_binary_candidate_planning.configure_firth_candidate_planning(
-        firth_batch_size=regenie2_binary.DEFAULT_FIRTH_BATCH_SIZE,
-        firth_candidate_capacity=regenie2_binary.DEFAULT_FIRTH_CANDIDATE_CAPACITY,
+
+
+def test_null_logistic_kernel_config_retraces_same_shape_without_cache_clear() -> None:
+    covariate_matrix, phenotype_vector, _ = build_binary_inputs()
+    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
+    loco_offset = jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32)
+    one_iteration_config = dataclasses.replace(
+        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
+        maximum_null_iterations=1,
+        null_logistic_coefficient_tolerance=1.0e-12,
     )
+    two_iteration_config = dataclasses.replace(
+        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
+        maximum_null_iterations=2,
+        null_logistic_coefficient_tolerance=1.0e-12,
+    )
+
+    one_iteration_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
+        state,
+        loco_offset,
+        kernel_config=one_iteration_config,
+    )
+    two_iteration_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
+        state,
+        loco_offset,
+        kernel_config=two_iteration_config,
+    )
+
+    assert int(np.asarray(one_iteration_state.null_logistic_iteration_count)) == 1
+    assert int(np.asarray(two_iteration_state.null_logistic_iteration_count)) == 2
 
 
 def test_group_firth_candidate_batch_inputs_places_heuristic_lanes_after_regular_lanes() -> None:
@@ -373,7 +398,7 @@ def test_sparse_candidate_mask_does_not_expand_score_candidates() -> None:
     assert int(np.asarray(sparse_result.firth_iteration_count[0])) == 0
 
 
-def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback() -> None:
     genotype_matrix, chromosome_state = build_chromosome_state()
     score_result = compute_score_test_chunk(
         chromosome_state,
@@ -391,32 +416,28 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback(monkeypat
         firth_failure_code=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
     )
 
-    regenie2_binary.regenie2_binary_candidate_planning.configure_firth_candidate_planning(
-        firth_batch_size=regenie2_binary.DEFAULT_FIRTH_BATCH_SIZE,
+    overflow_kernel_config = dataclasses.replace(
+        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
         firth_candidate_capacity=1,
     )
-    clear_binary_compute_caches()
     overflow_result = regenie2_binary.apply_device_candidate_corrections(
         chromosome_state=chromosome_state,
         genotype_matrix=genotype_matrix,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
+        kernel_config=overflow_kernel_config,
     )
 
-    regenie2_binary.regenie2_binary_candidate_planning.configure_firth_candidate_planning(
-        firth_batch_size=regenie2_binary.DEFAULT_FIRTH_BATCH_SIZE,
+    bounded_kernel_config = dataclasses.replace(
+        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
         firth_candidate_capacity=8,
     )
-    clear_binary_compute_caches()
     bounded_result = regenie2_binary.apply_device_candidate_corrections(
         chromosome_state=chromosome_state,
         genotype_matrix=genotype_matrix,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
-    )
-    regenie2_binary.regenie2_binary_candidate_planning.configure_firth_candidate_planning(
-        firth_batch_size=regenie2_binary.DEFAULT_FIRTH_BATCH_SIZE,
-        firth_candidate_capacity=regenie2_binary.DEFAULT_FIRTH_CANDIDATE_CAPACITY,
+        kernel_config=bounded_kernel_config,
     )
 
     np.testing.assert_allclose(np.asarray(overflow_result.beta), np.asarray(bounded_result.beta), equal_nan=True)
@@ -436,6 +457,59 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback(monkeypat
         equal_nan=True,
     )
     np.testing.assert_array_equal(np.asarray(overflow_result.extra_code), np.asarray(bounded_result.extra_code))
+
+
+def test_firth_correction_kernel_config_retraces_same_shape_without_cache_clear() -> None:
+    genotype_matrix, chromosome_state = build_chromosome_state()
+    score_result = compute_score_test_chunk(
+        chromosome_state,
+        genotype_matrix,
+        APPROXIMATE_FIRTH_PLAN,
+    )
+    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
+        beta=score_result.beta,
+        standard_error=score_result.standard_error,
+        chi_squared=score_result.chi_squared,
+        log10_p_value=score_result.log10_p_value,
+        extra_code=jnp.full((genotype_matrix.shape[1],), regenie2_binary.EXTRA_CODE_FIRTH, dtype=jnp.int32),
+        valid_mask=jnp.ones((genotype_matrix.shape[1],), dtype=jnp.bool_),
+        firth_iteration_count=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
+        firth_failure_code=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
+    )
+    small_batch_config = dataclasses.replace(
+        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
+        firth_batch_size=1,
+        firth_candidate_capacity=1,
+    )
+    larger_batch_config = dataclasses.replace(
+        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
+        firth_batch_size=2,
+        firth_candidate_capacity=8,
+    )
+
+    small_batch_result = regenie2_binary.apply_device_candidate_corrections(
+        chromosome_state=chromosome_state,
+        genotype_matrix=genotype_matrix,
+        result=forced_candidate_result,
+        correction_plan=APPROXIMATE_FIRTH_PLAN,
+        kernel_config=small_batch_config,
+    )
+    larger_batch_result = regenie2_binary.apply_device_candidate_corrections(
+        chromosome_state=chromosome_state,
+        genotype_matrix=genotype_matrix,
+        result=forced_candidate_result,
+        correction_plan=APPROXIMATE_FIRTH_PLAN,
+        kernel_config=larger_batch_config,
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(small_batch_result.beta),
+        np.asarray(larger_batch_result.beta),
+        rtol=1.0e-5,
+        atol=1.0e-5,
+        equal_nan=True,
+    )
+    np.testing.assert_array_equal(np.asarray(small_batch_result.extra_code), np.asarray(larger_batch_result.extra_code))
 
 
 def test_non_candidate_score_rows_remain_unchanged_after_device_correction() -> None:
