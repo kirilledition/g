@@ -199,6 +199,70 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
     )
 
 
+@jax.jit
+def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
+    chromosome_state: regenie2_types.Regenie2LinearChromosomeState,
+    genotype_matrix_by_variant: jax.Array,
+    genotype_sum_squares: jax.Array,
+) -> regenie2_types.Regenie2LinearChunkResult:
+    """Compute quantitative REGENIE step 2 association from variant-major genotypes."""
+    genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
+    genotype_sum_squares_float32 = jnp.asarray(genotype_sum_squares, dtype=jnp.float32)
+    score_matrix = chromosome_state.stacked_score_matrix @ genotype_matrix_by_variant_float32.T
+    covariate_projection_coordinates = score_matrix[:-1]
+    covariance_with_phenotype = score_matrix[-1]
+
+    projection_sum_squares = jnp.einsum(
+        "ij,ij->j",
+        covariate_projection_coordinates,
+        covariate_projection_coordinates,
+    )
+    genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares_float32 - projection_sum_squares, 0.0)
+
+    covariance_squared = covariance_with_phenotype * covariance_with_phenotype
+    positive_genotype_residual_mask = genotype_residual_sum_squares > 0.0
+    genotype_residual_sum_squares_inverse = jnp.where(
+        positive_genotype_residual_mask,
+        jnp.reciprocal(genotype_residual_sum_squares),
+        0.0,
+    )
+
+    beta = jnp.where(
+        positive_genotype_residual_mask,
+        covariance_with_phenotype * genotype_residual_sum_squares_inverse,
+        jnp.nan,
+    )
+    residual_sum_squares_after = (
+        chromosome_state.adjusted_residual_sum_squares - covariance_squared * genotype_residual_sum_squares_inverse
+    )
+    residual_sum_squares_after = jnp.maximum(residual_sum_squares_after, 0.0)
+    positive_residual_sum_squares_mask = residual_sum_squares_after > 0.0
+    standard_error = jnp.where(
+        positive_genotype_residual_mask & positive_residual_sum_squares_mask,
+        jnp.sqrt(
+            residual_sum_squares_after * genotype_residual_sum_squares_inverse / chromosome_state.degrees_of_freedom
+        ),
+        jnp.nan,
+    )
+    chi_squared = jnp.where(
+        positive_genotype_residual_mask & positive_residual_sum_squares_mask,
+        covariance_squared
+        * genotype_residual_sum_squares_inverse
+        * chromosome_state.degrees_of_freedom
+        / residual_sum_squares_after,
+        0.0,
+    )
+    log10_p_value = chi_squared_to_log10_p_value(chi_squared)
+    valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
+    return regenie2_types.Regenie2LinearChunkResult(
+        beta=beta,
+        standard_error=standard_error,
+        chi_squared=chi_squared,
+        log10_p_value=log10_p_value,
+        valid_mask=valid_mask,
+    )
+
+
 def compute_regenie2_linear_chunk(
     state: regenie2_types.Regenie2LinearState,
     genotype_matrix: jax.Array,

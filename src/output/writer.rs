@@ -1,5 +1,6 @@
 #![allow(clippy::needless_pass_by_value)]
 
+use std::env;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -16,7 +17,9 @@ use crate::output::finalization;
 use crate::output::manifest;
 use crate::output::schema;
 
-const REGENIE_STEP2_CHUNKS_PER_ARROW_FILE: usize = 4;
+const DEFAULT_REGENIE_STEP2_CHUNKS_PER_ARROW_FILE: usize = 4;
+const CHUNKS_PER_ARROW_FILE_ENVIRONMENT_VARIABLE: &str = "G_REGENIE2_CHUNKS_PER_ARROW_FILE";
+const ARROW_COMPRESSION_ENVIRONMENT_VARIABLE: &str = "G_REGENIE2_ARROW_COMPRESSION";
 #[derive(Debug, Error)]
 pub enum OutputWriterError {
     #[error("{0}")]
@@ -278,12 +281,13 @@ fn run_output_writer_coordinator(
     writer_thread_count: usize,
     worker_errors: Arc<Mutex<Vec<String>>>,
 ) {
-    let mut pending_chunks = Vec::with_capacity(REGENIE_STEP2_CHUNKS_PER_ARROW_FILE);
+    let chunks_per_arrow_file = get_regenie_step2_chunks_per_arrow_file();
+    let mut pending_chunks = Vec::with_capacity(chunks_per_arrow_file);
     while let Ok(job) = receiver.recv() {
         match job {
             OutputCoordinatorJob::RegenieStep2(chunk_job) => {
                 pending_chunks.push(*chunk_job);
-                if pending_chunks.len() >= REGENIE_STEP2_CHUNKS_PER_ARROW_FILE
+                if pending_chunks.len() >= chunks_per_arrow_file
                     && flush_pending_regenie_step2_chunks(&writer_sender, &mut pending_chunks, &worker_errors).is_err()
                 {
                     break;
@@ -454,7 +458,19 @@ fn write_record_batch_to_arrow_file(record_batch: &RecordBatch, chunk_file_path:
 }
 
 fn build_regenie_step2_ipc_write_options() -> Result<IpcWriteOptions, String> {
-    IpcWriteOptions::default().try_with_compression(Some(CompressionType::ZSTD)).map_err(|error| error.to_string())
+    match env::var(ARROW_COMPRESSION_ENVIRONMENT_VARIABLE)
+        .unwrap_or_else(|_| "zstd".to_string())
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "zstd" => IpcWriteOptions::default()
+            .try_with_compression(Some(CompressionType::ZSTD))
+            .map_err(|error| error.to_string()),
+        "none" => Ok(IpcWriteOptions::default()),
+        unsupported_compression => Err(format!(
+            "{ARROW_COMPRESSION_ENVIRONMENT_VARIABLE} must be 'zstd' or 'none', observed '{unsupported_compression}'.",
+        )),
+    }
 }
 
 fn get_regenie_step2_ipc_write_options() -> &'static IpcWriteOptions {
@@ -462,6 +478,17 @@ fn get_regenie_step2_ipc_write_options() -> &'static IpcWriteOptions {
     REGENIE_STEP2_IPC_WRITE_OPTIONS.get_or_init(|| {
         build_regenie_step2_ipc_write_options()
             .expect("REGENIE step 2 IPC write options should support zstd compression")
+    })
+}
+
+fn get_regenie_step2_chunks_per_arrow_file() -> usize {
+    static REGENIE_STEP2_CHUNKS_PER_ARROW_FILE: OnceLock<usize> = OnceLock::new();
+    *REGENIE_STEP2_CHUNKS_PER_ARROW_FILE.get_or_init(|| {
+        env::var(CHUNKS_PER_ARROW_FILE_ENVIRONMENT_VARIABLE)
+            .ok()
+            .and_then(|raw_value| raw_value.parse::<usize>().ok())
+            .filter(|chunk_count| *chunk_count > 0)
+            .unwrap_or(DEFAULT_REGENIE_STEP2_CHUNKS_PER_ARROW_FILE)
     })
 }
 

@@ -191,6 +191,7 @@ def warm_regenie2_binary_bgen_cache(
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         regenie_state,
         jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
+        correction_plan,
     )
     shapes = build_warm_cache_shapes(
         engine=engine,

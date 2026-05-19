@@ -70,6 +70,7 @@ pub fn preprocess_row_major_dosage_matrix(
         heterozygous_count,
         homozygous_alternate_count,
         has_missing_values,
+        selected_sample_count,
     );
 
     if has_missing_values {
@@ -149,15 +150,19 @@ pub fn summarize_variant_major_dosage_matrix(
         heterozygous_count,
         homozygous_alternate_count,
         has_missing_values,
+        selected_sample_count,
     ))
 }
 
+#[must_use]
 pub fn build_empty_chunk_stats(selected_variant_count: usize, has_missing_values: bool) -> ChunkStats {
     ChunkStats {
         allele_one_frequency: vec![0.0_f32; selected_variant_count],
         observation_count: vec![0_i32; selected_variant_count],
         has_missing_values,
         dosage_sum: vec![0.0_f32; selected_variant_count],
+        dosage_square_sum: vec![0.0_f32; selected_variant_count],
+        imputed_dosage_square_sum: vec![0.0_f32; selected_variant_count],
         dosage_variance_numerator: vec![0.0_f32; selected_variant_count],
         info_score: vec![None; selected_variant_count],
         allele_count: vec![0.0_f32; selected_variant_count],
@@ -173,7 +178,8 @@ pub fn build_empty_chunk_stats(selected_variant_count: usize, has_missing_values
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_chunk_stats_from_summaries(
+#[must_use]
+pub fn build_chunk_stats_from_summaries(
     dosage_sum: Vec<f32>,
     dosage_square_sum: Vec<f32>,
     observation_count: Vec<i32>,
@@ -183,9 +189,11 @@ fn build_chunk_stats_from_summaries(
     heterozygous_count: Vec<i32>,
     homozygous_alternate_count: Vec<i32>,
     has_missing_values: bool,
+    selected_sample_count: usize,
 ) -> ChunkStats {
     let selected_variant_count = observation_count.len();
     let mut allele_one_frequency = Vec::with_capacity(selected_variant_count);
+    let mut imputed_dosage_square_sum = Vec::with_capacity(selected_variant_count);
     let mut dosage_variance_numerator = Vec::with_capacity(selected_variant_count);
     let mut info_score = Vec::with_capacity(selected_variant_count);
     let mut minor_allele_count = Vec::with_capacity(selected_variant_count);
@@ -196,6 +204,7 @@ fn build_chunk_stats_from_summaries(
         let count = observation_count[variant_index];
         if count <= 0 {
             allele_one_frequency.push(0.0);
+            imputed_dosage_square_sum.push(0.0);
             dosage_variance_numerator.push(0.0);
             info_score.push(None);
             minor_allele_count.push(0.0);
@@ -206,6 +215,9 @@ fn build_chunk_stats_from_summaries(
 
         let count_float = count as f32;
         let dosage_mean = dosage_sum[variant_index] / count_float;
+        let missing_count = i32::try_from(selected_sample_count).unwrap_or(i32::MAX).saturating_sub(count).max(0);
+        let current_imputed_dosage_square_sum =
+            dosage_square_sum[variant_index] + (missing_count as f32 * dosage_mean * dosage_mean);
         let allele_frequency = dosage_mean / 2.0;
         let variance_numerator =
             (dosage_square_sum[variant_index] - (dosage_sum[variant_index] * dosage_mean)).max(0.0);
@@ -222,6 +234,7 @@ fn build_chunk_stats_from_summaries(
         let current_sparse_candidate = zero_density >= SPARSE_ZERO_DENSITY_THRESHOLD;
 
         allele_one_frequency.push(allele_frequency);
+        imputed_dosage_square_sum.push(current_imputed_dosage_square_sum);
         dosage_variance_numerator.push(variance_numerator);
         info_score.push(current_info_score);
         minor_allele_count.push(current_minor_allele_count);
@@ -236,6 +249,8 @@ fn build_chunk_stats_from_summaries(
         observation_count,
         has_missing_values,
         dosage_sum: dosage_sum.clone(),
+        dosage_square_sum,
+        imputed_dosage_square_sum,
         dosage_variance_numerator,
         info_score,
         allele_count: dosage_sum,
@@ -250,7 +265,7 @@ fn build_chunk_stats_from_summaries(
     }
 }
 
-fn increment_dosage_summary_counts(
+pub fn increment_dosage_summary_counts(
     dosage_value: f32,
     zero_count: &mut i32,
     nonzero_count: &mut i32,
@@ -285,6 +300,8 @@ mod tests {
         assert_eq!(dosage_values, vec![0.0, 1.0, 2.0, 1.0, 2.0, 1.0]);
         assert_eq!(stats.observation_count, vec![3, 1]);
         assert_eq!(stats.allele_one_frequency, vec![2.0 / 3.0, 0.5]);
+        assert_eq!(stats.dosage_square_sum, vec![8.0, 1.0]);
+        assert_eq!(stats.imputed_dosage_square_sum, vec![8.0, 3.0]);
         assert_eq!(stats.zero_count, vec![1, 0]);
         assert_eq!(stats.nonzero_count, vec![2, 1]);
         assert_eq!(stats.homozygous_reference_count, vec![1, 0]);
@@ -302,6 +319,8 @@ mod tests {
         assert_eq!(dosage_values, vec![0.0, 1.0, 0.0, 2.0]);
         assert_eq!(stats.observation_count, vec![0, 2]);
         assert_eq!(stats.allele_one_frequency, vec![0.0, 0.75]);
+        assert_eq!(stats.dosage_square_sum, vec![0.0, 5.0]);
+        assert_eq!(stats.imputed_dosage_square_sum, vec![0.0, 5.0]);
         assert_eq!(stats.info_score[0], None);
         assert!(stats.has_missing_values);
     }
@@ -314,11 +333,13 @@ mod tests {
 
         assert_eq!(stats.observation_count, vec![3, 3]);
         assert_eq!(stats.allele_count, vec![1.0, 4.0]);
+        assert_eq!(stats.dosage_square_sum, vec![1.0, 8.0]);
+        assert_eq!(stats.imputed_dosage_square_sum, vec![1.0, 8.0]);
         assert_eq!(stats.minor_allele_count, vec![1.0, 2.0]);
         assert_eq!(stats.zero_count, vec![2, 1]);
         assert_eq!(stats.nonzero_count, vec![1, 2]);
         assert!(stats.is_sparse_candidate[0]);
         assert!(stats.is_rare_sparse_firth_candidate[0]);
-        assert_eq!(stats.info_score, vec![Some(0.79999995), Some(1.0)]);
+        assert_eq!(stats.info_score, vec![Some(0.799_999_95), Some(1.0)]);
     }
 }

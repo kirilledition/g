@@ -88,6 +88,7 @@ def run_regenie2_linear_bgen_pipeline(
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
     stage_timing_recorder = stage_timing_recorder or build_stage_timing_recorder_from_environment()
+    use_variant_major = trusted_no_missing_diploid
     engine_start_time = time.perf_counter()
     engine = build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
@@ -159,6 +160,7 @@ def run_regenie2_linear_bgen_pipeline(
         writer_session=writer_session,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
+        variant_major_dosage=use_variant_major,
     )
 
 

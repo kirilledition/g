@@ -336,6 +336,61 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
+def test_binary_score_only_variant_major_callback_uses_direct_variant_major_compute() -> None:
+    writer_session = FakeWriterSession()
+    result = regenie2_binary_types.Regenie2BinaryChunkResult(
+        beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4, 0.5], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0, 5.0], dtype=jnp.float32),
+        extra_code=jnp.asarray([0, 0, 0], dtype=jnp.int32),
+        valid_mask=jnp.asarray([True, True, True]),
+        firth_iteration_count=jnp.asarray([0, 0, 0], dtype=jnp.int32),
+        firth_failure_code=jnp.asarray([0, 0, 0], dtype=jnp.int32),
+    )
+    callback = regenie2_pipeline.BinaryRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+        correction_plan=types.BinaryCorrectionPlan(),
+    )
+    variant_major_genotype_matrix = np.asarray(
+        [
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+        ],
+        dtype=np.float32,
+    )
+    chunk_stats = SimpleNamespace(is_sparse_candidate=np.asarray([True, False, True], dtype=np.bool_))
+
+    with (
+        patch(
+            "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_chromosome_state",
+            return_value="chromosome-state",
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
+            return_value=result,
+        ) as mock_variant_major_compute,
+        patch(
+            "g.engine.regenie2_pipeline.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
+        ) as mock_sample_major_compute,
+    ):
+        callback.compute_preprocessed_variant_major_dosage_chunk(
+            metadata=build_native_metadata(),
+            genotype_matrix_by_variant=variant_major_genotype_matrix,
+            chunk_stats=typing.cast("typing.Any", chunk_stats),
+        )
+        callback.finish()
+
+    genotype_matrix_by_variant = mock_variant_major_compute.call_args.kwargs["genotype_matrix_by_variant"]
+    np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant), variant_major_genotype_matrix)
+    assert mock_variant_major_compute.call_args.kwargs["sparse_candidate_mask"] is None
+    mock_sample_major_compute.assert_not_called()
+    assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
+
+
 def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     FakeRunEngine.instances.clear()
     FakePredictionSource.instances.clear()
@@ -384,6 +439,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert engine.variant_limit == 100
     assert engine.trusted_no_missing_diploid is True
     assert engine.validation_count == 1
+    assert engine.run_method == "variant_major_buffered"
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))

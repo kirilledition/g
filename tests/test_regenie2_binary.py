@@ -158,6 +158,27 @@ def test_score_only_plan_produces_no_fallback_candidates() -> None:
     np.testing.assert_array_equal(np.asarray(extra_code), [regenie2_binary.EXTRA_CODE_SCORE] * 3)
 
 
+def test_score_only_chromosome_prep_skips_firth_null_fit(monkeypatch: pytest.MonkeyPatch) -> None:
+    covariate_matrix, phenotype_vector, _ = build_binary_inputs()
+    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
+
+    def fail_firth_null_fit(*args: object, **kwargs: object) -> jax.Array:
+        del args, kwargs
+        raise AssertionError("score-only chromosome prep must not fit the Firth null model")
+
+    monkeypatch.setattr(regenie2_binary, "fit_covariate_only_firth_null_model", fail_firth_null_fit)
+    chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
+        state,
+        jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32),
+        types.BinaryCorrectionPlan(),
+    )
+
+    assert float(np.asarray(chromosome_state.null_firth_penalized_log_likelihood)) == 0.0
+    assert int(np.asarray(chromosome_state.null_logistic_iteration_count)) <= (
+        regenie2_binary.DEFAULT_MAXIMUM_NULL_ITERATIONS
+    )
+
+
 def test_p_threshold_controls_fallback_candidate_selection() -> None:
     valid_mask = jnp.asarray([True, True, True], dtype=jnp.bool_)
     log10_p_value = jnp.asarray([1.1, 1.5, 2.1], dtype=jnp.float32)

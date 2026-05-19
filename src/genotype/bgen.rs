@@ -114,12 +114,40 @@ struct ThreadLocalProfileSnapshot {
 struct VariantDecodeResult {
     profile_snapshot: ThreadLocalProfileSnapshot,
     selected_dosage_total: f32,
+    selected_dosage_square_total: f32,
+    zero_count: i32,
+    nonzero_count: i32,
+    homozygous_reference_count: i32,
+    heterozygous_count: i32,
+    homozygous_alternate_count: i32,
 }
 
 #[derive(Debug)]
 struct DosageTileDecodeResult {
     profile_snapshot: ThreadLocalProfileSnapshot,
     selected_dosage_totals: Vec<f32>,
+    selected_dosage_square_totals: Vec<f32>,
+    zero_counts: Vec<i32>,
+    nonzero_counts: Vec<i32>,
+    homozygous_reference_counts: Vec<i32>,
+    heterozygous_counts: Vec<i32>,
+    homozygous_alternate_counts: Vec<i32>,
+}
+
+fn build_variant_decode_result(
+    profile_snapshot: ThreadLocalProfileSnapshot,
+    selected_dosage_total: f32,
+) -> VariantDecodeResult {
+    VariantDecodeResult {
+        profile_snapshot,
+        selected_dosage_total,
+        selected_dosage_square_total: 0.0,
+        zero_count: 0,
+        nonzero_count: 0,
+        homozygous_reference_count: 0,
+        heterozygous_count: 0,
+        homozygous_alternate_count: 0,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -594,6 +622,13 @@ impl BgenReaderCore {
         let profiling_enabled = profiling.enabled.load(Ordering::Relaxed);
         profiling.record_selected_sample_count(selected_sample_count);
         let decode_tile_variant_count = decode_tile_variant_count();
+        let mut dosage_sum = Vec::with_capacity(selected_variant_count);
+        let mut dosage_square_sum = Vec::with_capacity(selected_variant_count);
+        let mut zero_count = Vec::with_capacity(selected_variant_count);
+        let mut nonzero_count = Vec::with_capacity(selected_variant_count);
+        let mut homozygous_reference_count = Vec::with_capacity(selected_variant_count);
+        let mut heterozygous_count = Vec::with_capacity(selected_variant_count);
+        let mut homozygous_alternate_count = Vec::with_capacity(selected_variant_count);
         let decode_results = self.variant_records[variant_start..variant_stop]
             .par_chunks(decode_tile_variant_count)
             .enumerate()
@@ -614,11 +649,27 @@ impl BgenReaderCore {
             .collect::<Result<Vec<DosageTileDecodeResult>, BgenError>>()?;
         for decode_result in decode_results {
             profiling.merge_thread_local_snapshot(&decode_result.profile_snapshot);
+            dosage_sum.extend(decode_result.selected_dosage_totals);
+            dosage_square_sum.extend(decode_result.selected_dosage_square_totals);
+            zero_count.extend(decode_result.zero_counts);
+            nonzero_count.extend(decode_result.nonzero_counts);
+            homozygous_reference_count.extend(decode_result.homozygous_reference_counts);
+            heterozygous_count.extend(decode_result.heterozygous_counts);
+            homozygous_alternate_count.extend(decode_result.homozygous_alternate_counts);
         }
-        let output_slice =
-            unsafe { std::slice::from_raw_parts(output_pointer_address as *const f32, output_value_count) };
-        preprocess::summarize_variant_major_dosage_matrix(output_slice, selected_sample_count, selected_variant_count)
-            .map_err(|error| BgenError::Range(error.to_string()))
+        let observation_count = vec![i32::try_from(selected_sample_count).unwrap_or(i32::MAX); selected_variant_count];
+        Ok(preprocess::build_chunk_stats_from_summaries(
+            dosage_sum,
+            dosage_square_sum,
+            observation_count,
+            zero_count,
+            nonzero_count,
+            homozygous_reference_count,
+            heterozygous_count,
+            homozygous_alternate_count,
+            false,
+            selected_sample_count,
+        ))
     }
 
     pub fn bgen_path(&self) -> &Path {
@@ -888,7 +939,16 @@ fn decode_variant_dosage_tile_into_row_major_matrix(
             .unwrap_or(u64::MAX);
     }
 
-    Ok(DosageTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_totals })
+    Ok(DosageTileDecodeResult {
+        profile_snapshot: thread_local_profile_snapshot,
+        selected_dosage_totals,
+        selected_dosage_square_totals: Vec::new(),
+        zero_counts: Vec::new(),
+        nonzero_counts: Vec::new(),
+        homozygous_reference_counts: Vec::new(),
+        heterozygous_counts: Vec::new(),
+        homozygous_alternate_counts: Vec::new(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -906,6 +966,12 @@ fn decode_trusted_variant_major_dosage_tile(
 ) -> Result<DosageTileDecodeResult, BgenError> {
     let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
     let mut selected_dosage_totals = vec![0.0_f32; variant_record_chunk.len()];
+    let mut selected_dosage_square_totals = vec![0.0_f32; variant_record_chunk.len()];
+    let mut zero_counts = vec![0_i32; variant_record_chunk.len()];
+    let mut nonzero_counts = vec![0_i32; variant_record_chunk.len()];
+    let mut homozygous_reference_counts = vec![0_i32; variant_record_chunk.len()];
+    let mut heterozygous_counts = vec![0_i32; variant_record_chunk.len()];
+    let mut homozygous_alternate_counts = vec![0_i32; variant_record_chunk.len()];
     for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
         let variant_decode_result = decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
             mmap,
@@ -921,6 +987,12 @@ fn decode_trusted_variant_major_dosage_tile(
         )?;
         let variant_profile_snapshot = variant_decode_result.profile_snapshot;
         selected_dosage_totals[tile_variant_index] = variant_decode_result.selected_dosage_total;
+        selected_dosage_square_totals[tile_variant_index] = variant_decode_result.selected_dosage_square_total;
+        zero_counts[tile_variant_index] = variant_decode_result.zero_count;
+        nonzero_counts[tile_variant_index] = variant_decode_result.nonzero_count;
+        homozygous_reference_counts[tile_variant_index] = variant_decode_result.homozygous_reference_count;
+        heterozygous_counts[tile_variant_index] = variant_decode_result.heterozygous_count;
+        homozygous_alternate_counts[tile_variant_index] = variant_decode_result.homozygous_alternate_count;
         thread_local_profile_snapshot.compressed_block_fetch_ns += variant_profile_snapshot.compressed_block_fetch_ns;
         thread_local_profile_snapshot.compressed_block_fetch_count +=
             variant_profile_snapshot.compressed_block_fetch_count;
@@ -937,7 +1009,16 @@ fn decode_trusted_variant_major_dosage_tile(
         thread_local_profile_snapshot.output_byte_count += variant_profile_snapshot.output_byte_count;
     }
     thread_local_profile_snapshot.decode_tile_count += 1;
-    Ok(DosageTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_totals })
+    Ok(DosageTileDecodeResult {
+        profile_snapshot: thread_local_profile_snapshot,
+        selected_dosage_totals,
+        selected_dosage_square_totals,
+        zero_counts,
+        nonzero_counts,
+        homozygous_reference_counts,
+        heterozygous_counts,
+        homozygous_alternate_counts,
+    })
 }
 
 fn validate_variant_bounds(variant_start: usize, variant_stop: usize, variant_count: usize) -> Result<(), BgenError> {
@@ -1239,7 +1320,7 @@ fn validate_variant_compatible_with_trusted_no_missing_diploid(
     Ok(())
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
+#[allow(clippy::cast_possible_truncation, clippy::too_many_arguments, clippy::too_many_lines)]
 fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
     mmap: &[u8],
     compression_type: CompressionType,
@@ -1324,6 +1405,12 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         BgenError::Range("Integer overflow while locating variant-major BGEN output row.".to_string())
     })?;
     let mut selected_dosage_total = 0.0_f32;
+    let mut selected_dosage_square_total = 0.0_f32;
+    let mut zero_count = 0_i32;
+    let mut nonzero_count = 0_i32;
+    let mut homozygous_reference_count = 0_i32;
+    let mut heterozygous_count = 0_i32;
+    let mut homozygous_alternate_count = 0_i32;
     for (file_sample_index, probability_pair) in packed_probability_bytes.chunks_exact(2).enumerate() {
         let selected_index = if sample_selection.is_identity {
             file_sample_index
@@ -1336,6 +1423,15 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
         let dosage_value = dosage_lookup[packed_probability_index];
         selected_dosage_total += dosage_value;
+        selected_dosage_square_total += dosage_value * dosage_value;
+        preprocess::increment_dosage_summary_counts(
+            dosage_value,
+            &mut zero_count,
+            &mut nonzero_count,
+            &mut homozygous_reference_count,
+            &mut heterozygous_count,
+            &mut homozygous_alternate_count,
+        );
         unsafe {
             // Each parallel worker owns a distinct variant row in the variant-major output matrix.
             output_pointer.add(variant_row_offset + selected_index).write(dosage_value);
@@ -1356,7 +1452,16 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         thread_local_profile_snapshot.probability_decode_count += 1;
     }
     thread_local_profile_snapshot.variant_decode_count += 1;
-    Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total })
+    Ok(VariantDecodeResult {
+        profile_snapshot: thread_local_profile_snapshot,
+        selected_dosage_total,
+        selected_dosage_square_total,
+        zero_count,
+        nonzero_count,
+        homozygous_reference_count,
+        heterozygous_count,
+        homozygous_alternate_count,
+    })
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments, clippy::too_many_lines)]
@@ -1523,7 +1628,7 @@ fn decode_variant_dosages_into_row_major_matrix(
         }
         thread_local_profile_snapshot.variant_decode_count += 1;
 
-        return Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total });
+        return Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total));
     }
 
     let output_write_start_time = profiling_enabled.then(Instant::now);
@@ -1602,7 +1707,7 @@ fn decode_variant_dosages_into_row_major_matrix(
 
     thread_local_profile_snapshot.variant_decode_count += 1;
 
-    Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total })
+    Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total))
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -1666,7 +1771,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
         }
         thread_local_profile_snapshot.variant_decode_count += 1;
 
-        return Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total });
+        return Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total));
     }
     if sample_selection.is_identity {
         let output_write_start_time = profiling_enabled.then(Instant::now);
@@ -1712,7 +1817,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
         }
         thread_local_profile_snapshot.variant_decode_count += 1;
 
-        return Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total });
+        return Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total));
     }
 
     if all_samples_present {
@@ -1750,7 +1855,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
         }
         thread_local_profile_snapshot.variant_decode_count += 1;
 
-        return Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total });
+        return Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total));
     }
 
     let output_write_start_time = profiling_enabled.then(Instant::now);
@@ -1803,7 +1908,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     }
     thread_local_profile_snapshot.variant_decode_count += 1;
 
-    Ok(VariantDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_total })
+    Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total))
 }
 
 fn read_probability_block<'a>(

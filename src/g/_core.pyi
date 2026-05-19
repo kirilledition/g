@@ -11,6 +11,8 @@ class ChunkStats:
     allele_one_frequency: npt.NDArray[np.float32]
     observation_count: npt.NDArray[np.int32]
     has_missing_values: bool
+    dosage_square_sum: npt.NDArray[np.float32]
+    imputed_dosage_square_sum: npt.NDArray[np.float32]
     info_score: npt.NDArray[np.float32]
     minor_allele_count: npt.NDArray[np.float32]
     zero_count: npt.NDArray[np.int32]

@@ -40,6 +40,7 @@ class Regenie2BinaryChromosomeState:
         square_root_weight: Square root of Bernoulli variance.
         weighted_genotype_projection_matrix: Cholesky-whitened weighted covariate transpose.
         null_firth_penalized_log_likelihood: Covariate-only Firth null penalized log-likelihood.
+        null_logistic_iteration_count: Number of IRLS updates used for the null logistic fit.
 
     """
 
@@ -53,6 +54,7 @@ class Regenie2BinaryChromosomeState:
     square_root_weight: jax.Array
     weighted_genotype_projection_matrix: jax.Array
     null_firth_penalized_log_likelihood: jax.Array
+    null_logistic_iteration_count: jax.Array
 
 
 @jax.tree_util.register_dataclass

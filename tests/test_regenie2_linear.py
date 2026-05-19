@@ -287,6 +287,58 @@ class TestComputeRegenie2LinearChunk:
         numpy.testing.assert_allclose(direct_result.log10_p_value, cached_result.log10_p_value)
         numpy.testing.assert_array_equal(direct_result.valid_mask, cached_result.valid_mask)
 
+    def test_variant_major_kernel_matches_sample_major_with_native_square_sums(self) -> None:
+        """Ensure native-square-sum variant-major computation matches sample-major results."""
+        sample_count = 96
+        variant_count = 6
+        covariate_count = 3
+
+        rng = np.random.default_rng(23)
+        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
+        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
+        covariate_matrix[:, 2] = rng.standard_normal(sample_count).astype(np.float32)
+        phenotype_vector = jnp.asarray(rng.standard_normal(sample_count), dtype=jnp.float32)
+        genotype_matrix = jnp.asarray(
+            rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32),
+        )
+        loco_predictions = jnp.asarray(rng.standard_normal(sample_count) * 0.1, dtype=jnp.float32)
+        state = regenie2_linear.prepare_regenie2_linear_state(
+            covariate_matrix=jnp.asarray(covariate_matrix),
+            phenotype_vector=phenotype_vector,
+        )
+        chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(state, loco_predictions)
+        sample_major_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
+            chromosome_state=chromosome_state,
+            genotype_matrix=genotype_matrix,
+        )
+        genotype_square_sum = jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix)
+        variant_major_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
+            chromosome_state=chromosome_state,
+            genotype_matrix_by_variant=genotype_matrix.T,
+            genotype_sum_squares=genotype_square_sum,
+        )
+
+        numpy.testing.assert_allclose(variant_major_result.beta, sample_major_result.beta, rtol=1e-5, atol=1e-5)
+        numpy.testing.assert_allclose(
+            variant_major_result.standard_error,
+            sample_major_result.standard_error,
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        numpy.testing.assert_allclose(
+            variant_major_result.chi_squared,
+            sample_major_result.chi_squared,
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        numpy.testing.assert_allclose(
+            variant_major_result.log10_p_value,
+            sample_major_result.log10_p_value,
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        numpy.testing.assert_array_equal(variant_major_result.valid_mask, sample_major_result.valid_mask)
+
     def test_handles_zero_variance_genotypes(self) -> None:
         """Ensure monomorphic variants are marked invalid."""
         sample_count = 50

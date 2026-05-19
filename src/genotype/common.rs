@@ -16,6 +16,8 @@ pub struct ChunkStats {
     pub observation_count: Vec<i32>,
     pub has_missing_values: bool,
     pub dosage_sum: Vec<f32>,
+    pub dosage_square_sum: Vec<f32>,
+    pub imputed_dosage_square_sum: Vec<f32>,
     pub dosage_variance_numerator: Vec<f32>,
     pub info_score: Vec<Option<f32>>,
     pub allele_count: Vec<f32>,

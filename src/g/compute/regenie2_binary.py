@@ -19,6 +19,7 @@ from g.compute import regenie2_linear
 MINIMUM_PROBABILITY = 1.0e-6
 MINIMUM_VARIANCE = 1.0e-8
 DEFAULT_MAXIMUM_NULL_ITERATIONS = 50
+NULL_LOGISTIC_COEFFICIENT_TOLERANCE = 1.0e-6
 EXTRA_CODE_SCORE = regenie2_binary_diagnostics.EXTRA_CODE_SCORE
 EXTRA_CODE_FIRTH = regenie2_binary_diagnostics.EXTRA_CODE_FIRTH
 EXTRA_CODE_SPA = regenie2_binary_diagnostics.EXTRA_CODE_SPA
@@ -140,6 +141,23 @@ class FullModelScoreComponents:
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
+class NullLogisticFitState:
+    """State for covariate-only null logistic IRLS.
+
+    Attributes:
+        coefficients: Current coefficient estimates.
+        iteration_count: Number of IRLS updates performed.
+        converged: Whether the coefficient update tolerance has been reached.
+
+    """
+
+    coefficients: jax.Array
+    iteration_count: jax.Array
+    converged: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
 class FirthVariantResult:
     """Firth outputs for one genotype lane.
 
@@ -218,16 +236,15 @@ def fit_null_logistic_coefficients(
     phenotype_vector: jax.Array,
     loco_offset: jax.Array,
     maximum_iterations: int = DEFAULT_MAXIMUM_NULL_ITERATIONS,
-) -> jax.Array:
+) -> NullLogisticFitState:
     """Fit a covariate-only logistic null model with a fixed LOCO offset."""
     covariate_count = covariate_matrix.shape[1]
 
-    def update_coefficients(
-        iteration_index: int,
-        coefficient_vector: jax.Array,
-    ) -> jax.Array:
-        del iteration_index
-        linear_predictor = covariate_matrix @ coefficient_vector + loco_offset
+    def condition_function(state: NullLogisticFitState) -> jax.Array:
+        return (state.iteration_count < maximum_iterations) & (~state.converged)
+
+    def body_function(state: NullLogisticFitState) -> NullLogisticFitState:
+        linear_predictor = covariate_matrix @ state.coefficients + loco_offset
         fitted_probability = compute_logistic_probability(linear_predictor)
         weight_vector = jnp.maximum(fitted_probability * (1.0 - fitted_probability), MINIMUM_VARIANCE)
         score_vector = covariate_matrix.T @ (phenotype_vector - fitted_probability)
@@ -236,24 +253,42 @@ def fit_null_logistic_coefficients(
             information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * MINIMUM_VARIANCE
         )
         coefficient_delta = regenie2_linear.solve_positive_definite_system(cholesky_factor, score_vector)
-        return coefficient_vector + coefficient_delta
+        updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)
+        converged = (updated_iteration_count > 0) & (
+            jnp.max(jnp.abs(coefficient_delta)) <= NULL_LOGISTIC_COEFFICIENT_TOLERANCE
+        )
+        return NullLogisticFitState(
+            coefficients=state.coefficients + coefficient_delta,
+            iteration_count=updated_iteration_count,
+            converged=converged,
+        )
 
     initial_coefficients = jnp.zeros(covariate_count, dtype=jnp.float32)
-    return jax.lax.fori_loop(0, maximum_iterations, update_coefficients, initial_coefficients)
+    return jax.lax.while_loop(
+        condition_function,
+        body_function,
+        NullLogisticFitState(
+            coefficients=initial_coefficients,
+            iteration_count=jnp.asarray(0, dtype=jnp.int32),
+            converged=jnp.asarray(0, dtype=jnp.bool_),
+        ),
+    )
 
 
-@jax.jit
+@functools.partial(jax.jit, static_argnames=("correction_plan",))
 def prepare_regenie2_binary_chromosome_state(
     state: regenie2_types.Regenie2BinaryState,
     loco_offset: jax.Array,
+    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
 ) -> regenie2_types.Regenie2BinaryChromosomeState:
     """Prepare chromosome-specific null logistic state reused across chunks."""
     loco_offset_float32 = jnp.asarray(loco_offset, dtype=jnp.float32)
-    null_logistic_coefficients = fit_null_logistic_coefficients(
+    null_logistic_fit_state = fit_null_logistic_coefficients(
         state.covariate_matrix,
         state.phenotype_vector,
         loco_offset_float32,
     )
+    null_logistic_coefficients = null_logistic_fit_state.coefficients
     fitted_probability = compute_logistic_probability(
         state.covariate_matrix @ null_logistic_coefficients + loco_offset_float32
     )
@@ -274,12 +309,15 @@ def prepare_regenie2_binary_chromosome_state(
         left_side=True,
         lower=True,
     )
-    null_firth_penalized_log_likelihood = fit_covariate_only_firth_null_model(
-        covariate_matrix=state.covariate_matrix,
-        phenotype_vector=state.phenotype_vector,
-        loco_offset=loco_offset_float32,
-        initial_coefficients=null_logistic_coefficients,
-    )
+    if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
+        null_firth_penalized_log_likelihood = jnp.asarray(0.0, dtype=jnp.float32)
+    else:
+        null_firth_penalized_log_likelihood = fit_covariate_only_firth_null_model(
+            covariate_matrix=state.covariate_matrix,
+            phenotype_vector=state.phenotype_vector,
+            loco_offset=loco_offset_float32,
+            initial_coefficients=null_logistic_coefficients,
+        )
     return regenie2_types.Regenie2BinaryChromosomeState(
         covariate_matrix=state.covariate_matrix,
         phenotype_vector=state.phenotype_vector,
@@ -291,6 +329,7 @@ def prepare_regenie2_binary_chromosome_state(
         square_root_weight=square_root_weight,
         weighted_genotype_projection_matrix=weighted_genotype_projection_matrix,
         null_firth_penalized_log_likelihood=null_firth_penalized_log_likelihood,
+        null_logistic_iteration_count=null_logistic_fit_state.iteration_count,
     )
 
 
@@ -1173,7 +1212,7 @@ def compute_regenie2_binary_chunk(
     sparse_candidate_mask: jax.Array | None = None,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association for a genotype chunk."""
-    chromosome_state = prepare_regenie2_binary_chromosome_state(state, loco_offset)
+    chromosome_state = prepare_regenie2_binary_chromosome_state(state, loco_offset, correction_plan)
     compute_regenie2_binary_chunk_from_state = typing.cast(
         "BinaryChunkComputeFunction",
         compute_regenie2_binary_chunk_from_chromosome_state,
