@@ -16,6 +16,7 @@ import numpy.typing as npt
 
 import g._core as core
 import g.compute.regenie2_binary as regenie2_binary
+import g.compute.regenie2_binary_diagnostics as regenie2_binary_diagnostics
 import g.compute.regenie2_binary_types as regenie2_binary_types
 import g.compute.regenie2_linear as regenie2_linear
 import g.compute.regenie2_linear_types as regenie2_linear_types
@@ -74,52 +75,20 @@ def record_binary_chunk_diagnostics(
     """Record binary candidate and Firth diagnostics for one chunk."""
     if stage_timing_recorder is None:
         return
-    firth_iteration_count = result.firth_iteration_count
-    firth_attempt_mask = firth_iteration_count > 0
-    firth_candidate_count = jnp.sum(firth_attempt_mask, dtype=jnp.int32)
-    finite_iteration_count = jnp.where(firth_attempt_mask, firth_iteration_count, jnp.asarray(0, dtype=jnp.int32))
-    sorted_active_iteration_count = jnp.sort(
-        jnp.where(firth_attempt_mask, firth_iteration_count, np.iinfo(np.int32).max)
-    )
-    median_iteration_index = jnp.maximum((firth_candidate_count - 1) // 2, 0)
-    diagnostics = jax.device_get(
-        {
-            "score_test_candidate_count": jnp.sum(
-                (result.extra_code == regenie2_binary.EXTRA_CODE_FIRTH)
-                | (result.extra_code == regenie2_binary.EXTRA_CODE_SPA)
-                | (result.extra_code == regenie2_binary.EXTRA_CODE_TEST_FAIL),
-                dtype=jnp.int32,
-            ),
-            "firth_candidate_count": firth_candidate_count,
-            "firth_iteration_min": jnp.where(
-                firth_candidate_count > 0,
-                sorted_active_iteration_count[0],
-                jnp.asarray(0, dtype=jnp.int32),
-            ),
-            "firth_iteration_median": jnp.where(
-                firth_candidate_count > 0,
-                sorted_active_iteration_count[median_iteration_index],
-                jnp.asarray(0, dtype=jnp.int32),
-            ),
-            "firth_iteration_max": jnp.max(finite_iteration_count),
-            "firth_converged_count": jnp.sum(result.extra_code == regenie2_binary.EXTRA_CODE_FIRTH, dtype=jnp.int32),
-            "firth_failed_count": jnp.sum(result.extra_code == regenie2_binary.EXTRA_CODE_TEST_FAIL, dtype=jnp.int32),
-            "firth_numerical_failure_count": jnp.sum(
-                result.firth_failure_code == regenie2_binary.FIRTH_FAILURE_NUMERICAL,
-                dtype=jnp.int32,
-            ),
-            "firth_max_iteration_failure_count": jnp.sum(
-                result.firth_failure_code == regenie2_binary.FIRTH_FAILURE_MAX_ITERATIONS,
-                dtype=jnp.int32,
-            ),
-            "firth_invalid_statistic_failure_count": jnp.sum(
-                result.firth_failure_code == regenie2_binary.FIRTH_FAILURE_INVALID_STATISTIC,
-                dtype=jnp.int32,
-            ),
-        }
-    )
+    diagnostics = jax.device_get(regenie2_binary_diagnostics.count_binary_chunk_diagnostics(result))
     stage_timing_recorder.add_binary_chunk_diagnostics(
-        {key: int(value) if key != "firth_iteration_median" else float(value) for key, value in diagnostics.items()}
+        {
+            "score_test_candidate_count": int(diagnostics.score_test_candidate_count),
+            "firth_candidate_count": int(diagnostics.firth_candidate_count),
+            "firth_iteration_min": int(diagnostics.firth_iteration_min),
+            "firth_iteration_median": float(diagnostics.firth_iteration_median),
+            "firth_iteration_max": int(diagnostics.firth_iteration_max),
+            "firth_converged_count": int(diagnostics.firth_converged_count),
+            "firth_failed_count": int(diagnostics.firth_failed_count),
+            "firth_numerical_failure_count": int(diagnostics.firth_numerical_failure_count),
+            "firth_max_iteration_failure_count": int(diagnostics.firth_max_iteration_failure_count),
+            "firth_invalid_statistic_failure_count": int(diagnostics.firth_invalid_statistic_failure_count),
+        }
     )
 
 

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+import g.compute.regenie2_binary_diagnostics as regenie2_binary_diagnostics
 from g import types
 from g.compute import regenie2_binary_types as regenie2_types
 from g.compute import regenie2_linear
@@ -18,14 +19,14 @@ from g.compute import regenie2_linear
 MINIMUM_PROBABILITY = 1.0e-6
 MINIMUM_VARIANCE = 1.0e-8
 DEFAULT_MAXIMUM_NULL_ITERATIONS = 50
-EXTRA_CODE_SCORE = 0
-EXTRA_CODE_FIRTH = 1
-EXTRA_CODE_SPA = 2
-EXTRA_CODE_TEST_FAIL = 3
-FIRTH_FAILURE_NONE = 0
-FIRTH_FAILURE_NUMERICAL = 1
-FIRTH_FAILURE_MAX_ITERATIONS = 2
-FIRTH_FAILURE_INVALID_STATISTIC = 3
+EXTRA_CODE_SCORE = regenie2_binary_diagnostics.EXTRA_CODE_SCORE
+EXTRA_CODE_FIRTH = regenie2_binary_diagnostics.EXTRA_CODE_FIRTH
+EXTRA_CODE_SPA = regenie2_binary_diagnostics.EXTRA_CODE_SPA
+EXTRA_CODE_TEST_FAIL = regenie2_binary_diagnostics.EXTRA_CODE_TEST_FAIL
+FIRTH_FAILURE_NONE = regenie2_binary_diagnostics.FIRTH_FAILURE_NONE
+FIRTH_FAILURE_NUMERICAL = regenie2_binary_diagnostics.FIRTH_FAILURE_NUMERICAL
+FIRTH_FAILURE_MAX_ITERATIONS = regenie2_binary_diagnostics.FIRTH_FAILURE_MAX_ITERATIONS
+FIRTH_FAILURE_INVALID_STATISTIC = regenie2_binary_diagnostics.FIRTH_FAILURE_INVALID_STATISTIC
 INITIAL_RESPONSE_SCALE = 4.863891244002886
 BINARY_CASE_THRESHOLD = 0.5
 ALLELE_COUNT_MULTIPLIER = 2.0
