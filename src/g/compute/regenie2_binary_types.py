@@ -142,3 +142,80 @@ class Regenie2BinaryChunkResult:
     valid_mask: jax.Array
     firth_iteration_count: jax.Array
     firth_failure_code: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2MultiBinaryState:
+    """Reusable state for multi-trait binary REGENIE step 2 association.
+
+    Attributes:
+        covariate_matrix: Covariate design matrix including intercept.
+        phenotype_matrix: Binary phenotype matrix with shape ``traits x samples``.
+        sample_count: Number of samples.
+
+    """
+
+    covariate_matrix: jax.Array
+    phenotype_matrix: jax.Array
+    sample_count: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2MultiBinaryChromosomeState:
+    """Trait-major chromosome-specific binary null model state.
+
+    Attributes:
+        covariate_matrix: Shared covariate design matrix including intercept.
+        phenotype_matrix: Binary phenotype matrix with shape ``traits x samples``.
+        null_logistic_coefficients: Per-trait null logistic coefficients.
+        fitted_probability: Per-trait null-model fitted probabilities.
+        score_residual: Per-trait raw score residuals.
+        loco_offset_matrix: Per-trait LOCO offsets.
+        standardized_residual: Per-trait Pearson residuals.
+        square_root_weight: Per-trait square root Bernoulli variance.
+        weighted_genotype_projection_matrix: Per-trait weighted covariate projection matrix.
+        null_firth_penalized_log_likelihood: Per-trait Firth null penalized log-likelihood.
+        null_logistic_iteration_count: Per-trait null IRLS iteration counts.
+
+    """
+
+    covariate_matrix: jax.Array
+    phenotype_matrix: jax.Array
+    null_logistic_coefficients: jax.Array
+    fitted_probability: jax.Array
+    score_residual: jax.Array
+    loco_offset_matrix: jax.Array
+    standardized_residual: jax.Array
+    square_root_weight: jax.Array
+    weighted_genotype_projection_matrix: jax.Array
+    null_firth_penalized_log_likelihood: jax.Array
+    null_logistic_iteration_count: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2MultiBinaryChunkResult:
+    """Trait-major association outputs for a multi-trait binary chunk.
+
+    Attributes:
+        beta: Estimated effect sizes with shape ``traits x variants``.
+        standard_error: Standard errors with shape ``traits x variants``.
+        chi_squared: Chi-squared statistics with shape ``traits x variants``.
+        log10_p_value: Negative log10 p-values with shape ``traits x variants``.
+        extra_code: Integer correction codes with shape ``traits x variants``.
+        valid_mask: Boolean mask for valid statistics with shape ``traits x variants``.
+        firth_iteration_count: Firth iteration counts with shape ``traits x variants``.
+        firth_failure_code: Firth failure-reason codes with shape ``traits x variants``.
+
+    """
+
+    beta: jax.Array
+    standard_error: jax.Array
+    chi_squared: jax.Array
+    log10_p_value: jax.Array
+    extra_code: jax.Array
+    valid_mask: jax.Array
+    firth_iteration_count: jax.Array
+    firth_failure_code: jax.Array

@@ -409,6 +409,73 @@ class TestComputeRegenie2LinearChunk:
         assert not jnp.allclose(result_no_loco.beta, result_with_loco.beta)
         assert not jnp.allclose(result_no_loco.chi_squared, result_with_loco.chi_squared)
 
+    def test_multi_trait_kernel_matches_stacked_single_trait_results(self) -> None:
+        """Ensure multi-trait computation matches stacked single-trait computation."""
+        sample_count = 96
+        variant_count = 6
+        covariate_count = 3
+        trait_count = 2
+
+        rng = np.random.default_rng(31)
+        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
+        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
+        covariate_matrix[:, 2] = rng.standard_normal(sample_count).astype(np.float32)
+        phenotype_matrix = jnp.asarray(rng.standard_normal((trait_count, sample_count)), dtype=jnp.float32)
+        genotype_matrix = jnp.asarray(
+            rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32),
+            dtype=jnp.float32,
+        )
+        loco_prediction_matrix = jnp.asarray(
+            rng.standard_normal((trait_count, sample_count)) * 0.1,
+            dtype=jnp.float32,
+        )
+
+        multi_state = regenie2_linear.prepare_regenie2_multi_linear_state(
+            covariate_matrix=jnp.asarray(covariate_matrix),
+            phenotype_matrix=phenotype_matrix,
+        )
+        multi_chromosome_state = regenie2_linear.prepare_regenie2_multi_linear_chromosome_state(
+            multi_state,
+            loco_prediction_matrix,
+        )
+        multi_result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state(
+            multi_chromosome_state,
+            genotype_matrix,
+        )
+
+        single_results = []
+        for trait_index in range(trait_count):
+            single_state = regenie2_linear.prepare_regenie2_linear_state(
+                covariate_matrix=jnp.asarray(covariate_matrix),
+                phenotype_vector=phenotype_matrix[trait_index],
+            )
+            single_results.append(
+                regenie2_linear.compute_regenie2_linear_chunk(
+                    state=single_state,
+                    genotype_matrix=genotype_matrix,
+                    loco_predictions=loco_prediction_matrix[trait_index],
+                )
+            )
+
+        numpy.testing.assert_allclose(
+            np.asarray(multi_result.beta),
+            np.stack([np.asarray(result.beta) for result in single_results], axis=0),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        numpy.testing.assert_allclose(
+            np.asarray(multi_result.standard_error),
+            np.stack([np.asarray(result.standard_error) for result in single_results], axis=0),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        numpy.testing.assert_allclose(
+            np.asarray(multi_result.chi_squared),
+            np.stack([np.asarray(result.chi_squared) for result in single_results], axis=0),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+
 
 class TestSolvePositiveDefiniteSystem:
     """Tests for solve_positive_definite_system."""

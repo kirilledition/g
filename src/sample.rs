@@ -28,6 +28,22 @@ pub struct AlignedSampleData {
     pub is_binary_trait: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct MultiAlignedSampleData {
+    pub sample_indices: Vec<i64>,
+    pub family_identifiers: Vec<String>,
+    pub individual_identifiers: Vec<String>,
+    pub phenotype_names: Vec<String>,
+    pub phenotype_matrix_values: Vec<f32>,
+    pub phenotype_row_count: usize,
+    pub phenotype_column_count: usize,
+    pub covariate_names: Vec<String>,
+    pub covariate_matrix_values: Vec<f32>,
+    pub covariate_row_count: usize,
+    pub covariate_column_count: usize,
+    pub is_binary_trait: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct AlignmentInputs {
     pub sample_indices: Vec<i64>,
@@ -35,6 +51,20 @@ pub struct AlignmentInputs {
     pub individual_identifiers: Vec<String>,
     pub phenotype_path: String,
     pub phenotype_name: String,
+    pub covariate_path: Option<String>,
+    pub covariate_names: Option<Vec<String>>,
+    pub is_binary_trait: bool,
+    pub sample_key_mode: SampleKeyMode,
+    pub allow_duplicate_iid_alignment: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct MultiAlignmentInputs {
+    pub sample_indices: Vec<i64>,
+    pub family_identifiers: Vec<String>,
+    pub individual_identifiers: Vec<String>,
+    pub phenotype_path: String,
+    pub phenotype_names: Vec<String>,
     pub covariate_path: Option<String>,
     pub covariate_names: Option<Vec<String>>,
     pub is_binary_trait: bool,
@@ -59,6 +89,13 @@ struct RawCovariateRecord {
 enum SampleKey {
     Iid(String),
     FidIid { family_identifier: String, individual_identifier: String },
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct AlignedSampleKey {
+    sample_index: i64,
+    family_identifier: String,
+    individual_identifier: String,
 }
 
 struct SampleIdentifierData {
@@ -108,6 +145,59 @@ impl AlignedSampleData {
             covariate_names,
             covariate_matrix_values,
             covariate_row_count,
+            covariate_column_count,
+            is_binary_trait,
+        }
+    }
+}
+
+impl MultiAlignedSampleData {
+    fn new(
+        phenotype_names: Vec<String>,
+        aligned_sample_data_by_trait: &[AlignedSampleData],
+        common_positions_by_trait: &[Vec<usize>],
+        is_binary_trait: bool,
+    ) -> Self {
+        let first_aligned_sample_data = &aligned_sample_data_by_trait[0];
+        let first_common_positions = &common_positions_by_trait[0];
+        let sample_count = first_common_positions.len();
+        let trait_count = aligned_sample_data_by_trait.len();
+        let covariate_column_count = first_aligned_sample_data.covariate_column_count;
+        let mut sample_indices = Vec::with_capacity(sample_count);
+        let mut family_identifiers = Vec::with_capacity(sample_count);
+        let mut individual_identifiers = Vec::with_capacity(sample_count);
+        let mut phenotype_matrix_values = Vec::with_capacity(trait_count * sample_count);
+        let mut covariate_matrix_values = Vec::with_capacity(sample_count * covariate_column_count);
+
+        for position in first_common_positions {
+            sample_indices.push(first_aligned_sample_data.sample_indices[*position]);
+            family_identifiers.push(first_aligned_sample_data.family_identifiers[*position].clone());
+            individual_identifiers.push(first_aligned_sample_data.individual_identifiers[*position].clone());
+            let covariate_row_start = position * covariate_column_count;
+            covariate_matrix_values.extend(
+                &first_aligned_sample_data.covariate_matrix_values
+                    [covariate_row_start..covariate_row_start + covariate_column_count],
+            );
+        }
+        for (aligned_sample_data, common_positions) in
+            aligned_sample_data_by_trait.iter().zip(common_positions_by_trait.iter())
+        {
+            for position in common_positions {
+                phenotype_matrix_values.push(aligned_sample_data.phenotype_vector[*position]);
+            }
+        }
+
+        Self {
+            sample_indices,
+            family_identifiers,
+            individual_identifiers,
+            phenotype_names,
+            phenotype_matrix_values,
+            phenotype_row_count: trait_count,
+            phenotype_column_count: sample_count,
+            covariate_names: first_aligned_sample_data.covariate_names.clone(),
+            covariate_matrix_values,
+            covariate_row_count: sample_count,
             covariate_column_count,
             is_binary_trait,
         }
@@ -194,6 +284,34 @@ pub fn align_sample_data(inputs: AlignmentInputs) -> Result<AlignedSampleData, S
     Ok(AlignedSampleData::new(inputs.phenotype_name, returned_covariate_names, aligned_rows, inputs.is_binary_trait))
 }
 
+pub fn align_multi_sample_data(inputs: MultiAlignmentInputs) -> Result<MultiAlignedSampleData, String> {
+    if inputs.phenotype_names.is_empty() {
+        return Err("At least one phenotype is required for multi-phenotype alignment.".to_string());
+    }
+    let mut aligned_sample_data_by_trait = Vec::with_capacity(inputs.phenotype_names.len());
+    for phenotype_name in &inputs.phenotype_names {
+        aligned_sample_data_by_trait.push(align_sample_data(AlignmentInputs {
+            sample_indices: inputs.sample_indices.clone(),
+            family_identifiers: inputs.family_identifiers.clone(),
+            individual_identifiers: inputs.individual_identifiers.clone(),
+            phenotype_path: inputs.phenotype_path.clone(),
+            phenotype_name: phenotype_name.clone(),
+            covariate_path: inputs.covariate_path.clone(),
+            covariate_names: inputs.covariate_names.clone(),
+            is_binary_trait: inputs.is_binary_trait,
+            sample_key_mode: inputs.sample_key_mode,
+            allow_duplicate_iid_alignment: inputs.allow_duplicate_iid_alignment,
+        })?);
+    }
+    let common_positions_by_trait = build_complete_case_positions(&aligned_sample_data_by_trait)?;
+    Ok(MultiAlignedSampleData::new(
+        inputs.phenotype_names,
+        &aligned_sample_data_by_trait,
+        &common_positions_by_trait,
+        inputs.is_binary_trait,
+    ))
+}
+
 pub fn align_sample_data_from_sample_file(
     sample_path: &Path,
     expected_sample_count: usize,
@@ -219,6 +337,83 @@ pub fn align_sample_data_from_sample_file(
         allow_duplicate_iid_alignment,
     };
     align_sample_data(inputs)
+}
+
+pub fn align_multi_sample_data_from_sample_file(
+    sample_path: &Path,
+    expected_sample_count: usize,
+    phenotype_path: String,
+    phenotype_names: Vec<String>,
+    covariate_path: Option<String>,
+    covariate_names: Option<Vec<String>>,
+    is_binary_trait: bool,
+    sample_key_mode: SampleKeyMode,
+    allow_duplicate_iid_alignment: bool,
+) -> Result<MultiAlignedSampleData, String> {
+    let sample_identifier_data = load_sample_identifier_data_from_sample_file(sample_path, expected_sample_count)?;
+    let inputs = MultiAlignmentInputs {
+        sample_indices: sample_identifier_data.sample_indices,
+        family_identifiers: sample_identifier_data.family_identifiers,
+        individual_identifiers: sample_identifier_data.individual_identifiers,
+        phenotype_path,
+        phenotype_names,
+        covariate_path,
+        covariate_names,
+        is_binary_trait,
+        sample_key_mode,
+        allow_duplicate_iid_alignment,
+    };
+    align_multi_sample_data(inputs)
+}
+
+fn build_complete_case_positions(
+    aligned_sample_data_by_trait: &[AlignedSampleData],
+) -> Result<Vec<Vec<usize>>, String> {
+    let mut positions_by_trait = Vec::with_capacity(aligned_sample_data_by_trait.len());
+    let mut key_sets = Vec::with_capacity(aligned_sample_data_by_trait.len());
+    for aligned_sample_data in aligned_sample_data_by_trait {
+        let mut positions_by_key = HashMap::with_capacity(aligned_sample_data.sample_indices.len());
+        for row_index in 0..aligned_sample_data.sample_indices.len() {
+            let aligned_sample_key = AlignedSampleKey {
+                sample_index: aligned_sample_data.sample_indices[row_index],
+                family_identifier: aligned_sample_data.family_identifiers[row_index].clone(),
+                individual_identifier: aligned_sample_data.individual_identifiers[row_index].clone(),
+            };
+            if positions_by_key.insert(aligned_sample_key.clone(), row_index).is_some() {
+                return Err(format!(
+                    "Duplicate aligned sample key '{}_{}' at BGEN sample index {} prevents unambiguous multi-phenotype complete-case alignment.",
+                    aligned_sample_key.family_identifier,
+                    aligned_sample_key.individual_identifier,
+                    aligned_sample_key.sample_index,
+                ));
+            }
+        }
+        key_sets.push(positions_by_key.keys().cloned().collect::<Vec<_>>());
+        positions_by_trait.push(positions_by_key);
+    }
+
+    let first_aligned_sample_data = &aligned_sample_data_by_trait[0];
+    let mut common_positions_by_trait = vec![Vec::new(); aligned_sample_data_by_trait.len()];
+    for row_index in 0..first_aligned_sample_data.sample_indices.len() {
+        let aligned_sample_key = AlignedSampleKey {
+            sample_index: first_aligned_sample_data.sample_indices[row_index],
+            family_identifier: first_aligned_sample_data.family_identifiers[row_index].clone(),
+            individual_identifier: first_aligned_sample_data.individual_identifiers[row_index].clone(),
+        };
+        if !key_sets.iter().all(|key_set| key_set.contains(&aligned_sample_key)) {
+            continue;
+        }
+        for (trait_index, positions_by_key) in positions_by_trait.iter().enumerate() {
+            let position = positions_by_key
+                .get(&aligned_sample_key)
+                .ok_or_else(|| "Internal multi-phenotype alignment key mismatch.".to_string())?;
+            common_positions_by_trait[trait_index].push(*position);
+        }
+    }
+    if common_positions_by_trait[0].is_empty() {
+        return Err("No aligned samples remain after complete-case multi-phenotype intersection.".to_string());
+    }
+    Ok(common_positions_by_trait)
 }
 
 fn validate_alignment_input_lengths(inputs: &AlignmentInputs) -> Result<(), String> {

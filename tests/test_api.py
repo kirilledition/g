@@ -245,11 +245,13 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
 
 
 def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:
-    with patch("g.api.run_one_phenotype_config") as mock_run_one_phenotype_config:
-        mock_run_one_phenotype_config.side_effect = [
-            api.RunArtifacts(output_run_directory=Path("one")),
-            api.RunArtifacts(output_run_directory=Path("two")),
-        ]
+    with patch("g.api.run_multi_phenotype_config") as mock_run_multi_phenotype_config:
+        mock_run_multi_phenotype_config.return_value = api.RunArtifacts(
+            phenotype_artifacts=(
+                api.RunArtifacts(output_run_directory=Path("one")),
+                api.RunArtifacts(output_run_directory=Path("two")),
+            )
+        )
         artifacts = api.regenie.from_options(
             {
                 "step": 2,
@@ -263,8 +265,8 @@ def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:
         )
 
     assert len(artifacts.phenotype_artifacts) == 2
-    assert mock_run_one_phenotype_config.call_args_list[0].args[1] == "one"
-    assert mock_run_one_phenotype_config.call_args_list[1].args[1] == "two"
+    mock_run_multi_phenotype_config.assert_called_once()
+    assert mock_run_multi_phenotype_config.call_args.args[0].input.pheno_columns == ("one", "two")
 
 
 def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:

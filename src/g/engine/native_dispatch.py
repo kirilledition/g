@@ -49,6 +49,32 @@ class NativeBgenRunInput:
     is_binary_trait: bool
 
 
+@dataclass(frozen=True)
+class NativeBgenMultiRunInput:
+    """Sample-aligned inputs for a shared multi-phenotype native BGEN run.
+
+    Attributes:
+        native_multi_aligned_sample_data: Rust-owned complete-case aligned multi-phenotype data.
+        phenotype_names: Phenotype names in trait-major matrix order.
+        sample_indices: BGEN sample indices for native chunk delivery.
+        family_identifiers: Family identifiers for the shared sample set.
+        individual_identifiers: Individual identifiers for the shared sample set.
+        phenotype_matrix: JAX trait-major phenotype matrix.
+        covariate_matrix: JAX shared design matrix.
+        is_binary_trait: Whether the run is for binary traits.
+
+    """
+
+    native_multi_aligned_sample_data: core.NativeMultiAlignedSampleData
+    phenotype_names: tuple[str, ...]
+    sample_indices: npt.NDArray[np.int64]
+    family_identifiers: tuple[str, ...]
+    individual_identifiers: tuple[str, ...]
+    phenotype_matrix: jax.Array
+    covariate_matrix: jax.Array
+    is_binary_trait: bool
+
+
 def build_native_bgen_run_input(
     native_aligned_sample_data: core.NativeAlignedSampleData,
 ) -> NativeBgenRunInput:
@@ -59,6 +85,22 @@ def build_native_bgen_run_input(
         phenotype_vector=jnp.asarray(native_aligned_sample_data.phenotype_vector, dtype=jnp.float32),
         covariate_matrix=jnp.asarray(native_aligned_sample_data.covariate_matrix, dtype=jnp.float32),
         is_binary_trait=native_aligned_sample_data.is_binary_trait,
+    )
+
+
+def build_native_bgen_multi_run_input(
+    native_multi_aligned_sample_data: core.NativeMultiAlignedSampleData,
+) -> NativeBgenMultiRunInput:
+    """Build Python/JAX views over Rust-owned complete-case multi-phenotype data."""
+    return NativeBgenMultiRunInput(
+        native_multi_aligned_sample_data=native_multi_aligned_sample_data,
+        phenotype_names=tuple(native_multi_aligned_sample_data.phenotype_names),
+        sample_indices=np.ascontiguousarray(native_multi_aligned_sample_data.sample_indices, dtype=np.int64),
+        family_identifiers=tuple(native_multi_aligned_sample_data.family_identifiers),
+        individual_identifiers=tuple(native_multi_aligned_sample_data.individual_identifiers),
+        phenotype_matrix=jnp.asarray(native_multi_aligned_sample_data.phenotype_matrix, dtype=jnp.float32),
+        covariate_matrix=jnp.asarray(native_multi_aligned_sample_data.covariate_matrix, dtype=jnp.float32),
+        is_binary_trait=native_multi_aligned_sample_data.is_binary_trait,
     )
 
 
@@ -92,6 +134,30 @@ def load_native_aligned_sample_data(
         str(sample_path) if sample_path is not None else None,
         str(phenotype_path),
         phenotype_name,
+        str(covariate_path) if covariate_path is not None else None,
+        list(covariate_names) if covariate_names is not None else None,
+        is_binary_trait,
+        sample_key_mode=resolve_sample_key_mode(alignment_config).value,
+        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
+    )
+
+
+def load_native_multi_aligned_sample_data(
+    *,
+    engine: core.Regenie2RunEngine,
+    sample_path: Path | None,
+    phenotype_path: Path,
+    phenotype_names: tuple[str, ...],
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    is_binary_trait: bool,
+    alignment_config: SampleAlignmentConfigProtocol | None = None,
+) -> core.NativeMultiAlignedSampleData:
+    """Load Rust-owned complete-case multi-phenotype sample data."""
+    return engine.align_multi_sample_data(
+        str(sample_path) if sample_path is not None else None,
+        str(phenotype_path),
+        list(phenotype_names),
         str(covariate_path) if covariate_path is not None else None,
         list(covariate_names) if covariate_names is not None else None,
         is_binary_trait,
@@ -136,6 +202,36 @@ def load_native_bgen_run_input(
     return build_native_bgen_run_input_callable(native_aligned_sample_data)
 
 
+def load_native_bgen_multi_run_input(
+    *,
+    genotype_source_config: source.GenotypeSourceConfig,
+    engine: core.Regenie2RunEngine,
+    phenotype_path: Path,
+    phenotype_names: tuple[str, ...],
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    is_binary_trait: bool,
+    alignment_config: SampleAlignmentConfigProtocol | None = None,
+) -> NativeBgenMultiRunInput:
+    """Load native complete-case multi-phenotype samples and JAX compute inputs."""
+    source.validate_genotype_source_config(genotype_source_config)
+    resolved_sample_path = source.resolve_bgen_sample_path(
+        genotype_source_config.source_path,
+        genotype_source_config.sample_path,
+    )
+    native_multi_aligned_sample_data = load_native_multi_aligned_sample_data(
+        engine=engine,
+        sample_path=resolved_sample_path,
+        phenotype_path=phenotype_path,
+        phenotype_names=phenotype_names,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
+        is_binary_trait=is_binary_trait,
+        alignment_config=alignment_config,
+    )
+    return build_native_bgen_multi_run_input(native_multi_aligned_sample_data)
+
+
 def build_regenie_prediction_source(
     *,
     prediction_list_path: Path,
@@ -148,6 +244,21 @@ def build_regenie_prediction_source(
         str(prediction_list_path),
         phenotype_name,
         run_input.native_aligned_sample_data,
+        sample_key_mode=resolve_sample_key_mode(alignment_config).value,
+        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
+    )
+
+
+def build_multi_regenie_prediction_source(
+    *,
+    prediction_list_path: Path,
+    run_input: NativeBgenMultiRunInput,
+    alignment_config: SampleAlignmentConfigProtocol | None = None,
+) -> core.MultiRegeniePredictionSource:
+    """Load native multi-trait REGENIE step 1 predictions aligned to shared samples."""
+    return core.MultiRegeniePredictionSource.from_native_multi_aligned_sample_data(
+        str(prediction_list_path),
+        run_input.native_multi_aligned_sample_data,
         sample_key_mode=resolve_sample_key_mode(alignment_config).value,
         allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
     )

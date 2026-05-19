@@ -112,6 +112,22 @@ def run_regenie2_binary_bgen_pipeline(**kwargs: typing.Any) -> Path | None:
     return typing.cast("Path | None", load_engine_module().run_regenie2_binary_bgen_pipeline(**kwargs))
 
 
+def run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs: typing.Any) -> tuple[Path | None, ...]:
+    """Run the multi-phenotype linear native pipeline lazily."""
+    return typing.cast(
+        "tuple[Path | None, ...]",
+        load_engine_module().run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs),
+    )
+
+
+def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> tuple[Path | None, ...]:
+    """Run the multi-phenotype binary native pipeline lazily."""
+    return typing.cast(
+        "tuple[Path | None, ...]",
+        load_engine_module().run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs),
+    )
+
+
 def normalize_binary_correction_config(binary_config: BinaryConfig) -> types.BinaryCorrectionPlan:
     """Normalize REGENIE-style binary correction flags into an internal plan."""
     if not (0.0 < binary_config.p_threshold < 1.0):
@@ -170,12 +186,186 @@ def run_regenie_config(regenie_config: RegenieConfig) -> RunArtifacts:
     """Run the shared REGENIE-compatible config path."""
     interface_config.validate_config(regenie_config)
     configure_runtime(regenie_config.g_compute, regenie_config.trait)
+    if len(regenie_config.input.pheno_columns) > 1:
+        return run_multi_phenotype_config(regenie_config)
     phenotype_artifacts: list[RunArtifacts] = []
     for phenotype_name in regenie_config.input.pheno_columns:
         phenotype_artifacts.append(run_one_phenotype_config(regenie_config, phenotype_name))
     if len(phenotype_artifacts) == 1:
         return phenotype_artifacts[0]
     return RunArtifacts(phenotype_artifacts=tuple(phenotype_artifacts))
+
+
+@dataclass(frozen=True)
+class RegenieMultiRunPlan:
+    """Prepared execution plan for one native multi-phenotype engine run."""
+
+    phenotype_names: tuple[str, ...]
+    association_mode: types.AssociationMode
+    genotype_source_config: source.GenotypeSourceConfig
+    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...]
+    committed_chunk_identifiers_by_phenotype: tuple[set[int], ...]
+    binary_correction_plan: types.BinaryCorrectionPlan
+    engine_config: EngineRunConfig
+
+
+def run_multi_phenotype_config(regenie_config: RegenieConfig) -> RunArtifacts:
+    """Run multiple phenotypes through one shared native engine delivery."""
+    output_prefix = typing.cast("Path", regenie_config.g_output.out)
+    output_run_root = regenie_config.g_output.output_run_directory or output_prefix.with_name(f"{output_prefix.name}.g")
+    api_entry_start_time = time.perf_counter()
+    stage_timing_recorder = None
+    try:
+        device_start_time = time.perf_counter()
+        configure_jax_device(regenie_config.g_compute.device)
+        stage_timing_recorder = build_stage_timing_recorder(regenie_config.g_diagnostics.stage_timings_json)
+        record_stage_duration(stage_timing_recorder, "jax_device_configuration_backend_init", device_start_time)
+        plan = build_regenie_multi_run_plan(regenie_config, output_run_root)
+        final_parquet_paths = dispatch_multi_engine_pipeline(
+            regenie_config=regenie_config,
+            plan=plan,
+            stage_timing_recorder=stage_timing_recorder,
+        )
+        phenotype_artifacts = build_multi_phenotype_artifacts(
+            regenie_config=regenie_config,
+            output_prefix=output_prefix,
+            phenotype_names=plan.phenotype_names,
+            output_run_paths_by_phenotype=plan.output_run_paths_by_phenotype,
+            final_parquet_paths=final_parquet_paths,
+        )
+        return RunArtifacts(phenotype_artifacts=phenotype_artifacts)
+    finally:
+        if stage_timing_recorder is not None:
+            record_stage_duration(stage_timing_recorder, "python_api_entry", api_entry_start_time)
+            write_stage_timing_snapshot(stage_timing_recorder, regenie_config.g_diagnostics.stage_timings_json)
+
+
+def build_regenie_multi_run_plan(regenie_config: RegenieConfig, output_run_root: Path) -> RegenieMultiRunPlan:
+    """Prepare output sessions and shared engine settings for a multi-phenotype run."""
+    binary_correction_plan = (
+        normalize_binary_correction_config(regenie_config.binary)
+        if regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
+        else types.BinaryCorrectionPlan()
+    )
+    association_mode = (
+        types.AssociationMode.REGENIE2_BINARY
+        if regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
+        else types.AssociationMode.REGENIE2_LINEAR
+    )
+    engine_config = EngineRunConfig(
+        chunk_size=regenie_config.trait.bsize,
+        device=regenie_config.g_compute.device,
+        staging_depth=regenie_config.g_compute.staging_depth,
+        variant_limit=regenie_config.g_compute.variant_limit,
+        output_run_directory=output_run_root,
+        resume=regenie_config.g_output.resume,
+        resume_mode=regenie_config.g_output.resume_mode,
+        finalize_parquet=regenie_config.g_output.format in {types.OutputFormat.PARQUET, types.OutputFormat.BOTH}
+        or regenie_config.g_output.finalize_parquet,
+        writer_threads=regenie_config.g_output.writer_threads,
+        writer_queue_depth=regenie_config.g_output.writer_queue_depth,
+        chunks_per_arrow_file=regenie_config.g_output.chunks_per_arrow_file,
+        arrow_compression=regenie_config.g_output.arrow_compression,
+        trusted_no_missing_diploid=regenie_config.g_compute.trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=regenie_config.g_compute.trusted_bgen_validation_mode,
+        alignment_config=regenie_config.g_compute,
+    )
+    prepared_output_runs = tuple(
+        output.prepare_output_run(
+            output_root=output_run_root / phenotype_name,
+            association_mode=association_mode,
+            resume=engine_config.resume,
+            resume_mode=engine_config.resume_mode,
+        )
+        for phenotype_name in regenie_config.input.pheno_columns
+    )
+    return RegenieMultiRunPlan(
+        phenotype_names=regenie_config.input.pheno_columns,
+        association_mode=association_mode,
+        genotype_source_config=source.build_bgen_source_config(
+            typing.cast("Path", regenie_config.input.bgen),
+            regenie_config.input.sample,
+        ),
+        output_run_paths_by_phenotype=tuple(
+            prepared_output_run.output_run_paths for prepared_output_run in prepared_output_runs
+        ),
+        committed_chunk_identifiers_by_phenotype=tuple(
+            set(prepared_output_run.committed_chunk_identifiers) for prepared_output_run in prepared_output_runs
+        ),
+        binary_correction_plan=binary_correction_plan,
+        engine_config=engine_config,
+    )
+
+
+def dispatch_multi_engine_pipeline(
+    *,
+    regenie_config: RegenieConfig,
+    plan: RegenieMultiRunPlan,
+    stage_timing_recorder: typing.Any,
+) -> tuple[Path | None, ...]:
+    """Dispatch multiple phenotypes to the shared native pipeline."""
+    common_arguments = {
+        "genotype_source_config": plan.genotype_source_config,
+        "phenotype_path": typing.cast("Path", regenie_config.input.pheno_file),
+        "phenotype_names": plan.phenotype_names,
+        "prediction_list_path": typing.cast("Path", regenie_config.input.pred),
+        "covariate_path": regenie_config.input.covar_file,
+        "covariate_names": regenie_config.input.covar_columns or None,
+        "chunk_size": plan.engine_config.chunk_size,
+        "variant_limit": plan.engine_config.variant_limit,
+        "staging_depth": plan.engine_config.staging_depth,
+        "output_run_paths_by_phenotype": plan.output_run_paths_by_phenotype,
+        "committed_chunk_identifiers_by_phenotype": plan.committed_chunk_identifiers_by_phenotype,
+        "finalize_parquet": plan.engine_config.finalize_parquet,
+        "writer_thread_count": plan.engine_config.writer_threads,
+        "writer_queue_depth": plan.engine_config.writer_queue_depth,
+        "chunks_per_arrow_file": plan.engine_config.chunks_per_arrow_file,
+        "arrow_compression": plan.engine_config.arrow_compression,
+        "trusted_no_missing_diploid": plan.engine_config.trusted_no_missing_diploid,
+        "trusted_bgen_validation_mode": plan.engine_config.trusted_bgen_validation_mode,
+        "stage_timing_recorder": stage_timing_recorder,
+        "alignment_config": plan.engine_config.alignment_config,
+    }
+    if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
+        return run_regenie2_multi_phenotype_binary_bgen_pipeline(
+            **common_arguments,
+            correction_plan=plan.binary_correction_plan,
+        )
+    return run_regenie2_multi_phenotype_linear_bgen_pipeline(**common_arguments)
+
+
+def build_multi_phenotype_artifacts(
+    *,
+    regenie_config: RegenieConfig,
+    output_prefix: Path,
+    phenotype_names: tuple[str, ...],
+    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    final_parquet_paths: tuple[Path | None, ...],
+) -> tuple[RunArtifacts, ...]:
+    """Finalize per-phenotype metadata and user-facing artifacts after a multi run."""
+    phenotype_artifacts: list[RunArtifacts] = []
+    for phenotype_name, output_run_paths, final_parquet_path in zip(
+        phenotype_names,
+        output_run_paths_by_phenotype,
+        final_parquet_paths,
+        strict=True,
+    ):
+        effective_config_path = output_run_paths.run_directory / "effective_config.toml"
+        interface_config.write_toml(regenie_config, effective_config_path)
+        extend_run_manifest(output_run_paths.run_directory, regenie_config, phenotype_name, effective_config_path)
+        final_regenie_path = None
+        if regenie_config.g_output.format in {types.OutputFormat.REGENIE, types.OutputFormat.BOTH}:
+            final_regenie_path = output_prefix.with_name(f"{output_prefix.name}_{phenotype_name}.regenie")
+            output.finalize_chunks_to_regenie_text(output_run_paths, final_regenie_path)
+        phenotype_artifacts.append(
+            RunArtifacts(
+                output_run_directory=output_run_paths.run_directory,
+                final_parquet=final_parquet_path,
+                final_regenie=final_regenie_path,
+                effective_config=effective_config_path,
+            )
+        )
+    return tuple(phenotype_artifacts)
 
 
 def run_one_phenotype_config(regenie_config: RegenieConfig, phenotype_name: str) -> RunArtifacts:
