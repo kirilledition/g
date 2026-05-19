@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import typing
 import json
+import typing
 from pathlib import Path
 
 import numpy as np
@@ -213,7 +213,7 @@ def test_prepare_output_run_strict_resume_requires_manifest(tmp_path: Path) -> N
     chunks_directory = run_directory / "chunks"
     chunks_directory.mkdir(parents=True)
 
-    with pytest.raises(ValueError, match="Strict resume requires run_manifest.json"):
+    with pytest.raises(ValueError, match=r"Strict resume requires run_manifest\.json"):
         output.prepare_output_run(
             output_root=tmp_path / "output",
             association_mode=AssociationMode.REGENIE2_LINEAR,

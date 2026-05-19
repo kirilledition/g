@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import re
 import typing
 from dataclasses import dataclass
@@ -151,6 +151,14 @@ def read_manifest_committed_chunk_identifiers(manifest: dict[str, typing.Any]) -
     return frozenset(chunk_identifiers)
 
 
+def require_integer_scalar(value: object, column_name: str) -> int:
+    """Return a Polars scalar as an integer when it has integer semantics."""
+    if isinstance(value, bool) or not isinstance(value, typing.SupportsIndex):
+        message = f"Expected integer scalar for column {column_name}."
+        raise ValueError(message)
+    return int(value)
+
+
 def validate_strict_manifest_chunks(
     output_run_paths: OutputRunPaths,
     manifest: dict[str, typing.Any],
@@ -185,8 +193,14 @@ def validate_strict_manifest_chunks(
         if chunk_rows.height != row_count:
             message = f"Strict resume row count mismatch for chunk {chunk_identifier}."
             raise ValueError(message)
-        observed_start = int(chunk_rows.get_column("variant_start_index").min())
-        observed_stop = int(chunk_rows.get_column("variant_stop_index").max())
+        observed_start = require_integer_scalar(
+            chunk_rows.get_column("variant_start_index").min(),
+            "variant_start_index",
+        )
+        observed_stop = require_integer_scalar(
+            chunk_rows.get_column("variant_stop_index").max(),
+            "variant_stop_index",
+        )
         if observed_start != variant_start_index or observed_stop != variant_stop_index:
             message = f"Strict resume variant range mismatch for chunk {chunk_identifier}."
             raise ValueError(message)

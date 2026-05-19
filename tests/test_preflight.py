@@ -23,7 +23,7 @@ class FakeEngine:
         return (
             selected_chromosomes,
             [f"variant{variant_index}" for variant_index in range(variant_start, variant_stop)],
-            [variant_index for variant_index in range(variant_start, variant_stop)],
+            list(range(variant_start, variant_stop)),
             ["A"] * len(selected_chromosomes),
             ["G"] * len(selected_chromosomes),
         )
