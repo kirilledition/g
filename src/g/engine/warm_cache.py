@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
-from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -12,9 +12,12 @@ import g._core as core
 import g.compute.regenie2_binary as regenie2_binary
 import g.compute.regenie2_linear as regenie2_linear
 import g.engine.callbacks as callbacks
-import g.engine.regenie2_pipeline as regenie2_pipeline
+import g.engine.native_dispatch as native_dispatch
 import g.io.source as source
 import g.types as g_types
+
+if typing.TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -88,14 +91,14 @@ def warm_regenie2_linear_bgen_cache(
     trusted_bgen_validation_mode: g_types.TrustedBgenValidationMode = g_types.TrustedBgenValidationMode.CACHE_ON_MISS,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for quantitative REGENIE step 2."""
-    engine = regenie2_pipeline.build_bgen_run_engine(
+    engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
-    run_input = regenie2_pipeline.load_native_bgen_run_input(
+    run_input = native_dispatch.load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
         phenotype_path=phenotype_path,
@@ -104,7 +107,7 @@ def warm_regenie2_linear_bgen_cache(
         covariate_names=covariate_names,
         is_binary_trait=False,
     )
-    prediction_source = regenie2_pipeline.build_regenie_prediction_source(
+    prediction_source = native_dispatch.build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
         run_input=run_input,
@@ -153,14 +156,14 @@ def warm_regenie2_binary_bgen_cache(
     trusted_bgen_validation_mode: g_types.TrustedBgenValidationMode = g_types.TrustedBgenValidationMode.CACHE_ON_MISS,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for binary REGENIE step 2."""
-    engine = regenie2_pipeline.build_bgen_run_engine(
+    engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
-    run_input = regenie2_pipeline.load_native_bgen_run_input(
+    run_input = native_dispatch.load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
         phenotype_path=phenotype_path,
@@ -169,7 +172,7 @@ def warm_regenie2_binary_bgen_cache(
         covariate_names=covariate_names,
         is_binary_trait=True,
     )
-    prediction_source = regenie2_pipeline.build_regenie_prediction_source(
+    prediction_source = native_dispatch.build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
         run_input=run_input,

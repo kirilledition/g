@@ -4,24 +4,22 @@ from __future__ import annotations
 
 import time
 import typing
-from dataclasses import dataclass
-from pathlib import Path
 
-import jax
-import jax.numpy as jnp
-import numpy as np
-import numpy.typing as npt
-
-from g import _core, types
 import g.compute.regenie2_binary as regenie2_binary
 import g.compute.regenie2_linear as regenie2_linear
 import g.engine.callbacks as callbacks
+import g.engine.native_dispatch as native_dispatch
 import g.engine.preflight as preflight
 import g.engine.timing as timing
 import g.engine.trusted_validation as trusted_validation
 import g.engine.warm_cache as warm_cache
+from g import _core, types
 from g.io import output, source
 
+if typing.TYPE_CHECKING:
+    from pathlib import Path
+
+REGENIE_COMPUTE_PATCH_TARGETS = (regenie2_binary, regenie2_linear)
 StageTimingSnapshot = timing.StageTimingSnapshot
 StageTimingRecorder = timing.StageTimingRecorder
 build_stage_timing_recorder_from_environment = timing.build_stage_timing_recorder_from_environment
@@ -55,83 +53,13 @@ build_synthetic_genotype_matrix = warm_cache.build_synthetic_genotype_matrix
 warm_regenie2_linear_bgen_cache = warm_cache.warm_regenie2_linear_bgen_cache
 warm_regenie2_binary_bgen_cache = warm_cache.warm_regenie2_binary_bgen_cache
 first_engine_chromosome = warm_cache.first_engine_chromosome
-
-
-@dataclass(frozen=True)
-class NativeBgenRunInput:
-    """Sample-aligned inputs retained in native form for BGEN REGENIE step 2.
-
-    Attributes:
-        native_aligned_sample_data: Rust-owned aligned sample identifiers and matrices.
-        sample_indices: BGEN sample indices for native chunk delivery.
-        phenotype_vector: JAX phenotype vector.
-        covariate_matrix: JAX design matrix.
-        is_binary_trait: Whether the run is for a binary trait.
-
-    """
-
-    native_aligned_sample_data: _core.NativeAlignedSampleData
-    sample_indices: npt.NDArray[np.int64]
-    phenotype_vector: jax.Array
-    covariate_matrix: jax.Array
-    is_binary_trait: bool
-
-
-def build_native_bgen_run_input(
-    native_aligned_sample_data: _core.NativeAlignedSampleData,
-) -> NativeBgenRunInput:
-    """Build Python/JAX views over Rust-owned aligned sample data."""
-    return NativeBgenRunInput(
-        native_aligned_sample_data=native_aligned_sample_data,
-        sample_indices=np.ascontiguousarray(native_aligned_sample_data.sample_indices, dtype=np.int64),
-        phenotype_vector=jnp.asarray(native_aligned_sample_data.phenotype_vector, dtype=jnp.float32),
-        covariate_matrix=jnp.asarray(native_aligned_sample_data.covariate_matrix, dtype=jnp.float32),
-        is_binary_trait=native_aligned_sample_data.is_binary_trait,
-    )
-
-
-def load_native_aligned_sample_data_from_individual_identifier_table(
-    *,
-    sample_table: typing.Any,
-    phenotype_path: Path,
-    phenotype_name: str,
-    covariate_path: Path | None,
-    covariate_names: tuple[str, ...] | None,
-    is_binary_trait: bool,
-) -> _core.NativeAlignedSampleData:
-    """Load Rust-owned aligned sample data from explicit sample identifiers."""
-    return _core.align_sample_data(
-        np.ascontiguousarray(sample_table.get_column("sample_index").to_numpy(), dtype=np.int64),
-        typing.cast("list[str]", sample_table.get_column("family_identifier").to_list()),
-        typing.cast("list[str]", sample_table.get_column("individual_identifier").to_list()),
-        str(phenotype_path),
-        phenotype_name,
-        str(covariate_path) if covariate_path is not None else None,
-        list(covariate_names) if covariate_names is not None else None,
-        is_binary_trait,
-    )
-
-
-def load_native_aligned_sample_data_from_sample_file(
-    *,
-    sample_path: Path,
-    expected_sample_count: int,
-    phenotype_path: Path,
-    phenotype_name: str,
-    covariate_path: Path | None,
-    covariate_names: tuple[str, ...] | None,
-    is_binary_trait: bool,
-) -> _core.NativeAlignedSampleData:
-    """Load Rust-owned aligned sample data through Oxford sample-file parsing."""
-    return _core.align_sample_data_from_sample_file(
-        str(sample_path),
-        expected_sample_count,
-        str(phenotype_path),
-        phenotype_name,
-        str(covariate_path) if covariate_path is not None else None,
-        list(covariate_names) if covariate_names is not None else None,
-        is_binary_trait,
-    )
+NativeBgenRunInput = native_dispatch.NativeBgenRunInput
+build_native_bgen_run_input = native_dispatch.build_native_bgen_run_input
+load_native_aligned_sample_data_from_individual_identifier_table = (
+    native_dispatch.load_native_aligned_sample_data_from_individual_identifier_table
+)
+load_native_aligned_sample_data_from_sample_file = native_dispatch.load_native_aligned_sample_data_from_sample_file
+build_regenie_prediction_source = native_dispatch.build_regenie_prediction_source
 
 
 def run_regenie2_linear_bgen_pipeline(
@@ -337,48 +265,17 @@ def load_native_bgen_run_input(
     is_binary_trait: bool,
 ) -> NativeBgenRunInput:
     """Load native-aligned samples and JAX compute inputs for a native BGEN run."""
-    source.validate_genotype_source_config(genotype_source_config)
-    resolved_sample_path = source.resolve_bgen_sample_path(
-        genotype_source_config.source_path,
-        genotype_source_config.sample_path,
-    )
-    if resolved_sample_path is not None:
-        native_aligned_sample_data = load_native_aligned_sample_data_from_sample_file(
-            sample_path=resolved_sample_path,
-            expected_sample_count=engine.sample_count,
-            phenotype_path=phenotype_path,
-            phenotype_name=phenotype_name,
-            covariate_path=covariate_path,
-            covariate_names=covariate_names,
-            is_binary_trait=is_binary_trait,
-        )
-        return build_native_bgen_run_input(native_aligned_sample_data)
-    if engine.contains_embedded_samples:
-        sample_table = source.build_sample_identifier_table(np.asarray(engine.sample_identifiers(), dtype=np.str_))
-        native_aligned_sample_data = load_native_aligned_sample_data_from_individual_identifier_table(
-            sample_table=sample_table,
-            phenotype_path=phenotype_path,
-            phenotype_name=phenotype_name,
-            covariate_path=covariate_path,
-            covariate_names=covariate_names,
-            is_binary_trait=is_binary_trait,
-        )
-        return build_native_bgen_run_input(native_aligned_sample_data)
-    message = "BGEN file does not contain samples and no .sample file was found."
-    raise ValueError(message)
-
-
-def build_regenie_prediction_source(
-    *,
-    prediction_list_path: Path,
-    phenotype_name: str,
-    run_input: NativeBgenRunInput,
-) -> _core.RegeniePredictionSource:
-    """Load Rust-owned REGENIE step 1 predictions aligned to the run samples."""
-    return _core.RegeniePredictionSource.from_native_aligned_sample_data(
-        str(prediction_list_path),
-        phenotype_name,
-        run_input.native_aligned_sample_data,
+    return native_dispatch.load_native_bgen_run_input(
+        genotype_source_config=genotype_source_config,
+        engine=engine,
+        phenotype_path=phenotype_path,
+        phenotype_name=phenotype_name,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
+        is_binary_trait=is_binary_trait,
+        build_native_bgen_run_input_callable=build_native_bgen_run_input,
+        load_from_individual_identifier_table_callable=load_native_aligned_sample_data_from_individual_identifier_table,
+        load_from_sample_file_callable=load_native_aligned_sample_data_from_sample_file,
     )
 
 
@@ -391,19 +288,14 @@ def build_bgen_run_engine(
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN run engine once for alignment and chunk delivery."""
-    engine = _core.Regenie2RunEngine(
-        str(genotype_source_config.source_path),
+    return native_dispatch.build_bgen_run_engine(
+        genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+        trusted_bgen_validator=validate_trusted_bgen_with_cache,
     )
-    if trusted_no_missing_diploid:
-        validate_trusted_bgen_with_cache(
-            engine=engine,
-            bgen_path=genotype_source_config.source_path,
-            validation_mode=trusted_bgen_validation_mode,
-        )
-    return engine
 
 
 def run_bgen_engine_with_callback(
@@ -417,41 +309,13 @@ def run_bgen_engine_with_callback(
     variant_major_dosage: bool = False,
 ) -> Path | None:
     """Run native BGEN chunk delivery and close the output writer."""
-    try:
-        if stage_timing_recorder is not None:
-            engine.reset_profile()
-        engine_delivery_start_time = time.perf_counter()
-        sample_indices = run_input.sample_indices
-        committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
-        if variant_major_dosage:
-            engine.run_bgen_variant_major_dosage_buffered_chunks(
-                sample_indices,
-                callback,
-                committed_chunk_identifiers=committed_chunk_identifier_list,
-            )
-        else:
-            engine.run_bgen_dosage_buffered_chunks(
-                sample_indices,
-                callback,
-                committed_chunk_identifiers=committed_chunk_identifier_list,
-            )
-        record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
-        if stage_timing_recorder is not None:
-            stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
-        callback_finish_start_time = time.perf_counter()
-        typing.cast("typing.Any", callback).finish()
-        record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
-        writer_finish_start_time = time.perf_counter()
-        final_parquet_path = writer_session.finish()
-        record_stage_duration(stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time)
-    except Exception:
-        abort_callback = getattr(callback, "abort", None)
-        if callable(abort_callback):
-            abort_callback()
-        writer_session.abort()
-        write_stage_timing_snapshot_from_environment(stage_timing_recorder)
-        raise
-    write_stage_timing_snapshot_from_environment(stage_timing_recorder)
-    if final_parquet_path is None:
-        return None
-    return Path(final_parquet_path)
+    return native_dispatch.run_bgen_engine_with_callback(
+        engine=engine,
+        run_input=run_input,
+        committed_chunk_identifiers=committed_chunk_identifiers,
+        writer_session=writer_session,
+        callback=callback,
+        stage_timing_recorder=stage_timing_recorder,
+        variant_major_dosage=variant_major_dosage,
+        stage_timing_snapshot_writer=write_stage_timing_snapshot_from_environment,
+    )
