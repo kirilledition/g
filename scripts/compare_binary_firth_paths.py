@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from g import types
-from g.compute import regenie2_binary, regenie2_binary_types
+from g.compute import regenie2_binary, regenie2_binary_types, regenie2_binary_variant_major_experimental
 
 
 @dataclass(frozen=True)
@@ -242,17 +242,17 @@ def compare_binary_paths(
         correction_plan,
     )
     genotype_matrix_by_variant = jnp.transpose(inputs.genotype_matrix)
-    experimental_score_test_result = (
-        regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
+    experimental_score_test_result = regenie2_binary_variant_major_experimental.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
+        chromosome_state,
+        genotype_matrix_by_variant,
+        correction_plan,
+    )
+    experimental_corrected_result = (
+        regenie2_binary_variant_major_experimental.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
             chromosome_state,
             genotype_matrix_by_variant,
             correction_plan,
         )
-    )
-    experimental_corrected_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
-        chromosome_state,
-        genotype_matrix_by_variant,
-        correction_plan,
     )
     production_metrics = compute_path_metrics(
         score_test_result=production_score_test_result,

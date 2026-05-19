@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy.stats
 
-from g.compute import regenie2_linear_types as regenie2_types
+from g.compute import regenie2_linear_types
 
 
 def solve_positive_definite_system(
@@ -41,7 +41,7 @@ def solve_positive_definite_system(
 def prepare_regenie2_linear_state(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
-) -> regenie2_types.Regenie2LinearState:
+) -> regenie2_linear_types.Regenie2LinearState:
     """Prepare covariate projection and phenotype residual for REGENIE step 2.
 
     Residualizes the phenotype against covariates but does NOT subtract
@@ -77,7 +77,7 @@ def prepare_regenie2_linear_state(
     )
     phenotype_residual = phenotype_vector_float32 - covariate_matrix_float32 @ phenotype_projection
 
-    return regenie2_types.Regenie2LinearState(
+    return regenie2_linear_types.Regenie2LinearState(
         covariate_matrix=covariate_matrix_float32,
         covariate_matrix_transpose=covariate_matrix_transpose,
         covariate_crossproduct_cholesky_factor=covariate_crossproduct_cholesky_factor,
@@ -91,7 +91,7 @@ def prepare_regenie2_linear_state(
 def prepare_regenie2_multi_linear_state(
     covariate_matrix: jax.Array,
     phenotype_matrix: jax.Array,
-) -> regenie2_types.Regenie2MultiLinearState:
+) -> regenie2_linear_types.Regenie2MultiLinearState:
     """Prepare shared covariate projection and trait-major phenotype residuals.
 
     Args:
@@ -123,7 +123,7 @@ def prepare_regenie2_multi_linear_state(
     )
     phenotype_residual_matrix = phenotype_matrix_float32 - (covariate_matrix_float32 @ phenotype_projection_matrix).T
 
-    return regenie2_types.Regenie2MultiLinearState(
+    return regenie2_linear_types.Regenie2MultiLinearState(
         covariate_matrix=covariate_matrix_float32,
         covariate_matrix_transpose=covariate_matrix_transpose,
         covariate_crossproduct_cholesky_factor=covariate_crossproduct_cholesky_factor,
@@ -155,9 +155,9 @@ def chi_squared_to_log10_p_value(chi_squared: jax.Array) -> jax.Array:
 
 @jax.jit
 def prepare_regenie2_linear_chromosome_state(
-    state: regenie2_types.Regenie2LinearState,
+    state: regenie2_linear_types.Regenie2LinearState,
     loco_predictions: jax.Array,
-) -> regenie2_types.Regenie2LinearChromosomeState:
+) -> regenie2_linear_types.Regenie2LinearChromosomeState:
     """Prepare chromosome-specific residual state reused across chunks."""
     loco_predictions_float32 = jnp.asarray(loco_predictions, dtype=jnp.float32)
     adjusted_residual = state.phenotype_residual - loco_predictions_float32
@@ -166,7 +166,7 @@ def prepare_regenie2_linear_chromosome_state(
         [state.whitened_covariate_transpose, adjusted_residual[None, :]],
         axis=0,
     )
-    return regenie2_types.Regenie2LinearChromosomeState(
+    return regenie2_linear_types.Regenie2LinearChromosomeState(
         covariate_matrix_transpose=state.covariate_matrix_transpose,
         covariate_crossproduct_cholesky_factor=state.covariate_crossproduct_cholesky_factor,
         stacked_score_matrix=stacked_score_matrix,
@@ -178,14 +178,14 @@ def prepare_regenie2_linear_chromosome_state(
 
 @jax.jit
 def prepare_regenie2_multi_linear_chromosome_state(
-    state: regenie2_types.Regenie2MultiLinearState,
+    state: regenie2_linear_types.Regenie2MultiLinearState,
     loco_prediction_matrix: jax.Array,
-) -> regenie2_types.Regenie2MultiLinearChromosomeState:
+) -> regenie2_linear_types.Regenie2MultiLinearChromosomeState:
     """Prepare chromosome-specific multi-trait residual state reused across chunks."""
     loco_prediction_matrix_float32 = jnp.asarray(loco_prediction_matrix, dtype=jnp.float32)
     adjusted_residual_matrix = state.phenotype_residual_matrix - loco_prediction_matrix_float32
     adjusted_residual_sum_squares = jnp.einsum("ij,ij->i", adjusted_residual_matrix, adjusted_residual_matrix)
-    return regenie2_types.Regenie2MultiLinearChromosomeState(
+    return regenie2_linear_types.Regenie2MultiLinearChromosomeState(
         covariate_matrix_transpose=state.covariate_matrix_transpose,
         covariate_crossproduct_cholesky_factor=state.covariate_crossproduct_cholesky_factor,
         whitened_covariate_transpose=state.whitened_covariate_transpose,
@@ -197,9 +197,9 @@ def prepare_regenie2_multi_linear_chromosome_state(
 
 @jax.jit
 def compute_regenie2_linear_chunk_from_chromosome_state(
-    chromosome_state: regenie2_types.Regenie2LinearChromosomeState,
+    chromosome_state: regenie2_linear_types.Regenie2LinearChromosomeState,
     genotype_matrix: jax.Array,
-) -> regenie2_types.Regenie2LinearChunkResult:
+) -> regenie2_linear_types.Regenie2LinearChunkResult:
     """Compute REGENIE step 2 linear association using chromosome-cached state."""
     score_matrix = chromosome_state.stacked_score_matrix @ genotype_matrix
     covariate_projection_coordinates = score_matrix[:-1]
@@ -255,7 +255,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
 
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
 
-    return regenie2_types.Regenie2LinearChunkResult(
+    return regenie2_linear_types.Regenie2LinearChunkResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
@@ -266,9 +266,9 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
 
 @jax.jit
 def compute_regenie2_multi_linear_chunk_from_chromosome_state(
-    chromosome_state: regenie2_types.Regenie2MultiLinearChromosomeState,
+    chromosome_state: regenie2_linear_types.Regenie2MultiLinearChromosomeState,
     genotype_matrix: jax.Array,
-) -> regenie2_types.Regenie2MultiLinearChunkResult:
+) -> regenie2_linear_types.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 association."""
     genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
     covariate_projection_coordinates = chromosome_state.whitened_covariate_transpose @ genotype_matrix_float32
@@ -319,7 +319,7 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
     )
     log10_p_value = chi_squared_to_log10_p_value(chi_squared)
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    return regenie2_types.Regenie2MultiLinearChunkResult(
+    return regenie2_linear_types.Regenie2MultiLinearChunkResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
@@ -330,10 +330,10 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
 
 @jax.jit
 def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
-    chromosome_state: regenie2_types.Regenie2LinearChromosomeState,
+    chromosome_state: regenie2_linear_types.Regenie2LinearChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     genotype_sum_squares: jax.Array,
-) -> regenie2_types.Regenie2LinearChunkResult:
+) -> regenie2_linear_types.Regenie2LinearChunkResult:
     """Compute quantitative REGENIE step 2 association from variant-major genotypes."""
     genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
     genotype_sum_squares_float32 = jnp.asarray(genotype_sum_squares, dtype=jnp.float32)
@@ -383,7 +383,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
     )
     log10_p_value = chi_squared_to_log10_p_value(chi_squared)
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    return regenie2_types.Regenie2LinearChunkResult(
+    return regenie2_linear_types.Regenie2LinearChunkResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
@@ -394,10 +394,10 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
 
 @jax.jit
 def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
-    chromosome_state: regenie2_types.Regenie2MultiLinearChromosomeState,
+    chromosome_state: regenie2_linear_types.Regenie2MultiLinearChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     genotype_sum_squares: jax.Array,
-) -> regenie2_types.Regenie2MultiLinearChunkResult:
+) -> regenie2_linear_types.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 from variant-major genotypes."""
     genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
     genotype_sum_squares_float32 = jnp.asarray(genotype_sum_squares, dtype=jnp.float32)
@@ -449,7 +449,7 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
     )
     log10_p_value = chi_squared_to_log10_p_value(chi_squared)
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    return regenie2_types.Regenie2MultiLinearChunkResult(
+    return regenie2_linear_types.Regenie2MultiLinearChunkResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
@@ -459,10 +459,10 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
 
 
 def compute_regenie2_linear_chunk(
-    state: regenie2_types.Regenie2LinearState,
+    state: regenie2_linear_types.Regenie2LinearState,
     genotype_matrix: jax.Array,
     loco_predictions: jax.Array,
-) -> regenie2_types.Regenie2LinearChunkResult:
+) -> regenie2_linear_types.Regenie2LinearChunkResult:
     """Compute REGENIE step 2 linear association for a genotype chunk.
 
     This implements the REGENIE step 2 score test for quantitative traits:

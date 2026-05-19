@@ -36,12 +36,12 @@ def test_root_help_renders_without_style_errors() -> None:
 
 def test_regenie_command_dispatches_config_api() -> None:
     with patch(
-        "g.cli.run_regenie_api",
+        "g.cli.api.regenie",
         return_value=api.RunArtifacts(
             output_run_directory=Path("results/output.g/trait.regenie2_linear.run"),
             final_regenie=Path("results/output_trait.regenie"),
         ),
-    ) as mock_run_regenie_api:
+    ) as mock_regenie_api:
         result = runner.invoke(
             app,
             [
@@ -75,7 +75,7 @@ def test_regenie_command_dispatches_config_api() -> None:
         )
 
     assert result.exit_code == 0
-    regenie_config = mock_run_regenie_api.call_args.args[0]
+    regenie_config = mock_regenie_api.call_args.args[0]
     assert regenie_config.input.pheno_columns == ("trait",)
     assert regenie_config.input.covar_columns == ("age", "sex")
     assert regenie_config.trait.bsize == 4096
@@ -140,11 +140,11 @@ def test_regenie_command_applies_toml_then_explicit_cli_override(tmp_path: Path)
         encoding="utf-8",
     )
 
-    with patch("g.cli.run_regenie_api", return_value=api.RunArtifacts()) as mock_run_regenie_api:
+    with patch("g.cli.api.regenie", return_value=api.RunArtifacts()) as mock_regenie_api:
         result = runner.invoke(app, ["regenie", "--config", str(config_path), "--qt", "--bsize", "4096"])
 
     assert result.exit_code == 0
-    regenie_config = mock_run_regenie_api.call_args.args[0]
+    regenie_config = mock_regenie_api.call_args.args[0]
     assert regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
     assert regenie_config.trait.bsize == 4096
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET

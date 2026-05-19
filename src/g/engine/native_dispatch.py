@@ -12,20 +12,15 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-import g._core as core
-import g.engine.timing as timing
-import g.engine.trusted_validation as trusted_validation
-import g.io.source as source
-import g.types as g_types
-
-StageTimingRecorder = timing.StageTimingRecorder
-record_stage_duration = timing.record_stage_duration
+from g import _core, types
+from g.engine import timing, trusted_validation
+from g.io import source
 
 
 class SampleAlignmentConfigProtocol(typing.Protocol):
     """Sample identity alignment settings accepted by native dispatch."""
 
-    sample_key_mode: g_types.SampleKeyMode
+    sample_key_mode: types.SampleKeyMode
 
 
 @dataclass(frozen=True)
@@ -41,7 +36,7 @@ class NativeBgenRunInput:
 
     """
 
-    native_aligned_sample_data: core.NativeAlignedSampleData
+    native_aligned_sample_data: _core.NativeAlignedSampleData
     sample_indices: npt.NDArray[np.int64]
     phenotype_vector: jax.Array
     covariate_matrix: jax.Array
@@ -64,7 +59,7 @@ class NativeBgenMultiRunInput:
 
     """
 
-    native_multi_aligned_sample_data: core.NativeMultiAlignedSampleData
+    native_multi_aligned_sample_data: _core.NativeMultiAlignedSampleData
     phenotype_names: tuple[str, ...]
     sample_indices: npt.NDArray[np.int64]
     family_identifiers: tuple[str, ...]
@@ -75,7 +70,7 @@ class NativeBgenMultiRunInput:
 
 
 def build_native_bgen_run_input(
-    native_aligned_sample_data: core.NativeAlignedSampleData,
+    native_aligned_sample_data: _core.NativeAlignedSampleData,
 ) -> NativeBgenRunInput:
     """Build Python/JAX views over Rust-owned aligned sample data."""
     return NativeBgenRunInput(
@@ -88,7 +83,7 @@ def build_native_bgen_run_input(
 
 
 def build_native_bgen_multi_run_input(
-    native_multi_aligned_sample_data: core.NativeMultiAlignedSampleData,
+    native_multi_aligned_sample_data: _core.NativeMultiAlignedSampleData,
 ) -> NativeBgenMultiRunInput:
     """Build Python/JAX views over Rust-owned complete-case multi-phenotype data."""
     return NativeBgenMultiRunInput(
@@ -103,16 +98,16 @@ def build_native_bgen_multi_run_input(
     )
 
 
-def resolve_sample_key_mode(alignment_config: SampleAlignmentConfigProtocol | None) -> g_types.SampleKeyMode:
+def resolve_sample_key_mode(alignment_config: SampleAlignmentConfigProtocol | None) -> types.SampleKeyMode:
     """Resolve the sample key mode for native calls."""
     if alignment_config is None:
-        return g_types.SampleKeyMode.IID
+        return types.SampleKeyMode.IID
     return alignment_config.sample_key_mode
 
 
 def load_native_aligned_sample_data(
     *,
-    engine: core.Regenie2RunEngine,
+    engine: _core.Regenie2RunEngine,
     sample_path: Path | None,
     phenotype_path: Path,
     phenotype_name: str,
@@ -120,7 +115,7 @@ def load_native_aligned_sample_data(
     covariate_names: tuple[str, ...] | None,
     is_binary_trait: bool,
     alignment_config: SampleAlignmentConfigProtocol | None = None,
-) -> core.NativeAlignedSampleData:
+) -> _core.NativeAlignedSampleData:
     """Load Rust-owned aligned sample data from a sample file or embedded BGEN samples."""
     return engine.align_sample_data(
         str(sample_path) if sample_path is not None else None,
@@ -135,7 +130,7 @@ def load_native_aligned_sample_data(
 
 def load_native_multi_aligned_sample_data(
     *,
-    engine: core.Regenie2RunEngine,
+    engine: _core.Regenie2RunEngine,
     sample_path: Path | None,
     phenotype_path: Path,
     phenotype_names: tuple[str, ...],
@@ -143,7 +138,7 @@ def load_native_multi_aligned_sample_data(
     covariate_names: tuple[str, ...] | None,
     is_binary_trait: bool,
     alignment_config: SampleAlignmentConfigProtocol | None = None,
-) -> core.NativeMultiAlignedSampleData:
+) -> _core.NativeMultiAlignedSampleData:
     """Load Rust-owned complete-case multi-phenotype sample data."""
     return engine.align_multi_sample_data(
         str(sample_path) if sample_path is not None else None,
@@ -159,19 +154,16 @@ def load_native_multi_aligned_sample_data(
 def load_native_bgen_run_input(
     *,
     genotype_source_config: source.GenotypeSourceConfig,
-    engine: core.Regenie2RunEngine,
+    engine: _core.Regenie2RunEngine,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
     covariate_names: tuple[str, ...] | None,
     is_binary_trait: bool,
     alignment_config: SampleAlignmentConfigProtocol | None = None,
-    build_native_bgen_run_input_callable: typing.Callable[
-        [core.NativeAlignedSampleData], NativeBgenRunInput
-    ] = build_native_bgen_run_input,
-    load_aligned_sample_data_callable: typing.Callable[
-        ..., core.NativeAlignedSampleData
-    ] = load_native_aligned_sample_data,
+    build_native_bgen_run_input_callable: typing.Callable[[_core.NativeAlignedSampleData], NativeBgenRunInput]
+    | None = None,
+    load_aligned_sample_data_callable: typing.Callable[..., _core.NativeAlignedSampleData] | None = None,
 ) -> NativeBgenRunInput:
     """Load native-aligned samples and JAX compute inputs for a native BGEN run."""
     source.validate_genotype_source_config(genotype_source_config)
@@ -179,7 +171,9 @@ def load_native_bgen_run_input(
         genotype_source_config.source_path,
         genotype_source_config.sample_path,
     )
-    native_aligned_sample_data = load_aligned_sample_data_callable(
+    resolved_build_native_bgen_run_input = build_native_bgen_run_input_callable or build_native_bgen_run_input
+    resolved_load_aligned_sample_data = load_aligned_sample_data_callable or load_native_aligned_sample_data
+    native_aligned_sample_data = resolved_load_aligned_sample_data(
         engine=engine,
         sample_path=resolved_sample_path,
         phenotype_path=phenotype_path,
@@ -189,13 +183,13 @@ def load_native_bgen_run_input(
         is_binary_trait=is_binary_trait,
         alignment_config=alignment_config,
     )
-    return build_native_bgen_run_input_callable(native_aligned_sample_data)
+    return resolved_build_native_bgen_run_input(native_aligned_sample_data)
 
 
 def load_native_bgen_multi_run_input(
     *,
     genotype_source_config: source.GenotypeSourceConfig,
-    engine: core.Regenie2RunEngine,
+    engine: _core.Regenie2RunEngine,
     phenotype_path: Path,
     phenotype_names: tuple[str, ...],
     covariate_path: Path | None,
@@ -228,9 +222,9 @@ def build_regenie_prediction_source(
     phenotype_name: str,
     run_input: NativeBgenRunInput,
     alignment_config: SampleAlignmentConfigProtocol | None = None,
-) -> core.RegeniePredictionSource:
+) -> _core.RegeniePredictionSource:
     """Load Rust-owned REGENIE step 1 predictions aligned to the run samples."""
-    return core.RegeniePredictionSource.from_native_aligned_sample_data(
+    return _core.RegeniePredictionSource.from_native_aligned_sample_data(
         str(prediction_list_path),
         phenotype_name,
         run_input.native_aligned_sample_data,
@@ -243,9 +237,9 @@ def build_multi_regenie_prediction_source(
     prediction_list_path: Path,
     run_input: NativeBgenMultiRunInput,
     alignment_config: SampleAlignmentConfigProtocol | None = None,
-) -> core.MultiRegeniePredictionSource:
+) -> _core.MultiRegeniePredictionSource:
     """Load native multi-trait REGENIE step 1 predictions aligned to shared samples."""
-    return core.MultiRegeniePredictionSource.from_native_multi_aligned_sample_data(
+    return _core.MultiRegeniePredictionSource.from_native_multi_aligned_sample_data(
         str(prediction_list_path),
         run_input.native_multi_aligned_sample_data,
         sample_key_mode=resolve_sample_key_mode(alignment_config).value,
@@ -258,18 +252,19 @@ def build_bgen_run_engine(
     chunk_size: int,
     variant_limit: int | None,
     trusted_no_missing_diploid: bool = False,
-    trusted_bgen_validation_mode: g_types.TrustedBgenValidationMode = g_types.TrustedBgenValidationMode.CACHE_ON_MISS,
-    trusted_bgen_validator: typing.Callable[..., None] = trusted_validation.validate_trusted_bgen_with_cache,
-) -> core.Regenie2RunEngine:
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
+    trusted_bgen_validator: typing.Callable[..., None] | None = None,
+) -> _core.Regenie2RunEngine:
     """Open the native BGEN run engine once for alignment and chunk delivery."""
-    engine = core.Regenie2RunEngine(
+    engine = _core.Regenie2RunEngine(
         str(genotype_source_config.source_path),
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
     if trusted_no_missing_diploid:
-        trusted_bgen_validator(
+        resolved_trusted_bgen_validator = trusted_bgen_validator or trusted_validation.validate_trusted_bgen_with_cache
+        resolved_trusted_bgen_validator(
             engine=engine,
             bgen_path=genotype_source_config.source_path,
             validation_mode=trusted_bgen_validation_mode,
@@ -279,15 +274,15 @@ def build_bgen_run_engine(
 
 def run_bgen_engine_with_callback(
     *,
-    engine: core.Regenie2RunEngine,
+    engine: _core.Regenie2RunEngine,
     run_input: NativeBgenRunInput,
     committed_chunk_identifiers: set[int] | None,
     writer_session: typing.Any,
     callback: object,
-    stage_timing_recorder: StageTimingRecorder | None,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
     variant_major_dosage: bool = False,
     stage_timing_snapshot_writer: typing.Callable[
-        [StageTimingRecorder | None, Path | None], None
+        [timing.StageTimingRecorder | None, Path | None], None
     ] = timing.write_stage_timing_snapshot,
 ) -> Path | None:
     """Run native BGEN chunk delivery and close the output writer."""
@@ -309,15 +304,17 @@ def run_bgen_engine_with_callback(
                 callback,
                 committed_chunk_identifiers=committed_chunk_identifier_list,
             )
-        record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
+        timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
         if stage_timing_recorder is not None:
             stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
         callback_finish_start_time = time.perf_counter()
         typing.cast("typing.Any", callback).finish()
-        record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
+        timing.record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
         writer_finish_start_time = time.perf_counter()
         final_parquet_path = writer_session.finish()
-        record_stage_duration(stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time)
+        timing.record_stage_duration(
+            stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
+        )
     except Exception:
         abort_callback = getattr(callback, "abort", None)
         if callable(abort_callback):

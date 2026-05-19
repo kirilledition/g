@@ -10,10 +10,7 @@ from pathlib import Path
 import click
 
 from g import api, types
-from g.interface import config as interface_config
-from g.interface import options as interface_options
-
-run_regenie_api = api.regenie
+from g.interface import config, options
 
 
 class NaturalOrderGroup(click.Group):
@@ -98,13 +95,13 @@ def explicit_cli_options(context: click.Context, parameters: dict[str, typing.An
     return cli_options
 
 
-def build_regenie_config_from_cli(context: click.Context, parameters: dict[str, typing.Any]) -> api.RegenieConfig:
+def build_regenie_config_from_cli(context: click.Context, parameters: dict[str, typing.Any]) -> config.RegenieConfig:
     """Apply built-in defaults, TOML config, and explicit CLI overrides."""
     raw_toml_options = read_raw_toml(parameters.get("config"))
     raw_cli_options = explicit_cli_options(context, parameters)
     try:
-        merged_options = interface_config.merge_option_dictionaries(raw_toml_options, raw_cli_options)
-        return api.RegenieConfig.from_options(merged_options)
+        merged_options = config.merge_option_dictionaries(raw_toml_options, raw_cli_options)
+        return config.RegenieConfig.from_options(merged_options)
     except ValueError as error:
         raise click.ClickException(str(error)) from error
 
@@ -222,7 +219,7 @@ def path_option(*parameter_declarations: str, **kwargs: typing.Any) -> typing.Ca
 def run_regenie_command(context: click.Context, **parameters: typing.Any) -> None:
     """Run a REGENIE-compatible step 2 association scan."""
     regenie_config = build_regenie_config_from_cli(context, parameters)
-    artifacts = run_regenie_api(regenie_config)
+    artifacts = api.regenie(regenie_config)
     print_success_message(artifacts)
 
 
@@ -235,7 +232,7 @@ def config_group() -> None:
 @path_option("--out", help="Config file to write. Defaults to stdout.")
 def config_init_command(out: Path | None) -> None:
     """Write a starter g regenie TOML config."""
-    template = interface_config.build_template()
+    template = config.build_template()
     if out is None:
         click.echo(template, nl=False)
         return
@@ -248,7 +245,7 @@ def config_init_command(out: Path | None) -> None:
 def config_validate_command(config_path: Path) -> None:
     """Validate a g regenie TOML config."""
     try:
-        api.RegenieConfig.from_toml(config_path)
+        config.RegenieConfig.from_toml(config_path)
     except ValueError as error:
         raise click.ClickException(str(error)) from error
     click.echo("Config is valid.")
@@ -259,12 +256,12 @@ def config_validate_command(config_path: Path) -> None:
 def config_explain_command(option_name: str | None) -> None:
     """Explain supported and recognized options."""
     if option_name is None:
-        for explanation in interface_options.iter_explanations():
+        for explanation in options.iter_explanations():
             click.echo(explanation)
         return
     normalized_name = option_name.removeprefix("--")
     try:
-        click.echo(interface_options.explain_option(normalized_name))
+        click.echo(options.explain_option(normalized_name))
     except KeyError as error:
         raise click.ClickException(f"Unknown option: {option_name}") from error
 

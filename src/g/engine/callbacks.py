@@ -14,17 +14,16 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-import g._core as core
-import g.compute.regenie2_binary as regenie2_binary
-import g.compute.regenie2_binary_diagnostics as regenie2_binary_diagnostics
-import g.compute.regenie2_binary_types as regenie2_binary_types
-import g.compute.regenie2_linear as regenie2_linear
-import g.compute.regenie2_linear_types as regenie2_linear_types
-import g.engine.timing as timing
-import g.types as g_types
-
-StageTimingRecorder = timing.StageTimingRecorder
-record_stage_duration = timing.record_stage_duration
+from g import _core, types
+from g.compute import (
+    regenie2_binary,
+    regenie2_binary_diagnostics,
+    regenie2_binary_types,
+    regenie2_binary_variant_major_experimental,
+    regenie2_linear,
+    regenie2_linear_types,
+)
+from g.engine import timing
 
 
 @dataclass(frozen=True)
@@ -33,7 +32,7 @@ class PreprocessedDosageChunkWorkItem:
 
     metadata: typing.Any
     genotype_matrix: npt.NDArray[np.float32]
-    chunk_stats: core.ChunkStats
+    chunk_stats: _core.ChunkStats
 
 
 @dataclass(frozen=True)
@@ -42,15 +41,15 @@ class PreprocessedVariantMajorDosageChunkWorkItem:
 
     metadata: typing.Any
     genotype_matrix_by_variant: npt.NDArray[np.float32]
-    chunk_stats: core.ChunkStats
+    chunk_stats: _core.ChunkStats
 
 
 @dataclass(frozen=True)
 class Regenie2ResultWriteWorkItem:
     """One computed REGENIE result awaiting host materialization and output writing."""
 
-    metadata: core.VariantMetadata
-    chunk_stats: core.ChunkStats
+    metadata: _core.VariantMetadata
+    chunk_stats: _core.ChunkStats
     beta: jax.Array
     standard_error: jax.Array
     chi_squared: jax.Array
@@ -62,8 +61,8 @@ class Regenie2ResultWriteWorkItem:
 class Regenie2MultiResultWriteWorkItem:
     """One computed multi-trait REGENIE result awaiting materialization and writing."""
 
-    metadata: core.VariantMetadata
-    chunk_stats: core.ChunkStats
+    metadata: _core.VariantMetadata
+    chunk_stats: _core.ChunkStats
     beta: jax.Array
     standard_error: jax.Array
     chi_squared: jax.Array
@@ -112,7 +111,7 @@ def block_until_ready(value: typing.Any) -> None:
 
 def record_binary_chunk_diagnostics(
     *,
-    stage_timing_recorder: StageTimingRecorder | None,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
     result: regenie2_binary_types.Regenie2BinaryChunkResult,
 ) -> None:
     """Record binary candidate and Firth diagnostics for one chunk."""
@@ -138,27 +137,27 @@ def record_binary_chunk_diagnostics(
 
 def put_genotype_matrix_on_device(
     genotype_matrix: jax.Array | npt.NDArray[np.float32],
-    stage_timing_recorder: StageTimingRecorder | None,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
 ) -> jax.Array:
     """Transfer a genotype chunk to the active JAX device with optional timing."""
     start_time = time.perf_counter()
     genotype_device_array = jax.device_put(genotype_matrix)
     block_until_ready(genotype_device_array)
-    record_stage_duration(stage_timing_recorder, "host_to_device_transfer", start_time)
+    timing.record_stage_duration(stage_timing_recorder, "host_to_device_transfer", start_time)
     return genotype_device_array
 
 
 def write_regenie2_native_chunk_with_optional_timing(
     *,
     writer_session: typing.Any,
-    metadata: core.VariantMetadata,
-    chunk_stats: core.ChunkStats,
+    metadata: _core.VariantMetadata,
+    chunk_stats: _core.ChunkStats,
     beta: jax.Array,
     standard_error: jax.Array,
     chi_squared: jax.Array,
     log10_p_value: jax.Array,
     extra_code: jax.Array | None,
-    stage_timing_recorder: StageTimingRecorder | None,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
 ) -> None:
     """Write one native-metadata REGENIE chunk while timing JAX result materialization."""
     materialization_start_time = time.perf_counter()
@@ -171,7 +170,7 @@ def write_regenie2_native_chunk_with_optional_timing(
             "extra_code": extra_code,
         }
     )
-    record_stage_duration(stage_timing_recorder, "device_to_host_materialization", materialization_start_time)
+    timing.record_stage_duration(stage_timing_recorder, "device_to_host_materialization", materialization_start_time)
 
     write_start_time = time.perf_counter()
     writer_session.write_regenie2_native_chunk(
@@ -183,21 +182,21 @@ def write_regenie2_native_chunk_with_optional_timing(
         log10_p_value=host_values["log10_p_value"],
         extra_code=host_values["extra_code"],
     )
-    record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
+    timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
 
 
 def write_regenie2_multi_native_chunk_with_optional_timing(
     *,
     writer_sessions: tuple[typing.Any, ...],
     committed_chunk_identifier_sets: tuple[set[int], ...],
-    metadata: core.VariantMetadata,
-    chunk_stats: core.ChunkStats,
+    metadata: _core.VariantMetadata,
+    chunk_stats: _core.ChunkStats,
     beta: jax.Array,
     standard_error: jax.Array,
     chi_squared: jax.Array,
     log10_p_value: jax.Array,
     extra_code: jax.Array | None,
-    stage_timing_recorder: StageTimingRecorder | None,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
 ) -> None:
     """Materialize one multi-trait result once and write missing per-trait slices."""
     materialization_start_time = time.perf_counter()
@@ -210,7 +209,7 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             "extra_code": extra_code,
         }
     )
-    record_stage_duration(stage_timing_recorder, "device_to_host_materialization", materialization_start_time)
+    timing.record_stage_duration(stage_timing_recorder, "device_to_host_materialization", materialization_start_time)
 
     chunk_identifier = int(metadata.variant_start_index)
     write_start_time = time.perf_counter()
@@ -229,7 +228,7 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             log10_p_value=host_values["log10_p_value"][trait_index],
             extra_code=extra_code_slice,
         )
-    record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
+    timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
 
 
 def get_metadata_chromosome(metadata: typing.Any) -> str:
@@ -245,7 +244,7 @@ class NativeBgenCallbackRunner:
         *,
         worker_name: str,
         staging_depth: int = 1,
-        stage_timing_recorder: StageTimingRecorder | None = None,
+        stage_timing_recorder: timing.StageTimingRecorder | None = None,
     ) -> None:
         """Initialize shared native callback state."""
         self.processed_chunk_count = 0
@@ -279,9 +278,9 @@ class NativeBgenCallbackRunner:
     def compute_preprocessed_chunk(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
+        variant_metadata: _core.VariantMetadata,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
-        chunk_stats: core.ChunkStats,
+        chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one Rust-preprocessed chunk and write it."""
         raise NotImplementedError
@@ -289,18 +288,18 @@ class NativeBgenCallbackRunner:
     def compute_preprocessed_variant_major_chunk(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
+        variant_metadata: _core.VariantMetadata,
         genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
-        chunk_stats: core.ChunkStats,
+        chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one Rust-preprocessed variant-major chunk and write it."""
         raise NotImplementedError
 
     def compute_preprocessed_dosage_chunk(
         self,
-        metadata: core.VariantMetadata,
+        metadata: _core.VariantMetadata,
         genotype_matrix: npt.NDArray[np.float32],
-        chunk_stats: core.ChunkStats,
+        chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed dosage chunk for JAX association."""
         self.put_dosage_work_item(
@@ -313,9 +312,9 @@ class NativeBgenCallbackRunner:
 
     def compute_preprocessed_variant_major_dosage_chunk(
         self,
-        metadata: core.VariantMetadata,
+        metadata: _core.VariantMetadata,
         genotype_matrix_by_variant: npt.NDArray[np.float32],
-        chunk_stats: core.ChunkStats,
+        chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed variant-major dosage chunk for JAX association."""
         self.put_dosage_work_item(
@@ -383,10 +382,12 @@ class NativeBgenCallbackRunner:
             put_start_time = time.perf_counter()
             try:
                 self.dosage_queue.put(work_item, timeout=0.1)
-                record_stage_duration(self.stage_timing_recorder, "callback_queue_put", put_start_time)
+                timing.record_stage_duration(self.stage_timing_recorder, "callback_queue_put", put_start_time)
                 return
             except queue.Full:
-                record_stage_duration(self.stage_timing_recorder, "callback_queue_producer_blocking", put_start_time)
+                timing.record_stage_duration(
+                    self.stage_timing_recorder, "callback_queue_producer_blocking", put_start_time
+                )
                 continue
 
     def raise_worker_error_if_present(self) -> None:
@@ -405,10 +406,12 @@ class NativeBgenCallbackRunner:
             put_start_time = time.perf_counter()
             try:
                 self.result_queue.put(work_item, timeout=0.1)
-                record_stage_duration(self.stage_timing_recorder, "result_queue_put", put_start_time)
+                timing.record_stage_duration(self.stage_timing_recorder, "result_queue_put", put_start_time)
                 return
             except queue.Full:
-                record_stage_duration(self.stage_timing_recorder, "result_queue_producer_blocking", put_start_time)
+                timing.record_stage_duration(
+                    self.stage_timing_recorder, "result_queue_producer_blocking", put_start_time
+                )
                 continue
 
     def finish(self) -> None:
@@ -483,7 +486,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         prediction_source: RegeniePredictionSourceProtocol,
         writer_session: typing.Any,
         staging_depth: int = 1,
-        stage_timing_recorder: StageTimingRecorder | None = None,
+        stage_timing_recorder: timing.StageTimingRecorder | None = None,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -504,9 +507,9 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def compute_preprocessed_chunk(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
+        variant_metadata: _core.VariantMetadata,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
-        chunk_stats: core.ChunkStats,
+        chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one Rust-preprocessed chunk and enqueue its result for writing."""
         result = self.compute_linear_result(variant_metadata=variant_metadata, genotype_matrix=genotype_matrix)
@@ -525,9 +528,9 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def compute_preprocessed_variant_major_chunk(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
+        variant_metadata: _core.VariantMetadata,
         genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
-        chunk_stats: core.ChunkStats,
+        chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one variant-major chunk and enqueue its result for writing."""
         result = self.compute_linear_variant_major_result(
@@ -550,8 +553,8 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def enqueue_linear_result_for_write(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
-        chunk_stats: core.ChunkStats,
+        variant_metadata: _core.VariantMetadata,
+        chunk_stats: _core.ChunkStats,
         result: regenie2_linear_types.Regenie2LinearChunkResult,
     ) -> None:
         """Enqueue a linear result for materialization and writing."""
@@ -587,7 +590,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             genotype_sum_squares=genotype_sum_squares,
         )
         block_until_ready(result.log10_p_value)
-        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
         return result
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
@@ -607,7 +610,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.current_chromosome_state,
         )
         block_until_ready(chromosome_ready_value)
-        record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
+        timing.record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
         self.current_chromosome = chromosome
 
     def compute_linear_result(
@@ -628,7 +631,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             genotype_matrix=genotype_device_array,
         )
         block_until_ready(result.log10_p_value)
-        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
         return result
 
 
@@ -642,7 +645,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         writer_sessions: tuple[typing.Any, ...],
         committed_chunk_identifier_sets: tuple[set[int], ...],
         staging_depth: int = 1,
-        stage_timing_recorder: StageTimingRecorder | None = None,
+        stage_timing_recorder: timing.StageTimingRecorder | None = None,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -687,9 +690,9 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def compute_preprocessed_chunk(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
+        variant_metadata: _core.VariantMetadata,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
-        chunk_stats: core.ChunkStats,
+        chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one sample-major Rust-preprocessed chunk and enqueue multi-trait results."""
         self.prepare_chromosome_state(variant_metadata)
@@ -702,15 +705,15 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             genotype_matrix=genotype_device_array,
         )
         block_until_ready(result.log10_p_value)
-        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
         self.enqueue_multi_result_for_write(variant_metadata=variant_metadata, chunk_stats=chunk_stats, result=result)
 
     def compute_preprocessed_variant_major_chunk(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
+        variant_metadata: _core.VariantMetadata,
         genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
-        chunk_stats: core.ChunkStats,
+        chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one variant-major Rust-preprocessed chunk and enqueue multi-trait results."""
         self.prepare_chromosome_state(variant_metadata)
@@ -724,7 +727,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             genotype_sum_squares=jax.device_put(chunk_stats.imputed_dosage_square_sum),
         )
         block_until_ready(result.log10_p_value)
-        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
         self.enqueue_multi_result_for_write(variant_metadata=variant_metadata, chunk_stats=chunk_stats, result=result)
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
@@ -739,14 +742,14 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             loco_predictions,
         )
         block_until_ready(self.current_chromosome_state.adjusted_residual_matrix)
-        record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
+        timing.record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
         self.current_chromosome = chromosome
 
     def enqueue_multi_result_for_write(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
-        chunk_stats: core.ChunkStats,
+        variant_metadata: _core.VariantMetadata,
+        chunk_stats: _core.ChunkStats,
         result: regenie2_linear_types.Regenie2MultiLinearChunkResult,
     ) -> None:
         """Enqueue a multi-linear result for materialization and writing."""
@@ -774,10 +777,10 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         run_input: NativeBgenRunInputProtocol,
         prediction_source: RegeniePredictionSourceProtocol,
         writer_session: typing.Any,
-        correction_plan: g_types.BinaryCorrectionPlan,
+        correction_plan: types.BinaryCorrectionPlan,
         kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
         staging_depth: int = 1,
-        stage_timing_recorder: StageTimingRecorder | None = None,
+        stage_timing_recorder: timing.StageTimingRecorder | None = None,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -800,9 +803,9 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def compute_preprocessed_chunk(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
+        variant_metadata: _core.VariantMetadata,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
-        chunk_stats: core.ChunkStats,
+        chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one Rust-preprocessed chunk and enqueue its result for writing."""
         result = self.compute_binary_result(
@@ -815,8 +818,8 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def enqueue_binary_result_for_write(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
-        chunk_stats: core.ChunkStats,
+        variant_metadata: _core.VariantMetadata,
+        chunk_stats: _core.ChunkStats,
         result: regenie2_binary_types.Regenie2BinaryChunkResult,
     ) -> None:
         """Enqueue a binary result for materialization and writing."""
@@ -865,7 +868,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     "correction_method": self.correction_plan.method.value,
                 }
             )
-        record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
+        timing.record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
         self.current_chromosome = chromosome
 
     def compute_binary_result(
@@ -890,16 +893,16 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             kernel_config=self.kernel_config,
         )
         block_until_ready(result.log10_p_value)
-        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
         record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
         return result
 
     def compute_preprocessed_variant_major_chunk(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
+        variant_metadata: _core.VariantMetadata,
         genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
-        chunk_stats: core.ChunkStats,
+        chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one variant-major chunk and enqueue its result for writing."""
         self.prepare_chromosome_state(variant_metadata)
@@ -908,8 +911,9 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         genotype_device_array = put_genotype_matrix_on_device(genotype_matrix_by_variant, self.stage_timing_recorder)
         self.release_numpy_dosage_buffer(genotype_matrix_by_variant)
         compute_start_time = time.perf_counter()
-        if self.correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
-            result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+        if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
+            variant_major_module = regenie2_binary_variant_major_experimental
+            result = variant_major_module.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
                 chromosome_state=self.current_chromosome_state,
                 genotype_matrix_by_variant=genotype_device_array,
                 correction_plan=self.correction_plan,
@@ -925,7 +929,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 kernel_config=self.kernel_config,
             )
         block_until_ready(result.log10_p_value)
-        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
         record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
         self.enqueue_binary_result_for_write(variant_metadata=variant_metadata, chunk_stats=chunk_stats, result=result)
 
@@ -939,9 +943,9 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         prediction_source: MultiRegeniePredictionSourceProtocol,
         writer_sessions: tuple[typing.Any, ...],
         committed_chunk_identifier_sets: tuple[set[int], ...],
-        correction_plan: g_types.BinaryCorrectionPlan,
+        correction_plan: types.BinaryCorrectionPlan,
         staging_depth: int = 1,
-        stage_timing_recorder: StageTimingRecorder | None = None,
+        stage_timing_recorder: timing.StageTimingRecorder | None = None,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -987,9 +991,9 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
     def compute_preprocessed_chunk(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
+        variant_metadata: _core.VariantMetadata,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
-        chunk_stats: core.ChunkStats,
+        chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one sample-major Rust-preprocessed chunk and enqueue multi-trait results."""
         self.prepare_chromosome_state(variant_metadata)
@@ -1004,15 +1008,15 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
         )
         block_until_ready(result.log10_p_value)
-        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
         self.enqueue_multi_result_for_write(variant_metadata=variant_metadata, chunk_stats=chunk_stats, result=result)
 
     def compute_preprocessed_variant_major_chunk(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
+        variant_metadata: _core.VariantMetadata,
         genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
-        chunk_stats: core.ChunkStats,
+        chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one variant-major Rust-preprocessed chunk and enqueue multi-trait results."""
         self.prepare_chromosome_state(variant_metadata)
@@ -1020,7 +1024,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         genotype_device_array = put_genotype_matrix_on_device(genotype_matrix_by_variant, self.stage_timing_recorder)
         self.release_numpy_dosage_buffer(genotype_matrix_by_variant)
         compute_start_time = time.perf_counter()
-        if self.correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
+        if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
             result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
                 chromosome_state=self.current_chromosome_state,
                 genotype_matrix_by_variant=genotype_device_array,
@@ -1035,7 +1039,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
             )
         block_until_ready(result.log10_p_value)
-        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
         self.enqueue_multi_result_for_write(variant_metadata=variant_metadata, chunk_stats=chunk_stats, result=result)
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
@@ -1062,14 +1066,14 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                         "correction_method": self.correction_plan.method.value,
                     }
                 )
-        record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
+        timing.record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
         self.current_chromosome = chromosome
 
     def enqueue_multi_result_for_write(
         self,
         *,
-        variant_metadata: core.VariantMetadata,
-        chunk_stats: core.ChunkStats,
+        variant_metadata: _core.VariantMetadata,
+        chunk_stats: _core.ChunkStats,
         result: regenie2_binary_types.Regenie2MultiBinaryChunkResult,
     ) -> None:
         """Enqueue a multi-binary result for materialization and writing."""

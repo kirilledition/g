@@ -8,17 +8,14 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
-import g._core as core
-import g.compute.regenie2_binary as regenie2_binary
-import g.compute.regenie2_binary_types as regenie2_binary_types
-import g.compute.regenie2_linear as regenie2_linear
-import g.engine.callbacks as callbacks
-import g.engine.native_dispatch as native_dispatch
-import g.io.source as source
-import g.types as g_types
+from g import _core, types
+from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear
+from g.engine import callbacks, native_dispatch
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
+
+    from g.io import source
 
 
 @dataclass(frozen=True)
@@ -38,13 +35,13 @@ class WarmCacheReport:
 
 def build_warm_cache_shapes(
     *,
-    engine: core.Regenie2RunEngine,
+    engine: _core.Regenie2RunEngine,
     chunk_size: int,
     variant_limit: int | None,
     sample_count: int,
 ) -> tuple[WarmCacheShape, ...]:
     """Build the full and tail chunk shapes that should be warmed."""
-    chunk_specs = core.plan_genotype_chunks(
+    chunk_specs = _core.plan_genotype_chunks(
         engine.variant_count,
         chunk_size,
         engine.chromosome_boundary_indices(),
@@ -89,7 +86,7 @@ def warm_regenie2_linear_bgen_cache(
     chunk_size: int,
     variant_limit: int | None,
     trusted_no_missing_diploid: bool = False,
-    trusted_bgen_validation_mode: g_types.TrustedBgenValidationMode = g_types.TrustedBgenValidationMode.CACHE_ON_MISS,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for quantitative REGENIE step 2."""
@@ -155,9 +152,9 @@ def warm_regenie2_binary_bgen_cache(
     covariate_names: tuple[str, ...] | None,
     chunk_size: int,
     variant_limit: int | None,
-    correction_plan: g_types.BinaryCorrectionPlan,
+    correction_plan: types.BinaryCorrectionPlan,
     trusted_no_missing_diploid: bool = False,
-    trusted_bgen_validation_mode: g_types.TrustedBgenValidationMode = g_types.TrustedBgenValidationMode.CACHE_ON_MISS,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
     kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None,
 ) -> WarmCacheReport:
@@ -219,7 +216,7 @@ def warm_regenie2_binary_bgen_cache(
     return WarmCacheReport(warmed_shapes=shapes)
 
 
-def first_engine_chromosome(engine: core.Regenie2RunEngine) -> str:
+def first_engine_chromosome(engine: _core.Regenie2RunEngine) -> str:
     """Return the first chromosome label from the native BGEN engine."""
     chromosome_values, _, _, _, _ = engine.variant_metadata_slice(0, 1)
     if not chromosome_values:

@@ -12,14 +12,7 @@ def __getattr__(name: str) -> typing.Any:
         cli = importlib.import_module("g.cli")
         return cli.main
     if name in {
-        "BinaryConfig",
-        "GComputeConfig",
-        "GDiagnosticsConfig",
-        "GOutputConfig",
-        "InputConfig",
-        "RegenieConfig",
         "RunArtifacts",
-        "TraitConfig",
         "regenie",
     }:
         api = importlib.import_module("g.api")
@@ -45,20 +38,13 @@ __all__ = [
     "ArrayMemoryOrder",
     "ArrowCompression",
     "AssociationMode",
-    "BinaryConfig",
     "Device",
-    "GComputeConfig",
-    "GDiagnosticsConfig",
-    "GOutputConfig",
-    "InputConfig",
     "JaxMatmulPrecision",
     "OutputFormat",
-    "RegenieConfig",
     "RegenieTraitType",
     "RunArtifacts",
     "SampleIdentifierSource",
     "SampleKeyMode",
-    "TraitConfig",
     "main",
     "regenie",
 ]

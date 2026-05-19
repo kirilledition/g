@@ -11,19 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path  # noqa: TC003
 
 from g import types
-from g.interface import config as interface_config
+from g.interface import config
 from g.io import output, source
 
 if typing.TYPE_CHECKING:
     from g.compute import regenie2_binary_types
-
-InputConfig = interface_config.InputConfig
-TraitConfig = interface_config.TraitConfig
-BinaryConfig = interface_config.BinaryConfig
-GComputeConfig = interface_config.GComputeConfig
-GOutputConfig = interface_config.GOutputConfig
-GDiagnosticsConfig = interface_config.GDiagnosticsConfig
-RegenieConfig = interface_config.RegenieConfig
 
 
 @dataclass(frozen=True)
@@ -43,7 +35,7 @@ class EngineRunConfig:
     arrow_compression: types.ArrowCompression
     trusted_no_missing_diploid: bool
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
-    alignment_config: GComputeConfig
+    alignment_config: config.GComputeConfig
     binary_kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None
     variant_limit: int | None = None
 
@@ -59,9 +51,14 @@ class RunArtifacts:
     phenotype_artifacts: tuple[RunArtifacts, ...] = ()
 
 
-def load_engine_module() -> typing.Any:
-    """Load the JAX-heavy engine module lazily."""
-    return importlib.import_module("g.engine")
+def load_regenie2_pipeline_module() -> typing.Any:
+    """Load the JAX-heavy REGENIE pipeline module lazily."""
+    return importlib.import_module("g.engine.regenie2_pipeline")
+
+
+def load_timing_module() -> typing.Any:
+    """Load stage-timing helpers lazily."""
+    return importlib.import_module("g.engine.timing")
 
 
 def load_jax_setup_module() -> typing.Any:
@@ -69,7 +66,7 @@ def load_jax_setup_module() -> typing.Any:
     return importlib.import_module("g.jax_setup")
 
 
-def configure_jax_runtime(compute_config: GComputeConfig) -> None:
+def configure_jax_runtime(compute_config: config.GComputeConfig) -> None:
     """Configure JAX lazily."""
     load_jax_setup_module().configure_jax_runtime(
         cache_directory=compute_config.jax_cache_dir,
@@ -89,34 +86,34 @@ def configure_jax_device(device: types.Device) -> None:
 
 def build_stage_timing_recorder(stage_timing_path: Path | None) -> typing.Any:
     """Build a stage timing recorder lazily."""
-    return load_engine_module().build_stage_timing_recorder(stage_timing_path)
+    return load_timing_module().build_stage_timing_recorder(stage_timing_path)
 
 
 def record_stage_duration(stage_timing_recorder: typing.Any, stage_name: str, start_time: float) -> None:
     """Record one stage duration lazily."""
-    load_engine_module().record_stage_duration(stage_timing_recorder, stage_name, start_time)
+    load_timing_module().record_stage_duration(stage_timing_recorder, stage_name, start_time)
 
 
 def write_stage_timing_snapshot(stage_timing_recorder: typing.Any, stage_timing_path: Path | None) -> None:
     """Write a stage timing snapshot lazily."""
-    load_engine_module().write_stage_timing_snapshot(stage_timing_recorder, stage_timing_path)
+    load_timing_module().write_stage_timing_snapshot(stage_timing_recorder, stage_timing_path)
 
 
 def run_regenie2_linear_bgen_pipeline(**kwargs: typing.Any) -> Path | None:
     """Run the linear native pipeline lazily."""
-    return typing.cast("Path | None", load_engine_module().run_regenie2_linear_bgen_pipeline(**kwargs))
+    return typing.cast("Path | None", load_regenie2_pipeline_module().run_regenie2_linear_bgen_pipeline(**kwargs))
 
 
 def run_regenie2_binary_bgen_pipeline(**kwargs: typing.Any) -> Path | None:
     """Run the binary native pipeline lazily."""
-    return typing.cast("Path | None", load_engine_module().run_regenie2_binary_bgen_pipeline(**kwargs))
+    return typing.cast("Path | None", load_regenie2_pipeline_module().run_regenie2_binary_bgen_pipeline(**kwargs))
 
 
 def run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs: typing.Any) -> tuple[Path | None, ...]:
     """Run the multi-phenotype linear native pipeline lazily."""
     return typing.cast(
         "tuple[Path | None, ...]",
-        load_engine_module().run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs),
+        load_regenie2_pipeline_module().run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs),
     )
 
 
@@ -124,11 +121,11 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> t
     """Run the multi-phenotype binary native pipeline lazily."""
     return typing.cast(
         "tuple[Path | None, ...]",
-        load_engine_module().run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs),
+        load_regenie2_pipeline_module().run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs),
     )
 
 
-def normalize_binary_correction_config(binary_config: BinaryConfig) -> types.BinaryCorrectionPlan:
+def normalize_binary_correction_config(binary_config: config.BinaryConfig) -> types.BinaryCorrectionPlan:
     """Normalize REGENIE-style binary correction flags into an internal plan."""
     if not (0.0 < binary_config.p_threshold < 1.0):
         message = "pThresh must be in (0, 1)."
@@ -155,7 +152,7 @@ def normalize_binary_correction_config(binary_config: BinaryConfig) -> types.Bin
     )
 
 
-def build_binary_kernel_config(compute_config: GComputeConfig) -> regenie2_binary_types.BinaryKernelConfig:
+def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie2_binary_types.BinaryKernelConfig:
     """Build immutable binary JAX kernel settings from public compute config."""
     binary_types_module = importlib.import_module("g.compute.regenie2_binary_types")
     return binary_types_module.BinaryKernelConfig(
@@ -172,7 +169,7 @@ def build_binary_kernel_config(compute_config: GComputeConfig) -> regenie2_binar
     )
 
 
-def configure_runtime(compute_config: GComputeConfig, trait_config: TraitConfig) -> None:
+def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
     """Apply runtime knobs before engine execution."""
     configure_jax_runtime(compute_config)
     core_module = importlib.import_module("g._core")
@@ -182,9 +179,9 @@ def configure_runtime(compute_config: GComputeConfig, trait_config: TraitConfig)
             core_module.configure_rayon_global_thread_pool(trait_config.threads)
 
 
-def run_regenie_config(regenie_config: RegenieConfig) -> RunArtifacts:
+def run_regenie_config(regenie_config: config.RegenieConfig) -> RunArtifacts:
     """Run the shared REGENIE-compatible config path."""
-    interface_config.validate_config(regenie_config)
+    config.validate_config(regenie_config)
     configure_runtime(regenie_config.g_compute, regenie_config.trait)
     if len(regenie_config.input.pheno_columns) > 1:
         return run_multi_phenotype_config(regenie_config)
@@ -209,7 +206,7 @@ class RegenieMultiRunPlan:
     engine_config: EngineRunConfig
 
 
-def run_multi_phenotype_config(regenie_config: RegenieConfig) -> RunArtifacts:
+def run_multi_phenotype_config(regenie_config: config.RegenieConfig) -> RunArtifacts:
     """Run multiple phenotypes through one shared native engine delivery."""
     output_prefix = typing.cast("Path", regenie_config.g_output.out)
     output_run_root = regenie_config.g_output.output_run_directory or output_prefix.with_name(f"{output_prefix.name}.g")
@@ -240,7 +237,7 @@ def run_multi_phenotype_config(regenie_config: RegenieConfig) -> RunArtifacts:
             write_stage_timing_snapshot(stage_timing_recorder, regenie_config.g_diagnostics.stage_timings_json)
 
 
-def build_regenie_multi_run_plan(regenie_config: RegenieConfig, output_run_root: Path) -> RegenieMultiRunPlan:
+def build_regenie_multi_run_plan(regenie_config: config.RegenieConfig, output_run_root: Path) -> RegenieMultiRunPlan:
     """Prepare output sessions and shared engine settings for a multi-phenotype run."""
     binary_correction_plan = (
         normalize_binary_correction_config(regenie_config.binary)
@@ -299,7 +296,7 @@ def build_regenie_multi_run_plan(regenie_config: RegenieConfig, output_run_root:
 
 def dispatch_multi_engine_pipeline(
     *,
-    regenie_config: RegenieConfig,
+    regenie_config: config.RegenieConfig,
     plan: RegenieMultiRunPlan,
     stage_timing_recorder: typing.Any,
 ) -> tuple[Path | None, ...]:
@@ -338,7 +335,7 @@ def dispatch_multi_engine_pipeline(
 
 def build_multi_phenotype_artifacts(
     *,
-    regenie_config: RegenieConfig,
+    regenie_config: config.RegenieConfig,
     output_prefix: Path,
     phenotype_names: tuple[str, ...],
     output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
@@ -353,7 +350,7 @@ def build_multi_phenotype_artifacts(
         strict=True,
     ):
         effective_config_path = output_run_paths.run_directory / "effective_config.toml"
-        interface_config.write_toml(regenie_config, effective_config_path)
+        config.write_toml(regenie_config, effective_config_path)
         extend_run_manifest(output_run_paths.run_directory, regenie_config, phenotype_name, effective_config_path)
         final_regenie_path = None
         if regenie_config.g_output.format in {types.OutputFormat.REGENIE, types.OutputFormat.BOTH}:
@@ -370,7 +367,7 @@ def build_multi_phenotype_artifacts(
     return tuple(phenotype_artifacts)
 
 
-def run_one_phenotype_config(regenie_config: RegenieConfig, phenotype_name: str) -> RunArtifacts:
+def run_one_phenotype_config(regenie_config: config.RegenieConfig, phenotype_name: str) -> RunArtifacts:
     """Run one phenotype through the existing engine."""
     output_prefix = typing.cast("Path", regenie_config.g_output.out)
     output_run_root = regenie_config.g_output.output_run_directory or output_prefix.with_name(f"{output_prefix.name}.g")
@@ -408,7 +405,7 @@ def run_one_phenotype_config(regenie_config: RegenieConfig, phenotype_name: str)
     effective_config_path = None
     if artifacts.output_run_directory is not None:
         effective_config_path = artifacts.output_run_directory / "effective_config.toml"
-        interface_config.write_toml(regenie_config, effective_config_path)
+        config.write_toml(regenie_config, effective_config_path)
         extend_run_manifest(
             artifacts.output_run_directory,
             regenie_config,
@@ -431,7 +428,7 @@ def run_one_phenotype_config(regenie_config: RegenieConfig, phenotype_name: str)
 
 def run_existing_engine(
     *,
-    regenie_config: RegenieConfig,
+    regenie_config: config.RegenieConfig,
     phenotype_name: str,
     output_prefix: Path,
     engine_config: EngineRunConfig,
@@ -489,7 +486,7 @@ def run_existing_engine(
 
 def dispatch_engine_pipeline(
     *,
-    regenie_config: RegenieConfig,
+    regenie_config: config.RegenieConfig,
     phenotype_name: str,
     genotype_source_config: source.GenotypeSourceConfig,
     engine_config: EngineRunConfig,
@@ -534,7 +531,7 @@ def dispatch_engine_pipeline(
 
 def extend_run_manifest(
     output_run_directory: Path,
-    regenie_config: RegenieConfig,
+    regenie_config: config.RegenieConfig,
     phenotype_name: str,
     effective_config_path: Path,
 ) -> None:
@@ -568,13 +565,13 @@ def extend_run_manifest(
 class RegenieApi:
     """Callable public REGENIE-compatible API."""
 
-    def __call__(self, regenie_config: RegenieConfig) -> RunArtifacts:
+    def __call__(self, regenie_config: config.RegenieConfig) -> RunArtifacts:
         """Run from a normalized config."""
         return run_regenie_config(regenie_config)
 
     def from_options(self, raw_options: typing.Mapping[str, typing.Any]) -> RunArtifacts:
         """Build a config from Python options and run it."""
-        return run_regenie_config(RegenieConfig.from_options(raw_options))
+        return run_regenie_config(config.RegenieConfig.from_options(raw_options))
 
 
 regenie = RegenieApi()

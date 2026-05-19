@@ -5,12 +5,13 @@ from unittest.mock import patch
 
 import g
 from g import api, types
+from g.interface import config
 from g.io import output, source
 from g.io.output import OutputRunPaths, PreparedOutputRun
 
 
-def build_minimal_config() -> api.RegenieConfig:
-    return api.RegenieConfig.from_options(
+def build_minimal_config() -> config.RegenieConfig:
+    return config.RegenieConfig.from_options(
         {
             "step": 2,
             "qt": True,
@@ -28,13 +29,13 @@ def build_minimal_config() -> api.RegenieConfig:
 
 def test_public_package_exposes_only_new_regenie_interface() -> None:
     assert "regenie" in g.__all__
-    assert "RegenieConfig" in g.__all__
-    assert "InputConfig" in g.__all__
-    assert "TraitConfig" in g.__all__
-    assert "BinaryConfig" in g.__all__
-    assert "GComputeConfig" in g.__all__
-    assert "GDiagnosticsConfig" in g.__all__
-    assert "GOutputConfig" in g.__all__
+    assert "RegenieConfig" not in g.__all__
+    assert "InputConfig" not in g.__all__
+    assert "TraitConfig" not in g.__all__
+    assert "BinaryConfig" not in g.__all__
+    assert "GComputeConfig" not in g.__all__
+    assert "GDiagnosticsConfig" not in g.__all__
+    assert "GOutputConfig" not in g.__all__
     assert "regenie2" not in g.__all__
     assert "regenie2_linear" not in g.__all__
     assert "ComputeConfig" not in g.__all__
@@ -42,7 +43,7 @@ def test_public_package_exposes_only_new_regenie_interface() -> None:
 
 
 def test_regenie_config_from_options_maps_regenie_names() -> None:
-    regenie_config = api.RegenieConfig.from_options(
+    regenie_config = config.RegenieConfig.from_options(
         {
             "step": 2,
             "bt": True,
@@ -71,7 +72,7 @@ def test_regenie_config_from_options_maps_regenie_names() -> None:
 
 def test_build_binary_kernel_config_maps_compute_options() -> None:
     kernel_config = api.build_binary_kernel_config(
-        api.GComputeConfig(
+        config.GComputeConfig(
             firth_batch_size=7,
             firth_candidate_capacity=11,
             binary_null_maximum_iterations=13,
@@ -92,7 +93,7 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
 
 
 def test_normalize_binary_correction_config_maps_approximate_firth() -> None:
-    plan = api.normalize_binary_correction_config(api.BinaryConfig(firth=True, approx=True, p_threshold=0.01))
+    plan = api.normalize_binary_correction_config(config.BinaryConfig(firth=True, approx=True, p_threshold=0.01))
 
     assert plan == types.BinaryCorrectionPlan(
         method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
@@ -142,7 +143,7 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
         run_directory=Path("results/output.g/trait.regenie2_binary.run"),
         chunks_directory=Path("results/output.g/trait.regenie2_binary.run/chunks"),
     )
-    regenie_config = api.RegenieConfig.from_options(
+    regenie_config = config.RegenieConfig.from_options(
         {
             "step": 2,
             "bt": True,
@@ -198,7 +199,7 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
 
 
 def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
-    regenie_config = api.RegenieConfig.from_options(
+    regenie_config = config.RegenieConfig.from_options(
         {
             "step": 2,
             "bt": True,
@@ -211,7 +212,7 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
             "approx": True,
         }
     )
-    kernel_config = api.build_binary_kernel_config(api.GComputeConfig(firth_batch_size=5))
+    kernel_config = api.build_binary_kernel_config(config.GComputeConfig(firth_batch_size=5))
     engine_config = api.EngineRunConfig(
         chunk_size=32,
         device=types.Device.CPU,
@@ -271,7 +272,7 @@ def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:
 
 
 def test_multi_run_plan_forwards_existing_manifests() -> None:
-    regenie_config = api.RegenieConfig.from_options(
+    regenie_config = config.RegenieConfig.from_options(
         {
             "step": 2,
             "qt": True,

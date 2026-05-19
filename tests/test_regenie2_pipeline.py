@@ -10,7 +10,7 @@ import numpy as np
 
 from g import types
 from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, regenie2_linear_types
-from g.engine import regenie2_pipeline
+from g.engine import callbacks, native_dispatch, regenie2_pipeline
 from g.io import output, source
 
 if typing.TYPE_CHECKING:
@@ -145,8 +145,8 @@ def build_native_aligned_sample_data() -> SimpleNamespace:
     )
 
 
-def build_native_run_input() -> regenie2_pipeline.NativeBgenRunInput:
-    return regenie2_pipeline.NativeBgenRunInput(
+def build_native_run_input() -> native_dispatch.NativeBgenRunInput:
+    return native_dispatch.NativeBgenRunInput(
         native_aligned_sample_data=typing.cast("typing.Any", build_native_aligned_sample_data()),
         sample_indices=np.asarray([1, 0], dtype=np.int64),
         phenotype_vector=jnp.asarray([0.0, 1.0], dtype=jnp.float32),
@@ -155,7 +155,7 @@ def build_native_run_input() -> regenie2_pipeline.NativeBgenRunInput:
     )
 
 
-def build_native_multi_run_input() -> regenie2_pipeline.NativeBgenMultiRunInput:
+def build_native_multi_run_input() -> native_dispatch.NativeBgenMultiRunInput:
     native_multi_aligned_sample_data = SimpleNamespace(
         phenotype_names=["trait_a", "trait_b"],
         sample_indices=np.asarray([1, 0], dtype=np.int64),
@@ -166,7 +166,7 @@ def build_native_multi_run_input() -> regenie2_pipeline.NativeBgenMultiRunInput:
         covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
         is_binary_trait=False,
     )
-    return regenie2_pipeline.NativeBgenMultiRunInput(
+    return native_dispatch.NativeBgenMultiRunInput(
         native_multi_aligned_sample_data=typing.cast("typing.Any", native_multi_aligned_sample_data),
         phenotype_names=("trait_a", "trait_b"),
         sample_indices=np.asarray([1, 0], dtype=np.int64),
@@ -217,7 +217,7 @@ def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -
         log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
         valid_mask=jnp.asarray([True, True]),
     )
-    callback = regenie2_pipeline.LinearRegenie2PipelineCallback(
+    callback = callbacks.LinearRegenie2PipelineCallback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -226,11 +226,11 @@ def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -
 
     with (
         patch(
-            "g.engine.regenie2_pipeline.regenie2_linear.prepare_regenie2_linear_chromosome_state",
+            "g.compute.regenie2_linear.prepare_regenie2_linear_chromosome_state",
             return_value="chromosome-state",
         ),
         patch(
-            "g.engine.regenie2_pipeline.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
+            "g.compute.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ),
     ):
@@ -267,7 +267,7 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
             dtype=jnp.int32,
         ),
     )
-    callback = regenie2_pipeline.BinaryRegenie2PipelineCallback(
+    callback = callbacks.BinaryRegenie2PipelineCallback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -278,11 +278,11 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
 
     with (
         patch(
-            "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_chromosome_state",
+            "g.compute.regenie2_binary.prepare_regenie2_binary_chromosome_state",
             return_value="chromosome-state",
         ) as mock_prepare,
         patch(
-            "g.engine.regenie2_pipeline.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
+            "g.compute.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
             return_value=result,
         ) as mock_compute,
     ):
@@ -333,7 +333,7 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
             dtype=jnp.int32,
         ),
     )
-    callback = regenie2_pipeline.BinaryRegenie2PipelineCallback(
+    callback = callbacks.BinaryRegenie2PipelineCallback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -361,11 +361,11 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
 
     with (
         patch(
-            "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_chromosome_state",
+            "g.compute.regenie2_binary.prepare_regenie2_binary_chromosome_state",
             return_value="chromosome-state",
         ),
         patch(
-            "g.engine.regenie2_pipeline.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
+            "g.compute.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
             return_value=result,
         ) as mock_compute,
     ):
@@ -425,7 +425,7 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
             dtype=jnp.int32,
         ),
     )
-    callback = regenie2_pipeline.BinaryRegenie2PipelineCallback(
+    callback = callbacks.BinaryRegenie2PipelineCallback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
@@ -444,15 +444,15 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
 
     with (
         patch(
-            "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_chromosome_state",
+            "g.compute.regenie2_binary.prepare_regenie2_binary_chromosome_state",
             return_value="chromosome-state",
         ),
         patch(
-            "g.engine.regenie2_pipeline.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
+            "g.compute.regenie2_binary_variant_major_experimental.compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
             return_value=result,
         ) as mock_variant_major_compute,
         patch(
-            "g.engine.regenie2_pipeline.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
+            "g.compute.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
         ) as mock_sample_major_compute,
     ):
         callback.compute_preprocessed_variant_major_dosage_chunk(
@@ -478,13 +478,13 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     preparation_order: list[str] = []
 
     with (
-        patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.regenie2_pipeline.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
-        patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
+        patch("g.engine.native_dispatch.load_native_bgen_run_input", return_value=run_input),
         patch(
             "g.engine.regenie2_pipeline.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_session,
@@ -537,7 +537,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, regenie2_pipeline.LinearRegenie2PipelineCallback)
+    assert isinstance(callback, callbacks.LinearRegenie2PipelineCallback)
     assert callback.dosage_queue_depth == 3
     assert callback.dosage_buffer_limit == 4
     assert committed_chunk_identifiers == [0, 64]
@@ -557,13 +557,13 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     preparation_order: list[str] = []
 
     with (
-        patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
         patch(
-            "g.engine.regenie2_pipeline.validate_trusted_bgen_with_cache",
+            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
-        patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
+        patch("g.engine.native_dispatch.load_native_bgen_run_input", return_value=run_input),
         patch(
             "g.engine.regenie2_pipeline.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_session,
@@ -579,7 +579,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             ),
         ),
         patch(
-            "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_state",
+            "g.compute.regenie2_binary.prepare_regenie2_binary_state",
             return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
         ),
     ):
@@ -608,7 +608,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, regenie2_pipeline.BinaryRegenie2PipelineCallback)
+    assert isinstance(callback, callbacks.BinaryRegenie2PipelineCallback)
     assert callback.kernel_config is kernel_config
     assert committed_chunk_identifiers == [0, 64]
 
@@ -620,9 +620,9 @@ def test_binary_pipeline_uses_sample_major_engine_for_untrusted_bgen() -> None:
     run_input = build_native_run_input()
 
     with (
-        patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
-        patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.load_native_bgen_run_input", return_value=run_input),
         patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
         patch(
             "g.engine.regenie2_pipeline.output.build_current_run_manifest_header", return_value={"header": "current"}
@@ -632,7 +632,7 @@ def test_binary_pipeline_uses_sample_major_engine_for_untrusted_bgen() -> None:
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
         ),
         patch(
-            "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_state",
+            "g.compute.regenie2_binary.prepare_regenie2_binary_state",
             return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
         ),
     ):
@@ -666,10 +666,10 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     initialized_chunk_sets = [frozenset({0, 32}), frozenset({32, 64})]
 
     with (
-        patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.regenie2_pipeline.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
         patch(
-            "g.engine.regenie2_pipeline.build_multi_regenie_prediction_source",
+            "g.engine.native_dispatch.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
         patch("g.engine.regenie2_pipeline.run_multi_preflight"),
@@ -724,7 +724,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
-    assert isinstance(callback, regenie2_pipeline.MultiLinearRegenie2PipelineCallback)
+    assert isinstance(callback, callbacks.MultiLinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [32]
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
@@ -733,8 +733,8 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
 def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated() -> None:
     FakeRunEngine.instances.clear()
 
-    with patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine):
-        engine = regenie2_pipeline.build_bgen_run_engine(
+    with patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine):
+        engine = native_dispatch.build_bgen_run_engine(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
             chunk_size=32,
             variant_limit=100,
@@ -753,14 +753,14 @@ def test_build_bgen_run_engine_caches_trusted_validation(tmp_path: Path, monkeyp
     bgen_path.write_bytes(b"bgen")
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
 
-    with patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine):
-        first_engine = regenie2_pipeline.build_bgen_run_engine(
+    with patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine):
+        first_engine = native_dispatch.build_bgen_run_engine(
             genotype_source_config=source.build_bgen_source_config(bgen_path),
             chunk_size=32,
             variant_limit=100,
             trusted_no_missing_diploid=True,
         )
-        second_engine = regenie2_pipeline.build_bgen_run_engine(
+        second_engine = native_dispatch.build_bgen_run_engine(
             genotype_source_config=source.build_bgen_source_config(bgen_path),
             chunk_size=32,
             variant_limit=100,
@@ -779,8 +779,8 @@ def test_build_bgen_run_engine_force_validates_trusted_bgen(tmp_path: Path, monk
     bgen_path.write_bytes(b"bgen")
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
 
-    with patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine):
-        engine = regenie2_pipeline.build_bgen_run_engine(
+    with patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine):
+        engine = native_dispatch.build_bgen_run_engine(
             genotype_source_config=source.build_bgen_source_config(bgen_path),
             chunk_size=32,
             variant_limit=100,
@@ -794,7 +794,7 @@ def test_build_bgen_run_engine_force_validates_trusted_bgen(tmp_path: Path, monk
 
 def test_load_native_bgen_run_input_rejects_non_bgen_source_suffix() -> None:
     with np.testing.assert_raises_regex(ValueError, r"Expected a \.bgen source path"):
-        regenie2_pipeline.load_native_bgen_run_input(
+        native_dispatch.load_native_bgen_run_input(
             genotype_source_config=source.GenotypeSourceConfig(source_path=Path("study.vcf")),
             engine=typing.cast("typing.Any", object()),
             phenotype_path=Path("phenotype.tsv"),
@@ -813,13 +813,13 @@ def test_load_native_bgen_run_input_uses_rust_alignment_for_embedded_samples() -
     )
 
     with (
-        patch("g.engine.regenie2_pipeline.source.resolve_bgen_sample_path", return_value=None),
+        patch("g.io.source.resolve_bgen_sample_path", return_value=None),
         patch(
-            "g.engine.regenie2_pipeline.load_native_aligned_sample_data",
+            "g.engine.native_dispatch.load_native_aligned_sample_data",
             return_value=native_aligned_sample_data,
         ) as mock_load_aligned_sample_data,
     ):
-        run_input = regenie2_pipeline.load_native_bgen_run_input(
+        run_input = native_dispatch.load_native_bgen_run_input(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
             engine=typing.cast("typing.Any", engine),
             phenotype_path=Path("phenotype.tsv"),
@@ -845,13 +845,13 @@ def test_load_native_bgen_run_input_uses_rust_sample_file_alignment() -> None:
     sample_path = Path("study.sample")
 
     with (
-        patch("g.engine.regenie2_pipeline.source.resolve_bgen_sample_path", return_value=sample_path),
+        patch("g.io.source.resolve_bgen_sample_path", return_value=sample_path),
         patch(
-            "g.engine.regenie2_pipeline.load_native_aligned_sample_data",
+            "g.engine.native_dispatch.load_native_aligned_sample_data",
             return_value=native_aligned_sample_data,
         ) as mock_load_aligned_sample_data,
     ):
-        run_input = regenie2_pipeline.load_native_bgen_run_input(
+        run_input = native_dispatch.load_native_bgen_run_input(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
             engine=typing.cast("typing.Any", engine),
             phenotype_path=Path("phenotype.tsv"),
@@ -885,14 +885,14 @@ def test_alignment_config_reaches_native_alignment_and_prediction_source() -> No
     )
 
     with (
-        patch("g.engine.regenie2_pipeline.source.resolve_bgen_sample_path", return_value=None),
+        patch("g.io.source.resolve_bgen_sample_path", return_value=None),
         patch(
-            "g.engine.regenie2_pipeline.load_native_aligned_sample_data",
+            "g.engine.native_dispatch.load_native_aligned_sample_data",
             return_value=native_aligned_sample_data,
         ) as mock_load_aligned_sample_data,
-        patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
     ):
-        run_input = regenie2_pipeline.load_native_bgen_run_input(
+        run_input = native_dispatch.load_native_bgen_run_input(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
             engine=typing.cast("typing.Any", engine),
             phenotype_path=Path("phenotype.tsv"),
@@ -902,7 +902,7 @@ def test_alignment_config_reaches_native_alignment_and_prediction_source() -> No
             is_binary_trait=False,
             alignment_config=alignment_config,
         )
-        prediction_source = regenie2_pipeline.build_regenie_prediction_source(
+        prediction_source = native_dispatch.build_regenie_prediction_source(
             prediction_list_path=Path("pred.list"),
             phenotype_name="trait",
             run_input=run_input,

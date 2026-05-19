@@ -4,9 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from g import api, types
-from g.interface import config as interface_config
-from g.interface import options as interface_options
+from g import types
+from g.interface import config, options
 
 
 def test_all_option_specs_are_accepted_by_python_options() -> None:
@@ -55,7 +54,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-stage-timings-json": "timings.json",
     }
 
-    regenie_config = api.RegenieConfig.from_options(raw_options)
+    regenie_config = config.RegenieConfig.from_options(raw_options)
 
     assert regenie_config.g_compute.trusted_bgen_validation_mode == types.TrustedBgenValidationMode.ASSUME_VALIDATED
     assert regenie_config.g_compute.firth_batch_size == 8
@@ -72,13 +71,13 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
 
 
 def test_every_supported_option_has_explain_metadata() -> None:
-    for option_name in interface_options.supported_option_names() | interface_options.unsupported_option_names():
-        explanation = interface_options.explain_option(option_name)
+    for option_name in options.supported_option_names() | options.unsupported_option_names():
+        explanation = options.explain_option(option_name)
         assert option_name in explanation
 
 
 def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
-    regenie_config = api.RegenieConfig.from_options(
+    regenie_config = config.RegenieConfig.from_options(
         {
             "step": 2,
             "bt": True,
@@ -98,21 +97,21 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
     )
     config_path = tmp_path / "effective_config.toml"
 
-    interface_config.write_toml(regenie_config, config_path)
-    loaded_config = api.RegenieConfig.from_toml(config_path)
+    config.write_toml(regenie_config, config_path)
+    loaded_config = config.RegenieConfig.from_toml(config_path)
 
     assert loaded_config == regenie_config
 
 
 def test_unknown_and_unsupported_options_raise_clear_errors() -> None:
     with pytest.raises(ValueError, match="Unknown g regenie option"):
-        api.RegenieConfig.from_options({"not_a_real_option": True})
+        config.RegenieConfig.from_options({"not_a_real_option": True})
 
     with pytest.raises(ValueError, match="Unknown g regenie option: g-allow-duplicate-iid-alignment"):
-        api.RegenieConfig.from_options({"g-allow-duplicate-iid-alignment": True})
+        config.RegenieConfig.from_options({"g-allow-duplicate-iid-alignment": True})
 
     with pytest.raises(ValueError, match="Unknown g regenie option: g-allow-duplicate-iid-alignment"):
-        api.RegenieConfig.from_options({"g": {"compute": {"allow-duplicate-iid-alignment": True}}})
+        config.RegenieConfig.from_options({"g": {"compute": {"allow-duplicate-iid-alignment": True}}})
 
     with pytest.raises(ValueError, match="valid REGENIE option"):
-        api.RegenieConfig.from_options({"pgen": "dataset", "phenoFile": "phenotype.tsv"})
+        config.RegenieConfig.from_options({"pgen": "dataset", "phenoFile": "phenotype.tsv"})

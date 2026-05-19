@@ -9,7 +9,12 @@ import numpy as np
 import pytest
 
 from g import types
-from g.compute import regenie2_binary, regenie2_binary_types
+from g.compute import (
+    regenie2_binary,
+    regenie2_binary_candidate_planning,
+    regenie2_binary_types,
+    regenie2_binary_variant_major_experimental,
+)
 
 APPROXIMATE_FIRTH_PLAN = types.BinaryCorrectionPlan(
     method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
@@ -31,11 +36,11 @@ compute_binary_chunk = typing.cast(
 )
 compute_score_test_chunk_variant_major = typing.cast(
     "BinaryChunkComputeFunction",
-    regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major,
+    regenie2_binary_variant_major_experimental.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major,
 )
 compute_binary_chunk_variant_major = typing.cast(
     "BinaryChunkComputeFunction",
-    regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major,
+    regenie2_binary_variant_major_experimental.compute_regenie2_binary_chunk_from_chromosome_state_variant_major,
 )
 
 
@@ -98,7 +103,7 @@ def build_chromosome_state() -> tuple[
 def test_firth_candidate_capacity_uses_default() -> None:
     assert (
         regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG.firth_candidate_capacity
-        == regenie2_binary.DEFAULT_FIRTH_CANDIDATE_CAPACITY
+        == regenie2_binary_candidate_planning.DEFAULT_FIRTH_CANDIDATE_CAPACITY
     )
 
 
@@ -114,7 +119,7 @@ def test_device_firth_batch_plan_uses_candidate_capacity() -> None:
     clear_binary_compute_caches()
     fallback_mask = jnp.asarray([True, False, True, False, True], dtype=jnp.bool_)
 
-    batch_plan = regenie2_binary.build_device_firth_batch_plan(
+    batch_plan = regenie2_binary_candidate_planning.build_device_firth_batch_plan(
         fallback_mask,
         candidate_capacity=4,
         firth_batch_size=2,
@@ -156,7 +161,7 @@ def test_null_logistic_kernel_config_retraces_same_shape_without_cache_clear() -
 
 
 def test_group_firth_candidate_batch_inputs_places_heuristic_lanes_after_regular_lanes() -> None:
-    ordered_inputs = regenie2_binary.group_firth_candidate_batch_inputs(
+    ordered_inputs = regenie2_binary_candidate_planning.group_firth_candidate_batch_inputs(
         flat_fallback_indices=jnp.asarray([10, 11, 12, 0], dtype=jnp.int32),
         flat_active_mask=jnp.asarray([True, True, True, False], dtype=jnp.bool_),
         genotype_matrix_by_variant=jnp.asarray(
@@ -181,7 +186,7 @@ def test_group_firth_candidate_batch_inputs_places_heuristic_lanes_after_regular
 
 
 def test_score_only_plan_produces_no_fallback_candidates() -> None:
-    extra_code = regenie2_binary.build_extra_code(
+    extra_code = regenie2_binary_candidate_planning.build_extra_code(
         log10_p_value=jnp.asarray([0.5, 2.0, 8.0], dtype=jnp.float32),
         valid_mask=jnp.asarray([True, True, True], dtype=jnp.bool_),
         correction_plan=types.BinaryCorrectionPlan(),
@@ -343,8 +348,8 @@ def test_p_threshold_controls_fallback_candidate_selection() -> None:
         p_threshold=0.01,
     )
 
-    relaxed_extra_code = regenie2_binary.build_extra_code(log10_p_value, valid_mask, relaxed_plan)
-    strict_extra_code = regenie2_binary.build_extra_code(log10_p_value, valid_mask, strict_plan)
+    relaxed_extra_code = regenie2_binary_candidate_planning.build_extra_code(log10_p_value, valid_mask, relaxed_plan)
+    strict_extra_code = regenie2_binary_candidate_planning.build_extra_code(log10_p_value, valid_mask, strict_plan)
 
     assert np.count_nonzero(np.asarray(relaxed_extra_code) == types.BinaryExtraCode.FIRTH.value) == 2
     assert np.count_nonzero(np.asarray(strict_extra_code) == types.BinaryExtraCode.FIRTH.value) == 1
