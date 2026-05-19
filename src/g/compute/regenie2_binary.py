@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import functools
-import math
 import os
 import typing
 from dataclasses import dataclass
@@ -11,6 +10,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+import g.compute.regenie2_binary_candidate_planning as regenie2_binary_candidate_planning
 import g.compute.regenie2_binary_diagnostics as regenie2_binary_diagnostics
 from g import types
 from g.compute import regenie2_binary_types as regenie2_types
@@ -35,8 +35,8 @@ FIRTH_COEFFICIENT_TOLERANCE = 1.0e-4
 FIRTH_LIKELIHOOD_TOLERANCE = 1.0e-4
 FIRTH_MAXIMUM_STEP_SIZE = 5.0
 FIRTH_MAXIMUM_ITERATIONS = 50
-DEFAULT_FIRTH_BATCH_SIZE = 64
-DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
+DEFAULT_FIRTH_BATCH_SIZE = regenie2_binary_candidate_planning.DEFAULT_FIRTH_BATCH_SIZE
+DEFAULT_FIRTH_CANDIDATE_CAPACITY = regenie2_binary_candidate_planning.DEFAULT_FIRTH_CANDIDATE_CAPACITY
 BLOCK_FIRTH_MATH_ENVIRONMENT_VARIABLE = "G_REGENIE2_BINARY_USE_BLOCK_FIRTH_MATH"
 
 BinaryScoreTestChunkComputeFunction = typing.Callable[
@@ -53,30 +53,8 @@ BinaryVariantMajorChunkComputeFunction = typing.Callable[
 ]
 
 
-@functools.cache
-def get_firth_batch_size() -> int:
-    """Resolve the active fixed Firth batch size from the environment."""
-    raw_value = os.environ.get("G_REGENIE2_BINARY_FIRTH_BATCH_SIZE")
-    if raw_value is None:
-        return DEFAULT_FIRTH_BATCH_SIZE
-    parsed_value = int(raw_value)
-    if parsed_value <= 0:
-        message = "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE must be positive."
-        raise ValueError(message)
-    return parsed_value
-
-
-@functools.cache
-def get_firth_candidate_capacity() -> int:
-    """Resolve the active fixed Firth candidate lane capacity from the environment."""
-    raw_value = os.environ.get("G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY")
-    if raw_value is None:
-        return DEFAULT_FIRTH_CANDIDATE_CAPACITY
-    parsed_value = int(raw_value)
-    if parsed_value <= 0:
-        message = "G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY must be positive."
-        raise ValueError(message)
-    return parsed_value
+get_firth_batch_size = regenie2_binary_candidate_planning.get_firth_batch_size
+get_firth_candidate_capacity = regenie2_binary_candidate_planning.get_firth_candidate_capacity
 
 
 @functools.cache
@@ -189,40 +167,8 @@ class FirthVariantResult:
     failure_code: jax.Array
 
 
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class FirthBatchPlan:
-    """Fixed-shape Firth candidate batch plan.
-
-    Attributes:
-        fallback_index_matrix: Candidate variant indices padded into fixed Firth batches.
-        fallback_active_mask_matrix: Active-lane mask matching `fallback_index_matrix`.
-        active_flat_position_vector: Fixed-size positions of active lanes in flattened padded batches.
-
-    """
-
-    fallback_index_matrix: jax.Array
-    fallback_active_mask_matrix: jax.Array
-    active_flat_position_vector: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class FirthCandidateBatchInputs:
-    """Fixed-shape Firth candidate inputs after optional lane ordering.
-
-    Attributes:
-        flat_fallback_indices: Candidate variant indices in flattened batch order.
-        flat_active_mask: Active-lane mask in flattened batch order.
-        genotype_matrix_by_variant: Candidate genotypes in flattened batch order.
-        heuristic_firth_mask: Whether each lane uses the separation-oriented initializer.
-
-    """
-
-    flat_fallback_indices: jax.Array
-    flat_active_mask: jax.Array
-    genotype_matrix_by_variant: jax.Array
-    heuristic_firth_mask: jax.Array
+FirthBatchPlan = regenie2_binary_candidate_planning.FirthBatchPlan
+FirthCandidateBatchInputs = regenie2_binary_candidate_planning.FirthCandidateBatchInputs
 
 
 def prepare_regenie2_binary_state(
@@ -263,32 +209,7 @@ def solve_from_positive_definite_matrix(
     return regenie2_linear.solve_positive_definite_system(cholesky_factor, right_hand_side)
 
 
-def build_extra_code(
-    log10_p_value: jax.Array,
-    valid_mask: jax.Array,
-    correction_plan: types.BinaryCorrectionPlan,
-) -> jax.Array:
-    """Select correction labels from score-test statistics."""
-    if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
-        candidate_mask = jnp.zeros_like(valid_mask, dtype=jnp.bool_)
-        correction_code = EXTRA_CODE_SCORE
-    elif correction_plan.method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE:
-        fallback_log10p_threshold = -math.log10(correction_plan.p_threshold)
-        candidate_mask = log10_p_value > fallback_log10p_threshold
-        correction_code = EXTRA_CODE_FIRTH
-    elif correction_plan.method == types.BinaryFallbackMethod.FIRTH:
-        message = "Exact REGENIE --firth without --approx is not implemented yet. Use --firth --approx."
-        raise NotImplementedError(message)
-    elif correction_plan.method == types.BinaryFallbackMethod.SPA:
-        message = "SPA fallback is not implemented yet. Omit --spa for score-test-only output."
-        raise NotImplementedError(message)
-    else:
-        typing.assert_never(correction_plan.method)
-    return jnp.where(
-        valid_mask,
-        jnp.where(candidate_mask, correction_code, EXTRA_CODE_SCORE),
-        EXTRA_CODE_TEST_FAIL,
-    ).astype(jnp.int32)
+build_extra_code = regenie2_binary_candidate_planning.build_extra_code
 
 
 @jax.jit
@@ -1025,51 +946,8 @@ def initialize_full_model_coefficients_without_mask(
     return jnp.concatenate([covariate_coefficients, genotype_coefficient[:, None]], axis=1)
 
 
-def build_device_firth_batch_plan(
-    fallback_mask: jax.Array,
-    candidate_capacity: int,
-) -> FirthBatchPlan:
-    """Build fixed-shape Firth index batches on device."""
-    firth_batch_size = get_firth_batch_size()
-    max_batch_count = (candidate_capacity + firth_batch_size - 1) // firth_batch_size
-    padded_variant_count = max_batch_count * firth_batch_size
-    fallback_index_vector = jnp.nonzero(fallback_mask, size=candidate_capacity, fill_value=0)[0]
-    fallback_count = jnp.sum(fallback_mask, dtype=jnp.int32)
-    padded_index_vector = jnp.pad(
-        fallback_index_vector,
-        (0, padded_variant_count - candidate_capacity),
-        constant_values=0,
-    )
-    active_mask_vector = jnp.arange(padded_variant_count, dtype=jnp.int32) < fallback_count
-    active_flat_position_vector = jnp.nonzero(
-        active_mask_vector,
-        size=candidate_capacity,
-        fill_value=0,
-    )[0]
-    return FirthBatchPlan(
-        fallback_index_matrix=padded_index_vector.reshape((max_batch_count, firth_batch_size)),
-        fallback_active_mask_matrix=active_mask_vector.reshape((max_batch_count, firth_batch_size)),
-        active_flat_position_vector=active_flat_position_vector,
-    )
-
-
-def group_firth_candidate_batch_inputs(
-    *,
-    flat_fallback_indices: jax.Array,
-    flat_active_mask: jax.Array,
-    genotype_matrix_by_variant: jax.Array,
-    heuristic_firth_mask: jax.Array,
-) -> FirthCandidateBatchInputs:
-    """Group likely long-running Firth lanes together before fixed-size batching."""
-    inactive_sort_key = jnp.asarray(2, dtype=jnp.int32)
-    sort_key = jnp.where(flat_active_mask, heuristic_firth_mask.astype(jnp.int32), inactive_sort_key)
-    sort_order = jnp.argsort(sort_key, stable=True)
-    return FirthCandidateBatchInputs(
-        flat_fallback_indices=jnp.take(flat_fallback_indices, sort_order, axis=0),
-        flat_active_mask=jnp.take(flat_active_mask, sort_order, axis=0),
-        genotype_matrix_by_variant=jnp.take(genotype_matrix_by_variant, sort_order, axis=0),
-        heuristic_firth_mask=jnp.take(heuristic_firth_mask, sort_order, axis=0),
-    )
+build_device_firth_batch_plan = regenie2_binary_candidate_planning.build_device_firth_batch_plan
+group_firth_candidate_batch_inputs = regenie2_binary_candidate_planning.group_firth_candidate_batch_inputs
 
 
 def compute_firth_variantwise(
