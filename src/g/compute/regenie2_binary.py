@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import functools
 import typing
 from dataclasses import dataclass
@@ -10,7 +11,6 @@ import jax
 import jax.numpy as jnp
 
 import g.compute.regenie2_binary_candidate_planning as regenie2_binary_candidate_planning
-import g.compute.regenie2_binary_diagnostics as regenie2_binary_diagnostics
 from g import types
 from g.compute import regenie2_binary_types as regenie2_types
 from g.compute import regenie2_linear
@@ -20,15 +20,6 @@ MINIMUM_VARIANCE = 1.0e-8
 RELATIVE_VARIANCE_TOLERANCE = 1.0e-6
 DEFAULT_MAXIMUM_NULL_ITERATIONS = 50
 NULL_LOGISTIC_COEFFICIENT_TOLERANCE = 1.0e-6
-EXTRA_CODE_SCORE = regenie2_binary_diagnostics.EXTRA_CODE_SCORE
-EXTRA_CODE_FIRTH = regenie2_binary_diagnostics.EXTRA_CODE_FIRTH
-EXTRA_CODE_SPA = regenie2_binary_diagnostics.EXTRA_CODE_SPA
-EXTRA_CODE_TEST_FAIL = regenie2_binary_diagnostics.EXTRA_CODE_TEST_FAIL
-FIRTH_FAILURE_NONE = regenie2_binary_diagnostics.FIRTH_FAILURE_NONE
-FIRTH_FAILURE_NUMERICAL = regenie2_binary_diagnostics.FIRTH_FAILURE_NUMERICAL
-FIRTH_FAILURE_MAX_ITERATIONS = regenie2_binary_diagnostics.FIRTH_FAILURE_MAX_ITERATIONS
-FIRTH_FAILURE_INVALID_STATISTIC = regenie2_binary_diagnostics.FIRTH_FAILURE_INVALID_STATISTIC
-FIRTH_FAILURE_STEP_HALVING = regenie2_binary_diagnostics.FIRTH_FAILURE_STEP_HALVING
 INITIAL_RESPONSE_SCALE = 4.863891244002886
 BINARY_CASE_THRESHOLD = 0.5
 ALLELE_COUNT_MULTIPLIER = 2.0
@@ -38,13 +29,6 @@ FIRTH_LIKELIHOOD_TOLERANCE = 1.0e-4
 FIRTH_MAXIMUM_STEP_SIZE = 5.0
 FIRTH_MAXIMUM_ITERATIONS = 50
 FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS = 12
-FIRTH_CONVERGENCE_REASON_NONE = 0
-FIRTH_CONVERGENCE_REASON_CONVERGED = 1
-FIRTH_CONVERGENCE_REASON_NUMERICAL_FAILURE = 2
-FIRTH_CONVERGENCE_REASON_MAX_ITERATIONS = 3
-FIRTH_CONVERGENCE_REASON_INVALID_STATISTIC = 4
-FIRTH_CONVERGENCE_REASON_STEP_HALVING_EXHAUSTED = 5
-FIRTH_CONVERGENCE_REASON_NULL_FAILURE = 6
 DEFAULT_FIRTH_BATCH_SIZE = regenie2_binary_candidate_planning.DEFAULT_FIRTH_BATCH_SIZE
 DEFAULT_FIRTH_CANDIDATE_CAPACITY = regenie2_binary_candidate_planning.DEFAULT_FIRTH_CANDIDATE_CAPACITY
 DEFAULT_BINARY_KERNEL_CONFIG = regenie2_types.BinaryKernelConfig(
@@ -59,6 +43,19 @@ DEFAULT_BINARY_KERNEL_CONFIG = regenie2_types.BinaryKernelConfig(
     firth_maximum_step_size=FIRTH_MAXIMUM_STEP_SIZE,
     use_block_firth_math=False,
 )
+
+
+class FirthConvergenceReason(enum.IntEnum):
+    """Internal integer termination reasons for binary Firth fitting."""
+
+    NONE = 0
+    CONVERGED = 1
+    NUMERICAL_FAILURE = 2
+    MAX_ITERATIONS = 3
+    INVALID_STATISTIC = 4
+    STEP_HALVING_EXHAUSTED = 5
+    NULL_FAILURE = 6
+
 
 BinaryScoreTestChunkComputeFunction = typing.Callable[
     [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan],
@@ -433,7 +430,7 @@ def prepare_regenie2_binary_chromosome_state(
         null_firth_result = NullFirthFitResult(
             penalized_log_likelihood=jnp.asarray(0.0, dtype=jnp.float32),
             iteration_count=jnp.asarray(0, dtype=jnp.int32),
-            convergence_reason_code=jnp.asarray(FIRTH_CONVERGENCE_REASON_NONE, dtype=jnp.int32),
+            convergence_reason_code=jnp.asarray(FirthConvergenceReason.NONE.value, dtype=jnp.int32),
             converged=jnp.asarray(1, dtype=jnp.bool_),
         )
     else:
@@ -782,19 +779,19 @@ def run_firth_step_halving(
 def map_firth_reason_code_to_failure_code(reason_code: jax.Array) -> jax.Array:
     """Map internal Firth termination reasons to public failure labels."""
     return jnp.where(
-        reason_code == FIRTH_CONVERGENCE_REASON_MAX_ITERATIONS,
-        FIRTH_FAILURE_MAX_ITERATIONS,
+        reason_code == FirthConvergenceReason.MAX_ITERATIONS.value,
+        types.FirthFailureCode.MAX_ITERATIONS.value,
         jnp.where(
-            reason_code == FIRTH_CONVERGENCE_REASON_INVALID_STATISTIC,
-            FIRTH_FAILURE_INVALID_STATISTIC,
+            reason_code == FirthConvergenceReason.INVALID_STATISTIC.value,
+            types.FirthFailureCode.INVALID_STATISTIC.value,
             jnp.where(
-                reason_code == FIRTH_CONVERGENCE_REASON_STEP_HALVING_EXHAUSTED,
-                FIRTH_FAILURE_STEP_HALVING,
+                reason_code == FirthConvergenceReason.STEP_HALVING_EXHAUSTED.value,
+                types.FirthFailureCode.STEP_HALVING.value,
                 jnp.where(
-                    (reason_code == FIRTH_CONVERGENCE_REASON_NUMERICAL_FAILURE)
-                    | (reason_code == FIRTH_CONVERGENCE_REASON_NULL_FAILURE),
-                    FIRTH_FAILURE_NUMERICAL,
-                    FIRTH_FAILURE_NONE,
+                    (reason_code == FirthConvergenceReason.NUMERICAL_FAILURE.value)
+                    | (reason_code == FirthConvergenceReason.NULL_FAILURE.value),
+                    types.FirthFailureCode.NUMERICAL.value,
+                    types.FirthFailureCode.NONE.value,
                 ),
             ),
         ),
@@ -986,11 +983,11 @@ def fit_covariate_only_firth_null_model(
         ) & (~updated_failed)
         updated_reason_code = jnp.where(
             step_halving_failed,
-            FIRTH_CONVERGENCE_REASON_STEP_HALVING_EXHAUSTED,
+            FirthConvergenceReason.STEP_HALVING_EXHAUSTED.value,
             jnp.where(
                 current_failed,
-                FIRTH_CONVERGENCE_REASON_NUMERICAL_FAILURE,
-                jnp.where(updated_converged, FIRTH_CONVERGENCE_REASON_CONVERGED, FIRTH_CONVERGENCE_REASON_NONE),
+                FirthConvergenceReason.NUMERICAL_FAILURE.value,
+                jnp.where(updated_converged, FirthConvergenceReason.CONVERGED.value, FirthConvergenceReason.NONE.value),
             ),
         ).astype(jnp.int32)
         return FirthState(
@@ -1032,15 +1029,15 @@ def fit_covariate_only_firth_null_model(
             iteration_count=jnp.asarray(0, dtype=jnp.int32),
             termination_reason_code=jnp.where(
                 initial_failed,
-                FIRTH_CONVERGENCE_REASON_NUMERICAL_FAILURE,
-                FIRTH_CONVERGENCE_REASON_NONE,
+                FirthConvergenceReason.NUMERICAL_FAILURE.value,
+                FirthConvergenceReason.NONE.value,
             ).astype(jnp.int32),
         ),
     )
     max_iteration_failure = (~final_state.converged) & (~final_state.failed)
     convergence_reason_code = jnp.where(
         max_iteration_failure,
-        FIRTH_CONVERGENCE_REASON_MAX_ITERATIONS,
+        FirthConvergenceReason.MAX_ITERATIONS.value,
         final_state.termination_reason_code,
     ).astype(jnp.int32)
     trusted_penalized_log_likelihood = jnp.where(
@@ -1195,11 +1192,11 @@ def fit_single_variant_firth_logistic_regression(
         ) & (~updated_failed)
         updated_reason_code = jnp.where(
             step_halving_failed,
-            FIRTH_CONVERGENCE_REASON_STEP_HALVING_EXHAUSTED,
+            FirthConvergenceReason.STEP_HALVING_EXHAUSTED.value,
             jnp.where(
                 current_failed,
-                FIRTH_CONVERGENCE_REASON_NUMERICAL_FAILURE,
-                jnp.where(updated_converged, FIRTH_CONVERGENCE_REASON_CONVERGED, FIRTH_CONVERGENCE_REASON_NONE),
+                FirthConvergenceReason.NUMERICAL_FAILURE.value,
+                jnp.where(updated_converged, FirthConvergenceReason.CONVERGED.value, FirthConvergenceReason.NONE.value),
             ),
         ).astype(jnp.int32)
         return FirthState(
@@ -1242,11 +1239,11 @@ def fit_single_variant_firth_logistic_regression(
     initial_failed = initial_full_failed | initial_null_failed
     initial_reason_code = jnp.where(
         initial_null_failed,
-        FIRTH_CONVERGENCE_REASON_NULL_FAILURE,
+        FirthConvergenceReason.NULL_FAILURE.value,
         jnp.where(
             initial_full_failed,
-            FIRTH_CONVERGENCE_REASON_NUMERICAL_FAILURE,
-            FIRTH_CONVERGENCE_REASON_NONE,
+            FirthConvergenceReason.NUMERICAL_FAILURE.value,
+            FirthConvergenceReason.NONE.value,
         ),
     ).astype(jnp.int32)
     final_state = jax.lax.while_loop(
@@ -1332,10 +1329,10 @@ def fit_single_variant_firth_logistic_regression(
     invalid_statistic_failure_mask = (~skip_firth) & final_state.converged & (~final_state.failed) & (~valid_mask)
     convergence_reason_code = jnp.where(
         maximum_iteration_failure_mask,
-        FIRTH_CONVERGENCE_REASON_MAX_ITERATIONS,
+        FirthConvergenceReason.MAX_ITERATIONS.value,
         jnp.where(
             invalid_statistic_failure_mask,
-            FIRTH_CONVERGENCE_REASON_INVALID_STATISTIC,
+            FirthConvergenceReason.INVALID_STATISTIC.value,
             final_state.termination_reason_code,
         ),
     ).astype(jnp.int32)
@@ -1349,10 +1346,10 @@ def fit_single_variant_firth_logistic_regression(
         converged_mask=jnp.where(skip_firth, jnp.asarray(0, dtype=jnp.bool_), final_state.converged),
         valid_mask=valid_mask,
         iteration_count=jnp.where(skip_firth, jnp.asarray(0, dtype=jnp.int32), final_state.iteration_count),
-        failure_code=jnp.where(skip_firth, FIRTH_FAILURE_NONE, failure_code),
+        failure_code=jnp.where(skip_firth, types.FirthFailureCode.NONE.value, failure_code),
         convergence_reason_code=jnp.where(
             skip_firth,
-            FIRTH_CONVERGENCE_REASON_NONE,
+            FirthConvergenceReason.NONE.value,
             convergence_reason_code,
         ),
     )
@@ -1482,7 +1479,7 @@ def apply_device_candidate_corrections_firth(
     kernel_config: regenie2_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Apply fully device-resident Firth corrections to score-test candidates."""
-    candidate_mask = result.extra_code == EXTRA_CODE_FIRTH
+    candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
     fallback_count = jnp.sum(candidate_mask, dtype=jnp.int32)
 
     def no_candidate_corrections() -> regenie2_types.Regenie2BinaryChunkResult:
@@ -1628,7 +1625,9 @@ def apply_device_candidate_corrections_firth(
                 firth_result.log10_p_value[active_flat_positions],
                 current_log10_p_value,
             )
-            merged_extra_code = jnp.where(active_valid_mask, EXTRA_CODE_FIRTH, EXTRA_CODE_TEST_FAIL).astype(jnp.int32)
+            merged_extra_code = jnp.where(
+                active_valid_mask, types.BinaryExtraCode.FIRTH.value, types.BinaryExtraCode.TEST_FAIL.value
+            ).astype(jnp.int32)
             return regenie2_types.Regenie2BinaryChunkResult(
                 beta=result.beta.at[active_fallback_indices].set(merged_beta),
                 standard_error=result.standard_error.at[active_fallback_indices].set(merged_standard_error),

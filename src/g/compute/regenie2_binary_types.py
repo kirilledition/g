@@ -131,11 +131,11 @@ class Regenie2BinaryChunkResult:
         standard_error: Standard errors of estimates.
         chi_squared: Chi-squared statistics.
         log10_p_value: Negative log10 p-values.
-        extra_code: Integer correction code for output rendering.
+        extra_code: Integer value from `types.BinaryExtraCode` for output rendering.
         valid_mask: Boolean mask for valid statistics.
         firth_iteration_count: Number of Firth iterations per variant, or zero for non-Firth rows.
-        firth_failure_code: Integer Firth failure-reason code, or zero for non-failed rows.
-        firth_convergence_reason_code: Internal Firth termination-reason code.
+        firth_failure_code: Integer value from `types.FirthFailureCode`, or zero for non-failed rows.
+        firth_convergence_reason_code: Internal Firth termination-reason integer.
 
     """
 
@@ -214,11 +214,11 @@ class Regenie2MultiBinaryChunkResult:
         standard_error: Standard errors with shape ``traits x variants``.
         chi_squared: Chi-squared statistics with shape ``traits x variants``.
         log10_p_value: Negative log10 p-values with shape ``traits x variants``.
-        extra_code: Integer correction codes with shape ``traits x variants``.
+        extra_code: Integer values from `types.BinaryExtraCode` with shape ``traits x variants``.
         valid_mask: Boolean mask for valid statistics with shape ``traits x variants``.
         firth_iteration_count: Firth iteration counts with shape ``traits x variants``.
-        firth_failure_code: Firth failure-reason codes with shape ``traits x variants``.
-        firth_convergence_reason_code: Internal Firth termination-reason codes with shape ``traits x variants``.
+        firth_failure_code: Values from `types.FirthFailureCode` with shape ``traits x variants``.
+        firth_convergence_reason_code: Internal Firth termination-reason integers with shape ``traits x variants``.
 
     """
 

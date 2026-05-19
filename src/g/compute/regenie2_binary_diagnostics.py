@@ -9,18 +9,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from g import types
+
 if typing.TYPE_CHECKING:
     import g.compute.regenie2_binary_types as regenie2_binary_types
-
-EXTRA_CODE_SCORE = 0
-EXTRA_CODE_FIRTH = 1
-EXTRA_CODE_SPA = 2
-EXTRA_CODE_TEST_FAIL = 3
-FIRTH_FAILURE_NONE = 0
-FIRTH_FAILURE_NUMERICAL = 1
-FIRTH_FAILURE_MAX_ITERATIONS = 2
-FIRTH_FAILURE_INVALID_STATISTIC = 3
-FIRTH_FAILURE_STEP_HALVING = 4
 
 
 @jax.tree_util.register_dataclass
@@ -70,9 +62,9 @@ def count_binary_chunk_diagnostics(
     median_iteration_index = jnp.maximum((firth_candidate_count - 1) // 2, 0)
     return BinaryChunkDiagnostics(
         score_test_candidate_count=jnp.sum(
-            (result.extra_code == EXTRA_CODE_FIRTH)
-            | (result.extra_code == EXTRA_CODE_SPA)
-            | (result.extra_code == EXTRA_CODE_TEST_FAIL),
+            (result.extra_code == types.BinaryExtraCode.FIRTH.value)
+            | (result.extra_code == types.BinaryExtraCode.SPA.value)
+            | (result.extra_code == types.BinaryExtraCode.TEST_FAIL.value),
             dtype=jnp.int32,
         ),
         firth_candidate_count=firth_candidate_count,
@@ -87,22 +79,22 @@ def count_binary_chunk_diagnostics(
             jnp.asarray(0, dtype=jnp.int32),
         ),
         firth_iteration_max=jnp.max(finite_iteration_count),
-        firth_converged_count=jnp.sum(result.extra_code == EXTRA_CODE_FIRTH, dtype=jnp.int32),
-        firth_failed_count=jnp.sum(result.extra_code == EXTRA_CODE_TEST_FAIL, dtype=jnp.int32),
+        firth_converged_count=jnp.sum(result.extra_code == types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32),
+        firth_failed_count=jnp.sum(result.extra_code == types.BinaryExtraCode.TEST_FAIL.value, dtype=jnp.int32),
         firth_numerical_failure_count=jnp.sum(
-            result.firth_failure_code == FIRTH_FAILURE_NUMERICAL,
+            result.firth_failure_code == types.FirthFailureCode.NUMERICAL.value,
             dtype=jnp.int32,
         ),
         firth_max_iteration_failure_count=jnp.sum(
-            result.firth_failure_code == FIRTH_FAILURE_MAX_ITERATIONS,
+            result.firth_failure_code == types.FirthFailureCode.MAX_ITERATIONS.value,
             dtype=jnp.int32,
         ),
         firth_invalid_statistic_failure_count=jnp.sum(
-            result.firth_failure_code == FIRTH_FAILURE_INVALID_STATISTIC,
+            result.firth_failure_code == types.FirthFailureCode.INVALID_STATISTIC.value,
             dtype=jnp.int32,
         ),
         firth_step_halving_failure_count=jnp.sum(
-            result.firth_failure_code == FIRTH_FAILURE_STEP_HALVING,
+            result.firth_failure_code == types.FirthFailureCode.STEP_HALVING.value,
             dtype=jnp.int32,
         ),
     )

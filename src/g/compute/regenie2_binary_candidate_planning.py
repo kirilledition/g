@@ -9,7 +9,6 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
-import g.compute.regenie2_binary_diagnostics as regenie2_binary_diagnostics
 import g.types as g_types
 
 DEFAULT_FIRTH_BATCH_SIZE = 64
@@ -60,11 +59,11 @@ def build_extra_code(
     """Select correction labels from score-test statistics."""
     if correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
         candidate_mask = jnp.zeros_like(valid_mask, dtype=jnp.bool_)
-        correction_code = regenie2_binary_diagnostics.EXTRA_CODE_SCORE
+        correction_code = g_types.BinaryExtraCode.SCORE.value
     elif correction_plan.method == g_types.BinaryFallbackMethod.FIRTH_APPROXIMATE:
         fallback_log10p_threshold = -math.log10(correction_plan.p_threshold)
         candidate_mask = log10_p_value > fallback_log10p_threshold
-        correction_code = regenie2_binary_diagnostics.EXTRA_CODE_FIRTH
+        correction_code = g_types.BinaryExtraCode.FIRTH.value
     elif correction_plan.method == g_types.BinaryFallbackMethod.FIRTH:
         message = "Exact REGENIE --firth without --approx is not implemented yet. Use --firth --approx."
         raise NotImplementedError(message)
@@ -75,8 +74,8 @@ def build_extra_code(
         typing.assert_never(correction_plan.method)
     return jnp.where(
         valid_mask,
-        jnp.where(candidate_mask, correction_code, regenie2_binary_diagnostics.EXTRA_CODE_SCORE),
-        regenie2_binary_diagnostics.EXTRA_CODE_TEST_FAIL,
+        jnp.where(candidate_mask, correction_code, g_types.BinaryExtraCode.SCORE.value),
+        g_types.BinaryExtraCode.TEST_FAIL.value,
     ).astype(jnp.int32)
 
 

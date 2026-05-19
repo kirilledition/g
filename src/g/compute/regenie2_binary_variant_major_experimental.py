@@ -78,7 +78,7 @@ def apply_device_candidate_corrections_firth_variant_major(
     kernel_config: regenie2_types.BinaryKernelConfig = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_types.Regenie2BinaryChunkResult:
     """Apply device-resident Firth corrections to variant-major score-test candidates."""
-    candidate_mask = result.extra_code == regenie2_binary.EXTRA_CODE_FIRTH
+    candidate_mask = result.extra_code == g_types.BinaryExtraCode.FIRTH.value
     fallback_count = jnp.sum(candidate_mask, dtype=jnp.int32)
 
     def no_candidate_corrections() -> regenie2_types.Regenie2BinaryChunkResult:
@@ -237,8 +237,8 @@ def apply_device_candidate_corrections_firth_variant_major(
             )
             merged_extra_code = jnp.where(
                 active_valid_mask,
-                regenie2_binary.EXTRA_CODE_FIRTH,
-                regenie2_binary.EXTRA_CODE_TEST_FAIL,
+                g_types.BinaryExtraCode.FIRTH.value,
+                g_types.BinaryExtraCode.TEST_FAIL.value,
             ).astype(jnp.int32)
             return regenie2_types.Regenie2BinaryChunkResult(
                 beta=result.beta.at[active_fallback_indices].set(merged_beta),

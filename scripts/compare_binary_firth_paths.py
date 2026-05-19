@@ -177,17 +177,17 @@ def compute_path_metrics(
     """Compute parity metrics for one path."""
     score_extra_code = np.asarray(score_test_result.extra_code)
     corrected_extra_code = np.asarray(corrected_result.extra_code)
-    firth_candidate_mask = score_extra_code == regenie2_binary.EXTRA_CODE_FIRTH
+    firth_candidate_mask = score_extra_code == types.BinaryExtraCode.FIRTH.value
     firth_failure_code = np.asarray(corrected_result.firth_failure_code)
     unique_extra_codes, extra_code_counts = np.unique(corrected_extra_code, return_counts=True)
     return BinaryPathMetrics(
-        score_test_count=int(np.count_nonzero(score_extra_code == regenie2_binary.EXTRA_CODE_SCORE)),
+        score_test_count=int(np.count_nonzero(score_extra_code == types.BinaryExtraCode.SCORE.value)),
         firth_candidate_count=int(np.count_nonzero(firth_candidate_mask)),
         firth_converged_count=int(
-            np.count_nonzero(firth_candidate_mask & (firth_failure_code == regenie2_binary.FIRTH_FAILURE_NONE))
+            np.count_nonzero(firth_candidate_mask & (firth_failure_code == types.FirthFailureCode.NONE.value))
         ),
         firth_failure_count=int(
-            np.count_nonzero(firth_candidate_mask & (firth_failure_code != regenie2_binary.FIRTH_FAILURE_NONE))
+            np.count_nonzero(firth_candidate_mask & (firth_failure_code != types.FirthFailureCode.NONE.value))
         ),
         extra_counts={
             str(int(extra_code)): int(extra_count)

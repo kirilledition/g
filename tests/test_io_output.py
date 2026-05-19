@@ -186,7 +186,9 @@ def test_native_writer_uses_shared_schema_and_null_placeholders(tmp_path: Path) 
 
 def test_native_binary_writer_maps_extra_code_to_label(tmp_path: Path) -> None:
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
-    write_native_chunks(output_run_paths, AssociationMode.REGENIE2_BINARY, extra_code_value=1)
+    write_native_chunks(
+        output_run_paths, AssociationMode.REGENIE2_BINARY, extra_code_value=types.BinaryExtraCode.FIRTH.value
+    )
 
     frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
     assert frame.columns == EXPECTED_CHUNK_COLUMNS
@@ -195,7 +197,9 @@ def test_native_binary_writer_maps_extra_code_to_label(tmp_path: Path) -> None:
 
 def test_native_binary_writer_maps_test_fail_extra_code_to_label(tmp_path: Path) -> None:
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
-    write_native_chunks(output_run_paths, AssociationMode.REGENIE2_BINARY, extra_code_value=3)
+    write_native_chunks(
+        output_run_paths, AssociationMode.REGENIE2_BINARY, extra_code_value=types.BinaryExtraCode.TEST_FAIL.value
+    )
 
     frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
     assert frame.columns == EXPECTED_CHUNK_COLUMNS
@@ -418,7 +422,9 @@ def test_chunk_arrow_schema_is_shared_between_linear_and_binary(tmp_path: Path) 
     linear_run_paths.chunks_directory.mkdir()
     binary_run_paths.chunks_directory.mkdir()
     write_native_chunks(linear_run_paths, AssociationMode.REGENIE2_LINEAR)
-    write_native_chunks(binary_run_paths, AssociationMode.REGENIE2_BINARY, extra_code_value=3)
+    write_native_chunks(
+        binary_run_paths, AssociationMode.REGENIE2_BINARY, extra_code_value=types.BinaryExtraCode.TEST_FAIL.value
+    )
 
     linear_schema = pyarrow.ipc.open_file(
         output.iter_sorted_chunk_file_paths(linear_run_paths.chunks_directory)[0],
@@ -440,7 +446,11 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
         resume=False,
     )
     initialize_test_output_run(prepared_output_run, current_header)
-    write_native_chunks(prepared_output_run.output_run_paths, AssociationMode.REGENIE2_BINARY, extra_code_value=1)
+    write_native_chunks(
+        prepared_output_run.output_run_paths,
+        AssociationMode.REGENIE2_BINARY,
+        extra_code_value=types.BinaryExtraCode.FIRTH.value,
+    )
 
     parquet_path = output.finalize_chunks_to_parquet(
         prepared_output_run.output_run_paths,

@@ -74,6 +74,25 @@ class BinaryFallbackMethod(enum.StrEnum):
     SPA = "spa"
 
 
+class BinaryExtraCode(enum.IntEnum):
+    """Integer correction labels used by binary REGENIE step 2 output."""
+
+    SCORE = 0
+    FIRTH = 1
+    SPA = 2
+    TEST_FAIL = 3
+
+
+class FirthFailureCode(enum.IntEnum):
+    """Integer failure labels for binary Firth fallback rows."""
+
+    NONE = 0
+    NUMERICAL = 1
+    MAX_ITERATIONS = 2
+    INVALID_STATISTIC = 3
+    STEP_HALVING = 4
+
+
 @dataclass(frozen=True)
 class BinaryCorrectionPlan:
     """Normalized binary fallback execution plan.
