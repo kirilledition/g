@@ -5,10 +5,12 @@ from g.engine.callbacks import (
     LinearRegenie2PipelineCallback,
 )
 from g.engine.regenie2_pipeline import (
-    WarmCacheReport,
-    WarmCacheShape,
     run_regenie2_binary_bgen_pipeline,
     run_regenie2_linear_bgen_pipeline,
+)
+from g.engine.warm_cache import (
+    WarmCacheReport,
+    WarmCacheShape,
     warm_regenie2_binary_bgen_cache,
     warm_regenie2_linear_bgen_cache,
 )
