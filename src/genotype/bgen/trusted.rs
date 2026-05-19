@@ -1,12 +1,13 @@
 use std::time::Instant;
 
+use super::decode::{
+    DosageTileDecodeResult, ThreadScratch, VariantDecodeResult, read_exact_bytes, read_probability_block, read_u8_at,
+    read_u16_at, read_u32_at, u32_to_usize, unphased_eight_bit_dosage_lookup,
+};
 use super::metadata::VariantRecord;
 use super::profile::{ThreadLocalProfileSnapshot, elapsed_nanoseconds};
 use super::sample_selection::SampleSelection;
-use super::{
-    BgenError, CompressionType, DosageTileDecodeResult, ThreadScratch, VariantDecodeResult, read_exact_bytes,
-    read_probability_block, read_u8_at, read_u16_at, read_u32_at, u32_to_usize, unphased_eight_bit_dosage_lookup,
-};
+use super::{BgenError, CompressionType};
 
 pub(super) fn all_samples_present_diploid(sample_ploidy_and_missingness: &[u8]) -> bool {
     const PRESENT_DIPLOID_BYTE_GROUP: [u8; 16] = [2_u8; 16];

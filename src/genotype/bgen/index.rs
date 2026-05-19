@@ -1,7 +1,8 @@
+use super::decode::{read_exact_bytes, read_u16_at, read_u32_at, u32_to_usize};
 use super::metadata::VariantRecord;
 use super::{
-    ALLELE_LENGTH_SIZE_IN_BYTES, BgenError, CompressionType, VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES, read_exact_bytes,
-    read_u16_at, read_u32_at, u32_to_usize, validate_variant_probability_block,
+    ALLELE_LENGTH_SIZE_IN_BYTES, BgenError, CompressionType, VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES,
+    validate_variant_probability_block,
 };
 
 pub(super) fn parse_sample_identifier_block(
