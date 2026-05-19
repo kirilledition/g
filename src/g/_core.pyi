@@ -39,6 +39,16 @@ class NativeAlignedSampleData:
     covariate_matrix: npt.NDArray[np.float32]
     is_binary_trait: bool
 
+class NativeMultiAlignedSampleData:
+    sample_indices: npt.NDArray[np.int64]
+    family_identifiers: list[str]
+    individual_identifiers: list[str]
+    phenotype_names: list[str]
+    phenotype_matrix: npt.NDArray[np.float32]
+    covariate_names: list[str]
+    covariate_matrix: npt.NDArray[np.float32]
+    is_binary_trait: bool
+
 class Regenie2RunEngine:
     sample_count: int
     variant_count: int
@@ -63,6 +73,17 @@ class Regenie2RunEngine:
         sample_key_mode: str = "iid",
         allow_duplicate_iid_alignment: bool = False,
     ) -> NativeAlignedSampleData: ...
+    def align_multi_sample_data(
+        self,
+        sample_path: str | None,
+        phenotype_path: str,
+        phenotype_names: list[str],
+        covariate_path: str | None = None,
+        covariate_names: list[str] | None = None,
+        is_binary_trait: bool = False,
+        sample_key_mode: str = "iid",
+        allow_duplicate_iid_alignment: bool = False,
+    ) -> NativeMultiAlignedSampleData: ...
     def chromosome_boundary_indices(self) -> list[int]: ...
     def reset_profile(self) -> None: ...
     def profile_snapshot(self) -> dict[str, int]: ...
@@ -103,6 +124,25 @@ class RegeniePredictionSource:
         sample_key_mode: str = "iid",
         allow_duplicate_iid_alignment: bool = False,
     ) -> RegeniePredictionSource: ...
+    def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]: ...
+
+class MultiRegeniePredictionSource:
+    def __init__(
+        self,
+        prediction_list_path: str,
+        phenotype_names: list[str],
+        sample_family_identifiers: list[str],
+        sample_individual_identifiers: list[str],
+        sample_key_mode: str = "iid",
+        allow_duplicate_iid_alignment: bool = False,
+    ) -> None: ...
+    @staticmethod
+    def from_native_multi_aligned_sample_data(
+        prediction_list_path: str,
+        aligned_sample_data: NativeMultiAlignedSampleData,
+        sample_key_mode: str = "iid",
+        allow_duplicate_iid_alignment: bool = False,
+    ) -> MultiRegeniePredictionSource: ...
     def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]: ...
 
 class OutputWriterSession:
@@ -161,6 +201,18 @@ def align_sample_data(
     sample_key_mode: str = "iid",
     allow_duplicate_iid_alignment: bool = False,
 ) -> NativeAlignedSampleData: ...
+def align_multi_sample_data(
+    sample_indices: npt.NDArray[np.int64],
+    family_identifiers: list[str],
+    individual_identifiers: list[str],
+    phenotype_path: str,
+    phenotype_names: list[str],
+    covariate_path: str | None = None,
+    covariate_names: list[str] | None = None,
+    is_binary_trait: bool = False,
+    sample_key_mode: str = "iid",
+    allow_duplicate_iid_alignment: bool = False,
+) -> NativeMultiAlignedSampleData: ...
 def align_sample_data_from_sample_file(
     sample_path: str,
     expected_sample_count: int,
@@ -172,3 +224,14 @@ def align_sample_data_from_sample_file(
     sample_key_mode: str = "iid",
     allow_duplicate_iid_alignment: bool = False,
 ) -> NativeAlignedSampleData: ...
+def align_multi_sample_data_from_sample_file(
+    sample_path: str,
+    expected_sample_count: int,
+    phenotype_path: str,
+    phenotype_names: list[str],
+    covariate_path: str | None = None,
+    covariate_names: list[str] | None = None,
+    is_binary_trait: bool = False,
+    sample_key_mode: str = "iid",
+    allow_duplicate_iid_alignment: bool = False,
+) -> NativeMultiAlignedSampleData: ...

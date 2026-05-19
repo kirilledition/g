@@ -115,6 +115,68 @@ def test_regenie_prediction_source_loads_from_native_aligned_sample_data(tmp_pat
     np.testing.assert_allclose(prediction_source.get_chromosome_predictions("chr22"), [0.3, 0.1], atol=1e-6)
 
 
+def test_multi_regenie_prediction_source_returns_trait_major_loco_matrix(tmp_path: Path) -> None:
+    trait_a_loco_path = tmp_path / "trait_a.loco"
+    trait_a_loco_path.write_text("FID_IID 0_A 0_B 0_C\nchr22 0.1 0.2 0.3\n")
+    trait_b_loco_path = tmp_path / "trait_b.loco"
+    trait_b_loco_path.write_text("FID_IID 0_A 0_B 0_C\nchr22 1.1 1.2 1.3\n")
+    prediction_list_path = tmp_path / "pred.list"
+    prediction_list_path.write_text(f"trait_a {trait_a_loco_path}\ntrait_b {trait_b_loco_path}\n")
+    phenotype_path = tmp_path / "phenotypes.tsv"
+    phenotype_path.write_text("IID\ttrait_a\ttrait_b\nC\t1.0\t2.0\nA\t3.0\t4.0\n")
+    native_multi_aligned_sample_data = _core.align_multi_sample_data(
+        np.asarray([0, 1], dtype=np.int64),
+        ["0", "0"],
+        ["C", "A"],
+        str(phenotype_path),
+        ["trait_a", "trait_b"],
+    )
+
+    prediction_source = _core.MultiRegeniePredictionSource.from_native_multi_aligned_sample_data(
+        str(prediction_list_path),
+        native_multi_aligned_sample_data,
+    )
+
+    np.testing.assert_allclose(
+        prediction_source.get_chromosome_predictions("chr22"),
+        np.asarray([[0.3, 0.1], [1.3, 1.1]], dtype=np.float32),
+        atol=1e-6,
+    )
+
+
+def test_multi_regenie_prediction_source_reports_missing_phenotype(tmp_path: Path) -> None:
+    trait_a_loco_path = tmp_path / "trait_a.loco"
+    trait_a_loco_path.write_text("FID_IID 0_A\n22 0.1\n")
+    prediction_list_path = tmp_path / "pred.list"
+    prediction_list_path.write_text(f"trait_a {trait_a_loco_path}\n")
+
+    with np.testing.assert_raises_regex(ValueError, "Phenotype 'trait_b' not found"):
+        _core.MultiRegeniePredictionSource(
+            str(prediction_list_path),
+            ["trait_a", "trait_b"],
+            ["0"],
+            ["A"],
+        )
+
+
+def test_multi_regenie_prediction_source_reports_missing_chromosome(tmp_path: Path) -> None:
+    trait_a_loco_path = tmp_path / "trait_a.loco"
+    trait_a_loco_path.write_text("FID_IID 0_A\n22 0.1\n")
+    trait_b_loco_path = tmp_path / "trait_b.loco"
+    trait_b_loco_path.write_text("FID_IID 0_A\n22 1.1\n")
+    prediction_list_path = tmp_path / "pred.list"
+    prediction_list_path.write_text(f"trait_a {trait_a_loco_path}\ntrait_b {trait_b_loco_path}\n")
+    prediction_source = _core.MultiRegeniePredictionSource(
+        str(prediction_list_path),
+        ["trait_a", "trait_b"],
+        ["0"],
+        ["A"],
+    )
+
+    with np.testing.assert_raises_regex(ValueError, "Chromosome '1'"):
+        prediction_source.get_chromosome_predictions("1")
+
+
 def test_regenie_prediction_source_reports_missing_samples(tmp_path: Path) -> None:
     loco_path = tmp_path / "trait.loco"
     loco_path.write_text("FID_IID 0_A\n22 0.1\n")

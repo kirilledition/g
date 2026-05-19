@@ -93,6 +93,12 @@ pub struct PredictionSource {
     chromosome_predictions: HashMap<String, Vec<f32>>,
 }
 
+#[derive(Debug)]
+pub struct MultiPredictionSource {
+    phenotype_names: Vec<String>,
+    chromosome_predictions_by_trait: Vec<HashMap<String, Vec<f32>>>,
+}
+
 impl PredictionSource {
     pub fn load(
         prediction_list_path: &Path,
@@ -149,6 +155,87 @@ impl PredictionSource {
                 available_chromosomes,
             }
         })
+    }
+}
+
+impl MultiPredictionSource {
+    pub fn load(
+        prediction_list_path: &Path,
+        phenotype_names: &[String],
+        target_family_identifiers: &[String],
+        target_individual_identifiers: &[String],
+        sample_key_mode: SampleKeyMode,
+        allow_duplicate_iid_alignment: bool,
+    ) -> Result<Self, PredictionError> {
+        validate_prediction_alignment_config(sample_key_mode, allow_duplicate_iid_alignment)?;
+        validate_target_sample_keys(target_family_identifiers, target_individual_identifiers)?;
+        if sample_key_mode == SampleKeyMode::Iid && !allow_duplicate_iid_alignment {
+            validate_unique_target_individual_identifiers(target_individual_identifiers)?;
+        }
+        let entries = parse_prediction_list_file(prediction_list_path)?;
+        let mut chromosome_predictions_by_trait = Vec::with_capacity(phenotype_names.len());
+        for phenotype_name in phenotype_names {
+            let Some(entry) = entries.iter().find(|entry| entry.phenotype_name == *phenotype_name) else {
+                return Err(PredictionError::MissingPhenotype {
+                    phenotype_name: phenotype_name.clone(),
+                    available_phenotypes: entries.iter().map(|entry| entry.phenotype_name.clone()).collect(),
+                });
+            };
+            let loco_predictions = parse_loco_file(&entry.loco_file_path)?;
+            validate_loco_sample_keys(&loco_predictions.sample_index)?;
+            if sample_key_mode == SampleKeyMode::Iid && !allow_duplicate_iid_alignment {
+                validate_unique_loco_individual_identifiers(&loco_predictions.sample_index)?;
+            }
+            let alignment_indices = build_sample_alignment_indices(
+                &loco_predictions.sample_index,
+                target_family_identifiers,
+                target_individual_identifiers,
+                sample_key_mode,
+                allow_duplicate_iid_alignment,
+            )?;
+            let aligned_predictions = loco_predictions
+                .chromosome_predictions
+                .into_iter()
+                .map(|(chromosome, prediction_values)| {
+                    let aligned_prediction_values =
+                        alignment_indices.iter().map(|sample_index| prediction_values[*sample_index]).collect();
+                    (chromosome, aligned_prediction_values)
+                })
+                .collect();
+            chromosome_predictions_by_trait.push(aligned_predictions);
+        }
+        Ok(Self { phenotype_names: phenotype_names.to_vec(), chromosome_predictions_by_trait })
+    }
+
+    pub fn chromosome_prediction_matrix(&self, chromosome: &str) -> Result<(usize, usize, Vec<f32>), PredictionError> {
+        let normalized_chromosome = normalize_chromosome(chromosome);
+        let trait_count = self.phenotype_names.len();
+        let mut prediction_matrix_values = Vec::new();
+        let mut sample_count = None;
+        for chromosome_predictions in &self.chromosome_predictions_by_trait {
+            let Some(prediction_values) = chromosome_predictions.get(&normalized_chromosome) else {
+                let mut available_chromosomes: Vec<String> = chromosome_predictions.keys().cloned().collect();
+                available_chromosomes.sort();
+                return Err(PredictionError::MissingChromosome {
+                    chromosome: chromosome.to_string(),
+                    normalized_chromosome,
+                    available_chromosomes,
+                });
+            };
+            if let Some(expected_sample_count) = sample_count {
+                if prediction_values.len() != expected_sample_count {
+                    return Err(PredictionError::LocoPredictionCountMismatch {
+                        line_number: 0,
+                        expected_count: expected_sample_count,
+                        observed_count: prediction_values.len(),
+                    });
+                }
+            } else {
+                sample_count = Some(prediction_values.len());
+            }
+            prediction_matrix_values.extend(prediction_values);
+        }
+        Ok((trait_count, sample_count.unwrap_or(0), prediction_matrix_values))
     }
 }
 

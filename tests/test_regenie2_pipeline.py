@@ -156,14 +156,18 @@ def build_native_run_input() -> regenie2_pipeline.NativeBgenRunInput:
 
 
 def build_native_multi_run_input() -> regenie2_pipeline.NativeBgenMultiRunInput:
-    single_trait_input = build_native_run_input()
+    native_multi_aligned_sample_data = SimpleNamespace(
+        phenotype_names=["trait_a", "trait_b"],
+        sample_indices=np.asarray([1, 0], dtype=np.int64),
+        family_identifiers=["f2", "f1"],
+        individual_identifiers=["i2", "i1"],
+        phenotype_matrix=np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32),
+        covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
+        is_binary_trait=False,
+    )
     return regenie2_pipeline.NativeBgenMultiRunInput(
+        native_multi_aligned_sample_data=typing.cast("typing.Any", native_multi_aligned_sample_data),
         phenotype_names=("trait_a", "trait_b"),
-        single_trait_run_inputs=(single_trait_input, single_trait_input),
-        single_trait_common_positions=(
-            np.asarray([0, 1], dtype=np.int64),
-            np.asarray([0, 1], dtype=np.int64),
-        ),
         sample_indices=np.asarray([1, 0], dtype=np.int64),
         family_identifiers=("f2", "f1"),
         individual_identifiers=("i2", "i1"),

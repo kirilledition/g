@@ -39,6 +39,34 @@ def align_sample_data(
     )
 
 
+def align_multi_sample_data(
+    sample_indices: np.ndarray,
+    family_identifiers: list[str],
+    individual_identifiers: list[str],
+    phenotype_path: Path,
+    phenotype_names: list[str],
+    covariate_path: Path | None,
+    covariate_names: list[str] | None,
+    *,
+    is_binary_trait: bool,
+    sample_key_mode: str = "iid",
+    allow_duplicate_iid_alignment: bool = False,
+) -> _core.NativeMultiAlignedSampleData:
+    """Run the native multi-phenotype alignment helper with test-friendly arguments."""
+    return _core.align_multi_sample_data(
+        np.ascontiguousarray(sample_indices, dtype=np.int64),
+        family_identifiers,
+        individual_identifiers,
+        str(phenotype_path),
+        phenotype_names,
+        str(covariate_path) if covariate_path is not None else None,
+        covariate_names,
+        is_binary_trait,
+        sample_key_mode=sample_key_mode,
+        allow_duplicate_iid_alignment=allow_duplicate_iid_alignment,
+    )
+
+
 def test_native_aligned_sample_data_continuous(tmp_path: Path) -> None:
     phenotype_path = tmp_path / "pheno.txt"
     phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\t1.5\nf2\ts2\t2.5\nf3\ts3\t3.5\n")
@@ -64,6 +92,60 @@ def test_native_aligned_sample_data_continuous(tmp_path: Path) -> None:
     )
     assert result.covariate_names == ["intercept", "age", "sex"]
     assert result.is_binary_trait is False
+
+
+def test_native_multi_alignment_complete_case_trait_major_matrix(tmp_path: Path) -> None:
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait_a\ttrait_b\nf1\ts1\t1.0\tNA\nf2\ts2\t2.0\t20.0\nf3\ts3\t3.0\t30.0\n")
+    covariate_path = tmp_path / "covar.txt"
+    covariate_path.write_text("FID\tIID\tage\nf1\ts1\t25\nf2\ts2\t30\nf3\ts3\t35\n")
+
+    result = align_multi_sample_data(
+        np.asarray([0, 1, 2], dtype=np.int64),
+        ["f1", "f2", "f3"],
+        ["s1", "s2", "s3"],
+        phenotype_path,
+        ["trait_a", "trait_b"],
+        covariate_path,
+        ["age"],
+        is_binary_trait=False,
+        sample_key_mode="fid_iid",
+    )
+
+    np.testing.assert_array_equal(result.sample_indices, np.asarray([1, 2], dtype=np.int64))
+    assert result.phenotype_names == ["trait_a", "trait_b"]
+    assert result.family_identifiers == ["f2", "f3"]
+    assert result.individual_identifiers == ["s2", "s3"]
+    np.testing.assert_allclose(
+        result.phenotype_matrix,
+        np.asarray([[2.0, 3.0], [20.0, 30.0]], dtype=np.float32),
+    )
+    np.testing.assert_allclose(
+        result.covariate_matrix,
+        np.asarray([[1.0, 30.0], [1.0, 35.0]], dtype=np.float32),
+    )
+
+
+def test_native_multi_alignment_binary_encoding_applies_to_all_traits(tmp_path: Path) -> None:
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\tcase_a\tcase_b\nf1\ts1\t1\t2\nf2\ts2\t2\t1\n")
+
+    result = align_multi_sample_data(
+        np.asarray([0, 1], dtype=np.int64),
+        ["s1", "s2"],
+        ["s1", "s2"],
+        phenotype_path,
+        ["case_a", "case_b"],
+        None,
+        None,
+        is_binary_trait=True,
+    )
+
+    np.testing.assert_allclose(
+        result.phenotype_matrix,
+        np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32),
+    )
+    assert result.is_binary_trait is True
 
 
 def test_native_aligned_sample_data_binary_intercept_only(tmp_path: Path) -> None:
