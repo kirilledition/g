@@ -7,10 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
-use arrow::array::{
-    Array, ArrayRef, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray, StringDictionaryBuilder,
-};
-use arrow::datatypes::{DataType, Field, Int8Type, Int32Type, Schema};
+use arrow::array::{Array, ArrayRef, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::ipc::CompressionType;
 use arrow::ipc::reader::FileReader as ArrowFileReader;
 use arrow::ipc::writer::{FileWriter, IpcWriteOptions};
@@ -24,6 +21,7 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
+use crate::output::schema;
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 const REGENIE_STEP2_CHUNKS_PER_ARROW_FILE: usize = 4;
@@ -468,7 +466,7 @@ fn build_chunk_file_name(first_chunk_identifier: i64, last_chunk_identifier: i64
 }
 
 fn build_regenie_step2_record_batch(job: RegenieStep2ChunkWriteBatch) -> Result<RecordBatch, String> {
-    let schema = get_regenie_step2_chunk_schema();
+    let schema = schema::get_regenie_step2_chunk_schema();
     let row_count = job.chunks.iter().map(|chunk_job| chunk_job.genpos.len()).sum();
     let mut chunk_identifier = Vec::with_capacity(row_count);
     let mut variant_start_index = Vec::with_capacity(row_count);
@@ -515,84 +513,22 @@ fn build_regenie_step2_record_batch(job: RegenieStep2ChunkWriteBatch) -> Result<
         Arc::new(Int64Array::from(chunk_identifier)),
         Arc::new(Int64Array::from(variant_start_index)),
         Arc::new(Int64Array::from(variant_stop_index)),
-        Arc::new(build_dictionary_string_array(&chrom)?),
+        Arc::new(schema::build_dictionary_string_array(&chrom)?),
         Arc::new(Int64Array::from(genpos)),
         Arc::new(StringArray::from(id)),
-        Arc::new(build_dictionary_string_array(&allele0)?),
-        Arc::new(build_dictionary_string_array(&allele1)?),
+        Arc::new(schema::build_dictionary_string_array(&allele0)?),
+        Arc::new(schema::build_dictionary_string_array(&allele1)?),
         Arc::new(Float32Array::from(a1freq)),
         Arc::new(Float32Array::from(info)),
         Arc::new(Int32Array::from(n)),
-        Arc::new(build_constant_dictionary_string_array(row_count, "ADD")?),
+        Arc::new(schema::build_constant_dictionary_string_array(row_count, "ADD")?),
         Arc::new(Float32Array::from(beta)),
         Arc::new(Float32Array::from(se)),
         Arc::new(Float32Array::from(chisq)),
         Arc::new(Float32Array::from(log10p)),
-        Arc::new(build_extra_string_array(extra_code)?),
+        Arc::new(schema::build_extra_string_array(extra_code)?),
     ];
     RecordBatch::try_new(Arc::clone(schema), columns).map_err(|error| error.to_string())
-}
-
-fn build_regenie_step2_chunk_schema() -> Schema {
-    let large_dictionary_type = DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8));
-    let small_dictionary_type = DataType::Dictionary(Box::new(DataType::Int8), Box::new(DataType::Utf8));
-    Schema::new(vec![
-        Field::new("chunk_identifier", DataType::Int64, true),
-        Field::new("variant_start_index", DataType::Int64, true),
-        Field::new("variant_stop_index", DataType::Int64, true),
-        Field::new("CHROM", large_dictionary_type.clone(), true),
-        Field::new("GENPOS", DataType::Int64, true),
-        Field::new("ID", DataType::Utf8, true),
-        Field::new("ALLELE0", large_dictionary_type.clone(), true),
-        Field::new("ALLELE1", large_dictionary_type.clone(), true),
-        Field::new("A1FREQ", DataType::Float32, true),
-        Field::new("INFO", DataType::Float32, true),
-        Field::new("N", DataType::Int32, true),
-        Field::new("TEST", small_dictionary_type.clone(), true),
-        Field::new("BETA", DataType::Float32, true),
-        Field::new("SE", DataType::Float32, true),
-        Field::new("CHISQ", DataType::Float32, true),
-        Field::new("LOG10P", DataType::Float32, true),
-        Field::new("EXTRA", DataType::Utf8, true),
-    ])
-}
-
-fn get_regenie_step2_chunk_schema() -> &'static Arc<Schema> {
-    static REGENIE_STEP2_CHUNK_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
-    REGENIE_STEP2_CHUNK_SCHEMA.get_or_init(|| Arc::new(build_regenie_step2_chunk_schema()))
-}
-
-fn build_dictionary_string_array(values: &[String]) -> Result<arrow::array::DictionaryArray<Int32Type>, String> {
-    let mut builder = StringDictionaryBuilder::<Int32Type>::new();
-    for value in values {
-        builder.append(value).map_err(|error| error.to_string())?;
-    }
-    Ok(builder.finish())
-}
-
-fn build_constant_dictionary_string_array(
-    row_count: usize,
-    value: &str,
-) -> Result<arrow::array::DictionaryArray<Int8Type>, String> {
-    let mut builder = StringDictionaryBuilder::<Int8Type>::new();
-    for _ in 0..row_count {
-        builder.append(value).map_err(|error| error.to_string())?;
-    }
-    Ok(builder.finish())
-}
-
-fn build_extra_string_array(extra_code: Vec<Option<i32>>) -> Result<StringArray, String> {
-    let mut values: Vec<Option<&str>> = Vec::with_capacity(extra_code.len());
-    for maybe_extra_code_value in extra_code {
-        match maybe_extra_code_value {
-            None | Some(0) => values.push(None),
-            Some(1) => values.push(Some("FIRTH")),
-            Some(2) => values.push(Some("SPA")),
-            Some(3) => values.push(Some("TEST_FAIL")),
-            Some(extra_code_value) => return Err(format!("Unsupported REGENIE step 2 extra code: {extra_code_value}")),
-        }
-    }
-    Ok(StringArray::from(values))
 }
 
 fn write_record_batch_to_arrow_file(record_batch: &RecordBatch, chunk_file_path: &Path) -> Result<(), String> {
@@ -644,7 +580,7 @@ fn write_final_parquet_from_chunk_files(
     chunk_file_paths.sort();
     let writer_properties = get_regenie_step2_parquet_writer_properties().clone();
     let output_file = File::create(final_parquet_path).map_err(OutputWriterError::runtime)?;
-    let final_schema = Arc::clone(get_regenie_step2_final_schema());
+    let final_schema = Arc::clone(schema::get_regenie_step2_final_schema());
     let mut parquet_writer =
         ArrowWriter::try_new(output_file, final_schema, Some(writer_properties)).map_err(OutputWriterError::runtime)?;
     let chunk_file_count = chunk_file_paths.len();
@@ -702,32 +638,6 @@ fn append_output_footer_metadata(
     }
 }
 
-fn build_regenie_step2_final_schema() -> Schema {
-    let large_dictionary_type = DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8));
-    let small_dictionary_type = DataType::Dictionary(Box::new(DataType::Int8), Box::new(DataType::Utf8));
-    Schema::new(vec![
-        Field::new("CHROM", large_dictionary_type.clone(), true),
-        Field::new("GENPOS", DataType::Int64, true),
-        Field::new("ID", DataType::Utf8, true),
-        Field::new("ALLELE0", large_dictionary_type.clone(), true),
-        Field::new("ALLELE1", large_dictionary_type.clone(), true),
-        Field::new("A1FREQ", DataType::Float32, true),
-        Field::new("INFO", DataType::Float32, true),
-        Field::new("N", DataType::Int32, true),
-        Field::new("TEST", small_dictionary_type.clone(), true),
-        Field::new("BETA", DataType::Float32, true),
-        Field::new("SE", DataType::Float32, true),
-        Field::new("CHISQ", DataType::Float32, true),
-        Field::new("LOG10P", DataType::Float32, true),
-        Field::new("EXTRA", DataType::Utf8, true),
-    ])
-}
-
-fn get_regenie_step2_final_schema() -> &'static Arc<Schema> {
-    static REGENIE_STEP2_FINAL_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
-    REGENIE_STEP2_FINAL_SCHEMA.get_or_init(|| Arc::new(build_regenie_step2_final_schema()))
-}
-
 fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> Result<RecordBatch, OutputWriterError> {
     let final_column_names = [
         "CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1", "A1FREQ", "INFO", "N", "TEST", "BETA", "SE", "CHISQ", "LOG10P",
@@ -740,7 +650,7 @@ fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> Result<RecordBatch,
         .ok_or_else(|| {
             OutputWriterError::Runtime("Rust output writer could not project chunk batch to final schema.".to_string())
         })?;
-    RecordBatch::try_new(Arc::clone(get_regenie_step2_final_schema()), projected_columns)
+    RecordBatch::try_new(Arc::clone(schema::get_regenie_step2_final_schema()), projected_columns)
         .map_err(OutputWriterError::runtime)
 }
 

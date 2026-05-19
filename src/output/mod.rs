@@ -1,5 +1,6 @@
 //! Native output persistence APIs.
 
+mod schema;
 pub mod writer;
 
 pub use writer::{
