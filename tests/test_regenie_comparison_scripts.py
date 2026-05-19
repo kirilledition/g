@@ -6,7 +6,7 @@ import sys
 import typing
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 
 if typing.TYPE_CHECKING:
     import pytest
@@ -367,13 +367,13 @@ def test_quantitative_step2_comparison_wires_parity_logic(tmp_path: Path) -> Non
     regenie_output = tmp_path / "regenie.regenie"
     g_output = tmp_path / "g.parquet"
     regenie_output.write_text("CHROM GENPOS ID BETA LOG10P\n1 100 rs1 0.1 1.0\n1 200 rs2 0.2 2.0\n")
-    pd.DataFrame(
+    pl.DataFrame(
         {
             "ID": ["rs1", "rs2"],
             "BETA": [0.1, 0.2],
             "LOG10P": [1.0, 2.0],
         }
-    ).to_parquet(g_output, index=False)
+    ).write_parquet(g_output)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
         regenie_output_path=regenie_output,
         g_output_path=g_output,
@@ -689,7 +689,7 @@ def test_quantitative_step2_comparison_uses_full_variant_identity_when_available
         )
         + "\n"
     )
-    pd.DataFrame(
+    pl.DataFrame(
         {
             "CHROM": [1],
             "GENPOS": [100],
@@ -699,7 +699,7 @@ def test_quantitative_step2_comparison_uses_full_variant_identity_when_available
             "BETA": [0.1],
             "LOG10P": [1.0],
         }
-    ).to_parquet(g_output, index=False)
+    ).write_parquet(g_output)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
         regenie_output_path=regenie_output,
         g_output_path=g_output,
@@ -722,7 +722,7 @@ def test_quantitative_step2_comparison_coerces_merge_key_types(tmp_path: Path) -
         )
         + "\n"
     )
-    pd.DataFrame(
+    pl.DataFrame(
         {
             "CHROM": ["22"],
             "GENPOS": [100],
@@ -732,7 +732,7 @@ def test_quantitative_step2_comparison_coerces_merge_key_types(tmp_path: Path) -
             "BETA": [0.1],
             "LOG10P": [1.0],
         }
-    ).to_parquet(g_output, index=False)
+    ).write_parquet(g_output)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
         regenie_output_path=regenie_output,
         g_output_path=g_output,
@@ -745,13 +745,13 @@ def test_quantitative_step2_comparison_reads_parquet_outputs(tmp_path: Path) -> 
     regenie_output = tmp_path / "regenie.regenie"
     g_output = tmp_path / "g.parquet"
     regenie_output.write_text("CHROM GENPOS ID BETA LOG10P\n1 100 rs1 0.1 1.0\n1 200 rs2 0.2 2.0\n")
-    pd.DataFrame(
+    pl.DataFrame(
         {
             "ID": ["rs1", "rs2"],
             "BETA": [0.1, 0.2],
             "LOG10P": [1.0, 2.0],
         }
-    ).to_parquet(g_output, index=False)
+    ).write_parquet(g_output)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
         regenie_output_path=regenie_output,
         g_output_path=g_output,

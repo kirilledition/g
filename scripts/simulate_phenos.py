@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 RANDOM_SEED = 42
 CASE_PREVALENCE = 0.3
@@ -22,12 +22,12 @@ MINIMUM_AGE_YEARS = 18
 class PhenotypeTables:
     """Generated continuous, binary, and covariate tables."""
 
-    continuous_table: pd.DataFrame
-    binary_table: pd.DataFrame
-    covariate_table: pd.DataFrame
+    continuous_table: pl.DataFrame
+    binary_table: pl.DataFrame
+    covariate_table: pl.DataFrame
 
 
-def load_family_table(family_path: Path) -> pd.DataFrame:
+def load_family_table(family_path: Path) -> pl.DataFrame:
     """Load the PLINK family file used for phenotype generation.
 
     Args:
@@ -44,22 +44,30 @@ def load_family_table(family_path: Path) -> pd.DataFrame:
         raise FileNotFoundError(f"Could not find {family_path}. Run scripts/fetch_1kg.py first.")
 
     print(f"Reading {family_path}...")
-    return pd.read_csv(
-        family_path,
-        sep=r"\s+",
-        header=None,
-        names=[
-            "family_identifier",
-            "individual_identifier",
-            "paternal_identifier",
-            "maternal_identifier",
-            "reported_sex",
-            "placeholder_phenotype",
-        ],
+    family_lines = [line.strip() for line in family_path.read_text().splitlines() if line.strip()]
+    family_columns = [
+        "family_identifier",
+        "individual_identifier",
+        "paternal_identifier",
+        "maternal_identifier",
+        "reported_sex",
+        "placeholder_phenotype",
+    ]
+    rows: list[dict[str, str]] = []
+    for line in family_lines:
+        values = line.split()
+        if len(values) != len(family_columns):
+            raise ValueError(
+                f"Unexpected column count in {family_path}: expected {len(family_columns)}, got {len(values)}"
+            )
+        rows.append(dict(zip(family_columns, values, strict=True)))
+    return pl.DataFrame(rows).with_columns(
+        pl.col("reported_sex").cast(pl.Int64),
+        pl.col("placeholder_phenotype").cast(pl.Float64),
     )
 
 
-def create_phenotype_and_covariate_tables(family_table: pd.DataFrame) -> PhenotypeTables:
+def create_phenotype_and_covariate_tables(family_table: pl.DataFrame) -> PhenotypeTables:
     """Create deterministic continuous, binary, and covariate tables.
 
     Args:
@@ -89,20 +97,18 @@ def create_phenotype_and_covariate_tables(family_table: pd.DataFrame) -> Phenoty
     ).astype(np.int64)
     age_years = np.maximum(rounded_age, MINIMUM_AGE_YEARS)
 
-    sex_covariate = family_table["reported_sex"].to_numpy(dtype=np.int64, copy=True)
+    sex_covariate = family_table.get_column("reported_sex").to_numpy().astype(np.int64, copy=True)
     unknown_sex_mask = sex_covariate == 0
     sex_covariate[unknown_sex_mask] = random_number_generator.choice([1, 2], size=int(unknown_sex_mask.sum()))
 
     identifier_columns = ["family_identifier", "individual_identifier"]
-    continuous_table = family_table[identifier_columns].copy()
-    continuous_table["phenotype_continuous"] = continuous_trait
-
-    binary_table = family_table[identifier_columns].copy()
-    binary_table["phenotype_binary"] = binary_trait
-
-    covariate_table = family_table[identifier_columns].copy()
-    covariate_table["age"] = age_years
-    covariate_table["sex"] = sex_covariate
+    identifier_table = family_table.select(identifier_columns)
+    continuous_table = identifier_table.with_columns(pl.Series("phenotype_continuous", continuous_trait))
+    binary_table = identifier_table.with_columns(pl.Series("phenotype_binary", binary_trait))
+    covariate_table = identifier_table.with_columns(
+        pl.Series("age", age_years),
+        pl.Series("sex", sex_covariate),
+    )
 
     return PhenotypeTables(
         continuous_table=continuous_table,
@@ -113,9 +119,9 @@ def create_phenotype_and_covariate_tables(family_table: pd.DataFrame) -> Phenoty
 
 def write_output_tables(
     data_directory: Path,
-    continuous_table: pd.DataFrame,
-    binary_table: pd.DataFrame,
-    covariate_table: pd.DataFrame,
+    continuous_table: pl.DataFrame,
+    binary_table: pl.DataFrame,
+    covariate_table: pl.DataFrame,
 ) -> None:
     """Write phenotype and covariate tables to the data directory.
 
@@ -134,13 +140,13 @@ def write_output_tables(
         "family_identifier": "FID",
         "individual_identifier": "IID",
     }
-    continuous_output_table = continuous_table.rename(columns=rename_columns)
-    binary_output_table = binary_table.rename(columns=rename_columns)
-    covariate_output_table = covariate_table.rename(columns=rename_columns)
+    continuous_output_table = continuous_table.rename(rename_columns)
+    binary_output_table = binary_table.rename(rename_columns)
+    covariate_output_table = covariate_table.rename(rename_columns)
 
-    continuous_output_table.to_csv(continuous_path, sep="\t", index=False)
-    binary_output_table.to_csv(binary_path, sep="\t", index=False)
-    covariate_output_table.to_csv(covariate_path, sep="\t", index=False)
+    continuous_output_table.write_csv(continuous_path, separator="\t")
+    binary_output_table.write_csv(binary_path, separator="\t")
+    covariate_output_table.write_csv(covariate_path, separator="\t")
 
     print(f"Saved {continuous_path}")
     print(f"Saved {binary_path}")

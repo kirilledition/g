@@ -28,7 +28,7 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
   * Bad: `from enum import StrEnum`  
   * Bad: `from collections.abc import Iterator`
 * **Rule:** Use conventional aliases only where they are already standard and improve readability.  
-  * Approved examples: `import numpy as np`, `import numpy.typing as npt`, `import jax.numpy as jnp`, `import polars as pl`, `import pandas as pd`
+  * Approved examples: `import numpy as np`, `import numpy.typing as npt`, `import jax.numpy as jnp`, `import polars as pl`
 * **Rule:** Keep imports out of functions, methods, and classes in production code under `src/g`.
   * Module-scope imports are the default.
   * `if typing.TYPE_CHECKING:` blocks are allowed for annotation-only imports.
