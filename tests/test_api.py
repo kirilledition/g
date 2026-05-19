@@ -110,7 +110,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
         patch("g.api.configure_jax_device") as mock_configure_jax_device,
         patch(
             "g.api.output.prepare_output_run",
-            return_value=PreparedOutputRun(output_run_paths=run_paths, committed_chunk_identifiers=frozenset({3})),
+            return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest={"committed_chunks": []}),
         ) as mock_prepare_output_run,
         patch("g.api.run_regenie2_linear_bgen_pipeline") as mock_pipeline,
         patch("g.api.output.finalize_chunks_to_regenie_text") as mock_finalize_regenie,
@@ -125,7 +125,8 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     assert artifacts.final_regenie is None
     mock_configure_jax_device.assert_called_once_with(types.Device.CPU)
     mock_prepare_output_run.assert_called_once()
-    assert mock_pipeline.call_args.kwargs["committed_chunk_identifiers"] == {3}
+    assert mock_pipeline.call_args.kwargs["existing_manifest"] == {"committed_chunks": []}
+    assert mock_pipeline.call_args.kwargs["resume"] is False
     assert mock_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_pipeline.call_args.kwargs["prediction_list_path"] == Path("predictions.list")
     assert mock_pipeline.call_args.kwargs["alignment_config"].sample_key_mode == types.SampleKeyMode.IID
@@ -171,7 +172,7 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
         patch("g.api.configure_jax_device"),
         patch(
             "g.api.output.prepare_output_run",
-            return_value=PreparedOutputRun(output_run_paths=run_paths, committed_chunk_identifiers=frozenset()),
+            return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
         patch("g.api.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
         patch("g.api.extend_run_manifest"),
@@ -236,7 +237,7 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
             genotype_source_config=source.build_bgen_source_config(Path("dataset.bgen")),
             engine_config=engine_config,
             output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
-            committed_chunk_identifiers=set(),
+            existing_manifest=None,
             binary_correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
             stage_timing_recorder=None,
         )
@@ -269,10 +270,58 @@ def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:
     assert mock_run_multi_phenotype_config.call_args.args[0].input.pheno_columns == ("one", "two")
 
 
+def test_multi_run_plan_forwards_existing_manifests() -> None:
+    regenie_config = api.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoColList": "one,two",
+            "pred": "predictions.list",
+            "out": "results/output",
+        }
+    )
+    run_paths = (
+        output.OutputRunPaths(Path("run/one"), Path("run/one/chunks")),
+        output.OutputRunPaths(Path("run/two"), Path("run/two/chunks")),
+    )
+    existing_manifests = ({"phenotype_name": "one"}, {"phenotype_name": "two"})
+
+    with patch(
+        "g.api.output.prepare_output_run",
+        side_effect=(
+            output.PreparedOutputRun(run_paths[0], existing_manifests[0]),
+            output.PreparedOutputRun(run_paths[1], existing_manifests[1]),
+        ),
+    ):
+        plan = api.build_regenie_multi_run_plan(regenie_config, Path("run"))
+
+    assert plan.output_run_paths_by_phenotype == run_paths
+    assert plan.existing_manifests_by_phenotype == existing_manifests
+    with patch("g.api.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_pipeline:
+        api.dispatch_multi_engine_pipeline(
+            regenie_config=regenie_config,
+            plan=plan,
+            stage_timing_recorder=None,
+        )
+
+    assert mock_pipeline.call_args.kwargs["existing_manifests_by_phenotype"] == existing_manifests
+    assert mock_pipeline.call_args.kwargs["resume"] is False
+
+
 def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
     run_paths = output.OutputRunPaths(tmp_path, tmp_path / "chunks")
     run_paths.chunks_directory.mkdir()
-    output.write_run_manifest(run_paths, output.build_initial_run_manifest(types.AssociationMode.REGENIE2_LINEAR))
+    output.write_run_manifest(
+        run_paths,
+        {
+            "schema_version": output.RUN_MANIFEST_SCHEMA_VERSION,
+            "association_mode": types.AssociationMode.REGENIE2_LINEAR.value,
+            "bgen": {"path": "/inputs/dataset.bgen", "size": 1, "mtime_ns": 2},
+            "committed_chunks": [],
+        },
+    )
     regenie_config = build_minimal_config()
 
     api.extend_run_manifest(tmp_path, regenie_config, "trait", tmp_path / "effective_config.toml")
@@ -281,4 +330,5 @@ def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
     assert manifest is not None
     assert manifest["command"]["interface"] == "g regenie"
     assert manifest["command"]["phenotype"] == "trait"
-    assert manifest["input_fingerprints"]["bgen"]["missing"] is True
+    assert manifest["bgen"] == {"path": "/inputs/dataset.bgen", "size": 1, "mtime_ns": 2}
+    assert "input_fingerprints" not in manifest

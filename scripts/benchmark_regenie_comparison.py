@@ -26,7 +26,6 @@ else:
 
 PARITY_BETA_ATOL = 1.0e-3
 PARITY_LOG10P_ATOL = 1.5e-2
-G_FINALIZE_PARQUET = True
 
 
 @dataclass(frozen=True)
@@ -263,42 +262,48 @@ def build_g_step2_command(
     phenotype_path = baseline_paths.continuous_phenotype_path
     phenotype_name = "phenotype_continuous"
     prediction_list_path = baseline_paths.regenie_qt_prediction_list_path
+    trait_flag = "--qt"
+    binary_correction_arguments: list[str] = []
     if trait_type == "binary":
         phenotype_path = baseline_paths.binary_phenotype_path
         phenotype_name = "phenotype_binary"
         prediction_list_path = baseline_paths.regenie_prediction_list_path
+        trait_flag = "--bt"
+        binary_correction_arguments = ["--firth", "--approx"]
     command_arguments = [
         uv_executable,
         "run",
         "g",
-        "regenie2",
+        "regenie",
+        "--step",
+        "2",
+        trait_flag,
         "--bgen",
         str(baseline_paths.bgen_path),
         "--sample",
         str(baseline_paths.sample_path),
-        "--pheno",
+        "--phenoFile",
         str(phenotype_path),
-        "--pheno-name",
+        "--phenoCol",
         phenotype_name,
-        "--covar",
+        "--covarFile",
         str(baseline_paths.covariate_path),
-        "--covar-names",
+        "--covarColList",
         "age,sex",
         "--pred",
         str(prediction_list_path),
         "--out",
         str(output_prefix),
-        "--trait-type",
-        trait_type,
-        "--chunk-size",
+        "--bsize",
         str(chunk_size),
-        "--device",
+        "--g-device",
         device,
+        "--g-output-format",
+        "parquet",
     ]
-    if G_FINALIZE_PARQUET:
-        command_arguments.append("--finalize-parquet")
+    command_arguments.extend(binary_correction_arguments)
     if variant_limit is not None:
-        command_arguments.extend(["--variant-limit", str(variant_limit)])
+        command_arguments.extend(["--g-variant-limit", str(variant_limit)])
     return command_arguments
 
 
@@ -370,15 +375,17 @@ def run_g_step2(
     stdout_log_path = log_directory / f"{program_name}.stdout.log"
     stderr_log_path = log_directory / f"{program_name}.stderr.log"
     association_suffix = ".regenie2_binary.run" if trait_type == "binary" else ".regenie2_linear.run"
-    output_run_directory = output_prefix.with_suffix(association_suffix)
-    if output_run_directory.exists():
-        shutil.rmtree(output_run_directory)
+    phenotype_name = "phenotype_binary" if trait_type == "binary" else "phenotype_continuous"
+    output_run_directory = output_prefix.with_name(f"{output_prefix.name}.g") / phenotype_name
+    output_association_directory = output_run_directory.with_suffix(association_suffix)
+    if output_association_directory.exists():
+        shutil.rmtree(output_association_directory)
     success, duration_seconds, error_message = run_command_with_logs(
         command_arguments=command_arguments,
         stdout_log_path=stdout_log_path,
         stderr_log_path=stderr_log_path,
     )
-    output_path = output_run_directory / "final.parquet"
+    output_path = output_association_directory / "final.parquet"
     output_row_count = count_table_rows(output_path)
     variants_per_second = None
     if output_row_count is not None and duration_seconds > 0:

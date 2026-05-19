@@ -75,7 +75,9 @@ def run_regenie2_linear_bgen_pipeline(
     variant_limit: int | None,
     output_run_paths: output.OutputRunPaths,
     staging_depth: int = 1,
-    committed_chunk_identifiers: set[int] | None = None,
+    existing_manifest: dict[str, typing.Any] | None = None,
+    resume: bool = False,
+    resume_mode: types.ResumeMode = types.ResumeMode.FAST,
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
@@ -110,15 +112,33 @@ def run_regenie2_linear_bgen_pipeline(
         alignment_config=alignment_config,
     )
     record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
-    output.write_run_manifest_header(
-        output_run_paths=output_run_paths,
+    current_header = output.build_current_run_manifest_header(
         association_mode=types.AssociationMode.REGENIE2_LINEAR,
         bgen_path=genotype_source_config.source_path,
-        sample_count=int(engine.sample_count),
+        sample_path=source.resolve_bgen_sample_path(
+            genotype_source_config.source_path,
+            genotype_source_config.sample_path,
+        ),
+        phenotype_path=phenotype_path,
+        phenotype_name=phenotype_name,
+        covariate_path=covariate_path,
+        covariate_names=tuple(run_input.native_aligned_sample_data.covariate_names),
+        prediction_list_path=prediction_list_path,
+        sample_count=int(run_input.sample_indices.shape[0]),
         variant_count=int(engine.variant_count),
         chunk_size=chunk_size,
+        variant_limit=variant_limit,
         binary_correction_plan=types.BinaryCorrectionPlan(),
         trusted_no_missing_diploid=trusted_no_missing_diploid,
+        sample_key_mode=resolve_sample_key_mode(alignment_config),
+        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
+    )
+    initialized_output_run = output.initialize_output_run(
+        output_run_paths=output_run_paths,
+        existing_manifest=existing_manifest,
+        current_header=current_header,
+        resume=resume,
+        resume_mode=resume_mode,
     )
     writer_start_time = time.perf_counter()
     writer_session = output.create_output_writer_session(
@@ -158,7 +178,7 @@ def run_regenie2_linear_bgen_pipeline(
     return run_bgen_engine_with_callback(
         engine=engine,
         run_input=run_input,
-        committed_chunk_identifiers=committed_chunk_identifiers,
+        committed_chunk_identifiers=set(initialized_output_run.committed_chunk_identifiers),
         writer_session=writer_session,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
@@ -178,7 +198,9 @@ def run_regenie2_binary_bgen_pipeline(
     variant_limit: int | None,
     output_run_paths: output.OutputRunPaths,
     staging_depth: int = 1,
-    committed_chunk_identifiers: set[int] | None = None,
+    existing_manifest: dict[str, typing.Any] | None = None,
+    resume: bool = False,
+    resume_mode: types.ResumeMode = types.ResumeMode.FAST,
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
@@ -216,15 +238,33 @@ def run_regenie2_binary_bgen_pipeline(
         alignment_config=alignment_config,
     )
     record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
-    output.write_run_manifest_header(
-        output_run_paths=output_run_paths,
+    current_header = output.build_current_run_manifest_header(
         association_mode=types.AssociationMode.REGENIE2_BINARY,
         bgen_path=genotype_source_config.source_path,
-        sample_count=int(engine.sample_count),
+        sample_path=source.resolve_bgen_sample_path(
+            genotype_source_config.source_path,
+            genotype_source_config.sample_path,
+        ),
+        phenotype_path=phenotype_path,
+        phenotype_name=phenotype_name,
+        covariate_path=covariate_path,
+        covariate_names=tuple(run_input.native_aligned_sample_data.covariate_names),
+        prediction_list_path=prediction_list_path,
+        sample_count=int(run_input.sample_indices.shape[0]),
         variant_count=int(engine.variant_count),
         chunk_size=chunk_size,
+        variant_limit=variant_limit,
         binary_correction_plan=correction_plan,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
+        sample_key_mode=resolve_sample_key_mode(alignment_config),
+        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
+    )
+    initialized_output_run = output.initialize_output_run(
+        output_run_paths=output_run_paths,
+        existing_manifest=existing_manifest,
+        current_header=current_header,
+        resume=resume,
+        resume_mode=resume_mode,
     )
     writer_start_time = time.perf_counter()
     writer_session = output.create_output_writer_session(
@@ -266,7 +306,7 @@ def run_regenie2_binary_bgen_pipeline(
     return run_bgen_engine_with_callback(
         engine=engine,
         run_input=run_input,
-        committed_chunk_identifiers=committed_chunk_identifiers,
+        committed_chunk_identifiers=set(initialized_output_run.committed_chunk_identifiers),
         writer_session=writer_session,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
@@ -306,7 +346,9 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     variant_limit: int | None,
     output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
     staging_depth: int = 1,
-    committed_chunk_identifiers_by_phenotype: tuple[set[int], ...] | None = None,
+    existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None = None,
+    resume: bool = False,
+    resume_mode: types.ResumeMode = types.ResumeMode.FAST,
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
@@ -329,7 +371,9 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
         variant_limit=variant_limit,
         output_run_paths_by_phenotype=output_run_paths_by_phenotype,
         staging_depth=staging_depth,
-        committed_chunk_identifiers_by_phenotype=committed_chunk_identifiers_by_phenotype,
+        existing_manifests_by_phenotype=existing_manifests_by_phenotype,
+        resume=resume,
+        resume_mode=resume_mode,
         finalize_parquet=finalize_parquet,
         writer_thread_count=writer_thread_count,
         writer_queue_depth=writer_queue_depth,
@@ -356,7 +400,9 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     variant_limit: int | None,
     output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
     staging_depth: int = 1,
-    committed_chunk_identifiers_by_phenotype: tuple[set[int], ...] | None = None,
+    existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None = None,
+    resume: bool = False,
+    resume_mode: types.ResumeMode = types.ResumeMode.FAST,
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
@@ -380,7 +426,9 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
         variant_limit=variant_limit,
         output_run_paths_by_phenotype=output_run_paths_by_phenotype,
         staging_depth=staging_depth,
-        committed_chunk_identifiers_by_phenotype=committed_chunk_identifiers_by_phenotype,
+        existing_manifests_by_phenotype=existing_manifests_by_phenotype,
+        resume=resume,
+        resume_mode=resume_mode,
         finalize_parquet=finalize_parquet,
         writer_thread_count=writer_thread_count,
         writer_queue_depth=writer_queue_depth,
@@ -407,7 +455,9 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     variant_limit: int | None,
     output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
     staging_depth: int,
-    committed_chunk_identifiers_by_phenotype: tuple[set[int], ...] | None,
+    existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None,
+    resume: bool,
+    resume_mode: types.ResumeMode,
     finalize_parquet: bool,
     writer_thread_count: int,
     writer_queue_depth: int,
@@ -423,7 +473,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     """Shared implementation for native multi-phenotype BGEN pipelines."""
     stage_timing_recorder = stage_timing_recorder or build_stage_timing_recorder()
     use_variant_major = trusted_no_missing_diploid
-    committed_chunk_identifier_sets = committed_chunk_identifiers_by_phenotype or tuple(set() for _ in phenotype_names)
+    existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
     engine_start_time = time.perf_counter()
     engine = build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
@@ -445,17 +495,48 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         alignment_config=alignment_config,
     )
     record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
-    for output_run_paths in output_run_paths_by_phenotype:
-        output.write_run_manifest_header(
-            output_run_paths=output_run_paths,
+    current_headers = tuple(
+        output.build_current_run_manifest_header(
             association_mode=association_mode,
             bgen_path=genotype_source_config.source_path,
-            sample_count=int(engine.sample_count),
+            sample_path=source.resolve_bgen_sample_path(
+                genotype_source_config.source_path,
+                genotype_source_config.sample_path,
+            ),
+            phenotype_path=phenotype_path,
+            phenotype_name=phenotype_name,
+            covariate_path=covariate_path,
+            covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
+            prediction_list_path=prediction_list_path,
+            sample_count=int(run_input.sample_indices.shape[0]),
             variant_count=int(engine.variant_count),
             chunk_size=chunk_size,
+            variant_limit=variant_limit,
             binary_correction_plan=correction_plan,
             trusted_no_missing_diploid=trusted_no_missing_diploid,
+            sample_key_mode=resolve_sample_key_mode(alignment_config),
+            allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
         )
+        for phenotype_name in phenotype_names
+    )
+    initialized_output_runs = tuple(
+        output.initialize_output_run(
+            output_run_paths=output_run_paths,
+            existing_manifest=existing_manifest,
+            current_header=current_header,
+            resume=resume,
+            resume_mode=resume_mode,
+        )
+        for output_run_paths, existing_manifest, current_header in zip(
+            output_run_paths_by_phenotype,
+            existing_manifests,
+            current_headers,
+            strict=True,
+        )
+    )
+    committed_chunk_identifier_sets = tuple(
+        set(initialized_output_run.committed_chunk_identifiers) for initialized_output_run in initialized_output_runs
+    )
     writer_start_time = time.perf_counter()
     writer_sessions = tuple(
         output.create_output_writer_session(

@@ -189,6 +189,7 @@ def _run_external_regenie_profile(
 def _run_g_profile(
     *,
     program_name: str,
+    trait_type: str,
     device: str,
     baseline_paths: baseline_benchmark.BaselinePaths,
     output_dir: Path,
@@ -200,8 +201,26 @@ def _run_g_profile(
     del enable_jax_trace, enable_memory_profile
     profile_run_directory = output_dir / program_name
     profile_run_directory.mkdir(parents=True, exist_ok=True)
+    phenotype_path = baseline_paths.continuous_phenotype_path
+    phenotype_name = "phenotype_continuous"
+    prediction_list_path = baseline_paths.regenie_qt_prediction_list_path
+    trait_flag = "--qt"
+    binary_correction_arguments: list[str] = []
+    association_mode = "regenie2_linear"
     output_prefix = profile_run_directory / "g_regenie2_linear"
-    final_parquet_path = output_prefix.with_name(f"{output_prefix.name}.g") / "phenotype_continuous.regenie2_linear.run" / "final.parquet"
+    if trait_type == "binary":
+        phenotype_path = baseline_paths.binary_phenotype_path
+        phenotype_name = "phenotype_binary"
+        prediction_list_path = baseline_paths.regenie_prediction_list_path
+        trait_flag = "--bt"
+        binary_correction_arguments = ["--firth", "--approx"]
+        association_mode = "regenie2_binary"
+        output_prefix = profile_run_directory / "g_regenie2_binary"
+    final_parquet_path = (
+        output_prefix.with_name(f"{output_prefix.name}.g")
+        / f"{phenotype_name}.{association_mode}.run"
+        / "final.parquet"
+    )
     command_arguments = [
         "uv",
         "run",
@@ -209,21 +228,21 @@ def _run_g_profile(
         "regenie",
         "--step",
         "2",
-        "--qt",
+        trait_flag,
         "--bgen",
         str(baseline_paths.bgen_path),
         "--sample",
         str(baseline_paths.sample_path),
         "--phenoFile",
-        str(baseline_paths.continuous_phenotype_path),
+        str(phenotype_path),
         "--phenoCol",
-        "phenotype_continuous",
+        phenotype_name,
         "--covarFile",
         str(baseline_paths.covariate_path),
         "--covarColList",
         "age,sex",
         "--pred",
-        str(baseline_paths.regenie_qt_prediction_list_path),
+        str(prediction_list_path),
         "--g-device",
         device,
         "--bsize",
@@ -233,6 +252,7 @@ def _run_g_profile(
         "--g-output-format",
         "parquet",
     ]
+    command_arguments.extend(binary_correction_arguments)
     if variant_limit is not None:
         command_arguments.extend(["--g-variant-limit", str(variant_limit)])
     stdout_log_path = profile_run_directory / "stdout.log"
@@ -249,7 +269,7 @@ def _run_g_profile(
     return ExternalProfileResult(
         program_name=program_name,
         implementation="g",
-        trait_type="quantitative",
+        trait_type=trait_type,
         step=2,
         device=device,
         status="success" if success else "failed",
@@ -396,12 +416,12 @@ def main() -> None:
     )
 
     results.append(_not_implemented_profile("g_regenie2_binary_step1", "binary", 1, "cpu"))
-    results.append(_not_implemented_profile("g_regenie2_binary_step2", "binary", 2, "cpu"))
     results.append(_not_implemented_profile("g_regenie2_quantitative_step1", "quantitative", 1, "cpu"))
 
     results.append(
         _run_g_profile(
             program_name="g_regenie2_quantitative_step2_cpu",
+            trait_type="quantitative",
             device="cpu",
             baseline_paths=baseline_paths,
             output_dir=arguments.output_dir,
@@ -415,6 +435,7 @@ def main() -> None:
         results.append(
             _run_g_profile(
                 program_name="g_regenie2_quantitative_step2_gpu",
+                trait_type="quantitative",
                 device="gpu",
                 baseline_paths=baseline_paths,
                 output_dir=arguments.output_dir,
@@ -445,9 +466,60 @@ def main() -> None:
             )
         )
 
+    results.append(
+        _run_g_profile(
+            program_name="g_regenie2_binary_step2_cpu",
+            trait_type="binary",
+            device="cpu",
+            baseline_paths=baseline_paths,
+            output_dir=arguments.output_dir,
+            variant_limit=arguments.g_variant_limit,
+            chunk_size=arguments.g_chunk_size,
+            enable_jax_trace=arguments.enable_jax_trace,
+            enable_memory_profile=arguments.enable_memory_profile,
+        )
+    )
+    if arguments.include_gpu and not arguments.cpu_only:
+        results.append(
+            _run_g_profile(
+                program_name="g_regenie2_binary_step2_gpu",
+                trait_type="binary",
+                device="gpu",
+                baseline_paths=baseline_paths,
+                output_dir=arguments.output_dir,
+                variant_limit=arguments.g_variant_limit,
+                chunk_size=arguments.g_chunk_size,
+                enable_jax_trace=arguments.enable_jax_trace,
+                enable_memory_profile=arguments.enable_memory_profile,
+            )
+        )
+    else:
+        results.append(
+            ExternalProfileResult(
+                program_name="g_regenie2_binary_step2_gpu",
+                implementation="g",
+                trait_type="binary",
+                step=2,
+                device="gpu",
+                status="not_implemented",
+                wall_time_seconds=None,
+                peak_rss_megabytes=None,
+                cpu_user_seconds=None,
+                cpu_system_seconds=None,
+                output_size_bytes=None,
+                stdout_log_path=None,
+                stderr_log_path=None,
+                output_paths=[],
+                notes="GPU run skipped (enable with --include-gpu).",
+            )
+        )
+
     regenie_quantitative = _result_by_name(results, "regenie_step2_quantitative")
+    regenie_binary = _result_by_name(results, "regenie_step2_binary")
     g_cpu = _result_by_name(results, "g_regenie2_quantitative_step2_cpu")
     g_gpu = _result_by_name(results, "g_regenie2_quantitative_step2_gpu")
+    g_binary_cpu = _result_by_name(results, "g_regenie2_binary_step2_cpu")
+    g_binary_gpu = _result_by_name(results, "g_regenie2_binary_step2_gpu")
     report_data: dict[str, typing.Any] = {
         "timestamp": datetime.now(UTC).isoformat(),
         "hardware": asdict(baseline_benchmark.collect_hardware_summary()),
@@ -456,6 +528,8 @@ def main() -> None:
             "g_cpu_vs_gpu": _runtime_comparison(g_cpu, g_gpu),
             "regenie_step2_quantitative_vs_g_cpu": _runtime_comparison(regenie_quantitative, g_cpu),
             "regenie_step2_quantitative_vs_g_gpu": _runtime_comparison(regenie_quantitative, g_gpu),
+            "regenie_step2_binary_vs_g_cpu": _runtime_comparison(regenie_binary, g_binary_cpu),
+            "regenie_step2_binary_vs_g_gpu": _runtime_comparison(regenie_binary, g_binary_gpu),
         },
     }
 

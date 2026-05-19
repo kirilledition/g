@@ -204,7 +204,7 @@ class RegenieMultiRunPlan:
     association_mode: types.AssociationMode
     genotype_source_config: source.GenotypeSourceConfig
     output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...]
-    committed_chunk_identifiers_by_phenotype: tuple[set[int], ...]
+    existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...]
     binary_correction_plan: types.BinaryCorrectionPlan
     engine_config: EngineRunConfig
 
@@ -289,8 +289,8 @@ def build_regenie_multi_run_plan(regenie_config: RegenieConfig, output_run_root:
         output_run_paths_by_phenotype=tuple(
             prepared_output_run.output_run_paths for prepared_output_run in prepared_output_runs
         ),
-        committed_chunk_identifiers_by_phenotype=tuple(
-            set(prepared_output_run.committed_chunk_identifiers) for prepared_output_run in prepared_output_runs
+        existing_manifests_by_phenotype=tuple(
+            prepared_output_run.existing_manifest for prepared_output_run in prepared_output_runs
         ),
         binary_correction_plan=binary_correction_plan,
         engine_config=engine_config,
@@ -315,7 +315,9 @@ def dispatch_multi_engine_pipeline(
         "variant_limit": plan.engine_config.variant_limit,
         "staging_depth": plan.engine_config.staging_depth,
         "output_run_paths_by_phenotype": plan.output_run_paths_by_phenotype,
-        "committed_chunk_identifiers_by_phenotype": plan.committed_chunk_identifiers_by_phenotype,
+        "existing_manifests_by_phenotype": plan.existing_manifests_by_phenotype,
+        "resume": plan.engine_config.resume,
+        "resume_mode": plan.engine_config.resume_mode,
         "finalize_parquet": plan.engine_config.finalize_parquet,
         "writer_thread_count": plan.engine_config.writer_threads,
         "writer_queue_depth": plan.engine_config.writer_queue_depth,
@@ -470,7 +472,7 @@ def run_existing_engine(
             genotype_source_config=genotype_source_config,
             engine_config=engine_config,
             output_run_paths=prepared_output_run.output_run_paths,
-            committed_chunk_identifiers=set(prepared_output_run.committed_chunk_identifiers),
+            existing_manifest=prepared_output_run.existing_manifest,
             binary_correction_plan=binary_correction_plan,
             stage_timing_recorder=stage_timing_recorder,
         )
@@ -492,7 +494,7 @@ def dispatch_engine_pipeline(
     genotype_source_config: source.GenotypeSourceConfig,
     engine_config: EngineRunConfig,
     output_run_paths: output.OutputRunPaths,
-    committed_chunk_identifiers: set[int],
+    existing_manifest: dict[str, typing.Any] | None,
     binary_correction_plan: types.BinaryCorrectionPlan,
     stage_timing_recorder: typing.Any,
 ) -> Path | None:
@@ -508,7 +510,9 @@ def dispatch_engine_pipeline(
         "variant_limit": engine_config.variant_limit,
         "staging_depth": engine_config.staging_depth,
         "output_run_paths": output_run_paths,
-        "committed_chunk_identifiers": committed_chunk_identifiers,
+        "existing_manifest": existing_manifest,
+        "resume": engine_config.resume,
+        "resume_mode": engine_config.resume_mode,
         "finalize_parquet": engine_config.finalize_parquet,
         "writer_thread_count": engine_config.writer_threads,
         "writer_queue_depth": engine_config.writer_queue_depth,
@@ -534,7 +538,7 @@ def extend_run_manifest(
     phenotype_name: str,
     effective_config_path: Path,
 ) -> None:
-    """Add command metadata and input fingerprints to a run manifest."""
+    """Add command and runtime metadata to a run manifest."""
     output_run_paths = output.OutputRunPaths(
         run_directory=output_run_directory,
         chunks_directory=output_run_directory / "chunks",
@@ -558,34 +562,7 @@ def extend_run_manifest(
         "trusted_no_missing_diploid": regenie_config.g_compute.trusted_no_missing_diploid,
         "trusted_bgen_validation_mode": regenie_config.g_compute.trusted_bgen_validation_mode.value,
     }
-    manifest["input_fingerprints"] = build_input_fingerprints(regenie_config)
     output.write_run_manifest(output_run_paths, manifest)
-
-
-def build_input_fingerprints(regenie_config: RegenieConfig) -> dict[str, typing.Any]:
-    """Build lightweight file fingerprints for user inputs."""
-    paths = {
-        "bgen": regenie_config.input.bgen,
-        "sample": regenie_config.input.sample,
-        "phenoFile": regenie_config.input.pheno_file,
-        "covarFile": regenie_config.input.covar_file,
-        "pred": regenie_config.input.pred,
-    }
-    fingerprints: dict[str, typing.Any] = {}
-    for path_name, path_value in paths.items():
-        if path_value is None:
-            continue
-        try:
-            path_stat = path_value.stat()
-        except FileNotFoundError:
-            fingerprints[path_name] = {"path": str(path_value), "missing": True}
-            continue
-        fingerprints[path_name] = {
-            "path": str(path_value.resolve()),
-            "size": path_stat.st_size,
-            "mtime_ns": path_stat.st_mtime_ns,
-        }
-    return fingerprints
 
 
 class RegenieApi:

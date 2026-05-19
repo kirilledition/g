@@ -17,6 +17,7 @@ import typing
 from pathlib import Path
 
 from g import api, types
+from g.io import output
 
 
 def load_script_module(module_name: str, relative_path: str) -> typing.Any:
@@ -226,8 +227,8 @@ def build_compute_stage_candidates(
                                 trait_type=trait_type,
                                 chunk_size=chunk_size,
                                 staging_depth=staging_depth,
-                                output_writer_thread_count=api.output.DEFAULT_WRITER_THREAD_COUNT,
-                                output_writer_queue_depth=api.output.DEFAULT_WRITER_QUEUE_DEPTH,
+                                output_writer_thread_count=output.DEFAULT_WRITER_THREAD_COUNT,
+                                output_writer_queue_depth=output.DEFAULT_WRITER_QUEUE_DEPTH,
                                 bgen_decode_tile_variant_count=bgen_candidate_summary.candidate.decode_tile_variant_count,
                                 rayon_thread_count=bgen_candidate_summary.candidate.rayon_thread_count,
                                 firth_batch_size=firth_batch_size,
@@ -239,8 +240,8 @@ def build_compute_stage_candidates(
                         trait_type=trait_type,
                         chunk_size=chunk_size,
                         staging_depth=staging_depth,
-                        output_writer_thread_count=api.output.DEFAULT_WRITER_THREAD_COUNT,
-                        output_writer_queue_depth=api.output.DEFAULT_WRITER_QUEUE_DEPTH,
+                        output_writer_thread_count=output.DEFAULT_WRITER_THREAD_COUNT,
+                        output_writer_queue_depth=output.DEFAULT_WRITER_QUEUE_DEPTH,
                         bgen_decode_tile_variant_count=bgen_candidate_summary.candidate.decode_tile_variant_count,
                         rayon_thread_count=bgen_candidate_summary.candidate.rayon_thread_count,
                         firth_batch_size=None,

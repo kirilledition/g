@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
-RUN_MANIFEST_SCHEMA_VERSION = 1
+RUN_MANIFEST_SCHEMA_VERSION = 2
 DEFAULT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_WRITER_THREAD_COUNT = 8
 DEFAULT_CHUNKS_PER_ARROW_FILE = 4
@@ -36,6 +36,13 @@ class PreparedOutputRun:
     """Prepared output run state for chunk persistence."""
 
     output_run_paths: OutputRunPaths
+    existing_manifest: dict[str, typing.Any] | None
+
+
+@dataclass(frozen=True)
+class InitializedOutputRun:
+    """Validated output run state for chunk persistence."""
+
     committed_chunk_identifiers: frozenset[int]
 
 
@@ -84,33 +91,80 @@ def write_run_manifest(output_run_paths: OutputRunPaths, manifest: dict[str, typ
     temporary_manifest_path.replace(manifest_path)
 
 
-def validate_manifest_compatibility(
-    manifest: dict[str, typing.Any],
+def build_file_fingerprint(path: Path | None) -> dict[str, typing.Any] | None:
+    """Build a lightweight immutable fingerprint for an input file."""
+    if path is None:
+        return None
+    path_stat = path.stat()
+    return {
+        "path": str(path.resolve()),
+        "size": path_stat.st_size,
+        "mtime_ns": path_stat.st_mtime_ns,
+    }
+
+
+def build_binary_correction_plan_manifest(binary_correction_plan: types.BinaryCorrectionPlan) -> dict[str, typing.Any]:
+    """Build the manifest representation of a binary correction plan."""
+    return {
+        "method": str(binary_correction_plan.method),
+        "p_threshold": binary_correction_plan.p_threshold,
+        "firth_se": binary_correction_plan.firth_se,
+    }
+
+
+def build_current_run_manifest_header(
+    *,
     association_mode: types.AssociationMode,
-) -> None:
-    """Validate manifest fields that are known before engine setup."""
-    if manifest.get("schema_version") != RUN_MANIFEST_SCHEMA_VERSION:
-        message = "Run manifest schema version is incompatible."
-        raise ValueError(message)
-    if manifest.get("association_mode") != str(association_mode):
-        message = "Run manifest association mode is incompatible with the requested run."
-        raise ValueError(message)
-
-
-def build_initial_run_manifest(association_mode: types.AssociationMode) -> dict[str, typing.Any]:
-    """Build the initial manifest written before output starts."""
+    bgen_path: Path,
+    sample_path: Path | None,
+    phenotype_path: Path,
+    phenotype_name: str,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...],
+    prediction_list_path: Path,
+    sample_count: int,
+    variant_count: int,
+    chunk_size: int,
+    variant_limit: int | None,
+    binary_correction_plan: types.BinaryCorrectionPlan,
+    trusted_no_missing_diploid: bool,
+    sample_key_mode: types.SampleKeyMode,
+    allow_duplicate_iid_alignment: bool,
+) -> dict[str, typing.Any]:
+    """Build immutable run manifest fields from the current execution plan."""
     return {
         "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
         "association_mode": str(association_mode),
-        "bgen": None,
-        "sample_count": None,
-        "variant_count": None,
-        "chunk_size": None,
-        "binary_correction_plan": None,
-        "trusted_no_missing_diploid": None,
-        "committed_chunks": [],
-        "finalized": False,
+        "bgen": build_file_fingerprint(bgen_path),
+        "sample": build_file_fingerprint(sample_path),
+        "phenotype_file": build_file_fingerprint(phenotype_path),
+        "phenotype_name": phenotype_name,
+        "covariate_file": build_file_fingerprint(covariate_path),
+        "covariate_names": list(covariate_names),
+        "prediction_list": build_file_fingerprint(prediction_list_path),
+        "sample_count": sample_count,
+        "variant_count": variant_count,
+        "chunk_size": chunk_size,
+        "variant_limit": variant_limit,
+        "binary_correction_plan": build_binary_correction_plan_manifest(binary_correction_plan),
+        "trusted_no_missing_diploid": trusted_no_missing_diploid,
+        "sample_key_mode": str(sample_key_mode),
+        "allow_duplicate_iid_alignment": allow_duplicate_iid_alignment,
     }
+
+
+def validate_manifest_compatibility(
+    manifest: dict[str, typing.Any],
+    current_header: dict[str, typing.Any],
+) -> None:
+    """Validate immutable manifest fields against the current run header."""
+    for field_name, current_value in current_header.items():
+        if field_name not in manifest:
+            message = f"Run manifest field '{field_name}' is missing."
+            raise ValueError(message)
+        if manifest[field_name] != current_value:
+            message = f"Run manifest field '{field_name}' is incompatible with the requested run."
+            raise ValueError(message)
 
 
 def read_manifest_committed_chunk_identifiers(manifest: dict[str, typing.Any]) -> frozenset[int]:
@@ -140,40 +194,39 @@ def validate_strict_manifest_chunks(
     return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
 
 
-def write_run_manifest_header(
+def initialize_output_run(
     *,
     output_run_paths: OutputRunPaths,
-    association_mode: types.AssociationMode,
-    bgen_path: Path,
-    sample_count: int,
-    variant_count: int,
-    chunk_size: int,
-    binary_correction_plan: types.BinaryCorrectionPlan,
-    trusted_no_missing_diploid: bool,
-) -> None:
-    """Write run-level manifest details once native input metadata is known."""
-    manifest = load_run_manifest(output_run_paths) or build_initial_run_manifest(association_mode)
-    validate_manifest_compatibility(manifest, association_mode)
-    bgen_stat = bgen_path.stat()
-    manifest.update(
-        {
-            "bgen": {
-                "path": str(bgen_path.resolve()),
-                "size": bgen_stat.st_size,
-                "mtime_ns": bgen_stat.st_mtime_ns,
-            },
-            "sample_count": sample_count,
-            "variant_count": variant_count,
-            "chunk_size": chunk_size,
-            "binary_correction_plan": {
-                "method": str(binary_correction_plan.method),
-                "p_threshold": binary_correction_plan.p_threshold,
-                "firth_se": binary_correction_plan.firth_se,
-            },
-            "trusted_no_missing_diploid": trusted_no_missing_diploid,
-        }
-    )
+    existing_manifest: dict[str, typing.Any] | None,
+    current_header: dict[str, typing.Any],
+    resume: bool,
+    resume_mode: types.ResumeMode,
+) -> InitializedOutputRun:
+    """Validate/write the manifest header and return accepted committed chunks."""
+    committed_chunk_identifiers = frozenset[int]()
+    committed_chunks: list[typing.Any] = []
+    manifest = dict(existing_manifest or {})
+    if existing_manifest is not None:
+        validate_manifest_compatibility(existing_manifest, current_header)
+        committed_chunks_value = existing_manifest.get("committed_chunks", [])
+        if not isinstance(committed_chunks_value, list):
+            message = "Run manifest committed_chunks field must be a list."
+            raise ValueError(message)
+        committed_chunks = committed_chunks_value
+        if resume:
+            if resume_mode == types.ResumeMode.STRICT:
+                committed_chunk_identifiers = validate_strict_manifest_chunks(output_run_paths, existing_manifest)
+            else:
+                committed_chunk_identifiers = read_manifest_committed_chunk_identifiers(existing_manifest)
+            logger.info("Resuming run with %d previously committed chunks.", len(committed_chunk_identifiers))
+    elif resume:
+        message = "Resume requires run_manifest.json."
+        raise ValueError(message)
+    manifest.update(current_header)
+    manifest["committed_chunks"] = committed_chunks
+    manifest.setdefault("finalized", False)
     write_run_manifest(output_run_paths, manifest)
+    return InitializedOutputRun(committed_chunk_identifiers=committed_chunk_identifiers)
 
 
 def prepare_output_run(
@@ -183,7 +236,7 @@ def prepare_output_run(
     resume: bool,
     resume_mode: types.ResumeMode = types.ResumeMode.FAST,
 ) -> PreparedOutputRun:
-    """Prepare a chunked output run directory and discover resumable state."""
+    """Prepare a chunked output run directory and load existing manifest state."""
     output_run_paths = resolve_output_run_paths(output_root, association_mode)
     if not resume and output_run_paths.run_directory.exists() and any(output_run_paths.run_directory.iterdir()):
         message = (
@@ -193,25 +246,12 @@ def prepare_output_run(
         raise ValueError(message)
     output_run_paths.chunks_directory.mkdir(parents=True, exist_ok=True)
     manifest = load_run_manifest(output_run_paths)
-    if manifest is not None:
-        validate_manifest_compatibility(manifest, association_mode)
-    committed_chunk_identifiers = frozenset[int]()
-    if resume:
-        if resume_mode == types.ResumeMode.STRICT:
-            if manifest is None:
-                message = "Strict resume requires run_manifest.json."
-                raise ValueError(message)
-            committed_chunk_identifiers = validate_strict_manifest_chunks(output_run_paths, manifest)
-        elif manifest is not None:
-            committed_chunk_identifiers = read_manifest_committed_chunk_identifiers(manifest)
-        else:
-            committed_chunk_identifiers = scan_committed_chunk_identifiers(output_run_paths.chunks_directory)
-        logger.info("Resuming run with %d previously committed chunks.", len(committed_chunk_identifiers))
-    elif manifest is None:
-        write_run_manifest(output_run_paths, build_initial_run_manifest(association_mode))
+    if resume and manifest is None:
+        message = "Resume requires run_manifest.json."
+        raise ValueError(message)
     return PreparedOutputRun(
         output_run_paths=output_run_paths,
-        committed_chunk_identifiers=committed_chunk_identifiers,
+        existing_manifest=manifest,
     )
 
 

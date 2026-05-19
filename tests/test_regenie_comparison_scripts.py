@@ -216,16 +216,21 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
         variant_limit=None,
         trait_type="binary",
     )
-    assert cpu_command[:4] == ["uv", "run", "g", "regenie2"]
-    assert "--trait-type" in cpu_command
-    assert cpu_command[cpu_command.index("--trait-type") + 1] == "quantitative"
-    assert "--device" in cpu_command
-    assert cpu_command[cpu_command.index("--device") + 1] == "cpu"
-    assert "--finalize-parquet" in cpu_command
-    assert "--variant-limit" in cpu_command
-    assert gpu_command[gpu_command.index("--device") + 1] == "gpu"
-    assert "--variant-limit" not in gpu_command
-    assert binary_command[binary_command.index("--trait-type") + 1] == "binary"
+    assert cpu_command[:4] == ["uv", "run", "g", "regenie"]
+    assert "--step" in cpu_command
+    assert cpu_command[cpu_command.index("--step") + 1] == "2"
+    assert "--qt" in cpu_command
+    assert "--g-device" in cpu_command
+    assert cpu_command[cpu_command.index("--g-device") + 1] == "cpu"
+    assert "--g-output-format" in cpu_command
+    assert cpu_command[cpu_command.index("--g-output-format") + 1] == "parquet"
+    assert "--g-variant-limit" in cpu_command
+    assert "--variant-limit" not in cpu_command
+    assert gpu_command[gpu_command.index("--g-device") + 1] == "gpu"
+    assert "--g-variant-limit" not in gpu_command
+    assert "--bt" in binary_command
+    assert "--firth" in binary_command
+    assert "--approx" in binary_command
     assert "phenotype_binary" in binary_command
 
 

@@ -139,7 +139,11 @@ class FakeRunEngine:
 def build_native_aligned_sample_data() -> SimpleNamespace:
     return SimpleNamespace(
         sample_indices=np.asarray([1, 0], dtype=np.int64),
+        family_identifiers=["family1", "family2"],
+        individual_identifiers=["sample1", "sample2"],
+        phenotype_name="trait",
         phenotype_vector=np.asarray([0.0, 1.0], dtype=np.float32),
+        covariate_names=["intercept", "age"],
         covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
         is_binary_trait=False,
     )
@@ -162,6 +166,7 @@ def build_native_multi_run_input() -> regenie2_pipeline.NativeBgenMultiRunInput:
         family_identifiers=["f2", "f1"],
         individual_identifiers=["i2", "i1"],
         phenotype_matrix=np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32),
+        covariate_names=["intercept", "age"],
         covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
         is_binary_trait=False,
     )
@@ -429,6 +434,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     FakePredictionSource.instances.clear()
     writer_session = FakeWriterSession()
     run_input = build_native_run_input()
+    preparation_order: list[str] = []
 
     with (
         patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
@@ -438,8 +444,20 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
-        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
-        patch("g.engine.regenie2_pipeline.output.write_run_manifest_header"),
+        patch(
+            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_session,
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header", return_value={"header": "current"}
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            side_effect=lambda **kwargs: (
+                preparation_order.append("manifest")
+                or output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0}))
+            ),
+        ),
         patch.object(
             regenie2_linear,
             "prepare_regenie2_linear_state",
@@ -457,7 +475,8 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             variant_limit=100,
             output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
             staging_depth=3,
-            committed_chunk_identifiers={64, 0},
+            existing_manifest={"header": "current", "committed_chunks": []},
+            resume=True,
             finalize_parquet=True,
             writer_thread_count=2,
             writer_queue_depth=3,
@@ -465,6 +484,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
         )
 
     assert final_path == Path("results/final.parquet")
+    assert preparation_order == ["manifest", "writer"]
     assert writer_session.finished is True
     engine = FakeRunEngine.instances[0]
     assert engine.bgen_path == "study.bgen"
@@ -493,6 +513,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     writer_session = FakeWriterSession()
     run_input = build_native_run_input()
     kernel_config = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
+    preparation_order: list[str] = []
 
     with (
         patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
@@ -502,8 +523,20 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
         patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
-        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
-        patch("g.engine.regenie2_pipeline.output.write_run_manifest_header"),
+        patch(
+            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_session,
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header", return_value={"header": "current"}
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            side_effect=lambda **kwargs: (
+                preparation_order.append("manifest")
+                or output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0}))
+            ),
+        ),
         patch(
             "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_state",
             return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
@@ -520,12 +553,14 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             variant_limit=100,
             output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
             staging_depth=3,
-            committed_chunk_identifiers={64, 0},
+            existing_manifest={"header": "current", "committed_chunks": []},
+            resume=True,
             trusted_no_missing_diploid=True,
             kernel_config=kernel_config,
         )
 
     assert final_path == Path("results/final.parquet")
+    assert preparation_order == ["manifest", "writer"]
     engine = FakeRunEngine.instances[0]
     assert engine.validation_count == 1
     assert engine.run_method == "variant_major_buffered"
@@ -548,7 +583,13 @@ def test_binary_pipeline_uses_sample_major_engine_for_untrusted_bgen() -> None:
         patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
         patch("g.engine.regenie2_pipeline.load_native_bgen_run_input", return_value=run_input),
         patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
-        patch("g.engine.regenie2_pipeline.output.write_run_manifest_header"),
+        patch(
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header", return_value={"header": "current"}
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
+        ),
         patch(
             "g.engine.regenie2_pipeline.regenie2_binary.prepare_regenie2_binary_state",
             return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
@@ -565,7 +606,8 @@ def test_binary_pipeline_uses_sample_major_engine_for_untrusted_bgen() -> None:
             variant_limit=100,
             output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
             staging_depth=3,
-            committed_chunk_identifiers={64, 0},
+            existing_manifest={"header": "current", "committed_chunks": []},
+            resume=True,
             trusted_no_missing_diploid=False,
         )
 
@@ -579,6 +621,8 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     FakeRunEngine.instances.clear()
     writer_sessions = [FakeWriterSession(), FakeWriterSession()]
     run_input = build_native_multi_run_input()
+    preparation_order: list[str] = []
+    initialized_chunk_sets = [frozenset({0, 32}), frozenset({32, 64})]
 
     with (
         patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
@@ -588,8 +632,21 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
             return_value=FakePredictionSource(),
         ),
         patch("g.engine.regenie2_pipeline.run_multi_preflight"),
-        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", side_effect=writer_sessions),
-        patch("g.engine.regenie2_pipeline.output.write_run_manifest_header"),
+        patch(
+            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_sessions.pop(0),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            side_effect=lambda **kwargs: (
+                preparation_order.append("manifest")
+                or output.InitializedOutputRun(committed_chunk_identifiers=initialized_chunk_sets.pop(0))
+            ),
+        ),
         patch.object(
             regenie2_pipeline.regenie2_linear,
             "prepare_regenie2_multi_linear_state",
@@ -610,11 +667,16 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
                 output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
             ),
             staging_depth=2,
-            committed_chunk_identifiers_by_phenotype=({0, 32}, {32, 64}),
+            existing_manifests_by_phenotype=(
+                {"header": "trait_a", "committed_chunks": []},
+                {"header": "trait_b", "committed_chunks": []},
+            ),
+            resume=True,
             trusted_no_missing_diploid=False,
         )
 
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+    assert preparation_order == ["manifest", "manifest", "writer", "writer"]
     assert len(FakeRunEngine.instances) == 1
     engine = FakeRunEngine.instances[0]
     assert engine.run_method == "buffered"
@@ -624,7 +686,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert isinstance(callback, regenie2_pipeline.MultiLinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [32]
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
-    assert all(writer_session.finished for writer_session in writer_sessions)
+    assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
 
 
 def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated() -> None:
