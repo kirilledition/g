@@ -355,8 +355,7 @@ impl Regenie2RunEngine {
         covariate_path=None,
         covariate_names=None,
         is_binary_trait=false,
-        sample_key_mode="iid".to_string(),
-        allow_duplicate_iid_alignment=false
+        sample_key_mode="iid".to_string()
     ))]
     fn align_sample_data(
         &self,
@@ -368,7 +367,6 @@ impl Regenie2RunEngine {
         covariate_names: Option<Vec<String>>,
         is_binary_trait: bool,
         sample_key_mode: String,
-        allow_duplicate_iid_alignment: bool,
     ) -> PyResult<NativeAlignedSampleData> {
         let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
         if let Some(sample_path) = sample_path {
@@ -384,7 +382,6 @@ impl Regenie2RunEngine {
                         covariate_names,
                         is_binary_trait,
                         parsed_sample_key_mode,
-                        allow_duplicate_iid_alignment,
                     )
                 })
                 .map(NativeAlignedSampleData::new)
@@ -408,7 +405,6 @@ impl Regenie2RunEngine {
             covariate_names,
             is_binary_trait,
             sample_key_mode: parsed_sample_key_mode,
-            allow_duplicate_iid_alignment,
         };
         py.detach(move || crate::sample::align_sample_data(inputs))
             .map(NativeAlignedSampleData::new)
@@ -424,8 +420,7 @@ impl Regenie2RunEngine {
         covariate_path=None,
         covariate_names=None,
         is_binary_trait=false,
-        sample_key_mode="iid".to_string(),
-        allow_duplicate_iid_alignment=false
+        sample_key_mode="iid".to_string()
     ))]
     fn align_multi_sample_data(
         &self,
@@ -437,7 +432,6 @@ impl Regenie2RunEngine {
         covariate_names: Option<Vec<String>>,
         is_binary_trait: bool,
         sample_key_mode: String,
-        allow_duplicate_iid_alignment: bool,
     ) -> PyResult<NativeMultiAlignedSampleData> {
         let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
         if let Some(sample_path) = sample_path {
@@ -453,7 +447,6 @@ impl Regenie2RunEngine {
                         covariate_names,
                         is_binary_trait,
                         parsed_sample_key_mode,
-                        allow_duplicate_iid_alignment,
                     )
                 })
                 .map(NativeMultiAlignedSampleData::new)
@@ -477,7 +470,6 @@ impl Regenie2RunEngine {
             covariate_names,
             is_binary_trait,
             sample_key_mode: parsed_sample_key_mode,
-            allow_duplicate_iid_alignment,
         };
         py.detach(move || crate::sample::align_multi_sample_data(inputs))
             .map(NativeMultiAlignedSampleData::new)
@@ -564,8 +556,7 @@ impl RegeniePredictionSource {
         phenotype_name,
         sample_family_identifiers,
         sample_individual_identifiers,
-        sample_key_mode="iid".to_string(),
-        allow_duplicate_iid_alignment=false
+        sample_key_mode="iid".to_string()
     ))]
     fn new(
         prediction_list_path: String,
@@ -573,7 +564,6 @@ impl RegeniePredictionSource {
         sample_family_identifiers: Vec<String>,
         sample_individual_identifiers: Vec<String>,
         sample_key_mode: String,
-        allow_duplicate_iid_alignment: bool,
     ) -> PyResult<Self> {
         let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
         let source = PredictionSource::load(
@@ -582,7 +572,6 @@ impl RegeniePredictionSource {
             &sample_family_identifiers,
             &sample_individual_identifiers,
             parsed_sample_key_mode,
-            allow_duplicate_iid_alignment,
         )
         .map_err(convert_prediction_error)?;
         Ok(Self { source })
@@ -594,15 +583,13 @@ impl RegeniePredictionSource {
         prediction_list_path,
         phenotype_name,
         aligned_sample_data,
-        sample_key_mode="iid".to_string(),
-        allow_duplicate_iid_alignment=false
+        sample_key_mode="iid".to_string()
     ))]
     fn from_native_aligned_sample_data(
         prediction_list_path: String,
         phenotype_name: String,
         aligned_sample_data: PyRef<'_, NativeAlignedSampleData>,
         sample_key_mode: String,
-        allow_duplicate_iid_alignment: bool,
     ) -> PyResult<Self> {
         let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
         let source = PredictionSource::load(
@@ -611,7 +598,6 @@ impl RegeniePredictionSource {
             &aligned_sample_data.data.family_identifiers,
             &aligned_sample_data.data.individual_identifiers,
             parsed_sample_key_mode,
-            allow_duplicate_iid_alignment,
         )
         .map_err(convert_prediction_error)?;
         Ok(Self { source })
@@ -637,8 +623,7 @@ impl MultiRegeniePredictionSource {
         phenotype_names,
         sample_family_identifiers,
         sample_individual_identifiers,
-        sample_key_mode="iid".to_string(),
-        allow_duplicate_iid_alignment=false
+        sample_key_mode="iid".to_string()
     ))]
     fn new(
         prediction_list_path: String,
@@ -646,7 +631,6 @@ impl MultiRegeniePredictionSource {
         sample_family_identifiers: Vec<String>,
         sample_individual_identifiers: Vec<String>,
         sample_key_mode: String,
-        allow_duplicate_iid_alignment: bool,
     ) -> PyResult<Self> {
         let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
         let source = NativeMultiPredictionSource::load(
@@ -655,7 +639,6 @@ impl MultiRegeniePredictionSource {
             &sample_family_identifiers,
             &sample_individual_identifiers,
             parsed_sample_key_mode,
-            allow_duplicate_iid_alignment,
         )
         .map_err(convert_prediction_error)?;
         Ok(Self { source })
@@ -666,14 +649,12 @@ impl MultiRegeniePredictionSource {
     #[pyo3(signature = (
         prediction_list_path,
         aligned_sample_data,
-        sample_key_mode="iid".to_string(),
-        allow_duplicate_iid_alignment=false
+        sample_key_mode="iid".to_string()
     ))]
     fn from_native_multi_aligned_sample_data(
         prediction_list_path: String,
         aligned_sample_data: PyRef<'_, NativeMultiAlignedSampleData>,
         sample_key_mode: String,
-        allow_duplicate_iid_alignment: bool,
     ) -> PyResult<Self> {
         let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
         let source = NativeMultiPredictionSource::load(
@@ -682,7 +663,6 @@ impl MultiRegeniePredictionSource {
             &aligned_sample_data.data.family_identifiers,
             &aligned_sample_data.data.individual_identifiers,
             parsed_sample_key_mode,
-            allow_duplicate_iid_alignment,
         )
         .map_err(convert_prediction_error)?;
         Ok(Self { source })
@@ -849,8 +829,7 @@ impl Regenie2RunEngine {
     covariate_path=None,
     covariate_names=None,
     is_binary_trait=false,
-    sample_key_mode="iid".to_string(),
-    allow_duplicate_iid_alignment=false
+    sample_key_mode="iid".to_string()
 ))]
 fn align_sample_data<'py>(
     py: Python<'py>,
@@ -863,7 +842,6 @@ fn align_sample_data<'py>(
     covariate_names: Option<Vec<String>>,
     is_binary_trait: bool,
     sample_key_mode: String,
-    allow_duplicate_iid_alignment: bool,
 ) -> PyResult<NativeAlignedSampleData> {
     let sample_index_values = sample_indices.as_slice()?.to_vec();
     let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
@@ -877,7 +855,6 @@ fn align_sample_data<'py>(
         covariate_names,
         is_binary_trait,
         sample_key_mode: parsed_sample_key_mode,
-        allow_duplicate_iid_alignment,
     };
     py.detach(|| crate::sample::align_sample_data(inputs))
         .map(NativeAlignedSampleData::new)
@@ -896,8 +873,7 @@ fn align_sample_data<'py>(
     covariate_path=None,
     covariate_names=None,
     is_binary_trait=false,
-    sample_key_mode="iid".to_string(),
-    allow_duplicate_iid_alignment=false
+    sample_key_mode="iid".to_string()
 ))]
 fn align_multi_sample_data<'py>(
     py: Python<'py>,
@@ -910,7 +886,6 @@ fn align_multi_sample_data<'py>(
     covariate_names: Option<Vec<String>>,
     is_binary_trait: bool,
     sample_key_mode: String,
-    allow_duplicate_iid_alignment: bool,
 ) -> PyResult<NativeMultiAlignedSampleData> {
     let sample_index_values = sample_indices.as_slice()?.to_vec();
     let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
@@ -924,7 +899,6 @@ fn align_multi_sample_data<'py>(
         covariate_names,
         is_binary_trait,
         sample_key_mode: parsed_sample_key_mode,
-        allow_duplicate_iid_alignment,
     };
     py.detach(|| crate::sample::align_multi_sample_data(inputs))
         .map(NativeMultiAlignedSampleData::new)
@@ -942,8 +916,7 @@ fn align_multi_sample_data<'py>(
     covariate_path=None,
     covariate_names=None,
     is_binary_trait=false,
-    sample_key_mode="iid".to_string(),
-    allow_duplicate_iid_alignment=false
+    sample_key_mode="iid".to_string()
 ))]
 fn align_sample_data_from_sample_file(
     py: Python<'_>,
@@ -955,7 +928,6 @@ fn align_sample_data_from_sample_file(
     covariate_names: Option<Vec<String>>,
     is_binary_trait: bool,
     sample_key_mode: String,
-    allow_duplicate_iid_alignment: bool,
 ) -> PyResult<NativeAlignedSampleData> {
     let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
     py.detach(move || {
@@ -968,7 +940,6 @@ fn align_sample_data_from_sample_file(
             covariate_names,
             is_binary_trait,
             parsed_sample_key_mode,
-            allow_duplicate_iid_alignment,
         )
     })
     .map(NativeAlignedSampleData::new)
@@ -986,8 +957,7 @@ fn align_sample_data_from_sample_file(
     covariate_path=None,
     covariate_names=None,
     is_binary_trait=false,
-    sample_key_mode="iid".to_string(),
-    allow_duplicate_iid_alignment=false
+    sample_key_mode="iid".to_string()
 ))]
 fn align_multi_sample_data_from_sample_file(
     py: Python<'_>,
@@ -999,7 +969,6 @@ fn align_multi_sample_data_from_sample_file(
     covariate_names: Option<Vec<String>>,
     is_binary_trait: bool,
     sample_key_mode: String,
-    allow_duplicate_iid_alignment: bool,
 ) -> PyResult<NativeMultiAlignedSampleData> {
     let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
     py.detach(move || {
@@ -1012,7 +981,6 @@ fn align_multi_sample_data_from_sample_file(
             covariate_names,
             is_binary_trait,
             parsed_sample_key_mode,
-            allow_duplicate_iid_alignment,
         )
     })
     .map(NativeMultiAlignedSampleData::new)

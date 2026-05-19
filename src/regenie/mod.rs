@@ -44,8 +44,6 @@ pub enum PredictionError {
     MissingChromosomePredictions(PathBuf),
     #[error("Target family and individual identifier arrays must have the same length.")]
     TargetSampleLengthMismatch,
-    #[error("allow_duplicate_iid_alignment is only supported when sample_key_mode='iid'.")]
-    InvalidDuplicateIidCompatibilityMode,
     #[error("Duplicate target sample key: {sample_key}")]
     DuplicateTargetSampleKey { sample_key: String },
     #[error("Duplicate LOCO sample key: {sample_key}")]
@@ -106,11 +104,9 @@ impl PredictionSource {
         target_family_identifiers: &[String],
         target_individual_identifiers: &[String],
         sample_key_mode: SampleKeyMode,
-        allow_duplicate_iid_alignment: bool,
     ) -> Result<Self, PredictionError> {
-        validate_prediction_alignment_config(sample_key_mode, allow_duplicate_iid_alignment)?;
         validate_target_sample_keys(target_family_identifiers, target_individual_identifiers)?;
-        if sample_key_mode == SampleKeyMode::Iid && !allow_duplicate_iid_alignment {
+        if sample_key_mode == SampleKeyMode::Iid {
             validate_unique_target_individual_identifiers(target_individual_identifiers)?;
         }
         let entries = parse_prediction_list_file(prediction_list_path)?;
@@ -122,7 +118,7 @@ impl PredictionSource {
         };
         let loco_predictions = parse_loco_file(&entry.loco_file_path)?;
         validate_loco_sample_keys(&loco_predictions.sample_index)?;
-        if sample_key_mode == SampleKeyMode::Iid && !allow_duplicate_iid_alignment {
+        if sample_key_mode == SampleKeyMode::Iid {
             validate_unique_loco_individual_identifiers(&loco_predictions.sample_index)?;
         }
         let alignment_indices = build_sample_alignment_indices(
@@ -130,7 +126,6 @@ impl PredictionSource {
             target_family_identifiers,
             target_individual_identifiers,
             sample_key_mode,
-            allow_duplicate_iid_alignment,
         )?;
         let aligned_predictions = loco_predictions
             .chromosome_predictions
@@ -165,11 +160,9 @@ impl MultiPredictionSource {
         target_family_identifiers: &[String],
         target_individual_identifiers: &[String],
         sample_key_mode: SampleKeyMode,
-        allow_duplicate_iid_alignment: bool,
     ) -> Result<Self, PredictionError> {
-        validate_prediction_alignment_config(sample_key_mode, allow_duplicate_iid_alignment)?;
         validate_target_sample_keys(target_family_identifiers, target_individual_identifiers)?;
-        if sample_key_mode == SampleKeyMode::Iid && !allow_duplicate_iid_alignment {
+        if sample_key_mode == SampleKeyMode::Iid {
             validate_unique_target_individual_identifiers(target_individual_identifiers)?;
         }
         let entries = parse_prediction_list_file(prediction_list_path)?;
@@ -183,7 +176,7 @@ impl MultiPredictionSource {
             };
             let loco_predictions = parse_loco_file(&entry.loco_file_path)?;
             validate_loco_sample_keys(&loco_predictions.sample_index)?;
-            if sample_key_mode == SampleKeyMode::Iid && !allow_duplicate_iid_alignment {
+            if sample_key_mode == SampleKeyMode::Iid {
                 validate_unique_loco_individual_identifiers(&loco_predictions.sample_index)?;
             }
             let alignment_indices = build_sample_alignment_indices(
@@ -191,7 +184,6 @@ impl MultiPredictionSource {
                 target_family_identifiers,
                 target_individual_identifiers,
                 sample_key_mode,
-                allow_duplicate_iid_alignment,
             )?;
             let aligned_predictions = loco_predictions
                 .chromosome_predictions
@@ -361,16 +353,6 @@ fn parse_loco_sample_identifiers(header_line: &str) -> Result<LocoSampleIndex, P
     Ok(LocoSampleIndex { family_identifiers, individual_identifiers })
 }
 
-fn validate_prediction_alignment_config(
-    sample_key_mode: SampleKeyMode,
-    allow_duplicate_iid_alignment: bool,
-) -> Result<(), PredictionError> {
-    if sample_key_mode == SampleKeyMode::FidIid && allow_duplicate_iid_alignment {
-        return Err(PredictionError::InvalidDuplicateIidCompatibilityMode);
-    }
-    Ok(())
-}
-
 fn validate_target_sample_keys(
     target_family_identifiers: &[String],
     target_individual_identifiers: &[String],
@@ -448,13 +430,12 @@ fn build_sample_alignment_indices(
     target_family_identifiers: &[String],
     target_individual_identifiers: &[String],
     sample_key_mode: SampleKeyMode,
-    allow_duplicate_iid_alignment: bool,
 ) -> Result<Vec<usize>, PredictionError> {
     if target_family_identifiers.len() != target_individual_identifiers.len() {
         return Err(PredictionError::TargetSampleLengthMismatch);
     }
 
-    if sample_key_mode == SampleKeyMode::Iid && !allow_duplicate_iid_alignment {
+    if sample_key_mode == SampleKeyMode::Iid {
         return build_individual_identifier_alignment_indices(loco_sample_index, target_individual_identifiers);
     }
     build_family_individual_identifier_alignment_indices(

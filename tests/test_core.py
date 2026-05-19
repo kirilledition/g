@@ -207,24 +207,22 @@ def test_regenie_prediction_source_rejects_duplicate_loco_iid_by_default(tmp_pat
         )
 
 
-def test_regenie_prediction_source_allows_duplicate_loco_iid_with_compatibility_flag(tmp_path: Path) -> None:
+def test_regenie_prediction_source_rejects_duplicate_target_iid_by_default(tmp_path: Path) -> None:
     loco_path = tmp_path / "trait.loco"
-    loco_path.write_text("FID_IID f1_s1 f2_s1\n22 0.1 0.2\n")
+    loco_path.write_text("FID_IID f1_s1\n22 0.1\n")
     prediction_list_path = tmp_path / "trait_pred.list"
     prediction_list_path.write_text(f"trait {loco_path}\n")
 
-    prediction_source = _core.RegeniePredictionSource(
-        str(prediction_list_path),
-        "trait",
-        ["f2"],
-        ["s1"],
-        allow_duplicate_iid_alignment=True,
-    )
-
-    np.testing.assert_allclose(prediction_source.get_chromosome_predictions("22"), [0.2], atol=1e-6)
+    with np.testing.assert_raises_regex(ValueError, "Duplicate target IID 's1'"):
+        _core.RegeniePredictionSource(
+            str(prediction_list_path),
+            "trait",
+            ["f1", "f2"],
+            ["s1", "s1"],
+        )
 
 
-def test_regenie_prediction_source_rejects_duplicate_exact_loco_key_even_with_flag(tmp_path: Path) -> None:
+def test_regenie_prediction_source_rejects_duplicate_exact_loco_key(tmp_path: Path) -> None:
     loco_path = tmp_path / "trait.loco"
     loco_path.write_text("FID_IID f1_s1 f1_s1\n22 0.1 0.2\n")
     prediction_list_path = tmp_path / "trait_pred.list"
@@ -236,7 +234,6 @@ def test_regenie_prediction_source_rejects_duplicate_exact_loco_key_even_with_fl
             "trait",
             ["f1"],
             ["s1"],
-            allow_duplicate_iid_alignment=True,
         )
 
 

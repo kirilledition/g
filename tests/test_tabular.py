@@ -22,7 +22,6 @@ def align_sample_data(
     *,
     is_binary_trait: bool,
     sample_key_mode: str = "iid",
-    allow_duplicate_iid_alignment: bool = False,
 ) -> _core.NativeAlignedSampleData:
     """Run the native alignment helper with test-friendly arguments."""
     return _core.align_sample_data(
@@ -35,7 +34,6 @@ def align_sample_data(
         covariate_names,
         is_binary_trait,
         sample_key_mode=sample_key_mode,
-        allow_duplicate_iid_alignment=allow_duplicate_iid_alignment,
     )
 
 
@@ -50,7 +48,6 @@ def align_multi_sample_data(
     *,
     is_binary_trait: bool,
     sample_key_mode: str = "iid",
-    allow_duplicate_iid_alignment: bool = False,
 ) -> _core.NativeMultiAlignedSampleData:
     """Run the native multi-phenotype alignment helper with test-friendly arguments."""
     return _core.align_multi_sample_data(
@@ -63,7 +60,6 @@ def align_multi_sample_data(
         covariate_names,
         is_binary_trait,
         sample_key_mode=sample_key_mode,
-        allow_duplicate_iid_alignment=allow_duplicate_iid_alignment,
     )
 
 
@@ -146,6 +142,30 @@ def test_native_multi_alignment_binary_encoding_applies_to_all_traits(tmp_path: 
         np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32),
     )
     assert result.is_binary_trait is True
+
+
+def test_native_multi_fid_iid_alignment_allows_repeated_iid_across_families(tmp_path: Path) -> None:
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait_a\ttrait_b\nf1\ts1\t1.0\t10.0\nf2\ts1\t2.0\t20.0\n")
+    covariate_path = tmp_path / "covar.txt"
+    covariate_path.write_text("FID\tIID\tage\nf1\ts1\t25\nf2\ts1\t35\n")
+
+    result = align_multi_sample_data(
+        np.asarray([0, 1], dtype=np.int64),
+        ["f2", "f1"],
+        ["s1", "s1"],
+        phenotype_path,
+        ["trait_a", "trait_b"],
+        covariate_path,
+        ["age"],
+        is_binary_trait=False,
+        sample_key_mode="fid_iid",
+    )
+
+    np.testing.assert_array_equal(result.sample_indices, np.asarray([0, 1], dtype=np.int64))
+    assert result.family_identifiers == ["f2", "f1"]
+    np.testing.assert_allclose(result.phenotype_matrix, np.asarray([[2.0, 1.0], [20.0, 10.0]], dtype=np.float32))
+    np.testing.assert_allclose(result.covariate_matrix, np.asarray([[1.0, 35.0], [1.0, 25.0]], dtype=np.float32))
 
 
 def test_native_aligned_sample_data_binary_intercept_only(tmp_path: Path) -> None:
@@ -312,24 +332,40 @@ def test_iid_alignment_rejects_duplicate_covariate_iid_by_default(tmp_path: Path
         )
 
 
-def test_iid_alignment_allows_duplicate_iid_with_compatibility_flag(tmp_path: Path) -> None:
+def test_iid_alignment_rejects_duplicate_phenotype_iid_before_missing_filter(tmp_path: Path) -> None:
     phenotype_path = tmp_path / "pheno.txt"
-    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\t1.0\nf2\ts1\t2.0\n")
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\tNA\nf2\ts1\t2.0\n")
 
-    result = align_sample_data(
-        np.asarray([0], dtype=np.int64),
-        ["f1"],
-        ["s1"],
-        phenotype_path,
-        "trait",
-        None,
-        None,
-        is_binary_trait=False,
-        allow_duplicate_iid_alignment=True,
-    )
+    with pytest.raises(ValueError, match=r"Duplicate IID 's1'.*phenotype table"):
+        align_sample_data(
+            np.asarray([0], dtype=np.int64),
+            ["f1"],
+            ["s1"],
+            phenotype_path,
+            "trait",
+            None,
+            None,
+            is_binary_trait=False,
+        )
 
-    np.testing.assert_array_equal(result.sample_indices, np.asarray([0, 0], dtype=np.int64))
-    np.testing.assert_allclose(result.phenotype_vector, np.asarray([1.0, 2.0], dtype=np.float32))
+
+def test_iid_alignment_rejects_duplicate_covariate_iid_before_missing_filter(tmp_path: Path) -> None:
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\t1.0\n")
+    covariate_path = tmp_path / "covar.txt"
+    covariate_path.write_text("FID\tIID\tage\nf1\ts1\tNA\nf2\ts1\t26\n")
+
+    with pytest.raises(ValueError, match=r"Duplicate IID 's1'.*covariate table"):
+        align_sample_data(
+            np.asarray([0], dtype=np.int64),
+            ["f1"],
+            ["s1"],
+            phenotype_path,
+            "trait",
+            covariate_path,
+            ["age"],
+            is_binary_trait=False,
+        )
 
 
 def test_fid_iid_alignment_allows_repeated_iid_across_families(tmp_path: Path) -> None:

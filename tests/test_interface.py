@@ -29,7 +29,6 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-trusted-no-missing-diploid": True,
         "g-trusted-bgen-validation-mode": "assume_validated",
         "g-sample-key-mode": "iid",
-        "g-allow-duplicate-iid-alignment": True,
         "g-output-format": "both",
         "g-writer-threads": 2,
         "g-writer-queue-depth": 3,
@@ -108,6 +107,12 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
 def test_unknown_and_unsupported_options_raise_clear_errors() -> None:
     with pytest.raises(ValueError, match="Unknown g regenie option"):
         api.RegenieConfig.from_options({"not_a_real_option": True})
+
+    with pytest.raises(ValueError, match="Unknown g regenie option: g-allow-duplicate-iid-alignment"):
+        api.RegenieConfig.from_options({"g-allow-duplicate-iid-alignment": True})
+
+    with pytest.raises(ValueError, match="Unknown g regenie option: g-allow-duplicate-iid-alignment"):
+        api.RegenieConfig.from_options({"g": {"compute": {"allow-duplicate-iid-alignment": True}}})
 
     with pytest.raises(ValueError, match="valid REGENIE option"):
         api.RegenieConfig.from_options({"pgen": "dataset", "phenoFile": "phenotype.tsv"})

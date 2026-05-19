@@ -27,14 +27,12 @@ class FakePredictionSource:
         sample_family_identifiers: list[str] | None = None,
         sample_individual_identifiers: list[str] | None = None,
         sample_key_mode: str = "iid",
-        allow_duplicate_iid_alignment: bool = False,  # noqa: FBT001, FBT002
     ) -> None:
         self.prediction_list_path = prediction_list_path
         self.phenotype_name = phenotype_name
         self.sample_family_identifiers = sample_family_identifiers
         self.sample_individual_identifiers = sample_individual_identifiers
         self.sample_key_mode = sample_key_mode
-        self.allow_duplicate_iid_alignment = allow_duplicate_iid_alignment
         self.native_aligned_sample_data: object | None = None
         FakePredictionSource.instances.append(self)
 
@@ -44,13 +42,11 @@ class FakePredictionSource:
         phenotype_name: str,
         aligned_sample_data: object,
         sample_key_mode: str = "iid",
-        allow_duplicate_iid_alignment: bool = False,  # noqa: FBT001, FBT002
     ) -> FakePredictionSource:
         prediction_source = FakePredictionSource(
             prediction_list_path,
             phenotype_name,
             sample_key_mode=sample_key_mode,
-            allow_duplicate_iid_alignment=allow_duplicate_iid_alignment,
         )
         prediction_source.native_aligned_sample_data = aligned_sample_data
         return prediction_source
@@ -837,7 +833,6 @@ def test_alignment_config_reaches_native_alignment_and_prediction_source() -> No
     native_aligned_sample_data = build_native_aligned_sample_data()
     alignment_config = SimpleNamespace(
         sample_key_mode=types.SampleKeyMode.FID_IID,
-        allow_duplicate_iid_alignment=False,
     )
     engine = SimpleNamespace(
         sample_count=2,
@@ -872,4 +867,3 @@ def test_alignment_config_reaches_native_alignment_and_prediction_source() -> No
     fake_prediction_source = typing.cast("FakePredictionSource", prediction_source)
     assert mock_load_aligned_sample_data.call_args.kwargs["alignment_config"] is alignment_config
     assert fake_prediction_source.sample_key_mode == "fid_iid"
-    assert fake_prediction_source.allow_duplicate_iid_alignment is False

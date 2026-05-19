@@ -26,7 +26,6 @@ class SampleAlignmentConfigProtocol(typing.Protocol):
     """Sample identity alignment settings accepted by native dispatch."""
 
     sample_key_mode: g_types.SampleKeyMode
-    allow_duplicate_iid_alignment: bool
 
 
 @dataclass(frozen=True)
@@ -111,13 +110,6 @@ def resolve_sample_key_mode(alignment_config: SampleAlignmentConfigProtocol | No
     return alignment_config.sample_key_mode
 
 
-def resolve_allow_duplicate_iid_alignment(alignment_config: SampleAlignmentConfigProtocol | None) -> bool:
-    """Resolve whether duplicate-IID compatibility alignment is enabled."""
-    if alignment_config is None:
-        return False
-    return alignment_config.allow_duplicate_iid_alignment
-
-
 def load_native_aligned_sample_data(
     *,
     engine: core.Regenie2RunEngine,
@@ -138,7 +130,6 @@ def load_native_aligned_sample_data(
         list(covariate_names) if covariate_names is not None else None,
         is_binary_trait,
         sample_key_mode=resolve_sample_key_mode(alignment_config).value,
-        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
     )
 
 
@@ -162,7 +153,6 @@ def load_native_multi_aligned_sample_data(
         list(covariate_names) if covariate_names is not None else None,
         is_binary_trait,
         sample_key_mode=resolve_sample_key_mode(alignment_config).value,
-        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
     )
 
 
@@ -245,7 +235,6 @@ def build_regenie_prediction_source(
         phenotype_name,
         run_input.native_aligned_sample_data,
         sample_key_mode=resolve_sample_key_mode(alignment_config).value,
-        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
     )
 
 
@@ -260,7 +249,6 @@ def build_multi_regenie_prediction_source(
         str(prediction_list_path),
         run_input.native_multi_aligned_sample_data,
         sample_key_mode=resolve_sample_key_mode(alignment_config).value,
-        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
     )
 
 

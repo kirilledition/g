@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
-RUN_MANIFEST_SCHEMA_VERSION = 2
+RUN_MANIFEST_SCHEMA_VERSION = 3
 DEFAULT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_WRITER_THREAD_COUNT = 8
 DEFAULT_CHUNKS_PER_ARROW_FILE = 4
@@ -129,7 +129,6 @@ def build_current_run_manifest_header(
     binary_correction_plan: types.BinaryCorrectionPlan,
     trusted_no_missing_diploid: bool,
     sample_key_mode: types.SampleKeyMode,
-    allow_duplicate_iid_alignment: bool,
 ) -> dict[str, typing.Any]:
     """Build immutable run manifest fields from the current execution plan."""
     return {
@@ -149,7 +148,6 @@ def build_current_run_manifest_header(
         "binary_correction_plan": build_binary_correction_plan_manifest(binary_correction_plan),
         "trusted_no_missing_diploid": trusted_no_missing_diploid,
         "sample_key_mode": str(sample_key_mode),
-        "allow_duplicate_iid_alignment": allow_duplicate_iid_alignment,
     }
 
 

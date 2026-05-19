@@ -167,11 +167,6 @@ def path_option(*parameter_declarations: str, **kwargs: typing.Any) -> typing.Ca
     help="Sample key mode.",
 )
 @click.option(
-    "--g-allow-duplicate-iid-alignment/--no-g-allow-duplicate-iid-alignment",
-    default=None,
-    help="Allow duplicate-IID alignment.",
-)
-@click.option(
     "--g-output-format",
     type=click.Choice([item.value for item in types.OutputFormat]),
     default=None,

@@ -130,7 +130,6 @@ def build_test_header(
         binary_correction_plan=types.BinaryCorrectionPlan(),
         trusted_no_missing_diploid=False,
         sample_key_mode=types.SampleKeyMode.IID,
-        allow_duplicate_iid_alignment=False,
     )
 
 
@@ -293,7 +292,6 @@ def test_initialize_output_run_rejects_incompatible_manifest_even_in_fast_mode(t
         ("trusted_no_missing_diploid", True),
         ("sample_key_mode", "fid_iid"),
         ("variant_limit", 8),
-        ("allow_duplicate_iid_alignment", True),
     ],
 )
 def test_initialize_output_run_rejects_manifest_header_mismatch(

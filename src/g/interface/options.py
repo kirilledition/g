@@ -120,13 +120,6 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         "Trusted BGEN validation mode.",
     ),
     OptionSpec("g-sample-key-mode", "sample_key_mode", SupportLevel.G_EXTENSION, "g.compute", "Sample key mode."),
-    OptionSpec(
-        "g-allow-duplicate-iid-alignment",
-        "allow_duplicate_iid_alignment",
-        SupportLevel.G_EXTENSION,
-        "g.compute",
-        "Allow duplicate-IID alignment in IID sample-key mode.",
-    ),
     OptionSpec("g-output-format", "format", SupportLevel.G_EXTENSION, "g.output", "Output materialization format."),
     OptionSpec(
         "g-output-run-directory",

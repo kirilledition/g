@@ -60,7 +60,6 @@ build_regenie_prediction_source = native_dispatch.build_regenie_prediction_sourc
 build_multi_regenie_prediction_source = native_dispatch.build_multi_regenie_prediction_source
 SampleAlignmentConfigProtocol = native_dispatch.SampleAlignmentConfigProtocol
 resolve_sample_key_mode = native_dispatch.resolve_sample_key_mode
-resolve_allow_duplicate_iid_alignment = native_dispatch.resolve_allow_duplicate_iid_alignment
 
 
 def run_regenie2_linear_bgen_pipeline(
@@ -131,7 +130,6 @@ def run_regenie2_linear_bgen_pipeline(
         binary_correction_plan=types.BinaryCorrectionPlan(),
         trusted_no_missing_diploid=trusted_no_missing_diploid,
         sample_key_mode=resolve_sample_key_mode(alignment_config),
-        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
     )
     initialized_output_run = output.initialize_output_run(
         output_run_paths=output_run_paths,
@@ -257,7 +255,6 @@ def run_regenie2_binary_bgen_pipeline(
         binary_correction_plan=correction_plan,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
         sample_key_mode=resolve_sample_key_mode(alignment_config),
-        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
     )
     initialized_output_run = output.initialize_output_run(
         output_run_paths=output_run_paths,
@@ -515,7 +512,6 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
             binary_correction_plan=correction_plan,
             trusted_no_missing_diploid=trusted_no_missing_diploid,
             sample_key_mode=resolve_sample_key_mode(alignment_config),
-            allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
         )
         for phenotype_name in phenotype_names
     )
