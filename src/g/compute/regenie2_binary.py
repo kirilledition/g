@@ -291,6 +291,29 @@ def prepare_regenie2_binary_state(
     )
 
 
+def prepare_regenie2_multi_binary_state(
+    covariate_matrix: jax.Array,
+    phenotype_matrix: jax.Array,
+) -> regenie2_types.Regenie2MultiBinaryState:
+    """Prepare reusable multi-trait binary step 2 state.
+
+    Args:
+        covariate_matrix: Covariate design matrix including intercept.
+        phenotype_matrix: Binary phenotype matrix in trait-major 0/1 encoding.
+
+    Returns:
+        Reusable multi-trait binary step 2 state.
+
+    """
+    covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=jnp.float32)
+    phenotype_matrix_float32 = jnp.asarray(phenotype_matrix, dtype=jnp.float32)
+    return regenie2_types.Regenie2MultiBinaryState(
+        covariate_matrix=covariate_matrix_float32,
+        phenotype_matrix=phenotype_matrix_float32,
+        sample_count=jnp.asarray(covariate_matrix_float32.shape[0], dtype=jnp.int32),
+    )
+
+
 def compute_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
     """Compute clipped logistic probabilities."""
     probability = jax.nn.sigmoid(linear_predictor)
@@ -413,6 +436,42 @@ def prepare_regenie2_binary_chromosome_state(
 
 
 @functools.partial(jax.jit, static_argnames=("correction_plan",))
+def prepare_regenie2_multi_binary_chromosome_state(
+    state: regenie2_types.Regenie2MultiBinaryState,
+    loco_offset_matrix: jax.Array,
+    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
+) -> regenie2_types.Regenie2MultiBinaryChromosomeState:
+    """Prepare chromosome-specific null logistic state for all requested binary traits."""
+    loco_offset_matrix_float32 = jnp.asarray(loco_offset_matrix, dtype=jnp.float32)
+
+    def prepare_one_trait(
+        phenotype_vector: jax.Array,
+        loco_offset: jax.Array,
+    ) -> regenie2_types.Regenie2BinaryChromosomeState:
+        trait_state = regenie2_types.Regenie2BinaryState(
+            covariate_matrix=state.covariate_matrix,
+            phenotype_vector=phenotype_vector,
+            sample_count=state.sample_count,
+        )
+        return prepare_regenie2_binary_chromosome_state(trait_state, loco_offset, correction_plan)
+
+    chromosome_states = jax.vmap(prepare_one_trait)(state.phenotype_matrix, loco_offset_matrix_float32)
+    return regenie2_types.Regenie2MultiBinaryChromosomeState(
+        covariate_matrix=state.covariate_matrix,
+        phenotype_matrix=state.phenotype_matrix,
+        null_logistic_coefficients=chromosome_states.null_logistic_coefficients,
+        fitted_probability=chromosome_states.fitted_probability,
+        score_residual=chromosome_states.score_residual,
+        loco_offset_matrix=chromosome_states.loco_offset,
+        standardized_residual=chromosome_states.standardized_residual,
+        square_root_weight=chromosome_states.square_root_weight,
+        weighted_genotype_projection_matrix=chromosome_states.weighted_genotype_projection_matrix,
+        null_firth_penalized_log_likelihood=chromosome_states.null_firth_penalized_log_likelihood,
+        null_logistic_iteration_count=chromosome_states.null_logistic_iteration_count,
+    )
+
+
+@functools.partial(jax.jit, static_argnames=("correction_plan",))
 def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     chromosome_state: regenie2_types.Regenie2BinaryChromosomeState,
     genotype_matrix: jax.Array,
@@ -450,6 +509,86 @@ compute_regenie2_binary_score_test_chunk = typing.cast(
     "BinaryScoreTestChunkComputeFunction",
     compute_regenie2_binary_score_test_chunk_from_chromosome_state,
 )
+
+
+def build_single_binary_chromosome_state_from_multi(
+    chromosome_state: regenie2_types.Regenie2MultiBinaryChromosomeState,
+    trait_index: jax.Array,
+) -> regenie2_types.Regenie2BinaryChromosomeState:
+    """Build a single-trait chromosome state view from a multi-trait state."""
+    return regenie2_types.Regenie2BinaryChromosomeState(
+        covariate_matrix=chromosome_state.covariate_matrix,
+        phenotype_vector=chromosome_state.phenotype_matrix[trait_index],
+        null_logistic_coefficients=chromosome_state.null_logistic_coefficients[trait_index],
+        fitted_probability=chromosome_state.fitted_probability[trait_index],
+        score_residual=chromosome_state.score_residual[trait_index],
+        loco_offset=chromosome_state.loco_offset_matrix[trait_index],
+        standardized_residual=chromosome_state.standardized_residual[trait_index],
+        square_root_weight=chromosome_state.square_root_weight[trait_index],
+        weighted_genotype_projection_matrix=chromosome_state.weighted_genotype_projection_matrix[trait_index],
+        null_firth_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood[trait_index],
+        null_logistic_iteration_count=chromosome_state.null_logistic_iteration_count[trait_index],
+    )
+
+
+def build_multi_binary_chunk_result(
+    result: regenie2_types.Regenie2BinaryChunkResult,
+) -> regenie2_types.Regenie2MultiBinaryChunkResult:
+    """Rewrap a vmapped single-trait binary result as a multi-trait result."""
+    return regenie2_types.Regenie2MultiBinaryChunkResult(
+        beta=result.beta,
+        standard_error=result.standard_error,
+        chi_squared=result.chi_squared,
+        log10_p_value=result.log10_p_value,
+        extra_code=result.extra_code,
+        valid_mask=result.valid_mask,
+        firth_iteration_count=result.firth_iteration_count,
+        firth_failure_code=result.firth_failure_code,
+    )
+
+
+@functools.partial(jax.jit, static_argnames=("correction_plan",))
+def compute_regenie2_multi_binary_chunk_from_chromosome_state(
+    chromosome_state: regenie2_types.Regenie2MultiBinaryChromosomeState,
+    genotype_matrix: jax.Array,
+    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
+    sparse_candidate_mask: jax.Array | None = None,
+) -> regenie2_types.Regenie2MultiBinaryChunkResult:
+    """Compute multi-trait binary REGENIE step 2 association using one genotype chunk."""
+
+    def compute_one_trait(trait_index: jax.Array) -> regenie2_types.Regenie2BinaryChunkResult:
+        single_chromosome_state = build_single_binary_chromosome_state_from_multi(chromosome_state, trait_index)
+        return compute_regenie2_binary_chunk_from_chromosome_state(
+            chromosome_state=single_chromosome_state,
+            genotype_matrix=genotype_matrix,
+            correction_plan=correction_plan,
+            sparse_candidate_mask=sparse_candidate_mask,
+        )
+
+    trait_count = chromosome_state.phenotype_matrix.shape[0]
+    return build_multi_binary_chunk_result(jax.vmap(compute_one_trait)(jnp.arange(trait_count, dtype=jnp.int32)))
+
+
+@functools.partial(jax.jit, static_argnames=("correction_plan",))
+def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
+    chromosome_state: regenie2_types.Regenie2MultiBinaryChromosomeState,
+    genotype_matrix_by_variant: jax.Array,
+    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
+    sparse_candidate_mask: jax.Array | None = None,
+) -> regenie2_types.Regenie2MultiBinaryChunkResult:
+    """Compute multi-trait binary association from variant-major genotypes."""
+
+    def compute_one_trait(trait_index: jax.Array) -> regenie2_types.Regenie2BinaryChunkResult:
+        single_chromosome_state = build_single_binary_chromosome_state_from_multi(chromosome_state, trait_index)
+        return compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+            chromosome_state=single_chromosome_state,
+            genotype_matrix_by_variant=genotype_matrix_by_variant,
+            correction_plan=correction_plan,
+            sparse_candidate_mask=sparse_candidate_mask,
+        )
+
+    trait_count = chromosome_state.phenotype_matrix.shape[0]
+    return build_multi_binary_chunk_result(jax.vmap(compute_one_trait)(jnp.arange(trait_count, dtype=jnp.int32)))
 
 
 def compute_information_components(

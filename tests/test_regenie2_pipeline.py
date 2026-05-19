@@ -155,6 +155,24 @@ def build_native_run_input() -> regenie2_pipeline.NativeBgenRunInput:
     )
 
 
+def build_native_multi_run_input() -> regenie2_pipeline.NativeBgenMultiRunInput:
+    single_trait_input = build_native_run_input()
+    return regenie2_pipeline.NativeBgenMultiRunInput(
+        phenotype_names=("trait_a", "trait_b"),
+        single_trait_run_inputs=(single_trait_input, single_trait_input),
+        single_trait_common_positions=(
+            np.asarray([0, 1], dtype=np.int64),
+            np.asarray([0, 1], dtype=np.int64),
+        ),
+        sample_indices=np.asarray([1, 0], dtype=np.int64),
+        family_identifiers=("f2", "f1"),
+        individual_identifiers=("i2", "i1"),
+        phenotype_matrix=jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.float32),
+        covariate_matrix=jnp.asarray([[1.0], [1.0]], dtype=jnp.float32),
+        is_binary_trait=False,
+    )
+
+
 def build_native_metadata() -> typing.Any:
     return SimpleNamespace(
         variant_start_index=5,
@@ -537,6 +555,58 @@ def test_binary_pipeline_uses_sample_major_engine_for_untrusted_bgen() -> None:
     engine = FakeRunEngine.instances[0]
     assert engine.validation_count == 0
     assert engine.run_method == "buffered"
+
+
+def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed_chunks() -> None:
+    FakeRunEngine.instances.clear()
+    writer_sessions = [FakeWriterSession(), FakeWriterSession()]
+    run_input = build_native_multi_run_input()
+
+    with (
+        patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.regenie2_pipeline.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
+        patch(
+            "g.engine.regenie2_pipeline.build_multi_regenie_prediction_source",
+            return_value=FakePredictionSource(),
+        ),
+        patch("g.engine.regenie2_pipeline.run_multi_preflight"),
+        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", side_effect=writer_sessions),
+        patch("g.engine.regenie2_pipeline.output.write_run_manifest_header"),
+        patch.object(
+            regenie2_pipeline.regenie2_linear,
+            "prepare_regenie2_multi_linear_state",
+            return_value=typing.cast("regenie2_linear_types.Regenie2MultiLinearState", "state"),
+        ),
+    ):
+        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_names=("trait_a", "trait_b"),
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths_by_phenotype=(
+                output.OutputRunPaths(Path("run/a"), Path("run/a/chunks")),
+                output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
+            ),
+            staging_depth=2,
+            committed_chunk_identifiers_by_phenotype=({0, 32}, {32, 64}),
+            trusted_no_missing_diploid=False,
+        )
+
+    assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+    assert len(FakeRunEngine.instances) == 1
+    engine = FakeRunEngine.instances[0]
+    assert engine.run_method == "buffered"
+    assert engine.run_arguments is not None
+    sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
+    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    assert isinstance(callback, regenie2_pipeline.MultiLinearRegenie2PipelineCallback)
+    assert committed_chunk_identifiers == [32]
+    assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
+    assert all(writer_session.finished for writer_session in writer_sessions)
 
 
 def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated() -> None:

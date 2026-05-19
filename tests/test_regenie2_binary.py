@@ -186,6 +186,58 @@ def test_score_only_chromosome_prep_skips_firth_null_fit(monkeypatch: pytest.Mon
     )
 
 
+def test_multi_trait_score_kernel_matches_stacked_single_trait_results() -> None:
+    covariate_matrix, phenotype_vector, genotype_matrix = build_binary_inputs()
+    phenotype_matrix = jnp.stack([phenotype_vector, 1.0 - phenotype_vector], axis=0)
+    loco_offset_matrix = jnp.zeros_like(phenotype_matrix)
+    multi_state = regenie2_binary.prepare_regenie2_multi_binary_state(covariate_matrix, phenotype_matrix)
+    multi_chromosome_state = regenie2_binary.prepare_regenie2_multi_binary_chromosome_state(
+        multi_state,
+        loco_offset_matrix,
+        types.BinaryCorrectionPlan(),
+    )
+    multi_result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
+        multi_chromosome_state,
+        genotype_matrix,
+        types.BinaryCorrectionPlan(),
+    )
+
+    single_results = []
+    for trait_index in range(phenotype_matrix.shape[0]):
+        single_state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_matrix[trait_index])
+        single_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
+            single_state,
+            loco_offset_matrix[trait_index],
+            types.BinaryCorrectionPlan(),
+        )
+        single_results.append(
+            compute_binary_chunk(
+                single_chromosome_state,
+                genotype_matrix,
+                types.BinaryCorrectionPlan(),
+            )
+        )
+
+    np.testing.assert_allclose(
+        np.asarray(multi_result.beta),
+        np.stack([np.asarray(result.beta) for result in single_results], axis=0),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+    np.testing.assert_allclose(
+        np.asarray(multi_result.standard_error),
+        np.stack([np.asarray(result.standard_error) for result in single_results], axis=0),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+    np.testing.assert_allclose(
+        np.asarray(multi_result.chi_squared),
+        np.stack([np.asarray(result.chi_squared) for result in single_results], axis=0),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+
+
 def test_p_threshold_controls_fallback_candidate_selection() -> None:
     valid_mask = jnp.asarray([True, True, True], dtype=jnp.bool_)
     log10_p_value = jnp.asarray([1.1, 1.5, 2.1], dtype=jnp.float32)

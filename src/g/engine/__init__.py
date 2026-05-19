@@ -3,10 +3,14 @@
 from g.engine.callbacks import (
     BinaryRegenie2PipelineCallback,
     LinearRegenie2PipelineCallback,
+    MultiBinaryRegenie2PipelineCallback,
+    MultiLinearRegenie2PipelineCallback,
 )
 from g.engine.regenie2_pipeline import (
     run_regenie2_binary_bgen_pipeline,
     run_regenie2_linear_bgen_pipeline,
+    run_regenie2_multi_phenotype_binary_bgen_pipeline,
+    run_regenie2_multi_phenotype_linear_bgen_pipeline,
 )
 from g.engine.timing import (
     StageTimingRecorder,
@@ -24,6 +28,8 @@ from g.engine.warm_cache import (
 __all__ = [
     "BinaryRegenie2PipelineCallback",
     "LinearRegenie2PipelineCallback",
+    "MultiBinaryRegenie2PipelineCallback",
+    "MultiLinearRegenie2PipelineCallback",
     "StageTimingRecorder",
     "WarmCacheReport",
     "WarmCacheShape",
@@ -31,6 +37,8 @@ __all__ = [
     "record_stage_duration",
     "run_regenie2_binary_bgen_pipeline",
     "run_regenie2_linear_bgen_pipeline",
+    "run_regenie2_multi_phenotype_binary_bgen_pipeline",
+    "run_regenie2_multi_phenotype_linear_bgen_pipeline",
     "warm_regenie2_binary_bgen_cache",
     "warm_regenie2_linear_bgen_cache",
     "write_stage_timing_snapshot",
