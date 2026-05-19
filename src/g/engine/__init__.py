@@ -1,8 +1,10 @@
 """High-level orchestration helpers for REGENIE step 2 association runs."""
 
-from g.engine.regenie2_pipeline import (
+from g.engine.callbacks import (
     BinaryRegenie2PipelineCallback,
     LinearRegenie2PipelineCallback,
+)
+from g.engine.regenie2_pipeline import (
     WarmCacheReport,
     WarmCacheShape,
     run_regenie2_binary_bgen_pipeline,
