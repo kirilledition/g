@@ -60,6 +60,20 @@ class Regenie2BinaryConfig:
 
 
 @dataclasses.dataclass(frozen=True)
+class SampleAlignmentConfig:
+    """Sample identity alignment settings.
+
+    Attributes:
+        sample_key_mode: Key mode used for phenotype, covariate, and prediction alignment.
+        allow_duplicate_iid_alignment: Allow legacy duplicate-IID alignment in IID mode.
+
+    """
+
+    sample_key_mode: types.SampleKeyMode = types.SampleKeyMode.IID
+    allow_duplicate_iid_alignment: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
 class RunArtifacts:
     """Immutable pointers to generated output files."""
 
@@ -99,6 +113,16 @@ def validate_compute_config(compute_config: ComputeConfig) -> None:
         raise ValueError(message)
     if compute_config.output_writer_queue_depth <= 0:
         message = "Output writer queue depth must be positive."
+        raise ValueError(message)
+
+
+def validate_sample_alignment_config(alignment_config: SampleAlignmentConfig) -> None:
+    """Validate sample identity alignment settings."""
+    if (
+        alignment_config.sample_key_mode == types.SampleKeyMode.FID_IID
+        and alignment_config.allow_duplicate_iid_alignment
+    ):
+        message = "allow_duplicate_iid_alignment is only supported when sample_key_mode='iid'."
         raise ValueError(message)
 
 
@@ -167,6 +191,7 @@ def regenie2_linear(
     pred: Path | str,
     compute: ComputeConfig | None = None,
     solver: Regenie2LinearConfig | None = None,
+    alignment: SampleAlignmentConfig | None = None,
 ) -> RunArtifacts:
     """Run a REGENIE step 2 linear association scan and write results to disk."""
     del solver
@@ -181,6 +206,7 @@ def regenie2_linear(
         pred=pred,
         trait_type=types.RegenieTraitType.QUANTITATIVE,
         compute=compute,
+        alignment=alignment,
     )
 
 
@@ -197,13 +223,16 @@ def regenie2(
     trait_type: types.RegenieTraitType = types.RegenieTraitType.QUANTITATIVE,
     compute: ComputeConfig | None = None,
     binary: Regenie2BinaryConfig | None = None,
+    alignment: SampleAlignmentConfig | None = None,
 ) -> RunArtifacts:
     """Run a REGENIE step 2 association scan and write results to disk."""
     api_entry_start_time = time.perf_counter()
     stage_timing_recorder = engine.build_stage_timing_recorder_from_environment()
     compute_config = compute or ComputeConfig()
+    alignment_config = alignment or SampleAlignmentConfig()
     try:
         validate_compute_config(compute_config)
+        validate_sample_alignment_config(alignment_config)
         staging_depth = resolve_compute_staging_depth(compute_config)
         device_start_time = time.perf_counter()
         configure_jax_device(compute_config.device)
@@ -231,6 +260,7 @@ def regenie2(
                     correction_plan=binary_correction_plan,
                     trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
                     trusted_bgen_validation_mode=compute_config.trusted_bgen_validation_mode,
+                    alignment_config=alignment_config,
                 )
             else:
                 warm_regenie2_linear_bgen_cache(
@@ -244,6 +274,7 @@ def regenie2(
                     variant_limit=compute_config.variant_limit,
                     trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
                     trusted_bgen_validation_mode=compute_config.trusted_bgen_validation_mode,
+                    alignment_config=alignment_config,
                 )
             engine.record_stage_duration(stage_timing_recorder, "jax_cache_warmup", warm_cache_start_time)
         output_run_directory = compute_config.output_run_directory or Path(out)
@@ -283,6 +314,7 @@ def regenie2(
                 trusted_bgen_validation_mode=compute_config.trusted_bgen_validation_mode,
                 correction_plan=binary_correction_plan,
                 stage_timing_recorder=stage_timing_recorder,
+                alignment_config=alignment_config,
             )
         else:
             final_parquet_path = run_regenie2_linear_bgen_pipeline(
@@ -303,6 +335,7 @@ def regenie2(
                 trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
                 trusted_bgen_validation_mode=compute_config.trusted_bgen_validation_mode,
                 stage_timing_recorder=stage_timing_recorder,
+                alignment_config=alignment_config,
             )
 
         return RunArtifacts(
@@ -326,10 +359,13 @@ def regenie2_warm_cache(
     trait_type: types.RegenieTraitType = types.RegenieTraitType.QUANTITATIVE,
     compute: ComputeConfig | None = None,
     binary: Regenie2BinaryConfig | None = None,
+    alignment: SampleAlignmentConfig | None = None,
 ) -> WarmCacheReport:
     """Warm JAX compilation-cache entries for a REGENIE step 2 CLI run."""
     compute_config = compute or ComputeConfig()
+    alignment_config = alignment or SampleAlignmentConfig()
     validate_compute_config(compute_config)
+    validate_sample_alignment_config(alignment_config)
     configure_jax_device(compute_config.device)
     covariate_name_list = parse_covariate_name_list(covar_names)
     genotype_source_config = source.build_bgen_source_config(bgen, sample)
@@ -348,6 +384,7 @@ def regenie2_warm_cache(
             correction_plan=binary_correction_plan,
             trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
             trusted_bgen_validation_mode=compute_config.trusted_bgen_validation_mode,
+            alignment_config=alignment_config,
         )
     return warm_regenie2_linear_bgen_cache(
         genotype_source_config=genotype_source_config,
@@ -360,4 +397,5 @@ def regenie2_warm_cache(
         variant_limit=compute_config.variant_limit,
         trusted_no_missing_diploid=compute_config.trusted_no_missing_diploid,
         trusted_bgen_validation_mode=compute_config.trusted_bgen_validation_mode,
+        alignment_config=alignment_config,
     )

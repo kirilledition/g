@@ -89,6 +89,7 @@ def warm_regenie2_linear_bgen_cache(
     variant_limit: int | None,
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: g_types.TrustedBgenValidationMode = g_types.TrustedBgenValidationMode.CACHE_ON_MISS,
+    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for quantitative REGENIE step 2."""
     engine = native_dispatch.build_bgen_run_engine(
@@ -106,11 +107,13 @@ def warm_regenie2_linear_bgen_cache(
         covariate_path=covariate_path,
         covariate_names=covariate_names,
         is_binary_trait=False,
+        alignment_config=alignment_config,
     )
     prediction_source = native_dispatch.build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
         run_input=run_input,
+        alignment_config=alignment_config,
     )
     chromosome = first_engine_chromosome(engine)
     regenie_state = regenie2_linear.prepare_regenie2_linear_state(
@@ -154,6 +157,7 @@ def warm_regenie2_binary_bgen_cache(
     correction_plan: g_types.BinaryCorrectionPlan,
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: g_types.TrustedBgenValidationMode = g_types.TrustedBgenValidationMode.CACHE_ON_MISS,
+    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for binary REGENIE step 2."""
     engine = native_dispatch.build_bgen_run_engine(
@@ -171,11 +175,13 @@ def warm_regenie2_binary_bgen_cache(
         covariate_path=covariate_path,
         covariate_names=covariate_names,
         is_binary_trait=True,
+        alignment_config=alignment_config,
     )
     prediction_source = native_dispatch.build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
         run_input=run_input,
+        alignment_config=alignment_config,
     )
     chromosome = first_engine_chromosome(engine)
     regenie_state = regenie2_binary.prepare_regenie2_binary_state(

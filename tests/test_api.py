@@ -10,14 +10,16 @@ from g import api
 from g.api import (
     ComputeConfig,
     RunArtifacts,
+    SampleAlignmentConfig,
     parse_covariate_name_list,
     regenie2,
     regenie2_linear,
     resolve_compute_staging_depth,
     validate_compute_config,
+    validate_sample_alignment_config,
 )
 from g.io.output import OutputRunPaths, PreparedOutputRun
-from g.types import AssociationMode, Device, RegenieTraitType
+from g.types import AssociationMode, Device, RegenieTraitType, SampleKeyMode
 
 
 def test_public_package_no_longer_exposes_direct_linear_or_logistic() -> None:
@@ -29,9 +31,12 @@ def test_public_package_exports_include_general_and_linear_regenie2() -> None:
     assert "regenie2" in g.__all__
     assert "regenie2_linear" in g.__all__
     assert "Regenie2BinaryConfig" in g.__all__
+    assert "SampleAlignmentConfig" in g.__all__
+    assert "SampleKeyMode" in g.__all__
     assert "RegenieBinaryCorrection" not in g.__all__
     assert g.regenie2 is api.regenie2
     assert g.regenie2_linear is api.regenie2_linear
+    assert g.SampleAlignmentConfig is api.SampleAlignmentConfig
 
 
 def test_parse_covariate_name_list_handles_string_input() -> None:
@@ -75,6 +80,7 @@ def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
     mock_configure_jax_device.assert_called_once_with(Device.CPU)
     assert mock_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_pipeline.call_args.kwargs["prediction_list_path"] == Path("predictions.list")
+    assert mock_pipeline.call_args.kwargs["alignment_config"] == SampleAlignmentConfig()
     genotype_source_config = mock_pipeline.call_args.kwargs["genotype_source_config"]
     assert genotype_source_config.source_path == Path("dataset.bgen")
     assert genotype_source_config.sample_path == Path("dataset.sample")
@@ -113,6 +119,7 @@ def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
                 trusted_no_missing_diploid=True,
                 trusted_bgen_validation_mode=api.types.TrustedBgenValidationMode.ASSUME_VALIDATED,
             ),
+            alignment=SampleAlignmentConfig(sample_key_mode=SampleKeyMode.FID_IID),
         )
 
     assert artifacts == RunArtifacts(
@@ -129,6 +136,7 @@ def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
         == api.types.TrustedBgenValidationMode.ASSUME_VALIDATED
     )
     assert mock_pipeline.call_args.kwargs["correction_plan"].method == api.types.BinaryFallbackMethod.SCORE_ONLY
+    assert mock_pipeline.call_args.kwargs["alignment_config"].sample_key_mode == SampleKeyMode.FID_IID
     mock_warm_cache.assert_called_once()
     assert mock_warm_cache.call_args.kwargs["trusted_no_missing_diploid"] is True
     assert (
@@ -136,6 +144,7 @@ def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
         == api.types.TrustedBgenValidationMode.ASSUME_VALIDATED
     )
     assert mock_warm_cache.call_args.kwargs["correction_plan"].method == api.types.BinaryFallbackMethod.SCORE_ONLY
+    assert mock_warm_cache.call_args.kwargs["alignment_config"].sample_key_mode == SampleKeyMode.FID_IID
 
 
 @pytest.mark.parametrize(
@@ -164,6 +173,16 @@ def test_prefetch_chunks_is_deprecated_alias_for_staging_depth() -> None:
         staging_depth = resolve_compute_staging_depth(compute_config)
 
     assert staging_depth == 4
+
+
+def test_validate_sample_alignment_config_rejects_duplicate_flag_in_fid_iid_mode() -> None:
+    with pytest.raises(ValueError, match="only supported when sample_key_mode='iid'"):
+        validate_sample_alignment_config(
+            SampleAlignmentConfig(
+                sample_key_mode=SampleKeyMode.FID_IID,
+                allow_duplicate_iid_alignment=True,
+            )
+        )
 
 
 def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalization() -> None:

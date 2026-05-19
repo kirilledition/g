@@ -26,11 +26,15 @@ class FakePredictionSource:
         phenotype_name: str | None = None,
         sample_family_identifiers: list[str] | None = None,
         sample_individual_identifiers: list[str] | None = None,
+        sample_key_mode: str = "iid",
+        allow_duplicate_iid_alignment: bool = False,  # noqa: FBT001, FBT002
     ) -> None:
         self.prediction_list_path = prediction_list_path
         self.phenotype_name = phenotype_name
         self.sample_family_identifiers = sample_family_identifiers
         self.sample_individual_identifiers = sample_individual_identifiers
+        self.sample_key_mode = sample_key_mode
+        self.allow_duplicate_iid_alignment = allow_duplicate_iid_alignment
         self.native_aligned_sample_data: object | None = None
         FakePredictionSource.instances.append(self)
 
@@ -39,8 +43,15 @@ class FakePredictionSource:
         prediction_list_path: str,
         phenotype_name: str,
         aligned_sample_data: object,
+        sample_key_mode: str = "iid",
+        allow_duplicate_iid_alignment: bool = False,  # noqa: FBT001, FBT002
     ) -> FakePredictionSource:
-        prediction_source = FakePredictionSource(prediction_list_path, phenotype_name)
+        prediction_source = FakePredictionSource(
+            prediction_list_path,
+            phenotype_name,
+            sample_key_mode=sample_key_mode,
+            allow_duplicate_iid_alignment=allow_duplicate_iid_alignment,
+        )
         prediction_source.native_aligned_sample_data = aligned_sample_data
         return prediction_source
 
@@ -384,6 +395,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert prediction_source.prediction_list_path == "pred.list"
     assert prediction_source.phenotype_name == "trait"
     assert prediction_source.native_aligned_sample_data is run_input.native_aligned_sample_data
+    assert prediction_source.sample_key_mode == "iid"
 
 
 def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None:
@@ -513,8 +525,10 @@ def test_build_bgen_run_engine_caches_trusted_validation(tmp_path: Path, monkeyp
             trusted_no_missing_diploid=True,
         )
 
-    assert first_engine.validation_count == 1
-    assert second_engine.validation_count == 0
+    first_fake_engine = typing.cast("FakeRunEngine", first_engine)
+    second_fake_engine = typing.cast("FakeRunEngine", second_engine)
+    assert first_fake_engine.validation_count == 1
+    assert second_fake_engine.validation_count == 0
 
 
 def test_build_bgen_run_engine_force_validates_trusted_bgen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -532,7 +546,8 @@ def test_build_bgen_run_engine_force_validates_trusted_bgen(tmp_path: Path, monk
             trusted_bgen_validation_mode=types.TrustedBgenValidationMode.FORCE_VALIDATE,
         )
 
-    assert engine.validation_count == 1
+    fake_engine = typing.cast("FakeRunEngine", engine)
+    assert fake_engine.validation_count == 1
 
 
 def test_load_native_bgen_run_input_rejects_non_bgen_source_suffix() -> None:
@@ -612,4 +627,48 @@ def test_load_native_bgen_run_input_uses_rust_sample_file_alignment() -> None:
         covariate_path=Path("covariates.tsv"),
         covariate_names=("age",),
         is_binary_trait=True,
+        alignment_config=None,
     )
+
+
+def test_alignment_config_reaches_native_alignment_and_prediction_source() -> None:
+    native_aligned_sample_data = build_native_aligned_sample_data()
+    alignment_config = SimpleNamespace(
+        sample_key_mode=types.SampleKeyMode.FID_IID,
+        allow_duplicate_iid_alignment=False,
+    )
+    engine = SimpleNamespace(
+        sample_count=2,
+        contains_embedded_samples=True,
+        sample_identifiers=lambda: ["sample1", "sample2"],
+    )
+
+    with (
+        patch("g.engine.regenie2_pipeline.source.resolve_bgen_sample_path", return_value=None),
+        patch(
+            "g.engine.regenie2_pipeline.load_native_aligned_sample_data_from_individual_identifier_table",
+            return_value=native_aligned_sample_data,
+        ) as mock_load_from_sample_table,
+        patch("g.engine.regenie2_pipeline._core.RegeniePredictionSource", FakePredictionSource),
+    ):
+        run_input = regenie2_pipeline.load_native_bgen_run_input(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            engine=typing.cast("typing.Any", engine),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            covariate_path=None,
+            covariate_names=None,
+            is_binary_trait=False,
+            alignment_config=alignment_config,
+        )
+        prediction_source = regenie2_pipeline.build_regenie_prediction_source(
+            prediction_list_path=Path("pred.list"),
+            phenotype_name="trait",
+            run_input=run_input,
+            alignment_config=alignment_config,
+        )
+
+    fake_prediction_source = typing.cast("FakePredictionSource", prediction_source)
+    assert mock_load_from_sample_table.call_args.kwargs["alignment_config"] is alignment_config
+    assert fake_prediction_source.sample_key_mode == "fid_iid"
+    assert fake_prediction_source.allow_duplicate_iid_alignment is False

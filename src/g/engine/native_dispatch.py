@@ -22,6 +22,13 @@ StageTimingRecorder = timing.StageTimingRecorder
 record_stage_duration = timing.record_stage_duration
 
 
+class SampleAlignmentConfigProtocol(typing.Protocol):
+    """Sample identity alignment settings accepted by native dispatch."""
+
+    sample_key_mode: g_types.SampleKeyMode
+    allow_duplicate_iid_alignment: bool
+
+
 @dataclass(frozen=True)
 class NativeBgenRunInput:
     """Sample-aligned inputs retained in native form for BGEN REGENIE step 2.
@@ -55,6 +62,20 @@ def build_native_bgen_run_input(
     )
 
 
+def resolve_sample_key_mode(alignment_config: SampleAlignmentConfigProtocol | None) -> g_types.SampleKeyMode:
+    """Resolve the sample key mode for native calls."""
+    if alignment_config is None:
+        return g_types.SampleKeyMode.IID
+    return alignment_config.sample_key_mode
+
+
+def resolve_allow_duplicate_iid_alignment(alignment_config: SampleAlignmentConfigProtocol | None) -> bool:
+    """Resolve whether duplicate-IID compatibility alignment is enabled."""
+    if alignment_config is None:
+        return False
+    return alignment_config.allow_duplicate_iid_alignment
+
+
 def load_native_aligned_sample_data_from_individual_identifier_table(
     *,
     sample_table: typing.Any,
@@ -63,6 +84,7 @@ def load_native_aligned_sample_data_from_individual_identifier_table(
     covariate_path: Path | None,
     covariate_names: tuple[str, ...] | None,
     is_binary_trait: bool,
+    alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> core.NativeAlignedSampleData:
     """Load Rust-owned aligned sample data from explicit sample identifiers."""
     return core.align_sample_data(
@@ -74,6 +96,8 @@ def load_native_aligned_sample_data_from_individual_identifier_table(
         str(covariate_path) if covariate_path is not None else None,
         list(covariate_names) if covariate_names is not None else None,
         is_binary_trait,
+        sample_key_mode=resolve_sample_key_mode(alignment_config).value,
+        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
     )
 
 
@@ -86,6 +110,7 @@ def load_native_aligned_sample_data_from_sample_file(
     covariate_path: Path | None,
     covariate_names: tuple[str, ...] | None,
     is_binary_trait: bool,
+    alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> core.NativeAlignedSampleData:
     """Load Rust-owned aligned sample data through Oxford sample-file parsing."""
     return core.align_sample_data_from_sample_file(
@@ -96,6 +121,8 @@ def load_native_aligned_sample_data_from_sample_file(
         str(covariate_path) if covariate_path is not None else None,
         list(covariate_names) if covariate_names is not None else None,
         is_binary_trait,
+        sample_key_mode=resolve_sample_key_mode(alignment_config).value,
+        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
     )
 
 
@@ -108,6 +135,7 @@ def load_native_bgen_run_input(
     covariate_path: Path | None,
     covariate_names: tuple[str, ...] | None,
     is_binary_trait: bool,
+    alignment_config: SampleAlignmentConfigProtocol | None = None,
     build_native_bgen_run_input_callable: typing.Callable[
         [core.NativeAlignedSampleData], NativeBgenRunInput
     ] = build_native_bgen_run_input,
@@ -133,6 +161,7 @@ def load_native_bgen_run_input(
             covariate_path=covariate_path,
             covariate_names=covariate_names,
             is_binary_trait=is_binary_trait,
+            alignment_config=alignment_config,
         )
         return build_native_bgen_run_input_callable(native_aligned_sample_data)
     if engine.contains_embedded_samples:
@@ -144,6 +173,7 @@ def load_native_bgen_run_input(
             covariate_path=covariate_path,
             covariate_names=covariate_names,
             is_binary_trait=is_binary_trait,
+            alignment_config=alignment_config,
         )
         return build_native_bgen_run_input_callable(native_aligned_sample_data)
     message = "BGEN file does not contain samples and no .sample file was found."
@@ -155,12 +185,15 @@ def build_regenie_prediction_source(
     prediction_list_path: Path,
     phenotype_name: str,
     run_input: NativeBgenRunInput,
+    alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> core.RegeniePredictionSource:
     """Load Rust-owned REGENIE step 1 predictions aligned to the run samples."""
     return core.RegeniePredictionSource.from_native_aligned_sample_data(
         str(prediction_list_path),
         phenotype_name,
         run_input.native_aligned_sample_data,
+        sample_key_mode=resolve_sample_key_mode(alignment_config).value,
+        allow_duplicate_iid_alignment=resolve_allow_duplicate_iid_alignment(alignment_config),
     )
 
 

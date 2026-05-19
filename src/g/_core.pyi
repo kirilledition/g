@@ -79,12 +79,16 @@ class RegeniePredictionSource:
         phenotype_name: str,
         sample_family_identifiers: list[str],
         sample_individual_identifiers: list[str],
+        sample_key_mode: str = "iid",
+        allow_duplicate_iid_alignment: bool = False,
     ) -> None: ...
     @staticmethod
     def from_native_aligned_sample_data(
         prediction_list_path: str,
         phenotype_name: str,
         aligned_sample_data: NativeAlignedSampleData,
+        sample_key_mode: str = "iid",
+        allow_duplicate_iid_alignment: bool = False,
     ) -> RegeniePredictionSource: ...
     def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]: ...
 
@@ -135,6 +139,8 @@ def align_sample_data(
     covariate_path: str | None = None,
     covariate_names: list[str] | None = None,
     is_binary_trait: bool = False,
+    sample_key_mode: str = "iid",
+    allow_duplicate_iid_alignment: bool = False,
 ) -> NativeAlignedSampleData: ...
 def align_sample_data_from_sample_file(
     sample_path: str,
@@ -144,4 +150,6 @@ def align_sample_data_from_sample_file(
     covariate_path: str | None = None,
     covariate_names: list[str] | None = None,
     is_binary_trait: bool = False,
+    sample_key_mode: str = "iid",
+    allow_duplicate_iid_alignment: bool = False,
 ) -> NativeAlignedSampleData: ...

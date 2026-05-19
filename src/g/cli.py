@@ -113,6 +113,16 @@ def run_regenie2_linear_command(
         default=False,
         help="Warm exact JAX cache shapes in this process before running.",
     ),
+    sample_key_mode: types.SampleKeyMode = typer.Option(
+        types.SampleKeyMode.IID,
+        "--sample-key-mode",
+        help="Sample key mode for phenotype, covariate, and LOCO alignment.",
+    ),
+    allow_duplicate_iid_alignment: bool = typer.Option(  # noqa: FBT001
+        False,  # noqa: FBT003
+        "--allow-duplicate-iid-alignment",
+        help="Allow legacy duplicate-IID alignment only in IID mode.",
+    ),
     resume: bool = typer.Option(  # noqa: FBT001
         default=False,
         help="Resume a previous chunked run.",
@@ -145,6 +155,10 @@ def run_regenie2_linear_command(
         ),
         warm_cache_first=warm_cache_first,
     )
+    alignment_config = api.SampleAlignmentConfig(
+        sample_key_mode=sample_key_mode,
+        allow_duplicate_iid_alignment=allow_duplicate_iid_alignment,
+    )
     artifacts = run_regenie2_linear_api(
         bgen=bgen,
         sample=sample,
@@ -156,6 +170,7 @@ def run_regenie2_linear_command(
         pred=pred,
         compute=compute_config,
         solver=api.Regenie2LinearConfig(),
+        alignment=alignment_config,
     )
     print_success_message(artifacts)
 
@@ -234,6 +249,16 @@ def run_regenie2_command(
         default=False,
         help="Warm exact JAX cache shapes in this process before running.",
     ),
+    sample_key_mode: types.SampleKeyMode = typer.Option(
+        types.SampleKeyMode.IID,
+        "--sample-key-mode",
+        help="Sample key mode for phenotype, covariate, and LOCO alignment.",
+    ),
+    allow_duplicate_iid_alignment: bool = typer.Option(  # noqa: FBT001
+        False,  # noqa: FBT003
+        "--allow-duplicate-iid-alignment",
+        help="Allow legacy duplicate-IID alignment only in IID mode.",
+    ),
     resume: bool = typer.Option(  # noqa: FBT001
         default=False,
         help="Resume a previous chunked run.",
@@ -266,6 +291,10 @@ def run_regenie2_command(
         ),
         warm_cache_first=warm_cache_first,
     )
+    alignment_config = api.SampleAlignmentConfig(
+        sample_key_mode=sample_key_mode,
+        allow_duplicate_iid_alignment=allow_duplicate_iid_alignment,
+    )
     artifacts = run_regenie2_api(
         bgen=bgen,
         sample=sample,
@@ -284,6 +313,7 @@ def run_regenie2_command(
             p_threshold=p_threshold,
             firth_se=firth_se,
         ),
+        alignment=alignment_config,
     )
     print_success_message(artifacts)
 
@@ -342,6 +372,16 @@ def run_regenie2_warm_cache_command(
         default=False,
         help="Assume trusted BGEN validation has already been completed.",
     ),
+    sample_key_mode: types.SampleKeyMode = typer.Option(
+        types.SampleKeyMode.IID,
+        "--sample-key-mode",
+        help="Sample key mode for phenotype, covariate, and LOCO alignment.",
+    ),
+    allow_duplicate_iid_alignment: bool = typer.Option(  # noqa: FBT001
+        False,  # noqa: FBT003
+        "--allow-duplicate-iid-alignment",
+        help="Allow legacy duplicate-IID alignment only in IID mode.",
+    ),
 ) -> None:
     """Warm JAX compilation-cache entries for a REGENIE step 2 association scan."""
     compute_config = api.ComputeConfig(
@@ -354,6 +394,10 @@ def run_regenie2_warm_cache_command(
             validate_trusted_bgen=validate_trusted_bgen,
             assume_trusted_bgen_validated=assume_trusted_bgen_validated,
         ),
+    )
+    alignment_config = api.SampleAlignmentConfig(
+        sample_key_mode=sample_key_mode,
+        allow_duplicate_iid_alignment=allow_duplicate_iid_alignment,
     )
     report = run_regenie2_warm_cache_api(
         bgen=bgen,
@@ -372,6 +416,7 @@ def run_regenie2_warm_cache_command(
             p_threshold=p_threshold,
             firth_se=firth_se,
         ),
+        alignment=alignment_config,
     )
     print_warm_cache_message(report)
 

@@ -16,6 +16,7 @@ def __getattr__(name: str) -> typing.Any:
         "Regenie2BinaryConfig",
         "Regenie2LinearConfig",
         "RunArtifacts",
+        "SampleAlignmentConfig",
         "regenie2",
         "regenie2_linear",
     }:
@@ -26,6 +27,7 @@ def __getattr__(name: str) -> typing.Any:
         "AssociationMode",
         "Device",
         "RegenieTraitType",
+        "SampleKeyMode",
         "SampleIdentifierSource",
     }:
         types = importlib.import_module("g.types")
@@ -43,7 +45,9 @@ __all__ = [
     "Regenie2LinearConfig",
     "RegenieTraitType",
     "RunArtifacts",
+    "SampleAlignmentConfig",
     "SampleIdentifierSource",
+    "SampleKeyMode",
     "main",
     "regenie2",
     "regenie2_linear",

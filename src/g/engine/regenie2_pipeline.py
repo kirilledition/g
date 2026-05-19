@@ -60,6 +60,9 @@ load_native_aligned_sample_data_from_individual_identifier_table = (
 )
 load_native_aligned_sample_data_from_sample_file = native_dispatch.load_native_aligned_sample_data_from_sample_file
 build_regenie_prediction_source = native_dispatch.build_regenie_prediction_source
+SampleAlignmentConfigProtocol = native_dispatch.SampleAlignmentConfigProtocol
+resolve_sample_key_mode = native_dispatch.resolve_sample_key_mode
+resolve_allow_duplicate_iid_alignment = native_dispatch.resolve_allow_duplicate_iid_alignment
 
 
 def run_regenie2_linear_bgen_pipeline(
@@ -81,6 +84,7 @@ def run_regenie2_linear_bgen_pipeline(
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     stage_timing_recorder: StageTimingRecorder | None = None,
+    alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
     stage_timing_recorder = stage_timing_recorder or build_stage_timing_recorder_from_environment()
@@ -102,6 +106,7 @@ def run_regenie2_linear_bgen_pipeline(
         covariate_path=covariate_path,
         covariate_names=covariate_names,
         is_binary_trait=False,
+        alignment_config=alignment_config,
     )
     record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
     output.write_run_manifest_header(
@@ -128,6 +133,7 @@ def run_regenie2_linear_bgen_pipeline(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
         run_input=run_input,
+        alignment_config=alignment_config,
     )
     record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
     preflight_start_time = time.perf_counter()
@@ -176,6 +182,7 @@ def run_regenie2_binary_bgen_pipeline(
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     stage_timing_recorder: StageTimingRecorder | None = None,
+    alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for binary REGENIE step 2."""
     stage_timing_recorder = stage_timing_recorder or build_stage_timing_recorder_from_environment()
@@ -198,6 +205,7 @@ def run_regenie2_binary_bgen_pipeline(
         covariate_path=covariate_path,
         covariate_names=covariate_names,
         is_binary_trait=True,
+        alignment_config=alignment_config,
     )
     record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
     output.write_run_manifest_header(
@@ -224,6 +232,7 @@ def run_regenie2_binary_bgen_pipeline(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
         run_input=run_input,
+        alignment_config=alignment_config,
     )
     record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
     preflight_start_time = time.perf_counter()
@@ -263,6 +272,7 @@ def load_native_bgen_run_input(
     covariate_path: Path | None,
     covariate_names: tuple[str, ...] | None,
     is_binary_trait: bool,
+    alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> NativeBgenRunInput:
     """Load native-aligned samples and JAX compute inputs for a native BGEN run."""
     return native_dispatch.load_native_bgen_run_input(
@@ -273,6 +283,7 @@ def load_native_bgen_run_input(
         covariate_path=covariate_path,
         covariate_names=covariate_names,
         is_binary_trait=is_binary_trait,
+        alignment_config=alignment_config,
         build_native_bgen_run_input_callable=build_native_bgen_run_input,
         load_from_individual_identifier_table_callable=load_native_aligned_sample_data_from_individual_identifier_table,
         load_from_sample_file_callable=load_native_aligned_sample_data_from_sample_file,

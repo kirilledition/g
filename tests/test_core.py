@@ -128,3 +128,68 @@ def test_regenie_prediction_source_reports_missing_samples(tmp_path: Path) -> No
             ["0"],
             ["missing"],
         )
+
+
+def test_regenie_prediction_source_rejects_duplicate_loco_iid_by_default(tmp_path: Path) -> None:
+    loco_path = tmp_path / "trait.loco"
+    loco_path.write_text("FID_IID f1_s1 f2_s1\n22 0.1 0.2\n")
+    prediction_list_path = tmp_path / "trait_pred.list"
+    prediction_list_path.write_text(f"trait {loco_path}\n")
+
+    with np.testing.assert_raises_regex(ValueError, "Duplicate LOCO IID 's1'"):
+        _core.RegeniePredictionSource(
+            str(prediction_list_path),
+            "trait",
+            ["f1"],
+            ["s1"],
+        )
+
+
+def test_regenie_prediction_source_allows_duplicate_loco_iid_with_compatibility_flag(tmp_path: Path) -> None:
+    loco_path = tmp_path / "trait.loco"
+    loco_path.write_text("FID_IID f1_s1 f2_s1\n22 0.1 0.2\n")
+    prediction_list_path = tmp_path / "trait_pred.list"
+    prediction_list_path.write_text(f"trait {loco_path}\n")
+
+    prediction_source = _core.RegeniePredictionSource(
+        str(prediction_list_path),
+        "trait",
+        ["f2"],
+        ["s1"],
+        allow_duplicate_iid_alignment=True,
+    )
+
+    np.testing.assert_allclose(prediction_source.get_chromosome_predictions("22"), [0.2], atol=1e-6)
+
+
+def test_regenie_prediction_source_rejects_duplicate_exact_loco_key_even_with_flag(tmp_path: Path) -> None:
+    loco_path = tmp_path / "trait.loco"
+    loco_path.write_text("FID_IID f1_s1 f1_s1\n22 0.1 0.2\n")
+    prediction_list_path = tmp_path / "trait_pred.list"
+    prediction_list_path.write_text(f"trait {loco_path}\n")
+
+    with np.testing.assert_raises_regex(ValueError, "Duplicate LOCO sample key: f1_s1"):
+        _core.RegeniePredictionSource(
+            str(prediction_list_path),
+            "trait",
+            ["f1"],
+            ["s1"],
+            allow_duplicate_iid_alignment=True,
+        )
+
+
+def test_regenie_prediction_source_fid_iid_mode_aligns_repeated_iid(tmp_path: Path) -> None:
+    loco_path = tmp_path / "trait.loco"
+    loco_path.write_text("FID_IID f1_s1 f2_s1\n22 0.1 0.2\n")
+    prediction_list_path = tmp_path / "trait_pred.list"
+    prediction_list_path.write_text(f"trait {loco_path}\n")
+
+    prediction_source = _core.RegeniePredictionSource(
+        str(prediction_list_path),
+        "trait",
+        ["f2", "f1"],
+        ["s1", "s1"],
+        sample_key_mode="fid_iid",
+    )
+
+    np.testing.assert_allclose(prediction_source.get_chromosome_predictions("22"), [0.2, 0.1], atol=1e-6)

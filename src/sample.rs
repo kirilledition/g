@@ -5,6 +5,12 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SampleKeyMode {
+    Iid,
+    FidIid,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AlignedSampleData {
     pub sample_indices: Vec<i64>,
@@ -29,6 +35,8 @@ pub struct AlignmentInputs {
     pub covariate_path: Option<String>,
     pub covariate_names: Option<Vec<String>>,
     pub is_binary_trait: bool,
+    pub sample_key_mode: SampleKeyMode,
+    pub allow_duplicate_iid_alignment: bool,
 }
 
 struct TabularTable {
@@ -42,6 +50,12 @@ struct RawPhenotypeRecord {
 
 struct RawCovariateRecord {
     covariate_values: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum SampleKey {
+    Iid(String),
+    FidIid { family_identifier: String, individual_identifier: String },
 }
 
 struct SampleIdentifierData {
@@ -99,21 +113,37 @@ impl AlignedSampleData {
 
 pub fn align_sample_data(inputs: AlignmentInputs) -> Result<AlignedSampleData, String> {
     validate_alignment_input_lengths(&inputs)?;
+    validate_alignment_config(inputs.sample_key_mode, inputs.allow_duplicate_iid_alignment)?;
+    validate_sample_identifier_keys(&inputs)?;
 
     let phenotype_table = read_tabular_table(Path::new(&inputs.phenotype_path))?;
     validate_required_column(&phenotype_table, "IID", &inputs.phenotype_path)?;
+    if inputs.sample_key_mode == SampleKeyMode::FidIid {
+        validate_required_column(&phenotype_table, "FID", &inputs.phenotype_path)?;
+    }
     validate_required_column(&phenotype_table, &inputs.phenotype_name, &inputs.phenotype_path)?;
-    let phenotype_records_by_identifier =
-        build_phenotype_records_by_identifier(&phenotype_table, &inputs.phenotype_name)?;
+    let phenotype_records_by_identifier = build_phenotype_records_by_key(
+        &phenotype_table,
+        &inputs.phenotype_name,
+        inputs.sample_key_mode,
+        inputs.allow_duplicate_iid_alignment,
+    )?;
 
     let (selected_covariate_names, covariate_records_by_identifier) = match inputs.covariate_path.as_ref() {
         Some(covariate_path) => {
             let covariate_table = read_tabular_table(Path::new(covariate_path))?;
             validate_required_column(&covariate_table, "IID", covariate_path)?;
+            if inputs.sample_key_mode == SampleKeyMode::FidIid {
+                validate_required_column(&covariate_table, "FID", covariate_path)?;
+            }
             let selected_covariate_names =
                 select_covariate_names(&covariate_table, inputs.covariate_names.as_deref(), covariate_path)?;
-            let covariate_records_by_identifier =
-                build_covariate_records_by_identifier(&covariate_table, &selected_covariate_names)?;
+            let covariate_records_by_identifier = build_covariate_records_by_key(
+                &covariate_table,
+                &selected_covariate_names,
+                inputs.sample_key_mode,
+                inputs.allow_duplicate_iid_alignment,
+            )?;
             (selected_covariate_names, covariate_records_by_identifier)
         }
         None => {
@@ -126,15 +156,19 @@ pub fn align_sample_data(inputs: AlignmentInputs) -> Result<AlignedSampleData, S
 
     let mut aligned_rows = Vec::new();
     for sample_array_index in 0..inputs.sample_indices.len() {
-        let individual_identifier = &inputs.individual_identifiers[sample_array_index];
-        let Some(phenotype_records) = phenotype_records_by_identifier.get(individual_identifier) else {
+        let sample_key = build_sample_key(
+            inputs.sample_key_mode,
+            &inputs.family_identifiers[sample_array_index],
+            &inputs.individual_identifiers[sample_array_index],
+        );
+        let Some(phenotype_records) = phenotype_records_by_identifier.get(&sample_key) else {
             continue;
         };
         if inputs.covariate_path.is_none() {
             append_intercept_only_aligned_rows(&inputs, sample_array_index, phenotype_records, &mut aligned_rows)?;
             continue;
         }
-        let Some(covariate_records) = covariate_records_by_identifier.get(individual_identifier) else {
+        let Some(covariate_records) = covariate_records_by_identifier.get(&sample_key) else {
             continue;
         };
         append_covariate_aligned_rows(
@@ -165,6 +199,8 @@ pub fn align_sample_data_from_sample_file(
     covariate_path: Option<String>,
     covariate_names: Option<Vec<String>>,
     is_binary_trait: bool,
+    sample_key_mode: SampleKeyMode,
+    allow_duplicate_iid_alignment: bool,
 ) -> Result<AlignedSampleData, String> {
     let sample_identifier_data = load_sample_identifier_data_from_sample_file(sample_path, expected_sample_count)?;
     let inputs = AlignmentInputs {
@@ -176,6 +212,8 @@ pub fn align_sample_data_from_sample_file(
         covariate_path,
         covariate_names,
         is_binary_trait,
+        sample_key_mode,
+        allow_duplicate_iid_alignment,
     };
     align_sample_data(inputs)
 }
@@ -190,6 +228,73 @@ fn validate_alignment_input_lengths(inputs: &AlignmentInputs) -> Result<(), Stri
             inputs.family_identifiers.len(),
             inputs.individual_identifiers.len(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_alignment_config(
+    sample_key_mode: SampleKeyMode,
+    allow_duplicate_iid_alignment: bool,
+) -> Result<(), String> {
+    if sample_key_mode == SampleKeyMode::FidIid && allow_duplicate_iid_alignment {
+        return Err("allow_duplicate_iid_alignment is only supported when sample_key_mode='iid'.".to_string());
+    }
+    Ok(())
+}
+
+fn validate_sample_identifier_keys(inputs: &AlignmentInputs) -> Result<(), String> {
+    match inputs.sample_key_mode {
+        SampleKeyMode::Iid => {
+            if !inputs.allow_duplicate_iid_alignment {
+                reject_duplicate_individual_identifiers(&inputs.individual_identifiers, "BGEN/sample identifiers")?;
+            }
+        }
+        SampleKeyMode::FidIid => {
+            reject_duplicate_sample_keys(
+                &inputs.family_identifiers,
+                &inputs.individual_identifiers,
+                "BGEN/sample identifiers",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn reject_duplicate_individual_identifiers(individual_identifiers: &[String], source_name: &str) -> Result<(), String> {
+    let mut observed_identifiers: HashMap<&str, usize> = HashMap::new();
+    for individual_identifier in individual_identifiers {
+        if individual_identifier.is_empty() {
+            continue;
+        }
+        let occurrence_count = observed_identifiers.entry(individual_identifier.as_str()).or_insert(0);
+        *occurrence_count += 1;
+        if *occurrence_count > 1 {
+            return Err(format!(
+                "Duplicate IID '{individual_identifier}' found in {source_name}; sample_key_mode='iid' requires unique non-null IID values. Use sample_key_mode='fid_iid' for datasets with non-globally-unique IID, or allow_duplicate_iid_alignment for legacy IID alignment."
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn reject_duplicate_sample_keys(
+    family_identifiers: &[String],
+    individual_identifiers: &[String],
+    source_name: &str,
+) -> Result<(), String> {
+    let mut observed_identifiers: HashMap<(&str, &str), usize> = HashMap::new();
+    for (family_identifier, individual_identifier) in family_identifiers.iter().zip(individual_identifiers.iter()) {
+        if individual_identifier.is_empty() {
+            continue;
+        }
+        let sample_key = (family_identifier.as_str(), individual_identifier.as_str());
+        let occurrence_count = observed_identifiers.entry(sample_key).or_insert(0);
+        *occurrence_count += 1;
+        if *occurrence_count > 1 {
+            return Err(format!(
+                "Duplicate sample key '{family_identifier}_{individual_identifier}' found in {source_name}; sample_key_mode='fid_iid' requires unique (FID, IID) values."
+            ));
+        }
     }
     Ok(())
 }
@@ -297,8 +402,8 @@ fn split_tabular_line(line: &str) -> Vec<String> {
 
 fn validate_required_column(table: &TabularTable, column_name: &str, table_path: &str) -> Result<(), String> {
     column_index(table, column_name).map(|_| ()).ok_or_else(|| {
-        if column_name == "IID" {
-            format!("Identifier column 'IID' was not found in {table_path}.")
+        if column_name == "FID" || column_name == "IID" {
+            format!("Identifier column '{column_name}' was not found in {table_path}.")
         } else {
             format!("Phenotype column '{column_name}' was not found in {table_path}.")
         }
@@ -317,27 +422,55 @@ fn is_tabular_null_value(value: &str) -> bool {
     matches!(value, "" | "NA" | "NaN" | "nan" | "-9")
 }
 
-fn build_phenotype_records_by_identifier(
+fn build_sample_key(sample_key_mode: SampleKeyMode, family_identifier: &str, individual_identifier: &str) -> SampleKey {
+    match sample_key_mode {
+        SampleKeyMode::Iid => SampleKey::Iid(individual_identifier.to_string()),
+        SampleKeyMode::FidIid => SampleKey::FidIid {
+            family_identifier: family_identifier.to_string(),
+            individual_identifier: individual_identifier.to_string(),
+        },
+    }
+}
+
+fn build_phenotype_records_by_key(
     phenotype_table: &TabularTable,
     phenotype_name: &str,
-) -> Result<HashMap<String, Vec<RawPhenotypeRecord>>, String> {
+    sample_key_mode: SampleKeyMode,
+    allow_duplicate_iid_alignment: bool,
+) -> Result<HashMap<SampleKey, Vec<RawPhenotypeRecord>>, String> {
+    let family_identifier_index = column_index(phenotype_table, "FID");
     let individual_identifier_index = column_index(phenotype_table, "IID")
         .ok_or_else(|| "Identifier column 'IID' was not found in phenotype table.".to_string())?;
     let phenotype_index = column_index(phenotype_table, phenotype_name)
         .ok_or_else(|| format!("Phenotype column '{phenotype_name}' was not found in phenotype table."))?;
-    let mut records_by_identifier: HashMap<String, Vec<RawPhenotypeRecord>> = HashMap::new();
+    let mut records_by_key: HashMap<SampleKey, Vec<RawPhenotypeRecord>> = HashMap::new();
     for row in &phenotype_table.rows {
         let individual_identifier = row_value(row, individual_identifier_index);
         let phenotype_value = row_value(row, phenotype_index);
         if individual_identifier.is_empty() || is_tabular_null_value(phenotype_value) {
             continue;
         }
-        records_by_identifier
-            .entry(individual_identifier.to_string())
+        let family_identifier = family_identifier_index.map_or("", |column| row_value(row, column));
+        let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
+        if sample_key_mode == SampleKeyMode::Iid
+            && !allow_duplicate_iid_alignment
+            && records_by_key.contains_key(&sample_key)
+        {
+            return Err(format!(
+                "Duplicate IID '{individual_identifier}' found in phenotype table; sample_key_mode='iid' requires unique non-null IID values."
+            ));
+        }
+        if sample_key_mode == SampleKeyMode::FidIid && records_by_key.contains_key(&sample_key) {
+            return Err(format!(
+                "Duplicate sample key '{family_identifier}_{individual_identifier}' found in phenotype table; sample_key_mode='fid_iid' requires unique (FID, IID) values."
+            ));
+        }
+        records_by_key
+            .entry(sample_key)
             .or_default()
             .push(RawPhenotypeRecord { phenotype_value: phenotype_value.to_string() });
     }
-    Ok(records_by_identifier)
+    Ok(records_by_key)
 }
 
 fn select_covariate_names(
@@ -372,10 +505,13 @@ fn select_covariate_names(
     }
 }
 
-fn build_covariate_records_by_identifier(
+fn build_covariate_records_by_key(
     covariate_table: &TabularTable,
     selected_covariate_names: &[String],
-) -> Result<HashMap<String, Vec<RawCovariateRecord>>, String> {
+    sample_key_mode: SampleKeyMode,
+    allow_duplicate_iid_alignment: bool,
+) -> Result<HashMap<SampleKey, Vec<RawCovariateRecord>>, String> {
+    let family_identifier_index = column_index(covariate_table, "FID");
     let individual_identifier_index = column_index(covariate_table, "IID")
         .ok_or_else(|| "Identifier column 'IID' was not found in covariate table.".to_string())?;
     let covariate_indices: Vec<usize> = selected_covariate_names
@@ -385,7 +521,7 @@ fn build_covariate_records_by_identifier(
                 .ok_or_else(|| format!("Covariate column '{covariate_name}' was not found."))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut records_by_identifier: HashMap<String, Vec<RawCovariateRecord>> = HashMap::new();
+    let mut records_by_key: HashMap<SampleKey, Vec<RawCovariateRecord>> = HashMap::new();
     for row in &covariate_table.rows {
         let individual_identifier = row_value(row, individual_identifier_index);
         if individual_identifier.is_empty() {
@@ -400,12 +536,24 @@ fn build_covariate_records_by_identifier(
         if covariate_values.len() != selected_covariate_names.len() {
             continue;
         }
-        records_by_identifier
-            .entry(individual_identifier.to_string())
-            .or_default()
-            .push(RawCovariateRecord { covariate_values });
+        let family_identifier = family_identifier_index.map_or("", |column| row_value(row, column));
+        let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
+        if sample_key_mode == SampleKeyMode::Iid
+            && !allow_duplicate_iid_alignment
+            && records_by_key.contains_key(&sample_key)
+        {
+            return Err(format!(
+                "Duplicate IID '{individual_identifier}' found in covariate table; sample_key_mode='iid' requires unique non-null IID values."
+            ));
+        }
+        if sample_key_mode == SampleKeyMode::FidIid && records_by_key.contains_key(&sample_key) {
+            return Err(format!(
+                "Duplicate sample key '{family_identifier}_{individual_identifier}' found in covariate table; sample_key_mode='fid_iid' requires unique (FID, IID) values."
+            ));
+        }
+        records_by_key.entry(sample_key).or_default().push(RawCovariateRecord { covariate_values });
     }
-    Ok(records_by_identifier)
+    Ok(records_by_key)
 }
 
 fn append_intercept_only_aligned_rows(

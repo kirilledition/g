@@ -73,6 +73,13 @@ class SampleIdentifierSource(enum.StrEnum):
     GENERATED = "generated"
 
 
+class SampleKeyMode(enum.StrEnum):
+    """Sample key used for phenotype, covariate, and prediction alignment."""
+
+    IID = "iid"
+    FID_IID = "fid_iid"
+
+
 class ArrayMemoryOrder(enum.StrEnum):
     """NumPy array memory layout selector."""
 

@@ -22,6 +22,8 @@ def align_sample_data(
     covariate_names: list[str] | None,
     *,
     is_binary_trait: bool,
+    sample_key_mode: str = "iid",
+    allow_duplicate_iid_alignment: bool = False,
 ) -> _core.NativeAlignedSampleData:
     """Run the native alignment helper with test-friendly arguments."""
     return _core.align_sample_data(
@@ -33,6 +35,8 @@ def align_sample_data(
         str(covariate_path) if covariate_path is not None else None,
         covariate_names,
         is_binary_trait,
+        sample_key_mode=sample_key_mode,
+        allow_duplicate_iid_alignment=allow_duplicate_iid_alignment,
     )
 
 
@@ -173,3 +177,118 @@ def test_native_sample_file_alignment_uses_oxford_id_2_column(tmp_path: Path) ->
         native_aligned_sample_data.covariate_matrix,
         np.asarray([[1.0, 25.0, 1.0], [1.0, 35.0, 1.0]], dtype=np.float32),
     )
+
+
+def test_iid_alignment_rejects_duplicate_bgen_iid_by_default(tmp_path: Path) -> None:
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\t1.0\n")
+
+    with pytest.raises(ValueError, match=r"Duplicate IID 's1'.*BGEN/sample identifiers"):
+        align_sample_data(
+            np.asarray([0, 1], dtype=np.int64),
+            ["f1", "f2"],
+            ["s1", "s1"],
+            phenotype_path,
+            "trait",
+            None,
+            None,
+            is_binary_trait=False,
+        )
+
+
+def test_iid_alignment_rejects_duplicate_phenotype_iid_by_default(tmp_path: Path) -> None:
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\t1.0\nf2\ts1\t2.0\n")
+
+    with pytest.raises(ValueError, match=r"Duplicate IID 's1'.*phenotype table"):
+        align_sample_data(
+            np.asarray([0], dtype=np.int64),
+            ["f1"],
+            ["s1"],
+            phenotype_path,
+            "trait",
+            None,
+            None,
+            is_binary_trait=False,
+        )
+
+
+def test_iid_alignment_rejects_duplicate_covariate_iid_by_default(tmp_path: Path) -> None:
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\t1.0\n")
+    covariate_path = tmp_path / "covar.txt"
+    covariate_path.write_text("FID\tIID\tage\nf1\ts1\t25\nf2\ts1\t26\n")
+
+    with pytest.raises(ValueError, match=r"Duplicate IID 's1'.*covariate table"):
+        align_sample_data(
+            np.asarray([0], dtype=np.int64),
+            ["f1"],
+            ["s1"],
+            phenotype_path,
+            "trait",
+            covariate_path,
+            ["age"],
+            is_binary_trait=False,
+        )
+
+
+def test_iid_alignment_allows_duplicate_iid_with_compatibility_flag(tmp_path: Path) -> None:
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\t1.0\nf2\ts1\t2.0\n")
+
+    result = align_sample_data(
+        np.asarray([0], dtype=np.int64),
+        ["f1"],
+        ["s1"],
+        phenotype_path,
+        "trait",
+        None,
+        None,
+        is_binary_trait=False,
+        allow_duplicate_iid_alignment=True,
+    )
+
+    np.testing.assert_array_equal(result.sample_indices, np.asarray([0, 0], dtype=np.int64))
+    np.testing.assert_allclose(result.phenotype_vector, np.asarray([1.0, 2.0], dtype=np.float32))
+
+
+def test_fid_iid_alignment_allows_repeated_iid_across_families(tmp_path: Path) -> None:
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\t1.0\nf2\ts1\t2.0\n")
+    covariate_path = tmp_path / "covar.txt"
+    covariate_path.write_text("FID\tIID\tage\nf1\ts1\t25\nf2\ts1\t35\n")
+
+    result = align_sample_data(
+        np.asarray([0, 1], dtype=np.int64),
+        ["f2", "f1"],
+        ["s1", "s1"],
+        phenotype_path,
+        "trait",
+        covariate_path,
+        ["age"],
+        is_binary_trait=False,
+        sample_key_mode="fid_iid",
+    )
+
+    np.testing.assert_array_equal(result.sample_indices, np.asarray([0, 1], dtype=np.int64))
+    assert result.family_identifiers == ["f2", "f1"]
+    np.testing.assert_allclose(result.phenotype_vector, np.asarray([2.0, 1.0], dtype=np.float32))
+    np.testing.assert_allclose(result.covariate_matrix, np.asarray([[1.0, 35.0], [1.0, 25.0]], dtype=np.float32))
+
+
+def test_fid_iid_alignment_requires_fid_columns(tmp_path: Path) -> None:
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text("IID\ttrait\ns1\t1.0\n")
+
+    with pytest.raises(ValueError, match="Identifier column 'FID'"):
+        align_sample_data(
+            np.asarray([0], dtype=np.int64),
+            ["f1"],
+            ["s1"],
+            phenotype_path,
+            "trait",
+            None,
+            None,
+            is_binary_trait=False,
+            sample_key_mode="fid_iid",
+        )
