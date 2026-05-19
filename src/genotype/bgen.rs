@@ -16,10 +16,12 @@ use crate::genotype::preprocess;
 mod index;
 mod metadata;
 mod profile;
+mod sample_selection;
 pub use metadata::VariantMetadataLists;
 use metadata::VariantRecord;
 pub use profile::ReaderProfileSnapshot;
 use profile::{ReaderProfiling, ThreadLocalProfileSnapshot, elapsed_nanoseconds};
+use sample_selection::{SampleSelection, build_sample_selection};
 
 const MISSING_SAMPLE_FLAG_MASK: u8 = 0x80;
 const PLOIDY_MASK: u8 = 0x3F;
@@ -589,13 +591,6 @@ fn convert_bgen_error_to_genotype_error(error: &BgenError) -> GenotypeError {
     GenotypeError::Reader(error.to_string())
 }
 
-#[derive(Debug)]
-struct SampleSelection {
-    selected_sample_count: usize,
-    file_to_selected_index: Vec<usize>,
-    is_identity: bool,
-}
-
 struct ThreadScratch {
     zlib_decompressor: Decompress,
     decompressed_probability_block: Vec<u8>,
@@ -762,31 +757,6 @@ fn validate_variant_bounds(variant_start: usize, variant_stop: usize, variant_co
         )));
     }
     Ok(())
-}
-
-fn build_sample_selection(sample_count: usize, sample_indices: &[i64]) -> Result<SampleSelection, BgenError> {
-    let mut file_to_selected_index = vec![usize::MAX; sample_count];
-    let mut is_identity = sample_indices.len() == sample_count;
-    for (selected_index, raw_sample_index) in sample_indices.iter().enumerate() {
-        let sample_index = usize::try_from(*raw_sample_index).map_err(|_| {
-            BgenError::Range(format!("Sample indices must be non-negative. Observed sample index {raw_sample_index}."))
-        })?;
-        if sample_index >= sample_count {
-            return Err(BgenError::Range(format!(
-                "Sample index {sample_index} is out of bounds for a BGEN file with {sample_count} samples.",
-            )));
-        }
-        if file_to_selected_index[sample_index] != usize::MAX {
-            return Err(BgenError::Range(format!(
-                "Sample index {sample_index} was requested more than once in the same read.",
-            )));
-        }
-        file_to_selected_index[sample_index] = selected_index;
-        if sample_index != selected_index {
-            is_identity = false;
-        }
-    }
-    Ok(SampleSelection { selected_sample_count: sample_indices.len(), file_to_selected_index, is_identity })
 }
 
 fn validate_variant_probability_block(
