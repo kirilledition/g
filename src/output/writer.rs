@@ -1,13 +1,11 @@
 #![allow(clippy::needless_pass_by_value)]
 
-use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
-use arrow::array::{Array, ArrayRef, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray};
+use arrow::array::{ArrayRef, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::ipc::CompressionType;
 use arrow::ipc::reader::FileReader as ArrowFileReader;
 use arrow::ipc::writer::{FileWriter, IpcWriteOptions};
@@ -17,16 +15,14 @@ use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
-use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
+use crate::output::manifest;
 use crate::output::schema;
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 const REGENIE_STEP2_CHUNKS_PER_ARROW_FILE: usize = 4;
-const RUN_MANIFEST_FILE_NAME: &str = "run_manifest.json";
-
 #[derive(Debug, Error)]
 pub enum OutputWriterError {
     #[error("{0}")]
@@ -36,7 +32,7 @@ pub enum OutputWriterError {
 }
 
 impl OutputWriterError {
-    fn runtime(error: impl ToString) -> Self {
+    pub(crate) fn runtime(error: impl ToString) -> Self {
         Self::Runtime(error.to_string())
     }
 }
@@ -364,98 +360,21 @@ fn write_regenie_step2_chunk_job(config: &OutputWriterConfig, job: RegenieStep2C
     let record_batch = build_regenie_step2_record_batch(job)?;
     write_record_batch_to_arrow_file(&record_batch, &temporary_chunk_file_path)?;
     std::fs::rename(&temporary_chunk_file_path, &chunk_file_path).map_err(|error| error.to_string())?;
-    record_run_manifest_chunk_commits(&config.run_directory, chunk_commits)?;
+    manifest::record_run_manifest_chunk_commits(&config.run_directory, chunk_commits)?;
     Ok(())
 }
 
-fn build_run_manifest_chunk_commits(job: &RegenieStep2ChunkWriteBatch) -> Vec<Value> {
+fn build_run_manifest_chunk_commits(job: &RegenieStep2ChunkWriteBatch) -> Vec<manifest::RunManifestChunkCommit> {
     job.chunks
         .iter()
-        .map(|chunk_job| {
-            json!({
-                "chunk_identifier": chunk_job.chunk_identifier,
-                "variant_start_index": chunk_job.variant_start_index,
-                "variant_stop_index": chunk_job.variant_stop_index,
-                "row_count": chunk_job.genpos.len(),
-                "chunk_file_name": job.chunk_file_name,
-            })
+        .map(|chunk_job| manifest::RunManifestChunkCommit {
+            chunk_identifier: chunk_job.chunk_identifier,
+            variant_start_index: chunk_job.variant_start_index,
+            variant_stop_index: chunk_job.variant_stop_index,
+            row_count: chunk_job.genpos.len(),
+            chunk_file_name: job.chunk_file_name.clone(),
         })
         .collect()
-}
-
-fn record_run_manifest_chunk_commits(run_directory: &Path, chunk_commits: Vec<Value>) -> Result<(), String> {
-    update_run_manifest(run_directory, |manifest| {
-        let manifest_object =
-            manifest.as_object_mut().ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
-        let committed_chunks = manifest_object
-            .entry("committed_chunks")
-            .or_insert_with(|| Value::Array(Vec::new()))
-            .as_array_mut()
-            .ok_or_else(|| "Run manifest committed_chunks field must be a list.".to_string())?;
-        for chunk_commit in chunk_commits {
-            let chunk_identifier = chunk_commit
-                .get("chunk_identifier")
-                .and_then(Value::as_i64)
-                .ok_or_else(|| "Manifest chunk commit is missing chunk_identifier.".to_string())?;
-            let already_committed = committed_chunks.iter().any(|committed_chunk| {
-                committed_chunk.get("chunk_identifier").and_then(Value::as_i64) == Some(chunk_identifier)
-            });
-            if !already_committed {
-                committed_chunks.push(chunk_commit);
-            }
-        }
-        committed_chunks.sort_by_key(|committed_chunk| {
-            committed_chunk.get("chunk_identifier").and_then(Value::as_i64).unwrap_or_default()
-        });
-        Ok(())
-    })
-}
-
-fn mark_run_manifest_finalized(
-    final_parquet_path: &Path,
-    row_count: usize,
-    chunk_file_count: usize,
-) -> Result<(), OutputWriterError> {
-    let Some(run_directory) = final_parquet_path.parent() else {
-        return Ok(());
-    };
-    update_run_manifest(run_directory, |manifest| {
-        let manifest_object =
-            manifest.as_object_mut().ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
-        manifest_object.insert("finalized".to_string(), Value::Bool(true));
-        manifest_object.insert("final_parquet".to_string(), Value::String(final_parquet_path.display().to_string()));
-        manifest_object.insert("final_row_count".to_string(), json!(row_count));
-        manifest_object.insert("final_chunk_file_count".to_string(), json!(chunk_file_count));
-        Ok(())
-    })
-    .map_err(OutputWriterError::runtime)
-}
-
-fn update_run_manifest(
-    run_directory: &Path,
-    update_manifest: impl FnOnce(&mut Value) -> Result<(), String>,
-) -> Result<(), String> {
-    let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
-    if !manifest_path.exists() {
-        return Ok(());
-    }
-    let manifest_lock = get_run_manifest_update_lock();
-    let _manifest_guard = manifest_lock.lock().map_err(|_| "Run manifest update lock was poisoned.".to_string())?;
-    let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
-    let mut manifest = serde_json::from_str::<Value>(&manifest_text).map_err(|error| error.to_string())?;
-    update_manifest(&mut manifest)?;
-    let temporary_manifest_path = manifest_path.with_extension("json.tmp");
-    let mut temporary_manifest_file = File::create(&temporary_manifest_path).map_err(|error| error.to_string())?;
-    let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
-    temporary_manifest_file.write_all(&manifest_bytes).map_err(|error| error.to_string())?;
-    temporary_manifest_file.write_all(b"\n").map_err(|error| error.to_string())?;
-    temporary_manifest_file.sync_all().map_err(|error| error.to_string())?;
-    std::fs::rename(&temporary_manifest_path, &manifest_path).map_err(|error| error.to_string())
-}
-
-fn get_run_manifest_update_lock() -> &'static Mutex<()> {
-    static RUN_MANIFEST_UPDATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    RUN_MANIFEST_UPDATE_LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn build_chunk_file_name(first_chunk_identifier: i64, last_chunk_identifier: i64) -> String {
@@ -597,7 +516,8 @@ fn write_final_parquet_from_chunk_files(
     }
     append_output_footer_metadata(&mut parquet_writer, association_mode, chunk_file_count, output_row_count);
     parquet_writer.close().map_err(OutputWriterError::runtime)?;
-    mark_run_manifest_finalized(final_parquet_path, output_row_count, chunk_file_count)?;
+    manifest::mark_run_manifest_finalized(final_parquet_path, output_row_count, chunk_file_count)
+        .map_err(OutputWriterError::runtime)?;
     Ok(())
 }
 
@@ -652,57 +572,6 @@ fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> Result<RecordBatch,
         })?;
     RecordBatch::try_new(Arc::clone(schema::get_regenie_step2_final_schema()), projected_columns)
         .map_err(OutputWriterError::runtime)
-}
-
-pub fn scan_committed_chunk_identifiers(chunks_directory: &Path) -> Result<Vec<i64>, OutputWriterError> {
-    if !chunks_directory.exists() {
-        return Ok(Vec::new());
-    }
-    let mut committed_identifiers = BTreeSet::new();
-    let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
-        .map_err(OutputWriterError::runtime)?
-        .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
-        .filter(|chunk_file_path| chunk_file_path.extension().is_some_and(|extension| extension == "arrow"))
-        .collect::<Vec<_>>();
-    chunk_file_paths.sort();
-    for chunk_file_path in chunk_file_paths {
-        if let Some((first_chunk_identifier, None)) = parse_chunk_file_name(&chunk_file_path) {
-            committed_identifiers.insert(first_chunk_identifier);
-            continue;
-        }
-        let input_file = File::open(&chunk_file_path).map_err(OutputWriterError::runtime)?;
-        let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
-        for maybe_batch in file_reader {
-            let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
-            let chunk_identifier_array = batch
-                .column_by_name("chunk_identifier")
-                .and_then(|column| column.as_any().downcast_ref::<Int64Array>())
-                .ok_or_else(|| {
-                    OutputWriterError::Runtime(
-                        "Rust output writer could not read chunk identifiers from Arrow chunk.".to_string(),
-                    )
-                })?;
-            for row_index in 0..chunk_identifier_array.len() {
-                if !chunk_identifier_array.is_null(row_index) {
-                    committed_identifiers.insert(chunk_identifier_array.value(row_index));
-                }
-            }
-        }
-    }
-    Ok(committed_identifiers.into_iter().collect())
-}
-
-fn parse_chunk_file_name(chunk_file_path: &Path) -> Option<(i64, Option<i64>)> {
-    let file_name = chunk_file_path.file_name()?.to_str()?;
-    let chunk_name = file_name.strip_prefix("chunk_")?.strip_suffix(".arrow")?;
-    let chunk_parts = chunk_name.split('_').collect::<Vec<_>>();
-    match chunk_parts.as_slice() {
-        [first_chunk_identifier] => first_chunk_identifier.parse::<i64>().ok().map(|identifier| (identifier, None)),
-        [first_chunk_identifier, last_chunk_identifier] => {
-            first_chunk_identifier.parse::<i64>().ok().zip(last_chunk_identifier.parse::<i64>().ok().map(Some))
-        }
-        _ => None,
-    }
 }
 
 #[cfg(test)]
