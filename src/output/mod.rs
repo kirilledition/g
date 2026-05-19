@@ -1,9 +1,11 @@
 //! Native output persistence APIs.
 
+mod finalization;
 mod manifest;
 mod resume;
 mod schema;
 pub mod writer;
 
+pub use finalization::finalize_output_run_chunks;
 pub use resume::scan_committed_chunk_identifiers;
-pub use writer::{OutputWriterError, OutputWriterSession, finalize_output_run_chunks};
+pub use writer::{OutputWriterError, OutputWriterSession};
