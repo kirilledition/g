@@ -41,7 +41,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     projection_sum_squares = jnp.einsum("ij,ij->i", projection_coordinates, projection_coordinates)
     variance = jnp.maximum(weighted_genotype_sum_squares - projection_sum_squares, 0.0)
     score = genotype_matrix_by_variant_float32 @ chromosome_state.score_residual
-    positive_variance_mask = variance > regenie2_binary.MINIMUM_VARIANCE
+    positive_variance_mask = regenie2_binary.compute_positive_variance_mask(variance, weighted_genotype_sum_squares)
     inverse_variance = jnp.where(positive_variance_mask, jnp.reciprocal(variance), 0.0)
     beta = jnp.where(positive_variance_mask, score * inverse_variance, jnp.nan)
     standard_error = jnp.where(positive_variance_mask, jnp.sqrt(inverse_variance), jnp.nan)
@@ -58,6 +58,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
         valid_mask=valid_mask,
         firth_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
         firth_failure_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
     )
 
 
@@ -200,6 +201,7 @@ def apply_device_candidate_corrections_firth_variant_major(
                 valid_mask=batched_firth_result.valid_mask.reshape((-1,)),
                 iteration_count=batched_firth_result.iteration_count.reshape((-1,)),
                 failure_code=batched_firth_result.failure_code.reshape((-1,)),
+                convergence_reason_code=batched_firth_result.convergence_reason_code.reshape((-1,)),
             )
             active_flat_positions = batch_plan.active_flat_position_vector
             active_fallback_indices = flat_fallback_indices[active_flat_positions]
@@ -250,6 +252,9 @@ def apply_device_candidate_corrections_firth_variant_major(
                 ),
                 firth_failure_code=result.firth_failure_code.at[active_fallback_indices].set(
                     firth_result.failure_code[active_flat_positions]
+                ),
+                firth_convergence_reason_code=result.firth_convergence_reason_code.at[active_fallback_indices].set(
+                    firth_result.convergence_reason_code[active_flat_positions]
                 ),
             )
 

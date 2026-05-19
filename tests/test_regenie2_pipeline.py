@@ -257,6 +257,7 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
         valid_mask=jnp.asarray([True, True]),
         firth_iteration_count=jnp.asarray([0, 2], dtype=jnp.int32),
         firth_failure_code=jnp.asarray([0, 0], dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.asarray([0, 1], dtype=jnp.int32),
     )
     callback = regenie2_pipeline.BinaryRegenie2PipelineCallback(
         run_input=build_native_run_input(),
@@ -305,6 +306,7 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
         valid_mask=jnp.asarray([True, True, True]),
         firth_iteration_count=jnp.asarray([0, 2, 1], dtype=jnp.int32),
         firth_failure_code=jnp.asarray([0, 0, 0], dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.asarray([0, 1, 1], dtype=jnp.int32),
     )
     callback = regenie2_pipeline.BinaryRegenie2PipelineCallback(
         run_input=build_native_run_input(),
@@ -379,6 +381,7 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
         valid_mask=jnp.asarray([True, True, True]),
         firth_iteration_count=jnp.asarray([0, 0, 0], dtype=jnp.int32),
         firth_failure_code=jnp.asarray([0, 0, 0], dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.asarray([0, 0, 0], dtype=jnp.int32),
     )
     callback = regenie2_pipeline.BinaryRegenie2PipelineCallback(
         run_input=build_native_run_input(),

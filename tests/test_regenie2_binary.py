@@ -417,6 +417,55 @@ def test_full_model_adjusted_weight_components_match_design_matrix_path() -> Non
     )
 
 
+def test_firth_convergence_rejects_large_negative_likelihood_delta() -> None:
+    converged = regenie2_binary.compute_firth_convergence_mask(
+        current_penalized_log_likelihood=jnp.asarray(10.0, dtype=jnp.float32),
+        candidate_penalized_log_likelihood=jnp.asarray(-100.0, dtype=jnp.float32),
+        coefficient_step=jnp.asarray([1.0e-6, -1.0e-6], dtype=jnp.float32),
+        adjusted_score=jnp.asarray([1.0e-6, -1.0e-6], dtype=jnp.float32),
+    )
+
+    assert not bool(np.asarray(converged))
+
+
+def test_firth_step_halving_rejects_full_step_and_accepts_halved_step() -> None:
+    def evaluate_penalized_log_likelihood(coefficients: jax.Array) -> jax.Array:
+        return -jnp.square(coefficients[0] - 1.0)
+
+    result = regenie2_binary.run_firth_step_halving(
+        current_coefficients=jnp.asarray([0.0], dtype=jnp.float32),
+        current_penalized_log_likelihood=jnp.asarray(-1.0, dtype=jnp.float32),
+        coefficient_step=jnp.asarray([4.0], dtype=jnp.float32),
+        evaluate_penalized_log_likelihood=evaluate_penalized_log_likelihood,
+    )
+
+    assert bool(np.asarray(result.accepted))
+    assert not bool(np.asarray(result.exhausted))
+    np.testing.assert_allclose(np.asarray(result.coefficient_step), [2.0])
+    np.testing.assert_allclose(np.asarray(result.coefficients), [2.0])
+
+
+def test_firth_step_halving_exhaustion_returns_failure_result() -> None:
+    def evaluate_penalized_log_likelihood(coefficients: jax.Array) -> jax.Array:
+        return jnp.asarray(-2.0, dtype=coefficients.dtype)
+
+    result = regenie2_binary.run_firth_step_halving(
+        current_coefficients=jnp.asarray([0.0], dtype=jnp.float32),
+        current_penalized_log_likelihood=jnp.asarray(-1.0, dtype=jnp.float32),
+        coefficient_step=jnp.asarray([1.0], dtype=jnp.float32),
+        evaluate_penalized_log_likelihood=evaluate_penalized_log_likelihood,
+    )
+    failure_code = regenie2_binary.map_firth_reason_code_to_failure_code(
+        jnp.asarray(regenie2_binary.FIRTH_CONVERGENCE_REASON_STEP_HALVING_EXHAUSTED, dtype=jnp.int32)
+    )
+
+    assert not bool(np.asarray(result.accepted))
+    assert bool(np.asarray(result.exhausted))
+    np.testing.assert_allclose(np.asarray(result.coefficient_step), [0.0])
+    np.testing.assert_allclose(np.asarray(result.coefficients), [0.0])
+    assert int(np.asarray(failure_code)) == regenie2_binary.FIRTH_FAILURE_STEP_HALVING
+
+
 def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
     genotype_matrix, chromosome_state = build_chromosome_state()
     candidate_genotype_matrix = genotype_matrix[:, :1]
@@ -434,6 +483,7 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
         valid_mask=jnp.asarray([True]),
         firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
         firth_failure_code=jnp.asarray([0], dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.asarray([0], dtype=jnp.int32),
     )
 
     result = regenie2_binary.apply_device_candidate_corrections(
@@ -449,6 +499,94 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
     assert np.isfinite(np.asarray(result.log10_p_value[0]))
     assert int(np.asarray(result.extra_code[0])) == regenie2_binary.EXTRA_CODE_FIRTH
     assert bool(np.asarray(result.valid_mask[0]))
+    assert (
+        int(np.asarray(result.firth_convergence_reason_code[0])) == regenie2_binary.FIRTH_CONVERGENCE_REASON_CONVERGED
+    )
+
+
+def test_firth_candidate_max_iteration_failure_is_labelled() -> None:
+    genotype_matrix, chromosome_state = build_chromosome_state()
+    candidate_genotype_matrix = genotype_matrix[:, :1]
+    score_result = compute_score_test_chunk(
+        chromosome_state,
+        candidate_genotype_matrix,
+        APPROXIMATE_FIRTH_PLAN,
+    )
+    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
+        beta=score_result.beta,
+        standard_error=score_result.standard_error,
+        chi_squared=score_result.chi_squared,
+        log10_p_value=score_result.log10_p_value,
+        extra_code=jnp.asarray([regenie2_binary.EXTRA_CODE_FIRTH], dtype=jnp.int32),
+        valid_mask=jnp.asarray([True]),
+        firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
+        firth_failure_code=jnp.asarray([0], dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.asarray([0], dtype=jnp.int32),
+    )
+    maximum_iteration_kernel_config = dataclasses.replace(
+        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
+        firth_maximum_iterations=1,
+        firth_gradient_tolerance=1.0e-12,
+        firth_coefficient_tolerance=1.0e-12,
+        firth_likelihood_tolerance=1.0e-12,
+    )
+    result = regenie2_binary.apply_device_candidate_corrections(
+        chromosome_state=chromosome_state,
+        genotype_matrix=candidate_genotype_matrix,
+        result=forced_candidate_result,
+        correction_plan=APPROXIMATE_FIRTH_PLAN,
+        kernel_config=maximum_iteration_kernel_config,
+    )
+
+    assert int(np.asarray(result.extra_code[0])) == regenie2_binary.EXTRA_CODE_TEST_FAIL
+    assert int(np.asarray(result.firth_failure_code[0])) == regenie2_binary.FIRTH_FAILURE_MAX_ITERATIONS
+    assert (
+        int(np.asarray(result.firth_convergence_reason_code[0]))
+        == regenie2_binary.FIRTH_CONVERGENCE_REASON_MAX_ITERATIONS
+    )
+
+
+def test_null_firth_failure_propagates_to_candidate_failure() -> None:
+    genotype_matrix, chromosome_state = build_chromosome_state()
+    failed_null_chromosome_state = dataclasses.replace(
+        chromosome_state,
+        null_firth_penalized_log_likelihood=jnp.asarray(jnp.nan, dtype=jnp.float32),
+        null_firth_convergence_reason_code=jnp.asarray(
+            regenie2_binary.FIRTH_CONVERGENCE_REASON_MAX_ITERATIONS,
+            dtype=jnp.int32,
+        ),
+    )
+    candidate_genotype_matrix = genotype_matrix[:, :1]
+    score_result = compute_score_test_chunk(
+        failed_null_chromosome_state,
+        candidate_genotype_matrix,
+        APPROXIMATE_FIRTH_PLAN,
+    )
+    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
+        beta=score_result.beta,
+        standard_error=score_result.standard_error,
+        chi_squared=score_result.chi_squared,
+        log10_p_value=score_result.log10_p_value,
+        extra_code=jnp.asarray([regenie2_binary.EXTRA_CODE_FIRTH], dtype=jnp.int32),
+        valid_mask=jnp.asarray([True]),
+        firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
+        firth_failure_code=jnp.asarray([0], dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.asarray([0], dtype=jnp.int32),
+    )
+
+    result = regenie2_binary.apply_device_candidate_corrections(
+        chromosome_state=failed_null_chromosome_state,
+        genotype_matrix=candidate_genotype_matrix,
+        result=forced_candidate_result,
+        correction_plan=APPROXIMATE_FIRTH_PLAN,
+    )
+
+    assert int(np.asarray(result.extra_code[0])) == regenie2_binary.EXTRA_CODE_TEST_FAIL
+    assert int(np.asarray(result.firth_failure_code[0])) == regenie2_binary.FIRTH_FAILURE_NUMERICAL
+    assert (
+        int(np.asarray(result.firth_convergence_reason_code[0]))
+        == regenie2_binary.FIRTH_CONVERGENCE_REASON_NULL_FAILURE
+    )
 
 
 def test_firth_se_changes_only_successful_firth_standard_error() -> None:
@@ -468,6 +606,7 @@ def test_firth_se_changes_only_successful_firth_standard_error() -> None:
         valid_mask=jnp.asarray([True]),
         firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
         firth_failure_code=jnp.asarray([0], dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.asarray([0], dtype=jnp.int32),
     )
     firth_se_plan = types.BinaryCorrectionPlan(
         method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
@@ -534,6 +673,7 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback() -> None
         valid_mask=jnp.ones((genotype_matrix.shape[1],), dtype=jnp.bool_),
         firth_iteration_count=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
         firth_failure_code=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
     )
 
     overflow_kernel_config = dataclasses.replace(
@@ -595,6 +735,7 @@ def test_firth_correction_kernel_config_retraces_same_shape_without_cache_clear(
         valid_mask=jnp.ones((genotype_matrix.shape[1],), dtype=jnp.bool_),
         firth_iteration_count=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
         firth_failure_code=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
     )
     small_batch_config = dataclasses.replace(
         regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
@@ -695,6 +836,13 @@ def test_variant_major_score_test_matches_sample_major() -> None:
     np.testing.assert_array_equal(
         np.asarray(variant_major_result.extra_code), np.asarray(sample_major_result.extra_code)
     )
+    np.testing.assert_array_equal(
+        np.asarray(variant_major_result.firth_failure_code), np.asarray(sample_major_result.firth_failure_code)
+    )
+    np.testing.assert_array_equal(
+        np.asarray(variant_major_result.firth_convergence_reason_code),
+        np.asarray(sample_major_result.firth_convergence_reason_code),
+    )
 
 
 def test_variant_major_binary_chunk_matches_sample_major() -> None:
@@ -732,6 +880,13 @@ def test_variant_major_binary_chunk_matches_sample_major() -> None:
     np.testing.assert_array_equal(
         np.asarray(variant_major_result.extra_code), np.asarray(sample_major_result.extra_code)
     )
+    np.testing.assert_array_equal(
+        np.asarray(variant_major_result.firth_failure_code), np.asarray(sample_major_result.firth_failure_code)
+    )
+    np.testing.assert_array_equal(
+        np.asarray(variant_major_result.firth_convergence_reason_code),
+        np.asarray(sample_major_result.firth_convergence_reason_code),
+    )
 
 
 def test_failed_firth_lanes_become_test_fail() -> None:
@@ -767,6 +922,7 @@ def test_failed_firth_lanes_become_test_fail() -> None:
         valid_mask=jnp.asarray([True]),
         firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
         firth_failure_code=jnp.asarray([0], dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.asarray([0], dtype=jnp.int32),
     )
 
     corrected_result = regenie2_binary.apply_device_candidate_corrections(

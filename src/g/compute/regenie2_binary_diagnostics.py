@@ -20,6 +20,7 @@ FIRTH_FAILURE_NONE = 0
 FIRTH_FAILURE_NUMERICAL = 1
 FIRTH_FAILURE_MAX_ITERATIONS = 2
 FIRTH_FAILURE_INVALID_STATISTIC = 3
+FIRTH_FAILURE_STEP_HALVING = 4
 
 
 @jax.tree_util.register_dataclass
@@ -38,6 +39,7 @@ class BinaryChunkDiagnostics:
         firth_numerical_failure_count: Firth candidates that failed numerically.
         firth_max_iteration_failure_count: Firth candidates that hit the iteration limit.
         firth_invalid_statistic_failure_count: Firth candidates with invalid final statistics.
+        firth_step_halving_failure_count: Firth candidates that exhausted step-halving attempts.
 
     """
 
@@ -51,6 +53,7 @@ class BinaryChunkDiagnostics:
     firth_numerical_failure_count: jax.Array
     firth_max_iteration_failure_count: jax.Array
     firth_invalid_statistic_failure_count: jax.Array
+    firth_step_halving_failure_count: jax.Array
 
 
 def count_binary_chunk_diagnostics(
@@ -96,6 +99,10 @@ def count_binary_chunk_diagnostics(
         ),
         firth_invalid_statistic_failure_count=jnp.sum(
             result.firth_failure_code == FIRTH_FAILURE_INVALID_STATISTIC,
+            dtype=jnp.int32,
+        ),
+        firth_step_halving_failure_count=jnp.sum(
+            result.firth_failure_code == FIRTH_FAILURE_STEP_HALVING,
             dtype=jnp.int32,
         ),
     )

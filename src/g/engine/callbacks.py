@@ -131,6 +131,7 @@ def record_binary_chunk_diagnostics(
             "firth_numerical_failure_count": int(diagnostics.firth_numerical_failure_count),
             "firth_max_iteration_failure_count": int(diagnostics.firth_max_iteration_failure_count),
             "firth_invalid_statistic_failure_count": int(diagnostics.firth_invalid_statistic_failure_count),
+            "firth_step_halving_failure_count": int(diagnostics.firth_step_halving_failure_count),
         }
     )
 
@@ -855,6 +856,12 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 {
                     "chromosome": chromosome,
                     "iteration_count": int(jax.device_get(self.current_chromosome_state.null_logistic_iteration_count)),
+                    "firth_iteration_count": int(
+                        jax.device_get(self.current_chromosome_state.null_firth_iteration_count)
+                    ),
+                    "firth_convergence_reason_code": int(
+                        jax.device_get(self.current_chromosome_state.null_firth_convergence_reason_code)
+                    ),
                     "correction_method": self.correction_plan.method.value,
                 }
             )

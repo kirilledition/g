@@ -100,6 +100,8 @@ class Regenie2BinaryChromosomeState:
         square_root_weight: Square root of Bernoulli variance.
         weighted_genotype_projection_matrix: Cholesky-whitened weighted covariate transpose.
         null_firth_penalized_log_likelihood: Covariate-only Firth null penalized log-likelihood.
+        null_firth_iteration_count: Number of covariate-only Firth iterations.
+        null_firth_convergence_reason_code: Internal covariate-only Firth termination-reason code.
         null_logistic_iteration_count: Number of IRLS updates used for the null logistic fit.
 
     """
@@ -114,6 +116,8 @@ class Regenie2BinaryChromosomeState:
     square_root_weight: jax.Array
     weighted_genotype_projection_matrix: jax.Array
     null_firth_penalized_log_likelihood: jax.Array
+    null_firth_iteration_count: jax.Array
+    null_firth_convergence_reason_code: jax.Array
     null_logistic_iteration_count: jax.Array
 
 
@@ -131,6 +135,7 @@ class Regenie2BinaryChunkResult:
         valid_mask: Boolean mask for valid statistics.
         firth_iteration_count: Number of Firth iterations per variant, or zero for non-Firth rows.
         firth_failure_code: Integer Firth failure-reason code, or zero for non-failed rows.
+        firth_convergence_reason_code: Internal Firth termination-reason code.
 
     """
 
@@ -142,6 +147,7 @@ class Regenie2BinaryChunkResult:
     valid_mask: jax.Array
     firth_iteration_count: jax.Array
     firth_failure_code: jax.Array
+    firth_convergence_reason_code: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -177,6 +183,8 @@ class Regenie2MultiBinaryChromosomeState:
         square_root_weight: Per-trait square root Bernoulli variance.
         weighted_genotype_projection_matrix: Per-trait weighted covariate projection matrix.
         null_firth_penalized_log_likelihood: Per-trait Firth null penalized log-likelihood.
+        null_firth_iteration_count: Per-trait covariate-only Firth iteration counts.
+        null_firth_convergence_reason_code: Per-trait covariate-only Firth termination-reason codes.
         null_logistic_iteration_count: Per-trait null IRLS iteration counts.
 
     """
@@ -191,6 +199,8 @@ class Regenie2MultiBinaryChromosomeState:
     square_root_weight: jax.Array
     weighted_genotype_projection_matrix: jax.Array
     null_firth_penalized_log_likelihood: jax.Array
+    null_firth_iteration_count: jax.Array
+    null_firth_convergence_reason_code: jax.Array
     null_logistic_iteration_count: jax.Array
 
 
@@ -208,6 +218,7 @@ class Regenie2MultiBinaryChunkResult:
         valid_mask: Boolean mask for valid statistics with shape ``traits x variants``.
         firth_iteration_count: Firth iteration counts with shape ``traits x variants``.
         firth_failure_code: Firth failure-reason codes with shape ``traits x variants``.
+        firth_convergence_reason_code: Internal Firth termination-reason codes with shape ``traits x variants``.
 
     """
 
@@ -219,3 +230,4 @@ class Regenie2MultiBinaryChunkResult:
     valid_mask: jax.Array
     firth_iteration_count: jax.Array
     firth_failure_code: jax.Array
+    firth_convergence_reason_code: jax.Array
