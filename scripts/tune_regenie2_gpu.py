@@ -227,7 +227,7 @@ def build_compute_stage_candidates(
                                 chunk_size=chunk_size,
                                 staging_depth=staging_depth,
                                 output_writer_thread_count=api.output.DEFAULT_WRITER_THREAD_COUNT,
-                                output_writer_queue_depth=api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH,
+                                output_writer_queue_depth=api.output.DEFAULT_WRITER_QUEUE_DEPTH,
                                 bgen_decode_tile_variant_count=bgen_candidate_summary.candidate.decode_tile_variant_count,
                                 rayon_thread_count=bgen_candidate_summary.candidate.rayon_thread_count,
                                 firth_batch_size=firth_batch_size,
@@ -240,7 +240,7 @@ def build_compute_stage_candidates(
                         chunk_size=chunk_size,
                         staging_depth=staging_depth,
                         output_writer_thread_count=api.output.DEFAULT_WRITER_THREAD_COUNT,
-                        output_writer_queue_depth=api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH,
+                        output_writer_queue_depth=api.output.DEFAULT_WRITER_QUEUE_DEPTH,
                         bgen_decode_tile_variant_count=bgen_candidate_summary.candidate.decode_tile_variant_count,
                         rayon_thread_count=bgen_candidate_summary.candidate.rayon_thread_count,
                         firth_batch_size=None,
@@ -280,18 +280,7 @@ def build_step2_trial_environment(
     environment = dict(os.environ)
     environment.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     environment.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", ".50")
-    if candidate.bgen_decode_tile_variant_count is None:
-        environment.pop("G_BGEN_DECODE_TILE_VARIANT_COUNT", None)
-    else:
-        environment["G_BGEN_DECODE_TILE_VARIANT_COUNT"] = str(candidate.bgen_decode_tile_variant_count)
-    if candidate.rayon_thread_count is None:
-        environment.pop("RAYON_NUM_THREADS", None)
-    else:
-        environment["RAYON_NUM_THREADS"] = str(candidate.rayon_thread_count)
-    if candidate.firth_batch_size is None:
-        environment.pop("G_REGENIE2_BINARY_FIRTH_BATCH_SIZE", None)
-    else:
-        environment["G_REGENIE2_BINARY_FIRTH_BATCH_SIZE"] = str(candidate.firth_batch_size)
+    del candidate
     return environment
 
 
@@ -312,9 +301,14 @@ def build_step2_child_command(
         prediction_list_path = baseline_paths.regenie_prediction_list_path
     trait_type_literal = candidate.trait_type.value
     variant_limit_expression = "None" if variant_limit is None else str(variant_limit)
-    binary_config_expression = "None"
+    binary_options_expression = "{}"
     if candidate.trait_type == types.RegenieTraitType.BINARY:
-        binary_config_expression = "api.Regenie2BinaryConfig(firth=True, approx=True)"
+        binary_options_expression = '{"firth": True, "approx": True}'
+    bgen_tile_expression = (
+        "64" if candidate.bgen_decode_tile_variant_count is None else str(candidate.bgen_decode_tile_variant_count)
+    )
+    firth_batch_expression = "64" if candidate.firth_batch_size is None else str(candidate.firth_batch_size)
+    rayon_thread_expression = "None" if candidate.rayon_thread_count is None else str(candidate.rayon_thread_count)
     child_code = textwrap.dedent(
         """
         import json
@@ -322,30 +316,32 @@ def build_step2_child_command(
 
         import polars as pl
 
-        from g import api, types
+        from g import api
 
         start_time = time.perf_counter()
-        artifacts = api.regenie2(
-            bgen={bgen_path!r},
-            sample={sample_path!r},
-            pheno={phenotype_path!r},
-            pheno_name={phenotype_name!r},
-            out={output_path!r},
-            covar={covariate_path!r},
-            covar_names="age,sex",
-            pred={prediction_path!r},
-            trait_type=types.RegenieTraitType({trait_type!r}),
-            compute=api.ComputeConfig(
-                device=types.Device.GPU,
-                chunk_size={chunk_size},
-                variant_limit={variant_limit_expression},
-                staging_depth={staging_depth},
-                finalize_parquet=True,
-                output_writer_thread_count={output_writer_thread_count},
-                output_writer_queue_depth={output_writer_queue_depth},
-            ),
-            binary={binary_config_expression},
-        )
+        artifacts = api.regenie.from_options({{
+            "step": 2,
+            "bt" if {trait_type!r} == "binary" else "qt": True,
+            "bgen": {bgen_path!r},
+            "sample": {sample_path!r},
+            "phenoFile": {phenotype_path!r},
+            "phenoCol": {phenotype_name!r},
+            "out": {output_path!r},
+            "covarFile": {covariate_path!r},
+            "covarColList": "age,sex",
+            "pred": {prediction_path!r},
+            "g-device": "gpu",
+            "bsize": {chunk_size},
+            "g-variant-limit": {variant_limit_expression},
+            "g-staging-depth": {staging_depth},
+            "g-output-format": "parquet",
+            "g-writer-threads": {output_writer_thread_count},
+            "g-writer-queue-depth": {output_writer_queue_depth},
+            "g-bgen-decode-tile-variant-count": {bgen_tile_expression},
+            "g-firth-batch-size": {firth_batch_expression},
+            "threads": {rayon_thread_expression},
+            **{binary_options_expression},
+        }})
         wall_time_seconds = time.perf_counter() - start_time
         output_row_count = pl.scan_parquet(artifacts.final_parquet).select(pl.len()).collect().item()
         print(
@@ -372,7 +368,10 @@ def build_step2_child_command(
         staging_depth=candidate.staging_depth,
         output_writer_thread_count=candidate.output_writer_thread_count,
         output_writer_queue_depth=candidate.output_writer_queue_depth,
-        binary_config_expression=binary_config_expression,
+        bgen_tile_expression=bgen_tile_expression,
+        firth_batch_expression=firth_batch_expression,
+        rayon_thread_expression=rayon_thread_expression,
+        binary_options_expression=binary_options_expression,
     )
     return [sys.executable, "-c", child_code]
 

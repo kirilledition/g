@@ -58,23 +58,25 @@ def regenie2_parity_results(tmp_path_factory: pytest.TempPathFactory) -> Regenie
         pytest.skip("REGENIE phase-0 baseline data is not available.")
 
     output_directory = tmp_path_factory.mktemp("regenie2-parity")
-    artifacts = api.regenie2_linear(
-        bgen=DATA_DIRECTORY / "1kg_chr22_full.bgen",
-        sample=DATA_DIRECTORY / "1kg_chr22_full.sample",
-        pheno=DATA_DIRECTORY / "pheno_cont.txt",
-        pheno_name=PHENOTYPE_NAME,
-        out=output_directory / "regenie2_parity",
-        covar=DATA_DIRECTORY / "covariates.txt",
-        covar_names=("age", "sex"),
-        pred=BASELINE_DIRECTORY / "regenie_step1_qt_pred.list",
-        compute=api.ComputeConfig(
-            chunk_size=512,
-            device=types.Device.CPU,
-            variant_limit=PARITY_VARIANT_LIMIT,
-            staging_depth=0,
-            output_run_directory=output_directory / "regenie2_parity",
-            finalize_parquet=True,
-        ),
+    artifacts = api.regenie.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": DATA_DIRECTORY / "1kg_chr22_full.bgen",
+            "sample": DATA_DIRECTORY / "1kg_chr22_full.sample",
+            "phenoFile": DATA_DIRECTORY / "pheno_cont.txt",
+            "phenoCol": PHENOTYPE_NAME,
+            "out": output_directory / "regenie2_parity",
+            "covarFile": DATA_DIRECTORY / "covariates.txt",
+            "covarCol": ("age", "sex"),
+            "pred": BASELINE_DIRECTORY / "regenie_step1_qt_pred.list",
+            "bsize": 512,
+            "g-device": types.Device.CPU.value,
+            "g-variant-limit": PARITY_VARIANT_LIMIT,
+            "g-staging-depth": 0,
+            "g-output-run-directory": output_directory / "regenie2_parity",
+            "g-output-format": types.OutputFormat.PARQUET.value,
+        }
     )
 
     assert artifacts.final_parquet is not None

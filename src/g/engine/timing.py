@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
+import typing
 from dataclasses import dataclass
-from pathlib import Path
+
+if typing.TYPE_CHECKING:
+    import pathlib
 
 
 @dataclass(frozen=True)
@@ -75,19 +77,21 @@ class StageTimingRecorder:
             )
 
 
-def build_stage_timing_recorder_from_environment() -> StageTimingRecorder | None:
-    """Create a diagnostic stage recorder when requested by the profiling harness."""
-    if not os.environ.get("G_REGENIE2_STAGE_TIMINGS_JSON"):
+def build_stage_timing_recorder(stage_timing_path: pathlib.Path | None = None) -> StageTimingRecorder | None:
+    """Create a diagnostic stage recorder when requested."""
+    if stage_timing_path is None:
         return None
     return StageTimingRecorder()
 
 
-def write_stage_timing_snapshot_from_environment(stage_timing_recorder: StageTimingRecorder | None) -> None:
-    """Persist diagnostic stage timings when the profiling harness requests them."""
+def write_stage_timing_snapshot(
+    stage_timing_recorder: StageTimingRecorder | None,
+    stage_timing_path: pathlib.Path | None = None,
+) -> None:
+    """Persist diagnostic stage timings when requested."""
     if stage_timing_recorder is None:
         return
-    stage_timing_path = os.environ.get("G_REGENIE2_STAGE_TIMINGS_JSON")
-    if not stage_timing_path:
+    if stage_timing_path is None:
         return
     snapshot = stage_timing_recorder.snapshot()
     payload = {
@@ -98,8 +102,8 @@ def write_stage_timing_snapshot_from_environment(stage_timing_recorder: StageTim
         "null_logistic_diagnostics": snapshot.null_logistic_diagnostics,
         "derived_metrics": build_derived_metrics(snapshot),
     }
-    Path(stage_timing_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(stage_timing_path).write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
+    stage_timing_path.parent.mkdir(parents=True, exist_ok=True)
+    stage_timing_path.write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
 
 
 def build_derived_metrics(snapshot: StageTimingSnapshot) -> dict[str, float]:

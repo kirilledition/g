@@ -7,9 +7,9 @@ authors = [
 ]
 requires-python = ">=3.14,<3.15"
 dependencies = [
+    "click>=8.3.1",
     "jax[cpu]>=0.10.0",
     "numpy>=2.4.5",
-    "typer>=0.25.1",
 ]
 
 [dependency-groups]
@@ -30,6 +30,7 @@ gpu = ["jax[cuda12]>=0.10.0"]
 
 [project.scripts]
 g = "g:main"
+g-regenie = "g.cli:regenie_main"
 
 [build-system]
 requires = ["maturin>=1.13.3,<2.0"]

@@ -6,7 +6,9 @@ use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadwriteArray2
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::genotype::bgen::{BgenError, ReaderProfileSnapshot, VariantMetadataLists};
+use crate::genotype::bgen::{
+    BgenError, ReaderProfileSnapshot, VariantMetadataLists, set_bgen_decode_tile_variant_count,
+};
 use crate::genotype::common::{
     ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunkStats, GenotypeError, VariantMetadataColumns,
 };
@@ -18,7 +20,8 @@ use crate::sample::{AlignedSampleData, AlignmentInputs, SampleKeyMode};
 mod output;
 
 use output::{
-    OutputWriterSession, finalize_output_run_chunks, scan_committed_chunk_identifiers, validate_strict_manifest_chunks,
+    OutputWriterSession, finalize_output_run_chunks, finalize_output_run_chunks_to_regenie_text,
+    scan_committed_chunk_identifiers, validate_strict_manifest_chunks,
 };
 
 #[pyclass(skip_from_py_object)]
@@ -813,6 +816,24 @@ fn build_profile_snapshot_dict(profile_snapshot: &ReaderProfileSnapshot) -> Hash
     ])
 }
 
+#[pyfunction]
+#[allow(clippy::missing_errors_doc)]
+fn configure_bgen_decode_tile_variant_count(tile_variant_count: usize) -> PyResult<()> {
+    set_bgen_decode_tile_variant_count(tile_variant_count).map_err(convert_bgen_error)
+}
+
+#[pyfunction]
+#[allow(clippy::missing_errors_doc)]
+fn configure_rayon_global_thread_pool(thread_count: usize) -> PyResult<()> {
+    if thread_count == 0 {
+        return Err(PyValueError::new_err("Rayon thread count must be positive."));
+    }
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build_global()
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
 #[allow(clippy::missing_errors_doc)]
 pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<ChunkSpec>()?;
@@ -823,8 +844,11 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<RegeniePredictionSource>()?;
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
+    module.add_function(wrap_pyfunction!(finalize_output_run_chunks_to_regenie_text, module)?)?;
     module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
     module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
+    module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;
+    module.add_function(wrap_pyfunction!(configure_rayon_global_thread_pool, module)?)?;
     module.add_function(wrap_pyfunction!(hello_from_bin, module)?)?;
     module.add_function(wrap_pyfunction!(plan_genotype_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(align_sample_data, module)?)?;

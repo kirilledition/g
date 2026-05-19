@@ -4,8 +4,8 @@
 
 The active public surface is intentionally narrow:
 
-- Python API: `g.regenie2(...)`, `g.regenie2_linear(...)`, and `g.api.regenie2_warm_cache(...)`
-- CLI: `g regenie2 ...`, `g regenie2-linear ...`, and `g regenie2-warm-cache ...`
+- Python API: `g.regenie(config)` and `g.regenie.from_options({...})`
+- CLI: `g regenie ...`, `g-regenie ...`, and `g config init|validate|explain`
 - Inputs: BGEN 1.2 genotype data, optional `.sample`, phenotype/covariate tables, and REGENIE step 1 `_pred.list` files
 - Outputs: resumable Arrow chunk run directories, with optional compressed `final.parquet` finalization
 
@@ -42,7 +42,7 @@ Local generated state lives in `data/`, `.tools/`, `.venv/`, and `target/`; thes
 The project is managed with `uv`, `just`, Rust/Cargo, and `maturin`.
 
 - Python: `>=3.14,<3.15`
-- Python runtime dependencies: JAX, NumPy, Polars, Typer
+- Python runtime dependencies: JAX, NumPy, Click
 - Native extension: Rust 2024, PyO3 ABI3 for Python 3.14
 - Benchmark/data tools: `plink`, `plink2`, `regenie`, `zstd`
 - Optional GPU workflow: CUDA-capable JAX environment and SLURM access
@@ -97,76 +97,54 @@ just setup-binary-baseline
 
 ## CLI Usage
 
-Quantitative REGENIE step 2 shorthand:
+Quantitative REGENIE step 2:
 
 ```bash
 uv run g \
-  regenie2-linear \
+  regenie \
+  --step 2 \
+  --qt \
   --bgen data/1kg_chr22_full.bgen \
   --sample data/1kg_chr22_full.sample \
-  --pheno data/pheno_cont.txt \
-  --pheno-name phenotype_continuous \
-  --covar data/covariates.txt \
-  --covar-names age,sex \
+  --phenoFile data/pheno_cont.txt \
+  --phenoCol phenotype_continuous \
+  --covarFile data/covariates.txt \
+  --covarColList age,sex \
   --pred data/baselines/regenie_step1_qt_pred.list \
   --out data/example_regenie2 \
-  --finalize-parquet
-```
-
-General entrypoint for quantitative traits:
-
-```bash
-uv run g \
-  regenie2 \
-  --bgen data/1kg_chr22_full.bgen \
-  --sample data/1kg_chr22_full.sample \
-  --pheno data/pheno_cont.txt \
-  --pheno-name phenotype_continuous \
-  --covar data/covariates.txt \
-  --covar-names age,sex \
-  --pred data/baselines/regenie_step1_qt_pred.list \
-  --trait-type quantitative \
-  --out data/example_regenie2 \
-  --finalize-parquet
+  --g-output-format both
 ```
 
 Binary traits with approximate Firth fallback:
 
 ```bash
 uv run g \
-  regenie2 \
+  regenie \
+  --step 2 \
+  --bt \
   --bgen data/1kg_chr22_full.bgen \
   --sample data/1kg_chr22_full.sample \
-  --pheno data/pheno_bin.txt \
-  --pheno-name phenotype_binary \
-  --covar data/covariates.txt \
-  --covar-names age,sex \
+  --phenoFile data/pheno_bin.txt \
+  --phenoCol phenotype_binary \
+  --covarFile data/covariates.txt \
+  --covarColList age,sex \
   --pred data/baselines/regenie_step1_pred.list \
-  --trait-type binary \
   --firth \
   --approx \
   --pThresh 0.01 \
   --out data/example_regenie2_binary \
-  --finalize-parquet
+  --g-output-format both
 ```
 
-Warm JAX cache shapes without writing association output:
+Config files use the same option names under TOML sections:
 
 ```bash
-uv run g \
-  regenie2-warm-cache \
-  --bgen data/1kg_chr22_full.bgen \
-  --sample data/1kg_chr22_full.sample \
-  --pheno data/pheno_cont.txt \
-  --pheno-name phenotype_continuous \
-  --covar data/covariates.txt \
-  --covar-names age,sex \
-  --pred data/baselines/regenie_step1_qt_pred.list \
-  --trait-type quantitative \
-  --device cpu
+uv run g config init --out regenie.toml
+uv run g config validate regenie.toml
+uv run g regenie --config regenie.toml --g-device gpu
 ```
 
-Useful execution flags include `--device cpu|gpu`, `--chunk-size`, `--variant-limit`, `--prefetch-chunks`, `--resume`, `--trusted-no-missing-diploid`, `--warm-cache-first`, `--output-writer-thread-count`, and `--output-writer-queue-depth`.
+Useful execution flags include `--g-device cpu|gpu`, `--bsize`, `--g-variant-limit`, `--g-staging-depth`, `--g-resume`, `--g-trusted-no-missing-diploid`, `--g-writer-threads`, `--g-writer-queue-depth`, JAX cache settings, BGEN decode tiling, and binary/Firth solver settings.
 
 ## Python API
 
@@ -175,35 +153,40 @@ from pathlib import Path
 
 import g
 
-artifacts = g.regenie2(
-    bgen=Path("data/1kg_chr22_full.bgen"),
-    sample=Path("data/1kg_chr22_full.sample"),
-    pheno=Path("data/pheno_cont.txt"),
-    pheno_name="phenotype_continuous",
-    covar=Path("data/covariates.txt"),
-    covar_names=["age", "sex"],
-    pred=Path("data/baselines/regenie_step1_qt_pred.list"),
-    trait_type=g.RegenieTraitType.QUANTITATIVE,
-    out=Path("data/example_regenie2"),
-    compute=g.ComputeConfig(device=g.Device.CPU),
+artifacts = g.regenie.from_options(
+    {
+        "step": 2,
+        "qt": True,
+        "bgen": Path("data/1kg_chr22_full.bgen"),
+        "sample": Path("data/1kg_chr22_full.sample"),
+        "phenoFile": Path("data/pheno_cont.txt"),
+        "phenoCol": "phenotype_continuous",
+        "covarFile": Path("data/covariates.txt"),
+        "covarColList": "age,sex",
+        "pred": Path("data/baselines/regenie_step1_qt_pred.list"),
+        "out": Path("data/example_regenie2"),
+        "g-device": "cpu",
+    }
 )
 ```
 
-The API returns `g.RunArtifacts` with the output run directory and, when finalization is enabled, the final Parquet path.
+The API returns `g.RunArtifacts` with the output run directory and materialized REGENIE text/Parquet paths.
 
 ## Output Layout
 
-Given `--out data/example_regenie2`, `g` writes a mode-specific run directory unless the output path already ends with `.run`:
+Given `--out data/example_regenie2`, `g` writes REGENIE text to `data/example_regenie2_<phenotype>.regenie` by default and keeps internal chunks under a `g` run directory:
 
 ```text
-data/example_regenie2.regenie2_linear.run/
+data/example_regenie2.g/phenotype_continuous.regenie2_linear.run/
   chunks/
     chunk_000000000.arrow
     chunk_000000001.arrow
+  effective_config.toml
+  run_manifest.json
   final.parquet
 ```
 
-Binary runs use the `.regenie2_binary.run` suffix. Arrow chunks are written incrementally and can be resumed with `--resume`. CLI Parquet finalization is opt-in with `--finalize-parquet`; the Python `ComputeConfig` default enables finalization.
+Binary runs use the `.regenie2_binary.run` suffix. Arrow chunks are written incrementally and can be resumed with `--g-resume`. `--g-output-format` controls `regenie`, `parquet`, `arrow`, or `both`.
 
 ## Development Commands
 

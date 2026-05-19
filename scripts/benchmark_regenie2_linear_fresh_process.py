@@ -100,25 +100,25 @@ def build_child_command(
 
         import polars as pl
 
-        from g import api, types
+        from g import api
 
         start_time = time.perf_counter()
-        artifacts = api.regenie2_linear(
-            bgen={bgen_path!r},
-            sample={sample_path!r},
-            pheno={phenotype_path!r},
-            pheno_name="phenotype_continuous",
-            out={output_path!r},
-            covar={covariate_path!r},
-            covar_names="age,sex",
-            pred={prediction_path!r},
-            compute=api.ComputeConfig(
-                device=types.Device({device!r}),
-                chunk_size={chunk_size},
-                finalize_parquet={finalize_parquet},
-                output_writer_thread_count={output_writer_thread_count},
-            ),
-        )
+        artifacts = api.regenie.from_options({{
+            "step": 2,
+            "qt": True,
+            "bgen": {bgen_path!r},
+            "sample": {sample_path!r},
+            "phenoFile": {phenotype_path!r},
+            "phenoCol": "phenotype_continuous",
+            "out": {output_path!r},
+            "covarFile": {covariate_path!r},
+            "covarColList": "age,sex",
+            "pred": {prediction_path!r},
+            "g-device": {device!r},
+            "bsize": {chunk_size},
+            "g-output-format": "parquet" if {finalize_parquet} else "arrow",
+            "g-writer-threads": {output_writer_thread_count},
+        }})
         wall_time_seconds = time.perf_counter() - start_time
         artifact_path = artifacts.final_parquet or artifacts.output_run_directory
         output_row_count = (

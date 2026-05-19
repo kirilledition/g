@@ -1,6 +1,4 @@
-use std::env;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -13,15 +11,14 @@ use crate::output::writer::{
     write_regenie_step2_chunk_job,
 };
 
-const DEFAULT_REGENIE_STEP2_CHUNKS_PER_ARROW_FILE: usize = 4;
-const CHUNKS_PER_ARROW_FILE_ENVIRONMENT_VARIABLE: &str = "G_REGENIE2_CHUNKS_PER_ARROW_FILE";
-
 #[derive(Clone)]
 struct OutputWriterConfig {
     run_directory: PathBuf,
     chunks_directory: PathBuf,
     association_mode: String,
     finalize_parquet: bool,
+    chunks_per_arrow_file: usize,
+    arrow_compression: String,
 }
 
 enum OutputCoordinatorJob {
@@ -43,6 +40,7 @@ pub struct OutputWriterSession {
     config: OutputWriterConfig,
 }
 
+#[allow(clippy::missing_errors_doc)]
 impl OutputWriterSession {
     pub fn new(
         run_directory: String,
@@ -51,15 +49,22 @@ impl OutputWriterSession {
         writer_thread_count: usize,
         writer_queue_depth: usize,
         finalize_parquet: bool,
+        chunks_per_arrow_file: usize,
+        arrow_compression: String,
     ) -> Result<Self, OutputWriterError> {
         if writer_thread_count == 0 {
             return Err(OutputWriterError::InvalidInput("Writer thread count must be at least 1.".to_string()));
+        }
+        if chunks_per_arrow_file == 0 {
+            return Err(OutputWriterError::InvalidInput("Chunks per Arrow file must be at least 1.".to_string()));
         }
         let config = OutputWriterConfig {
             run_directory: PathBuf::from(run_directory),
             chunks_directory: PathBuf::from(chunks_directory),
             association_mode,
             finalize_parquet,
+            chunks_per_arrow_file,
+            arrow_compression,
         };
         let (sender, receiver) = bounded(writer_queue_depth.max(1));
         let (writer_sender, writer_receiver) = bounded(writer_queue_depth.max(1));
@@ -74,8 +79,15 @@ impl OutputWriterSession {
             }));
         }
         let coordinator_worker_errors = Arc::clone(&worker_errors);
+        let coordinator_chunks_per_arrow_file = config.chunks_per_arrow_file;
         let coordinator_handle = std::thread::spawn(move || {
-            run_output_writer_coordinator(receiver, writer_sender, writer_thread_count, coordinator_worker_errors);
+            run_output_writer_coordinator(
+                receiver,
+                writer_sender,
+                writer_thread_count,
+                coordinator_chunks_per_arrow_file,
+                coordinator_worker_errors,
+            );
         });
         Ok(Self {
             sender: Mutex::new(Some(sender)),
@@ -233,13 +245,14 @@ fn validate_column_lengths(expected_row_count: usize, observed_lengths: &[usize]
     ))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn run_output_writer_coordinator(
     receiver: Receiver<OutputCoordinatorJob>,
     writer_sender: Sender<OutputWriteJob>,
     writer_thread_count: usize,
+    chunks_per_arrow_file: usize,
     worker_errors: Arc<Mutex<Vec<String>>>,
 ) {
-    let chunks_per_arrow_file = get_regenie_step2_chunks_per_arrow_file();
     let mut pending_chunks = Vec::with_capacity(chunks_per_arrow_file);
     while let Ok(job) = receiver.recv() {
         match job {
@@ -266,17 +279,6 @@ fn run_output_writer_coordinator(
     }
 }
 
-fn get_regenie_step2_chunks_per_arrow_file() -> usize {
-    static REGENIE_STEP2_CHUNKS_PER_ARROW_FILE: OnceLock<usize> = OnceLock::new();
-    *REGENIE_STEP2_CHUNKS_PER_ARROW_FILE.get_or_init(|| {
-        env::var(CHUNKS_PER_ARROW_FILE_ENVIRONMENT_VARIABLE)
-            .ok()
-            .and_then(|raw_value| raw_value.parse::<usize>().ok())
-            .filter(|chunk_count| *chunk_count > 0)
-            .unwrap_or(DEFAULT_REGENIE_STEP2_CHUNKS_PER_ARROW_FILE)
-    })
-}
-
 fn flush_pending_regenie_step2_chunks(
     writer_sender: &Sender<OutputWriteJob>,
     pending_chunks: &mut Vec<RegenieStep2ChunkJob>,
@@ -301,6 +303,7 @@ fn push_worker_error(worker_errors: &Arc<Mutex<Vec<String>>>, error: String) {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn run_output_writer_worker(
     receiver: Receiver<OutputWriteJob>,
     config: OutputWriterConfig,
@@ -308,9 +311,12 @@ fn run_output_writer_worker(
 ) {
     while let Ok(job) = receiver.recv() {
         let write_result = match job {
-            OutputWriteJob::RegenieStep2(regenie_step2_job) => {
-                write_regenie_step2_chunk_job(&config.run_directory, &config.chunks_directory, *regenie_step2_job)
-            }
+            OutputWriteJob::RegenieStep2(regenie_step2_job) => write_regenie_step2_chunk_job(
+                &config.run_directory,
+                &config.chunks_directory,
+                *regenie_step2_job,
+                &config.arrow_compression,
+            ),
             OutputWriteJob::Shutdown => return,
         };
         if let Err(error) = write_result {

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+import getpass
 import typing
 from pathlib import Path
 
@@ -13,17 +13,13 @@ from g import types
 
 DEFAULT_NODE_LOCAL_CACHE_ROOT = Path("/tmp")
 DEFAULT_CACHE_DIRECTORY_NAME = "g-jax-cache"
-G_JAX_CACHE_DIRECTORY_ENVIRONMENT_VARIABLE = "G_JAX_CACHE_DIR"
-JAX_COMPILATION_CACHE_ENVIRONMENT_VARIABLE = "JAX_COMPILATION_CACHE_DIR"
-TRANSFER_GUARD_DIAGNOSTICS_ENVIRONMENT_VARIABLE = "G_JAX_TRANSFER_GUARD_DIAGNOSTICS"
-ENABLE_XLA_AUTOTUNE_CACHE_ENVIRONMENT_VARIABLE = "G_ENABLE_JAX_XLA_AUTOTUNE_CACHE"
 XLA_AUTOTUNE_CACHE_OPTION = "xla_gpu_per_fusion_autotune_cache_dir"
 DISABLE_XLA_CACHE_OPTION = "none"
 
 
 def default_node_local_jax_compilation_cache_directory() -> Path:
     """Build the default node-local JAX compilation cache directory."""
-    user_name = os.environ.get("USER") or "unknown"
+    user_name = getpass.getuser() or "unknown"
     return DEFAULT_NODE_LOCAL_CACHE_ROOT / user_name / DEFAULT_CACHE_DIRECTORY_NAME
 
 
@@ -41,11 +37,8 @@ def path_is_node_local(path: Path) -> bool:
 
 FLOAT_DTYPE = jnp.float32
 JAX_ENABLE_X64 = False
-DEFAULT_MATMUL_PRECISION = os.environ.get(
-    "G_JAX_DEFAULT_MATMUL_PRECISION",
-    "float32",
-)
-ENABLE_PERSISTENT_COMPILATION_CACHE = os.environ.get("G_ENABLE_JAX_PERSISTENT_COMPILATION_CACHE", "1") == "1"
+DEFAULT_MATMUL_PRECISION = "float32"
+ENABLE_PERSISTENT_COMPILATION_CACHE = True
 PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = -1
 PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
 CUDA_PLATFORM_NAME = "cuda"
@@ -55,31 +48,23 @@ NVIDIA_UVM_DEVICE_PATH = Path("/dev/nvidia-uvm")
 NVIDIA_DRIVER_DIRECTORY_PATH = Path("/proc/driver/nvidia")
 
 
-def resolve_jax_compilation_cache_directory() -> Path:
+def resolve_jax_compilation_cache_directory(cache_directory: Path | None = None) -> Path:
     """Resolve the persistent JAX compilation cache directory."""
-    configured_cache_directory = os.environ.get(JAX_COMPILATION_CACHE_ENVIRONMENT_VARIABLE)
-    if configured_cache_directory is not None:
-        return Path(configured_cache_directory).expanduser()
-    configured_g_cache_directory = os.environ.get(G_JAX_CACHE_DIRECTORY_ENVIRONMENT_VARIABLE)
-    if configured_g_cache_directory is not None:
-        return Path(configured_g_cache_directory).expanduser()
+    if cache_directory is not None:
+        return cache_directory.expanduser()
     return default_node_local_jax_compilation_cache_directory()
 
 
-def resolve_xla_cache_option(cache_directory: Path) -> str:
+def resolve_xla_cache_option(cache_directory: Path, *, enable_xla_autotune_cache: bool = False) -> str:
     """Resolve whether XLA auxiliary persistent caches should be enabled."""
-    if (
-        os.environ.get(ENABLE_XLA_AUTOTUNE_CACHE_ENVIRONMENT_VARIABLE, "0") == "1"
-        and path_is_node_local(cache_directory)
-        and not path_is_beegfs(cache_directory)
-    ):
+    if enable_xla_autotune_cache and path_is_node_local(cache_directory) and not path_is_beegfs(cache_directory):
         return XLA_AUTOTUNE_CACHE_OPTION
     return DISABLE_XLA_CACHE_OPTION
 
 
-def transfer_guard_diagnostics_enabled() -> bool:
+def transfer_guard_diagnostics_enabled(*, enable_transfer_guard: bool = False) -> bool:
     """Return whether transfer guard diagnostics should disallow implicit transfers."""
-    return os.environ.get(TRANSFER_GUARD_DIAGNOSTICS_ENVIRONMENT_VARIABLE, "0") == "1"
+    return enable_transfer_guard
 
 
 def nvidia_driver_is_visible() -> bool:
@@ -90,17 +75,36 @@ def nvidia_driver_is_visible() -> bool:
 
 
 jax.config.update("jax_enable_x64", JAX_ENABLE_X64)
-jax.config.update("jax_default_matmul_precision", DEFAULT_MATMUL_PRECISION)
-if ENABLE_PERSISTENT_COMPILATION_CACHE:
-    cache_directory = resolve_jax_compilation_cache_directory()
-    cache_directory.mkdir(parents=True, exist_ok=True)
-    jax.config.update("jax_compilation_cache_dir", str(cache_directory))
-    jax.config.update("jax_persistent_cache_min_entry_size_bytes", PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES)
-    jax.config.update("jax_persistent_cache_min_compile_time_secs", PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS)
-    jax.config.update("jax_persistent_cache_enable_xla_caches", resolve_xla_cache_option(cache_directory))
 
-if transfer_guard_diagnostics_enabled():
-    jax.config.update("jax_transfer_guard", "disallow")
+
+def configure_jax_runtime(
+    *,
+    cache_directory: Path | None = None,
+    matmul_precision: types.JaxMatmulPrecision | None = None,
+    persistent_cache: bool = ENABLE_PERSISTENT_COMPILATION_CACHE,
+    persistent_cache_min_entry_size_bytes: int = PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
+    persistent_cache_min_compile_time_seconds: int = PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
+    xla_autotune_cache: bool = False,
+    transfer_guard: bool = False,
+) -> None:
+    """Configure JAX runtime knobs before engine modules are imported."""
+    precision_value = DEFAULT_MATMUL_PRECISION if matmul_precision is None else matmul_precision.value
+    jax.config.update("jax_default_matmul_precision", precision_value)
+    if persistent_cache:
+        resolved_cache_directory = resolve_jax_compilation_cache_directory(cache_directory)
+        resolved_cache_directory.mkdir(parents=True, exist_ok=True)
+        jax.config.update("jax_compilation_cache_dir", str(resolved_cache_directory))
+        jax.config.update("jax_persistent_cache_min_entry_size_bytes", persistent_cache_min_entry_size_bytes)
+        jax.config.update("jax_persistent_cache_min_compile_time_secs", persistent_cache_min_compile_time_seconds)
+        jax.config.update(
+            "jax_persistent_cache_enable_xla_caches",
+            resolve_xla_cache_option(
+                resolved_cache_directory,
+                enable_xla_autotune_cache=xla_autotune_cache,
+            ),
+        )
+    if transfer_guard_diagnostics_enabled(enable_transfer_guard=transfer_guard):
+        jax.config.update("jax_transfer_guard", "disallow")
 
 
 def configure_jax_device(device: types.Device) -> None:

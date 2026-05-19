@@ -4,30 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 
 from g import _core, types
 
-ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE = (
-    "G_REGENIE2_ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED"
-)
 TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION = 1
 
 
 def assume_trusted_no_missing_diploid_validated() -> bool:
     """Return whether trusted BGEN validation should be treated as already completed."""
-    raw_value = os.environ.get(ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE)
-    if raw_value is None:
-        return False
-    return raw_value.lower() in {"1", "true", "yes", "on"}
+    return False
 
 
 def trusted_bgen_validation_cache_directory() -> Path:
     """Return the trusted BGEN validation cache directory."""
-    xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
-    cache_home = Path(xdg_cache_home) if xdg_cache_home else Path.home() / ".cache"
-    return cache_home / "g" / "bgen_validation"
+    return Path.home() / ".cache" / "g" / "bgen_validation"
 
 
 def build_trusted_bgen_validation_fingerprint(

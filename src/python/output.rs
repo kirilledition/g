@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 use crate::output::{
     OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
+    finalize_output_run_chunks_to_regenie_text as finalize_native_output_run_chunks_to_regenie_text,
     scan_committed_chunk_identifiers as scan_native_committed_chunk_identifiers,
     validate_strict_manifest_chunks as validate_native_strict_manifest_chunks,
 };
@@ -23,7 +24,16 @@ pub(crate) struct OutputWriterSession {
 #[pymethods]
 impl OutputWriterSession {
     #[new]
-    #[pyo3(signature = (run_directory, chunks_directory, association_mode, writer_thread_count=1, writer_queue_depth=1, finalize_parquet=true))]
+    #[pyo3(signature = (
+        run_directory,
+        chunks_directory,
+        association_mode,
+        writer_thread_count=1,
+        writer_queue_depth=1,
+        finalize_parquet=true,
+        chunks_per_arrow_file=4,
+        arrow_compression="zstd".to_string(),
+    ))]
     fn new(
         run_directory: String,
         chunks_directory: String,
@@ -31,6 +41,8 @@ impl OutputWriterSession {
         writer_thread_count: usize,
         writer_queue_depth: usize,
         finalize_parquet: bool,
+        chunks_per_arrow_file: usize,
+        arrow_compression: String,
     ) -> PyResult<Self> {
         let inner = NativeOutputWriterSession::new(
             run_directory,
@@ -39,6 +51,8 @@ impl OutputWriterSession {
             writer_thread_count,
             writer_queue_depth,
             finalize_parquet,
+            chunks_per_arrow_file,
+            arrow_compression,
         )
         .map_err(output_writer_error_to_py)?;
         Ok(Self { inner })
@@ -97,6 +111,16 @@ pub(crate) fn finalize_output_run_chunks(
 ) -> PyResult<String> {
     finalize_native_output_run_chunks(Path::new(&run_directory), Path::new(&chunks_directory), &association_mode)
         .map(|path| path.display().to_string())
+        .map_err(output_writer_error_to_py)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn finalize_output_run_chunks_to_regenie_text(
+    chunks_directory: String,
+    regenie_text_path: String,
+) -> PyResult<()> {
+    finalize_native_output_run_chunks_to_regenie_text(Path::new(&chunks_directory), Path::new(&regenie_text_path))
         .map_err(output_writer_error_to_py)
 }
 

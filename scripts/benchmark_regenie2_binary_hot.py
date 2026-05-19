@@ -24,7 +24,6 @@ DEFAULT_DATA_DIRECTORY = Path("data")
 DEFAULT_OUTPUT_PARENT = Path("data/profiles")
 DEFAULT_VARIANT_COUNT = 418_943
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
-JAX_XLA_AUTOTUNE_CACHE = "xla_gpu_per_fusion_autotune_cache_dir"
 GPU_JAX_CACHE_PARENT_DEFAULT = "/tmp/g-jax-binary-hot-cache"
 ENABLE_XLA_AUTOTUNE_CACHE = os.environ.get("G_PROFILE_ENABLE_XLA_AUTOTUNE_CACHE") == "1"
 
@@ -366,6 +365,7 @@ def trial_result_from_json_dict(payload: dict[str, typing.Any]) -> TrialResult:
 
 def build_trial_environment(configuration: BenchmarkConfiguration, stage_timing_path: Path | None) -> dict[str, str]:
     """Build environment overrides for one benchmark trial."""
+    del stage_timing_path
     python_path_entries = [str(REPOSITORY_ROOT)]
     existing_python_path = os.environ.get("PYTHONPATH")
     if existing_python_path:
@@ -373,20 +373,8 @@ def build_trial_environment(configuration: BenchmarkConfiguration, stage_timing_
     environment = {
         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
         "XLA_PYTHON_CLIENT_MEM_FRACTION": ".50",
-        "JAX_COMPILATION_CACHE_DIR": str(configuration.jax_cache_directory),
-        "JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES": "-1",
-        "JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS": "0",
-        "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE": str(configuration.firth_batch_size),
         "PYTHONPATH": os.pathsep.join(python_path_entries),
     }
-    if ENABLE_XLA_AUTOTUNE_CACHE:
-        environment["JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES"] = JAX_XLA_AUTOTUNE_CACHE
-    if configuration.device == types.Device.CPU:
-        environment["JAX_PLATFORMS"] = "cpu"
-    if configuration.assume_trusted_validated:
-        environment["G_REGENIE2_ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED"] = "1"
-    if stage_timing_path is not None:
-        environment["G_REGENIE2_STAGE_TIMINGS_JSON"] = str(stage_timing_path)
     return environment
 
 
@@ -410,24 +398,31 @@ def build_compute_config(
     configuration: BenchmarkConfiguration,
     output_root: Path,
     finalize_parquet: bool,
-) -> api.ComputeConfig:
-    """Build the API compute configuration for one trial."""
-    return api.ComputeConfig(
-        device=configuration.device,
-        chunk_size=configuration.chunk_size,
-        variant_limit=configuration.variant_limit,
-        staging_depth=configuration.staging_depth,
-        output_run_directory=output_root,
-        finalize_parquet=finalize_parquet,
-        output_writer_thread_count=configuration.output_writer_thread_count,
-        output_writer_queue_depth=configuration.output_writer_queue_depth,
-        trusted_no_missing_diploid=configuration.trusted_no_missing_diploid,
-        trusted_bgen_validation_mode=(
+    stage_timing_path: Path | None,
+) -> dict[str, object]:
+    """Build g-specific options for one trial."""
+    return {
+        "g-device": configuration.device.value,
+        "bsize": configuration.chunk_size,
+        "g-variant-limit": configuration.variant_limit,
+        "g-staging-depth": configuration.staging_depth,
+        "g-output-run-directory": output_root,
+        "g-output-format": "parquet" if finalize_parquet else "arrow",
+        "g-jax-cache-dir": configuration.jax_cache_directory,
+        "g-jax-persistent-cache-min-entry-size-bytes": -1,
+        "g-jax-persistent-cache-min-compile-time-seconds": 0,
+        "g-jax-xla-autotune-cache": ENABLE_XLA_AUTOTUNE_CACHE,
+        "g-firth-batch-size": configuration.firth_batch_size,
+        "g-stage-timings-json": stage_timing_path,
+        "g-writer-threads": configuration.output_writer_thread_count,
+        "g-writer-queue-depth": configuration.output_writer_queue_depth,
+        "g-trusted-no-missing-diploid": configuration.trusted_no_missing_diploid,
+        "g-trusted-bgen-validation-mode": (
             types.TrustedBgenValidationMode.ASSUME_VALIDATED
             if configuration.assume_trusted_validated
             else types.TrustedBgenValidationMode.CACHE_ON_MISS
-        ),
-    )
+        ).value,
+    }
 
 
 def run_regenie2_api_call(
@@ -435,25 +430,31 @@ def run_regenie2_api_call(
     configuration: BenchmarkConfiguration,
     trial_spec: TrialSpec,
     output_root: Path,
+    stage_timing_path: Path | None = None,
 ) -> api.RunArtifacts:
     """Run binary REGENIE step 2 through the public Python API."""
     data_directory = configuration.data_directory
-    return api.regenie2(
-        bgen=data_directory / "1kg_chr22_full.bgen",
-        sample=data_directory / "1kg_chr22_full.sample",
-        pheno=data_directory / "pheno_bin.txt",
-        pheno_name="phenotype_binary",
-        out=output_root,
-        covar=data_directory / "covariates.txt",
-        covar_names="age,sex",
-        pred=data_directory / "baselines/regenie_step1_pred.list",
-        trait_type=types.RegenieTraitType.BINARY,
-        compute=build_compute_config(
-            configuration=configuration,
-            output_root=output_root,
-            finalize_parquet=trial_spec.finalize_parquet,
-        ),
-        binary=api.Regenie2BinaryConfig(firth=True, approx=True),
+    return api.regenie.from_options(
+        {
+            "step": 2,
+            "bt": True,
+            "bgen": data_directory / "1kg_chr22_full.bgen",
+            "sample": data_directory / "1kg_chr22_full.sample",
+            "phenoFile": data_directory / "pheno_bin.txt",
+            "phenoCol": "phenotype_binary",
+            "out": output_root,
+            "covarFile": data_directory / "covariates.txt",
+            "covarColList": "age,sex",
+            "pred": data_directory / "baselines/regenie_step1_pred.list",
+            "firth": True,
+            "approx": True,
+            **build_compute_config(
+                configuration=configuration,
+                output_root=output_root,
+                finalize_parquet=trial_spec.finalize_parquet,
+                stage_timing_path=stage_timing_path,
+            ),
+        }
     )
 
 
@@ -530,6 +531,7 @@ def run_api_trial(
             configuration=configuration,
             trial_spec=trial_spec,
             output_root=output_root,
+            stage_timing_path=stage_timing_path,
         )
         wall_time_seconds = time.perf_counter() - start_time
     return TrialResult(

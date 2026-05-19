@@ -17,6 +17,7 @@ mod metadata;
 mod profile;
 mod sample_selection;
 mod trusted;
+pub use decode::set_decode_tile_variant_count as set_bgen_decode_tile_variant_count;
 use decode::{
     DosageTileDecodeResult, ThreadScratch, decode_tile_variant_count, decode_variant_dosage_tile_into_row_major_matrix,
     read_exact_bytes, read_probability_block, read_u32_at, u32_to_usize,

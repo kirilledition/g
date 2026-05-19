@@ -539,14 +539,8 @@ def test_binary_pipeline_uses_sample_major_engine_for_untrusted_bgen() -> None:
     assert engine.run_method == "buffered"
 
 
-def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated() -> None:
     FakeRunEngine.instances.clear()
-    monkeypatch.setenv(
-        regenie2_pipeline.ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE,
-        "1",
-    )
 
     with patch("g.engine.regenie2_pipeline._core.Regenie2RunEngine", FakeRunEngine):
         engine = regenie2_pipeline.build_bgen_run_engine(
@@ -554,6 +548,7 @@ def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated(
             chunk_size=32,
             variant_limit=100,
             trusted_no_missing_diploid=True,
+            trusted_bgen_validation_mode=types.TrustedBgenValidationMode.ASSUME_VALIDATED,
         )
 
     assert isinstance(engine, FakeRunEngine)

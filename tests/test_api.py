@@ -1,298 +1,152 @@
 from __future__ import annotations
 
-import subprocess
-import sys
-import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 import g
-from g import api
-from g.api import (
-    ComputeConfig,
-    RunArtifacts,
-    SampleAlignmentConfig,
-    parse_covariate_name_list,
-    regenie2,
-    regenie2_linear,
-    resolve_compute_staging_depth,
-    validate_compute_config,
-    validate_sample_alignment_config,
-)
+from g import api, types
+from g.io import output
 from g.io.output import OutputRunPaths, PreparedOutputRun
-from g.types import AssociationMode, Device, RegenieTraitType, SampleKeyMode
 
 
-def test_public_package_no_longer_exposes_direct_linear_or_logistic() -> None:
-    assert not hasattr(g, "linear")
-    assert not hasattr(g, "logistic")
-
-
-def test_public_package_exports_include_general_and_linear_regenie2() -> None:
-    assert "regenie2" in g.__all__
-    assert "regenie2_linear" in g.__all__
-    assert "Regenie2BinaryConfig" in g.__all__
-    assert "SampleAlignmentConfig" in g.__all__
-    assert "SampleKeyMode" in g.__all__
-    assert "RegenieBinaryCorrection" not in g.__all__
-    assert g.regenie2 is api.regenie2
-    assert g.regenie2_linear is api.regenie2_linear
-    assert g.SampleAlignmentConfig is api.SampleAlignmentConfig
-
-
-def test_importing_api_does_not_import_polars() -> None:
-    completed_process = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; import g.api; raise SystemExit('polars' in sys.modules)",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
+def build_minimal_config() -> api.RegenieConfig:
+    return api.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "sample": "dataset.sample",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "covarColList": "age,sex",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "g-output-format": "parquet",
+        }
     )
 
-    assert completed_process.returncode == 0, completed_process.stderr
+
+def test_public_package_exposes_only_new_regenie_interface() -> None:
+    assert "regenie" in g.__all__
+    assert "RegenieConfig" in g.__all__
+    assert "InputConfig" in g.__all__
+    assert "TraitConfig" in g.__all__
+    assert "BinaryConfig" in g.__all__
+    assert "GComputeConfig" in g.__all__
+    assert "GDiagnosticsConfig" in g.__all__
+    assert "GOutputConfig" in g.__all__
+    assert "regenie2" not in g.__all__
+    assert "regenie2_linear" not in g.__all__
+    assert "ComputeConfig" not in g.__all__
+    assert g.regenie is api.regenie
 
 
-def test_cli_help_does_not_import_polars() -> None:
-    command = textwrap.dedent(
-        """
-        import sys
-        from typer.testing import CliRunner
-        from g.cli import app
-
-        result = CliRunner().invoke(app, ["--help"])
-        if result.exit_code != 0:
-            print(result.output)
-            raise SystemExit(result.exit_code)
-        raise SystemExit("polars" in sys.modules)
-        """
+def test_regenie_config_from_options_maps_regenie_names() -> None:
+    regenie_config = api.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "bt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoColList": "trait_a,trait_b",
+            "covarCol": ["age", "sex"],
+            "pred": "predictions.list",
+            "out": "results/output",
+            "firth": True,
+            "approx": True,
+            "pThresh": 0.01,
+            "g-device": "gpu",
+            "g-output-format": "both",
+        }
     )
-    completed_process = subprocess.run(
-        [sys.executable, "-c", command],
-        check=False,
-        capture_output=True,
-        text=True,
+
+    assert regenie_config.input.bgen == Path("dataset.bgen")
+    assert regenie_config.input.pheno_columns == ("trait_a", "trait_b")
+    assert regenie_config.input.covar_columns == ("age", "sex")
+    assert regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
+    assert regenie_config.binary.p_threshold == 0.01
+    assert regenie_config.g_compute.device == types.Device.GPU
+    assert regenie_config.g_output.format == types.OutputFormat.BOTH
+
+
+def test_normalize_binary_correction_config_maps_approximate_firth() -> None:
+    plan = api.normalize_binary_correction_config(api.BinaryConfig(firth=True, approx=True, p_threshold=0.01))
+
+    assert plan == types.BinaryCorrectionPlan(
+        method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+        p_threshold=0.01,
+        firth_se=False,
     )
 
-    assert completed_process.returncode == 0, completed_process.stderr
 
-
-def test_parse_covariate_name_list_handles_string_input() -> None:
-    assert parse_covariate_name_list(" age, sex ,, bmi ") == ("age", "sex", "bmi")
-
-
-def test_parse_covariate_name_list_handles_iterable_input() -> None:
-    assert parse_covariate_name_list(["age", " sex ", ""]) == ("age", "sex")
-
-
-def test_regenie2_linear_uses_bgen_input_and_prediction_list() -> None:
+def test_regenie_callable_dispatches_linear_pipeline() -> None:
+    run_paths = OutputRunPaths(
+        run_directory=Path("results/output.g/trait.regenie2_linear.run"),
+        chunks_directory=Path("results/output.g/trait.regenie2_linear.run/chunks"),
+    )
     with (
         patch("g.api.configure_jax_device") as mock_configure_jax_device,
         patch(
-            "g.api.prepare_output_run",
-            return_value=PreparedOutputRun(
-                output_run_paths=OutputRunPaths(
-                    run_directory=Path("results/output.regenie2_linear.run"),
-                    chunks_directory=Path("results/output.regenie2_linear.run/chunks"),
-                ),
-                committed_chunk_identifiers=frozenset(),
-            ),
-        ),
+            "g.api.output.prepare_output_run",
+            return_value=PreparedOutputRun(output_run_paths=run_paths, committed_chunk_identifiers=frozenset({3})),
+        ) as mock_prepare_output_run,
         patch("g.api.run_regenie2_linear_bgen_pipeline") as mock_pipeline,
+        patch("g.api.output.finalize_chunks_to_regenie_text") as mock_finalize_regenie,
+        patch("g.api.extend_run_manifest") as mock_extend_run_manifest,
+        patch("g.interface.config.write_toml") as mock_write_toml,
     ):
-        mock_pipeline.return_value = Path("results/output.regenie2_linear.run/final.parquet")
-        artifacts = regenie2_linear(
-            bgen="dataset.bgen",
-            sample="dataset.sample",
-            pheno="phenotype.tsv",
-            pheno_name="trait",
-            out="results/output",
-            covar_names="age,sex",
-            pred="predictions.list",
-        )
+        mock_pipeline.return_value = Path("results/output.g/trait.regenie2_linear.run/final.parquet")
+        artifacts = api.regenie(build_minimal_config())
 
-    assert artifacts == RunArtifacts(
-        output_run_directory=Path("results/output.regenie2_linear.run"),
-        final_parquet=Path("results/output.regenie2_linear.run/final.parquet"),
-    )
-    mock_configure_jax_device.assert_called_once_with(Device.CPU)
+    assert artifacts.output_run_directory == Path("results/output.g/trait.regenie2_linear.run")
+    assert artifacts.final_parquet == Path("results/output.g/trait.regenie2_linear.run/final.parquet")
+    assert artifacts.final_regenie is None
+    mock_configure_jax_device.assert_called_once_with(types.Device.CPU)
+    mock_prepare_output_run.assert_called_once()
+    assert mock_pipeline.call_args.kwargs["committed_chunk_identifiers"] == {3}
     assert mock_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_pipeline.call_args.kwargs["prediction_list_path"] == Path("predictions.list")
-    assert mock_pipeline.call_args.kwargs["alignment_config"] == SampleAlignmentConfig()
-    genotype_source_config = mock_pipeline.call_args.kwargs["genotype_source_config"]
-    assert genotype_source_config.source_path == Path("dataset.bgen")
-    assert genotype_source_config.sample_path == Path("dataset.sample")
-    mock_pipeline.assert_called_once()
+    assert mock_pipeline.call_args.kwargs["alignment_config"].sample_key_mode == types.SampleKeyMode.IID
+    assert mock_pipeline.call_args.kwargs["chunks_per_arrow_file"] == 4
+    assert mock_pipeline.call_args.kwargs["arrow_compression"] == types.ArrowCompression.ZSTD
+    mock_finalize_regenie.assert_not_called()
+    mock_extend_run_manifest.assert_called_once()
+    mock_write_toml.assert_called_once()
 
 
-def test_regenie2_binary_dispatches_native_pipeline_and_output_mode() -> None:
-    with (
-        patch("g.api.configure_jax_device"),
-        patch(
-            "g.api.prepare_output_run",
-            return_value=PreparedOutputRun(
-                output_run_paths=OutputRunPaths(
-                    run_directory=Path("results/output.regenie2_binary.run"),
-                    chunks_directory=Path("results/output.regenie2_binary.run/chunks"),
-                ),
-                committed_chunk_identifiers=frozenset({5}),
-            ),
-        ) as mock_prepare_output_run,
-        patch("g.api.run_regenie2_binary_bgen_pipeline") as mock_pipeline,
-        patch("g.api.warm_regenie2_binary_bgen_cache") as mock_warm_cache,
-    ):
-        mock_pipeline.return_value = Path("results/output.regenie2_binary.run/final.parquet")
-        artifacts = regenie2(
-            bgen="dataset.bgen",
-            sample="dataset.sample",
-            pheno="phenotype.tsv",
-            pheno_name="trait",
-            out="results/output",
-            covar_names="age,sex",
-            pred="predictions.list",
-            trait_type=RegenieTraitType.BINARY,
-            compute=ComputeConfig(
-                resume=True,
-                warm_cache_first=True,
-                trusted_no_missing_diploid=True,
-                trusted_bgen_validation_mode=api.types.TrustedBgenValidationMode.ASSUME_VALIDATED,
-            ),
-            alignment=SampleAlignmentConfig(sample_key_mode=SampleKeyMode.FID_IID),
+def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:
+    with patch("g.api.run_one_phenotype_config") as mock_run_one_phenotype_config:
+        mock_run_one_phenotype_config.side_effect = [
+            api.RunArtifacts(output_run_directory=Path("one")),
+            api.RunArtifacts(output_run_directory=Path("two")),
+        ]
+        artifacts = api.regenie.from_options(
+            {
+                "step": 2,
+                "qt": True,
+                "bgen": "dataset.bgen",
+                "phenoFile": "phenotype.tsv",
+                "phenoColList": "one,two",
+                "pred": "predictions.list",
+                "out": "results/output",
+            }
         )
 
-    assert artifacts == RunArtifacts(
-        output_run_directory=Path("results/output.regenie2_binary.run"),
-        final_parquet=Path("results/output.regenie2_binary.run/final.parquet"),
-    )
-    assert mock_pipeline.call_args.kwargs["committed_chunk_identifiers"] == {5}
-    assert mock_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
-    assert mock_prepare_output_run.call_args.kwargs["association_mode"] == AssociationMode.REGENIE2_BINARY
-    assert mock_pipeline.call_args.kwargs["writer_thread_count"] == api.output.DEFAULT_WRITER_THREAD_COUNT
-    assert mock_pipeline.call_args.kwargs["trusted_no_missing_diploid"] is True
-    assert (
-        mock_pipeline.call_args.kwargs["trusted_bgen_validation_mode"]
-        == api.types.TrustedBgenValidationMode.ASSUME_VALIDATED
-    )
-    assert mock_pipeline.call_args.kwargs["correction_plan"].method == api.types.BinaryFallbackMethod.SCORE_ONLY
-    assert mock_pipeline.call_args.kwargs["alignment_config"].sample_key_mode == SampleKeyMode.FID_IID
-    mock_warm_cache.assert_called_once()
-    assert mock_warm_cache.call_args.kwargs["trusted_no_missing_diploid"] is True
-    assert (
-        mock_warm_cache.call_args.kwargs["trusted_bgen_validation_mode"]
-        == api.types.TrustedBgenValidationMode.ASSUME_VALIDATED
-    )
-    assert mock_warm_cache.call_args.kwargs["correction_plan"].method == api.types.BinaryFallbackMethod.SCORE_ONLY
-    assert mock_warm_cache.call_args.kwargs["alignment_config"].sample_key_mode == SampleKeyMode.FID_IID
+    assert len(artifacts.phenotype_artifacts) == 2
+    assert mock_run_one_phenotype_config.call_args_list[0].args[1] == "one"
+    assert mock_run_one_phenotype_config.call_args_list[1].args[1] == "two"
 
 
-@pytest.mark.parametrize(
-    ("compute_config", "expected_message"),
-    [
-        (ComputeConfig(chunk_size=0), "Chunk size must be positive"),
-        (ComputeConfig(variant_limit=0), "Variant limit must be positive"),
-        (ComputeConfig(staging_depth=-1), "Staging depth must be zero or positive"),
-        (ComputeConfig(prefetch_chunks=-1), "Prefetch chunk count must be zero or positive"),
-        (ComputeConfig(output_writer_thread_count=0), "Output writer thread count must be positive"),
-        (ComputeConfig(output_writer_queue_depth=0), "Output writer queue depth must be positive"),
-    ],
-)
-def test_validate_compute_config_rejects_invalid_values(
-    compute_config: ComputeConfig,
-    expected_message: str,
-) -> None:
-    with pytest.raises(ValueError, match=expected_message):
-        validate_compute_config(compute_config)
+def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
+    run_paths = output.OutputRunPaths(tmp_path, tmp_path / "chunks")
+    run_paths.chunks_directory.mkdir()
+    output.write_run_manifest(run_paths, output.build_initial_run_manifest(types.AssociationMode.REGENIE2_LINEAR))
+    regenie_config = build_minimal_config()
 
+    api.extend_run_manifest(tmp_path, regenie_config, "trait", tmp_path / "effective_config.toml")
 
-def test_prefetch_chunks_is_deprecated_alias_for_staging_depth() -> None:
-    compute_config = ComputeConfig(staging_depth=2, prefetch_chunks=4)
-
-    with pytest.warns(DeprecationWarning, match="prefetch_chunks is deprecated"):
-        staging_depth = resolve_compute_staging_depth(compute_config)
-
-    assert staging_depth == 4
-
-
-def test_validate_sample_alignment_config_rejects_duplicate_flag_in_fid_iid_mode() -> None:
-    with pytest.raises(ValueError, match="only supported when sample_key_mode='iid'"):
-        validate_sample_alignment_config(
-            SampleAlignmentConfig(
-                sample_key_mode=SampleKeyMode.FID_IID,
-                allow_duplicate_iid_alignment=True,
-            )
-        )
-
-
-def test_regenie2_linear_chunked_output_returns_run_artifacts_without_finalization() -> None:
-    mock_output_run_paths = OutputRunPaths(
-        run_directory=Path("results/output.regenie2_linear.run"),
-        chunks_directory=Path("results/output.regenie2_linear.run/chunks"),
-    )
-
-    with (
-        patch("g.api.configure_jax_device") as mock_configure_jax_device,
-        patch(
-            "g.api.prepare_output_run",
-            return_value=PreparedOutputRun(
-                output_run_paths=mock_output_run_paths,
-                committed_chunk_identifiers=frozenset({3}),
-            ),
-        ) as mock_prepare_output_run,
-        patch("g.api.run_regenie2_linear_bgen_pipeline") as mock_pipeline,
-    ):
-        mock_pipeline.return_value = None
-        artifacts = regenie2_linear(
-            bgen="dataset.bgen",
-            pheno="phenotype.tsv",
-            pheno_name="trait",
-            out="results/output",
-            pred="predictions.list",
-            compute=ComputeConfig(
-                output_run_directory=Path("results/output"),
-                resume=True,
-                finalize_parquet=False,
-            ),
-        )
-
-    assert artifacts == RunArtifacts(
-        output_run_directory=Path("results/output.regenie2_linear.run"),
-        final_parquet=None,
-    )
-    mock_configure_jax_device.assert_called_once_with(Device.CPU)
-    assert mock_pipeline.call_args.kwargs["committed_chunk_identifiers"] == {3}
-    mock_pipeline.assert_called_once()
-    assert mock_pipeline.call_args.kwargs["writer_thread_count"] == api.output.DEFAULT_WRITER_THREAD_COUNT
-    assert mock_pipeline.call_args.kwargs["writer_queue_depth"] == api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
-    mock_prepare_output_run.assert_called_once()
-
-
-def test_regenie2_linear_passes_internal_output_writer_configuration() -> None:
-    with (
-        patch("g.api.configure_jax_device"),
-        patch(
-            "g.api.prepare_output_run",
-            return_value=PreparedOutputRun(
-                output_run_paths=OutputRunPaths(
-                    run_directory=Path("results/output.regenie2_linear.run"),
-                    chunks_directory=Path("results/output.regenie2_linear.run/chunks"),
-                ),
-                committed_chunk_identifiers=frozenset(),
-            ),
-        ),
-        patch("g.api.run_regenie2_linear_bgen_pipeline") as mock_pipeline,
-    ):
-        regenie2_linear(
-            bgen="dataset.bgen",
-            pheno="phenotype.tsv",
-            pheno_name="trait",
-            out="results/output",
-            pred="predictions.list",
-            compute=ComputeConfig(output_writer_thread_count=2, output_writer_queue_depth=3),
-        )
-
-    assert mock_pipeline.call_args.kwargs["writer_thread_count"] == 2
-    assert mock_pipeline.call_args.kwargs["writer_queue_depth"] == 3
+    manifest = output.load_run_manifest(run_paths)
+    assert manifest is not None
+    assert manifest["command"]["interface"] == "g regenie"
+    assert manifest["command"]["phenotype"] == "trait"
+    assert manifest["input_fingerprints"]["bgen"]["missing"] is True

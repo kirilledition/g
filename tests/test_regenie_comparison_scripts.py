@@ -127,9 +127,9 @@ def test_tuning_benchmark_builds_trial_environment_from_low_level_knobs() -> Non
         firth_batch_size=64,
     )
     environment = tuning_benchmark.build_step2_trial_environment(candidate)
-    assert environment["G_BGEN_DECODE_TILE_VARIANT_COUNT"] == "128"
-    assert environment["RAYON_NUM_THREADS"] == "4"
-    assert environment["G_REGENIE2_BINARY_FIRTH_BATCH_SIZE"] == "64"
+    assert "G_BGEN_DECODE_TILE_VARIANT_COUNT" not in environment
+    assert "RAYON_NUM_THREADS" not in environment
+    assert "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE" not in environment
 
 
 def test_tuning_benchmark_builds_shared_compute_candidates() -> None:
@@ -481,9 +481,9 @@ def test_binary_hot_child_process_command_contains_binary_controls(tmp_path: Pat
     assert "benchmark_regenie2_binary_hot" in command_text
     assert "trusted_no_missing_diploid" in command_text
     assert "variant_limit" in command_text
-    assert child_command.environment_overrides["G_REGENIE2_BINARY_FIRTH_BATCH_SIZE"] == "64"
-    assert child_command.environment_overrides["G_REGENIE2_ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED"] == "1"
-    assert child_command.environment_overrides["JAX_PLATFORMS"] == "cpu"
+    assert "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE" not in child_command.environment_overrides
+    assert "G_REGENIE2_ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED" not in child_command.environment_overrides
+    assert "JAX_PLATFORMS" not in child_command.environment_overrides
 
 
 def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
@@ -558,11 +558,11 @@ def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pyte
         cache_directory=tmp_path / "jax_cache",
         stage_timing_path=tmp_path / "stages.json",
     )
-    assert environment["JAX_COMPILATION_CACHE_DIR"] == str(tmp_path / "gpu_cache" / "12345" / "jax_cache")
-    assert environment["G_REGENIE2_STAGE_TIMINGS_JSON"] == str(tmp_path / "stages.json")
-    assert environment["G_BGEN_DECODE_TILE_VARIANT_COUNT"] == "128"
-    assert environment["RAYON_NUM_THREADS"] == "2"
-    assert environment["G_REGENIE2_BINARY_FIRTH_BATCH_SIZE"] == "64"
+    assert "JAX_COMPILATION_CACHE_DIR" not in environment
+    assert "G_REGENIE2_STAGE_TIMINGS_JSON" not in environment
+    assert "G_BGEN_DECODE_TILE_VARIANT_COUNT" not in environment
+    assert "RAYON_NUM_THREADS" not in environment
+    assert "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE" not in environment
     assert "JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES" not in environment
 
 
@@ -588,10 +588,10 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
     command_text = command[2]
     assert command[:2] == [sys.executable, "-c"]
     assert "phenotype_binary" in command_text
-    assert "types.Device('cpu')" in command_text
-    assert "chunk_size=4096" in command_text
-    assert "variant_limit=1000" in command_text
-    assert "Regenie2BinaryConfig(firth=True, approx=True)" in command_text
+    assert "\"g-device\": 'cpu'" in command_text
+    assert '"bsize": 4096' in command_text
+    assert '"g-variant-limit": 1000' in command_text
+    assert '"firth": True' in command_text
     assert "jax_probe_device_platform" in command_text
 
 

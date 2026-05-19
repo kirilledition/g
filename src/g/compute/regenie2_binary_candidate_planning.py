@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import functools
 import math
-import os
 import typing
 from dataclasses import dataclass
 
@@ -16,32 +15,35 @@ import g.types as g_types
 
 DEFAULT_FIRTH_BATCH_SIZE = 64
 DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
+configured_firth_batch_size = DEFAULT_FIRTH_BATCH_SIZE
+configured_firth_candidate_capacity = DEFAULT_FIRTH_CANDIDATE_CAPACITY
+
+
+def configure_firth_candidate_planning(*, firth_batch_size: int, firth_candidate_capacity: int) -> None:
+    """Configure fixed-shape Firth planning settings."""
+    if firth_batch_size <= 0:
+        message = "Firth batch size must be positive."
+        raise ValueError(message)
+    if firth_candidate_capacity <= 0:
+        message = "Firth candidate capacity must be positive."
+        raise ValueError(message)
+    global configured_firth_batch_size, configured_firth_candidate_capacity
+    configured_firth_batch_size = firth_batch_size
+    configured_firth_candidate_capacity = firth_candidate_capacity
+    get_firth_batch_size.cache_clear()
+    get_firth_candidate_capacity.cache_clear()
 
 
 @functools.cache
 def get_firth_batch_size() -> int:
-    """Resolve the active fixed Firth batch size from the environment."""
-    raw_value = os.environ.get("G_REGENIE2_BINARY_FIRTH_BATCH_SIZE")
-    if raw_value is None:
-        return DEFAULT_FIRTH_BATCH_SIZE
-    parsed_value = int(raw_value)
-    if parsed_value <= 0:
-        message = "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE must be positive."
-        raise ValueError(message)
-    return parsed_value
+    """Resolve the active fixed Firth batch size."""
+    return configured_firth_batch_size
 
 
 @functools.cache
 def get_firth_candidate_capacity() -> int:
-    """Resolve the active fixed Firth candidate lane capacity from the environment."""
-    raw_value = os.environ.get("G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY")
-    if raw_value is None:
-        return DEFAULT_FIRTH_CANDIDATE_CAPACITY
-    parsed_value = int(raw_value)
-    if parsed_value <= 0:
-        message = "G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY must be positive."
-        raise ValueError(message)
-    return parsed_value
+    """Resolve the active fixed Firth candidate lane capacity."""
+    return configured_firth_candidate_capacity
 
 
 @jax.tree_util.register_dataclass

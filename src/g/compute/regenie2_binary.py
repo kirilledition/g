@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import functools
-import os
 import typing
 from dataclasses import dataclass
 
@@ -38,7 +37,14 @@ FIRTH_MAXIMUM_STEP_SIZE = 5.0
 FIRTH_MAXIMUM_ITERATIONS = 50
 DEFAULT_FIRTH_BATCH_SIZE = regenie2_binary_candidate_planning.DEFAULT_FIRTH_BATCH_SIZE
 DEFAULT_FIRTH_CANDIDATE_CAPACITY = regenie2_binary_candidate_planning.DEFAULT_FIRTH_CANDIDATE_CAPACITY
-BLOCK_FIRTH_MATH_ENVIRONMENT_VARIABLE = "G_REGENIE2_BINARY_USE_BLOCK_FIRTH_MATH"
+configured_maximum_null_iterations = DEFAULT_MAXIMUM_NULL_ITERATIONS
+configured_null_logistic_coefficient_tolerance = NULL_LOGISTIC_COEFFICIENT_TOLERANCE
+configured_firth_gradient_tolerance = FIRTH_GRADIENT_TOLERANCE
+configured_firth_coefficient_tolerance = FIRTH_COEFFICIENT_TOLERANCE
+configured_firth_likelihood_tolerance = FIRTH_LIKELIHOOD_TOLERANCE
+configured_firth_maximum_step_size = FIRTH_MAXIMUM_STEP_SIZE
+configured_firth_maximum_iterations = FIRTH_MAXIMUM_ITERATIONS
+configured_use_block_firth_math = False
 
 BinaryScoreTestChunkComputeFunction = typing.Callable[
     [regenie2_types.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan],
@@ -58,13 +64,86 @@ get_firth_batch_size = regenie2_binary_candidate_planning.get_firth_batch_size
 get_firth_candidate_capacity = regenie2_binary_candidate_planning.get_firth_candidate_capacity
 
 
+def configure_binary_runtime(
+    *,
+    maximum_null_iterations: int,
+    null_logistic_coefficient_tolerance: float,
+    firth_maximum_iterations: int,
+    firth_gradient_tolerance: float,
+    firth_coefficient_tolerance: float,
+    firth_likelihood_tolerance: float,
+    firth_maximum_step_size: float,
+    use_block_firth_math: bool,
+) -> None:
+    """Configure binary solver settings used when kernels are traced."""
+    global configured_maximum_null_iterations, configured_null_logistic_coefficient_tolerance
+    global configured_firth_gradient_tolerance, configured_firth_coefficient_tolerance
+    global configured_firth_likelihood_tolerance, configured_firth_maximum_step_size
+    global configured_firth_maximum_iterations, configured_use_block_firth_math
+    configured_maximum_null_iterations = maximum_null_iterations
+    configured_null_logistic_coefficient_tolerance = null_logistic_coefficient_tolerance
+    configured_firth_maximum_iterations = firth_maximum_iterations
+    configured_firth_gradient_tolerance = firth_gradient_tolerance
+    configured_firth_coefficient_tolerance = firth_coefficient_tolerance
+    configured_firth_likelihood_tolerance = firth_likelihood_tolerance
+    configured_firth_maximum_step_size = firth_maximum_step_size
+    configured_use_block_firth_math = use_block_firth_math
+    get_maximum_null_iterations.cache_clear()
+    get_null_logistic_coefficient_tolerance.cache_clear()
+    get_firth_maximum_iterations.cache_clear()
+    get_firth_gradient_tolerance.cache_clear()
+    get_firth_coefficient_tolerance.cache_clear()
+    get_firth_likelihood_tolerance.cache_clear()
+    get_firth_maximum_step_size.cache_clear()
+    get_use_block_firth_math.cache_clear()
+
+
+@functools.cache
+def get_maximum_null_iterations() -> int:
+    """Return the configured null logistic iteration cap."""
+    return configured_maximum_null_iterations
+
+
+@functools.cache
+def get_null_logistic_coefficient_tolerance() -> float:
+    """Return the configured null logistic coefficient tolerance."""
+    return configured_null_logistic_coefficient_tolerance
+
+
+@functools.cache
+def get_firth_gradient_tolerance() -> float:
+    """Return the configured Firth gradient tolerance."""
+    return configured_firth_gradient_tolerance
+
+
+@functools.cache
+def get_firth_coefficient_tolerance() -> float:
+    """Return the configured Firth coefficient tolerance."""
+    return configured_firth_coefficient_tolerance
+
+
+@functools.cache
+def get_firth_likelihood_tolerance() -> float:
+    """Return the configured Firth likelihood tolerance."""
+    return configured_firth_likelihood_tolerance
+
+
+@functools.cache
+def get_firth_maximum_step_size() -> float:
+    """Return the configured Firth maximum step size."""
+    return configured_firth_maximum_step_size
+
+
+@functools.cache
+def get_firth_maximum_iterations() -> int:
+    """Return the configured Firth iteration cap."""
+    return configured_firth_maximum_iterations
+
+
 @functools.cache
 def get_use_block_firth_math() -> bool:
     """Resolve whether experimental block Firth math is enabled."""
-    raw_value = os.environ.get(BLOCK_FIRTH_MATH_ENVIRONMENT_VARIABLE)
-    if raw_value is None:
-        return False
-    return raw_value.lower() in {"1", "true", "yes", "on"}
+    return configured_use_block_firth_math
 
 
 @jax.tree_util.register_dataclass
@@ -235,13 +314,15 @@ def fit_null_logistic_coefficients(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
     loco_offset: jax.Array,
-    maximum_iterations: int = DEFAULT_MAXIMUM_NULL_ITERATIONS,
+    maximum_iterations: int | None = None,
 ) -> NullLogisticFitState:
     """Fit a covariate-only logistic null model with a fixed LOCO offset."""
     covariate_count = covariate_matrix.shape[1]
+    resolved_maximum_iterations = get_maximum_null_iterations() if maximum_iterations is None else maximum_iterations
+    coefficient_tolerance = get_null_logistic_coefficient_tolerance()
 
     def condition_function(state: NullLogisticFitState) -> jax.Array:
-        return (state.iteration_count < maximum_iterations) & (~state.converged)
+        return (state.iteration_count < resolved_maximum_iterations) & (~state.converged)
 
     def body_function(state: NullLogisticFitState) -> NullLogisticFitState:
         linear_predictor = covariate_matrix @ state.coefficients + loco_offset
@@ -254,9 +335,7 @@ def fit_null_logistic_coefficients(
         )
         coefficient_delta = regenie2_linear.solve_positive_definite_system(cholesky_factor, score_vector)
         updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)
-        converged = (updated_iteration_count > 0) & (
-            jnp.max(jnp.abs(coefficient_delta)) <= NULL_LOGISTIC_COEFFICIENT_TOLERANCE
-        )
+        converged = (updated_iteration_count > 0) & (jnp.max(jnp.abs(coefficient_delta)) <= coefficient_tolerance)
         return NullLogisticFitState(
             coefficients=state.coefficients + coefficient_delta,
             iteration_count=updated_iteration_count,
@@ -547,7 +626,7 @@ def fit_covariate_only_firth_null_model(
     """Fit the covariate-only Firth null model and return its penalized log-likelihood."""
 
     def condition_function(state: FirthState) -> jax.Array:
-        return (state.iteration_count < FIRTH_MAXIMUM_ITERATIONS) & (~state.converged) & (~state.failed)
+        return (state.iteration_count < get_firth_maximum_iterations()) & (~state.converged) & (~state.failed)
 
     def body_function(state: FirthState) -> FirthState:
         linear_predictor = covariate_matrix @ state.coefficients + loco_offset
@@ -577,15 +656,17 @@ def fit_covariate_only_firth_null_model(
         second_hessian = second_hessian + jnp.eye(second_hessian.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
         coefficient_step = solve_from_positive_definite_matrix(second_hessian, adjusted_score)
         maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
-        step_scale = jnp.minimum(1.0, FIRTH_MAXIMUM_STEP_SIZE / jnp.maximum(maximum_coefficient_step, MINIMUM_VARIANCE))
+        step_scale = jnp.minimum(
+            1.0, get_firth_maximum_step_size() / jnp.maximum(maximum_coefficient_step, MINIMUM_VARIANCE)
+        )
         scaled_coefficient_step = coefficient_step * step_scale
         updated_converged = (
             (state.iteration_count > 0)
-            & (jnp.max(jnp.abs(scaled_coefficient_step)) <= FIRTH_COEFFICIENT_TOLERANCE)
-            & (jnp.max(jnp.abs(adjusted_score)) <= FIRTH_GRADIENT_TOLERANCE)
+            & (jnp.max(jnp.abs(scaled_coefficient_step)) <= get_firth_coefficient_tolerance())
+            & (jnp.max(jnp.abs(adjusted_score)) <= get_firth_gradient_tolerance())
             & (
                 (current_penalized_log_likelihood - state.previous_penalized_log_likelihood)
-                < FIRTH_LIKELIHOOD_TOLERANCE
+                < get_firth_likelihood_tolerance()
             )
             & (~current_failed)
         )
@@ -664,7 +745,12 @@ def fit_single_variant_firth_logistic_regression(
         return compute_logistic_probability(linear_predictor)
 
     def condition_function(state: FirthState) -> jax.Array:
-        return (state.iteration_count < FIRTH_MAXIMUM_ITERATIONS) & (~state.converged) & (~state.failed) & (~skip_firth)
+        return (
+            (state.iteration_count < get_firth_maximum_iterations())
+            & (~state.converged)
+            & (~state.failed)
+            & (~skip_firth)
+        )
 
     def body_function(state: FirthState) -> FirthState:
         probability_vector = compute_probability_vector(state.coefficients)
@@ -727,15 +813,17 @@ def fit_single_variant_firth_logistic_regression(
         second_hessian = second_hessian + jnp.eye(second_hessian.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
         coefficient_step = solve_from_positive_definite_matrix(second_hessian, adjusted_score)
         maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
-        step_scale = jnp.minimum(1.0, FIRTH_MAXIMUM_STEP_SIZE / jnp.maximum(maximum_coefficient_step, MINIMUM_VARIANCE))
+        step_scale = jnp.minimum(
+            1.0, get_firth_maximum_step_size() / jnp.maximum(maximum_coefficient_step, MINIMUM_VARIANCE)
+        )
         scaled_coefficient_step = coefficient_step * step_scale
         updated_converged = (
             (state.iteration_count > 0)
-            & (jnp.max(jnp.abs(scaled_coefficient_step)) <= FIRTH_COEFFICIENT_TOLERANCE)
-            & (jnp.max(jnp.abs(adjusted_score)) <= FIRTH_GRADIENT_TOLERANCE)
+            & (jnp.max(jnp.abs(scaled_coefficient_step)) <= get_firth_coefficient_tolerance())
+            & (jnp.max(jnp.abs(adjusted_score)) <= get_firth_gradient_tolerance())
             & (
                 (current_penalized_log_likelihood - state.previous_penalized_log_likelihood)
-                < FIRTH_LIKELIHOOD_TOLERANCE
+                < get_firth_likelihood_tolerance()
             )
             & (~current_failed)
         )
@@ -850,7 +938,7 @@ def fit_single_variant_firth_logistic_regression(
         (~skip_firth)
         & (~final_state.converged)
         & (~final_state.failed)
-        & (final_state.iteration_count >= FIRTH_MAXIMUM_ITERATIONS)
+        & (final_state.iteration_count >= get_firth_maximum_iterations())
     )
     invalid_statistic_failure_mask = (~skip_firth) & final_state.converged & (~final_state.failed) & (~valid_mask)
     failure_code = jnp.where(

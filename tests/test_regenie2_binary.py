@@ -103,16 +103,19 @@ def test_firth_candidate_capacity_uses_default() -> None:
     assert regenie2_binary.get_firth_candidate_capacity() == regenie2_binary.DEFAULT_FIRTH_CANDIDATE_CAPACITY
 
 
-def test_firth_candidate_capacity_rejects_invalid_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY", "0")
-    regenie2_binary.get_firth_candidate_capacity.cache_clear()
+def test_firth_candidate_capacity_rejects_invalid_config() -> None:
+    with pytest.raises(ValueError, match="Firth candidate capacity"):
+        regenie2_binary.regenie2_binary_candidate_planning.configure_firth_candidate_planning(
+            firth_batch_size=64,
+            firth_candidate_capacity=0,
+        )
 
-    with pytest.raises(ValueError, match="G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY"):
-        regenie2_binary.get_firth_candidate_capacity()
 
-
-def test_device_firth_batch_plan_uses_candidate_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("G_REGENIE2_BINARY_FIRTH_BATCH_SIZE", "2")
+def test_device_firth_batch_plan_uses_candidate_capacity() -> None:
+    regenie2_binary.regenie2_binary_candidate_planning.configure_firth_candidate_planning(
+        firth_batch_size=2,
+        firth_candidate_capacity=1024,
+    )
     clear_binary_compute_caches()
     fallback_mask = jnp.asarray([True, False, True, False, True], dtype=jnp.bool_)
 
@@ -121,6 +124,10 @@ def test_device_firth_batch_plan_uses_candidate_capacity(monkeypatch: pytest.Mon
     np.testing.assert_array_equal(np.asarray(batch_plan.fallback_index_matrix), [[0, 2], [4, 0]])
     np.testing.assert_array_equal(np.asarray(batch_plan.fallback_active_mask_matrix), [[True, True], [True, False]])
     np.testing.assert_array_equal(np.asarray(batch_plan.active_flat_position_vector), [0, 1, 2, 0])
+    regenie2_binary.regenie2_binary_candidate_planning.configure_firth_candidate_planning(
+        firth_batch_size=regenie2_binary.DEFAULT_FIRTH_BATCH_SIZE,
+        firth_candidate_capacity=regenie2_binary.DEFAULT_FIRTH_CANDIDATE_CAPACITY,
+    )
 
 
 def test_group_firth_candidate_batch_inputs_places_heuristic_lanes_after_regular_lanes() -> None:
@@ -384,7 +391,10 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback(monkeypat
         firth_failure_code=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
     )
 
-    monkeypatch.setenv("G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY", "1")
+    regenie2_binary.regenie2_binary_candidate_planning.configure_firth_candidate_planning(
+        firth_batch_size=regenie2_binary.DEFAULT_FIRTH_BATCH_SIZE,
+        firth_candidate_capacity=1,
+    )
     clear_binary_compute_caches()
     overflow_result = regenie2_binary.apply_device_candidate_corrections(
         chromosome_state=chromosome_state,
@@ -393,13 +403,20 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback(monkeypat
         correction_plan=APPROXIMATE_FIRTH_PLAN,
     )
 
-    monkeypatch.setenv("G_REGENIE2_BINARY_FIRTH_CANDIDATE_CAPACITY", "8")
+    regenie2_binary.regenie2_binary_candidate_planning.configure_firth_candidate_planning(
+        firth_batch_size=regenie2_binary.DEFAULT_FIRTH_BATCH_SIZE,
+        firth_candidate_capacity=8,
+    )
     clear_binary_compute_caches()
     bounded_result = regenie2_binary.apply_device_candidate_corrections(
         chromosome_state=chromosome_state,
         genotype_matrix=genotype_matrix,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
+    )
+    regenie2_binary.regenie2_binary_candidate_planning.configure_firth_candidate_planning(
+        firth_batch_size=regenie2_binary.DEFAULT_FIRTH_BATCH_SIZE,
+        firth_candidate_capacity=regenie2_binary.DEFAULT_FIRTH_CANDIDATE_CAPACITY,
     )
 
     np.testing.assert_allclose(np.asarray(overflow_result.beta), np.asarray(bounded_result.beta), equal_nan=True)

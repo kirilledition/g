@@ -22,12 +22,9 @@ if typing.TYPE_CHECKING:
 REGENIE_COMPUTE_PATCH_TARGETS = (regenie2_binary, regenie2_linear)
 StageTimingSnapshot = timing.StageTimingSnapshot
 StageTimingRecorder = timing.StageTimingRecorder
-build_stage_timing_recorder_from_environment = timing.build_stage_timing_recorder_from_environment
+build_stage_timing_recorder = timing.build_stage_timing_recorder
 record_stage_duration = timing.record_stage_duration
-write_stage_timing_snapshot_from_environment = timing.write_stage_timing_snapshot_from_environment
-ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE = (
-    trusted_validation.ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED_ENVIRONMENT_VARIABLE
-)
+write_stage_timing_snapshot = timing.write_stage_timing_snapshot
 TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION = trusted_validation.TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION
 assume_trusted_no_missing_diploid_validated = trusted_validation.assume_trusted_no_missing_diploid_validated
 trusted_bgen_validation_cache_directory = trusted_validation.trusted_bgen_validation_cache_directory
@@ -78,13 +75,15 @@ def run_regenie2_linear_bgen_pipeline(
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
+    chunks_per_arrow_file: int = output.DEFAULT_CHUNKS_PER_ARROW_FILE,
+    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     stage_timing_recorder: StageTimingRecorder | None = None,
     alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
-    stage_timing_recorder = stage_timing_recorder or build_stage_timing_recorder_from_environment()
+    stage_timing_recorder = stage_timing_recorder or build_stage_timing_recorder()
     use_variant_major = trusted_no_missing_diploid
     engine_start_time = time.perf_counter()
     engine = build_bgen_run_engine(
@@ -124,6 +123,8 @@ def run_regenie2_linear_bgen_pipeline(
         writer_thread_count=writer_thread_count,
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression,
     )
     record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
     prediction_start_time = time.perf_counter()
@@ -177,6 +178,8 @@ def run_regenie2_binary_bgen_pipeline(
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
+    chunks_per_arrow_file: int = output.DEFAULT_CHUNKS_PER_ARROW_FILE,
+    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
@@ -184,7 +187,7 @@ def run_regenie2_binary_bgen_pipeline(
     alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for binary REGENIE step 2."""
-    stage_timing_recorder = stage_timing_recorder or build_stage_timing_recorder_from_environment()
+    stage_timing_recorder = stage_timing_recorder or build_stage_timing_recorder()
     use_variant_major = trusted_no_missing_diploid
     engine_start_time = time.perf_counter()
     engine = build_bgen_run_engine(
@@ -224,6 +227,8 @@ def run_regenie2_binary_bgen_pipeline(
         writer_thread_count=writer_thread_count,
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression,
     )
     record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
     prediction_start_time = time.perf_counter()
@@ -326,5 +331,5 @@ def run_bgen_engine_with_callback(
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
         variant_major_dosage=variant_major_dosage,
-        stage_timing_snapshot_writer=write_stage_timing_snapshot_from_environment,
+        stage_timing_snapshot_writer=write_stage_timing_snapshot,
     )

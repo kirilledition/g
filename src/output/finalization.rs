@@ -2,11 +2,13 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use arrow::array::{ArrayRef, RecordBatch};
 use arrow::ipc::reader::FileReader as ArrowFileReader;
+use arrow_cast::display::array_value_to_string;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::KeyValue;
@@ -29,6 +31,29 @@ pub fn finalize_output_run_chunks(
     Ok(final_parquet_path)
 }
 
+pub fn finalize_output_run_chunks_to_regenie_text(
+    chunks_directory: &Path,
+    regenie_text_path: &Path,
+) -> Result<(), OutputWriterError> {
+    let mut chunk_file_paths = sorted_arrow_chunk_file_paths(chunks_directory)?;
+    let mut output_file = File::create(regenie_text_path).map_err(OutputWriterError::runtime)?;
+    let mut wrote_header = false;
+    for chunk_file_path in chunk_file_paths.drain(..) {
+        let input_file = File::open(&chunk_file_path).map_err(OutputWriterError::runtime)?;
+        let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
+        for maybe_batch in file_reader {
+            let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
+            let projected_batch = project_chunk_batch_to_final_batch(batch)?;
+            if !wrote_header {
+                write_regenie_text_header(&mut output_file, &projected_batch)?;
+                wrote_header = true;
+            }
+            write_regenie_text_batch(&mut output_file, &projected_batch)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn write_final_parquet_from_chunk_files(
     chunks_directory: &Path,
     final_parquet_path: &Path,
@@ -39,12 +64,7 @@ pub(crate) fn write_final_parquet_from_chunk_files(
             "Unsupported association mode for Rust output writer finalization: {association_mode}",
         )));
     }
-    let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
-        .map_err(OutputWriterError::runtime)?
-        .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
-        .filter(|chunk_file_path| chunk_file_path.extension().is_some_and(|extension| extension == "arrow"))
-        .collect::<Vec<_>>();
-    chunk_file_paths.sort();
+    let chunk_file_paths = sorted_arrow_chunk_file_paths(chunks_directory)?;
     let writer_properties = get_regenie_step2_parquet_writer_properties().clone();
     let output_file = File::create(final_parquet_path).map_err(OutputWriterError::runtime)?;
     let final_schema = Arc::clone(schema::get_regenie_step2_final_schema());
@@ -66,6 +86,36 @@ pub(crate) fn write_final_parquet_from_chunk_files(
     parquet_writer.close().map_err(OutputWriterError::runtime)?;
     manifest::mark_run_manifest_finalized(final_parquet_path, output_row_count, chunk_file_count)
         .map_err(OutputWriterError::runtime)?;
+    Ok(())
+}
+
+fn sorted_arrow_chunk_file_paths(chunks_directory: &Path) -> Result<Vec<PathBuf>, OutputWriterError> {
+    let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
+        .map_err(OutputWriterError::runtime)?
+        .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
+        .filter(|chunk_file_path| chunk_file_path.extension().is_some_and(|extension| extension == "arrow"))
+        .collect::<Vec<_>>();
+    chunk_file_paths.sort();
+    Ok(chunk_file_paths)
+}
+
+fn write_regenie_text_header(output_file: &mut File, batch: &RecordBatch) -> Result<(), OutputWriterError> {
+    let header = batch.schema().fields().iter().map(|field| field.name().as_str()).collect::<Vec<_>>().join("\t");
+    writeln!(output_file, "{header}").map_err(OutputWriterError::runtime)
+}
+
+fn write_regenie_text_batch(output_file: &mut File, batch: &RecordBatch) -> Result<(), OutputWriterError> {
+    for row_index in 0..batch.num_rows() {
+        for column_index in 0..batch.num_columns() {
+            if column_index > 0 {
+                write!(output_file, "\t").map_err(OutputWriterError::runtime)?;
+            }
+            let column = batch.column(column_index);
+            let value = array_value_to_string(column.as_ref(), row_index).map_err(OutputWriterError::runtime)?;
+            write!(output_file, "{value}").map_err(OutputWriterError::runtime)?;
+        }
+        writeln!(output_file).map_err(OutputWriterError::runtime)?;
+    }
     Ok(())
 }
 

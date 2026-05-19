@@ -12,13 +12,15 @@ def __getattr__(name: str) -> typing.Any:
         cli = importlib.import_module("g.cli")
         return cli.main
     if name in {
-        "ComputeConfig",
-        "Regenie2BinaryConfig",
-        "Regenie2LinearConfig",
+        "BinaryConfig",
+        "GComputeConfig",
+        "GDiagnosticsConfig",
+        "GOutputConfig",
+        "InputConfig",
+        "RegenieConfig",
         "RunArtifacts",
-        "SampleAlignmentConfig",
-        "regenie2",
-        "regenie2_linear",
+        "TraitConfig",
+        "regenie",
     }:
         api = importlib.import_module("g.api")
         return getattr(api, name)
@@ -26,6 +28,9 @@ def __getattr__(name: str) -> typing.Any:
         "ArrayMemoryOrder",
         "AssociationMode",
         "Device",
+        "JaxMatmulPrecision",
+        "OutputFormat",
+        "ArrowCompression",
         "RegenieTraitType",
         "SampleKeyMode",
         "SampleIdentifierSource",
@@ -38,17 +43,22 @@ def __getattr__(name: str) -> typing.Any:
 
 __all__ = [
     "ArrayMemoryOrder",
+    "ArrowCompression",
     "AssociationMode",
-    "ComputeConfig",
+    "BinaryConfig",
     "Device",
-    "Regenie2BinaryConfig",
-    "Regenie2LinearConfig",
+    "GComputeConfig",
+    "GDiagnosticsConfig",
+    "GOutputConfig",
+    "InputConfig",
+    "JaxMatmulPrecision",
+    "OutputFormat",
+    "RegenieConfig",
     "RegenieTraitType",
     "RunArtifacts",
-    "SampleAlignmentConfig",
     "SampleIdentifierSource",
     "SampleKeyMode",
+    "TraitConfig",
     "main",
-    "regenie2",
-    "regenie2_linear",
+    "regenie",
 ]

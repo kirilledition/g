@@ -374,30 +374,11 @@ def build_g_trial_environment(
     stage_timing_path: Path | None,
 ) -> dict[str, str]:
     """Build child process environment overrides for one g trial."""
-    jax_cache_directory = cache_directory
-    if candidate.device == "gpu":
-        job_identifier = os.environ.get("SLURM_JOB_ID") or str(os.getpid())
-        gpu_cache_parent = os.environ.get("G_PROFILE_GPU_JAX_CACHE_PARENT", GPU_JAX_CACHE_PARENT_DEFAULT)
-        jax_cache_directory = Path(gpu_cache_parent) / job_identifier / cache_directory.name
+    del cache_directory, stage_timing_path
     environment = {
         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
         "XLA_PYTHON_CLIENT_MEM_FRACTION": ".50",
-        "JAX_COMPILATION_CACHE_DIR": str(jax_cache_directory),
-        "JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES": "-1",
-        "JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS": "0",
     }
-    if ENABLE_XLA_AUTOTUNE_CACHE:
-        environment["JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES"] = JAX_XLA_AUTOTUNE_CACHE
-    if candidate.device == "cpu":
-        environment["JAX_PLATFORMS"] = "cpu"
-    if candidate.bgen_decode_tile_variant_count is not None:
-        environment["G_BGEN_DECODE_TILE_VARIANT_COUNT"] = str(candidate.bgen_decode_tile_variant_count)
-    if candidate.rayon_thread_count is not None:
-        environment["RAYON_NUM_THREADS"] = str(candidate.rayon_thread_count)
-    if candidate.firth_batch_size is not None:
-        environment["G_REGENIE2_BINARY_FIRTH_BATCH_SIZE"] = str(candidate.firth_batch_size)
-    if stage_timing_path is not None:
-        environment["G_REGENIE2_STAGE_TIMINGS_JSON"] = str(stage_timing_path)
     return environment
 
 
@@ -407,6 +388,8 @@ def build_g_step2_child_command(
     candidate: Step2Candidate,
     output_prefix: Path,
     variant_limit: int | None,
+    cache_directory: Path | None = None,
+    stage_timing_path: Path | None = None,
     trace_directory: Path | None = None,
     memory_profile_path: Path | None = None,
 ) -> list[str]:
@@ -414,13 +397,24 @@ def build_g_step2_child_command(
     phenotype_path = baseline_paths.continuous_phenotype_path
     phenotype_name = "phenotype_continuous"
     prediction_path = baseline_paths.regenie_qt_prediction_list_path
-    binary_config_expression = "None"
+    binary_options_expression = "{}"
     if candidate.trait_type == "binary":
         phenotype_path = baseline_paths.binary_phenotype_path
         phenotype_name = "phenotype_binary"
         prediction_path = baseline_paths.regenie_prediction_list_path
-        binary_config_expression = "api.Regenie2BinaryConfig(firth=True, approx=True)"
+        binary_options_expression = '{"firth": True, "approx": True}'
     variant_limit_expression = "None" if variant_limit is None else str(variant_limit)
+    jax_cache_directory = cache_directory
+    if jax_cache_directory is not None and candidate.device == "gpu":
+        job_identifier = os.environ.get("SLURM_JOB_ID") or str(os.getpid())
+        gpu_cache_parent = os.environ.get("G_PROFILE_GPU_JAX_CACHE_PARENT", GPU_JAX_CACHE_PARENT_DEFAULT)
+        jax_cache_directory = Path(gpu_cache_parent) / job_identifier / jax_cache_directory.name
+    jax_cache_directory_expression = "None" if jax_cache_directory is None else repr(str(jax_cache_directory))
+    bgen_tile_expression = (
+        "64" if candidate.bgen_decode_tile_variant_count is None else str(candidate.bgen_decode_tile_variant_count)
+    )
+    firth_batch_expression = "64" if candidate.firth_batch_size is None else str(candidate.firth_batch_size)
+    rayon_thread_expression = "None" if candidate.rayon_thread_count is None else str(candidate.rayon_thread_count)
     child_code = textwrap.dedent(
         """
         import json
@@ -437,27 +431,32 @@ def build_g_step2_child_command(
             jax.profiler.start_trace(trace_directory)
         try:
             start_time = time.perf_counter()
-            artifacts = api.regenie2(
-                bgen={bgen_path!r},
-                sample={sample_path!r},
-                pheno={phenotype_path!r},
-                pheno_name={phenotype_name!r},
-                out={output_prefix!r},
-                covar={covariate_path!r},
-                covar_names="age,sex",
-                pred={prediction_path!r},
-                trait_type=types.RegenieTraitType({trait_type!r}),
-                compute=api.ComputeConfig(
-                    device=types.Device({device!r}),
-                    chunk_size={chunk_size},
-                    variant_limit={variant_limit_expression},
-                    staging_depth={staging_depth},
-                    finalize_parquet=True,
-                    output_writer_thread_count={writer_thread_count},
-                    output_writer_queue_depth={writer_queue_depth},
-                ),
-                binary={binary_config_expression},
-            )
+            artifacts = api.regenie.from_options({{
+                "step": 2,
+                "bt" if {trait_type!r} == "binary" else "qt": True,
+                "bgen": {bgen_path!r},
+                "sample": {sample_path!r},
+                "phenoFile": {phenotype_path!r},
+                "phenoCol": {phenotype_name!r},
+                "out": {output_prefix!r},
+                "covarFile": {covariate_path!r},
+                "covarColList": "age,sex",
+                "pred": {prediction_path!r},
+                "g-device": {device!r},
+                "bsize": {chunk_size},
+                "g-variant-limit": {variant_limit_expression},
+                "g-staging-depth": {staging_depth},
+                "g-output-format": "parquet",
+                "g-writer-threads": {writer_thread_count},
+                "g-writer-queue-depth": {writer_queue_depth},
+                "g-bgen-decode-tile-variant-count": {bgen_tile_expression},
+                "g-firth-batch-size": {firth_batch_expression},
+                "threads": {rayon_thread_expression},
+                "g-jax-cache-dir": {jax_cache_directory_expression},
+                "g-jax-xla-autotune-cache": {enable_xla_autotune_cache},
+                "g-stage-timings-json": {stage_timing_path!r},
+                **{binary_options_expression},
+            }})
             wall_time_seconds = time.perf_counter() - start_time
             output_row_count = pl.scan_parquet(artifacts.final_parquet).select(pl.len()).collect().item()
             probe_array = jax.device_put(0)
@@ -493,7 +492,13 @@ def build_g_step2_child_command(
         staging_depth=candidate.staging_depth,
         writer_thread_count=candidate.output_writer_thread_count,
         writer_queue_depth=candidate.output_writer_queue_depth,
-        binary_config_expression=binary_config_expression,
+        bgen_tile_expression=bgen_tile_expression,
+        firth_batch_expression=firth_batch_expression,
+        rayon_thread_expression=rayon_thread_expression,
+        jax_cache_directory_expression=jax_cache_directory_expression,
+        enable_xla_autotune_cache=ENABLE_XLA_AUTOTUNE_CACHE,
+        stage_timing_path=str(stage_timing_path) if stage_timing_path is not None else None,
+        binary_options_expression=binary_options_expression,
     )
     return [sys.executable, "-c", child_code]
 
@@ -566,6 +571,8 @@ def run_g_trial(
         candidate=candidate,
         output_prefix=output_prefix,
         variant_limit=variant_limit,
+        cache_directory=cache_directory,
+        stage_timing_path=stage_timing_path,
         trace_directory=trace_directory,
         memory_profile_path=memory_profile_path,
     )
@@ -1017,25 +1024,13 @@ def candidate_from_aggregate_name(winner_key: str, aggregate_result: AggregateRe
     return Step2Candidate(
         trait_type=trait_type,
         device=device,
-        chunk_size=read_int("chunk_size=", 8192),
-        staging_depth=read_int("staging_depth=", 1),
-        output_writer_thread_count=read_int("output_writer_thread_count=", 8),
-        output_writer_queue_depth=read_int("output_writer_queue_depth=", 4),
-        bgen_decode_tile_variant_count=(
-            int(trial.environment_overrides["G_BGEN_DECODE_TILE_VARIANT_COUNT"])
-            if "G_BGEN_DECODE_TILE_VARIANT_COUNT" in trial.environment_overrides
-            else None
-        ),
-        rayon_thread_count=(
-            int(trial.environment_overrides["RAYON_NUM_THREADS"])
-            if "RAYON_NUM_THREADS" in trial.environment_overrides
-            else None
-        ),
-        firth_batch_size=(
-            int(trial.environment_overrides["G_REGENIE2_BINARY_FIRTH_BATCH_SIZE"])
-            if "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE" in trial.environment_overrides
-            else None
-        ),
+        chunk_size=read_int('"bsize": ', 8192),
+        staging_depth=read_int('"g-staging-depth": ', 1),
+        output_writer_thread_count=read_int('"g-writer-threads": ', 8),
+        output_writer_queue_depth=read_int('"g-writer-queue-depth": ', 4),
+        bgen_decode_tile_variant_count=read_int('"g-bgen-decode-tile-variant-count": ', 64),
+        rayon_thread_count=read_int('"threads": ', 0) or None,
+        firth_batch_size=read_int('"g-firth-batch-size": ', 64),
     )
 
 

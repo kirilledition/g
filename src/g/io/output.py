@@ -20,6 +20,7 @@ RUN_MANIFEST_FILENAME = "run_manifest.json"
 RUN_MANIFEST_SCHEMA_VERSION = 1
 DEFAULT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_WRITER_THREAD_COUNT = 8
+DEFAULT_CHUNKS_PER_ARROW_FILE = 4
 
 
 @dataclass(frozen=True)
@@ -221,6 +222,8 @@ def create_output_writer_session(
     writer_thread_count: int,
     writer_queue_depth: int,
     finalize_parquet: bool,
+    chunks_per_arrow_file: int = DEFAULT_CHUNKS_PER_ARROW_FILE,
+    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
 ) -> typing.Any:
     """Create one native Rust output writer session."""
     return _core.OutputWriterSession(
@@ -230,6 +233,8 @@ def create_output_writer_session(
         writer_thread_count=writer_thread_count,
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression.value,
     )
 
 
@@ -257,3 +262,14 @@ def finalize_chunks_to_parquet(
         association_mode=str(association_mode),
     )
     return Path(final_parquet_path)
+
+
+def finalize_chunks_to_regenie_text(
+    output_run_paths: OutputRunPaths,
+    regenie_text_path: Path,
+) -> None:
+    """Materialize committed chunk files as REGENIE-compatible text."""
+    _core.finalize_output_run_chunks_to_regenie_text(
+        chunks_directory=str(output_run_paths.chunks_directory),
+        regenie_text_path=str(regenie_text_path),
+    )

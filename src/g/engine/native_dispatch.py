@@ -188,8 +188,8 @@ def run_bgen_engine_with_callback(
     stage_timing_recorder: StageTimingRecorder | None,
     variant_major_dosage: bool = False,
     stage_timing_snapshot_writer: typing.Callable[
-        [StageTimingRecorder | None], None
-    ] = timing.write_stage_timing_snapshot_from_environment,
+        [StageTimingRecorder | None, Path | None], None
+    ] = timing.write_stage_timing_snapshot,
 ) -> Path | None:
     """Run native BGEN chunk delivery and close the output writer."""
     try:
@@ -224,9 +224,9 @@ def run_bgen_engine_with_callback(
         if callable(abort_callback):
             abort_callback()
         writer_session.abort()
-        stage_timing_snapshot_writer(stage_timing_recorder)
+        stage_timing_snapshot_writer(stage_timing_recorder, None)
         raise
-    stage_timing_snapshot_writer(stage_timing_recorder)
+    stage_timing_snapshot_writer(stage_timing_recorder, None)
     if final_parquet_path is None:
         return None
     return Path(final_parquet_path)

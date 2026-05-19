@@ -168,6 +168,7 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
     mmap: &[u8],
     compression_type: CompressionType,

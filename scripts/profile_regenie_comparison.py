@@ -201,36 +201,40 @@ def _run_g_profile(
     profile_run_directory = output_dir / program_name
     profile_run_directory.mkdir(parents=True, exist_ok=True)
     output_prefix = profile_run_directory / "g_regenie2_linear"
-    final_parquet_path = output_prefix.with_suffix(".regenie2_linear.run") / "final.parquet"
+    final_parquet_path = output_prefix.with_name(f"{output_prefix.name}.g") / "phenotype_continuous.regenie2_linear.run" / "final.parquet"
     command_arguments = [
         "uv",
         "run",
         "g",
-        "regenie2-linear",
+        "regenie",
+        "--step",
+        "2",
+        "--qt",
         "--bgen",
         str(baseline_paths.bgen_path),
         "--sample",
         str(baseline_paths.sample_path),
-        "--pheno",
+        "--phenoFile",
         str(baseline_paths.continuous_phenotype_path),
-        "--pheno-name",
+        "--phenoCol",
         "phenotype_continuous",
-        "--covar",
+        "--covarFile",
         str(baseline_paths.covariate_path),
-        "--covar-names",
+        "--covarColList",
         "age,sex",
         "--pred",
         str(baseline_paths.regenie_qt_prediction_list_path),
-        "--device",
+        "--g-device",
         device,
-        "--chunk-size",
+        "--bsize",
         str(chunk_size),
         "--out",
         str(output_prefix),
-        "--finalize-parquet",
+        "--g-output-format",
+        "parquet",
     ]
     if variant_limit is not None:
-        command_arguments.extend(["--variant-limit", str(variant_limit)])
+        command_arguments.extend(["--g-variant-limit", str(variant_limit)])
     stdout_log_path = profile_run_directory / "stdout.log"
     stderr_log_path = profile_run_directory / "stderr.log"
     success, duration_seconds, peak_rss_megabytes, cpu_user_seconds, cpu_system_seconds, error_message = (

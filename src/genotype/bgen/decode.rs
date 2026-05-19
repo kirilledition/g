@@ -1,5 +1,6 @@
 use std::mem::MaybeUninit;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use flate2::{Decompress, FlushDecompress, Status};
@@ -13,6 +14,7 @@ use super::{BgenError, CompressionType};
 const MISSING_SAMPLE_FLAG_MASK: u8 = 0x80;
 const PLOIDY_MASK: u8 = 0x3F;
 const DEFAULT_DECODE_TILE_VARIANT_COUNT: usize = 64;
+static DECODE_TILE_VARIANT_COUNT: AtomicUsize = AtomicUsize::new(DEFAULT_DECODE_TILE_VARIANT_COUNT);
 #[derive(Debug)]
 pub(super) struct VariantDecodeResult {
     pub(super) profile_snapshot: ThreadLocalProfileSnapshot,
@@ -54,14 +56,16 @@ fn build_variant_decode_result(
 }
 
 pub(super) fn decode_tile_variant_count() -> usize {
-    static DECODE_TILE_VARIANT_COUNT: OnceLock<usize> = OnceLock::new();
-    *DECODE_TILE_VARIANT_COUNT.get_or_init(|| {
-        std::env::var("G_BGEN_DECODE_TILE_VARIANT_COUNT")
-            .ok()
-            .and_then(|raw_value| raw_value.parse::<usize>().ok())
-            .filter(|tile_variant_count| *tile_variant_count > 0)
-            .unwrap_or(DEFAULT_DECODE_TILE_VARIANT_COUNT)
-    })
+    DECODE_TILE_VARIANT_COUNT.load(Ordering::Relaxed)
+}
+
+#[allow(clippy::missing_errors_doc)]
+pub fn set_decode_tile_variant_count(tile_variant_count: usize) -> Result<(), BgenError> {
+    if tile_variant_count == 0 {
+        return Err(BgenError::Range("BGEN decode tile variant count must be positive.".to_string()));
+    }
+    DECODE_TILE_VARIANT_COUNT.store(tile_variant_count, Ordering::Relaxed);
+    Ok(())
 }
 
 pub(super) fn unphased_eight_bit_dosage_lookup() -> &'static [f32] {

@@ -25,6 +25,31 @@ class ResumeMode(enum.StrEnum):
     STRICT = "strict"
 
 
+class OutputFormat(enum.StrEnum):
+    """User-facing output materialization format."""
+
+    REGENIE = "regenie"
+    PARQUET = "parquet"
+    ARROW = "arrow"
+    BOTH = "both"
+
+
+class JaxMatmulPrecision(enum.StrEnum):
+    """JAX matrix multiplication precision selector."""
+
+    FLOAT32 = "float32"
+    TENSORFLOAT32 = "tensorfloat32"
+    BFLOAT16 = "bfloat16"
+    HIGHEST = "highest"
+
+
+class ArrowCompression(enum.StrEnum):
+    """Arrow IPC compression codec for internal chunk files."""
+
+    ZSTD = "zstd"
+    NONE = "none"
+
+
 class TrustedBgenValidationMode(enum.StrEnum):
     """Trusted BGEN validation behavior."""
 

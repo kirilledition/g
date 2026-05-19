@@ -19,81 +19,41 @@ from g.jax_setup import (
 from g.types import Device
 
 
-def test_resolve_jax_cache_uses_jax_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure JAX_COMPILATION_CACHE_DIR takes highest precedence."""
-    monkeypatch.setenv("JAX_COMPILATION_CACHE_DIR", "/custom/jax/cache")
-    monkeypatch.setenv("XDG_CACHE_HOME", "/custom/xdg/cache")
+def test_resolve_jax_cache_uses_explicit_config_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure explicit config paths are used instead of environment variables."""
+    monkeypatch.setenv("JAX_COMPILATION_CACHE_DIR", "/ignored/jax/cache")
+    monkeypatch.setenv("G_JAX_CACHE_DIR", "/ignored/g/cache")
 
+    result = resolve_jax_compilation_cache_directory(Path("~/custom/g/cache"))
+
+    assert result == Path("~/custom/g/cache").expanduser()
+
+
+def test_resolve_jax_cache_uses_fallback() -> None:
+    """Ensure fallback uses a node-local cache path when no config path is set."""
     result = resolve_jax_compilation_cache_directory()
 
-    assert result == Path("/custom/jax/cache")
+    assert result.parent.parent == Path("/tmp")
+    assert result.name == "g-jax-cache"
 
 
-def test_resolve_jax_cache_expands_jax_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure JAX_COMPILATION_CACHE_DIR is expanded."""
-    monkeypatch.setenv("JAX_COMPILATION_CACHE_DIR", "~/custom/jax/cache")
-    monkeypatch.setenv("HOME", "/mock/home")
-
-    result = resolve_jax_compilation_cache_directory()
-
-    assert result == Path("/mock/home/custom/jax/cache")
-
-
-def test_resolve_jax_cache_uses_xdg_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure G_JAX_CACHE_DIR is used when JAX_COMPILATION_CACHE_DIR is not set."""
-    monkeypatch.delenv("JAX_COMPILATION_CACHE_DIR", raising=False)
-    monkeypatch.setenv("G_JAX_CACHE_DIR", "/custom/g/cache")
-
-    result = resolve_jax_compilation_cache_directory()
-
-    assert result == Path("/custom/g/cache")
-
-
-def test_resolve_jax_cache_expands_xdg_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure G_JAX_CACHE_DIR is expanded."""
-    monkeypatch.delenv("JAX_COMPILATION_CACHE_DIR", raising=False)
-    monkeypatch.setenv("G_JAX_CACHE_DIR", "~/custom/g/cache")
-    monkeypatch.setenv("HOME", "/mock/home")
-
-    result = resolve_jax_compilation_cache_directory()
-
-    assert result == Path("/mock/home/custom/g/cache")
-
-
-def test_resolve_jax_cache_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure fallback uses a node-local cache path when no env vars are set."""
-    monkeypatch.delenv("JAX_COMPILATION_CACHE_DIR", raising=False)
-    monkeypatch.delenv("G_JAX_CACHE_DIR", raising=False)
-    monkeypatch.setenv("USER", "mockuser")
-
-    result = resolve_jax_compilation_cache_directory()
-
-    assert result == Path("/tmp/mockuser/g-jax-cache")
-
-
-def test_resolve_xla_cache_option_defaults_to_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_xla_cache_option_defaults_to_disabled() -> None:
     """Ensure XLA auxiliary caches are opt-in even on node-local paths."""
-    monkeypatch.delenv("G_ENABLE_JAX_XLA_AUTOTUNE_CACHE", raising=False)
-
     result = resolve_xla_cache_option(Path("/tmp/mockuser/g-jax-cache"))
 
     assert result == "none"
 
 
-def test_resolve_xla_cache_option_enables_node_local_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_xla_cache_option_enables_node_local_opt_in() -> None:
     """Ensure XLA auxiliary caches can be enabled on node-local paths."""
-    monkeypatch.setenv("G_ENABLE_JAX_XLA_AUTOTUNE_CACHE", "1")
-
-    result = resolve_xla_cache_option(Path("/tmp/mockuser/g-jax-cache"))
+    result = resolve_xla_cache_option(Path("/tmp/mockuser/g-jax-cache"), enable_xla_autotune_cache=True)
 
     assert result == "xla_gpu_per_fusion_autotune_cache_dir"
 
 
-def test_resolve_xla_cache_option_rejects_beegfs_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_xla_cache_option_rejects_beegfs_opt_in() -> None:
     """Ensure XLA auxiliary caches stay disabled on BeeGFS paths."""
-    monkeypatch.setenv("G_ENABLE_JAX_XLA_AUTOTUNE_CACHE", "1")
-
-    result = resolve_xla_cache_option(Path("/mnt/beegfs/kirill/cache"))
+    result = resolve_xla_cache_option(Path("/mnt/beegfs/kirill/cache"), enable_xla_autotune_cache=True)
 
     assert result == "none"
 

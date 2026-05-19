@@ -1,9 +1,8 @@
 #![allow(clippy::needless_pass_by_value)]
 
-use std::env;
 use std::fs::File;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use arrow::array::{ArrayRef, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::ipc::CompressionType;
@@ -12,8 +11,6 @@ use thiserror::Error;
 
 use crate::output::manifest;
 use crate::output::schema;
-
-const ARROW_COMPRESSION_ENVIRONMENT_VARIABLE: &str = "G_REGENIE2_ARROW_COMPRESSION";
 
 #[derive(Debug, Error)]
 pub enum OutputWriterError {
@@ -57,12 +54,13 @@ pub(crate) fn write_regenie_step2_chunk_job(
     run_directory: &Path,
     chunks_directory: &Path,
     job: RegenieStep2ChunkWriteBatch,
+    arrow_compression: &str,
 ) -> Result<(), String> {
     let chunk_file_path = chunks_directory.join(&job.chunk_file_name);
     let temporary_chunk_file_path = chunk_file_path.with_extension("arrow.tmp");
     let chunk_commits = build_run_manifest_chunk_commits(&job);
     let record_batch = build_regenie_step2_record_batch(job)?;
-    write_record_batch_to_arrow_file(&record_batch, &temporary_chunk_file_path)?;
+    write_record_batch_to_arrow_file(&record_batch, &temporary_chunk_file_path, arrow_compression)?;
     std::fs::rename(&temporary_chunk_file_path, &chunk_file_path).map_err(|error| error.to_string())?;
     manifest::record_run_manifest_chunk_commits(run_directory, chunk_commits)?;
     Ok(())
@@ -154,37 +152,29 @@ fn build_regenie_step2_record_batch(job: RegenieStep2ChunkWriteBatch) -> Result<
     RecordBatch::try_new(Arc::clone(schema), columns).map_err(|error| error.to_string())
 }
 
-fn write_record_batch_to_arrow_file(record_batch: &RecordBatch, chunk_file_path: &Path) -> Result<(), String> {
+fn write_record_batch_to_arrow_file(
+    record_batch: &RecordBatch,
+    chunk_file_path: &Path,
+    arrow_compression: &str,
+) -> Result<(), String> {
     let output_file = File::create(chunk_file_path).map_err(|error| error.to_string())?;
-    let write_options = get_regenie_step2_ipc_write_options().clone();
+    let write_options = build_regenie_step2_ipc_write_options(arrow_compression)?;
     let mut writer = FileWriter::try_new_with_options(output_file, &record_batch.schema(), write_options)
         .map_err(|error| error.to_string())?;
     writer.write(record_batch).map_err(|error| error.to_string())?;
     writer.finish().map_err(|error| error.to_string())
 }
 
-fn build_regenie_step2_ipc_write_options() -> Result<IpcWriteOptions, String> {
-    match env::var(ARROW_COMPRESSION_ENVIRONMENT_VARIABLE)
-        .unwrap_or_else(|_| "zstd".to_string())
-        .to_ascii_lowercase()
-        .as_str()
-    {
+fn build_regenie_step2_ipc_write_options(arrow_compression: &str) -> Result<IpcWriteOptions, String> {
+    match arrow_compression.to_ascii_lowercase().as_str() {
         "zstd" => IpcWriteOptions::default()
             .try_with_compression(Some(CompressionType::ZSTD))
             .map_err(|error| error.to_string()),
         "none" => Ok(IpcWriteOptions::default()),
-        unsupported_compression => Err(format!(
-            "{ARROW_COMPRESSION_ENVIRONMENT_VARIABLE} must be 'zstd' or 'none', observed '{unsupported_compression}'.",
-        )),
+        unsupported_compression => {
+            Err(format!("Arrow compression must be 'zstd' or 'none', observed '{unsupported_compression}'."))
+        }
     }
-}
-
-fn get_regenie_step2_ipc_write_options() -> &'static IpcWriteOptions {
-    static REGENIE_STEP2_IPC_WRITE_OPTIONS: OnceLock<IpcWriteOptions> = OnceLock::new();
-    REGENIE_STEP2_IPC_WRITE_OPTIONS.get_or_init(|| {
-        build_regenie_step2_ipc_write_options()
-            .expect("REGENIE step 2 IPC write options should support zstd compression")
-    })
 }
 
 #[cfg(test)]
@@ -252,7 +242,7 @@ mod tests {
             .as_any()
             .downcast_ref::<Float32Array>()
             .expect("INFO column should be a float32 array");
-        assert_eq!(info_array.value(0), 0.9);
+        assert!((info_array.value(0) - 0.9).abs() < f32::EPSILON);
         assert_eq!(record_batch.column_by_name("EXTRA").expect("EXTRA column should exist").null_count(), 1);
     }
 
@@ -288,6 +278,7 @@ mod tests {
             &run_directory,
             &chunks_directory,
             build_test_batch(vec![build_test_chunk(0, Some(vec![1])), build_test_chunk(1, Some(vec![0]))]),
+            "zstd",
         )
         .expect("chunk batch should write");
 

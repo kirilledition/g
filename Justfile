@@ -212,16 +212,16 @@ slurm-gpu-just +just_arguments:
     exec just slurm-gpu-run just {{just_arguments}}
 
 # Run REGENIE step 2 with local baseline predictions
-regenie2-linear:
-    {{server_env}} && uv run g regenie2-linear --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_cont.txt --pheno-name phenotype_continuous --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_qt_pred.list --out {{data_dir}}/regenie2_linear
+regenie-linear:
+    {{server_env}} && uv run g regenie --step 2 --qt --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --phenoFile {{data_dir}}/pheno_cont.txt --phenoCol phenotype_continuous --covarFile {{data_dir}}/covariates.txt --covarColList age,sex --pred {{data_dir}}/baselines/regenie_step1_qt_pred.list --out {{data_dir}}/regenie_linear --g-output-format parquet
 
 # Run binary REGENIE step 2 on chr22 with GPU JAX
 regenie2-binary-gpu:
-    {{server_env}} && uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu --trait-type binary --device gpu --firth --approx --finalize-parquet
+    {{server_env}} && uv run g regenie --step 2 --bt --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --phenoFile {{data_dir}}/pheno_bin.txt --phenoCol phenotype_binary --covarFile {{data_dir}}/covariates.txt --covarColList age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu --g-device gpu --firth --approx --g-output-format parquet
 
 # Smoke test binary REGENIE step 2 on a small chr22 variant slice with GPU JAX
 regenie2-binary-gpu-smoke:
-    {{server_env}} && uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu_smoke --trait-type binary --device gpu --firth --approx --variant-limit 1000 --finalize-parquet
+    {{server_env}} && uv run g regenie --step 2 --bt --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --phenoFile {{data_dir}}/pheno_bin.txt --phenoCol phenotype_binary --covarFile {{data_dir}}/covariates.txt --covarColList age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu_smoke --g-device gpu --firth --approx --g-variant-limit 1000 --g-output-format parquet
 
 # Run binary REGENIE step 2 through SLURM on the configured GPU node
 slurm-regenie2-binary-gpu:
