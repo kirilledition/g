@@ -4,6 +4,7 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
 use arrow::array::{ArrayRef, RecordBatch};
 use arrow::ipc::reader::FileReader as ArrowFileReader;
@@ -18,6 +19,21 @@ use crate::output::schema;
 use crate::output::writer::OutputWriterError;
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct RegenieStep2FinalizationTiming {
+    pub(crate) chunk_file_count: u64,
+    pub(crate) batch_count: u64,
+    pub(crate) row_count: u64,
+    pub(crate) list_chunk_files_seconds: f64,
+    pub(crate) read_arrow_seconds: f64,
+    pub(crate) project_batch_seconds: f64,
+    pub(crate) write_parquet_seconds: f64,
+    pub(crate) footer_metadata_seconds: f64,
+    pub(crate) close_writer_seconds: f64,
+    pub(crate) manifest_update_seconds: f64,
+    pub(crate) total_seconds: f64,
+}
 
 pub fn finalize_output_run_chunks(
     run_directory: &Path,
@@ -34,12 +50,25 @@ pub(crate) fn write_final_parquet_from_chunk_files(
     final_parquet_path: &Path,
     association_mode: &str,
 ) -> Result<(), OutputWriterError> {
+    write_final_parquet_from_chunk_files_with_timing(chunks_directory, final_parquet_path, association_mode).map(|_| ())
+}
+
+pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
+    chunks_directory: &Path,
+    final_parquet_path: &Path,
+    association_mode: &str,
+) -> Result<RegenieStep2FinalizationTiming, OutputWriterError> {
+    let total_start_time = Instant::now();
     if association_mode != "regenie2_linear" && association_mode != "regenie2_binary" {
         return Err(OutputWriterError::InvalidInput(format!(
             "Unsupported association mode for Rust output writer finalization: {association_mode}",
         )));
     }
+
+    let list_chunk_files_start_time = Instant::now();
     let chunk_file_paths = sorted_arrow_chunk_file_paths(chunks_directory)?;
+    let list_chunk_files_seconds = list_chunk_files_start_time.elapsed().as_secs_f64();
+
     let writer_properties = get_regenie_step2_parquet_writer_properties().clone();
     let output_file = File::create(final_parquet_path).map_err(OutputWriterError::runtime)?;
     let final_schema = Arc::clone(schema::get_regenie_step2_final_schema());
@@ -47,21 +76,58 @@ pub(crate) fn write_final_parquet_from_chunk_files(
         ArrowWriter::try_new(output_file, final_schema, Some(writer_properties)).map_err(OutputWriterError::runtime)?;
     let chunk_file_count = chunk_file_paths.len();
     let mut output_row_count = 0usize;
+    let mut batch_count = 0u64;
+    let mut read_arrow_seconds = 0.0;
+    let mut project_batch_seconds = 0.0;
+    let mut write_parquet_seconds = 0.0;
     for chunk_file_path in chunk_file_paths {
+        let open_file_start_time = Instant::now();
         let input_file = File::open(&chunk_file_path).map_err(OutputWriterError::runtime)?;
         let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
+        read_arrow_seconds += open_file_start_time.elapsed().as_secs_f64();
         for maybe_batch in file_reader {
+            let read_batch_start_time = Instant::now();
             let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
+            read_arrow_seconds += read_batch_start_time.elapsed().as_secs_f64();
+
+            let project_batch_start_time = Instant::now();
             let projected_batch = project_chunk_batch_to_final_batch(batch)?;
+            project_batch_seconds += project_batch_start_time.elapsed().as_secs_f64();
             output_row_count += projected_batch.num_rows();
+
+            let write_parquet_start_time = Instant::now();
             parquet_writer.write(&projected_batch).map_err(OutputWriterError::runtime)?;
+            write_parquet_seconds += write_parquet_start_time.elapsed().as_secs_f64();
+            batch_count += 1;
         }
     }
+
+    let footer_metadata_start_time = Instant::now();
     append_output_footer_metadata(&mut parquet_writer, association_mode, chunk_file_count, output_row_count);
+    let footer_metadata_seconds = footer_metadata_start_time.elapsed().as_secs_f64();
+
+    let close_writer_start_time = Instant::now();
     parquet_writer.close().map_err(OutputWriterError::runtime)?;
+    let close_writer_seconds = close_writer_start_time.elapsed().as_secs_f64();
+
+    let manifest_update_start_time = Instant::now();
     manifest::mark_run_manifest_finalized(final_parquet_path, output_row_count, chunk_file_count)
         .map_err(OutputWriterError::runtime)?;
-    Ok(())
+    let manifest_update_seconds = manifest_update_start_time.elapsed().as_secs_f64();
+
+    Ok(RegenieStep2FinalizationTiming {
+        chunk_file_count: u64::try_from(chunk_file_count).map_err(OutputWriterError::runtime)?,
+        batch_count,
+        row_count: u64::try_from(output_row_count).map_err(OutputWriterError::runtime)?,
+        list_chunk_files_seconds,
+        read_arrow_seconds,
+        project_batch_seconds,
+        write_parquet_seconds,
+        footer_metadata_seconds,
+        close_writer_seconds,
+        manifest_update_seconds,
+        total_seconds: total_start_time.elapsed().as_secs_f64(),
+    })
 }
 
 fn sorted_arrow_chunk_file_paths(chunks_directory: &Path) -> Result<Vec<PathBuf>, OutputWriterError> {

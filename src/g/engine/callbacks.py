@@ -213,6 +213,7 @@ def write_regenie2_native_chunk_with_optional_timing(
         extra_code=host_values["extra_code"],
     )
     timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
+    timing.record_stage_duration(stage_timing_recorder, "single_trait_output_write", write_start_time)
 
 
 def write_regenie2_multi_native_chunk_with_optional_timing(
@@ -246,6 +247,7 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
     for trait_index, writer_session in enumerate(writer_sessions):
         if chunk_identifier in committed_chunk_identifier_sets[trait_index]:
             continue
+        per_trait_write_start_time = time.perf_counter()
         extra_code_slice = None
         if host_values["extra_code"] is not None:
             extra_code_slice = host_values["extra_code"][trait_index]
@@ -258,7 +260,11 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             log10_p_value=host_values["log10_p_value"][trait_index],
             extra_code=extra_code_slice,
         )
+        timing.record_stage_duration(
+            stage_timing_recorder, "multi_trait_output_write_per_trait", per_trait_write_start_time
+        )
     timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
+    timing.record_stage_duration(stage_timing_recorder, "multi_trait_output_write_total", write_start_time)
 
 
 def get_metadata_chromosome(metadata: typing.Any) -> str:

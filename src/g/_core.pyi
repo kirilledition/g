@@ -150,6 +150,7 @@ class OutputWriterSession:
         finalize_parquet: bool = True,
         chunks_per_arrow_file: int = 4,
         arrow_compression: str = "zstd",
+        collect_stage_timings: bool = False,
     ) -> None: ...
     def write_regenie2_native_chunk(
         self,

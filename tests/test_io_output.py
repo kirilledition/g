@@ -184,6 +184,32 @@ def test_native_writer_uses_shared_schema_and_null_placeholders(tmp_path: Path) 
     assert frame.get_column("EXTRA").to_list() == [None, None, None, None]
 
 
+def test_native_writer_records_output_stage_timings_when_requested(tmp_path: Path) -> None:
+    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
+    writer_session = output.create_output_writer_session(
+        output_run_paths,
+        AssociationMode.REGENIE2_LINEAR,
+        writer_thread_count=1,
+        writer_queue_depth=1,
+        finalize_parquet=False,
+        collect_stage_timings=True,
+    )
+    callback = NativeChunkWritingCallback(writer_session)
+    try:
+        engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
+        engine.run_bgen_dosage_buffered_chunks(np.arange(4, dtype=np.int64), callback)
+        writer_session.finish()
+    except Exception:
+        writer_session.abort()
+        raise
+
+    timing_payload = json.loads((tmp_path / "output_stage_timings.json").read_text(encoding="utf-8"))
+    assert timing_payload["stage_counts"]["rust_output_result_buffer_copy"] == 2
+    assert timing_payload["stage_counts"]["rust_output_writer_arrow_file_write"] == 1
+    assert timing_payload["output_metrics"]["writer_chunk_count"] == 2
+    assert timing_payload["output_metrics"]["writer_row_count"] == 4
+
+
 def test_native_binary_writer_maps_extra_code_to_label(tmp_path: Path) -> None:
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
     write_native_chunks(

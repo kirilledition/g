@@ -271,6 +271,10 @@ benchmark-regenie2-linear-fresh-gpu-parquet: install-perf-extension
 benchmark-regenie2-binary-hot-gpu: install-perf-extension
     {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_binary_hot.py --device gpu
 
+# Benchmark output-stage timings across finalization, phenotype count, and bsize
+benchmark-output-stages-gpu: install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/benchmark_output_stages.py --device gpu
+
 # Smoke test binary REGENIE step 2 benchmark harness on a small variant slice
 benchmark-regenie2-binary-hot-gpu-smoke: install-perf-extension
     {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_binary_hot.py --device gpu --variant-limit 1000 --no-include-cold-process --no-include-finalized-hot

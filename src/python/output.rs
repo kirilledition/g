@@ -24,6 +24,7 @@ pub(crate) struct OutputWriterSession {
 #[pymethods]
 impl OutputWriterSession {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         run_directory,
         chunks_directory,
@@ -33,6 +34,7 @@ impl OutputWriterSession {
         finalize_parquet=true,
         chunks_per_arrow_file=4,
         arrow_compression="zstd".to_string(),
+        collect_stage_timings=false,
     ))]
     fn new(
         run_directory: String,
@@ -43,6 +45,7 @@ impl OutputWriterSession {
         finalize_parquet: bool,
         chunks_per_arrow_file: usize,
         arrow_compression: String,
+        collect_stage_timings: bool,
     ) -> PyResult<Self> {
         let inner = NativeOutputWriterSession::new(
             run_directory,
@@ -53,6 +56,7 @@ impl OutputWriterSession {
             finalize_parquet,
             chunks_per_arrow_file,
             arrow_compression,
+            collect_stage_timings,
         )
         .map_err(output_writer_error_to_py)?;
         Ok(Self { inner })
