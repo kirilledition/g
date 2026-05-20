@@ -277,10 +277,13 @@ class NativeBgenCallbackRunner:
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
     ) -> None:
         """Initialize shared native callback state."""
+        if staging_depth <= 0:
+            message = "staging_depth must be positive."
+            raise ValueError(message)
         self.processed_chunk_count = 0
         self.stage_timing_recorder = stage_timing_recorder
-        self.dosage_queue_depth = max(1, staging_depth)
-        self.result_queue_depth = max(1, staging_depth)
+        self.dosage_queue_depth = staging_depth
+        self.result_queue_depth = staging_depth
         self.result_in_flight_limit = self.result_queue_depth + 1
         self.dosage_buffer_limit = self.dosage_queue_depth + 1
         self.dosage_queue: queue.Queue[

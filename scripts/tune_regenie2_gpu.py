@@ -156,7 +156,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     argument_parser.add_argument("--top-compute-candidates", type=int, default=3)
     argument_parser.add_argument("--top-finalists", type=int, default=3)
     argument_parser.add_argument("--chunk-sizes", default="2048,4096,8192,16384")
-    argument_parser.add_argument("--staging-depths", "--prefetch-chunks", default="0,1,2")
+    argument_parser.add_argument("--staging-depths", "--prefetch-chunks", default="1,2")
     argument_parser.add_argument("--output-writer-thread-counts", default="1,2,4,8")
     argument_parser.add_argument("--writer-queue-depth-multipliers", default="1,2")
     argument_parser.add_argument("--firth-batch-sizes", default="32,64,128")

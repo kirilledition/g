@@ -574,8 +574,8 @@ def validate_config(config: RegenieConfig) -> None:
     if config.trait.threads is not None and config.trait.threads <= 0:
         message = "--threads must be positive when provided."
         raise ValueError(message)
-    if config.g_compute.staging_depth < 0:
-        message = "--g-staging-depth must be zero or positive."
+    if config.g_compute.staging_depth <= 0:
+        message = "--g-staging-depth must be positive."
         raise ValueError(message)
     if config.g_compute.variant_limit is not None and config.g_compute.variant_limit <= 0:
         message = "--g-variant-limit must be positive when provided."

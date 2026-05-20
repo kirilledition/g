@@ -319,7 +319,7 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         "g_staging_depth",
         SupportLevel.G_EXTENSION,
         "g.compute",
-        "Native callback staging depth.",
+        "Positive native callback staging depth.",
         cli_flags=("--g-staging-depth", "g_staging_depth"),
         type=OptionValueType.INTEGER,
     ),

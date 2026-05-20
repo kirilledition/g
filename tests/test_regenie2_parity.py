@@ -94,7 +94,7 @@ def regenie2_parity_results(tmp_path_factory: pytest.TempPathFactory) -> Regenie
             "bsize": 512,
             "g-device": types.Device.CPU.value,
             "g-variant-limit": PARITY_VARIANT_LIMIT,
-            "g-staging-depth": 0,
+            "g-staging-depth": 1,
             "g-output-run-directory": output_directory / "regenie2_parity",
             "g-output-format": types.OutputFormat.PARQUET.value,
         }

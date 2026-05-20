@@ -123,7 +123,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--smoke", action="store_true", help="Use a fast smoke configuration.")
     parser.add_argument("--skip-deep-profiles", action="store_true", help="Skip perf/py-spy/cProfile/JAX trace runs.")
     parser.add_argument("--chunk-sizes", default="2048,4096,8192,16384")
-    parser.add_argument("--staging-depths", "--prefetch-chunks", default="0,1,2")
+    parser.add_argument("--staging-depths", "--prefetch-chunks", default="1,2")
     parser.add_argument("--output-writer-thread-counts", default="1,2,4,8")
     parser.add_argument("--writer-queue-depth-multipliers", default="1,2")
     parser.add_argument("--firth-batch-sizes", default="32,64,128")
@@ -1236,7 +1236,7 @@ def apply_smoke_overrides(arguments: argparse.Namespace) -> None:
     if arguments.variant_limit is None:
         arguments.variant_limit = 1000
     arguments.chunk_sizes = "2048"
-    arguments.staging_depths = "0"
+    arguments.staging_depths = "1"
     arguments.output_writer_thread_counts = "1"
     arguments.writer_queue_depth_multipliers = "1"
     arguments.firth_batch_sizes = "32"

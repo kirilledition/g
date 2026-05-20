@@ -146,7 +146,7 @@ def test_tuning_benchmark_builds_shared_compute_candidates() -> None:
     candidates = tuning_benchmark.build_compute_stage_candidates(
         trait_type=tuning_benchmark.types.RegenieTraitType.QUANTITATIVE,
         chunk_sizes=(4096, 8192),
-        staging_depth_values=(0, 1),
+        staging_depth_values=(1, 2),
         bgen_candidates=(bgen_candidate_summary,),
         firth_batch_sizes=(32, 64),
     )
