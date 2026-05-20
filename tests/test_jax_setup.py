@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from g.jax_setup import (
     FLOAT_DTYPE,
     configure_jax_device,
+    configure_jax_runtime_before_backend_init,
     require_gpu_device,
     resolve_jax_compilation_cache_directory,
     resolve_xla_cache_option,
@@ -74,6 +75,41 @@ def test_configure_jax_device_cpu() -> None:
     with patch("g.jax_setup.jax.config.update") as mock_update:
         configure_jax_device(Device.CPU)
         mock_update.assert_called_once_with("jax_platforms", "cpu")
+
+
+def test_configure_jax_runtime_before_backend_init_sets_platform_first(tmp_path: Path) -> None:
+    """Ensure platform selection happens before other JAX runtime settings."""
+    cache_directory = tmp_path / "jax-cache"
+
+    with patch("g.jax_setup.jax.config.update") as mock_update:
+        configure_jax_runtime_before_backend_init(device=Device.CPU, cache_directory=cache_directory)
+
+    assert mock_update.call_args_list[0].args == ("jax_platforms", "cpu")
+    assert ("jax_enable_x64", False) in [call.args for call in mock_update.call_args_list]
+    assert ("jax_compilation_cache_dir", str(cache_directory)) in [call.args for call in mock_update.call_args_list]
+
+
+def test_configure_jax_runtime_before_backend_init_validates_gpu_after_runtime(tmp_path: Path) -> None:
+    """Ensure GPU validation happens after platform and cache settings are applied."""
+    cache_directory = tmp_path / "jax-cache"
+    call_order: list[str] = []
+
+    def record_config_update(setting_name: str, value: object) -> None:
+        del value
+        call_order.append(setting_name)
+
+    def record_require_gpu_device() -> None:
+        call_order.append("require_gpu_device")
+
+    with (
+        patch("g.jax_setup.jax.config.update", side_effect=record_config_update),
+        patch("g.jax_setup.require_gpu_device", side_effect=record_require_gpu_device),
+    ):
+        configure_jax_runtime_before_backend_init(device=Device.GPU, cache_directory=cache_directory)
+
+    assert call_order[0] == "jax_platforms"
+    assert "jax_compilation_cache_dir" in call_order
+    assert call_order[-1] == "require_gpu_device"
 
 
 def test_require_gpu_device_accepts_gpu_platform() -> None:

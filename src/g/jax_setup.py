@@ -7,7 +7,7 @@ import typing
 from pathlib import Path
 
 import jax
-import jax.numpy as jnp
+import numpy as np
 
 from g import types
 
@@ -35,7 +35,7 @@ def path_is_node_local(path: Path) -> bool:
     return str(expanded_path).startswith("/tmp/") or str(expanded_path) == "/tmp"
 
 
-FLOAT_DTYPE = jnp.float32
+FLOAT_DTYPE = np.float32
 JAX_ENABLE_X64 = False
 DEFAULT_MATMUL_PRECISION = "float32"
 ENABLE_PERSISTENT_COMPILATION_CACHE = True
@@ -74,7 +74,12 @@ def nvidia_driver_is_visible() -> bool:
     )
 
 
-jax.config.update("jax_enable_x64", JAX_ENABLE_X64)
+def configure_jax_platform(device: types.Device) -> None:
+    """Configure the JAX platform without initializing a backend."""
+    if device == types.Device.GPU:
+        jax.config.update("jax_platforms", CUDA_PLATFORM_NAME)
+    else:
+        jax.config.update("jax_platforms", "cpu")
 
 
 def configure_jax_runtime(
@@ -88,6 +93,7 @@ def configure_jax_runtime(
     transfer_guard: bool = False,
 ) -> None:
     """Configure JAX runtime knobs before engine modules are imported."""
+    jax.config.update("jax_enable_x64", JAX_ENABLE_X64)
     precision_value = DEFAULT_MATMUL_PRECISION if matmul_precision is None else matmul_precision.value
     jax.config.update("jax_default_matmul_precision", precision_value)
     if persistent_cache:
@@ -107,6 +113,32 @@ def configure_jax_runtime(
         jax.config.update("jax_transfer_guard", "disallow")
 
 
+def configure_jax_runtime_before_backend_init(
+    *,
+    device: types.Device,
+    cache_directory: Path | None = None,
+    matmul_precision: types.JaxMatmulPrecision | None = None,
+    persistent_cache: bool = ENABLE_PERSISTENT_COMPILATION_CACHE,
+    persistent_cache_min_entry_size_bytes: int = PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
+    persistent_cache_min_compile_time_seconds: int = PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
+    xla_autotune_cache: bool = False,
+    transfer_guard: bool = False,
+) -> None:
+    """Configure JAX platform and runtime knobs before backend initialization."""
+    configure_jax_platform(device)
+    configure_jax_runtime(
+        cache_directory=cache_directory,
+        matmul_precision=matmul_precision,
+        persistent_cache=persistent_cache,
+        persistent_cache_min_entry_size_bytes=persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds=persistent_cache_min_compile_time_seconds,
+        xla_autotune_cache=xla_autotune_cache,
+        transfer_guard=transfer_guard,
+    )
+    if device == types.Device.GPU:
+        require_gpu_device()
+
+
 def configure_jax_device(device: types.Device) -> None:
     """Configure the JAX execution device.
 
@@ -114,11 +146,9 @@ def configure_jax_device(device: types.Device) -> None:
         device: Device enum specifying CPU or GPU execution.
 
     """
+    configure_jax_platform(device)
     if device == types.Device.GPU:
-        jax.config.update("jax_platforms", CUDA_PLATFORM_NAME)
         require_gpu_device()
-    else:
-        jax.config.update("jax_platforms", "cpu")
 
 
 def require_gpu_device() -> None:

@@ -49,9 +49,18 @@ def load_jax_setup_module() -> typing.Any:
     return importlib.import_module("g.jax_setup")
 
 
-def configure_jax_runtime(compute_config: config.GComputeConfig) -> None:
-    """Configure JAX lazily."""
-    load_jax_setup_module().configure_jax_runtime(
+def configure_jax_platform_before_setup_import(device: types.Device) -> None:
+    """Configure JAX platform selection before importing setup helpers."""
+    jax_module = importlib.import_module("jax")
+    platform_name = "cuda" if device == types.Device.GPU else "cpu"
+    jax_module.config.update("jax_platforms", platform_name)
+
+
+def configure_runtime_before_jax_import(compute_config: config.GComputeConfig) -> None:
+    """Configure JAX platform and runtime before compute modules are imported."""
+    configure_jax_platform_before_setup_import(compute_config.device)
+    load_jax_setup_module().configure_jax_runtime_before_backend_init(
+        device=compute_config.device,
         cache_directory=compute_config.jax_cache_dir,
         matmul_precision=compute_config.jax_matmul_precision,
         persistent_cache=compute_config.jax_persistent_cache,
@@ -60,6 +69,11 @@ def configure_jax_runtime(compute_config: config.GComputeConfig) -> None:
         xla_autotune_cache=compute_config.jax_xla_autotune_cache,
         transfer_guard=compute_config.jax_transfer_guard,
     )
+
+
+def configure_jax_runtime(compute_config: config.GComputeConfig) -> None:
+    """Configure JAX lazily."""
+    configure_runtime_before_jax_import(compute_config)
 
 
 def configure_jax_device(device: types.Device) -> None:
@@ -109,8 +123,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> t
 
 
 def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
-    """Apply runtime knobs before engine execution."""
-    configure_jax_runtime(compute_config)
+    """Apply native runtime knobs before engine execution."""
     core_module = importlib.import_module("g._core")
     core_module.configure_bgen_decode_tile_variant_count(compute_config.bgen_decode_tile_variant_count)
     if trait_config.threads is not None:
@@ -131,7 +144,7 @@ def run_validated_regenie_config(regenie_config: config.RegenieConfig) -> RunArt
     stage_timing_recorder = None
     try:
         device_start_time = time.perf_counter()
-        configure_jax_device(regenie_config.g_compute.device)
+        configure_runtime_before_jax_import(regenie_config.g_compute)
         stage_timing_recorder = build_stage_timing_recorder(regenie_config.g_diagnostics.stage_timings_json)
         record_stage_duration(stage_timing_recorder, "jax_device_configuration_backend_init", device_start_time)
         output_start_time = time.perf_counter()

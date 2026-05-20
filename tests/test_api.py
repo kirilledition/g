@@ -112,7 +112,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
         chunks_directory=Path("results/output.g/trait.regenie2_linear.run/chunks"),
     )
     with (
-        patch("g.runner.configure_jax_device") as mock_configure_jax_device,
+        patch("g.runner.configure_runtime_before_jax_import") as mock_configure_runtime_before_jax_import,
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest={"committed_chunks": []}),
@@ -127,7 +127,8 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     assert artifacts.output_run_directory == Path("results/output.g/trait.regenie2_linear.run")
     assert artifacts.final_parquet == Path("results/output.g/trait.regenie2_linear.run/final.parquet")
     assert artifacts.effective_config == Path("results/output.g/trait.regenie2_linear.run/effective_config.toml")
-    mock_configure_jax_device.assert_called_once_with(types.Device.CPU)
+    mock_configure_runtime_before_jax_import.assert_called_once()
+    assert mock_configure_runtime_before_jax_import.call_args.args[0].device == types.Device.CPU
     mock_prepare_output_run.assert_called_once()
     assert mock_pipeline.call_args.kwargs["existing_manifest"] == {"committed_chunks": []}
     assert mock_pipeline.call_args.kwargs["resume"] is False
@@ -164,7 +165,7 @@ def test_regenie_writes_run_start_metadata_before_pipeline_failure() -> None:
         raise RuntimeError(message)
 
     with (
-        patch("g.runner.configure_jax_device"),
+        patch("g.runner.configure_runtime_before_jax_import"),
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
@@ -177,6 +178,70 @@ def test_regenie_writes_run_start_metadata_before_pipeline_failure() -> None:
         api.regenie(build_minimal_config())
 
     assert call_order == ["effective_config", "manifest", "pipeline"]
+
+
+def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
+    run_paths = OutputRunPaths(
+        run_directory=Path("results/output.g/trait.regenie2_linear.run"),
+        chunks_directory=Path("results/output.g/trait.regenie2_linear.run/chunks"),
+    )
+    call_order: list[str] = []
+
+    def record_jax_bootstrap(*args: object, **kwargs: object) -> None:
+        del args
+        del kwargs
+        call_order.append("jax")
+
+    def record_prepare_output_run(*args: object, **kwargs: object) -> PreparedOutputRun:
+        del args
+        del kwargs
+        call_order.append("plan")
+        return PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None)
+
+    def record_pipeline(**kwargs: object) -> Path:
+        del kwargs
+        call_order.append("pipeline")
+        return Path("results/output.g/trait.regenie2_linear.run/final.parquet")
+
+    with (
+        patch("g.runner.configure_runtime_before_jax_import", side_effect=record_jax_bootstrap),
+        patch("g.execution_plan.output.prepare_output_run", side_effect=record_prepare_output_run),
+        patch("g.runner.run_regenie2_linear_bgen_pipeline", side_effect=record_pipeline),
+        patch("g.runner.extend_run_manifest"),
+        patch("g.interface.config.write_toml"),
+    ):
+        api.regenie(build_minimal_config())
+
+    assert call_order == ["jax", "plan", "pipeline"]
+
+
+def test_runtime_bootstrap_sets_jax_platform_before_setup_import() -> None:
+    call_order: list[str] = []
+
+    class FakeJaxConfig:
+        def update(self, setting_name: str, value: object) -> None:
+            call_order.append(f"{setting_name}:{value}")
+
+    class FakeJaxModule:
+        config = FakeJaxConfig()
+
+    class FakeJaxSetupModule:
+        def configure_jax_runtime_before_backend_init(self, **kwargs: object) -> None:
+            del kwargs
+            call_order.append("setup")
+
+    def import_module(module_name: str) -> object:
+        call_order.append(f"import:{module_name}")
+        if module_name == "jax":
+            return FakeJaxModule()
+        if module_name == "g.jax_setup":
+            return FakeJaxSetupModule()
+        raise AssertionError(f"Unexpected import: {module_name}")
+
+    with patch("g.runner.importlib.import_module", side_effect=import_module):
+        runner.configure_runtime_before_jax_import(config.GComputeConfig(device=types.Device.GPU))
+
+    assert call_order == ["import:jax", "jax_platforms:cuda", "import:g.jax_setup", "setup"]
 
 
 def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_config() -> None:
@@ -211,7 +276,7 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
     )
 
     with (
-        patch("g.runner.configure_jax_device"),
+        patch("g.runner.configure_runtime_before_jax_import"),
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
@@ -237,6 +302,15 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
     assert (
         mock_binary_pipeline.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
     )
+
+
+def test_quantitative_kernel_config_does_not_import_binary_runtime() -> None:
+    regenie_config = build_minimal_config()
+
+    with patch("g.execution_plan.importlib.import_module", side_effect=AssertionError("unexpected binary import")):
+        kernel_config = execution_plan.build_kernel_config(regenie_config)
+
+    assert kernel_config.binary_kernel_config is None
 
 
 def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
