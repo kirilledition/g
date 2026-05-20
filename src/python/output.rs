@@ -1,13 +1,14 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use std::path::Path;
+use std::sync::Arc;
 
 use numpy::PyReadonlyArray1;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use crate::output::{
-    OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
+    NativeChunkHandle, OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
     scan_committed_chunk_identifiers as scan_native_committed_chunk_identifiers,
     validate_strict_manifest_chunks as validate_native_strict_manifest_chunks,
@@ -73,13 +74,23 @@ impl OutputWriterSession {
             .map_err(|_| PyValueError::new_err("Variant start index does not fit into int64 output."))?;
         let variant_stop_index = i64::try_from(metadata.variant_stop_index)
             .map_err(|_| PyValueError::new_err("Variant stop index does not fit into int64 output."))?;
+        let expected_variant_stop_index = variant_start_index
+            .checked_add(
+                i64::try_from(metadata.metadata.position.len())
+                    .map_err(|_| PyValueError::new_err("Variant metadata row count does not fit into int64 output."))?,
+            )
+            .ok_or_else(|| PyValueError::new_err("Variant stop index does not fit into int64 output."))?;
+        if variant_stop_index != expected_variant_stop_index {
+            return Err(PyValueError::new_err("Variant metadata bounds do not match metadata row count."));
+        }
         let extra_code_slice = extra_code.as_ref().map(|array| array.as_slice()).transpose()?;
         self.inner
-            .write_regenie2_native_chunk(
-                variant_start_index,
-                variant_stop_index,
-                &metadata.metadata,
-                &chunk_stats.stats,
+            .write_regenie2_native_chunk_handle(
+                NativeChunkHandle::new(
+                    Arc::clone(&metadata.metadata),
+                    Arc::clone(&chunk_stats.stats),
+                    variant_start_index,
+                ),
                 beta.as_slice()?,
                 standard_error.as_slice()?,
                 chi_squared.as_slice()?,
