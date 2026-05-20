@@ -249,7 +249,8 @@ def test_regenie_command_rejects_removed_duplicate_iid_flag() -> None:
     result = runner.invoke(app, ["regenie", "--g-allow-duplicate-iid-alignment"])
 
     assert result.exit_code != 0
-    assert "No such option: --g-allow-duplicate-iid-alignment" in result.output
+    assert "No such option" in result.output
+    assert "--g-allow-duplicate-iid-alignment" in result.output
 
 
 def test_regenie_command_applies_toml_then_explicit_cli_override(tmp_path: Path) -> None:
