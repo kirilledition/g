@@ -40,6 +40,10 @@ binary_hot_benchmark = load_script_module(
     "binary_hot_benchmark_script",
     "scripts/benchmark_regenie2_binary_hot.py",
 )
+output_stage_benchmark = load_script_module(
+    "output_stage_benchmark_script",
+    "scripts/benchmark_output_stages.py",
+)
 binary_firth_parity = load_script_module(
     "binary_firth_parity_script",
     "scripts/compare_binary_firth_paths.py",
@@ -542,6 +546,48 @@ def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
     assert summary["headline"]["hot_same_process_no_final_seconds"] == 7.25
     assert summary["headline"]["hot_same_process_finalized_seconds"] == 7.85
     assert summary["metadata"]["configuration"]["trusted_no_missing_diploid"] is True
+
+
+def test_output_stage_benchmark_builds_recommended_matrix() -> None:
+    cases = output_stage_benchmark.build_benchmark_cases(
+        small_chunk_size=1024,
+        large_chunk_size=8192,
+        many_phenotype_count=8,
+    )
+
+    assert len(cases) == 8
+    assert {benchmark_case.finalize_parquet for benchmark_case in cases} == {False, True}
+    assert {benchmark_case.phenotype_count for benchmark_case in cases} == {1, 8}
+    assert {benchmark_case.chunk_size for benchmark_case in cases} == {1024, 8192}
+    assert "arrow_chunks_single_phenotype_small_bsize_1024" in {benchmark_case.name for benchmark_case in cases}
+    assert "parquet_final_8_phenotypes_large_bsize_8192" in {benchmark_case.name for benchmark_case in cases}
+
+
+def test_output_stage_benchmark_prepares_multi_phenotype_resources(tmp_path: Path) -> None:
+    data_directory = tmp_path / "data"
+    baseline_directory = data_directory / "baselines"
+    baseline_directory.mkdir(parents=True)
+    phenotype_path = data_directory / "pheno_cont.txt"
+    phenotype_path.write_text(
+        "FID\tIID\tphenotype_continuous\nf1\ti1\t1.0\nf2\ti2\t2.0\n",
+        encoding="utf-8",
+    )
+    loco_path = baseline_directory / "trait.loco"
+    loco_path.write_text("FID_IID 0_i1 0_i2\n22 0.1 0.2\n", encoding="utf-8")
+    (baseline_directory / "regenie_step1_qt_pred.list").write_text(
+        f"phenotype_continuous {loco_path}\n",
+        encoding="utf-8",
+    )
+
+    resources = output_stage_benchmark.prepare_phenotype_resources(
+        data_directory=data_directory,
+        output_directory=tmp_path / "benchmark",
+        phenotype_count=3,
+    )
+
+    assert resources.phenotype_names == ("output_trait_00", "output_trait_01", "output_trait_02")
+    assert resources.phenotype_path.exists()
+    assert resources.prediction_list_path.read_text(encoding="utf-8").count(str(loco_path)) == 3
 
 
 def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

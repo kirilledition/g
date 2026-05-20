@@ -1,16 +1,20 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
+use serde_json::json;
 
 use crate::genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
 use crate::output::finalization;
 use crate::output::manifest;
 use crate::output::writer::{
-    OutputWriterError, RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, build_chunk_file_name,
-    write_regenie_step2_chunk_job,
+    OutputWriterError, RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, RegenieStep2ChunkWriteTiming,
+    build_chunk_file_name, write_regenie_step2_chunk_job,
 };
+
+const OUTPUT_STAGE_TIMING_FILE_NAME: &str = "output_stage_timings.json";
 
 #[derive(Clone)]
 pub(crate) struct NativeChunkHandle {
@@ -56,6 +60,67 @@ struct OutputWriterConfig {
     finalize_parquet: bool,
     chunks_per_arrow_file: usize,
     arrow_compression: String,
+    collect_stage_timings: bool,
+}
+
+#[derive(Default)]
+struct OutputStageTimingAccumulator {
+    metadata_clone_seconds: f64,
+    result_buffer_copy_seconds: f64,
+    enqueue_seconds: f64,
+    coordinator_flush_seconds: f64,
+    writer_record_batch_build_seconds: f64,
+    writer_arrow_file_write_seconds: f64,
+    writer_total_seconds: f64,
+    manifest_commit_seconds: f64,
+    finish_total_seconds: f64,
+    finalization_list_chunk_files_seconds: f64,
+    finalization_read_arrow_seconds: f64,
+    finalization_project_batch_seconds: f64,
+    finalization_write_parquet_seconds: f64,
+    finalization_footer_metadata_seconds: f64,
+    finalization_close_writer_seconds: f64,
+    finalization_manifest_update_seconds: f64,
+    finalization_total_seconds: f64,
+    metadata_clone_count: u64,
+    result_buffer_copy_count: u64,
+    enqueue_count: u64,
+    coordinator_flush_count: u64,
+    writer_chunk_file_count: u64,
+    writer_chunk_count: u64,
+    writer_row_count: u64,
+    manifest_commit_count: u64,
+    finish_count: u64,
+    finalization_chunk_file_count: u64,
+    finalization_batch_count: u64,
+    finalization_row_count: u64,
+    finalization_count: u64,
+}
+
+impl OutputStageTimingAccumulator {
+    fn add_writer_timing(&mut self, timing: RegenieStep2ChunkWriteTiming) {
+        self.writer_record_batch_build_seconds += timing.record_batch_build_seconds;
+        self.writer_arrow_file_write_seconds += timing.arrow_file_write_seconds;
+        self.writer_total_seconds += timing.total_seconds;
+        self.writer_chunk_file_count += timing.chunk_file_count;
+        self.writer_chunk_count += timing.chunk_count;
+        self.writer_row_count += timing.row_count;
+    }
+
+    fn add_finalization_timing(&mut self, timing: finalization::RegenieStep2FinalizationTiming) {
+        self.finalization_list_chunk_files_seconds += timing.list_chunk_files_seconds;
+        self.finalization_read_arrow_seconds += timing.read_arrow_seconds;
+        self.finalization_project_batch_seconds += timing.project_batch_seconds;
+        self.finalization_write_parquet_seconds += timing.write_parquet_seconds;
+        self.finalization_footer_metadata_seconds += timing.footer_metadata_seconds;
+        self.finalization_close_writer_seconds += timing.close_writer_seconds;
+        self.finalization_manifest_update_seconds += timing.manifest_update_seconds;
+        self.finalization_total_seconds += timing.total_seconds;
+        self.finalization_chunk_file_count += timing.chunk_file_count;
+        self.finalization_batch_count += timing.batch_count;
+        self.finalization_row_count += timing.row_count;
+        self.finalization_count += 1;
+    }
 }
 
 enum OutputCoordinatorJob {
@@ -75,11 +140,13 @@ pub struct OutputWriterSession {
     worker_handles: Mutex<Vec<JoinHandle<()>>>,
     worker_errors: Arc<Mutex<Vec<String>>>,
     worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
+    stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
     config: OutputWriterConfig,
 }
 
 #[allow(clippy::missing_errors_doc)]
 impl OutputWriterSession {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         run_directory: String,
         chunks_directory: String,
@@ -89,6 +156,7 @@ impl OutputWriterSession {
         finalize_parquet: bool,
         chunks_per_arrow_file: usize,
         arrow_compression: String,
+        collect_stage_timings: bool,
     ) -> Result<Self, OutputWriterError> {
         if writer_thread_count == 0 {
             return Err(OutputWriterError::InvalidInput("Writer thread count must be at least 1.".to_string()));
@@ -103,23 +171,34 @@ impl OutputWriterSession {
             finalize_parquet,
             chunks_per_arrow_file,
             arrow_compression,
+            collect_stage_timings,
         };
         let (sender, receiver) = bounded(writer_queue_depth.max(1));
         let (writer_sender, writer_receiver) = bounded(writer_queue_depth.max(1));
         let worker_errors = Arc::new(Mutex::new(Vec::new()));
         let worker_commits = Arc::new(Mutex::new(Vec::new()));
+        let stage_timings = Arc::new(Mutex::new(OutputStageTimingAccumulator::default()));
         let mut worker_handles = Vec::with_capacity(writer_thread_count);
         for _ in 0..writer_thread_count {
             let receiver_clone = writer_receiver.clone();
             let config_clone = config.clone();
             let worker_errors_clone = Arc::clone(&worker_errors);
             let worker_commits_clone = Arc::clone(&worker_commits);
+            let stage_timings_clone = Arc::clone(&stage_timings);
             worker_handles.push(std::thread::spawn(move || {
-                run_output_writer_worker(receiver_clone, config_clone, worker_errors_clone, worker_commits_clone);
+                run_output_writer_worker(
+                    receiver_clone,
+                    config_clone,
+                    worker_errors_clone,
+                    worker_commits_clone,
+                    stage_timings_clone,
+                );
             }));
         }
         let coordinator_worker_errors = Arc::clone(&worker_errors);
+        let coordinator_stage_timings = Arc::clone(&stage_timings);
         let coordinator_chunks_per_arrow_file = config.chunks_per_arrow_file;
+        let coordinator_collect_stage_timings = config.collect_stage_timings;
         let coordinator_handle = std::thread::spawn(move || {
             run_output_writer_coordinator(
                 receiver,
@@ -127,6 +206,8 @@ impl OutputWriterSession {
                 writer_thread_count,
                 coordinator_chunks_per_arrow_file,
                 coordinator_worker_errors,
+                coordinator_stage_timings,
+                coordinator_collect_stage_timings,
             );
         });
         Ok(Self {
@@ -135,40 +216,64 @@ impl OutputWriterSession {
             worker_handles: Mutex::new(worker_handles),
             worker_errors,
             worker_commits,
+            stage_timings,
             config,
         })
     }
 
     pub fn finish(&self) -> Result<Option<PathBuf>, OutputWriterError> {
+        let finish_start_time = start_optional_timing(self.config.collect_stage_timings);
         self.close_writer_sender(OutputCoordinatorJob::Finish)?;
         self.join_coordinator_thread()?;
         self.join_writer_threads()?;
         self.raise_if_worker_failed()?;
         let chunk_commits = self.take_worker_commits()?;
+        let manifest_commit_start_time = start_optional_timing(self.config.collect_stage_timings);
         manifest::record_run_manifest_chunk_commits(&self.config.run_directory, chunk_commits)
             .map_err(OutputWriterError::runtime)?;
+        if let Some(start_time) = manifest_commit_start_time {
+            self.record_stage_timing(|stage_timings| {
+                stage_timings.manifest_commit_seconds += start_time.elapsed().as_secs_f64();
+                stage_timings.manifest_commit_count += 1;
+            })?;
+        }
         if !self.config.finalize_parquet {
+            self.record_finish_timing(finish_start_time)?;
+            self.write_stage_timing_snapshot()?;
             return Ok(None);
         }
         let final_parquet_path = self.config.run_directory.join("final.parquet");
-        finalization::write_final_parquet_from_chunk_files(
+        let finalization_timing = finalization::write_final_parquet_from_chunk_files_with_timing(
             &self.config.chunks_directory,
             &final_parquet_path,
             &self.config.association_mode,
         )?;
+        self.record_stage_timing(|stage_timings| stage_timings.add_finalization_timing(finalization_timing))?;
+        self.record_finish_timing(finish_start_time)?;
+        self.write_stage_timing_snapshot()?;
         Ok(Some(final_parquet_path))
     }
 
     pub fn finish_interrupted(&self, signal_name: &str) -> Result<(), OutputWriterError> {
+        let finish_start_time = start_optional_timing(self.config.collect_stage_timings);
         self.close_writer_sender(OutputCoordinatorJob::Finish)?;
         self.join_coordinator_thread()?;
         self.join_writer_threads()?;
         self.raise_if_worker_failed()?;
         let chunk_commits = self.take_worker_commits()?;
+        let manifest_commit_start_time = start_optional_timing(self.config.collect_stage_timings);
         manifest::record_run_manifest_chunk_commits(&self.config.run_directory, chunk_commits)
             .map_err(OutputWriterError::runtime)?;
+        if let Some(start_time) = manifest_commit_start_time {
+            self.record_stage_timing(|stage_timings| {
+                stage_timings.manifest_commit_seconds += start_time.elapsed().as_secs_f64();
+                stage_timings.manifest_commit_count += 1;
+            })?;
+        }
         manifest::mark_run_manifest_interrupted(&self.config.run_directory, signal_name)
-            .map_err(OutputWriterError::runtime)
+            .map_err(OutputWriterError::runtime)?;
+        self.record_finish_timing(finish_start_time)?;
+        self.write_stage_timing_snapshot()
     }
 
     pub fn abort(&self) -> Result<(), OutputWriterError> {
@@ -213,8 +318,17 @@ impl OutputWriterSession {
                 "Rust output writer metadata bounds do not match metadata row count.".to_string(),
             ));
         }
+        let metadata_clone_start_time = start_optional_timing(self.config.collect_stage_timings);
+        let chunk_handle =
+            NativeChunkHandle::new(Arc::new(metadata.clone()), Arc::new(chunk_stats.clone()), variant_start_index);
+        if let Some(start_time) = metadata_clone_start_time {
+            self.record_stage_timing(|stage_timings| {
+                stage_timings.metadata_clone_seconds += start_time.elapsed().as_secs_f64();
+                stage_timings.metadata_clone_count += 1;
+            })?;
+        }
         self.write_regenie2_native_chunk_handle(
-            NativeChunkHandle::new(Arc::new(metadata.clone()), Arc::new(chunk_stats.clone()), variant_start_index),
+            chunk_handle,
             beta,
             standard_error,
             chi_squared,
@@ -256,6 +370,7 @@ impl OutputWriterSession {
         if let Some(extra_code_values) = extra_code {
             validate_column_lengths(row_count, &[extra_code_values.len()])?;
         }
+        let result_buffer_copy_start_time = start_optional_timing(self.config.collect_stage_timings);
         let job = RegenieStep2ChunkJob {
             chunk_handle,
             beta: beta.to_vec(),
@@ -264,6 +379,12 @@ impl OutputWriterSession {
             log10p: log10_p_value.to_vec(),
             extra_code: extra_code.map(<[i32]>::to_vec),
         };
+        if let Some(start_time) = result_buffer_copy_start_time {
+            self.record_stage_timing(|stage_timings| {
+                stage_timings.result_buffer_copy_seconds += start_time.elapsed().as_secs_f64();
+                stage_timings.result_buffer_copy_count += 1;
+            })?;
+        }
         self.raise_if_worker_failed()?;
         let sender_guard = self
             .sender
@@ -272,8 +393,101 @@ impl OutputWriterSession {
         let sender = sender_guard
             .as_ref()
             .ok_or_else(|| OutputWriterError::Runtime("Rust output writer session is already closed.".to_string()))?;
+        let enqueue_start_time = start_optional_timing(self.config.collect_stage_timings);
         sender.send(OutputCoordinatorJob::RegenieStep2(Box::new(job))).map_err(OutputWriterError::runtime)?;
+        if let Some(start_time) = enqueue_start_time {
+            self.record_stage_timing(|stage_timings| {
+                stage_timings.enqueue_seconds += start_time.elapsed().as_secs_f64();
+                stage_timings.enqueue_count += 1;
+            })?;
+        }
         Ok(())
+    }
+
+    fn record_finish_timing(&self, finish_start_time: Option<Instant>) -> Result<(), OutputWriterError> {
+        if let Some(start_time) = finish_start_time {
+            self.record_stage_timing(|stage_timings| {
+                stage_timings.finish_total_seconds += start_time.elapsed().as_secs_f64();
+                stage_timings.finish_count += 1;
+            })?;
+        }
+        Ok(())
+    }
+
+    fn record_stage_timing(
+        &self,
+        update_stage_timings: impl FnOnce(&mut OutputStageTimingAccumulator),
+    ) -> Result<(), OutputWriterError> {
+        if !self.config.collect_stage_timings {
+            return Ok(());
+        }
+        let mut stage_timings = self.stage_timings.lock().map_err(|_| {
+            OutputWriterError::Runtime("Rust output writer stage timing lock was poisoned.".to_string())
+        })?;
+        update_stage_timings(&mut stage_timings);
+        Ok(())
+    }
+
+    fn write_stage_timing_snapshot(&self) -> Result<(), OutputWriterError> {
+        if !self.config.collect_stage_timings {
+            return Ok(());
+        }
+        let stage_timings = self.stage_timings.lock().map_err(|_| {
+            OutputWriterError::Runtime("Rust output writer stage timing lock was poisoned.".to_string())
+        })?;
+        let payload = json!({
+            "stage_totals_seconds": {
+                "rust_output_metadata_clone": stage_timings.metadata_clone_seconds,
+                "rust_output_result_buffer_copy": stage_timings.result_buffer_copy_seconds,
+                "rust_output_enqueue": stage_timings.enqueue_seconds,
+                "rust_output_coordinator_flush": stage_timings.coordinator_flush_seconds,
+                "rust_output_writer_record_batch_build": stage_timings.writer_record_batch_build_seconds,
+                "rust_output_writer_arrow_file_write": stage_timings.writer_arrow_file_write_seconds,
+                "rust_output_writer_total": stage_timings.writer_total_seconds,
+                "rust_output_manifest_commit": stage_timings.manifest_commit_seconds,
+                "rust_output_finish_total": stage_timings.finish_total_seconds,
+                "rust_output_finalization_list_chunk_files": stage_timings.finalization_list_chunk_files_seconds,
+                "rust_output_finalization_read_arrow": stage_timings.finalization_read_arrow_seconds,
+                "rust_output_finalization_project_batch": stage_timings.finalization_project_batch_seconds,
+                "rust_output_finalization_write_parquet": stage_timings.finalization_write_parquet_seconds,
+                "rust_output_finalization_footer_metadata": stage_timings.finalization_footer_metadata_seconds,
+                "rust_output_finalization_close_writer": stage_timings.finalization_close_writer_seconds,
+                "rust_output_finalization_manifest_update": stage_timings.finalization_manifest_update_seconds,
+                "rust_output_finalization_total": stage_timings.finalization_total_seconds,
+            },
+            "stage_counts": {
+                "rust_output_metadata_clone": stage_timings.metadata_clone_count,
+                "rust_output_result_buffer_copy": stage_timings.result_buffer_copy_count,
+                "rust_output_enqueue": stage_timings.enqueue_count,
+                "rust_output_coordinator_flush": stage_timings.coordinator_flush_count,
+                "rust_output_writer_record_batch_build": stage_timings.writer_chunk_file_count,
+                "rust_output_writer_arrow_file_write": stage_timings.writer_chunk_file_count,
+                "rust_output_writer_total": stage_timings.writer_chunk_file_count,
+                "rust_output_manifest_commit": stage_timings.manifest_commit_count,
+                "rust_output_finish_total": stage_timings.finish_count,
+                "rust_output_finalization_list_chunk_files": stage_timings.finalization_count,
+                "rust_output_finalization_read_arrow": stage_timings.finalization_chunk_file_count,
+                "rust_output_finalization_project_batch": stage_timings.finalization_batch_count,
+                "rust_output_finalization_write_parquet": stage_timings.finalization_batch_count,
+                "rust_output_finalization_footer_metadata": stage_timings.finalization_count,
+                "rust_output_finalization_close_writer": stage_timings.finalization_count,
+                "rust_output_finalization_manifest_update": stage_timings.finalization_count,
+                "rust_output_finalization_total": stage_timings.finalization_count,
+            },
+            "output_metrics": {
+                "writer_chunk_file_count": stage_timings.writer_chunk_file_count,
+                "writer_chunk_count": stage_timings.writer_chunk_count,
+                "writer_row_count": stage_timings.writer_row_count,
+                "finalization_chunk_file_count": stage_timings.finalization_chunk_file_count,
+                "finalization_batch_count": stage_timings.finalization_batch_count,
+                "finalization_row_count": stage_timings.finalization_row_count,
+            },
+        });
+        let timing_path = self.config.run_directory.join(OUTPUT_STAGE_TIMING_FILE_NAME);
+        let temporary_timing_path = timing_path.with_extension("json.tmp");
+        let timing_text = serde_json::to_string_pretty(&payload).map_err(OutputWriterError::runtime)?;
+        std::fs::write(&temporary_timing_path, format!("{timing_text}\n")).map_err(OutputWriterError::runtime)?;
+        std::fs::rename(&temporary_timing_path, &timing_path).map_err(OutputWriterError::runtime)
     }
 
     fn raise_if_worker_failed(&self) -> Result<(), OutputWriterError> {
@@ -333,6 +547,10 @@ fn validate_column_lengths(expected_row_count: usize, observed_lengths: &[usize]
     ))
 }
 
+fn start_optional_timing(collect_stage_timings: bool) -> Option<Instant> {
+    collect_stage_timings.then(Instant::now)
+}
+
 #[allow(clippy::needless_pass_by_value)]
 fn run_output_writer_coordinator(
     receiver: Receiver<OutputCoordinatorJob>,
@@ -340,6 +558,8 @@ fn run_output_writer_coordinator(
     writer_thread_count: usize,
     chunks_per_arrow_file: usize,
     worker_errors: Arc<Mutex<Vec<String>>>,
+    stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
+    collect_stage_timings: bool,
 ) {
     let mut pending_chunks = Vec::with_capacity(chunks_per_arrow_file);
     while let Ok(job) = receiver.recv() {
@@ -347,13 +567,26 @@ fn run_output_writer_coordinator(
             OutputCoordinatorJob::RegenieStep2(chunk_job) => {
                 pending_chunks.push(*chunk_job);
                 if pending_chunks.len() >= chunks_per_arrow_file
-                    && flush_pending_regenie_step2_chunks(&writer_sender, &mut pending_chunks, &worker_errors).is_err()
+                    && flush_pending_regenie_step2_chunks(
+                        &writer_sender,
+                        &mut pending_chunks,
+                        &worker_errors,
+                        &stage_timings,
+                        collect_stage_timings,
+                    )
+                    .is_err()
                 {
                     break;
                 }
             }
             OutputCoordinatorJob::Finish => {
-                let _ = flush_pending_regenie_step2_chunks(&writer_sender, &mut pending_chunks, &worker_errors);
+                let _ = flush_pending_regenie_step2_chunks(
+                    &writer_sender,
+                    &mut pending_chunks,
+                    &worker_errors,
+                    &stage_timings,
+                    collect_stage_timings,
+                );
                 break;
             }
             OutputCoordinatorJob::Abort => break,
@@ -371,10 +604,13 @@ fn flush_pending_regenie_step2_chunks(
     writer_sender: &Sender<OutputWriteJob>,
     pending_chunks: &mut Vec<RegenieStep2ChunkJob>,
     worker_errors: &Arc<Mutex<Vec<String>>>,
+    stage_timings: &Arc<Mutex<OutputStageTimingAccumulator>>,
+    collect_stage_timings: bool,
 ) -> Result<(), ()> {
     if pending_chunks.is_empty() {
         return Ok(());
     }
+    let flush_start_time = start_optional_timing(collect_stage_timings);
     let first_chunk_identifier = pending_chunks.first().map_or(0, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
     let last_chunk_identifier =
         pending_chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
@@ -382,7 +618,15 @@ fn flush_pending_regenie_step2_chunks(
     let write_batch = RegenieStep2ChunkWriteBatch { chunk_file_name, chunks: std::mem::take(pending_chunks) };
     writer_sender.send(OutputWriteJob::RegenieStep2(Box::new(write_batch))).map_err(|error| {
         push_worker_error(worker_errors, error.to_string());
-    })
+    })?;
+    if let Some(start_time) = flush_start_time {
+        let mut stage_timings_guard = stage_timings.lock().map_err(|_| {
+            push_worker_error(worker_errors, "Rust output writer stage timing lock was poisoned.".to_string());
+        })?;
+        stage_timings_guard.coordinator_flush_seconds += start_time.elapsed().as_secs_f64();
+        stage_timings_guard.coordinator_flush_count += 1;
+    }
+    Ok(())
 }
 
 fn push_worker_error(worker_errors: &Arc<Mutex<Vec<String>>>, error: String) {
@@ -397,6 +641,7 @@ fn run_output_writer_worker(
     config: OutputWriterConfig,
     worker_errors: Arc<Mutex<Vec<String>>>,
     worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
+    stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
 ) {
     while let Ok(job) = receiver.recv() {
         let write_result = match job {
@@ -406,12 +651,22 @@ fn run_output_writer_worker(
             OutputWriteJob::Shutdown => return,
         };
         match write_result {
-            Ok(chunk_commits) => {
+            Ok(write_result) => {
+                if config.collect_stage_timings {
+                    let Ok(mut stage_timings_guard) = stage_timings.lock() else {
+                        push_worker_error(
+                            &worker_errors,
+                            "Rust output writer stage timing lock was poisoned.".to_string(),
+                        );
+                        return;
+                    };
+                    stage_timings_guard.add_writer_timing(write_result.timing);
+                }
                 let Ok(mut worker_commits_guard) = worker_commits.lock() else {
                     push_worker_error(&worker_errors, "Rust output writer commit lock was poisoned.".to_string());
                     return;
                 };
-                worker_commits_guard.extend(chunk_commits);
+                worker_commits_guard.extend(write_result.chunk_commits);
             }
             Err(error) => {
                 push_worker_error(&worker_errors, error);

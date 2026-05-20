@@ -3,6 +3,7 @@
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use arrow::array::{ArrayRef, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::ipc::CompressionType;
@@ -41,18 +42,57 @@ pub(crate) struct RegenieStep2ChunkWriteBatch {
     pub(crate) chunks: Vec<RegenieStep2ChunkJob>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct RegenieStep2ChunkWriteTiming {
+    pub(crate) chunk_file_count: u64,
+    pub(crate) chunk_count: u64,
+    pub(crate) row_count: u64,
+    pub(crate) record_batch_build_seconds: f64,
+    pub(crate) arrow_file_write_seconds: f64,
+    pub(crate) total_seconds: f64,
+}
+
+pub(crate) struct RegenieStep2ChunkWriteResult {
+    pub(crate) chunk_commits: Vec<manifest::RunManifestChunkCommit>,
+    pub(crate) timing: RegenieStep2ChunkWriteTiming,
+}
+
 pub(crate) fn write_regenie_step2_chunk_job(
     chunks_directory: &Path,
     job: RegenieStep2ChunkWriteBatch,
     arrow_compression: &str,
-) -> Result<Vec<manifest::RunManifestChunkCommit>, String> {
+) -> Result<RegenieStep2ChunkWriteResult, String> {
+    let total_start_time = Instant::now();
     let chunk_file_path = chunks_directory.join(&job.chunk_file_name);
     let temporary_chunk_file_path = chunk_file_path.with_extension("arrow.tmp");
+    let chunk_count = u64::try_from(job.chunks.len()).map_err(|error| error.to_string())?;
+    let row_count = job
+        .chunks
+        .iter()
+        .map(|chunk_job| u64::try_from(chunk_job.chunk_handle.row_count()).map_err(|error| error.to_string()))
+        .sum::<Result<u64, String>>()?;
     let chunk_commits = build_run_manifest_chunk_commits(&job)?;
+
+    let record_batch_build_start_time = Instant::now();
     let record_batch = build_regenie_step2_record_batch(job)?;
+    let record_batch_build_seconds = record_batch_build_start_time.elapsed().as_secs_f64();
+
+    let arrow_file_write_start_time = Instant::now();
     write_record_batch_to_arrow_file(&record_batch, &temporary_chunk_file_path, arrow_compression)?;
     std::fs::rename(&temporary_chunk_file_path, &chunk_file_path).map_err(|error| error.to_string())?;
-    Ok(chunk_commits)
+    let arrow_file_write_seconds = arrow_file_write_start_time.elapsed().as_secs_f64();
+
+    Ok(RegenieStep2ChunkWriteResult {
+        chunk_commits,
+        timing: RegenieStep2ChunkWriteTiming {
+            chunk_file_count: 1,
+            chunk_count,
+            row_count,
+            record_batch_build_seconds,
+            arrow_file_write_seconds,
+            total_seconds: total_start_time.elapsed().as_secs_f64(),
+        },
+    })
 }
 
 fn build_run_manifest_chunk_commits(

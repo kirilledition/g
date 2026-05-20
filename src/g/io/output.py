@@ -264,6 +264,7 @@ def create_output_writer_session(
     finalize_parquet: bool,
     chunks_per_arrow_file: int = DEFAULT_CHUNKS_PER_ARROW_FILE,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+    collect_stage_timings: bool = False,
 ) -> typing.Any:
     """Create one native Rust output writer session."""
     return _core.OutputWriterSession(
@@ -275,6 +276,7 @@ def create_output_writer_session(
         finalize_parquet=finalize_parquet,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression.value,
+        collect_stage_timings=collect_stage_timings,
     )
 
 

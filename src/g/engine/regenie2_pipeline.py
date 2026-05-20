@@ -100,6 +100,7 @@ def run_regenie2_linear_bgen_pipeline(
         finalize_parquet=finalize_parquet,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
+        collect_stage_timings=stage_timing_recorder is not None,
     )
     timing.record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
     prediction_start_time = time.perf_counter()
@@ -225,6 +226,7 @@ def run_regenie2_binary_bgen_pipeline(
         finalize_parquet=finalize_parquet,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
+        collect_stage_timings=stage_timing_recorder is not None,
     )
     timing.record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
     prediction_start_time = time.perf_counter()
@@ -513,6 +515,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
             finalize_parquet=finalize_parquet,
             chunks_per_arrow_file=chunks_per_arrow_file,
             arrow_compression=arrow_compression,
+            collect_stage_timings=stage_timing_recorder is not None,
         )
         for output_run_paths in output_run_paths_by_phenotype
     )
