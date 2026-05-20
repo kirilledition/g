@@ -7,8 +7,10 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::Read;
 use std::path::Path;
+
+const TABULAR_MISSING_VALUE_TOKENS: &[&str] = &["", "NA", "NaN", "nan", "-9"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SampleKeyMode {
@@ -95,6 +97,27 @@ struct TabularColumnSelection {
     individual_identifier_value_index: usize,
     data_value_indices: Vec<usize>,
     selected_columns: Vec<SelectedTabularColumn>,
+}
+
+#[derive(Clone, Copy)]
+enum TabularDelimiter {
+    Tab,
+    Space,
+}
+
+impl TabularDelimiter {
+    fn byte(self) -> u8 {
+        match self {
+            Self::Tab => b'\t',
+            Self::Space => b' ',
+        }
+    }
+}
+
+struct StreamingTabularReader<R: Read> {
+    path_text: String,
+    source_label: &'static str,
+    reader: csv::Reader<R>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -496,54 +519,47 @@ fn load_sample_identifier_data_from_sample_file(
     sample_path: &Path,
     expected_sample_count: usize,
 ) -> Result<SampleIdentifierData, String> {
-    let sample_content = std::fs::read_to_string(sample_path)
-        .map_err(|error| format!("Failed to read sample file '{}': {error}.", sample_path.display()))?;
-    let non_empty_lines: Vec<String> = sample_content
-        .lines()
-        .map(|line| line.trim_end_matches('\r').to_string())
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-    if non_empty_lines.len() < 2 {
-        return Err(format!("Sample file '{}' must contain at least two header lines.", sample_path.display()));
-    }
-
-    let column_names = split_sample_file_line(&non_empty_lines[0]);
-    let column_types = split_sample_file_line(&non_empty_lines[1]);
+    let mut reader = open_sample_file_reader(sample_path)?;
+    let column_names = space_delimited_record_to_strings(&reader.read_required_record(format!(
+        "Sample file '{}' must contain at least two header lines.",
+        sample_path.display()
+    ))?);
+    let column_types = space_delimited_record_to_strings(&reader.read_required_record(format!(
+        "Sample file '{}' must contain at least two header lines.",
+        sample_path.display()
+    ))?);
     validate_sample_file_header(sample_path, &column_names, &column_types)?;
     let family_identifier_column_index = 0;
     let individual_identifier_column_index =
         column_names.iter().position(|column_name| column_name == "ID_2").unwrap_or(family_identifier_column_index);
-    let sample_count = non_empty_lines.len() - 2;
+
+    let mut sample_indices = Vec::with_capacity(expected_sample_count);
+    let mut family_identifiers = Vec::with_capacity(expected_sample_count);
+    let mut individual_identifiers = Vec::with_capacity(expected_sample_count);
+    let mut sample_count = 0usize;
+    while let Some(record) = reader.read_next_record()? {
+        sample_count += 1;
+        let row_values = space_delimited_record_to_strings(&record);
+        if row_values.len() != column_names.len() {
+            return Err(format!(
+                "Sample file '{}' line {} has {} values, but the header declares {} columns.",
+                sample_path.display(),
+                sample_count + 2,
+                row_values.len(),
+                column_names.len(),
+            ));
+        }
+        sample_indices.push(i64::try_from(sample_count - 1).map_err(|error| error.to_string())?);
+        family_identifiers.push(row_values[family_identifier_column_index].clone());
+        individual_identifiers.push(row_values[individual_identifier_column_index].clone());
+    }
     if sample_count != expected_sample_count {
         return Err(format!(
             "Expect number of samples in file to match BGEN sample count. Sample file '{}' contains {sample_count} rows, but the BGEN contains {expected_sample_count} samples.",
             sample_path.display()
         ));
     }
-
-    let mut sample_indices = Vec::with_capacity(sample_count);
-    let mut family_identifiers = Vec::with_capacity(sample_count);
-    let mut individual_identifiers = Vec::with_capacity(sample_count);
-    for (line_index, raw_line) in non_empty_lines[2..].iter().enumerate() {
-        let row_values = split_sample_file_line(raw_line);
-        if row_values.len() != column_names.len() {
-            return Err(format!(
-                "Sample file '{}' line {} has {} values, but the header declares {} columns.",
-                sample_path.display(),
-                line_index + 3,
-                row_values.len(),
-                column_names.len(),
-            ));
-        }
-        sample_indices.push(i64::try_from(line_index).map_err(|error| error.to_string())?);
-        family_identifiers.push(row_values[family_identifier_column_index].clone());
-        individual_identifiers.push(row_values[individual_identifier_column_index].clone());
-    }
     Ok(SampleIdentifierData { sample_indices, family_identifiers, individual_identifiers })
-}
-
-fn split_sample_file_line(raw_line: &str) -> Vec<String> {
-    raw_line.split_whitespace().map(ToString::to_string).collect()
 }
 
 fn validate_sample_file_header(
@@ -574,33 +590,79 @@ fn validate_sample_file_header(
     Ok(())
 }
 
-fn open_tabular_reader(table_path: &Path) -> Result<BufReader<File>, String> {
-    let table_file =
-        File::open(table_path).map_err(|error| format!("Failed to read table '{}': {error}.", table_path.display()))?;
-    Ok(BufReader::new(table_file))
+fn open_sample_file_reader(sample_path: &Path) -> Result<StreamingTabularReader<File>, String> {
+    open_tabular_reader(sample_path, "sample file", TabularDelimiter::Space)
 }
 
-fn read_tabular_header<R: BufRead>(reader: &mut R, table_path: &Path) -> Result<Vec<String>, String> {
-    let mut header_line = String::new();
-    let byte_count = reader
-        .read_line(&mut header_line)
-        .map_err(|error| format!("Failed to read table '{}': {error}.", table_path.display()))?;
-    if byte_count == 0 {
-        return Err(format!("Table '{}' is empty.", table_path.display()));
-    }
-    let headers = split_tabular_line(&header_line);
+fn open_tsv_table_reader(table_path: &Path) -> Result<StreamingTabularReader<File>, String> {
+    open_tabular_reader(table_path, "table", TabularDelimiter::Tab)
+}
+
+fn open_tabular_reader(
+    table_path: &Path,
+    source_label: &'static str,
+    delimiter: TabularDelimiter,
+) -> Result<StreamingTabularReader<File>, String> {
+    let table_file = File::open(table_path)
+        .map_err(|error| format!("Failed to read {source_label} '{}': {error}.", table_path.display()))?;
+    Ok(StreamingTabularReader::new(table_path.display().to_string(), source_label, table_file, delimiter))
+}
+
+fn read_tabular_header<R: Read>(
+    reader: &mut StreamingTabularReader<R>,
+    table_path: &Path,
+) -> Result<Vec<String>, String> {
+    let headers =
+        record_to_strings(&reader.read_required_record(format!("Table '{}' is empty.", table_path.display()))?);
     if headers.is_empty() {
         return Err(format!("Table '{}' must contain a header row.", table_path.display()));
     }
     Ok(headers)
 }
 
-fn split_tabular_line(line: &str) -> Vec<String> {
-    trim_tabular_line_ending(line).split('\t').map(ToString::to_string).collect()
+impl<R: Read> StreamingTabularReader<R> {
+    fn new(path_text: String, source_label: &'static str, source: R, delimiter: TabularDelimiter) -> Self {
+        let reader = csv::ReaderBuilder::new()
+            .delimiter(delimiter.byte())
+            .flexible(true)
+            .has_headers(false)
+            .trim(csv::Trim::All)
+            .from_reader(source);
+        Self { path_text, source_label, reader }
+    }
+
+    fn read_required_record(&mut self, empty_error_message: String) -> Result<csv::StringRecord, String> {
+        self.read_next_record()?.ok_or(empty_error_message)
+    }
+
+    fn read_next_record(&mut self) -> Result<Option<csv::StringRecord>, String> {
+        let mut record = csv::StringRecord::new();
+        loop {
+            let has_record = self
+                .reader
+                .read_record(&mut record)
+                .map_err(|error| format!("Failed to read {} '{}': {error}.", self.source_label, self.path_text))?;
+            if !has_record {
+                return Ok(None);
+            }
+            if !is_empty_tabular_record(&record) {
+                return Ok(Some(record));
+            }
+            record.clear();
+        }
+    }
 }
 
-fn trim_tabular_line_ending(line: &str) -> &str {
-    line.trim_end_matches('\n').trim_end_matches('\r')
+fn is_empty_tabular_record(record: &csv::StringRecord) -> bool {
+    record.iter().all(str::is_empty)
+}
+
+fn record_to_strings(record: &csv::StringRecord) -> Vec<String> {
+    record.iter().map(ToString::to_string).collect()
+}
+
+fn space_delimited_record_to_strings(record: &csv::StringRecord) -> Vec<String> {
+    record.iter().filter(|field_value| !field_value.is_empty()).map(ToString::to_string).collect()
 }
 
 fn required_column_index(headers: &[String], column_name: &str, table_path: &str) -> Result<usize, String> {
@@ -643,32 +705,18 @@ fn push_selected_column(selected_columns: &mut Vec<SelectedTabularColumn>, colum
     selected_value_index
 }
 
-fn select_tabular_line_values<'a>(raw_line: &'a str, selection: &TabularColumnSelection) -> Vec<&'a str> {
-    let line = trim_tabular_line_ending(raw_line);
+fn select_tabular_record_values<'a>(record: &'a csv::StringRecord, selection: &TabularColumnSelection) -> Vec<&'a str> {
     let mut selected_values = vec![""; selection.selected_columns.len()];
-    let mut ordered_selection_index = 0;
-    for (field_index, field_value) in line.split('\t').enumerate() {
-        while ordered_selection_index < selection.selected_columns.len()
-            && selection.selected_columns[ordered_selection_index].column_index < field_index
-        {
-            ordered_selection_index += 1;
-        }
-        while ordered_selection_index < selection.selected_columns.len()
-            && selection.selected_columns[ordered_selection_index].column_index == field_index
-        {
-            let selected_value_index = selection.selected_columns[ordered_selection_index].selected_value_index;
-            selected_values[selected_value_index] = field_value;
-            ordered_selection_index += 1;
-        }
-        if ordered_selection_index == selection.selected_columns.len() {
-            break;
+    for selected_column in &selection.selected_columns {
+        if let Some(field_value) = record.get(selected_column.column_index) {
+            selected_values[selected_column.selected_value_index] = field_value;
         }
     }
     selected_values
 }
 
 fn is_tabular_null_value(value: &str) -> bool {
-    matches!(value, "" | "NA" | "NaN" | "nan" | "-9")
+    TABULAR_MISSING_VALUE_TOKENS.contains(&value)
 }
 
 fn build_sample_key(sample_key_mode: SampleKeyMode, family_identifier: &str, individual_identifier: &str) -> SampleKey {
@@ -686,7 +734,7 @@ fn read_phenotype_records_by_key(
     phenotype_name: &str,
     sample_key_mode: SampleKeyMode,
 ) -> Result<HashMap<SampleKey, RawPhenotypeRecord>, String> {
-    let mut reader = open_tabular_reader(phenotype_path)?;
+    let mut reader = open_tsv_table_reader(phenotype_path)?;
     let headers = read_tabular_header(&mut reader, phenotype_path)?;
     let phenotype_path_text = phenotype_path.display().to_string();
     let family_identifier_index = column_index(&headers, "FID");
@@ -699,10 +747,8 @@ fn read_phenotype_records_by_key(
         TabularColumnSelection::new(family_identifier_index, individual_identifier_index, &[phenotype_index]);
     let mut observed_sample_keys: HashSet<SampleKey> = HashSet::new();
     let mut records_by_key: HashMap<SampleKey, RawPhenotypeRecord> = HashMap::new();
-    for line_result in reader.lines() {
-        let raw_line =
-            line_result.map_err(|error| format!("Failed to read table '{}': {error}.", phenotype_path.display()))?;
-        let selected_values = select_tabular_line_values(&raw_line, &selection);
+    while let Some(record) = reader.read_next_record()? {
+        let selected_values = select_tabular_record_values(&record, &selection);
         let individual_identifier = selected_values[selection.individual_identifier_value_index];
         if individual_identifier.is_empty() {
             continue;
@@ -734,7 +780,7 @@ fn read_multi_phenotype_records_by_key(
     phenotype_names: &[String],
     sample_key_mode: SampleKeyMode,
 ) -> Result<HashMap<SampleKey, RawMultiPhenotypeRecord>, String> {
-    let mut reader = open_tabular_reader(phenotype_path)?;
+    let mut reader = open_tsv_table_reader(phenotype_path)?;
     let headers = read_tabular_header(&mut reader, phenotype_path)?;
     let phenotype_path_text = phenotype_path.display().to_string();
     let family_identifier_index = column_index(&headers, "FID");
@@ -750,10 +796,8 @@ fn read_multi_phenotype_records_by_key(
         TabularColumnSelection::new(family_identifier_index, individual_identifier_index, &phenotype_indices);
     let mut observed_sample_keys: HashSet<SampleKey> = HashSet::new();
     let mut records_by_key: HashMap<SampleKey, RawMultiPhenotypeRecord> = HashMap::new();
-    for line_result in reader.lines() {
-        let raw_line =
-            line_result.map_err(|error| format!("Failed to read table '{}': {error}.", phenotype_path.display()))?;
-        let selected_values = select_tabular_line_values(&raw_line, &selection);
+    while let Some(record) = reader.read_next_record()? {
+        let selected_values = select_tabular_record_values(&record, &selection);
         let individual_identifier = selected_values[selection.individual_identifier_value_index];
         if individual_identifier.is_empty() {
             continue;
@@ -820,7 +864,7 @@ fn read_covariate_records_by_key(
     requested_covariate_names: Option<&[String]>,
     sample_key_mode: SampleKeyMode,
 ) -> Result<(Vec<String>, HashMap<SampleKey, RawCovariateRecord>), String> {
-    let mut reader = open_tabular_reader(covariate_path)?;
+    let mut reader = open_tsv_table_reader(covariate_path)?;
     let headers = read_tabular_header(&mut reader, covariate_path)?;
     let covariate_path_text = covariate_path.display().to_string();
     let family_identifier_index = column_index(&headers, "FID");
@@ -840,10 +884,8 @@ fn read_covariate_records_by_key(
         TabularColumnSelection::new(family_identifier_index, individual_identifier_index, &covariate_indices);
     let mut observed_sample_keys: HashSet<SampleKey> = HashSet::new();
     let mut records_by_key: HashMap<SampleKey, RawCovariateRecord> = HashMap::new();
-    for line_result in reader.lines() {
-        let raw_line =
-            line_result.map_err(|error| format!("Failed to read table '{}': {error}.", covariate_path.display()))?;
-        let selected_values = select_tabular_line_values(&raw_line, &selection);
+    while let Some(record) = reader.read_next_record()? {
+        let selected_values = select_tabular_record_values(&record, &selection);
         let individual_identifier = selected_values[selection.individual_identifier_value_index];
         if individual_identifier.is_empty() {
             continue;

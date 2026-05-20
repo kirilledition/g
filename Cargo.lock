@@ -602,6 +602,7 @@ dependencies = [
  "arrow",
  "criterion",
  "crossbeam-channel",
+ "csv",
  "flate2",
  "memmap2",
  "numpy",

@@ -90,6 +90,28 @@ def test_native_aligned_sample_data_continuous(tmp_path: Path) -> None:
     assert result.is_binary_trait is False
 
 
+def test_native_alignment_streaming_parser_handles_crlf_and_quoted_tsv(tmp_path: Path) -> None:
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_bytes(b'FID\tIID\ttrait\r\nf1\t"s1"\t"1.5"\r\nf2\t"s2"\t"2.5"\r\n')
+    covariate_path = tmp_path / "covar.txt"
+    covariate_path.write_bytes(b'FID\tIID\tage\r\nf1\t"s1"\t"25"\r\nf2\t"s2"\t"30"\r\n')
+
+    result = align_sample_data(
+        np.asarray([0, 1], dtype=np.int64),
+        ["s1", "s2"],
+        ["s1", "s2"],
+        phenotype_path,
+        "trait",
+        covariate_path,
+        ["age"],
+        is_binary_trait=False,
+    )
+
+    np.testing.assert_array_equal(result.sample_indices, np.asarray([0, 1], dtype=np.int64))
+    np.testing.assert_allclose(result.phenotype_vector, np.asarray([1.5, 2.5], dtype=np.float32))
+    np.testing.assert_allclose(result.covariate_matrix, np.asarray([[1.0, 25.0], [1.0, 30.0]], dtype=np.float32))
+
+
 def test_native_multi_alignment_complete_case_trait_major_matrix(tmp_path: Path) -> None:
     phenotype_path = tmp_path / "pheno.txt"
     phenotype_path.write_text("FID\tIID\ttrait_a\ttrait_b\nf1\ts1\t1.0\tNA\nf2\ts2\t2.0\t20.0\nf3\ts3\t3.0\t30.0\n")
