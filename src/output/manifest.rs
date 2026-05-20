@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -19,6 +20,9 @@ pub(crate) fn record_run_manifest_chunk_commits(
     run_directory: &Path,
     chunk_commits: Vec<RunManifestChunkCommit>,
 ) -> Result<(), String> {
+    if chunk_commits.is_empty() {
+        return Ok(());
+    }
     update_run_manifest(run_directory, |manifest| {
         let manifest_object =
             manifest.as_object_mut().ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
@@ -27,12 +31,13 @@ pub(crate) fn record_run_manifest_chunk_commits(
             .or_insert_with(|| Value::Array(Vec::new()))
             .as_array_mut()
             .ok_or_else(|| "Run manifest committed_chunks field must be a list.".to_string())?;
+        let mut committed_chunk_identifiers = committed_chunks
+            .iter()
+            .filter_map(|committed_chunk| committed_chunk.get("chunk_identifier").and_then(Value::as_i64))
+            .collect::<BTreeSet<_>>();
         for chunk_commit in chunk_commits {
             let chunk_identifier = chunk_commit.chunk_identifier;
-            let already_committed = committed_chunks.iter().any(|committed_chunk| {
-                committed_chunk.get("chunk_identifier").and_then(Value::as_i64) == Some(chunk_identifier)
-            });
-            if !already_committed {
+            if committed_chunk_identifiers.insert(chunk_identifier) {
                 committed_chunks.push(json!({
                     "chunk_identifier": chunk_commit.chunk_identifier,
                     "variant_start_index": chunk_commit.variant_start_index,
@@ -93,4 +98,61 @@ fn update_run_manifest(
 fn get_run_manifest_update_lock() -> &'static Mutex<()> {
     static RUN_MANIFEST_UPDATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     RUN_MANIFEST_UPDATE_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    fn create_test_directory() -> PathBuf {
+        let unique_suffix =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("system time should be after Unix epoch").as_nanos();
+        let directory_path = std::env::temp_dir().join(format!("g-output-manifest-test-{unique_suffix}"));
+        std::fs::create_dir_all(&directory_path).expect("test directory should be created");
+        directory_path
+    }
+
+    fn build_chunk_commit(chunk_identifier: i64) -> RunManifestChunkCommit {
+        RunManifestChunkCommit {
+            chunk_identifier,
+            variant_start_index: chunk_identifier,
+            variant_stop_index: chunk_identifier + 2,
+            row_count: 2,
+            chunk_file_name: format!("chunk_{chunk_identifier:09}.arrow"),
+        }
+    }
+
+    #[test]
+    fn records_committed_chunks_once_in_identifier_order() {
+        let run_directory = create_test_directory();
+        let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
+        std::fs::write(&manifest_path, "{\n  \"committed_chunks\": []\n}\n").expect("manifest should be written");
+
+        record_run_manifest_chunk_commits(
+            &run_directory,
+            vec![build_chunk_commit(2), build_chunk_commit(0), build_chunk_commit(2)],
+        )
+        .expect("manifest commits should be recorded");
+
+        let manifest_text = std::fs::read_to_string(&manifest_path).expect("manifest should be readable");
+        let manifest = serde_json::from_str::<Value>(&manifest_text).expect("manifest should be JSON");
+        let committed_chunks =
+            manifest.get("committed_chunks").and_then(Value::as_array).expect("committed chunks should be an array");
+        let committed_chunk_identifiers = committed_chunks
+            .iter()
+            .map(|committed_chunk| {
+                committed_chunk
+                    .get("chunk_identifier")
+                    .and_then(Value::as_i64)
+                    .expect("chunk identifier should be present")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(committed_chunk_identifiers, vec![0, 2]);
+
+        std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
+    }
 }
