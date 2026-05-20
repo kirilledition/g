@@ -172,6 +172,59 @@ def test_regenie_command_rejects_unsupported_regenie_flag() -> None:
     assert "--pgen is a valid REGENIE option" in result.output
 
 
+def test_regenie_command_rejects_binary_only_flag_under_quantitative_trait() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "regenie",
+            "--step",
+            "2",
+            "--bgen",
+            "dataset.bgen",
+            "--phenoFile",
+            "phenotype.tsv",
+            "--phenoCol",
+            "trait",
+            "--pred",
+            "predictions.list",
+            "--out",
+            "results/output",
+            "--qt",
+            "--firth",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--firth can only be used with --bt" in result.output
+
+
+def test_regenie_command_rejects_explicit_binary_threshold_under_quantitative_trait() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "regenie",
+            "--step",
+            "2",
+            "--bgen",
+            "dataset.bgen",
+            "--phenoFile",
+            "phenotype.tsv",
+            "--phenoCol",
+            "trait",
+            "--pred",
+            "predictions.list",
+            "--out",
+            "results/output",
+            "--qt",
+            "--pThresh",
+            "0.05",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--pThresh can only be used with --bt" in result.output
+
+
 def test_regenie_command_rejects_removed_duplicate_iid_flag() -> None:
     result = runner.invoke(app, ["regenie", "--g-allow-duplicate-iid-alignment"])
 
@@ -193,9 +246,6 @@ def test_regenie_command_applies_toml_then_explicit_cli_override(tmp_path: Path)
                 "step = 2",
                 "bt = true",
                 "bsize = 1024",
-                "[binary]",
-                "firth = true",
-                "approx = true",
                 "[output]",
                 'out = "results/output"',
                 "[g.output]",
