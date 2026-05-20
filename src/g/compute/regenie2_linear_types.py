@@ -41,7 +41,8 @@ class Regenie2LinearChromosomeState:
         covariate_matrix_transpose: Transpose of the covariate design matrix.
         covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
         stacked_score_matrix: Matrix for covariate projection coordinates and phenotype covariance.
-        adjusted_residual: Covariate-residualized phenotype after LOCO subtraction.
+        adjusted_residual: Phenotype residual after covariate residualization and LOCO subtraction.
+        adjusted_residual_projection_coordinates: Projection of adjusted residual onto whitened covariates.
         adjusted_residual_sum_squares: Sum of squares of ``adjusted_residual``.
         degrees_of_freedom: Residual degrees of freedom for one-variant tests.
 
@@ -51,6 +52,7 @@ class Regenie2LinearChromosomeState:
     covariate_crossproduct_cholesky_factor: jax.Array
     stacked_score_matrix: jax.Array
     adjusted_residual: jax.Array
+    adjusted_residual_projection_coordinates: jax.Array
     adjusted_residual_sum_squares: jax.Array
     degrees_of_freedom: jax.Array
 
@@ -110,7 +112,8 @@ class Regenie2MultiLinearChromosomeState:
         covariate_matrix_transpose: Transpose of the covariate design matrix.
         covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
         whitened_covariate_transpose: Cholesky-whitened covariate transpose.
-        adjusted_residual_matrix: Trait-major residuals after LOCO subtraction.
+        adjusted_residual_matrix: Trait-major residuals after covariate residualization and LOCO subtraction.
+        adjusted_residual_projection_coordinate_matrix: Per-trait projection onto whitened covariates.
         adjusted_residual_sum_squares: Per-trait adjusted residual sums of squares.
         degrees_of_freedom: Residual degrees of freedom for one-variant tests.
 
@@ -120,6 +123,7 @@ class Regenie2MultiLinearChromosomeState:
     covariate_crossproduct_cholesky_factor: jax.Array
     whitened_covariate_transpose: jax.Array
     adjusted_residual_matrix: jax.Array
+    adjusted_residual_projection_coordinate_matrix: jax.Array
     adjusted_residual_sum_squares: jax.Array
     degrees_of_freedom: jax.Array
 
