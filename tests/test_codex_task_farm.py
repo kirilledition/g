@@ -112,6 +112,7 @@ def test_codex_command_builders_pin_models_and_reasoning() -> None:
         "gpt-5.5",
         "-c",
         'model_reasoning_effort="high"',
+        "--dangerously-bypass-approvals-and-sandbox",
         "exec",
         "--json",
         "-o",
@@ -120,8 +121,10 @@ def test_codex_command_builders_pin_models_and_reasoning() -> None:
     ]
     assert "review" in review_command
     assert 'model_reasoning_effort="xhigh"' in review_command
+    assert "--dangerously-bypass-approvals-and-sandbox" in review_command
     assert "--add-dir" in integration_command
     assert "/repo/worktree" in integration_command
+    assert "--dangerously-bypass-approvals-and-sandbox" in integration_command
 
 
 def test_refresh_runtime_statuses_marks_finished_detached_worker(tmp_path: Path) -> None:

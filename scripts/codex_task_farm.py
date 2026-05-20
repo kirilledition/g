@@ -398,6 +398,7 @@ def build_worker_prompt(task: JsonObject) -> str:
     return f"""You are a Codex implementation worker in a dedicated git worktree.
 
 Read AGENTS.md, docs/STYLEGUIDE.md, and Justfile before editing code.
+If the worktree already contains edits, inspect them and continue from them unless they are clearly wrong.
 Implement exactly this task and keep the change narrow.
 Commit logical intermediate steps and leave a clean worktree when done.
 Run relevant tests through `nix develop --command just ...` when feasible.
@@ -465,6 +466,7 @@ def build_worker_command(worktree_path: Path, model: str, reasoning_effort: str,
         model,
         "-c",
         f'model_reasoning_effort="{reasoning_effort}"',
+        "--dangerously-bypass-approvals-and-sandbox",
         "exec",
         "--json",
         "-o",
@@ -491,6 +493,7 @@ def build_review_command(
         model,
         "-c",
         f'model_reasoning_effort="{reasoning_effort}"',
+        "--dangerously-bypass-approvals-and-sandbox",
         "--base",
         base_branch,
         "--json",
@@ -518,6 +521,7 @@ def build_integration_command(
         model,
         "-c",
         f'model_reasoning_effort="{reasoning_effort}"',
+        "--dangerously-bypass-approvals-and-sandbox",
         "exec",
         "--json",
         "-o",

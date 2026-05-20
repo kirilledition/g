@@ -23,6 +23,7 @@ just codex-tasks-run --jobs 5
 ```
 
 Each worker uses `gpt-5.5` with high reasoning effort, creates or reuses a task-specific git worktree under `../g-worktrees`, writes logs under `.codex-task-worktrees`, and works on a branch named `codex/review-<id>-<slug>`.
+Spawned worker, review, and integration Codex processes run with `--dangerously-bypass-approvals-and-sandbox` so they can write git metadata inside linked worktrees and create commits.
 
 Check progress:
 
