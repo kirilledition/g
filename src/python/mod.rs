@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
+use std::sync::Arc;
 
 use numpy::ndarray::{Array1, Array2};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadwriteArray2, PyUntypedArrayMethods};
@@ -45,12 +46,12 @@ impl ChunkSpec {
 
 #[pyclass]
 pub(crate) struct ChunkStats {
-    pub(crate) stats: NativeChunkStats,
+    pub(crate) stats: Arc<NativeChunkStats>,
 }
 
 impl ChunkStats {
     fn new(stats: NativeChunkStats) -> Self {
-        Self { stats }
+        Self { stats: Arc::new(stats) }
     }
 }
 
@@ -121,7 +122,7 @@ impl ChunkStats {
 pub(crate) struct VariantMetadata {
     pub(crate) variant_start_index: usize,
     pub(crate) variant_stop_index: usize,
-    pub(crate) metadata: VariantMetadataColumns,
+    pub(crate) metadata: Arc<VariantMetadataColumns>,
 }
 
 #[pyclass]
@@ -136,7 +137,7 @@ pub(crate) struct NativeMultiAlignedSampleData {
 
 impl VariantMetadata {
     fn new(variant_start_index: usize, variant_stop_index: usize, metadata: VariantMetadataColumns) -> Self {
-        Self { variant_start_index, variant_stop_index, metadata }
+        Self { variant_start_index, variant_stop_index, metadata: Arc::new(metadata) }
     }
 }
 

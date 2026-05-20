@@ -9,6 +9,7 @@ use arrow::ipc::CompressionType;
 use arrow::ipc::writer::{FileWriter, IpcWriteOptions};
 use thiserror::Error;
 
+use crate::output::NativeChunkHandle;
 use crate::output::manifest;
 use crate::output::schema;
 
@@ -27,17 +28,7 @@ impl OutputWriterError {
 }
 
 pub(crate) struct RegenieStep2ChunkJob {
-    pub(crate) chunk_identifier: i64,
-    pub(crate) variant_start_index: i64,
-    pub(crate) variant_stop_index: i64,
-    pub(crate) chrom: Vec<String>,
-    pub(crate) genpos: Vec<i64>,
-    pub(crate) id: Vec<String>,
-    pub(crate) allele0: Vec<String>,
-    pub(crate) allele1: Vec<String>,
-    pub(crate) a1freq: Vec<f32>,
-    pub(crate) info: Vec<Option<f32>>,
-    pub(crate) n: Vec<i32>,
+    pub(crate) chunk_handle: NativeChunkHandle,
     pub(crate) beta: Vec<f32>,
     pub(crate) se: Vec<f32>,
     pub(crate) chisq: Vec<f32>,
@@ -58,7 +49,7 @@ pub(crate) fn write_regenie_step2_chunk_job(
 ) -> Result<(), String> {
     let chunk_file_path = chunks_directory.join(&job.chunk_file_name);
     let temporary_chunk_file_path = chunk_file_path.with_extension("arrow.tmp");
-    let chunk_commits = build_run_manifest_chunk_commits(&job);
+    let chunk_commits = build_run_manifest_chunk_commits(&job)?;
     let record_batch = build_regenie_step2_record_batch(job)?;
     write_record_batch_to_arrow_file(&record_batch, &temporary_chunk_file_path, arrow_compression)?;
     std::fs::rename(&temporary_chunk_file_path, &chunk_file_path).map_err(|error| error.to_string())?;
@@ -66,15 +57,20 @@ pub(crate) fn write_regenie_step2_chunk_job(
     Ok(())
 }
 
-fn build_run_manifest_chunk_commits(job: &RegenieStep2ChunkWriteBatch) -> Vec<manifest::RunManifestChunkCommit> {
+fn build_run_manifest_chunk_commits(
+    job: &RegenieStep2ChunkWriteBatch,
+) -> Result<Vec<manifest::RunManifestChunkCommit>, String> {
     job.chunks
         .iter()
-        .map(|chunk_job| manifest::RunManifestChunkCommit {
-            chunk_identifier: chunk_job.chunk_identifier,
-            variant_start_index: chunk_job.variant_start_index,
-            variant_stop_index: chunk_job.variant_stop_index,
-            row_count: chunk_job.genpos.len(),
-            chunk_file_name: job.chunk_file_name.clone(),
+        .map(|chunk_job| {
+            let variant_stop_index = chunk_job.chunk_handle.variant_stop_index().map_err(|error| error.to_string())?;
+            Ok(manifest::RunManifestChunkCommit {
+                chunk_identifier: chunk_job.chunk_handle.chunk_identifier,
+                variant_start_index: chunk_job.chunk_handle.variant_start_index(),
+                variant_stop_index,
+                row_count: chunk_job.chunk_handle.row_count(),
+                chunk_file_name: job.chunk_file_name.clone(),
+            })
         })
         .collect()
 }
@@ -88,7 +84,7 @@ pub(crate) fn build_chunk_file_name(first_chunk_identifier: i64, last_chunk_iden
 
 fn build_regenie_step2_record_batch(job: RegenieStep2ChunkWriteBatch) -> Result<RecordBatch, String> {
     let schema = schema::get_regenie_step2_chunk_schema();
-    let row_count = job.chunks.iter().map(|chunk_job| chunk_job.genpos.len()).sum();
+    let row_count = job.chunks.iter().map(|chunk_job| chunk_job.chunk_handle.row_count()).sum();
     let mut chunk_identifier = Vec::with_capacity(row_count);
     let mut variant_start_index = Vec::with_capacity(row_count);
     let mut variant_stop_index = Vec::with_capacity(row_count);
@@ -107,18 +103,20 @@ fn build_regenie_step2_record_batch(job: RegenieStep2ChunkWriteBatch) -> Result<
     let mut extra_code = Vec::with_capacity(row_count);
 
     for chunk_job in job.chunks {
-        let chunk_row_count = chunk_job.genpos.len();
-        chunk_identifier.extend(std::iter::repeat_n(chunk_job.chunk_identifier, chunk_row_count));
-        variant_start_index.extend(std::iter::repeat_n(chunk_job.variant_start_index, chunk_row_count));
-        variant_stop_index.extend(std::iter::repeat_n(chunk_job.variant_stop_index, chunk_row_count));
-        chrom.extend(chunk_job.chrom);
-        genpos.extend(chunk_job.genpos);
-        id.extend(chunk_job.id);
-        allele0.extend(chunk_job.allele0);
-        allele1.extend(chunk_job.allele1);
-        a1freq.extend(chunk_job.a1freq);
-        info.extend(chunk_job.info);
-        n.extend(chunk_job.n);
+        let chunk_row_count = chunk_job.chunk_handle.row_count();
+        let chunk_variant_stop_index =
+            chunk_job.chunk_handle.variant_stop_index().map_err(|error| error.to_string())?;
+        chunk_identifier.extend(std::iter::repeat_n(chunk_job.chunk_handle.chunk_identifier, chunk_row_count));
+        variant_start_index.extend(std::iter::repeat_n(chunk_job.chunk_handle.variant_start_index(), chunk_row_count));
+        variant_stop_index.extend(std::iter::repeat_n(chunk_variant_stop_index, chunk_row_count));
+        chrom.extend(chunk_job.chunk_handle.metadata.chromosome.iter().cloned());
+        genpos.extend_from_slice(&chunk_job.chunk_handle.metadata.position);
+        id.extend(chunk_job.chunk_handle.metadata.variant_identifier.iter().cloned());
+        allele0.extend(chunk_job.chunk_handle.metadata.allele_two.iter().cloned());
+        allele1.extend(chunk_job.chunk_handle.metadata.allele_one.iter().cloned());
+        a1freq.extend_from_slice(&chunk_job.chunk_handle.stats.allele_one_frequency);
+        info.extend(chunk_job.chunk_handle.stats.info_score.iter().copied());
+        n.extend_from_slice(&chunk_job.chunk_handle.stats.observation_count);
         beta.extend(chunk_job.beta);
         se.extend(chunk_job.se);
         chisq.extend(chunk_job.chisq);
@@ -184,23 +182,46 @@ mod tests {
 
     use parquet::file::reader::{FileReader as ParquetFileReader, SerializedFileReader};
 
+    use crate::genotype::common::{ChunkStats, VariantMetadataColumns};
     use crate::output::finalization;
 
     use super::*;
 
+    fn build_test_chunk_handle(chunk_identifier: i64) -> NativeChunkHandle {
+        NativeChunkHandle::new(
+            Arc::new(VariantMetadataColumns {
+                chromosome: vec!["22".to_string()],
+                variant_identifier: vec![format!("variant{chunk_identifier}")],
+                position: vec![100 + chunk_identifier],
+                allele_one: vec!["A".to_string()],
+                allele_two: vec!["G".to_string()],
+            }),
+            Arc::new(ChunkStats {
+                allele_one_frequency: vec![0.5],
+                observation_count: vec![100],
+                has_missing_values: false,
+                dosage_sum: vec![0.0],
+                dosage_square_sum: vec![0.0],
+                imputed_dosage_square_sum: vec![0.0],
+                dosage_variance_numerator: vec![0.0],
+                info_score: vec![Some(0.9)],
+                allele_count: vec![0.0],
+                minor_allele_count: vec![0.0],
+                zero_count: vec![0],
+                nonzero_count: vec![0],
+                homozygous_reference_count: vec![0],
+                heterozygous_count: vec![0],
+                homozygous_alternate_count: vec![0],
+                is_sparse_candidate: vec![false],
+                is_rare_sparse_firth_candidate: vec![false],
+            }),
+            chunk_identifier,
+        )
+    }
+
     fn build_test_chunk(chunk_identifier: i64, extra_code: Option<Vec<i32>>) -> RegenieStep2ChunkJob {
         RegenieStep2ChunkJob {
-            chunk_identifier,
-            variant_start_index: chunk_identifier,
-            variant_stop_index: chunk_identifier + 1,
-            chrom: vec!["22".to_string()],
-            genpos: vec![100 + chunk_identifier],
-            id: vec![format!("variant{chunk_identifier}")],
-            allele0: vec!["G".to_string()],
-            allele1: vec!["A".to_string()],
-            a1freq: vec![0.5],
-            info: vec![Some(0.9)],
-            n: vec![100],
+            chunk_handle: build_test_chunk_handle(chunk_identifier),
             beta: vec![0.1],
             se: vec![0.01],
             chisq: vec![10.0],
@@ -210,9 +231,9 @@ mod tests {
     }
 
     fn build_test_batch(chunks: Vec<RegenieStep2ChunkJob>) -> RegenieStep2ChunkWriteBatch {
-        let first_chunk_identifier = chunks.first().map_or(0, |chunk_job| chunk_job.chunk_identifier);
+        let first_chunk_identifier = chunks.first().map_or(0, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
         let last_chunk_identifier =
-            chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_identifier);
+            chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
         RegenieStep2ChunkWriteBatch {
             chunk_file_name: build_chunk_file_name(first_chunk_identifier, last_chunk_identifier),
             chunks,

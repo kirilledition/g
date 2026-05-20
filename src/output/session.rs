@@ -12,6 +12,42 @@ use crate::output::writer::{
 };
 
 #[derive(Clone)]
+pub(crate) struct NativeChunkHandle {
+    pub(crate) metadata: Arc<VariantMetadataColumns>,
+    pub(crate) stats: Arc<NativeChunkStats>,
+    pub(crate) chunk_identifier: i64,
+}
+
+impl NativeChunkHandle {
+    pub(crate) fn new(
+        metadata: Arc<VariantMetadataColumns>,
+        stats: Arc<NativeChunkStats>,
+        chunk_identifier: i64,
+    ) -> Self {
+        Self { metadata, stats, chunk_identifier }
+    }
+
+    pub(crate) fn row_count(&self) -> usize {
+        self.metadata.position.len()
+    }
+
+    pub(crate) fn variant_start_index(&self) -> i64 {
+        self.chunk_identifier
+    }
+
+    pub(crate) fn variant_stop_index(&self) -> Result<i64, OutputWriterError> {
+        let row_count = i64::try_from(self.row_count()).map_err(|_| {
+            OutputWriterError::InvalidInput("Rust output writer row count does not fit into int64.".to_string())
+        })?;
+        self.chunk_identifier.checked_add(row_count).ok_or_else(|| {
+            OutputWriterError::InvalidInput(
+                "Rust output writer variant stop index does not fit into int64.".to_string(),
+            )
+        })
+    }
+}
+
+#[derive(Clone)]
 struct OutputWriterConfig {
     run_directory: PathBuf,
     chunks_directory: PathBuf,
@@ -135,20 +171,54 @@ impl OutputWriterSession {
         log10_p_value: &[f32],
         extra_code: Option<&[i32]>,
     ) -> Result<(), OutputWriterError> {
+        let expected_variant_stop_index = variant_start_index
+            .checked_add(i64::try_from(metadata.position.len()).map_err(|_| {
+                OutputWriterError::InvalidInput("Rust output writer row count does not fit into int64.".to_string())
+            })?)
+            .ok_or_else(|| {
+                OutputWriterError::InvalidInput(
+                    "Rust output writer variant stop index does not fit into int64.".to_string(),
+                )
+            })?;
+        if variant_stop_index != expected_variant_stop_index {
+            return Err(OutputWriterError::InvalidInput(
+                "Rust output writer metadata bounds do not match metadata row count.".to_string(),
+            ));
+        }
+        self.write_regenie2_native_chunk_handle(
+            NativeChunkHandle::new(Arc::new(metadata.clone()), Arc::new(chunk_stats.clone()), variant_start_index),
+            beta,
+            standard_error,
+            chi_squared,
+            log10_p_value,
+            extra_code,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn write_regenie2_native_chunk_handle(
+        &self,
+        chunk_handle: NativeChunkHandle,
+        beta: &[f32],
+        standard_error: &[f32],
+        chi_squared: &[f32],
+        log10_p_value: &[f32],
+        extra_code: Option<&[i32]>,
+    ) -> Result<(), OutputWriterError> {
         if self.config.association_mode != "regenie2_linear" && self.config.association_mode != "regenie2_binary" {
             return Err(OutputWriterError::InvalidInput(
                 "Rust output backend only supports REGENIE step 2 quantitative and binary output.".to_string(),
             ));
         }
-        let row_count = metadata.position.len();
+        let row_count = chunk_handle.row_count();
         let observed_lengths = [
-            metadata.chromosome.len(),
-            metadata.variant_identifier.len(),
-            metadata.allele_two.len(),
-            metadata.allele_one.len(),
-            chunk_stats.allele_one_frequency.len(),
-            chunk_stats.info_score.len(),
-            chunk_stats.observation_count.len(),
+            chunk_handle.metadata.chromosome.len(),
+            chunk_handle.metadata.variant_identifier.len(),
+            chunk_handle.metadata.allele_two.len(),
+            chunk_handle.metadata.allele_one.len(),
+            chunk_handle.stats.allele_one_frequency.len(),
+            chunk_handle.stats.info_score.len(),
+            chunk_handle.stats.observation_count.len(),
             beta.len(),
             standard_error.len(),
             chi_squared.len(),
@@ -159,17 +229,7 @@ impl OutputWriterSession {
             validate_column_lengths(row_count, &[extra_code_values.len()])?;
         }
         let job = RegenieStep2ChunkJob {
-            chunk_identifier: variant_start_index,
-            variant_start_index,
-            variant_stop_index,
-            chrom: metadata.chromosome.clone(),
-            genpos: metadata.position.clone(),
-            id: metadata.variant_identifier.clone(),
-            allele0: metadata.allele_two.clone(),
-            allele1: metadata.allele_one.clone(),
-            a1freq: chunk_stats.allele_one_frequency.clone(),
-            info: chunk_stats.info_score.clone(),
-            n: chunk_stats.observation_count.clone(),
+            chunk_handle,
             beta: beta.to_vec(),
             se: standard_error.to_vec(),
             chisq: chi_squared.to_vec(),
@@ -287,9 +347,9 @@ fn flush_pending_regenie_step2_chunks(
     if pending_chunks.is_empty() {
         return Ok(());
     }
-    let first_chunk_identifier = pending_chunks.first().map_or(0, |chunk_job| chunk_job.chunk_identifier);
+    let first_chunk_identifier = pending_chunks.first().map_or(0, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
     let last_chunk_identifier =
-        pending_chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_identifier);
+        pending_chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
     let chunk_file_name = build_chunk_file_name(first_chunk_identifier, last_chunk_identifier);
     let write_batch = RegenieStep2ChunkWriteBatch { chunk_file_name, chunks: std::mem::take(pending_chunks) };
     writer_sender.send(OutputWriteJob::RegenieStep2(Box::new(write_batch))).map_err(|error| {
