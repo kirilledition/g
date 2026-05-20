@@ -4,9 +4,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import g
-from g import api, types
+from g import api, execution_plan, runner, types
 from g.interface import config
-from g.io import output, source
+from g.io import output
 from g.io.output import OutputRunPaths, PreparedOutputRun
 
 
@@ -71,7 +71,7 @@ def test_regenie_config_from_options_maps_regenie_names() -> None:
 
 
 def test_build_binary_kernel_config_maps_compute_options() -> None:
-    kernel_config = api.build_binary_kernel_config(
+    kernel_config = execution_plan.build_binary_kernel_config(
         config.GComputeConfig(
             firth_batch_size=7,
             firth_candidate_capacity=11,
@@ -93,7 +93,9 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
 
 
 def test_normalize_binary_correction_config_maps_approximate_firth() -> None:
-    plan = api.normalize_binary_correction_config(config.BinaryConfig(firth=True, approx=True, p_threshold=0.01))
+    plan = execution_plan.normalize_binary_correction_config(
+        config.BinaryConfig(firth=True, approx=True, p_threshold=0.01)
+    )
 
     assert plan == types.BinaryCorrectionPlan(
         method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
@@ -108,13 +110,13 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
         chunks_directory=Path("results/output.g/trait.regenie2_linear.run/chunks"),
     )
     with (
-        patch("g.api.configure_jax_device") as mock_configure_jax_device,
+        patch("g.runner.configure_jax_device") as mock_configure_jax_device,
         patch(
-            "g.api.output.prepare_output_run",
+            "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest={"committed_chunks": []}),
         ) as mock_prepare_output_run,
-        patch("g.api.run_regenie2_linear_bgen_pipeline") as mock_pipeline,
-        patch("g.api.extend_run_manifest") as mock_extend_run_manifest,
+        patch("g.runner.run_regenie2_linear_bgen_pipeline") as mock_pipeline,
+        patch("g.runner.extend_run_manifest") as mock_extend_run_manifest,
         patch("g.interface.config.write_toml") as mock_write_toml,
     ):
         mock_pipeline.return_value = Path("results/output.g/trait.regenie2_linear.run/final.parquet")
@@ -167,13 +169,13 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
     )
 
     with (
-        patch("g.api.configure_jax_device"),
+        patch("g.runner.configure_jax_device"),
         patch(
-            "g.api.output.prepare_output_run",
+            "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
         ),
-        patch("g.api.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
-        patch("g.api.extend_run_manifest"),
+        patch("g.runner.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
+        patch("g.runner.extend_run_manifest"),
         patch("g.interface.config.write_toml"),
     ):
         mock_binary_pipeline.return_value = Path("results/output.g/trait.regenie2_binary.run/final.parquet")
@@ -207,45 +209,32 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
             "out": "results/output",
             "firth": True,
             "approx": True,
+            "g-firth-batch-size": 5,
         }
     )
-    kernel_config = api.build_binary_kernel_config(config.GComputeConfig(firth_batch_size=5))
-    engine_config = api.EngineRunConfig(
-        chunk_size=32,
-        device=types.Device.CPU,
-        staging_depth=1,
-        output_run_directory=Path("run"),
-        resume=False,
-        resume_mode=types.ResumeMode.FAST,
-        finalize_parquet=True,
-        writer_threads=1,
-        writer_queue_depth=1,
-        chunks_per_arrow_file=1,
-        arrow_compression=types.ArrowCompression.ZSTD,
-        trusted_no_missing_diploid=False,
-        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
-        alignment_config=regenie_config.g_compute,
-        binary_kernel_config=kernel_config,
-    )
+    run_paths = output.OutputRunPaths(Path("run"), Path("run/chunks"))
 
-    with patch("g.api.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline:
-        api.dispatch_engine_pipeline(
-            regenie_config=regenie_config,
-            phenotype_name="trait",
-            genotype_source_config=source.build_bgen_source_config(Path("dataset.bgen")),
-            engine_config=engine_config,
-            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
-            existing_manifest=None,
-            binary_correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
+    with (
+        patch(
+            "g.execution_plan.output.prepare_output_run",
+            return_value=output.PreparedOutputRun(run_paths, None),
+        ),
+        patch("g.runner.run_regenie2_binary_bgen_pipeline") as mock_binary_pipeline,
+    ):
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        runner.dispatch_one_phenotype_engine_pipeline(
+            plan=plan,
+            phenotype_run_plan=plan.phenotype_run_plans[0],
             stage_timing_recorder=None,
         )
 
-    assert mock_binary_pipeline.call_args.kwargs["kernel_config"] is kernel_config
+    assert mock_binary_pipeline.call_args.kwargs["kernel_config"] is plan.kernel_config.binary_kernel_config
+    assert mock_binary_pipeline.call_args.kwargs["kernel_config"].firth_batch_size == 5
 
 
 def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:
-    with patch("g.api.run_multi_phenotype_config") as mock_run_multi_phenotype_config:
-        mock_run_multi_phenotype_config.return_value = api.RunArtifacts(
+    with patch("g.api.runner.regenie") as mock_runner_regenie:
+        mock_runner_regenie.return_value = api.RunArtifacts(
             phenotype_artifacts=(
                 api.RunArtifacts(output_run_directory=Path("one")),
                 api.RunArtifacts(output_run_directory=Path("two")),
@@ -264,8 +253,8 @@ def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:
         )
 
     assert len(artifacts.phenotype_artifacts) == 2
-    mock_run_multi_phenotype_config.assert_called_once()
-    assert mock_run_multi_phenotype_config.call_args.args[0].input.pheno_columns == ("one", "two")
+    mock_runner_regenie.assert_called_once()
+    assert mock_runner_regenie.call_args.args[0].input.pheno_columns == ("one", "two")
 
 
 def test_multi_run_plan_forwards_existing_manifests() -> None:
@@ -287,19 +276,18 @@ def test_multi_run_plan_forwards_existing_manifests() -> None:
     existing_manifests = ({"phenotype_name": "one"}, {"phenotype_name": "two"})
 
     with patch(
-        "g.api.output.prepare_output_run",
+        "g.execution_plan.output.prepare_output_run",
         side_effect=(
             output.PreparedOutputRun(run_paths[0], existing_manifests[0]),
             output.PreparedOutputRun(run_paths[1], existing_manifests[1]),
         ),
     ):
-        plan = api.build_regenie_multi_run_plan(regenie_config, Path("run"))
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
 
-    assert plan.output_run_paths_by_phenotype == run_paths
-    assert plan.existing_manifests_by_phenotype == existing_manifests
-    with patch("g.api.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_pipeline:
-        api.dispatch_multi_engine_pipeline(
-            regenie_config=regenie_config,
+    assert tuple(phenotype_plan.output_run_paths for phenotype_plan in plan.phenotype_run_plans) == run_paths
+    assert tuple(phenotype_plan.existing_manifest for phenotype_plan in plan.phenotype_run_plans) == existing_manifests
+    with patch("g.runner.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_pipeline:
+        runner.dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=None,
         )
@@ -322,7 +310,13 @@ def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
     )
     regenie_config = build_minimal_config()
 
-    api.extend_run_manifest(tmp_path, regenie_config, "trait", tmp_path / "effective_config.toml")
+    with patch(
+        "g.execution_plan.output.prepare_output_run",
+        return_value=output.PreparedOutputRun(run_paths, None),
+    ):
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+
+    runner.extend_run_manifest(plan=plan, phenotype_run_plan=plan.phenotype_run_plans[0])
 
     manifest = output.load_run_manifest(run_paths)
     assert manifest is not None
