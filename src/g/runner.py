@@ -210,6 +210,10 @@ def build_common_engine_arguments(
         "arrow_compression": plan.output_plan.arrow_compression,
         "trusted_no_missing_diploid": plan.kernel_config.trusted_no_missing_diploid,
         "trusted_bgen_validation_mode": plan.kernel_config.trusted_bgen_validation_mode,
+        "bgen_decode_tile_variant_count": plan.kernel_config.bgen_decode_tile_variant_count,
+        "jax_device": plan.kernel_config.device,
+        "jax_matmul_precision": plan.kernel_config.alignment_config.jax_matmul_precision,
+        "output_format": plan.output_plan.output_format,
         "stage_timing_recorder": stage_timing_recorder,
         "alignment_config": plan.kernel_config.alignment_config,
     }
@@ -269,6 +273,7 @@ def dispatch_multi_phenotype_engine_pipeline(
         return run_regenie2_multi_phenotype_binary_bgen_pipeline(
             **common_arguments,
             correction_plan=plan.binary_correction_plan,
+            kernel_config=plan.kernel_config.binary_kernel_config,
         )
     return run_regenie2_multi_phenotype_linear_bgen_pipeline(**common_arguments)
 
