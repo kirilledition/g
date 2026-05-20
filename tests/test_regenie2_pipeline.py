@@ -726,7 +726,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     assert committed_chunk_identifiers == [0, 64]
 
 
-def test_binary_pipeline_uses_sample_major_engine_for_untrusted_bgen() -> None:
+def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> None:
     FakeRunEngine.instances.clear()
     FakePredictionSource.instances.clear()
     writer_session = FakeWriterSession()
@@ -768,7 +768,7 @@ def test_binary_pipeline_uses_sample_major_engine_for_untrusted_bgen() -> None:
     assert final_path == Path("results/final.parquet")
     engine = FakeRunEngine.instances[0]
     assert engine.validation_count == 0
-    assert engine.run_method == "buffered"
+    assert engine.run_method == "variant_major_buffered"
 
 
 def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed_chunks() -> None:
@@ -833,7 +833,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert preparation_order == ["manifest", "manifest", "writer", "writer"]
     assert len(FakeRunEngine.instances) == 1
     engine = FakeRunEngine.instances[0]
-    assert engine.run_method == "buffered"
+    assert engine.run_method == "variant_major_buffered"
     assert engine.run_arguments is not None
     sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
