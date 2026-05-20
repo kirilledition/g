@@ -573,6 +573,7 @@ def validate_config(config: RegenieConfig) -> None:
     if not config.input.pheno_columns:
         message = "At least one --phenoCol or --phenoColList entry is required."
         raise ValueError(message)
+    validate_unique_phenotype_names(config.input.pheno_columns)
     if config.input.pred is None:
         message = "--pred is required for REGENIE Step 2."
         raise ValueError(message)
@@ -627,6 +628,20 @@ def validate_config(config: RegenieConfig) -> None:
         raise ValueError(message)
     if config.binary.approx and not config.binary.firth:
         message = "--approx requires --firth."
+        raise ValueError(message)
+
+
+def validate_unique_phenotype_names(phenotype_names: tuple[str, ...]) -> None:
+    """Validate that phenotype names identify unique output metadata entries."""
+    seen_phenotype_names = set[str]()
+    duplicate_phenotype_names = list[str]()
+    for phenotype_name in phenotype_names:
+        if phenotype_name in seen_phenotype_names:
+            duplicate_phenotype_names.append(phenotype_name)
+        seen_phenotype_names.add(phenotype_name)
+    if duplicate_phenotype_names:
+        duplicate_summary = ", ".join(sorted(set(duplicate_phenotype_names)))
+        message = f"Duplicate phenotype names are not allowed: {duplicate_summary}."
         raise ValueError(message)
 
 

@@ -72,6 +72,41 @@ def test_regenie_config_from_options_maps_regenie_names() -> None:
     assert regenie_config.g_output.format == types.OutputFormat.ARROW
 
 
+def test_execution_plan_uses_safe_phenotype_output_directories() -> None:
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoColList": "../bad,a/b,/tmp/outside",
+            "pred": "predictions.list",
+            "out": "results/output",
+        }
+    )
+    prepared_output_run = output.PreparedOutputRun(
+        output.OutputRunPaths(Path("unused"), Path("unused/chunks")),
+        None,
+    )
+
+    with patch(
+        "g.execution_plan.output.prepare_output_run", return_value=prepared_output_run
+    ) as mock_prepare_output_run:
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+
+    assert tuple(phenotype_plan.phenotype_name for phenotype_plan in plan.phenotype_run_plans) == (
+        "../bad",
+        "a/b",
+        "/tmp/outside",
+    )
+    output_roots = tuple(call.kwargs["output_root"] for call in mock_prepare_output_run.call_args_list)
+    assert output_roots == (
+        Path("results/output.g/trait_0001_bad"),
+        Path("results/output.g/trait_0002_a_b"),
+        Path("results/output.g/trait_0003_tmp_outside"),
+    )
+
+
 def test_build_binary_kernel_config_maps_compute_options() -> None:
     kernel_config = execution_plan.build_binary_kernel_config(
         config.GComputeConfig(

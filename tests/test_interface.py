@@ -133,3 +133,18 @@ def test_staging_depth_must_be_positive() -> None:
 
     with pytest.raises(ValueError, match="--g-staging-depth must be positive"):
         config.RegenieConfig.from_options(raw_options)
+
+
+def test_duplicate_phenotype_names_are_rejected() -> None:
+    raw_options: dict[str, object] = {
+        "step": 2,
+        "qt": True,
+        "bgen": "dataset.bgen",
+        "phenoFile": "phenotype.tsv",
+        "phenoColList": "trait,other,trait",
+        "pred": "predictions.list",
+        "out": "results/output",
+    }
+
+    with pytest.raises(ValueError, match="Duplicate phenotype names are not allowed: trait"):
+        config.RegenieConfig.from_options(raw_options)
