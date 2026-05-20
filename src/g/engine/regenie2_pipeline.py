@@ -308,8 +308,9 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
+    sample_mode: types.MultiPhenotypeSampleMode | None = None,
 ) -> tuple[Path | None, ...]:
-    """Run the native BGEN pipeline once for multiple quantitative phenotypes."""
+    """Run the complete-case native BGEN pipeline once for multiple quantitative phenotypes."""
     return run_regenie2_multi_phenotype_bgen_pipeline(
         genotype_source_config=genotype_source_config,
         phenotype_path=phenotype_path,
@@ -334,6 +335,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
         correction_plan=types.BinaryCorrectionPlan(),
         stage_timing_recorder=stage_timing_recorder,
         alignment_config=alignment_config,
+        sample_mode=sample_mode,
         association_mode=types.AssociationMode.REGENIE2_LINEAR,
     )
 
@@ -363,8 +365,9 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
+    sample_mode: types.MultiPhenotypeSampleMode | None = None,
 ) -> tuple[Path | None, ...]:
-    """Run the native BGEN pipeline once for multiple binary phenotypes."""
+    """Run the complete-case native BGEN pipeline once for multiple binary phenotypes."""
     return run_regenie2_multi_phenotype_bgen_pipeline(
         genotype_source_config=genotype_source_config,
         phenotype_path=phenotype_path,
@@ -389,6 +392,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
         correction_plan=correction_plan,
         stage_timing_recorder=stage_timing_recorder,
         alignment_config=alignment_config,
+        sample_mode=sample_mode,
         association_mode=types.AssociationMode.REGENIE2_BINARY,
     )
 
@@ -418,9 +422,17 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     correction_plan: types.BinaryCorrectionPlan,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None,
+    sample_mode: types.MultiPhenotypeSampleMode | None,
     association_mode: types.AssociationMode,
 ) -> tuple[Path | None, ...]:
-    """Shared implementation for native multi-phenotype BGEN pipelines."""
+    """Shared implementation for opt-in complete-case multi-phenotype BGEN pipelines."""
+    if sample_mode != types.MultiPhenotypeSampleMode.COMPLETE_CASE:
+        message = (
+            "Native multi-phenotype batching uses a shared complete-case sample intersection. "
+            "Pass --g-multi-phenotype-sample-mode complete-case only when that non-equivalent "
+            "sample handling is intended."
+        )
+        raise ValueError(message)
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
     use_variant_major = True
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)

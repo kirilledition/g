@@ -1005,6 +1005,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
             ),
             resume=True,
             trusted_no_missing_diploid=False,
+            sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
         )
 
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
@@ -1019,6 +1020,25 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert committed_chunk_identifiers == [32]
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+
+
+def test_multi_linear_pipeline_requires_explicit_complete_case_sample_mode() -> None:
+    with pytest.raises(ValueError, match="complete-case"):
+        regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_names=("trait_a", "trait_b"),
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths_by_phenotype=(
+                output.OutputRunPaths(Path("run/a"), Path("run/a/chunks")),
+                output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
+            ),
+            trusted_no_missing_diploid=False,
+        )
 
 
 def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated() -> None:

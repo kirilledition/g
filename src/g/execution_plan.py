@@ -30,6 +30,7 @@ class KernelConfig:
         trusted_no_missing_diploid: Whether BGEN records can use the trusted diploid fast path.
         trusted_bgen_validation_mode: Validation policy for trusted BGEN decoding.
         alignment_config: Sample alignment settings consumed by the native dispatcher.
+        multi_phenotype_sample_mode: Sample handling for multi-phenotype requests.
         binary_kernel_config: Static binary JAX kernel settings.
 
     """
@@ -43,6 +44,7 @@ class KernelConfig:
     trusted_no_missing_diploid: bool
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
     alignment_config: config.GComputeConfig
+    multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode
     binary_kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None
 
 
@@ -247,6 +249,7 @@ def build_kernel_config(regenie_config: config.RegenieConfig) -> KernelConfig:
         trusted_no_missing_diploid=regenie_config.g_compute.trusted_no_missing_diploid,
         trusted_bgen_validation_mode=regenie_config.g_compute.trusted_bgen_validation_mode,
         alignment_config=regenie_config.g_compute,
+        multi_phenotype_sample_mode=regenie_config.g_compute.multi_phenotype_sample_mode,
         binary_kernel_config=(
             build_binary_kernel_config(regenie_config.g_compute)
             if regenie_config.trait.trait_type == types.RegenieTraitType.BINARY

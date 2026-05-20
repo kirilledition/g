@@ -90,12 +90,23 @@ def test_native_aligned_sample_data_continuous(tmp_path: Path) -> None:
     assert result.is_binary_trait is False
 
 
-def test_native_multi_alignment_complete_case_trait_major_matrix(tmp_path: Path) -> None:
+def test_native_multi_alignment_is_explicit_complete_case_trait_major_matrix(tmp_path: Path) -> None:
     phenotype_path = tmp_path / "pheno.txt"
     phenotype_path.write_text("FID\tIID\ttrait_a\ttrait_b\nf1\ts1\t1.0\tNA\nf2\ts2\t2.0\t20.0\nf3\ts3\t3.0\t30.0\n")
     covariate_path = tmp_path / "covar.txt"
     covariate_path.write_text("FID\tIID\tage\nf1\ts1\t25\nf2\ts2\t30\nf3\ts3\t35\n")
 
+    single_trait_result = align_sample_data(
+        np.asarray([0, 1, 2], dtype=np.int64),
+        ["f1", "f2", "f3"],
+        ["s1", "s2", "s3"],
+        phenotype_path,
+        "trait_a",
+        covariate_path,
+        ["age"],
+        is_binary_trait=False,
+        sample_key_mode="fid_iid",
+    )
     result = align_multi_sample_data(
         np.asarray([0, 1, 2], dtype=np.int64),
         ["f1", "f2", "f3"],
@@ -108,6 +119,7 @@ def test_native_multi_alignment_complete_case_trait_major_matrix(tmp_path: Path)
         sample_key_mode="fid_iid",
     )
 
+    np.testing.assert_array_equal(single_trait_result.sample_indices, np.asarray([0, 1, 2], dtype=np.int64))
     np.testing.assert_array_equal(result.sample_indices, np.asarray([1, 2], dtype=np.int64))
     assert result.phenotype_names == ["trait_a", "trait_b"]
     assert result.family_identifiers == ["f2", "f3"]

@@ -28,6 +28,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-trusted-no-missing-diploid": True,
         "g-trusted-bgen-validation-mode": "assume_validated",
         "g-sample-key-mode": "iid",
+        "g-multi-phenotype-sample-mode": "complete-case",
         "g-output-format": "arrow",
         "g-writer-threads": 2,
         "g-writer-queue-depth": 3,
@@ -57,6 +58,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     regenie_config = config.RegenieConfig.from_options(raw_options)
 
     assert regenie_config.g_compute.trusted_bgen_validation_mode == types.TrustedBgenValidationMode.ASSUME_VALIDATED
+    assert regenie_config.g_compute.multi_phenotype_sample_mode == types.MultiPhenotypeSampleMode.COMPLETE_CASE
     assert regenie_config.g_compute.firth_batch_size == 8
     assert regenie_config.g_compute.firth_candidate_capacity == 16
     assert regenie_config.g_compute.binary_null_maximum_iterations == 25

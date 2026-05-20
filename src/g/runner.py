@@ -173,6 +173,15 @@ def dispatch_execution_plan(
 ) -> tuple[Path | None, ...]:
     """Dispatch an execution plan to the native engine layer."""
     if len(plan.phenotype_run_plans) > 1:
+        if plan.kernel_config.multi_phenotype_sample_mode == types.MultiPhenotypeSampleMode.PER_PHENOTYPE:
+            return tuple(
+                dispatch_one_phenotype_engine_pipeline(
+                    plan=plan,
+                    phenotype_run_plan=phenotype_run_plan,
+                    stage_timing_recorder=stage_timing_recorder,
+                )
+                for phenotype_run_plan in plan.phenotype_run_plans
+            )
         return dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=stage_timing_recorder,
@@ -254,6 +263,7 @@ def dispatch_multi_phenotype_engine_pipeline(
     )
     common_arguments.update(
         {
+            "sample_mode": plan.kernel_config.multi_phenotype_sample_mode,
             "phenotype_names": tuple(
                 phenotype_run_plan.phenotype_name for phenotype_run_plan in plan.phenotype_run_plans
             ),
