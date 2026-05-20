@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import datetime
 import enum
@@ -144,6 +145,13 @@ def write_json_object(path: Path, value: JsonObject) -> None:
     """Write a JSON object with stable formatting."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def remove_stale_output_files(paths: list[Path]) -> None:
+    """Remove output files from an earlier task-farm command attempt."""
+    for path in paths:
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
 
 
 def split_task_sections(task_markdown: str) -> TaskSections:
@@ -1142,6 +1150,8 @@ def command_review(arguments: argparse.Namespace) -> int:
         task_identifier = int(task["id"])
         final_message_path = review_directory / f"{task_identifier:02d}.md"
         jsonl_log_path = review_directory / f"{task_identifier:02d}.jsonl"
+        stderr_log_path = review_directory / f"{task_identifier:02d}.stderr.log"
+        remove_stale_output_files([final_message_path, jsonl_log_path, stderr_log_path])
         command_arguments = build_review_command(
             worktree_path=worktree_path,
             model=str(defaults.get("reviewer_model", "gpt-5.5")),
@@ -1158,7 +1168,7 @@ def command_review(arguments: argparse.Namespace) -> int:
         )
         jsonl_log_path.write_text(completed_process.stdout)
         if completed_process.stderr:
-            (review_directory / f"{task_identifier:02d}.stderr.log").write_text(completed_process.stderr)
+            stderr_log_path.write_text(completed_process.stderr)
         if completed_process.returncode == 0:
             set_runtime_task_status(state, task, TaskStatus.REVIEWED)
             print(f"Reviewed task {task_identifier:02d}: {final_message_path}")

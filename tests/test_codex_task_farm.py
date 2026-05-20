@@ -179,6 +179,67 @@ def test_dangerous_flag_adds_bypass_only_for_worker_and_integrator() -> None:
     assert "--dangerously-bypass-approvals-and-sandbox" in integration_command
 
 
+def test_review_clears_stale_outputs_before_running(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest = codex_task_farm.default_manifest()
+    manifest["defaults"]["state_directory"] = ".state"
+    manifest["tasks"] = [
+        {
+            "id": 1,
+            "status": "implemented",
+            "branch": "codex/one",
+            "worktree": "worktree",
+            "title": "Review task",
+            "body_markdown": "Body",
+            "guidance_markdown": "Guidance",
+            "dependencies": [],
+        }
+    ]
+    (tmp_path / "worktree").mkdir()
+    review_directory = tmp_path / ".state" / "reviews"
+    review_directory.mkdir(parents=True)
+    final_message_path = review_directory / "01.md"
+    jsonl_log_path = review_directory / "01.jsonl"
+    stderr_log_path = review_directory / "01.stderr.log"
+    final_message_path.write_text("old final")
+    jsonl_log_path.write_text("old jsonl")
+    stderr_log_path.write_text("old stderr")
+
+    class FakeCompletedProcess:
+        returncode: int = 0
+        stdout: str = '{"type": "ok"}\n'
+        stderr: str = ""
+
+    def fake_subprocess_run(
+        command_arguments: list[str],
+        **subprocess_arguments: object,
+    ) -> FakeCompletedProcess:
+        assert subprocess_arguments["cwd"] == tmp_path
+        assert subprocess_arguments["input"] == codex_task_farm.build_review_prompt(manifest["tasks"][0])
+        assert subprocess_arguments["check"] is False
+        assert subprocess_arguments["capture_output"] is True
+        assert subprocess_arguments["text"] is True
+        assert not final_message_path.exists()
+        assert not jsonl_log_path.exists()
+        assert not stderr_log_path.exists()
+        output_flag_index = command_arguments.index("-o")
+        Path(command_arguments[output_flag_index + 1]).write_text("new final")
+        return FakeCompletedProcess()
+
+    monkeypatch.setattr(codex_task_farm, "repository_root", lambda: tmp_path)
+    monkeypatch.setattr(codex_task_farm, "load_manifest", lambda repository_directory: manifest)
+    monkeypatch.setattr(codex_task_farm, "refresh_runtime_statuses", lambda repository_directory, manifest: None)
+    monkeypatch.setattr(codex_task_farm.subprocess, "run", fake_subprocess_run)
+
+    exit_code = codex_task_farm.command_review(argparse.Namespace(task=[1]))
+
+    state = codex_task_farm.read_json_object(tmp_path / ".state" / "state.json")
+    assert exit_code == 0
+    assert state["statuses"] == {"1": "reviewed"}
+    assert final_message_path.read_text() == "new final"
+    assert jsonl_log_path.read_text() == '{"type": "ok"}\n'
+    assert not stderr_log_path.exists()
+
+
 def test_wrapper_exit_code_classification_accepts_verified_and_legacy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
