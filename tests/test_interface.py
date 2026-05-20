@@ -115,3 +115,19 @@ def test_unknown_and_unsupported_options_raise_clear_errors() -> None:
 
     with pytest.raises(ValueError, match="valid REGENIE option"):
         config.RegenieConfig.from_options({"pgen": "dataset", "phenoFile": "phenotype.tsv"})
+
+
+def test_staging_depth_must_be_positive() -> None:
+    raw_options: dict[str, object] = {
+        "step": 2,
+        "qt": True,
+        "bgen": "dataset.bgen",
+        "phenoFile": "phenotype.tsv",
+        "phenoCol": "trait",
+        "pred": "predictions.list",
+        "out": "results/output",
+        "g-staging-depth": 0,
+    }
+
+    with pytest.raises(ValueError, match="--g-staging-depth must be positive"):
+        config.RegenieConfig.from_options(raw_options)

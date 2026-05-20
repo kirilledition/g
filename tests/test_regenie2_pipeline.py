@@ -7,14 +7,12 @@ from unittest.mock import patch
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from g import types
 from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, regenie2_linear_types
 from g.engine import callbacks, native_dispatch, regenie2_pipeline, timing
 from g.io import output, source
-
-if typing.TYPE_CHECKING:
-    import pytest
 
 
 class FakePredictionSource:
@@ -206,6 +204,11 @@ class SparseOnlyChunkStats(ExplodingChunkStats):
     @property
     def is_sparse_candidate(self) -> np.ndarray:
         return np.asarray([True, False], dtype=np.bool_)
+
+
+def test_native_bgen_callback_runner_rejects_nonpositive_staging_depth() -> None:
+    with pytest.raises(ValueError, match="staging_depth must be positive"):
+        callbacks.NativeBgenCallbackRunner(worker_name="invalid-staging-depth", staging_depth=0)
 
 
 def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -> None:
