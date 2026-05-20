@@ -39,8 +39,6 @@ def print_success_message(artifacts: api.RunArtifacts) -> None:
         return
     if artifacts.output_run_directory is not None:
         click.echo(f"Success. Chunked run saved to {artifacts.output_run_directory}")
-        if artifacts.final_regenie is not None:
-            click.echo(f"REGENIE text output saved to {artifacts.final_regenie}")
         if artifacts.final_parquet is not None:
             click.echo(f"Finalized Parquet saved to {artifacts.final_parquet}")
         return

@@ -9,7 +9,6 @@ use pyo3::prelude::*;
 use crate::output::{
     OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
-    finalize_output_run_chunks_to_regenie_text as finalize_native_output_run_chunks_to_regenie_text,
     scan_committed_chunk_identifiers as scan_native_committed_chunk_identifiers,
     validate_strict_manifest_chunks as validate_native_strict_manifest_chunks,
 };
@@ -111,16 +110,6 @@ pub(crate) fn finalize_output_run_chunks(
 ) -> PyResult<String> {
     finalize_native_output_run_chunks(Path::new(&run_directory), Path::new(&chunks_directory), &association_mode)
         .map(|path| path.display().to_string())
-        .map_err(output_writer_error_to_py)
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn finalize_output_run_chunks_to_regenie_text(
-    chunks_directory: String,
-    regenie_text_path: String,
-) -> PyResult<()> {
-    finalize_native_output_run_chunks_to_regenie_text(Path::new(&chunks_directory), Path::new(&regenie_text_path))
         .map_err(output_writer_error_to_py)
 }
 

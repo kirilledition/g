@@ -39,7 +39,7 @@ def test_regenie_command_dispatches_config_api() -> None:
         "g.cli.api.regenie",
         return_value=api.RunArtifacts(
             output_run_directory=Path("results/output.g/trait.regenie2_linear.run"),
-            final_regenie=Path("results/output_trait.regenie"),
+            final_parquet=Path("results/output.g/trait.regenie2_linear.run/final.parquet"),
         ),
     ) as mock_regenie_api:
         result = runner.invoke(
@@ -70,7 +70,7 @@ def test_regenie_command_dispatches_config_api() -> None:
                 "--g-device",
                 "gpu",
                 "--g-output-format",
-                "regenie",
+                "parquet",
             ],
         )
 
@@ -80,7 +80,7 @@ def test_regenie_command_dispatches_config_api() -> None:
     assert regenie_config.input.covar_columns == ("age", "sex")
     assert regenie_config.trait.bsize == 4096
     assert regenie_config.g_compute.device == types.Device.GPU
-    assert "output_trait.regenie" in result.output
+    assert "final.parquet" in result.output
 
 
 def test_regenie_command_rejects_unsupported_regenie_flag() -> None:
@@ -175,13 +175,11 @@ def test_print_success_message_reports_run_directory_outputs(capsys: typing.Any)
     print_success_message(
         api.RunArtifacts(
             output_run_directory=Path("results/output.g/trait.regenie2_linear.run"),
-            final_regenie=Path("results/output_trait.regenie"),
             final_parquet=Path("results/output.g/trait.regenie2_linear.run/final.parquet"),
         )
     )
     captured = capsys.readouterr()
     assert "results/output.g/trait.regenie2_linear.run" in captured.out
-    assert "output_trait.regenie" in captured.out
     assert "final.parquet" in captured.out
 
 

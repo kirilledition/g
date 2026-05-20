@@ -20,8 +20,7 @@ use crate::sample::{AlignedSampleData, AlignmentInputs, MultiAlignedSampleData, 
 mod output;
 
 use output::{
-    OutputWriterSession, finalize_output_run_chunks, finalize_output_run_chunks_to_regenie_text,
-    scan_committed_chunk_identifiers, validate_strict_manifest_chunks,
+    OutputWriterSession, finalize_output_run_chunks, scan_committed_chunk_identifiers, validate_strict_manifest_chunks,
 };
 
 #[pyclass(skip_from_py_object)]
@@ -1117,7 +1116,6 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<MultiRegeniePredictionSource>()?;
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
-    module.add_function(wrap_pyfunction!(finalize_output_run_chunks_to_regenie_text, module)?)?;
     module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
     module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;
