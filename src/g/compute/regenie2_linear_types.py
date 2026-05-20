@@ -19,7 +19,7 @@ class Regenie2LinearState:
         whitened_covariate_transpose: Cholesky-whitened covariate transpose.
         phenotype_residual: Phenotype residualized against covariates.
         sample_count: Number of samples.
-        degrees_of_freedom: Residual degrees of freedom for one-variant tests.
+        degrees_of_freedom: Null-model residual degrees of freedom.
 
     """
 
@@ -44,7 +44,7 @@ class Regenie2LinearChromosomeState:
         adjusted_residual: Phenotype residual after covariate residualization and LOCO subtraction.
         adjusted_residual_projection_coordinates: Projection of adjusted residual onto whitened covariates.
         adjusted_residual_sum_squares: Sum of squares of ``adjusted_residual``.
-        degrees_of_freedom: Residual degrees of freedom for one-variant tests.
+        degrees_of_freedom: Null-model residual degrees of freedom.
 
     """
 
@@ -90,7 +90,7 @@ class Regenie2MultiLinearState:
         whitened_covariate_transpose: Cholesky-whitened covariate transpose.
         phenotype_residual_matrix: Trait-major phenotype residuals after covariate projection.
         sample_count: Number of samples.
-        degrees_of_freedom: Residual degrees of freedom for one-variant tests.
+        degrees_of_freedom: Null-model residual degrees of freedom.
 
     """
 
@@ -115,7 +115,7 @@ class Regenie2MultiLinearChromosomeState:
         adjusted_residual_matrix: Trait-major residuals after covariate residualization and LOCO subtraction.
         adjusted_residual_projection_coordinate_matrix: Per-trait projection onto whitened covariates.
         adjusted_residual_sum_squares: Per-trait adjusted residual sums of squares.
-        degrees_of_freedom: Residual degrees of freedom for one-variant tests.
+        degrees_of_freedom: Null-model residual degrees of freedom.
 
     """
 

@@ -59,7 +59,7 @@ def prepare_regenie2_linear_state(
     phenotype_vector_float32 = jnp.asarray(phenotype_vector, dtype=jnp.float32)
     sample_count = covariate_matrix_float32.shape[0]
     covariate_parameter_count = covariate_matrix_float32.shape[1]
-    degrees_of_freedom = sample_count - covariate_parameter_count - 1
+    degrees_of_freedom = sample_count - covariate_parameter_count
 
     covariate_matrix_transpose = covariate_matrix_float32.T
     covariate_crossproduct = covariate_matrix_transpose @ covariate_matrix_float32
@@ -106,7 +106,7 @@ def prepare_regenie2_multi_linear_state(
     phenotype_matrix_float32 = jnp.asarray(phenotype_matrix, dtype=jnp.float32)
     sample_count = covariate_matrix_float32.shape[0]
     covariate_parameter_count = covariate_matrix_float32.shape[1]
-    degrees_of_freedom = sample_count - covariate_parameter_count - 1
+    degrees_of_freedom = sample_count - covariate_parameter_count
 
     covariate_matrix_transpose = covariate_matrix_float32.T
     covariate_crossproduct = covariate_matrix_transpose @ covariate_matrix_float32
@@ -235,26 +235,18 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
         jnp.nan,
     )
 
-    residual_sum_squares_after = (
-        chromosome_state.adjusted_residual_sum_squares - covariance_squared * genotype_residual_sum_squares_inverse
-    )
-    residual_sum_squares_after = jnp.maximum(residual_sum_squares_after, 0.0)
-    positive_residual_sum_squares_mask = residual_sum_squares_after > 0.0
+    null_mean_squared_error = chromosome_state.adjusted_residual_sum_squares / chromosome_state.degrees_of_freedom
+    positive_null_mean_squared_error_mask = null_mean_squared_error > 0.0
 
     standard_error = jnp.where(
-        positive_genotype_residual_mask & positive_residual_sum_squares_mask,
-        jnp.sqrt(
-            residual_sum_squares_after * genotype_residual_sum_squares_inverse / chromosome_state.degrees_of_freedom
-        ),
+        positive_genotype_residual_mask & positive_null_mean_squared_error_mask,
+        jnp.sqrt(null_mean_squared_error * genotype_residual_sum_squares_inverse),
         jnp.nan,
     )
 
     chi_squared = jnp.where(
-        positive_genotype_residual_mask & positive_residual_sum_squares_mask,
-        covariance_squared
-        * genotype_residual_sum_squares_inverse
-        * chromosome_state.degrees_of_freedom
-        / residual_sum_squares_after,
+        positive_genotype_residual_mask & positive_null_mean_squared_error_mask,
+        covariance_squared * genotype_residual_sum_squares_inverse / null_mean_squared_error,
         0.0,
     )
 
@@ -304,27 +296,16 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
         covariance_with_phenotype * genotype_residual_sum_squares_inverse[None, :],
         jnp.nan,
     )
-    residual_sum_squares_after = (
-        chromosome_state.adjusted_residual_sum_squares[:, None]
-        - covariance_squared * genotype_residual_sum_squares_inverse[None, :]
-    )
-    residual_sum_squares_after = jnp.maximum(residual_sum_squares_after, 0.0)
-    positive_residual_sum_squares_mask = residual_sum_squares_after > 0.0
+    null_mean_squared_error = chromosome_state.adjusted_residual_sum_squares / chromosome_state.degrees_of_freedom
+    positive_null_mean_squared_error_mask = null_mean_squared_error > 0.0
     standard_error = jnp.where(
-        positive_genotype_residual_mask[None, :] & positive_residual_sum_squares_mask,
-        jnp.sqrt(
-            residual_sum_squares_after
-            * genotype_residual_sum_squares_inverse[None, :]
-            / chromosome_state.degrees_of_freedom
-        ),
+        positive_genotype_residual_mask[None, :] & positive_null_mean_squared_error_mask[:, None],
+        jnp.sqrt(null_mean_squared_error[:, None] * genotype_residual_sum_squares_inverse[None, :]),
         jnp.nan,
     )
     chi_squared = jnp.where(
-        positive_genotype_residual_mask[None, :] & positive_residual_sum_squares_mask,
-        covariance_squared
-        * genotype_residual_sum_squares_inverse[None, :]
-        * chromosome_state.degrees_of_freedom
-        / residual_sum_squares_after,
+        positive_genotype_residual_mask[None, :] & positive_null_mean_squared_error_mask[:, None],
+        covariance_squared * genotype_residual_sum_squares_inverse[None, :] / null_mean_squared_error[:, None],
         0.0,
     )
     log10_p_value = chi_squared_to_log10_p_value(chi_squared)
@@ -374,24 +355,16 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
         covariance_with_phenotype * genotype_residual_sum_squares_inverse,
         jnp.nan,
     )
-    residual_sum_squares_after = (
-        chromosome_state.adjusted_residual_sum_squares - covariance_squared * genotype_residual_sum_squares_inverse
-    )
-    residual_sum_squares_after = jnp.maximum(residual_sum_squares_after, 0.0)
-    positive_residual_sum_squares_mask = residual_sum_squares_after > 0.0
+    null_mean_squared_error = chromosome_state.adjusted_residual_sum_squares / chromosome_state.degrees_of_freedom
+    positive_null_mean_squared_error_mask = null_mean_squared_error > 0.0
     standard_error = jnp.where(
-        positive_genotype_residual_mask & positive_residual_sum_squares_mask,
-        jnp.sqrt(
-            residual_sum_squares_after * genotype_residual_sum_squares_inverse / chromosome_state.degrees_of_freedom
-        ),
+        positive_genotype_residual_mask & positive_null_mean_squared_error_mask,
+        jnp.sqrt(null_mean_squared_error * genotype_residual_sum_squares_inverse),
         jnp.nan,
     )
     chi_squared = jnp.where(
-        positive_genotype_residual_mask & positive_residual_sum_squares_mask,
-        covariance_squared
-        * genotype_residual_sum_squares_inverse
-        * chromosome_state.degrees_of_freedom
-        / residual_sum_squares_after,
+        positive_genotype_residual_mask & positive_null_mean_squared_error_mask,
+        covariance_squared * genotype_residual_sum_squares_inverse / null_mean_squared_error,
         0.0,
     )
     log10_p_value = chi_squared_to_log10_p_value(chi_squared)
@@ -440,27 +413,16 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
         covariance_with_phenotype * genotype_residual_sum_squares_inverse[None, :],
         jnp.nan,
     )
-    residual_sum_squares_after = (
-        chromosome_state.adjusted_residual_sum_squares[:, None]
-        - covariance_squared * genotype_residual_sum_squares_inverse[None, :]
-    )
-    residual_sum_squares_after = jnp.maximum(residual_sum_squares_after, 0.0)
-    positive_residual_sum_squares_mask = residual_sum_squares_after > 0.0
+    null_mean_squared_error = chromosome_state.adjusted_residual_sum_squares / chromosome_state.degrees_of_freedom
+    positive_null_mean_squared_error_mask = null_mean_squared_error > 0.0
     standard_error = jnp.where(
-        positive_genotype_residual_mask[None, :] & positive_residual_sum_squares_mask,
-        jnp.sqrt(
-            residual_sum_squares_after
-            * genotype_residual_sum_squares_inverse[None, :]
-            / chromosome_state.degrees_of_freedom
-        ),
+        positive_genotype_residual_mask[None, :] & positive_null_mean_squared_error_mask[:, None],
+        jnp.sqrt(null_mean_squared_error[:, None] * genotype_residual_sum_squares_inverse[None, :]),
         jnp.nan,
     )
     chi_squared = jnp.where(
-        positive_genotype_residual_mask[None, :] & positive_residual_sum_squares_mask,
-        covariance_squared
-        * genotype_residual_sum_squares_inverse[None, :]
-        * chromosome_state.degrees_of_freedom
-        / residual_sum_squares_after,
+        positive_genotype_residual_mask[None, :] & positive_null_mean_squared_error_mask[:, None],
+        covariance_squared * genotype_residual_sum_squares_inverse[None, :] / null_mean_squared_error[:, None],
         0.0,
     )
     log10_p_value = chi_squared_to_log10_p_value(chi_squared)
@@ -501,7 +463,7 @@ def compute_regenie2_linear_chunk(
         For each variant g:
             genotype_residual = g - X @ (X'X)^-1 @ X' @ g
             beta = (genotype_residual' @ adjusted_residual) / (genotype_residual' @ genotype_residual)
-            variance = sigma_e^2 / (genotype_residual' @ genotype_residual)
+            variance = null_mean_squared_error / (genotype_residual' @ genotype_residual)
             chi_squared = beta^2 / variance
             log10_p_value = -log10(chi2_to_p(chi_squared, df=1))
 
