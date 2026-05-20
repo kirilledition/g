@@ -136,6 +136,7 @@ def run_validated_regenie_config(regenie_config: config.RegenieConfig) -> RunArt
         record_stage_duration(stage_timing_recorder, "jax_device_configuration_backend_init", device_start_time)
         output_start_time = time.perf_counter()
         plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        write_execution_plan_start_metadata(regenie_config=regenie_config, plan=plan)
         record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)
         final_parquet_paths = dispatch_execution_plan(
             plan=plan,
@@ -259,13 +260,41 @@ def dispatch_multi_phenotype_engine_pipeline(
     return run_regenie2_multi_phenotype_linear_bgen_pipeline(**common_arguments)
 
 
+def write_execution_plan_start_metadata(
+    *,
+    regenie_config: config.RegenieConfig,
+    plan: execution_plan.RegenieExecutionPlan,
+) -> None:
+    """Write per-phenotype metadata before native engine execution starts."""
+    for phenotype_run_plan in plan.phenotype_run_plans:
+        write_run_start_metadata(
+            regenie_config=regenie_config,
+            plan=plan,
+            phenotype_run_plan=phenotype_run_plan,
+        )
+
+
+def write_run_start_metadata(
+    *,
+    regenie_config: config.RegenieConfig,
+    plan: execution_plan.RegenieExecutionPlan,
+    phenotype_run_plan: execution_plan.PhenotypeRunPlan,
+) -> None:
+    """Write run metadata before native engine execution starts."""
+    config.write_toml(regenie_config, phenotype_run_plan.effective_config_path)
+    extend_run_manifest(
+        plan=plan,
+        phenotype_run_plan=phenotype_run_plan,
+    )
+
+
 def finalize_execution_plan(
     *,
     regenie_config: config.RegenieConfig,
     plan: execution_plan.RegenieExecutionPlan,
     final_parquet_paths: tuple[Path | None, ...],
 ) -> RunArtifacts:
-    """Finalize metadata and user-facing artifacts after native execution."""
+    """Build user-facing artifacts after native execution."""
     phenotype_artifacts = tuple(
         finalize_phenotype_run(
             regenie_config=regenie_config,
@@ -291,12 +320,8 @@ def finalize_phenotype_run(
     phenotype_run_plan: execution_plan.PhenotypeRunPlan,
     final_parquet_path: Path | None,
 ) -> RunArtifacts:
-    """Finalize metadata for one phenotype."""
-    config.write_toml(regenie_config, phenotype_run_plan.effective_config_path)
-    extend_run_manifest(
-        plan=plan,
-        phenotype_run_plan=phenotype_run_plan,
-    )
+    """Build artifacts for one phenotype."""
+    del regenie_config, plan
     return RunArtifacts(
         output_run_directory=phenotype_run_plan.output_run_paths.run_directory,
         final_parquet=final_parquet_path,

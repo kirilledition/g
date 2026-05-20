@@ -203,9 +203,11 @@ def initialize_output_run(
     """Validate/write the manifest header and return accepted committed chunks."""
     committed_chunk_identifiers = frozenset[int]()
     committed_chunks: list[typing.Any] = []
-    manifest = dict(existing_manifest or {})
+    manifest = dict(load_run_manifest(output_run_paths) or {})
     if existing_manifest is not None:
         validate_manifest_compatibility(existing_manifest, current_header)
+        if not manifest:
+            manifest = dict(existing_manifest)
         committed_chunks_value = existing_manifest.get("committed_chunks", [])
         if not isinstance(committed_chunks_value, list):
             message = "Run manifest committed_chunks field must be a list."

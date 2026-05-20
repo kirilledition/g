@@ -229,6 +229,33 @@ def test_initialize_output_run_compatible_resume_preserves_committed_chunks(tmp_
     assert [chunk["chunk_identifier"] for chunk in manifest["committed_chunks"]] == [0, 2]
 
 
+def test_initialize_output_run_preserves_preinitialized_metadata(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path)
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    output.write_run_manifest(
+        prepared_output_run.output_run_paths,
+        {
+            "command": {
+                "effective_config": str(prepared_output_run.output_run_paths.run_directory / "effective_config.toml")
+            },
+            "runtime": {"device": "cpu"},
+        },
+    )
+
+    initialize_test_output_run(prepared_output_run, current_header)
+
+    manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    assert manifest is not None
+    assert manifest["command"]["effective_config"].endswith("effective_config.toml")
+    assert manifest["runtime"] == {"device": "cpu"}
+    assert manifest["phenotype_name"] == "trait"
+    assert manifest["committed_chunks"] == []
+
+
 def test_prepare_output_run_strict_resume_validates_manifest_chunks(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
     prepared_output_run = output.prepare_output_run(
