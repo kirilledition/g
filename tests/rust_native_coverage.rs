@@ -198,13 +198,12 @@ fn bgen_reader_exercises_metadata_dosage_preprocessing_and_profile_paths() {
     assert_eq!(reader.variant_count(), 4);
     assert_eq!(reader.chromosome_boundary_indices(), vec![0, 4]);
 
-    let (chromosome, variant_identifiers, position, allele_one, allele_two) =
-        reader.variant_metadata_slice(0, 2).expect("metadata slice should load");
-    assert_eq!(chromosome.len(), 2);
-    assert_eq!(variant_identifiers.len(), 2);
-    assert_eq!(position.len(), 2);
-    assert_eq!(allele_one.len(), 2);
-    assert_eq!(allele_two.len(), 2);
+    let metadata = reader.variant_metadata_slice(0, 2).expect("metadata slice should load");
+    assert_eq!(metadata.chromosome.len(), 2);
+    assert_eq!(metadata.variant_identifier.len(), 2);
+    assert_eq!(metadata.position.len(), 2);
+    assert_eq!(metadata.allele_one.len(), 2);
+    assert_eq!(metadata.allele_two.len(), 2);
 
     let sample_indices = [3_i64, 1, 0];
     let dosage_values = reader.read_dosage_f32(&sample_indices, 0, 2).expect("dosages should decode");
@@ -458,9 +457,8 @@ fn bgen_reader_covers_trait_object_and_header_error_contracts() {
     let two_chromosome_reader =
         BgenReaderCore::open(&two_chromosome_path, false).expect("two chromosome BGEN should open");
     assert_eq!(two_chromosome_reader.chromosome_boundary_indices(), vec![0, 1, 2]);
-    let (_chromosome, variant_identifiers, _position, _allele_one, _allele_two) =
-        two_chromosome_reader.variant_metadata_slice(0, 2).expect("metadata should load");
-    assert_eq!(variant_identifiers, vec!["empty-rsid".to_string(), "rs2".to_string()]);
+    let metadata = two_chromosome_reader.variant_metadata_slice(0, 2).expect("metadata should load");
+    assert_eq!(metadata.variant_identifier, vec!["empty-rsid".to_string(), "rs2".to_string()]);
 }
 
 #[test]

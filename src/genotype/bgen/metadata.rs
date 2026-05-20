@@ -1,3 +1,5 @@
+use crate::genotype::common::VariantMetadataColumns;
+
 #[derive(Debug)]
 pub(super) struct VariantRecord {
     pub(super) probability_payload_offset: usize,
@@ -10,9 +12,7 @@ pub(super) struct VariantRecord {
     pub(super) reference_allele: String,
 }
 
-pub type VariantMetadataLists = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
-
-pub(super) fn build_variant_metadata_lists(selected_variant_records: &[VariantRecord]) -> VariantMetadataLists {
+pub(super) fn build_variant_metadata_columns(selected_variant_records: &[VariantRecord]) -> VariantMetadataColumns {
     let chromosome_values =
         selected_variant_records.iter().map(|variant_record| variant_record.chromosome.clone()).collect();
     let variant_identifier_values = selected_variant_records
@@ -24,7 +24,13 @@ pub(super) fn build_variant_metadata_lists(selected_variant_records: &[VariantRe
         selected_variant_records.iter().map(|variant_record| variant_record.counted_allele.clone()).collect();
     let allele_two_values =
         selected_variant_records.iter().map(|variant_record| variant_record.reference_allele.clone()).collect();
-    (chromosome_values, variant_identifier_values, position_values, allele_one_values, allele_two_values)
+    VariantMetadataColumns {
+        chromosome: chromosome_values,
+        variant_identifier: variant_identifier_values,
+        position: position_values,
+        allele_one: allele_one_values,
+        allele_two: allele_two_values,
+    }
 }
 
 pub(super) fn build_chromosome_boundary_indices(variant_records: &[VariantRecord]) -> Vec<usize> {

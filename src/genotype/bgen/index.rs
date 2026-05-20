@@ -1,9 +1,8 @@
-use super::decode::{read_exact_bytes, read_u16_at, read_u32_at, u32_to_usize};
+use super::BgenError;
+use super::decode::{ThreadScratch, read_exact_bytes, read_probability_block, read_u16_at, read_u32_at, u32_to_usize};
+use super::format::{ALLELE_LENGTH_SIZE_IN_BYTES, CompressionType, VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES};
 use super::metadata::VariantRecord;
-use super::{
-    ALLELE_LENGTH_SIZE_IN_BYTES, BgenError, CompressionType, VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES,
-    validate_variant_probability_block,
-};
+use super::profile::ThreadLocalProfileSnapshot;
 
 pub(super) fn parse_sample_identifier_block(
     mmap: &[u8],
@@ -154,4 +153,30 @@ pub(super) fn parse_variant_records(
     }
 
     Ok(variant_records)
+}
+
+fn validate_variant_probability_block(
+    mmap: &[u8],
+    compression_type: CompressionType,
+    variant_record: &VariantRecord,
+    sample_count: usize,
+    variant_label: &str,
+) -> Result<(), BgenError> {
+    let mut thread_scratch = ThreadScratch::default();
+    let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
+    let probability_block = read_probability_block(
+        mmap,
+        compression_type,
+        variant_record,
+        &mut thread_scratch,
+        &mut thread_local_profile_snapshot,
+        false,
+    )?;
+    let observed_sample_count = u32_to_usize(read_u32_at(probability_block, 0)?)?;
+    if observed_sample_count != sample_count {
+        return Err(BgenError::InvalidFormat(format!(
+            "The {variant_label} stores {observed_sample_count} samples in its probability block, but the file header reports {sample_count}.",
+        )));
+    }
+    Ok(())
 }
