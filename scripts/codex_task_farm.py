@@ -30,6 +30,7 @@ DEFAULT_INTEGRATION_BRANCH = "integration/code-review"
 MANIFEST_VERSION = 1
 
 PRESERVED_MANUAL_KEYS = {"dependencies", "status", "enabled", "assignee", "notes", "manual_expected_paths"}
+PATH_WITH_LINE_SUFFIX_PATTERN = re.compile(r"^(?P<path>.+?):[0-9]+(?:-[0-9]+)?$")
 
 
 class TaskStatus(enum.StrEnum):
@@ -180,11 +181,27 @@ def extract_expected_paths(task_markdown: str) -> list[str]:
     candidate_paths = re.findall(r"(?<!`)`([^`\n]+)`(?!`)", task_markdown)
     expected_paths: list[str] = []
     for candidate_path in candidate_paths:
-        if " " in candidate_path:
+        normalized_path = normalize_expected_path(candidate_path)
+        if normalized_path is None:
             continue
-        if candidate_path.startswith(("src/", "tests/", "docs/", "scripts/", "Cargo.", "pyproject.toml", "Justfile")):
-            expected_paths.append(candidate_path)
+        expected_paths.append(normalized_path)
     return sorted(set(expected_paths))
+
+
+def normalize_expected_path(candidate_path: str) -> str | None:
+    """Normalize an inline-code path reference into a repository path."""
+    if " " in candidate_path or any(character in candidate_path for character in "*?[]"):
+        return None
+    path_match = PATH_WITH_LINE_SUFFIX_PATTERN.match(candidate_path)
+    normalized_candidate = path_match.group("path") if path_match is not None else candidate_path
+    path = Path(normalized_candidate)
+    if path.is_absolute() or ".." in path.parts:
+        return None
+    if normalized_candidate.startswith(
+        ("src/", "tests/", "docs/", "scripts/", "Cargo.", "pyproject.toml", "Justfile"),
+    ):
+        return normalized_candidate
+    return None
 
 
 def parse_review_tasks(markdown_text: str) -> list[ParsedTask]:
@@ -343,12 +360,67 @@ def sync_manifest(repository_directory: Path) -> JsonObject:
     return manifest
 
 
-def load_manifest(repository_directory: Path) -> JsonObject:
+def task_runtime_identity(task: JsonObject) -> JsonObject:
+    """Build the runtime identity fields that make a task status reusable."""
+    return {
+        "id": int(task["id"]),
+        "slug": str(task.get("slug", "")),
+        "branch": str(task.get("branch", "")),
+        "worktree": str(task.get("worktree", "")),
+        "source_start_line": int(task.get("source_start_line", 0)),
+        "source_end_line": int(task.get("source_end_line", 0)),
+    }
+
+
+def task_identity_matches(task: JsonObject, identity: JsonObject | None) -> bool:
+    """Return whether a stored task identity belongs to the current manifest task."""
+    if identity is None:
+        return False
+    return task_runtime_identity(task) == {
+        "id": identity.get("id"),
+        "slug": identity.get("slug"),
+        "branch": identity.get("branch"),
+        "worktree": identity.get("worktree"),
+        "source_start_line": identity.get("source_start_line"),
+        "source_end_line": identity.get("source_end_line"),
+    }
+
+
+def manifest_task_identity(parsed_task: ParsedTask, defaults: JsonObject) -> JsonObject:
+    """Build the identity a parsed markdown task should have in the manifest."""
+    return {
+        "id": parsed_task.identifier,
+        "slug": parsed_task.slug,
+        "branch": task_branch(parsed_task),
+        "worktree": task_worktree(defaults, parsed_task),
+        "source_start_line": parsed_task.source_start_line,
+        "source_end_line": parsed_task.source_end_line,
+    }
+
+
+def validate_manifest_is_current(repository_directory: Path, manifest: JsonObject) -> None:
+    """Raise when the manifest does not match the current markdown source."""
+    source_path = repository_directory / REPO_RELATIVE_SOURCE_PATH
+    defaults = typing.cast("JsonObject", manifest.get("defaults", {}))
+    parsed_tasks = parse_review_tasks(source_path.read_text())
+    expected_identities = [manifest_task_identity(parsed_task, defaults) for parsed_task in parsed_tasks]
+    task_records = selected_tasks(manifest, [])
+    actual_identities = [task_runtime_identity(task) for task in task_records]
+    if actual_identities != expected_identities:
+        message = f"{REPO_RELATIVE_MANIFEST_PATH} is missing or stale. Run sync-manifest first."
+        raise ValueError(message)
+
+
+def load_manifest(repository_directory: Path, *, validate_current: bool = True) -> JsonObject:
     """Load the task manifest."""
     manifest_path = repository_directory / REPO_RELATIVE_MANIFEST_PATH
     if not manifest_path.exists():
-        return sync_manifest(repository_directory)
-    return read_json_object(manifest_path)
+        message = f"{REPO_RELATIVE_MANIFEST_PATH} is missing. Run sync-manifest first."
+        raise ValueError(message)
+    manifest = read_json_object(manifest_path)
+    if validate_current:
+        validate_manifest_is_current(repository_directory, manifest)
+    return manifest
 
 
 def save_manifest(repository_directory: Path, manifest: JsonObject) -> None:
@@ -585,8 +657,24 @@ def write_worker_wrapper(
     wrapper_path.chmod(0o755)
 
 
+def task_expected_paths(task: JsonObject) -> list[str]:
+    """Return generated and manual expected paths without duplicates."""
+    expected_paths = [
+        str(path)
+        for path in typing.cast("list[object]", task.get("expected_paths", []))
+        if isinstance(path, str)
+    ]
+    manual_expected_paths = [
+        str(path)
+        for path in typing.cast("list[object]", task.get("manual_expected_paths", []))
+        if isinstance(path, str)
+    ]
+    return sorted(set(expected_paths + manual_expected_paths))
+
+
 def build_worker_prompt(task: JsonObject) -> str:
     """Build the implementation prompt for a worker agent."""
+    expected_paths = task_expected_paths(task)
     return f"""You are a Codex implementation worker in a dedicated git worktree.
 
 Read AGENTS.md, docs/STYLEGUIDE.md, and Justfile before editing code.
@@ -598,7 +686,7 @@ Never commit files under data/ or .codex-task-worktrees/.
 
 Task {task["id"]}: {task["title"]}
 Category: {task["category"]}
-Expected paths: {", ".join(typing.cast("list[str]", task.get("expected_paths", []))) or "not precomputed"}
+Expected paths: {", ".join(expected_paths) or "not precomputed"}
 
 {task["body_markdown"]}
 
@@ -748,7 +836,7 @@ def running_process_exists(process_identifier: int) -> bool:
 def load_state(state_path: Path) -> JsonObject:
     """Load runtime state."""
     if not state_path.exists():
-        return {"runs": {}}
+        return {"runs": {}, "statuses": {}, "task_identities": {}}
     return read_json_object(state_path)
 
 
@@ -760,7 +848,15 @@ def save_state(state_path: Path, state: JsonObject) -> None:
 def runtime_task_status(state: JsonObject, task: JsonObject) -> str:
     """Return the current runtime status for a task."""
     statuses = typing.cast("JsonObject", state.get("statuses", {}))
+    identities = typing.cast("JsonObject", state.get("task_identities", {}))
     task_identifier = str(task["id"])
+    stored_identity = identities.get(task_identifier)
+    if (
+        stored_identity is not None
+        and isinstance(stored_identity, dict)
+        and not task_identity_matches(task, typing.cast("JsonObject", stored_identity))
+    ):
+        return str(task.get("status", TaskStatus.READY.value))
     status = statuses.get(task_identifier, task.get("status", TaskStatus.READY.value))
     return str(status)
 
@@ -768,9 +864,12 @@ def runtime_task_status(state: JsonObject, task: JsonObject) -> str:
 def set_runtime_task_status(state: JsonObject, task: JsonObject, status: TaskStatus) -> None:
     """Set a task status in ignored runtime state."""
     statuses = typing.cast("JsonObject", state.setdefault("statuses", {}))
-    statuses[str(task["id"])] = status.value
+    task_identifier = str(task["id"])
+    statuses[task_identifier] = status.value
+    identities = typing.cast("JsonObject", state.setdefault("task_identities", {}))
+    identities[task_identifier] = task_runtime_identity(task)
     status_updates = typing.cast("JsonObject", state.setdefault("status_updated_at", {}))
-    status_updates[str(task["id"])] = utc_timestamp()
+    status_updates[task_identifier] = utc_timestamp()
 
 
 def record_worker_completion(state: JsonObject, task: JsonObject, completion: WorkerCompletion) -> None:
@@ -785,6 +884,97 @@ def record_worker_completion(state: JsonObject, task: JsonObject, completion: Wo
         "verification": completion.verification,
         "worktree_clean": completion.worktree_clean,
     }
+
+
+def state_run_matches_task(run: object, task: JsonObject) -> bool:
+    """Return whether a runtime run record belongs to the current manifest task."""
+    if not isinstance(run, dict):
+        return False
+    typed_run = typing.cast("JsonObject", run)
+    return typed_run.get("branch") == task.get("branch") and typed_run.get("worktree") == task.get("worktree")
+
+
+def archive_runtime_state_entry(
+    state: JsonObject,
+    *,
+    task_identifier: str,
+    reason: str,
+    task: JsonObject | None,
+) -> None:
+    """Move stale runtime state for one task identifier out of active scheduling maps."""
+    archived_entries = typing.cast("list[JsonObject]", state.setdefault("archived_stale_entries", []))
+    runs = typing.cast("JsonObject", state.setdefault("runs", {}))
+    statuses = typing.cast("JsonObject", state.setdefault("statuses", {}))
+    status_updates = typing.cast("JsonObject", state.setdefault("status_updated_at", {}))
+    worker_results = typing.cast("JsonObject", state.setdefault("worker_results", {}))
+    identities = typing.cast("JsonObject", state.setdefault("task_identities", {}))
+    entry: JsonObject = {
+        "archived_at": utc_timestamp(),
+        "task_identifier": task_identifier,
+        "reason": reason,
+    }
+    if task is not None:
+        entry["current_task_identity"] = task_runtime_identity(task)
+    for key, mapping in (
+        ("run", runs),
+        ("status", statuses),
+        ("status_updated_at", status_updates),
+        ("worker_result", worker_results),
+        ("task_identity", identities),
+    ):
+        if task_identifier in mapping:
+            entry[key] = mapping.pop(task_identifier)
+    archived_entries.append(entry)
+
+
+def prune_stale_runtime_state(state: JsonObject, manifest: JsonObject) -> bool:
+    """Remove runtime state that does not match the current task manifest."""
+    tasks_by_runtime_identifier = {str(task["id"]): task for task in selected_tasks(manifest, [])}
+    active_identifiers = set(tasks_by_runtime_identifier)
+    candidate_identifiers: set[str] = set()
+    for mapping_name in ("runs", "statuses", "status_updated_at", "worker_results", "task_identities"):
+        mapping = state.setdefault(mapping_name, {})
+        if isinstance(mapping, dict):
+            candidate_identifiers.update(str(identifier) for identifier in mapping)
+    changed = False
+    for task_identifier in sorted(candidate_identifiers):
+        task = tasks_by_runtime_identifier.get(task_identifier)
+        if task is None:
+            archive_runtime_state_entry(
+                state,
+                task_identifier=task_identifier,
+                reason="task-not-in-current-manifest",
+                task=None,
+            )
+            changed = True
+            continue
+        runs = typing.cast("JsonObject", state.setdefault("runs", {}))
+        identities = typing.cast("JsonObject", state.setdefault("task_identities", {}))
+        stored_identity = identities.get(task_identifier)
+        run = runs.get(task_identifier)
+        if task_identifier not in active_identifiers:
+            continue
+        if isinstance(stored_identity, dict) and not task_identity_matches(
+            task,
+            typing.cast("JsonObject", stored_identity),
+        ):
+            archive_runtime_state_entry(
+                state,
+                task_identifier=task_identifier,
+                reason="task-identity-mismatch",
+                task=task,
+            )
+            changed = True
+            continue
+        if run is not None and not state_run_matches_task(run, task):
+            archive_runtime_state_entry(
+                state,
+                task_identifier=task_identifier,
+                reason="run-branch-or-worktree-mismatch",
+                task=task,
+            )
+            changed = True
+    return changed
 
 
 def tasks_by_identifier(manifest: JsonObject) -> dict[int, JsonObject]:
@@ -831,12 +1021,56 @@ def ensure_dependencies_ready(
                 )
 
 
+def ensure_tasks_have_status(
+    state: JsonObject,
+    tasks: list[JsonObject],
+    allowed_statuses: set[str],
+    operation: str,
+) -> None:
+    """Raise if selected tasks are not in an allowed state."""
+    for task in tasks:
+        task_status = runtime_task_status(state, task)
+        if task_status not in allowed_statuses:
+            raise ValueError(
+                f"Task {task['id']} cannot {operation}: status is "
+                f"{task_status}, expected one of {sorted(allowed_statuses)}.",
+            )
+
+
+def git_current_branch(worktree_path: Path) -> str:
+    """Return the current branch name for a worktree."""
+    command_result = run_command(["git", "branch", "--show-current"], cwd=worktree_path)
+    ensure_success(command_result)
+    return command_result.stdout.strip()
+
+
+def git_head_commit(worktree_path: Path) -> str:
+    """Return the current HEAD commit for a worktree."""
+    command_result = run_command(["git", "rev-parse", "HEAD"], cwd=worktree_path)
+    ensure_success(command_result)
+    return command_result.stdout.strip()
+
+
+def ensure_integration_worktree_ready(worktree_path: Path, integration_branch: str) -> None:
+    """Raise unless the integration worktree is clean and on the integration branch."""
+    current_branch = git_current_branch(worktree_path)
+    if current_branch != integration_branch:
+        message = (
+            f"Integration worktree is on {current_branch or '<detached>'}, "
+            f"expected {integration_branch}."
+        )
+        raise ValueError(message)
+    if not git_worktree_is_clean(worktree_path):
+        message = "Integration worktree has uncommitted changes."
+        raise ValueError(message)
+
+
 def refresh_runtime_statuses(repository_directory: Path, manifest: JsonObject) -> None:
     """Refresh task statuses from detached worker state."""
     state_path = state_directory(repository_directory, manifest) / "state.json"
     state = load_state(state_path)
+    changed = prune_stale_runtime_state(state, manifest)
     runs = typing.cast("JsonObject", state.get("runs", {}))
-    changed = False
     for task in selected_tasks(manifest, []):
         task_identifier = int(task["id"])
         run = runs.get(str(task_identifier), {})
@@ -884,6 +1118,9 @@ def launch_worker(
     prompt_path = run_directory / "worker-prompt.md"
     wrapper_path = run_directory / "worker-wrapper.sh"
     exit_code_path = run_directory / "exit-code.txt"
+    remove_stale_output_files(
+        [final_message_path, jsonl_log_path, stderr_log_path, prompt_path, wrapper_path, exit_code_path]
+    )
     prompt = build_worker_prompt(task)
     prompt_path.write_text(prompt)
     command_arguments = build_worker_command(
@@ -1128,6 +1365,12 @@ def command_review(arguments: argparse.Namespace) -> int:
     tasks = selected_tasks(manifest, typing.cast("list[int]", arguments.task))
     if not tasks:
         raise ValueError("Select at least one task to review.")
+    ensure_tasks_have_status(
+        state,
+        tasks,
+        {TaskStatus.IMPLEMENTED.value, TaskStatus.REVIEWED.value},
+        "review",
+    )
     ensure_dependencies_ready(
         manifest,
         state,
@@ -1190,6 +1433,10 @@ def command_integrate(arguments: argparse.Namespace) -> int:
     tasks = selected_tasks(manifest, typing.cast("list[int]", arguments.task))
     if not tasks:
         raise ValueError("Select at least one task to integrate.")
+    allowed_statuses = {TaskStatus.REVIEWED.value}
+    if bool(getattr(arguments, "allow_unreviewed", False)):
+        allowed_statuses.add(TaskStatus.IMPLEMENTED.value)
+    ensure_tasks_have_status(state, tasks, allowed_statuses, "integrate")
     ensure_dependencies_ready(
         manifest,
         state,
@@ -1202,17 +1449,22 @@ def command_integrate(arguments: argparse.Namespace) -> int:
     )
     integration_worktree_path = ensure_integration_worktree(repository_directory, defaults)
     integration_branch = str(defaults.get("integration_branch", DEFAULT_INTEGRATION_BRANCH))
+    ensure_integration_worktree_ready(integration_worktree_path, integration_branch)
     exit_code = 0
     for task in tasks:
         worktree_path = resolve_manifest_path(repository_directory, str(task["worktree"]))
         if not worktree_path.exists():
             raise FileNotFoundError(f"Worktree does not exist: {worktree_path}")
+        ensure_integration_worktree_ready(integration_worktree_path, integration_branch)
+        head_before_integration = git_head_commit(integration_worktree_path)
         integration_directory = state_directory(repository_directory, manifest) / "integrations"
         integration_directory.mkdir(parents=True, exist_ok=True)
         task_identifier = int(task["id"])
         final_message_path = integration_directory / f"{task_identifier:02d}-final.md"
         jsonl_log_path = integration_directory / f"{task_identifier:02d}.jsonl"
         review_report_path = state_directory(repository_directory, manifest) / "reviews" / f"{task_identifier:02d}.md"
+        stderr_log_path = integration_directory / f"{task_identifier:02d}.stderr.log"
+        remove_stale_output_files([final_message_path, jsonl_log_path, stderr_log_path])
         command_arguments = build_integration_command(
             integration_worktree_path=integration_worktree_path,
             worktree_path=worktree_path,
@@ -1233,8 +1485,27 @@ def command_integrate(arguments: argparse.Namespace) -> int:
         )
         jsonl_log_path.write_text(completed_process.stdout)
         if completed_process.stderr:
-            (integration_directory / f"{task_identifier:02d}.stderr.log").write_text(completed_process.stderr)
+            stderr_log_path.write_text(completed_process.stderr)
         if completed_process.returncode == 0:
+            try:
+                ensure_integration_worktree_ready(integration_worktree_path, integration_branch)
+                head_after_integration = git_head_commit(integration_worktree_path)
+            except (RuntimeError, ValueError) as error:
+                set_runtime_task_status(state, task, TaskStatus.BLOCKED)
+                exit_code = 1
+                print(
+                    f"Integration produced an invalid worktree for task {task_identifier:02d}: {error}",
+                    file=sys.stderr,
+                )
+                break
+            if head_after_integration == head_before_integration:
+                set_runtime_task_status(state, task, TaskStatus.BLOCKED)
+                exit_code = 1
+                print(
+                    f"Integration for task {task_identifier:02d} returned success but did not advance HEAD.",
+                    file=sys.stderr,
+                )
+                break
             set_runtime_task_status(state, task, TaskStatus.MERGED)
             print(f"Integrated task {task_identifier:02d}: {final_message_path}")
         else:
@@ -1306,6 +1577,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--dangerous",
         action="store_true",
         help="Allow integrator to bypass approvals and sandbox.",
+    )
+    integrate_parser.add_argument(
+        "--allow-unreviewed",
+        action="store_true",
+        help="Allow implemented tasks without reviewed status.",
     )
     integrate_parser.set_defaults(handler=command_integrate)
 

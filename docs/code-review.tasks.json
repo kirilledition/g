@@ -1,0 +1,241 @@
+{
+  "defaults": {
+    "base_branch": "main",
+    "integration_branch": "integration/code-review",
+    "integration_worktree": "../g-worktrees/integration-code-review",
+    "integrator_dangerously_bypass_approvals": false,
+    "integrator_model": "gpt-5.5",
+    "integrator_reasoning_effort": "xhigh",
+    "jobs": 5,
+    "reviewer_model": "gpt-5.5",
+    "reviewer_reasoning_effort": "xhigh",
+    "state_directory": ".codex-task-worktrees",
+    "worker_dangerously_bypass_approvals": false,
+    "worker_model": "gpt-5.5",
+    "worker_reasoning_effort": "high",
+    "worktree_root": "../g-worktrees"
+  },
+  "source_path": "docs/code-review.md",
+  "tasks": [
+    {
+      "body_markdown": "## 1. Quantitative-trait SE / CHISQ / LOG10P do not match the REGENIE fixture\n\nThe linear Step 2 kernel appears to produce the right **beta** for the REGENIE v4.1 fixture, but not the right standard error, chi-square, or log10 p-value.\n\nThe current implementation uses a full-model residual variance after fitting the genotype:\n\n* `src/g/compute/regenie2_linear.py:238-259`\n\nThe test reference, however, documents the REGENIE-compatible default QT score-statistic formula using the null residual variance:\n\n* `tests/test_regenie2_linear.py:183-204`\n\nThe current kernel computes degrees of freedom as:\n\n* `src/g/compute/regenie2_linear.py:62`\n\nand then uses the post-genotype residual sum of squares in the association statistic path.\n\nI ran a targeted check against the existing REGENIE v4.1 fixture. Beta matches, but the other fields do not:\n\n```text\nbeta\nobserved: [ 0.05026095  0.29938010 -0.06271657]\nexpected: [ 0.05026090  0.29938000 -0.06271650]\n\nstandard_error\nobserved: [0.45019916 0.41196188 0.48963654]\nexpected: [0.42739200 0.40212500 0.46493300]\n\nchi_squared\nobserved: [0.01246385 0.52811890 0.01640653]\nexpected: [0.01382960 0.55427400 0.01819630]\n\nlog10_p_value\nobserved: [0.04043033 0.33031246 0.04668529]\nexpected: [0.04268720 0.34048600 0.04929640]\n```\n\nThe existing test does not catch this because it only asserts the observed kernel beta:\n\n* `tests/test_regenie2_linear.py:533-599`\n\nSpecifically, the reference calculation checks all fields, but the observed kernel assertion only verifies beta.\n\n### Required fix\n\nDecide explicitly whether the QT kernel is supposed to report REGENIE score-test output or full-model OLS output. For a REGENIE replacement, it should match the REGENIE score-test output.\n\nThe likely formula should be:\n\n```text\nbeta = covariance / genotype_residual_sum_squares\nSE = sqrt(null_mse / genotype_residual_sum_squares)\nCHISQ = beta^2 / SE^2\nnull_mse = adjusted_residual_sum_squares / null_degrees_of_freedom\nnull_degrees_of_freedom = n - covariate_parameter_count\n```\n\nThen update all equivalent paths:\n\n* scalar/sample-major linear path\n* multi linear path\n* variant-major linear path\n\nRelevant implementation areas:\n\n* `src/g/compute/regenie2_linear.py:238-259`\n* `src/g/compute/regenie2_linear.py:274-338`\n* `src/g/compute/regenie2_linear.py:443-467`\n\nAdd tests that assert **beta, SE, CHISQ, and LOG10P** against the REGENIE fixture.",
+      "branch": "codex/review-01-quantitative-trait-se-chisq-log10p-do-not-match-the-regenie-fixture",
+      "category": "Release blockers",
+      "dependencies": [],
+      "enabled": true,
+      "expected_paths": [
+        "src/g/compute/regenie2_linear.py",
+        "tests/test_regenie2_linear.py"
+      ],
+      "guidance_markdown": "",
+      "id": 1,
+      "kind": "implementation",
+      "priority": "Release blockers",
+      "slug": "quantitative-trait-se-chisq-log10p-do-not-match-the-regenie-fixture",
+      "source_end_line": 113,
+      "source_start_line": 40,
+      "status": "ready",
+      "title": "Quantitative-trait SE / CHISQ / LOG10P do not match the REGENIE fixture",
+      "worktree": "../g-worktrees/review-01-quantitative-trait-se-chisq-log10p-do-not-match-the-regenie-fixture"
+    },
+    {
+      "body_markdown": "## 2. Multi-phenotype batching currently changes the analyzed samples\n\nThis is the biggest architectural/statistical problem.\n\nThe current multi-phenotype alignment uses a shared complete-case intersection across all traits. That means:\n\n```bash\ng regenie --phenoColList A,B\n```\n\ndoes **not** necessarily produce the same result for phenotype `A` as:\n\n```bash\ng regenie --phenoCol A\n```\n\nIf phenotype `B` has missing values in samples where `A` is present, the batched run drops those samples from `A`.\n\nThat violates the desired \u201cdecode once, compute many phenotypes\u201d strategy because the optimization changes the estimand.\n\nRelevant code:\n\n* `src/sample.rs:251-294`\n* `src/sample.rs:346-393`\n* `src/g/engine/native_dispatch.py:47-60`\n* `src/g/engine/native_dispatch.py:85-98`\n* `src/g/engine/native_dispatch.py:131-151`\n* `src/g/engine/native_dispatch.py:189-216`\n* `src/g/engine/regenie2_pipeline.py:437-470`\n\nThe existing test confirms this is intentional current behavior:\n\n* `tests/test_tabular.py:93-124`\n\n### Required fix\n\nDo not expose current multi-phenotype batching as equivalent to separate REGENIE runs.\n\nThe cleaner architecture is:\n\n```text\ndecode genotype chunk once\ntransfer genotype chunk once\nfor each phenotype or phenotype-group:\n    apply its own valid-sample mask/gather\n    compute association\n```\n\nYou can still batch phenotypes efficiently by grouping them into sample-alignment equivalence classes:\n\n```text\ngroup 1: phenotypes with same valid sample mask, covariates, LOCO predictions\ngroup 2: another mask\n...\n```\n\nFor now, either:\n\n1. implement per-trait masks/gathers, or\n2. make complete-case batching an explicit non-default mode, for example:\n\n```bash\n--g-multi-phenotype-sample-mode complete-case\n```\n\nand document that it is **not** equivalent to separate REGENIE single-phenotype runs.",
+      "branch": "codex/review-02-multi-phenotype-batching-currently-changes-the-analyzed-samples",
+      "category": "Release blockers",
+      "dependencies": [],
+      "enabled": true,
+      "expected_paths": [
+        "src/g/engine/native_dispatch.py",
+        "src/g/engine/regenie2_pipeline.py",
+        "src/sample.rs",
+        "tests/test_tabular.py"
+      ],
+      "guidance_markdown": "",
+      "id": 2,
+      "kind": "implementation",
+      "priority": "Release blockers",
+      "slug": "multi-phenotype-batching-currently-changes-the-analyzed-samples",
+      "source_end_line": 182,
+      "source_start_line": 114,
+      "status": "ready",
+      "title": "Multi-phenotype batching currently changes the analyzed samples",
+      "worktree": "../g-worktrees/review-02-multi-phenotype-batching-currently-changes-the-analyzed-samples"
+    },
+    {
+      "body_markdown": "## 3. Multi-binary ignores user-specified binary kernel config\n\nSingle-phenotype binary runs pass the binary kernel config through the pipeline:\n\n* `src/g/runner.py:236-241`\n* `src/g/engine/regenie2_pipeline.py:162-169`\n* `src/g/engine/callbacks.py:941-970`\n* `src/g/engine/callbacks.py:1025-1037`\n* `src/g/engine/callbacks.py:1061-1080`\n\nBut the multi-binary path drops it.\n\nProblem locations:\n\n* `src/g/runner.py:268-272`\n* `src/g/engine/regenie2_pipeline.py:341-366`\n* `src/g/engine/regenie2_pipeline.py:396-422`\n* `src/g/engine/regenie2_pipeline.py:518-527`\n* `src/g/engine/callbacks.py:1148-1157`\n* `src/g/engine/callbacks.py:1298-1302`\n\nThe compute functions then fall back to `DEFAULT_BINARY_KERNEL_CONFIG`:\n\n* `src/g/compute/regenie2_binary.py:450-456`\n* `src/g/compute/regenie2_binary.py:569-576`\n* `src/g/compute/regenie2_binary.py:593-600`\n\nThis affects reproducibility and correctness whenever users set options such as:\n\n```text\n--g-binary-null-maximum-iterations\n--g-binary-null-tolerance\n--g-firth-maximum-iterations\n--g-firth-tolerance\n--g-firth-maximum-step-size\n--g-use-block-firth-math\n--g-firth-batch-size\n```\n\n### Required fix\n\nThread `kernel_config` through the full multi-binary stack:\n\n```text\nrunner\n\u2192 run_regenie2_multi_phenotype_binary_bgen_pipeline\n\u2192 run_regenie2_multi_phenotype_bgen_pipeline\n\u2192 dispatch_multi_phenotype_engine_pipeline\n\u2192 MultiBinaryRegenie2PipelineCallback\n\u2192 prepare_regenie2_multi_binary_chromosome_state\n\u2192 compute_regenie2_multi_binary_chunk\n\u2192 compute_regenie2_binary_variant_major_chunk\n```\n\nThen add a test where multi-binary with non-default kernel settings equals stacking the corresponding single-binary runs.",
+      "branch": "codex/review-03-multi-binary-ignores-user-specified-binary-kernel-config",
+      "category": "Release blockers",
+      "dependencies": [],
+      "enabled": true,
+      "expected_paths": [
+        "src/g/compute/regenie2_binary.py",
+        "src/g/engine/callbacks.py",
+        "src/g/engine/regenie2_pipeline.py",
+        "src/g/runner.py"
+      ],
+      "guidance_markdown": "",
+      "id": 3,
+      "kind": "implementation",
+      "priority": "Release blockers",
+      "slug": "multi-binary-ignores-user-specified-binary-kernel-config",
+      "source_end_line": 240,
+      "source_start_line": 183,
+      "status": "ready",
+      "title": "Multi-binary ignores user-specified binary kernel config",
+      "worktree": "../g-worktrees/review-03-multi-binary-ignores-user-specified-binary-kernel-config"
+    },
+    {
+      "body_markdown": "## 4. Phenotype names are unsafe path components\n\nPhenotype names are currently used directly as output subdirectories:\n\n* `src/g/execution_plan.py:180-187`\n* `src/g/execution_plan.py:265-275`\n\nValidation resolves phenotype names but does not reject duplicates or path-unsafe values:\n\n* `src/g/interface/config.py:530-545`\n* `src/g/interface/config.py:548-619`\n\nThis creates two problems.\n\nFirst, duplicate phenotype names can produce multiple run plans writing to the same output directory.\n\nSecond, a phenotype name containing path separators or traversal can escape the intended output root:\n\n```text\n../bad\na/b\n/tmp/outside\n```\n\nThis is a safe automation issue, not just polish.\n\n### Required fix\n\nReject duplicate phenotype names.\n\nAlso either reject unsafe names outright or map each phenotype to a safe deterministic directory name, for example:\n\n```text\ntrait_0001_height\ntrait_0002_bmi\ntrait_0003_<hash>\n```\n\nThe original phenotype name should remain in the manifest and output metadata, but it should not be trusted as a filesystem path component.",
+      "branch": "codex/review-04-phenotype-names-are-unsafe-path-components",
+      "category": "Release blockers",
+      "dependencies": [],
+      "enabled": true,
+      "expected_paths": [
+        "src/g/execution_plan.py",
+        "src/g/interface/config.py"
+      ],
+      "guidance_markdown": "",
+      "id": 4,
+      "kind": "implementation",
+      "priority": "Release blockers",
+      "slug": "phenotype-names-are-unsafe-path-components",
+      "source_end_line": 282,
+      "source_start_line": 241,
+      "status": "ready",
+      "title": "Phenotype names are unsafe path components",
+      "worktree": "../g-worktrees/review-04-phenotype-names-are-unsafe-path-components"
+    },
+    {
+      "body_markdown": "## 5. QT silently accepts binary-only flags\n\nFor quantitative traits, options such as these should not silently succeed:\n\n```bash\n--qt --firth --approx --pThresh 0.01\n```\n\nCurrently they are parsed into `BinaryConfig`:\n\n* `src/g/interface/config.py:238-244`\n\nbut ignored when the execution plan is quantitative:\n\n* `src/g/execution_plan.py:199-203`\n\nValidation rejects some invalid binary combinations, but it does not reject binary-only options under QT:\n\n* `src/g/interface/config.py:548-619`\n\nI confirmed this behavior with a direct config construction: a QT config with `firth=True`, `approx=True`, and `pThresh=0.01` succeeds.\n\n### Required fix\n\nFail loudly when binary-only options are explicitly supplied for QT.\n\nAt minimum reject these under `--qt`:\n\n```text\n--firth\n--approx\n--firth-se\n--spa\n```\n\nFor `--pThresh`, because it has a default, you need to distinguish \u201cdefaulted\u201d from \u201cexplicitly supplied.\u201d The clean fix is to preserve option provenance through normalization, for example an `explicit_options` set or source map.",
+      "branch": "codex/review-05-qt-silently-accepts-binary-only-flags",
+      "category": "Release blockers",
+      "dependencies": [],
+      "enabled": true,
+      "expected_paths": [
+        "src/g/execution_plan.py",
+        "src/g/interface/config.py"
+      ],
+      "guidance_markdown": "",
+      "id": 5,
+      "kind": "implementation",
+      "priority": "Release blockers",
+      "slug": "qt-silently-accepts-binary-only-flags",
+      "source_end_line": 321,
+      "source_start_line": 283,
+      "status": "ready",
+      "title": "QT silently accepts binary-only flags",
+      "worktree": "../g-worktrees/review-05-qt-silently-accepts-binary-only-flags"
+    },
+    {
+      "body_markdown": "## 6. The Rust tabular reader is not yet the desired streaming parser architecture\n\nThe runtime is no longer using Polars, which is good. Phenotype and covariate readers are selected-column and buffered:\n\n* `src/sample.rs:577-600`\n* `src/sample.rs:684-729`\n* `src/sample.rs:732-785`\n* `src/sample.rs:818-877`\n\nHowever, sample-file loading still reads the whole sample file into memory:\n\n* `src/sample.rs:495-505`\n\nAlso, the parser is currently simple tab-splitting:\n\n* `src/sample.rs:598-600`\n* `src/sample.rs:646-668`\n\nThat may be acceptable for strict TSV-only input, but it is not yet the cleaner \u201cRust csv crate streaming TSV/CSV parser\u201d direction you described.\n\n### Recommendation\n\nUse a single streaming tabular parser abstraction for sample, phenotype, and covariate files. The Rust `csv` crate is the right default choice.\n\nThis parser should:\n\n```text\n- stream rows\n- select only required columns\n- validate duplicate IDs\n- validate required columns\n- preserve deterministic row order\n- handle CRLF\n- clearly define missing-value tokens\n- either support quoted CSV correctly or reject CSV mode explicitly\n```\n\nThis is not as urgent as the statistical blockers, but it should be fixed before scaling this to large UKB-style files.",
+      "branch": "codex/review-06-the-rust-tabular-reader-is-not-yet-the-desired-streaming-parser-architecture",
+      "category": "High-priority issues",
+      "dependencies": [],
+      "enabled": true,
+      "expected_paths": [
+        "src/sample.rs"
+      ],
+      "guidance_markdown": "",
+      "id": 6,
+      "kind": "implementation",
+      "priority": "High-priority issues",
+      "slug": "the-rust-tabular-reader-is-not-yet-the-desired-streaming-parser-architecture",
+      "source_end_line": 364,
+      "source_start_line": 324,
+      "status": "ready",
+      "title": "The Rust tabular reader is not yet the desired streaming parser architecture",
+      "worktree": "../g-worktrees/review-06-the-rust-tabular-reader-is-not-yet-the-desired-streaming-parser-architecture"
+    },
+    {
+      "body_markdown": "## 7. Output writing may become a performance bottleneck\n\nThe output path currently performs several materializations/copies.\n\nPython callback materializes device arrays to host:\n\n* `src/g/engine/callbacks.py:180-215`\n* `src/g/engine/callbacks.py:218-261`\n\nRust then clones/copies chunk data:\n\n* `src/output/session.rs:204-211`\n* `src/output/session.rs:247-254`\n* `src/output/writer.rs:83-148`\n\nFinalization reads Arrow chunk files and writes final Parquet:\n\n* `src/output/finalization.rs:42-62`\n\nThis is not necessarily wrong, but it needs measurement. For fast GPU kernels, output finalization and Python-side per-phenotype loops can dominate.\n\n### Recommendation\n\nAdd stage timing benchmarks with:\n\n```text\nfinalization on/off\nArrow chunk output only\nParquet final output\nsingle phenotype\nmany phenotypes\nlarge bsize\nsmall bsize\n```\n\nLonger term, consider:\n\n```text\n- direct Parquet row-group writing\n- fewer Python \u2192 Rust per-trait calls in multi-phenotype mode\n- batched multi-trait writer API\n- ownership transfer / zero-copy host buffers where safe\n```\n\nDo not optimize this blindly, but do benchmark it now.",
+      "branch": "codex/review-07-output-writing-may-become-a-performance-bottleneck",
+      "category": "High-priority issues",
+      "dependencies": [],
+      "enabled": true,
+      "expected_paths": [
+        "src/g/engine/callbacks.py",
+        "src/output/finalization.rs",
+        "src/output/session.rs",
+        "src/output/writer.rs"
+      ],
+      "guidance_markdown": "",
+      "id": 7,
+      "kind": "implementation",
+      "priority": "High-priority issues",
+      "slug": "output-writing-may-become-a-performance-bottleneck",
+      "source_end_line": 412,
+      "source_start_line": 365,
+      "status": "ready",
+      "title": "Output writing may become a performance bottleneck",
+      "worktree": "../g-worktrees/review-07-output-writing-may-become-a-performance-bottleneck"
+    },
+    {
+      "body_markdown": "## 8. JAX runtime bootstrapping remains fragile\n\nThe runner tries to configure JAX before importing the heavy pipeline:\n\n* `src/g/runner.py:52-57`\n* `src/g/runner.py:141-148`\n\nThat is good, but JAX-heavy modules still import JAX at module import time:\n\n* `src/g/engine/native_dispatch.py:10-11`\n* `src/g/engine/callbacks.py:12-24`\n* `src/g/compute/*`\n\nThe risk is repeated Python use with different configs or early imports before `runner` configures the runtime. JAX backend/platform/cache settings are often process-global or sticky after initialization.\n\n### Recommendation\n\nMake JAX initialization policy explicit:\n\n```text\n- importing g.api should not initialize JAX\n- first run configures JAX\n- later incompatible runtime configs fail loudly\n- compatible repeated runs are allowed\n```\n\nAdd tests for:\n\n```text\nimport g.api without importing JAX-heavy modules\nrun once with one device/cache config\nrun again with same config\nrun again with incompatible config and expect clear failure\n```\n\nThis matters for reproducibility and safe automation.",
+      "branch": "codex/review-08-jax-runtime-bootstrapping-remains-fragile",
+      "category": "High-priority issues",
+      "dependencies": [],
+      "enabled": true,
+      "expected_paths": [
+        "src/g/engine/callbacks.py",
+        "src/g/engine/native_dispatch.py",
+        "src/g/runner.py"
+      ],
+      "guidance_markdown": "",
+      "id": 8,
+      "kind": "implementation",
+      "priority": "High-priority issues",
+      "slug": "jax-runtime-bootstrapping-remains-fragile",
+      "source_end_line": 451,
+      "source_start_line": 413,
+      "status": "ready",
+      "title": "JAX runtime bootstrapping remains fragile",
+      "worktree": "../g-worktrees/review-08-jax-runtime-bootstrapping-remains-fragile"
+    },
+    {
+      "body_markdown": "## 9. Production binary variant-major path uses a module labeled experimental\n\nThe module is explicitly named and documented as experimental:\n\n* `src/g/compute/regenie2_binary_variant_major_experimental.py:1`\n* `src/g/compute/regenie2_binary_variant_major_experimental.py:21-25`\n* `src/g/compute/regenie2_binary_variant_major_experimental.py:305-309`\n\nBut production callback code routes binary variant-major score-only computation through it:\n\n* `src/g/engine/callbacks.py:1108-1116`\n\nThe multi-binary path also reaches variant-major computation through:\n\n* `src/g/compute/regenie2_binary.py:603-614`\n* `src/g/engine/callbacks.py:1259-1265`\n\n### Recommendation\n\nEither promote this to a production module and rename it, or stop using it in production.\n\nBefore promotion, add parity tests between sample-major and variant-major binary paths for:\n\n```text\n- score-only BT\n- approximate Firth candidate selection\n- covariates\n- LOCO offsets\n- missing/imputed genotypes\n- monomorphic variants\n- rare variants\n- trusted and non-trusted BGEN paths\n```",
+      "branch": "codex/review-09-production-binary-variant-major-path-uses-a-module-labeled-experimental",
+      "category": "High-priority issues",
+      "dependencies": [],
+      "enabled": true,
+      "expected_paths": [
+        "src/g/compute/regenie2_binary.py",
+        "src/g/compute/regenie2_binary_variant_major_experimental.py",
+        "src/g/engine/callbacks.py"
+      ],
+      "guidance_markdown": "",
+      "id": 9,
+      "kind": "implementation",
+      "priority": "High-priority issues",
+      "slug": "production-binary-variant-major-path-uses-a-module-labeled-experimental",
+      "source_end_line": 487,
+      "source_start_line": 452,
+      "status": "ready",
+      "title": "Production binary variant-major path uses a module labeled experimental",
+      "worktree": "../g-worktrees/review-09-production-binary-variant-major-path-uses-a-module-labeled-experimental"
+    },
+    {
+      "body_markdown": "## 10. Manifest/resume does not yet cover enough compute-affecting state\n\nThe current manifest header includes useful fields such as input fingerprints, phenotype/covariate/pred info, sample count, variant count, chunk size, correction plan, trusted flag, and sample-key mode:\n\n* `src/g/io/output.py:115-151`\n\nBut it does not appear to include all settings that can change output, including:\n\n```text\nbinary kernel config / tolerances\nFirth iteration and step-size knobs\nJAX precision/backend policy\noutput schema version beyond manifest schema\ndecode tile size\nmulti-phenotype sample mode\noutput writer/finalization settings\n```\n\nResume behavior also deserves sharper semantics. Commits are recorded on finish:\n\n* `src/output/session.rs:142-159`\n* `src/output/manifest.rs:19-55`\n\nThe Python fast resume path relies on manifest-committed chunks:\n\n* `src/g/io/output.py:195-229`\n\nStrict mode validates files, but the fast path does not appear to use the Rust chunk scanner in:\n\n* `src/output/resume.rs:15-51`\n\n### Recommendation\n\nAdd an execution-plan hash to the manifest covering all compute/output-affecting fields.\n\nThen add resume-incompatibility tests for changes to:\n\n```text\nbsize\ntrait type\nphenotype\ncovariates\npredictions\nbinary correction plan\nbinary kernel config\nsample-key mode\noutput schema\ntrusted BGEN mode\ndecode tile size\n```\n\nAlso decide crash semantics explicitly:\n\n```text\nOption A: commit chunks as soon as they are durably written\nOption B: only trust completed manifests and safely overwrite staged chunks\n```\n\nEither is acceptable, but it must be deterministic and tested.",
+      "branch": "codex/review-10-manifest-resume-does-not-yet-cover-enough-compute-affecting-state",
+      "category": "High-priority issues",
+      "dependencies": [],
+      "enabled": true,
+      "expected_paths": [
+        "src/g/io/output.py",
+        "src/output/manifest.rs",
+        "src/output/resume.rs",
+        "src/output/session.rs"
+      ],
+      "guidance_markdown": "",
+      "id": 10,
+      "kind": "implementation",
+      "priority": "High-priority issues",
+      "slug": "manifest-resume-does-not-yet-cover-enough-compute-affecting-state",
+      "source_end_line": 549,
+      "source_start_line": 488,
+      "status": "ready",
+      "title": "Manifest/resume does not yet cover enough compute-affecting state",
+      "worktree": "../g-worktrees/review-10-manifest-resume-does-not-yet-cover-enough-compute-affecting-state"
+    }
+  ],
+  "version": 1
+}

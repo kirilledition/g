@@ -56,6 +56,19 @@ No guidance.
     assert tasks[1].guidance_markdown == ""
 
 
+def test_expected_paths_strip_line_suffixes_and_skip_globs() -> None:
+    markdown = """# Category
+
+## 1. Paths
+
+Use `src/g/current.py:12-20`, `tests/test_current.py:7`, `src/g/compute/*`, and `/tmp/outside`.
+"""
+
+    tasks = codex_task_farm.parse_review_tasks(markdown)
+
+    assert tasks[0].expected_paths == ["src/g/current.py", "tests/test_current.py"]
+
+
 def test_sync_manifest_preserves_only_manual_metadata(tmp_path: Path) -> None:
     docs_directory = tmp_path / "docs"
     docs_directory.mkdir()
@@ -108,6 +121,14 @@ Body with `src/g/current.py`.
     assert "unexpected" not in task
     assert task["branch"] == "codex/review-07-first-task"
     assert task["worktree"] == "../custom-worktrees/review-07-first-task"
+
+
+def test_load_manifest_requires_explicit_sync(tmp_path: Path) -> None:
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "code-review.md").write_text("")
+
+    with pytest.raises(ValueError, match="sync-manifest"):
+        codex_task_farm.load_manifest(tmp_path)
 
 
 def test_codex_command_builders_default_to_safe_execution() -> None:
@@ -240,6 +261,66 @@ def test_review_clears_stale_outputs_before_running(tmp_path: Path, monkeypatch:
     assert not stderr_log_path.exists()
 
 
+def test_worker_launch_clears_stale_outputs_before_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = codex_task_farm.default_manifest()
+    manifest["defaults"]["state_directory"] = ".state"
+    task = {
+        "id": 1,
+        "status": "ready",
+        "branch": "codex/one",
+        "worktree": "worktree",
+        "title": "Run task",
+        "category": "Category",
+        "body_markdown": "Body",
+        "guidance_markdown": "Guidance",
+        "dependencies": [],
+    }
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    run_directory = tmp_path / ".state" / "runs" / "01"
+    run_directory.mkdir(parents=True)
+    stale_paths = [
+        run_directory / "worker-final.md",
+        run_directory / "worker.jsonl",
+        run_directory / "worker.stderr.log",
+        run_directory / "worker-prompt.md",
+        run_directory / "worker-wrapper.sh",
+        run_directory / "exit-code.txt",
+    ]
+    for stale_path in stale_paths:
+        stale_path.write_text("stale")
+
+    class FakePopen:
+        pid = 123
+
+    def fake_popen(*args: object, **kwargs: object) -> FakePopen:
+        del args, kwargs
+        return FakePopen()
+
+    monkeypatch.setattr(
+        codex_task_farm,
+        "ensure_task_worktree",
+        lambda repository_directory, task, base_branch: worktree_path,
+    )
+    monkeypatch.setattr(codex_task_farm.subprocess, "Popen", fake_popen)
+
+    launched_worker = codex_task_farm.launch_worker(
+        repository_directory=tmp_path,
+        manifest=manifest,
+        task=task,
+        dangerously_bypass_approvals=False,
+    )
+
+    assert launched_worker.process_identifier == 123
+    assert not (run_directory / "worker-final.md").exists()
+    assert (run_directory / "worker-prompt.md").read_text() != "stale"
+    assert (run_directory / "worker-wrapper.sh").read_text() != "stale"
+    assert not (run_directory / "exit-code.txt").exists()
+
+
 def test_wrapper_exit_code_classification_accepts_verified_and_legacy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -290,6 +371,41 @@ def test_worker_classification_blocks_incomplete_states(tmp_path: Path, monkeypa
     assert no_commit.verification == "no-task-commit"
 
 
+def test_prune_stale_runtime_state_archives_mismatched_task_identity() -> None:
+    manifest = codex_task_farm.default_manifest()
+    manifest["tasks"] = [
+        {
+            "id": 7,
+            "slug": "new-task",
+            "branch": "codex/review-07-new-task",
+            "worktree": "../g-worktrees/review-07-new-task",
+            "source_start_line": 10,
+            "source_end_line": 20,
+        }
+    ]
+    state: codex_task_farm.JsonObject = {
+        "runs": {
+            "7": {
+                "branch": "codex/review-07-old-task",
+                "worktree": "../g-worktrees/review-07-old-task",
+            },
+            "11": {
+                "branch": "codex/review-11-old-task",
+                "worktree": "../g-worktrees/review-11-old-task",
+            },
+        },
+        "statuses": {"7": "merged", "11": "merged"},
+        "worker_results": {"7": {"verification": "legacy"}, "11": {"verification": "legacy"}},
+    }
+
+    changed = codex_task_farm.prune_stale_runtime_state(state, manifest)
+
+    assert changed is True
+    assert state["runs"] == {}
+    assert state["statuses"] == {}
+    assert len(state["archived_stale_entries"]) == 2
+
+
 def test_run_wait_launches_all_workers_before_waiting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest = codex_task_farm.default_manifest()
     manifest["defaults"]["state_directory"] = ".state"
@@ -338,6 +454,42 @@ def test_run_wait_launches_all_workers_before_waiting(tmp_path: Path, monkeypatc
 
     assert exit_code == 0
     assert launch_log == [1, 2]
+
+
+def test_review_rejects_tasks_that_are_not_implemented(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = codex_task_farm.default_manifest()
+    manifest["defaults"]["state_directory"] = ".state"
+    manifest["tasks"] = [
+        {"id": 1, "status": "ready", "branch": "codex/one", "worktree": "worktree", "dependencies": []}
+    ]
+
+    monkeypatch.setattr(codex_task_farm, "repository_root", lambda: tmp_path)
+    monkeypatch.setattr(codex_task_farm, "load_manifest", lambda repository_directory: manifest)
+    monkeypatch.setattr(codex_task_farm, "refresh_runtime_statuses", lambda repository_directory, manifest: None)
+
+    with pytest.raises(ValueError, match="cannot review"):
+        codex_task_farm.command_review(argparse.Namespace(task=[1]))
+
+
+def test_integrate_rejects_unreviewed_tasks_without_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = codex_task_farm.default_manifest()
+    manifest["defaults"]["state_directory"] = ".state"
+    manifest["tasks"] = [
+        {"id": 1, "status": "implemented", "branch": "codex/one", "worktree": "worktree", "dependencies": []}
+    ]
+
+    monkeypatch.setattr(codex_task_farm, "repository_root", lambda: tmp_path)
+    monkeypatch.setattr(codex_task_farm, "load_manifest", lambda repository_directory: manifest)
+    monkeypatch.setattr(codex_task_farm, "refresh_runtime_statuses", lambda repository_directory, manifest: None)
+
+    with pytest.raises(ValueError, match="cannot integrate"):
+        codex_task_farm.command_integrate(argparse.Namespace(task=[1], dangerous=False, allow_unreviewed=False))
 
 
 def test_dependency_gating_blocks_missing_or_unready_dependencies() -> None:
