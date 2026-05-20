@@ -42,19 +42,17 @@ pub(crate) struct RegenieStep2ChunkWriteBatch {
 }
 
 pub(crate) fn write_regenie_step2_chunk_job(
-    run_directory: &Path,
     chunks_directory: &Path,
     job: RegenieStep2ChunkWriteBatch,
     arrow_compression: &str,
-) -> Result<(), String> {
+) -> Result<Vec<manifest::RunManifestChunkCommit>, String> {
     let chunk_file_path = chunks_directory.join(&job.chunk_file_name);
     let temporary_chunk_file_path = chunk_file_path.with_extension("arrow.tmp");
     let chunk_commits = build_run_manifest_chunk_commits(&job)?;
     let record_batch = build_regenie_step2_record_batch(job)?;
     write_record_batch_to_arrow_file(&record_batch, &temporary_chunk_file_path, arrow_compression)?;
     std::fs::rename(&temporary_chunk_file_path, &chunk_file_path).map_err(|error| error.to_string())?;
-    manifest::record_run_manifest_chunk_commits(run_directory, chunk_commits)?;
-    Ok(())
+    Ok(chunk_commits)
 }
 
 fn build_run_manifest_chunk_commits(
@@ -296,7 +294,6 @@ mod tests {
         let chunks_directory = run_directory.join("chunks");
         std::fs::create_dir_all(&chunks_directory).expect("chunk directory should be created");
         write_regenie_step2_chunk_job(
-            &run_directory,
             &chunks_directory,
             build_test_batch(vec![build_test_chunk(0, Some(vec![1])), build_test_chunk(1, Some(vec![0]))]),
             "zstd",

@@ -6,6 +6,7 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
 use crate::output::finalization;
+use crate::output::manifest;
 use crate::output::writer::{
     OutputWriterError, RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, build_chunk_file_name,
     write_regenie_step2_chunk_job,
@@ -73,6 +74,7 @@ pub struct OutputWriterSession {
     coordinator_handle: Mutex<Option<JoinHandle<()>>>,
     worker_handles: Mutex<Vec<JoinHandle<()>>>,
     worker_errors: Arc<Mutex<Vec<String>>>,
+    worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
     config: OutputWriterConfig,
 }
 
@@ -105,13 +107,15 @@ impl OutputWriterSession {
         let (sender, receiver) = bounded(writer_queue_depth.max(1));
         let (writer_sender, writer_receiver) = bounded(writer_queue_depth.max(1));
         let worker_errors = Arc::new(Mutex::new(Vec::new()));
+        let worker_commits = Arc::new(Mutex::new(Vec::new()));
         let mut worker_handles = Vec::with_capacity(writer_thread_count);
         for _ in 0..writer_thread_count {
             let receiver_clone = writer_receiver.clone();
             let config_clone = config.clone();
             let worker_errors_clone = Arc::clone(&worker_errors);
+            let worker_commits_clone = Arc::clone(&worker_commits);
             worker_handles.push(std::thread::spawn(move || {
-                run_output_writer_worker(receiver_clone, config_clone, worker_errors_clone);
+                run_output_writer_worker(receiver_clone, config_clone, worker_errors_clone, worker_commits_clone);
             }));
         }
         let coordinator_worker_errors = Arc::clone(&worker_errors);
@@ -130,6 +134,7 @@ impl OutputWriterSession {
             coordinator_handle: Mutex::new(Some(coordinator_handle)),
             worker_handles: Mutex::new(worker_handles),
             worker_errors,
+            worker_commits,
             config,
         })
     }
@@ -139,6 +144,9 @@ impl OutputWriterSession {
         self.join_coordinator_thread()?;
         self.join_writer_threads()?;
         self.raise_if_worker_failed()?;
+        let chunk_commits = self.take_worker_commits()?;
+        manifest::record_run_manifest_chunk_commits(&self.config.run_directory, chunk_commits)
+            .map_err(OutputWriterError::runtime)?;
         if !self.config.finalize_parquet {
             return Ok(None);
         }
@@ -156,6 +164,14 @@ impl OutputWriterSession {
         self.join_coordinator_thread()?;
         self.join_writer_threads()?;
         Ok(())
+    }
+
+    fn take_worker_commits(&self) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
+        let mut worker_commits = self
+            .worker_commits
+            .lock()
+            .map_err(|_| OutputWriterError::Runtime("Rust output writer commit lock was poisoned.".to_string()))?;
+        Ok(std::mem::take(&mut *worker_commits))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -368,20 +384,27 @@ fn run_output_writer_worker(
     receiver: Receiver<OutputWriteJob>,
     config: OutputWriterConfig,
     worker_errors: Arc<Mutex<Vec<String>>>,
+    worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
 ) {
     while let Ok(job) = receiver.recv() {
         let write_result = match job {
-            OutputWriteJob::RegenieStep2(regenie_step2_job) => write_regenie_step2_chunk_job(
-                &config.run_directory,
-                &config.chunks_directory,
-                *regenie_step2_job,
-                &config.arrow_compression,
-            ),
+            OutputWriteJob::RegenieStep2(regenie_step2_job) => {
+                write_regenie_step2_chunk_job(&config.chunks_directory, *regenie_step2_job, &config.arrow_compression)
+            }
             OutputWriteJob::Shutdown => return,
         };
-        if let Err(error) = write_result {
-            push_worker_error(&worker_errors, error);
-            return;
+        match write_result {
+            Ok(chunk_commits) => {
+                let Ok(mut worker_commits_guard) = worker_commits.lock() else {
+                    push_worker_error(&worker_errors, "Rust output writer commit lock was poisoned.".to_string());
+                    return;
+                };
+                worker_commits_guard.extend(chunk_commits);
+            }
+            Err(error) => {
+                push_worker_error(&worker_errors, error);
+                return;
+            }
         }
     }
 }
