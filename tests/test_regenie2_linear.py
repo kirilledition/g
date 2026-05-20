@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.testing
+import numpy.typing as npt
 
 from g.compute import regenie2_linear
 
@@ -27,6 +28,30 @@ class ReferenceRegenie2LinearChunkResult:
     valid_mask: jax.Array
 
 
+@dataclass(frozen=True)
+class LinearLocoCovariateFixture:
+    """Tiny REGENIE parity fixture with covariate-correlated LOCO predictions."""
+
+    covariate_matrix: npt.NDArray[np.float64]
+    phenotype_vector: npt.NDArray[np.float64]
+    genotype_matrix: npt.NDArray[np.float64]
+    loco_predictions: npt.NDArray[np.float64]
+    expected_beta: npt.NDArray[np.float64]
+    expected_standard_error: npt.NDArray[np.float64]
+    expected_chi_squared: npt.NDArray[np.float64]
+    expected_log10_p_value: npt.NDArray[np.float64]
+
+
+@dataclass(frozen=True)
+class LinearFormulaResult:
+    """Linear association statistics for one candidate LOCO residualization formula."""
+
+    beta: npt.NDArray[np.float64]
+    standard_error: npt.NDArray[np.float64]
+    chi_squared: npt.NDArray[np.float64]
+    log10_p_value: npt.NDArray[np.float64]
+
+
 def compute_legacy_reference_chunk(
     state: regenie2_linear_types.Regenie2LinearState,
     genotype_matrix: jax.Array,
@@ -36,14 +61,21 @@ def compute_legacy_reference_chunk(
     adjusted_residual = state.phenotype_residual - loco_predictions
     adjusted_residual_sum_squares = jnp.dot(adjusted_residual, adjusted_residual)
     covariate_genotype_crossproduct = state.covariate_matrix_transpose @ genotype_matrix
+    covariate_adjusted_residual_crossproduct = state.covariate_matrix_transpose @ adjusted_residual
     genotype_projection = regenie2_linear.solve_positive_definite_system(
         state.covariate_crossproduct_cholesky_factor,
         covariate_genotype_crossproduct,
     )
+    adjusted_residual_projection = regenie2_linear.solve_positive_definite_system(
+        state.covariate_crossproduct_cholesky_factor,
+        covariate_adjusted_residual_crossproduct,
+    )
     genotype_sum_squares = jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix)
     projection_sum_squares = jnp.einsum("ij,ij->j", covariate_genotype_crossproduct, genotype_projection)
     genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares - projection_sum_squares, 0.0)
-    covariance_with_phenotype = genotype_matrix.T @ adjusted_residual
+    raw_covariance_with_phenotype = genotype_matrix.T @ adjusted_residual
+    covariance_projection = covariate_genotype_crossproduct.T @ adjusted_residual_projection
+    covariance_with_phenotype = raw_covariance_with_phenotype - covariance_projection
     covariance_squared = covariance_with_phenotype * covariance_with_phenotype
     positive_genotype_residual_mask = genotype_residual_sum_squares > 0.0
     genotype_residual_sum_squares_inverse = jnp.where(
@@ -84,6 +116,95 @@ def compute_legacy_reference_chunk(
         chi_squared=chi_squared,
         log10_p_value=log10_p_value,
         valid_mask=valid_mask,
+    )
+
+
+def build_loco_covariate_fixture() -> LinearLocoCovariateFixture:
+    """Build a tiny fixture generated against REGENIE v4.1 step 2 output."""
+    sample_count = 12
+    correlated_covariate = np.asarray(
+        [-1.6, -1.3, -0.9, -0.5, -0.2, 0.0, 0.3, 0.5, 0.8, 1.1, 1.4, 1.7],
+        dtype=np.float64,
+    )
+    covariate_matrix = np.column_stack([np.ones(sample_count, dtype=np.float64), correlated_covariate])
+
+    base_residual = np.asarray(
+        [1.2, -0.7, 0.4, -1.1, 0.9, -0.2, 1.5, -1.4, 0.6, -0.8, 1.0, -1.3],
+        dtype=np.float64,
+    )
+    residual_projection = covariate_matrix @ np.linalg.solve(
+        covariate_matrix.T @ covariate_matrix,
+        covariate_matrix.T @ base_residual,
+    )
+    phenotype_residual = base_residual - residual_projection
+    phenotype_residual *= np.sqrt(sample_count - covariate_matrix.shape[1]) / np.linalg.norm(phenotype_residual)
+    phenotype_vector = 1.25 + 0.4 * correlated_covariate + phenotype_residual
+
+    loco_predictions = 0.65 * correlated_covariate + 0.15 * phenotype_residual
+    genotype_matrix = 2.0 - np.asarray(
+        [
+            [0.0, 0.0, 2.0],
+            [0.0, 1.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 2.0, 2.0],
+            [2.0, 1.0, 1.0],
+            [2.0, 2.0, 0.0],
+            [0.0, 0.0, 2.0],
+            [1.0, 1.0, 1.0],
+            [2.0, 2.0, 0.0],
+            [0.0, 2.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [2.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+
+    return LinearLocoCovariateFixture(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        genotype_matrix=genotype_matrix,
+        loco_predictions=loco_predictions,
+        expected_beta=np.asarray([0.0502609, 0.29938, -0.0627165], dtype=np.float64),
+        expected_standard_error=np.asarray([0.427392, 0.402125, 0.464933], dtype=np.float64),
+        expected_chi_squared=np.asarray([0.0138296, 0.554274, 0.0181963], dtype=np.float64),
+        expected_log10_p_value=np.asarray([0.0426872, 0.340486, 0.0492964], dtype=np.float64),
+    )
+
+
+def residualize_against_covariates(
+    covariate_matrix: npt.NDArray[np.float64],
+    value_array: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64]:
+    """Residualize one vector or matrix against the covariate matrix."""
+    covariate_coefficients = np.linalg.solve(covariate_matrix.T @ covariate_matrix, covariate_matrix.T @ value_array)
+    return value_array - covariate_matrix @ covariate_coefficients
+
+
+def compute_regenie_null_mse_formula(
+    *,
+    covariate_matrix: npt.NDArray[np.float64],
+    adjusted_residual: npt.NDArray[np.float64],
+    genotype_matrix: npt.NDArray[np.float64],
+) -> LinearFormulaResult:
+    """Compute REGENIE default QT score statistics for a chosen adjusted residual."""
+    genotype_residual_matrix = residualize_against_covariates(covariate_matrix, genotype_matrix)
+    genotype_residual_sum_squares = np.einsum("ij,ij->j", genotype_residual_matrix, genotype_residual_matrix)
+    covariance_with_phenotype = genotype_residual_matrix.T @ adjusted_residual
+    adjusted_residual_sum_squares = float(adjusted_residual @ adjusted_residual)
+    null_degrees_of_freedom = covariate_matrix.shape[0] - covariate_matrix.shape[1]
+
+    beta = covariance_with_phenotype / genotype_residual_sum_squares
+    standard_error = np.sqrt(adjusted_residual_sum_squares / null_degrees_of_freedom / genotype_residual_sum_squares)
+    chi_squared = np.square(beta / standard_error)
+    log10_p_value = np.asarray(
+        regenie2_linear.chi_squared_to_log10_p_value(jnp.asarray(chi_squared, dtype=jnp.float32)),
+        dtype=np.float64,
+    )
+    return LinearFormulaResult(
+        beta=beta,
+        standard_error=standard_error,
+        chi_squared=chi_squared,
+        log10_p_value=log10_p_value,
     )
 
 
@@ -408,6 +529,74 @@ class TestComputeRegenie2LinearChunk:
 
         assert not jnp.allclose(result_no_loco.beta, result_with_loco.beta)
         assert not jnp.allclose(result_no_loco.chi_squared, result_with_loco.chi_squared)
+
+    def test_loco_predictions_with_covariate_signal_match_regenie_ordering(self) -> None:
+        """Lock down REGENIE parity when LOCO predictions are not covariate-orthogonal."""
+        fixture = build_loco_covariate_fixture()
+        phenotype_residual = residualize_against_covariates(
+            fixture.covariate_matrix,
+            fixture.phenotype_vector,
+        )
+        current_order_residual = phenotype_residual - fixture.loco_predictions
+        alternative_order_residual = residualize_against_covariates(
+            fixture.covariate_matrix,
+            fixture.phenotype_vector - fixture.loco_predictions,
+        )
+
+        current_order_result = compute_regenie_null_mse_formula(
+            covariate_matrix=fixture.covariate_matrix,
+            adjusted_residual=current_order_residual,
+            genotype_matrix=fixture.genotype_matrix,
+        )
+        alternative_order_result = compute_regenie_null_mse_formula(
+            covariate_matrix=fixture.covariate_matrix,
+            adjusted_residual=alternative_order_residual,
+            genotype_matrix=fixture.genotype_matrix,
+        )
+
+        numpy.testing.assert_allclose(current_order_result.beta, fixture.expected_beta, rtol=1e-5, atol=1e-7)
+        numpy.testing.assert_allclose(
+            current_order_result.standard_error,
+            fixture.expected_standard_error,
+            rtol=1e-5,
+            atol=1e-7,
+        )
+        numpy.testing.assert_allclose(
+            current_order_result.chi_squared,
+            fixture.expected_chi_squared,
+            rtol=1e-5,
+            atol=1e-7,
+        )
+        numpy.testing.assert_allclose(
+            current_order_result.log10_p_value,
+            fixture.expected_log10_p_value,
+            rtol=1e-5,
+            atol=1e-7,
+        )
+        assert not np.allclose(
+            alternative_order_result.standard_error,
+            fixture.expected_standard_error,
+            rtol=1e-2,
+            atol=1e-4,
+        )
+        assert not np.allclose(
+            alternative_order_result.chi_squared,
+            fixture.expected_chi_squared,
+            rtol=1e-2,
+            atol=1e-4,
+        )
+
+        state = regenie2_linear.prepare_regenie2_linear_state(
+            covariate_matrix=jnp.asarray(fixture.covariate_matrix, dtype=jnp.float32),
+            phenotype_vector=jnp.asarray(fixture.phenotype_vector, dtype=jnp.float32),
+        )
+        observed_result = regenie2_linear.compute_regenie2_linear_chunk(
+            state=state,
+            genotype_matrix=jnp.asarray(fixture.genotype_matrix, dtype=jnp.float32),
+            loco_predictions=jnp.asarray(fixture.loco_predictions, dtype=jnp.float32),
+        )
+
+        numpy.testing.assert_allclose(observed_result.beta, fixture.expected_beta, rtol=1e-5, atol=1e-6)
 
     def test_multi_trait_kernel_matches_stacked_single_trait_results(self) -> None:
         """Ensure multi-trait computation matches stacked single-trait computation."""

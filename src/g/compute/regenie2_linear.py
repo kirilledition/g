@@ -161,6 +161,7 @@ def prepare_regenie2_linear_chromosome_state(
     """Prepare chromosome-specific residual state reused across chunks."""
     loco_predictions_float32 = jnp.asarray(loco_predictions, dtype=jnp.float32)
     adjusted_residual = state.phenotype_residual - loco_predictions_float32
+    adjusted_residual_projection_coordinates = state.whitened_covariate_transpose @ adjusted_residual
     adjusted_residual_sum_squares = jnp.dot(adjusted_residual, adjusted_residual)
     stacked_score_matrix = jnp.concatenate(
         [state.whitened_covariate_transpose, adjusted_residual[None, :]],
@@ -171,6 +172,7 @@ def prepare_regenie2_linear_chromosome_state(
         covariate_crossproduct_cholesky_factor=state.covariate_crossproduct_cholesky_factor,
         stacked_score_matrix=stacked_score_matrix,
         adjusted_residual=adjusted_residual,
+        adjusted_residual_projection_coordinates=adjusted_residual_projection_coordinates,
         adjusted_residual_sum_squares=adjusted_residual_sum_squares,
         degrees_of_freedom=state.degrees_of_freedom,
     )
@@ -184,12 +186,14 @@ def prepare_regenie2_multi_linear_chromosome_state(
     """Prepare chromosome-specific multi-trait residual state reused across chunks."""
     loco_prediction_matrix_float32 = jnp.asarray(loco_prediction_matrix, dtype=jnp.float32)
     adjusted_residual_matrix = state.phenotype_residual_matrix - loco_prediction_matrix_float32
+    adjusted_residual_projection_coordinate_matrix = adjusted_residual_matrix @ state.whitened_covariate_transpose.T
     adjusted_residual_sum_squares = jnp.einsum("ij,ij->i", adjusted_residual_matrix, adjusted_residual_matrix)
     return regenie2_linear_types.Regenie2MultiLinearChromosomeState(
         covariate_matrix_transpose=state.covariate_matrix_transpose,
         covariate_crossproduct_cholesky_factor=state.covariate_crossproduct_cholesky_factor,
         whitened_covariate_transpose=state.whitened_covariate_transpose,
         adjusted_residual_matrix=adjusted_residual_matrix,
+        adjusted_residual_projection_coordinate_matrix=adjusted_residual_projection_coordinate_matrix,
         adjusted_residual_sum_squares=adjusted_residual_sum_squares,
         degrees_of_freedom=state.degrees_of_freedom,
     )
@@ -203,7 +207,10 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
     """Compute REGENIE step 2 linear association using chromosome-cached state."""
     score_matrix = chromosome_state.stacked_score_matrix @ genotype_matrix
     covariate_projection_coordinates = score_matrix[:-1]
-    covariance_with_phenotype = score_matrix[-1]
+    raw_covariance_with_phenotype = score_matrix[-1]
+    covariance_with_phenotype = raw_covariance_with_phenotype - (
+        chromosome_state.adjusted_residual_projection_coordinates @ covariate_projection_coordinates
+    )
 
     genotype_sum_squares = jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix)
     projection_sum_squares = jnp.einsum(
@@ -272,7 +279,10 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
     """Compute multi-trait quantitative REGENIE step 2 association."""
     genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
     covariate_projection_coordinates = chromosome_state.whitened_covariate_transpose @ genotype_matrix_float32
-    covariance_with_phenotype = chromosome_state.adjusted_residual_matrix @ genotype_matrix_float32
+    raw_covariance_with_phenotype = chromosome_state.adjusted_residual_matrix @ genotype_matrix_float32
+    covariance_with_phenotype = raw_covariance_with_phenotype - (
+        chromosome_state.adjusted_residual_projection_coordinate_matrix @ covariate_projection_coordinates
+    )
 
     genotype_sum_squares = jnp.einsum("ij,ij->j", genotype_matrix_float32, genotype_matrix_float32)
     projection_sum_squares = jnp.einsum(
@@ -339,7 +349,10 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
     genotype_sum_squares_float32 = jnp.asarray(genotype_sum_squares, dtype=jnp.float32)
     score_matrix = chromosome_state.stacked_score_matrix @ genotype_matrix_by_variant_float32.T
     covariate_projection_coordinates = score_matrix[:-1]
-    covariance_with_phenotype = score_matrix[-1]
+    raw_covariance_with_phenotype = score_matrix[-1]
+    covariance_with_phenotype = raw_covariance_with_phenotype - (
+        chromosome_state.adjusted_residual_projection_coordinates @ covariate_projection_coordinates
+    )
 
     projection_sum_squares = jnp.einsum(
         "ij,ij->j",
@@ -404,7 +417,10 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
     covariate_projection_coordinates = (
         chromosome_state.whitened_covariate_transpose @ genotype_matrix_by_variant_float32.T
     )
-    covariance_with_phenotype = chromosome_state.adjusted_residual_matrix @ genotype_matrix_by_variant_float32.T
+    raw_covariance_with_phenotype = chromosome_state.adjusted_residual_matrix @ genotype_matrix_by_variant_float32.T
+    covariance_with_phenotype = raw_covariance_with_phenotype - (
+        chromosome_state.adjusted_residual_projection_coordinate_matrix @ covariate_projection_coordinates
+    )
 
     projection_sum_squares = jnp.einsum(
         "ij,ij->j",
