@@ -287,6 +287,13 @@ mod tests {
     }
 
     #[test]
+    fn runtime_error_helper_preserves_message() {
+        let error = OutputWriterError::runtime("worker failed");
+
+        assert!(matches!(error, OutputWriterError::Runtime(message) if message == "worker failed"));
+    }
+
+    #[test]
     fn linear_record_batch_uses_shared_schema_and_null_extra() {
         let record_batch = build_regenie_step2_record_batch(build_test_batch(vec![build_test_chunk(0, None)]))
             .expect("linear record batch should build");

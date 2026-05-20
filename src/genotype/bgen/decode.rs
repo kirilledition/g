@@ -1272,3 +1272,290 @@ pub(super) fn u32_to_usize(value: u32) -> Result<usize, BgenError> {
         ))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::CompressionType;
+    use super::super::metadata::VariantRecord;
+    use super::super::sample_selection::build_sample_selection;
+    use super::*;
+
+    fn test_variant_record(probability_payload_length: usize) -> VariantRecord {
+        VariantRecord {
+            probability_payload_offset: 0,
+            probability_payload_length,
+            declared_uncompressed_block_length: probability_payload_length,
+            chromosome: "22".to_string(),
+            resolved_variant_identifier: "variant".to_string(),
+            position: 1,
+            counted_allele: "A".to_string(),
+            reference_allele: "G".to_string(),
+        }
+    }
+
+    fn pack_probabilities(probabilities: &[u32], bit_count: u8) -> Vec<u8> {
+        let mut packed_bytes = vec![0_u8; (probabilities.len() * usize::from(bit_count)).div_ceil(8)];
+        let mut bit_offset = 0_usize;
+        for probability in probabilities {
+            for bit_index in 0..usize::from(bit_count) {
+                if ((probability >> bit_index) & 1) != 0 {
+                    let output_bit = bit_offset + bit_index;
+                    packed_bytes[output_bit / 8] |= 1 << (output_bit % 8);
+                }
+            }
+            bit_offset += usize::from(bit_count);
+        }
+        packed_bytes
+    }
+
+    fn probability_block(
+        sample_count: u32,
+        ploidy: &[u8],
+        phased_flag: u8,
+        probability_bit_count: u8,
+        probabilities: &[u32],
+    ) -> Vec<u8> {
+        let mut block = Vec::new();
+        block.extend_from_slice(&sample_count.to_le_bytes());
+        block.extend_from_slice(&2_u16.to_le_bytes());
+        block.push(2);
+        block.push(2);
+        block.extend_from_slice(ploidy);
+        block.push(phased_flag);
+        block.push(probability_bit_count);
+        block.extend(pack_probabilities(probabilities, probability_bit_count));
+        block
+    }
+
+    #[test]
+    fn packed_probability_reader_reads_across_byte_boundaries_and_reports_truncation() {
+        let packed_probabilities = pack_probabilities(&[1, 2, 3, 0], 2);
+        let mut reader = PackedProbabilityReader::new(&packed_probabilities);
+
+        assert_eq!(reader.read_probability(2).expect("first value"), 1);
+        assert_eq!(reader.read_probability(2).expect("second value"), 2);
+        assert_eq!(reader.read_probability(2).expect("third value"), 3);
+        assert_eq!(reader.read_probability(2).expect("fourth value"), 0);
+        assert!(reader.read_probability(2).expect_err("truncated stream").to_string().contains("ended"));
+    }
+
+    #[test]
+    fn row_major_decode_covers_eight_bit_identity_subset_and_missing_paths() {
+        let variant_record = test_variant_record(0);
+        let sample_selection = build_sample_selection(3, &[0, 1, 2]).expect("identity selection");
+        let mut output = vec![0.0_f32; 3 * 2];
+        let result = decode_unphased_eight_bit_dosages_into_row_major_matrix(
+            &[2, 2, 2],
+            &[255, 0, 0, 255, 0, 0],
+            &sample_selection,
+            &variant_record,
+            output.as_mut_ptr() as usize,
+            1,
+            2,
+            true,
+            false,
+            true,
+            ThreadLocalProfileSnapshot::default(),
+        )
+        .expect("identity 8-bit row-major decode");
+        assert_eq!(result.selected_observation_count, 0);
+        assert!(result.selected_dosage_total > 0.0);
+        assert!(output.iter().any(|value| *value > 0.0));
+
+        let subset_selection = build_sample_selection(3, &[2, 0]).expect("subset selection");
+        let mut subset_output = vec![0.0_f32; 2 * 2];
+        let subset_result = decode_unphased_eight_bit_dosages_into_row_major_matrix(
+            &[2, 0x82, 2],
+            &[255, 0, 0, 255, 0, 0],
+            &subset_selection,
+            &variant_record,
+            subset_output.as_mut_ptr() as usize,
+            0,
+            2,
+            true,
+            false,
+            true,
+            ThreadLocalProfileSnapshot::default(),
+        )
+        .expect("subset 8-bit row-major decode");
+        assert!(subset_result.selected_dosage_total >= 0.0);
+        assert!(subset_output.iter().all(|value| !value.is_nan()));
+    }
+
+    #[test]
+    fn variant_major_decode_covers_eight_bit_identity_subset_and_imputation_paths() {
+        let variant_record = test_variant_record(0);
+        let subset_selection = build_sample_selection(3, &[2, 1, 0]).expect("subset selection");
+        let mut output = vec![0.0_f32; 3];
+        let result = decode_unphased_eight_bit_dosages_into_variant_major_matrix(
+            &[2, 0x82, 2],
+            &[255, 0, 0, 255, 0, 0],
+            &subset_selection,
+            &variant_record,
+            output.as_mut_ptr() as usize,
+            0,
+            3,
+            true,
+            false,
+            ThreadLocalProfileSnapshot::default(),
+        )
+        .expect("8-bit variant-major decode");
+        assert!(result.has_missing_values);
+        assert_eq!(result.selected_observation_count, 2);
+        assert!(output.iter().all(|value| !value.is_nan()));
+
+        let identity_selection = build_sample_selection(3, &[0, 1, 2]).expect("identity selection");
+        let mut identity_output = vec![0.0_f32; 3];
+        let identity_result = decode_unphased_eight_bit_dosages_into_variant_major_matrix(
+            &[2, 2, 2],
+            &[255, 0, 0, 255, 0, 0],
+            &identity_selection,
+            &variant_record,
+            identity_output.as_mut_ptr() as usize,
+            0,
+            3,
+            true,
+            true,
+            ThreadLocalProfileSnapshot::default(),
+        )
+        .expect("trusted identity 8-bit variant-major decode");
+        assert!(!identity_result.has_missing_values);
+        assert_eq!(identity_result.selected_observation_count, 3);
+    }
+
+    #[test]
+    fn generic_row_major_decode_covers_unphased_phased_subset_and_error_paths() {
+        let sample_selection = build_sample_selection(2, &[0, 1]).expect("identity selection");
+        let mut thread_scratch = ThreadScratch::default();
+        let unphased_block = probability_block(2, &[2, 2], 0, 2, &[3, 0, 0, 3]);
+        let variant_record = test_variant_record(unphased_block.len());
+        let mut output = vec![0.0_f32; 2];
+        let unphased_result = decode_variant_dosages_into_row_major_matrix(
+            &unphased_block,
+            CompressionType::None,
+            2,
+            &sample_selection,
+            &variant_record,
+            output.as_mut_ptr() as usize,
+            0,
+            1,
+            true,
+            false,
+            true,
+            &mut thread_scratch,
+        )
+        .expect("generic unphased row-major decode");
+        assert!(unphased_result.selected_dosage_total >= 0.0);
+
+        let phased_block = probability_block(2, &[2, 2], 1, 2, &[3, 0, 0, 3]);
+        let variant_record = test_variant_record(phased_block.len());
+        let subset_selection = build_sample_selection(2, &[1]).expect("subset selection");
+        let mut subset_output = vec![0.0_f32; 1];
+        decode_variant_dosages_into_row_major_matrix(
+            &phased_block,
+            CompressionType::None,
+            2,
+            &subset_selection,
+            &variant_record,
+            subset_output.as_mut_ptr() as usize,
+            0,
+            1,
+            true,
+            false,
+            true,
+            &mut thread_scratch,
+        )
+        .expect("generic phased subset row-major decode");
+
+        let invalid_phased_block = probability_block(1, &[2], 2, 2, &[0, 0]);
+        let variant_record = test_variant_record(invalid_phased_block.len());
+        assert!(
+            decode_variant_dosages_into_row_major_matrix(
+                &invalid_phased_block,
+                CompressionType::None,
+                1,
+                &build_sample_selection(1, &[0]).expect("identity selection"),
+                &variant_record,
+                output.as_mut_ptr() as usize,
+                0,
+                1,
+                false,
+                false,
+                false,
+                &mut thread_scratch,
+            )
+            .expect_err("invalid phased flag should fail")
+            .to_string()
+            .contains("phased flag")
+        );
+    }
+
+    #[test]
+    fn generic_variant_major_decode_covers_unphased_phased_and_missing_paths() {
+        let mut thread_scratch = ThreadScratch::default();
+        let sample_selection = build_sample_selection(2, &[1, 0]).expect("subset selection");
+        let unphased_block = probability_block(2, &[2, 0x82], 0, 2, &[3, 0, 0, 3]);
+        let variant_record = test_variant_record(unphased_block.len());
+        let mut output = vec![0.0_f32; 2];
+        let result = decode_variant_dosages_into_variant_major_matrix(
+            &unphased_block,
+            CompressionType::None,
+            2,
+            &sample_selection,
+            &variant_record,
+            output.as_mut_ptr() as usize,
+            0,
+            2,
+            true,
+            false,
+            &mut thread_scratch,
+        )
+        .expect("generic variant-major unphased decode");
+        assert!(result.has_missing_values);
+        assert!(output.iter().all(|value| !value.is_nan()));
+
+        let phased_block = probability_block(2, &[2, 2], 1, 2, &[3, 0, 0, 3]);
+        let variant_record = test_variant_record(phased_block.len());
+        decode_variant_dosages_into_variant_major_matrix(
+            &phased_block,
+            CompressionType::None,
+            2,
+            &build_sample_selection(2, &[0, 1]).expect("identity selection"),
+            &variant_record,
+            output.as_mut_ptr() as usize,
+            0,
+            2,
+            true,
+            false,
+            &mut thread_scratch,
+        )
+        .expect("generic variant-major phased decode");
+    }
+
+    #[test]
+    fn byte_readers_probability_blocks_and_zlib_errors_report_clear_failures() {
+        assert_eq!(read_u8_at(&[7], 0).expect("u8"), 7);
+        assert_eq!(read_u16_at(&[1, 2], 0).expect("u16"), 513);
+        assert_eq!(read_u32_at(&[1, 0, 0, 0], 0).expect("u32"), 1);
+        assert!(
+            read_exact_bytes(&[1, 2], 1, 5).expect_err("short read should fail").to_string().contains("end of file")
+        );
+
+        let mut thread_scratch = ThreadScratch::default();
+        let mut profile = ThreadLocalProfileSnapshot::default();
+        let variant_record = test_variant_record(3);
+        assert!(
+            read_probability_block(
+                &[1, 2, 3],
+                CompressionType::Zlib,
+                &variant_record,
+                &mut thread_scratch,
+                &mut profile,
+                true,
+            )
+            .expect_err("invalid zlib should fail")
+            .to_string()
+            .contains("I/O error")
+        );
+    }
+}
