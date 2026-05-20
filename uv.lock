@@ -97,7 +97,7 @@ gpu = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.4.0" },
-    { name = "jax", extras = ["cpu"], specifier = ">=0.10.0" },
+    { name = "jax", extras = ["cpu"], specifier = ">=0.10.1" },
     { name = "numpy", specifier = ">=2.4.6" },
 ]
 
