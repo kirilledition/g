@@ -100,7 +100,7 @@ class GOutputConfig:
     """Engine-specific output settings."""
 
     out: Path | None = None
-    format: types.OutputFormat = types.OutputFormat.REGENIE
+    format: types.OutputFormat = types.OutputFormat.PARQUET
     output_run_directory: Path | None = None
     writer_threads: int = DEFAULT_OUTPUT_WRITER_THREADS
     writer_queue_depth: int = DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
@@ -316,7 +316,7 @@ def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
         ),
         g_output=GOutputConfig(
             out=path_or_none(normalized_options.get("out")),
-            format=types.OutputFormat(str(normalized_options.get("g-output-format", types.OutputFormat.REGENIE.value))),
+            format=types.OutputFormat(str(normalized_options.get("g-output-format", types.OutputFormat.PARQUET.value))),
             output_run_directory=path_or_none(normalized_options.get("g-output-run-directory")),
             writer_threads=int(normalized_options.get("g-writer-threads", DEFAULT_OUTPUT_WRITER_THREADS)),
             writer_queue_depth=int(normalized_options.get("g-writer-queue-depth", DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH)),

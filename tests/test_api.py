@@ -57,7 +57,7 @@ def test_regenie_config_from_options_maps_regenie_names() -> None:
             "approx": True,
             "pThresh": 0.01,
             "g-device": "gpu",
-            "g-output-format": "both",
+            "g-output-format": "arrow",
         }
     )
 
@@ -67,7 +67,7 @@ def test_regenie_config_from_options_maps_regenie_names() -> None:
     assert regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
     assert regenie_config.binary.p_threshold == 0.01
     assert regenie_config.g_compute.device == types.Device.GPU
-    assert regenie_config.g_output.format == types.OutputFormat.BOTH
+    assert regenie_config.g_output.format == types.OutputFormat.ARROW
 
 
 def test_build_binary_kernel_config_maps_compute_options() -> None:
@@ -114,7 +114,6 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest={"committed_chunks": []}),
         ) as mock_prepare_output_run,
         patch("g.api.run_regenie2_linear_bgen_pipeline") as mock_pipeline,
-        patch("g.api.output.finalize_chunks_to_regenie_text") as mock_finalize_regenie,
         patch("g.api.extend_run_manifest") as mock_extend_run_manifest,
         patch("g.interface.config.write_toml") as mock_write_toml,
     ):
@@ -123,7 +122,6 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
 
     assert artifacts.output_run_directory == Path("results/output.g/trait.regenie2_linear.run")
     assert artifacts.final_parquet == Path("results/output.g/trait.regenie2_linear.run/final.parquet")
-    assert artifacts.final_regenie is None
     mock_configure_jax_device.assert_called_once_with(types.Device.CPU)
     mock_prepare_output_run.assert_called_once()
     assert mock_pipeline.call_args.kwargs["existing_manifest"] == {"committed_chunks": []}
@@ -133,7 +131,6 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     assert mock_pipeline.call_args.kwargs["alignment_config"].sample_key_mode == types.SampleKeyMode.IID
     assert mock_pipeline.call_args.kwargs["chunks_per_arrow_file"] == 4
     assert mock_pipeline.call_args.kwargs["arrow_compression"] == types.ArrowCompression.ZSTD
-    mock_finalize_regenie.assert_not_called()
     mock_extend_run_manifest.assert_called_once()
     mock_write_toml.assert_called_once()
 

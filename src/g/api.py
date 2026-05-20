@@ -46,7 +46,6 @@ class RunArtifacts:
 
     output_run_directory: Path | None = None
     final_parquet: Path | None = None
-    final_regenie: Path | None = None
     effective_config: Path | None = None
     phenotype_artifacts: tuple[RunArtifacts, ...] = ()
 
@@ -257,7 +256,7 @@ def build_regenie_multi_run_plan(regenie_config: config.RegenieConfig, output_ru
         output_run_directory=output_run_root,
         resume=regenie_config.g_output.resume,
         resume_mode=regenie_config.g_output.resume_mode,
-        finalize_parquet=regenie_config.g_output.format in {types.OutputFormat.PARQUET, types.OutputFormat.BOTH}
+        finalize_parquet=regenie_config.g_output.format == types.OutputFormat.PARQUET
         or regenie_config.g_output.finalize_parquet,
         writer_threads=regenie_config.g_output.writer_threads,
         writer_queue_depth=regenie_config.g_output.writer_queue_depth,
@@ -352,15 +351,10 @@ def build_multi_phenotype_artifacts(
         effective_config_path = output_run_paths.run_directory / "effective_config.toml"
         config.write_toml(regenie_config, effective_config_path)
         extend_run_manifest(output_run_paths.run_directory, regenie_config, phenotype_name, effective_config_path)
-        final_regenie_path = None
-        if regenie_config.g_output.format in {types.OutputFormat.REGENIE, types.OutputFormat.BOTH}:
-            final_regenie_path = output_prefix.with_name(f"{output_prefix.name}_{phenotype_name}.regenie")
-            output.finalize_chunks_to_regenie_text(output_run_paths, final_regenie_path)
         phenotype_artifacts.append(
             RunArtifacts(
                 output_run_directory=output_run_paths.run_directory,
                 final_parquet=final_parquet_path,
-                final_regenie=final_regenie_path,
                 effective_config=effective_config_path,
             )
         )
@@ -384,7 +378,7 @@ def run_one_phenotype_config(regenie_config: config.RegenieConfig, phenotype_nam
         output_run_directory=output_run_root / phenotype_name,
         resume=regenie_config.g_output.resume,
         resume_mode=regenie_config.g_output.resume_mode,
-        finalize_parquet=regenie_config.g_output.format in {types.OutputFormat.PARQUET, types.OutputFormat.BOTH}
+        finalize_parquet=regenie_config.g_output.format == types.OutputFormat.PARQUET
         or regenie_config.g_output.finalize_parquet,
         writer_threads=regenie_config.g_output.writer_threads,
         writer_queue_depth=regenie_config.g_output.writer_queue_depth,
@@ -401,7 +395,6 @@ def run_one_phenotype_config(regenie_config: config.RegenieConfig, phenotype_nam
         output_prefix=output_prefix,
         engine_config=engine_config,
     )
-    final_regenie_path = None
     effective_config_path = None
     if artifacts.output_run_directory is not None:
         effective_config_path = artifacts.output_run_directory / "effective_config.toml"
@@ -412,16 +405,8 @@ def run_one_phenotype_config(regenie_config: config.RegenieConfig, phenotype_nam
             phenotype_name,
             effective_config_path,
         )
-        if regenie_config.g_output.format in {types.OutputFormat.REGENIE, types.OutputFormat.BOTH}:
-            final_regenie_path = output_prefix.with_name(f"{output_prefix.name}_{phenotype_name}.regenie")
-            output_run_paths = output.OutputRunPaths(
-                run_directory=artifacts.output_run_directory,
-                chunks_directory=artifacts.output_run_directory / "chunks",
-            )
-            output.finalize_chunks_to_regenie_text(output_run_paths, final_regenie_path)
     return dataclasses.replace(
         artifacts,
-        final_regenie=final_regenie_path,
         effective_config=effective_config_path,
     )
 

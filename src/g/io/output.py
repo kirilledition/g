@@ -300,14 +300,3 @@ def finalize_chunks_to_parquet(
         association_mode=str(association_mode),
     )
     return Path(final_parquet_path)
-
-
-def finalize_chunks_to_regenie_text(
-    output_run_paths: OutputRunPaths,
-    regenie_text_path: Path,
-) -> None:
-    """Materialize committed chunk files as REGENIE-compatible text."""
-    _core.finalize_output_run_chunks_to_regenie_text(
-        chunks_directory=str(output_run_paths.chunks_directory),
-        regenie_text_path=str(regenie_text_path),
-    )

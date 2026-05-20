@@ -28,7 +28,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-trusted-no-missing-diploid": True,
         "g-trusted-bgen-validation-mode": "assume_validated",
         "g-sample-key-mode": "iid",
-        "g-output-format": "both",
+        "g-output-format": "arrow",
         "g-writer-threads": 2,
         "g-writer-queue-depth": 3,
         "g-output-chunks-per-arrow-file": 2,
@@ -64,7 +64,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_compute.bgen_decode_tile_variant_count == 32
     assert regenie_config.g_compute.jax_matmul_precision == types.JaxMatmulPrecision.HIGHEST
     assert regenie_config.g_compute.jax_persistent_cache is False
-    assert regenie_config.g_output.format == types.OutputFormat.BOTH
+    assert regenie_config.g_output.format == types.OutputFormat.ARROW
     assert regenie_config.g_output.chunks_per_arrow_file == 2
     assert regenie_config.g_output.arrow_compression == types.ArrowCompression.NONE
     assert regenie_config.g_diagnostics.stage_timings_json == Path("timings.json")
@@ -88,7 +88,7 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
             "out": "results/output",
             "firth": True,
             "approx": True,
-            "g-output-format": "both",
+            "g-output-format": "arrow",
             "g-output-arrow-compression": "none",
             "g-firth-batch-size": 8,
             "g-jax-persistent-cache": False,

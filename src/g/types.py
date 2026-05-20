@@ -28,10 +28,8 @@ class ResumeMode(enum.StrEnum):
 class OutputFormat(enum.StrEnum):
     """User-facing output materialization format."""
 
-    REGENIE = "regenie"
     PARQUET = "parquet"
     ARROW = "arrow"
-    BOTH = "both"
 
 
 class JaxMatmulPrecision(enum.StrEnum):

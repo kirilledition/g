@@ -111,8 +111,7 @@ uv run g \
   --covarFile data/covariates.txt \
   --covarColList age,sex \
   --pred data/baselines/regenie_step1_qt_pred.list \
-  --out data/example_regenie2 \
-  --g-output-format both
+  --out data/example_regenie2
 ```
 
 Binary traits with approximate Firth fallback:
@@ -132,8 +131,7 @@ uv run g \
   --firth \
   --approx \
   --pThresh 0.01 \
-  --out data/example_regenie2_binary \
-  --g-output-format both
+  --out data/example_regenie2_binary
 ```
 
 Config files use the same option names under TOML sections:
@@ -170,11 +168,11 @@ artifacts = g.regenie.from_options(
 )
 ```
 
-The API returns `g.RunArtifacts` with the output run directory and materialized REGENIE text/Parquet paths.
+The API returns `g.RunArtifacts` with the output run directory and finalized Parquet path when Parquet finalization is enabled.
 
 ## Output Layout
 
-Given `--out data/example_regenie2`, `g` writes REGENIE text to `data/example_regenie2_<phenotype>.regenie` by default and keeps internal chunks under a `g` run directory:
+Given `--out data/example_regenie2`, `g` writes Arrow chunks under a `g` run directory and finalizes Parquet by default:
 
 ```text
 data/example_regenie2.g/phenotype_continuous.regenie2_linear.run/
@@ -186,7 +184,7 @@ data/example_regenie2.g/phenotype_continuous.regenie2_linear.run/
   final.parquet
 ```
 
-Binary runs use the `.regenie2_binary.run` suffix. Arrow chunks are written incrementally and can be resumed with `--g-resume`. `--g-output-format` controls `regenie`, `parquet`, `arrow`, or `both`.
+Binary runs use the `.regenie2_binary.run` suffix. Arrow chunks are written incrementally and can be resumed with `--g-resume`. `--g-output-format` controls `parquet` or `arrow`.
 
 ## Development Commands
 
