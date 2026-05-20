@@ -389,6 +389,34 @@ ci-test:
 test:
     {{server_env}} && uv run pytest tests/
 
+# Generate docs/code-review.tasks.json from docs/code-review.md
+codex-tasks-sync:
+    {{server_env}} && uv run python scripts/codex_task_farm.py sync-manifest
+
+# List Codex task farm tasks
+codex-tasks-list *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py list {{arguments}}
+
+# Launch Codex task farm worker agents
+codex-tasks-run *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py run {{arguments}}
+
+# Show Codex task farm status
+codex-tasks-status *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py status {{arguments}}
+
+# Review one or more Codex task branches
+codex-tasks-review +arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py review {{arguments}}
+
+# Integrate one or more reviewed Codex task branches into main
+codex-tasks-integrate +arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py integrate {{arguments}}
+
+# Integrate all implemented/reviewed Codex task branches into main in order
+codex-tasks-integrate-ready:
+    {{server_env}} && uv run python scripts/codex_task_farm.py integrate-ready
+
 upgrade-python-deps:
     {{server_env}} && uv sync -U --group dev --group gpu
 

@@ -182,16 +182,9 @@ If the product is going to strongly encourage trusted BGEN, this is acceptable. 
 
 **Guidance**
 
-Either:
 
 ```text
-1. make trusted no-missing diploid path the official performance path;
-```
-
-or:
-
-```text
-2. implement variant-major untrusted decode + stats + imputation path.
+1. implement variant-major untrusted decode + stats + imputation path.
 ```
 
 Do not invest in GPU micro-optimizations before knowing which BGEN path users will actually run.
@@ -432,55 +425,3 @@ I am not saying this is wrong, but it is important enough to lock down with pari
 **Guidance**
 
 Add a tiny fixture where covariates and LOCO predictions are correlated and compare both formulas against REGENIE output.
-
----
-
-## 20. Float32 may be too aggressive for Firth and tail p-values
-
-The code is consistently float32, which is good for GPU speed. But Firth logistic regression and extreme GWAS p-value tails can be numerically sensitive.
-
-This does not mean you need float64 everywhere. A good compromise might be:
-
-```text
-score-only:
-  float32
-
-linear/binary common matrix operations:
-  float32
-
-Firth tiny dense solve:
-  optionally float64 or highest precision
-
-final p-value/log10p:
-  validate float32 vs float64/reference
-```
-
-If REGENIE parity matters, you need explicit tests here.
-
----
-
-## 21. `EXTRA = "FIRTH"` for successful Firth rows may not match REGENIE-style output
-
-`build_extra_string_array()` maps successful Firth code to `"FIRTH"`:
-
-```rust
-Some(1) => values.push(Some("FIRTH"))
-```
-
-Relevant lines: `src/output/schema.rs:32-43`.
-
-If you want truly REGENIE-compatible text output, successful correction probably should not be labeled as `"FIRTH"` in `EXTRA`; failures should be labeled. If you prefer richer diagnostics, that is fine, but then the output is not exactly REGENIE-compatible.
-
-Since you are pre-release, choose one:
-
-```text
-Compatibility:
-  EXTRA null for successful score/Firth/SPA
-  EXTRA TEST_FAIL for failed correction
-
-Diagnostic output:
-  keep FIRTH/SPA labels
-  document that output is g-native, not exact REGENIE text
-```
-
-I would use compatibility for `.regenie` text and put richer diagnostics in Parquet columns.
