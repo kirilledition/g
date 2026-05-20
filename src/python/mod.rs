@@ -7,9 +7,7 @@ use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadwriteArray2
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::genotype::bgen::{
-    BgenError, ReaderProfileSnapshot, VariantMetadataLists, set_bgen_decode_tile_variant_count,
-};
+use crate::genotype::bgen::{BgenError, ReaderProfileSnapshot, set_bgen_decode_tile_variant_count};
 use crate::genotype::common::{
     ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunkStats, GenotypeError, VariantMetadataColumns,
 };
@@ -23,6 +21,8 @@ mod output;
 use output::{
     OutputWriterSession, finalize_output_run_chunks, scan_committed_chunk_identifiers, validate_strict_manifest_chunks,
 };
+
+type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
 
 #[pyclass(skip_from_py_object)]
 #[derive(Clone)]
@@ -480,8 +480,12 @@ impl Regenie2RunEngine {
         self.engine.reader().chromosome_boundary_indices()
     }
 
-    fn variant_metadata_slice(&self, variant_start: usize, variant_stop: usize) -> PyResult<VariantMetadataLists> {
-        self.engine.reader().variant_metadata_slice(variant_start, variant_stop).map_err(convert_bgen_error)
+    fn variant_metadata_slice(&self, variant_start: usize, variant_stop: usize) -> PyResult<VariantMetadataTuple> {
+        self.engine
+            .reader()
+            .variant_metadata_slice(variant_start, variant_stop)
+            .map(convert_variant_metadata_columns_to_tuple)
+            .map_err(convert_bgen_error)
     }
 
     fn reset_profile(&self) {
@@ -728,18 +732,14 @@ impl Regenie2RunEngine {
                     .map_err(convert_bgen_error)?;
                 Py::new(py, ChunkStats::new(chunk_stats))?
             };
-            let metadata_tuple = self
+            let metadata_columns = self
                 .engine
                 .reader()
                 .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
                 .map_err(convert_bgen_error)?;
             let metadata = Py::new(
                 py,
-                VariantMetadata::new(
-                    chunk_spec.variant_start_index,
-                    chunk_spec.variant_stop_index,
-                    convert_variant_metadata_tuple(metadata_tuple),
-                ),
+                VariantMetadata::new(chunk_spec.variant_start_index, chunk_spec.variant_stop_index, metadata_columns),
             )?;
             callback.call_method1("compute_preprocessed_dosage_chunk", (metadata, output_array_object, stats))?;
         }
@@ -797,18 +797,14 @@ impl Regenie2RunEngine {
                     .map_err(convert_bgen_error)?;
                 Py::new(py, ChunkStats::new(chunk_stats))?
             };
-            let metadata_tuple = self
+            let metadata_columns = self
                 .engine
                 .reader()
                 .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
                 .map_err(convert_bgen_error)?;
             let metadata = Py::new(
                 py,
-                VariantMetadata::new(
-                    chunk_spec.variant_start_index,
-                    chunk_spec.variant_stop_index,
-                    convert_variant_metadata_tuple(metadata_tuple),
-                ),
+                VariantMetadata::new(chunk_spec.variant_start_index, chunk_spec.variant_stop_index, metadata_columns),
             )?;
             callback.call_method1(
                 "compute_preprocessed_variant_major_dosage_chunk",
@@ -1060,9 +1056,14 @@ fn build_committed_identifier_set(committed_chunk_identifiers: Option<Vec<usize>
     committed_chunk_identifiers.unwrap_or_default().into_iter().collect()
 }
 
-fn convert_variant_metadata_tuple(variant_metadata: VariantMetadataLists) -> VariantMetadataColumns {
-    let (chromosome, variant_identifier, position, allele_one, allele_two) = variant_metadata;
-    VariantMetadataColumns { chromosome, variant_identifier, position, allele_one, allele_two }
+fn convert_variant_metadata_columns_to_tuple(variant_metadata: VariantMetadataColumns) -> VariantMetadataTuple {
+    (
+        variant_metadata.chromosome,
+        variant_metadata.variant_identifier,
+        variant_metadata.position,
+        variant_metadata.allele_one,
+        variant_metadata.allele_two,
+    )
 }
 
 fn build_profile_snapshot_dict(profile_snapshot: &ReaderProfileSnapshot) -> HashMap<String, u64> {
