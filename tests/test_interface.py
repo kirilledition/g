@@ -4,8 +4,21 @@ from pathlib import Path
 
 import pytest
 
-from g import types
+from g import execution_plan, types
 from g.interface import config, options
+
+
+def build_valid_quantitative_options() -> dict[str, object]:
+    """Build minimal valid quantitative REGENIE options."""
+    return {
+        "step": 2,
+        "qt": True,
+        "bgen": "dataset.bgen",
+        "phenoFile": "phenotype.tsv",
+        "phenoCol": "trait",
+        "pred": "predictions.list",
+        "out": "results/output",
+    }
 
 
 def test_all_option_specs_are_accepted_by_python_options() -> None:
@@ -115,6 +128,47 @@ def test_unknown_and_unsupported_options_raise_clear_errors() -> None:
 
     with pytest.raises(ValueError, match="valid REGENIE option"):
         config.RegenieConfig.from_options({"pgen": "dataset", "phenoFile": "phenotype.tsv"})
+
+
+@pytest.mark.parametrize(
+    ("option_name", "option_value"),
+    [
+        ("firth", True),
+        ("approx", True),
+        ("firth-se", True),
+        ("spa", True),
+        ("pThresh", config.DEFAULT_P_THRESHOLD),
+    ],
+)
+def test_quantitative_trait_rejects_explicit_binary_only_options(option_name: str, option_value: object) -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options[option_name] = option_value
+
+    with pytest.raises(ValueError, match=f"--{option_name} can only be used with --bt"):
+        config.RegenieConfig.from_options(raw_options)
+
+
+def test_quantitative_trait_accepts_defaulted_binary_threshold() -> None:
+    regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
+
+    assert regenie_config.binary.p_threshold == config.DEFAULT_P_THRESHOLD
+
+
+def test_quantitative_execution_plan_rejects_direct_binary_only_config() -> None:
+    regenie_config = config.RegenieConfig(
+        input=config.InputConfig(
+            bgen=Path("dataset.bgen"),
+            pheno_file=Path("phenotype.tsv"),
+            pheno_columns=("trait",),
+            pred=Path("predictions.list"),
+        ),
+        trait=config.TraitConfig(trait_type=types.RegenieTraitType.QUANTITATIVE),
+        binary=config.BinaryConfig(firth=True, approx=True, p_threshold=0.01),
+        g_output=config.GOutputConfig(out=Path("results/output")),
+    )
+
+    with pytest.raises(ValueError, match="--firth, --approx, --pThresh can only be used with --bt"):
+        execution_plan.build_regenie_execution_plan(regenie_config)
 
 
 def test_staging_depth_must_be_positive() -> None:

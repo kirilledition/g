@@ -29,6 +29,7 @@ DEFAULT_JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
 DEFAULT_OUTPUT_WRITER_THREADS = 8
 DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_OUTPUT_CHUNKS_PER_ARROW_FILE = 4
+QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "spa", "pThresh")
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,7 @@ class RegenieConfig:
     g_compute: GComputeConfig = dataclasses.field(default_factory=GComputeConfig)
     g_output: GOutputConfig = dataclasses.field(default_factory=GOutputConfig)
     g_diagnostics: GDiagnosticsConfig = dataclasses.field(default_factory=GDiagnosticsConfig)
+    explicit_options: frozenset[str] = dataclasses.field(default_factory=frozenset, compare=False, repr=False)
 
     @classmethod
     def from_toml(cls, path: Path | str) -> RegenieConfig:
@@ -195,6 +197,12 @@ def merge_option_dictionaries(
 def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
     """Build a normalized config from CLI/TOML/Python option dictionaries."""
     normalized_options = normalize_option_dictionary(raw_options)
+    explicit_options = frozenset(normalized_options)
+    trait_type = resolve_configured_trait_type(normalized_options)
+    reject_quantitative_binary_only_options(
+        explicit_options=explicit_options,
+        trait_type=trait_type,
+    )
     reject_unsupported_options(normalized_options)
     validate_unknown_options(normalized_options)
     pheno_columns = resolve_exclusive_columns(
@@ -211,14 +219,6 @@ def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
         repeated_snake_key="covar_col",
         list_snake_key="covar_col_list",
     )
-    raw_trait_type = normalized_options.get("trait_type")
-    if raw_trait_type is not None and normalized_options.get("qt") is None and normalized_options.get("bt") is None:
-        trait_type = types.RegenieTraitType(str(raw_trait_type))
-    else:
-        trait_type = normalize_trait_type(
-            qt=typing.cast("bool | None", normalized_options.get("qt")),
-            bt=typing.cast("bool | None", normalized_options.get("bt")),
-        )
     config = RegenieConfig(
         input=InputConfig(
             bgen=path_or_none(normalized_options.get("bgen")),
@@ -333,6 +333,7 @@ def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
         g_diagnostics=GDiagnosticsConfig(
             stage_timings_json=path_or_none(normalized_options.get("g-stage-timings-json")),
         ),
+        explicit_options=explicit_options,
     )
     validate_config(config)
     return config
@@ -350,6 +351,17 @@ def optional_jax_matmul_precision(raw_value: typing.Any) -> types.JaxMatmulPreci
     if raw_value is None:
         return None
     return types.JaxMatmulPrecision(str(raw_value))
+
+
+def resolve_configured_trait_type(normalized_options: typing.Mapping[str, typing.Any]) -> types.RegenieTraitType:
+    """Resolve trait type from normalized option names."""
+    raw_trait_type = normalized_options.get("trait_type")
+    if raw_trait_type is not None and normalized_options.get("qt") is None and normalized_options.get("bt") is None:
+        return types.RegenieTraitType(str(raw_trait_type))
+    return normalize_trait_type(
+        qt=typing.cast("bool | None", normalized_options.get("qt")),
+        bt=typing.cast("bool | None", normalized_options.get("bt")),
+    )
 
 
 def normalize_option_dictionary(raw_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
@@ -527,6 +539,20 @@ def validate_unknown_options(normalized_options: typing.Mapping[str, typing.Any]
             raise ValueError(message)
 
 
+def reject_quantitative_binary_only_options(
+    *,
+    explicit_options: frozenset[str],
+    trait_type: types.RegenieTraitType,
+) -> None:
+    """Reject binary-only options when the configured trait type is quantitative."""
+    if trait_type != types.RegenieTraitType.QUANTITATIVE:
+        return
+    binary_only_option_names = tuple(
+        option_name for option_name in QUANTITATIVE_BINARY_ONLY_OPTION_NAMES if option_name in explicit_options
+    )
+    raise_for_quantitative_binary_only_options(binary_only_option_names)
+
+
 def resolve_exclusive_columns(
     normalized_options: typing.Mapping[str, typing.Any],
     *,
@@ -599,6 +625,7 @@ def validate_config(config: RegenieConfig) -> None:
         "--g-bgen-decode-tile-variant-count",
         config.g_compute.bgen_decode_tile_variant_count,
     )
+    validate_quantitative_binary_config(config)
     if config.g_output.writer_threads <= 0:
         message = "--g-writer-threads must be positive."
         raise ValueError(message)
@@ -617,6 +644,33 @@ def validate_config(config: RegenieConfig) -> None:
     if config.binary.approx and not config.binary.firth:
         message = "--approx requires --firth."
         raise ValueError(message)
+
+
+def validate_quantitative_binary_config(config: RegenieConfig) -> None:
+    """Reject binary-only configuration for quantitative traits."""
+    if config.trait.trait_type != types.RegenieTraitType.QUANTITATIVE:
+        return
+    binary_only_option_names: list[str] = []
+    if config.binary.firth or "firth" in config.explicit_options:
+        binary_only_option_names.append("firth")
+    if config.binary.approx or "approx" in config.explicit_options:
+        binary_only_option_names.append("approx")
+    if config.binary.firth_se or "firth-se" in config.explicit_options:
+        binary_only_option_names.append("firth-se")
+    if config.binary.spa or "spa" in config.explicit_options:
+        binary_only_option_names.append("spa")
+    if config.binary.p_threshold != DEFAULT_P_THRESHOLD or "pThresh" in config.explicit_options:
+        binary_only_option_names.append("pThresh")
+    raise_for_quantitative_binary_only_options(tuple(binary_only_option_names))
+
+
+def raise_for_quantitative_binary_only_options(option_names: tuple[str, ...]) -> None:
+    """Raise a clear error for binary-only options used with quantitative traits."""
+    if not option_names:
+        return
+    formatted_option_names = ", ".join(f"--{option_name}" for option_name in option_names)
+    message = f"{formatted_option_names} can only be used with --bt; omit binary-only options when using --qt."
+    raise ValueError(message)
 
 
 def validate_positive_integer(option_name: str, value: int) -> None:
@@ -680,6 +734,15 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
         input_section["covarColList"] = ",".join(config.input.covar_columns)
     if config.input.pred is not None:
         input_section["pred"] = config.input.pred
+    binary_section: dict[str, typing.Any] = {}
+    if config.trait.trait_type == types.RegenieTraitType.BINARY:
+        binary_section = {
+            "firth": config.binary.firth,
+            "approx": config.binary.approx,
+            "spa": config.binary.spa,
+            "pThresh": config.binary.p_threshold,
+            "firth-se": config.binary.firth_se,
+        }
     return {
         "input": input_section,
         "trait": {
@@ -689,13 +752,7 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             "bsize": config.trait.bsize,
             **optional_mapping("threads", config.trait.threads),
         },
-        "binary": {
-            "firth": config.binary.firth,
-            "approx": config.binary.approx,
-            "spa": config.binary.spa,
-            "pThresh": config.binary.p_threshold,
-            "firth-se": config.binary.firth_se,
-        },
+        "binary": binary_section,
         "output": {
             **optional_mapping("out", config.g_output.out),
         },

@@ -7,13 +7,13 @@ import typing
 from dataclasses import dataclass
 
 from g import types
+from g.interface import config
 from g.io import output, source
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g.compute import regenie2_binary_types
-    from g.interface import config
 
 
 @dataclass(frozen=True)
@@ -172,6 +172,7 @@ def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie
 
 def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> RegenieExecutionPlan:
     """Build a complete execution plan from a validated public config."""
+    config.validate_config(regenie_config)
     output_prefix = typing.cast("Path", regenie_config.g_output.out)
     output_run_root = regenie_config.g_output.output_run_directory or output_prefix.with_name(f"{output_prefix.name}.g")
     association_mode = resolve_association_mode(regenie_config.trait.trait_type)
