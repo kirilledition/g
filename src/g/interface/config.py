@@ -421,6 +421,13 @@ def flatten_g_section(raw_g_options: typing.Mapping[str, typing.Any]) -> dict[st
 
 def normalize_option_name(option_name: str) -> str:
     """Map Pythonic names to REGENIE-compatible names."""
+    if option_name == "trait_type":
+        return option_name
+    if option_name in options.OPTION_SPEC_BY_NAME:
+        return option_name
+    destination_option_spec = options.OPTION_SPEC_BY_DESTINATION.get(option_name)
+    if destination_option_spec is not None:
+        return destination_option_spec.name
     aliases = {
         "pheno_file": "phenoFile",
         "pheno": "phenoFile",
@@ -485,8 +492,6 @@ def normalize_option_name(option_name: str) -> str:
         "trusted_no_missing_diploid": "g-trusted-no-missing-diploid",
         "g_trusted_no_missing_diploid": "g-trusted-no-missing-diploid",
     }
-    if option_name == "trait_type":
-        return option_name
     return aliases.get(option_name, option_name.replace("_", "-") if option_name.startswith("g_") else option_name)
 
 

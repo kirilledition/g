@@ -111,111 +111,56 @@ def path_option(*parameter_declarations: str, **kwargs: typing.Any) -> typing.Ca
     return click.option(*parameter_declarations, type=click.Path(path_type=Path), default=None, **kwargs)
 
 
+def click_type_for_option(option_spec: options.OptionSpec) -> typing.Any:
+    """Return the Click type declared by an option spec."""
+    if option_spec.accepted_values:
+        return click.Choice(option_spec.accepted_values)
+    if option_spec.type == options.OptionValueType.PATH:
+        return click.Path(path_type=Path)
+    if option_spec.type == options.OptionValueType.INTEGER:
+        return int
+    if option_spec.type == options.OptionValueType.FLOAT:
+        return float
+    return None
+
+
+def click_declarations_for_option(option_spec: options.OptionSpec) -> tuple[str, ...]:
+    """Return Click parameter declarations for an option spec."""
+    if option_spec.cli_flags:
+        return option_spec.cli_flags
+    return (f"--{option_spec.name}", option_spec.destination)
+
+
+def click_keyword_arguments_for_option(option_spec: options.OptionSpec) -> dict[str, typing.Any]:
+    """Return Click keyword arguments for an option spec."""
+    keyword_arguments: dict[str, typing.Any] = {"help": option_spec.help_text}
+    click_type = click_type_for_option(option_spec)
+    if click_type is not None:
+        keyword_arguments["type"] = click_type
+    if option_spec.default is not None or not option_spec.multiple:
+        keyword_arguments["default"] = option_spec.default
+    if option_spec.multiple:
+        keyword_arguments["multiple"] = True
+    if option_spec.is_flag and not any("/" in flag for flag in option_spec.cli_flags):
+        keyword_arguments["is_flag"] = True
+    return keyword_arguments
+
+
+def regenie_options(function: typing.Callable[..., typing.Any]) -> typing.Callable[..., typing.Any]:
+    """Apply g regenie options from the central option table."""
+    decorated_function = function
+    for option_spec in reversed(options.OPTION_SPECS):
+        decorated_function = click.option(
+            *click_declarations_for_option(option_spec),
+            **click_keyword_arguments_for_option(option_spec),
+        )(decorated_function)
+    return decorated_function
+
+
 @app.command("regenie", context_settings={"help_option_names": ["--help", "-h"]})
 @click.pass_context
 @path_option("--config", help="TOML config file.")
-@click.option("--step", type=int, default=None, help="REGENIE analysis step. Only step 2 is supported.")
-@click.option("--qt/--no-qt", default=None, help="Analyze quantitative traits.")
-@click.option("--bt/--no-bt", default=None, help="Analyze binary traits.")
-@path_option("--bgen", help="BGEN genotype file.")
-@path_option("--sample", help="BGEN sample file.")
-@path_option("--phenoFile", "pheno_file", help="Phenotype table.")
-@click.option("--phenoCol", "pheno_col", multiple=True, help="Phenotype column.")
-@click.option("--phenoColList", "pheno_col_list", default=None, help="Comma-separated phenotype columns.")
-@path_option("--covarFile", "covar_file", help="Covariate table.")
-@click.option("--covarCol", "covar_col", multiple=True, help="Covariate column.")
-@click.option("--covarColList", "covar_col_list", default=None, help="Comma-separated covariate columns.")
-@path_option("--pred", help="REGENIE step 1 prediction list.")
-@click.option("--bsize", type=int, default=None, help="Variants per processing block.")
-@click.option("--threads", type=int, default=None, help="Requested CPU thread count.")
-@path_option("--out", help="Output prefix.")
-@click.option("--firth/--no-firth", default=None, help="Use Firth fallback.")
-@click.option("--approx/--no-approx", default=None, help="Use approximate Firth fallback.")
-@click.option("--spa/--no-spa", default=None, help="Use SPA fallback.")
-@click.option("--pThresh", "p_threshold", type=float, default=None, help="Fallback p-value threshold.")
-@click.option("--firth-se/--no-firth-se", "firth_se", default=None, help="Use Firth-derived standard errors.")
-@path_option("--bed", help="Recognized REGENIE option; unsupported by g.")
-@path_option("--pgen", help="Recognized REGENIE option; unsupported by g.")
-@path_option("--keep", help="Recognized REGENIE option; unsupported by g.")
-@path_option("--remove", help="Recognized REGENIE option; unsupported by g.")
-@path_option("--extract", help="Recognized REGENIE option; unsupported by g.")
-@path_option("--exclude", help="Recognized REGENIE option; unsupported by g.")
-@click.option("--catCovarList", "cat_covar_list", default=None, help="Recognized REGENIE option; unsupported by g.")
-@click.option("--test", default=None, help="Recognized REGENIE option; unsupported by g.")
-@click.option("--t2e", is_flag=True, default=None, help="Recognized REGENIE option; unsupported by g.")
-@click.option("--g-device", type=click.Choice([item.value for item in types.Device]), default=None, help="JAX device.")
-@click.option("--g-staging-depth", type=int, default=None, help="Native callback staging depth.")
-@click.option("--g-variant-limit", type=int, default=None, help="Debug variant cap.")
-@click.option(
-    "--g-trusted-no-missing-diploid/--no-g-trusted-no-missing-diploid",
-    default=None,
-    help="Trusted BGEN fast path.",
-)
-@click.option(
-    "--g-trusted-bgen-validation-mode",
-    type=click.Choice([item.value for item in types.TrustedBgenValidationMode]),
-    default=None,
-    help="Trusted BGEN validation mode.",
-)
-@click.option(
-    "--g-sample-key-mode",
-    type=click.Choice([item.value for item in types.SampleKeyMode]),
-    default=None,
-    help="Sample key mode.",
-)
-@click.option(
-    "--g-output-format",
-    type=click.Choice([item.value for item in types.OutputFormat]),
-    default=None,
-    help="Output materialization format.",
-)
-@path_option("--g-output-run-directory", help="Internal g run directory.")
-@click.option("--g-writer-threads", type=int, default=None, help="Output writer thread count.")
-@click.option("--g-writer-queue-depth", type=int, default=None, help="Output writer queue depth.")
-@click.option("--g-output-chunks-per-arrow-file", type=int, default=None, help="Chunks grouped into one Arrow file.")
-@click.option(
-    "--g-output-arrow-compression",
-    type=click.Choice([item.value for item in types.ArrowCompression]),
-    default=None,
-    help="Internal Arrow chunk compression.",
-)
-@click.option("--g-resume/--no-g-resume", default=None, help="Resume a previous run.")
-@click.option(
-    "--g-resume-mode",
-    type=click.Choice([item.value for item in types.ResumeMode]),
-    default=None,
-    help="Resume validation mode.",
-)
-@click.option("--g-finalize-parquet/--no-g-finalize-parquet", default=None, help="Finalize Parquet.")
-@click.option("--g-firth-batch-size", type=int, default=None, help="Firth batch size.")
-@click.option("--g-firth-candidate-capacity", type=int, default=None, help="Firth candidate capacity.")
-@click.option("--g-binary-null-maximum-iterations", type=int, default=None, help="Maximum null-logistic iterations.")
-@click.option("--g-binary-null-coefficient-tolerance", type=float, default=None, help="Null-logistic tolerance.")
-@click.option("--g-firth-maximum-iterations", type=int, default=None, help="Maximum Firth iterations.")
-@click.option("--g-firth-gradient-tolerance", type=float, default=None, help="Firth gradient tolerance.")
-@click.option("--g-firth-coefficient-tolerance", type=float, default=None, help="Firth coefficient tolerance.")
-@click.option("--g-firth-likelihood-tolerance", type=float, default=None, help="Firth likelihood tolerance.")
-@click.option("--g-firth-maximum-step-size", type=float, default=None, help="Firth maximum step size.")
-@click.option("--g-use-block-firth-math/--no-g-use-block-firth-math", default=None, help="Use block Firth math.")
-@click.option("--g-bgen-decode-tile-variant-count", type=int, default=None, help="BGEN decode tile variant count.")
-@path_option("--g-jax-cache-dir", help="JAX compilation cache directory.")
-@click.option(
-    "--g-jax-matmul-precision",
-    type=click.Choice([item.value for item in types.JaxMatmulPrecision]),
-    default=None,
-    help="JAX matmul precision.",
-)
-@click.option("--g-jax-persistent-cache/--no-g-jax-persistent-cache", default=None, help="Use JAX persistent cache.")
-@click.option("--g-jax-persistent-cache-min-entry-size-bytes", type=int, default=None, help="Minimum cache entry size.")
-@click.option(
-    "--g-jax-persistent-cache-min-compile-time-seconds",
-    type=int,
-    default=None,
-    help="Minimum compile time for persistent cache writes.",
-)
-@click.option("--g-jax-xla-autotune-cache/--no-g-jax-xla-autotune-cache", default=None, help="Use XLA autotune cache.")
-@click.option("--g-jax-transfer-guard/--no-g-jax-transfer-guard", default=None, help="Enable JAX transfer guard.")
-@path_option("--g-stage-timings-json", help="Stage timing diagnostics JSON path.")
+@regenie_options
 def run_regenie_command(context: click.Context, **parameters: typing.Any) -> None:
     """Run a REGENIE-compatible step 2 association scan."""
     regenie_config = build_regenie_config_from_cli(context, parameters)

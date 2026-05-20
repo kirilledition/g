@@ -4,10 +4,12 @@ import typing
 from pathlib import Path
 from unittest.mock import patch
 
+import click
 from click.testing import CliRunner
 
 from g import api, types
 from g.cli import app, main, print_success_message
+from g.interface import options
 
 runner = CliRunner()
 
@@ -81,6 +83,20 @@ def test_regenie_command_dispatches_config_api() -> None:
     assert regenie_config.trait.bsize == 4096
     assert regenie_config.g_compute.device == types.Device.GPU
     assert "output_trait.regenie" in result.output
+
+
+def test_regenie_command_options_are_generated_from_specs() -> None:
+    regenie_command = app.commands["regenie"]
+    click_options = {
+        click_option.name: click_option
+        for click_option in regenie_command.params
+        if isinstance(click_option, click.Option)
+    }
+
+    for option_spec in options.OPTION_SPECS:
+        click_option = click_options[option_spec.destination]
+        assert click_option.opts[0].split("/")[0] == f"--{option_spec.name}"
+        assert click_option.help == option_spec.help_text
 
 
 def test_regenie_command_rejects_unsupported_regenie_flag() -> None:
