@@ -95,7 +95,7 @@ def test_binary_firth_parity_harness_synthetic_fixture_passes() -> None:
     )
 
     assert comparison.passed is True
-    assert comparison.production_metrics == comparison.experimental_metrics
+    assert comparison.production_metrics == comparison.variant_major_metrics
     assert comparison.production_metrics.firth_candidate_count >= 0
 
 

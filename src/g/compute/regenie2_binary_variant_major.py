@@ -1,4 +1,4 @@
-"""Experimental direct variant-major JAX binary association path."""
+"""Direct variant-major JAX binary association path."""
 
 from __future__ import annotations
 
@@ -18,12 +18,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     genotype_matrix_by_variant: jax.Array,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
-    """Compute the experimental variant-major score test for one binary chunk.
-
-    This direct variant-major JAX path is not used by the production trusted
-    BGEN pipeline until full-data Firth parity is established.
-
-    """
+    """Compute the variant-major score test for one binary chunk."""
     genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
     weighted_genotype_matrix_by_variant = (
         genotype_matrix_by_variant_float32 * chromosome_state.square_root_weight[None, :]
@@ -302,12 +297,7 @@ def compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
     sparse_candidate_mask: jax.Array | None = None,
     kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
-    """Compute experimental binary association from a variant-major chunk.
-
-    This direct variant-major JAX path is not used by the production trusted
-    BGEN pipeline until full-data Firth parity is established.
-
-    """
+    """Compute binary association from a variant-major chunk."""
     score_test_result = compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
         chromosome_state,
         genotype_matrix_by_variant,
