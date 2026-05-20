@@ -1,5 +1,8 @@
 # GWAS Engine (`g`)
 
+[![PR CI](https://github.com/kirilledition/g/actions/workflows/pr-ci.yml/badge.svg)](https://github.com/kirilledition/g/actions/workflows/pr-ci.yml)
+[![Science Monthly](https://github.com/kirilledition/g/actions/workflows/science-monthly.yml/badge.svg)](https://github.com/kirilledition/g/actions/workflows/science-monthly.yml)
+
 `g` is a GPU-accelerated GWAS engine for BGEN-backed **REGENIE step 2** association scans. The current package is a Python 3.14 API/CLI backed by JAX compute code and a Rust/PyO3 native extension for BGEN parsing and output persistence.
 
 The active public surface is intentionally narrow:
