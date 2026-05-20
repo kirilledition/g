@@ -603,7 +603,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
     def compute_one_trait(trait_index: jax.Array) -> regenie2_binary_types.Regenie2BinaryChunkResult:
         single_chromosome_state = build_single_binary_chromosome_state_from_multi(chromosome_state, trait_index)
         compute_variant_major_chunk = (
-            regenie2_binary_variant_major_experimental.compute_regenie2_binary_chunk_from_chromosome_state_variant_major
+            regenie2_binary_variant_major.compute_regenie2_binary_chunk_from_chromosome_state_variant_major
         )
         return compute_variant_major_chunk(
             chromosome_state=single_chromosome_state,
@@ -1721,4 +1721,4 @@ def compute_regenie2_binary_chunk(
     )
 
 
-from g.compute import regenie2_binary_variant_major_experimental  # noqa: E402
+from g.compute import regenie2_binary_variant_major  # noqa: E402

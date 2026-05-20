@@ -1,4 +1,4 @@
-"""Compare production and experimental binary Firth compute paths."""
+"""Compare production sample-major and variant-major binary Firth compute paths."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from g import types
-from g.compute import regenie2_binary, regenie2_binary_types, regenie2_binary_variant_major_experimental
+from g.compute import regenie2_binary, regenie2_binary_types, regenie2_binary_variant_major
 
 
 @dataclass(frozen=True)
@@ -56,12 +56,12 @@ class BinaryPathMetrics:
 
 @dataclass(frozen=True)
 class BinaryPathComparison:
-    """Comparison between production and experimental binary paths.
+    """Comparison between production sample-major and variant-major binary paths.
 
     Attributes:
         passed: Whether all parity checks passed.
         production_metrics: Metrics from the production sample-major path.
-        experimental_metrics: Metrics from the experimental variant-major path.
+        variant_major_metrics: Metrics from the variant-major path.
         maximum_absolute_deltas: Maximum absolute differences by numeric column.
         mismatch_messages: Human-readable mismatch descriptions.
 
@@ -69,7 +69,7 @@ class BinaryPathComparison:
 
     passed: bool
     production_metrics: BinaryPathMetrics
-    experimental_metrics: BinaryPathMetrics
+    variant_major_metrics: BinaryPathMetrics
     maximum_absolute_deltas: dict[str, float]
     mismatch_messages: tuple[str, ...]
 
@@ -90,7 +90,7 @@ class NumericColumnComparison:
 
 def build_argument_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
-    parser = argparse.ArgumentParser(description="Compare binary Firth production and experimental compute paths.")
+    parser = argparse.ArgumentParser(description="Compare binary Firth production sample-major and variant-major compute paths.")
     parser.add_argument(
         "--input-npz",
         type=Path,
@@ -200,17 +200,17 @@ def compare_numeric_column(
     *,
     column_name: str,
     production_values: jax.Array,
-    experimental_values: jax.Array,
+    variant_major_values: jax.Array,
     relative_tolerance: float,
     absolute_tolerance: float,
 ) -> NumericColumnComparison:
     """Compare one numeric result column."""
     production_array = np.asarray(production_values)
-    experimental_array = np.asarray(experimental_values)
-    maximum_absolute_delta = float(np.nanmax(np.abs(production_array - experimental_array)))
+    variant_major_array = np.asarray(variant_major_values)
+    maximum_absolute_delta = float(np.nanmax(np.abs(production_array - variant_major_array)))
     if np.allclose(
         production_array,
-        experimental_array,
+        variant_major_array,
         rtol=relative_tolerance,
         atol=absolute_tolerance,
         equal_nan=True,
@@ -229,7 +229,7 @@ def compare_binary_paths(
     relative_tolerance: float = 1.0e-5,
     absolute_tolerance: float = 1.0e-5,
 ) -> BinaryPathComparison:
-    """Compare production sample-major and experimental variant-major binary paths."""
+    """Compare production sample-major and variant-major binary paths."""
     chromosome_state = prepare_chromosome_state(inputs)
     production_score_test_result = regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state(
         chromosome_state,
@@ -242,13 +242,13 @@ def compare_binary_paths(
         correction_plan,
     )
     genotype_matrix_by_variant = jnp.transpose(inputs.genotype_matrix)
-    experimental_score_test_result = regenie2_binary_variant_major_experimental.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
+    variant_major_score_test_result = regenie2_binary_variant_major.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
         chromosome_state,
         genotype_matrix_by_variant,
         correction_plan,
     )
-    experimental_corrected_result = (
-        regenie2_binary_variant_major_experimental.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+    variant_major_corrected_result = (
+        regenie2_binary_variant_major.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
             chromosome_state,
             genotype_matrix_by_variant,
             correction_plan,
@@ -258,28 +258,28 @@ def compare_binary_paths(
         score_test_result=production_score_test_result,
         corrected_result=production_corrected_result,
     )
-    experimental_metrics = compute_path_metrics(
-        score_test_result=experimental_score_test_result,
-        corrected_result=experimental_corrected_result,
+    variant_major_metrics = compute_path_metrics(
+        score_test_result=variant_major_score_test_result,
+        corrected_result=variant_major_corrected_result,
     )
     mismatch_messages: list[str] = []
-    if production_metrics != experimental_metrics:
+    if production_metrics != variant_major_metrics:
         mismatch_messages.append("Score-test/Firth candidate metrics differ.")
     if not np.array_equal(
-        np.asarray(production_corrected_result.extra_code), np.asarray(experimental_corrected_result.extra_code)
+        np.asarray(production_corrected_result.extra_code), np.asarray(variant_major_corrected_result.extra_code)
     ):
         mismatch_messages.append("EXTRA codes differ.")
     maximum_absolute_deltas: dict[str, float] = {}
-    for column_name, production_values, experimental_values in [
-        ("beta", production_corrected_result.beta, experimental_corrected_result.beta),
-        ("standard_error", production_corrected_result.standard_error, experimental_corrected_result.standard_error),
-        ("chi_squared", production_corrected_result.chi_squared, experimental_corrected_result.chi_squared),
-        ("log10_p_value", production_corrected_result.log10_p_value, experimental_corrected_result.log10_p_value),
+    for column_name, production_values, variant_major_values in [
+        ("beta", production_corrected_result.beta, variant_major_corrected_result.beta),
+        ("standard_error", production_corrected_result.standard_error, variant_major_corrected_result.standard_error),
+        ("chi_squared", production_corrected_result.chi_squared, variant_major_corrected_result.chi_squared),
+        ("log10_p_value", production_corrected_result.log10_p_value, variant_major_corrected_result.log10_p_value),
     ]:
         numeric_column_comparison = compare_numeric_column(
             column_name=column_name,
             production_values=production_values,
-            experimental_values=experimental_values,
+            variant_major_values=variant_major_values,
             relative_tolerance=relative_tolerance,
             absolute_tolerance=absolute_tolerance,
         )
@@ -289,7 +289,7 @@ def compare_binary_paths(
     return BinaryPathComparison(
         passed=not mismatch_messages,
         production_metrics=production_metrics,
-        experimental_metrics=experimental_metrics,
+        variant_major_metrics=variant_major_metrics,
         maximum_absolute_deltas=maximum_absolute_deltas,
         mismatch_messages=tuple(mismatch_messages),
     )
@@ -300,7 +300,7 @@ def comparison_to_json_dict(comparison: BinaryPathComparison) -> dict[str, typin
     return {
         "passed": comparison.passed,
         "production_metrics": comparison.production_metrics.__dict__,
-        "experimental_metrics": comparison.experimental_metrics.__dict__,
+        "variant_major_metrics": comparison.variant_major_metrics.__dict__,
         "maximum_absolute_deltas": comparison.maximum_absolute_deltas,
         "mismatch_messages": list(comparison.mismatch_messages),
     }
