@@ -201,6 +201,7 @@ class RegenieMultiRunPlan:
     association_mode: types.AssociationMode
     genotype_source_config: source.GenotypeSourceConfig
     output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...]
+    effective_config_paths: tuple[Path, ...]
     existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...]
     binary_correction_plan: types.BinaryCorrectionPlan
     engine_config: EngineRunConfig
@@ -228,6 +229,7 @@ def run_multi_phenotype_config(regenie_config: config.RegenieConfig) -> RunArtif
             output_prefix=output_prefix,
             phenotype_names=plan.phenotype_names,
             output_run_paths_by_phenotype=plan.output_run_paths_by_phenotype,
+            effective_config_paths=plan.effective_config_paths,
             final_parquet_paths=final_parquet_paths,
         )
         return RunArtifacts(phenotype_artifacts=phenotype_artifacts)
@@ -276,6 +278,14 @@ def build_regenie_multi_run_plan(regenie_config: config.RegenieConfig, output_ru
         )
         for phenotype_name in regenie_config.input.pheno_columns
     )
+    effective_config_paths = tuple(
+        write_run_start_metadata(prepared_output_run.output_run_paths, regenie_config, phenotype_name)
+        for prepared_output_run, phenotype_name in zip(
+            prepared_output_runs,
+            regenie_config.input.pheno_columns,
+            strict=True,
+        )
+    )
     return RegenieMultiRunPlan(
         phenotype_names=regenie_config.input.pheno_columns,
         association_mode=association_mode,
@@ -286,6 +296,7 @@ def build_regenie_multi_run_plan(regenie_config: config.RegenieConfig, output_ru
         output_run_paths_by_phenotype=tuple(
             prepared_output_run.output_run_paths for prepared_output_run in prepared_output_runs
         ),
+        effective_config_paths=effective_config_paths,
         existing_manifests_by_phenotype=tuple(
             prepared_output_run.existing_manifest for prepared_output_run in prepared_output_runs
         ),
@@ -339,19 +350,18 @@ def build_multi_phenotype_artifacts(
     output_prefix: Path,
     phenotype_names: tuple[str, ...],
     output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    effective_config_paths: tuple[Path, ...],
     final_parquet_paths: tuple[Path | None, ...],
 ) -> tuple[RunArtifacts, ...]:
     """Finalize per-phenotype metadata and user-facing artifacts after a multi run."""
     phenotype_artifacts: list[RunArtifacts] = []
-    for phenotype_name, output_run_paths, final_parquet_path in zip(
+    for phenotype_name, output_run_paths, effective_config_path, final_parquet_path in zip(
         phenotype_names,
         output_run_paths_by_phenotype,
+        effective_config_paths,
         final_parquet_paths,
         strict=True,
     ):
-        effective_config_path = output_run_paths.run_directory / "effective_config.toml"
-        config.write_toml(regenie_config, effective_config_path)
-        extend_run_manifest(output_run_paths.run_directory, regenie_config, phenotype_name, effective_config_path)
         final_regenie_path = None
         if regenie_config.g_output.format in {types.OutputFormat.REGENIE, types.OutputFormat.BOTH}:
             final_regenie_path = output_prefix.with_name(f"{output_prefix.name}_{phenotype_name}.regenie")
@@ -402,27 +412,19 @@ def run_one_phenotype_config(regenie_config: config.RegenieConfig, phenotype_nam
         engine_config=engine_config,
     )
     final_regenie_path = None
-    effective_config_path = None
-    if artifacts.output_run_directory is not None:
-        effective_config_path = artifacts.output_run_directory / "effective_config.toml"
-        config.write_toml(regenie_config, effective_config_path)
-        extend_run_manifest(
-            artifacts.output_run_directory,
-            regenie_config,
-            phenotype_name,
-            effective_config_path,
+    if artifacts.output_run_directory is not None and regenie_config.g_output.format in {
+        types.OutputFormat.REGENIE,
+        types.OutputFormat.BOTH,
+    }:
+        final_regenie_path = output_prefix.with_name(f"{output_prefix.name}_{phenotype_name}.regenie")
+        output_run_paths = output.OutputRunPaths(
+            run_directory=artifacts.output_run_directory,
+            chunks_directory=artifacts.output_run_directory / "chunks",
         )
-        if regenie_config.g_output.format in {types.OutputFormat.REGENIE, types.OutputFormat.BOTH}:
-            final_regenie_path = output_prefix.with_name(f"{output_prefix.name}_{phenotype_name}.regenie")
-            output_run_paths = output.OutputRunPaths(
-                run_directory=artifacts.output_run_directory,
-                chunks_directory=artifacts.output_run_directory / "chunks",
-            )
-            output.finalize_chunks_to_regenie_text(output_run_paths, final_regenie_path)
+        output.finalize_chunks_to_regenie_text(output_run_paths, final_regenie_path)
     return dataclasses.replace(
         artifacts,
         final_regenie=final_regenie_path,
-        effective_config=effective_config_path,
     )
 
 
@@ -462,6 +464,11 @@ def run_existing_engine(
             resume=engine_config.resume,
             resume_mode=engine_config.resume_mode,
         )
+        effective_config_path = write_run_start_metadata(
+            prepared_output_run.output_run_paths,
+            regenie_config,
+            phenotype_name,
+        )
         record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)
         final_parquet_path = dispatch_engine_pipeline(
             regenie_config=regenie_config,
@@ -476,6 +483,7 @@ def run_existing_engine(
         return RunArtifacts(
             output_run_directory=prepared_output_run.output_run_paths.run_directory,
             final_parquet=final_parquet_path,
+            effective_config=effective_config_path,
         )
     finally:
         del output_prefix
@@ -527,6 +535,18 @@ def dispatch_engine_pipeline(
             kernel_config=engine_config.binary_kernel_config,
         )
     return run_regenie2_linear_bgen_pipeline(**common_arguments)
+
+
+def write_run_start_metadata(
+    output_run_paths: output.OutputRunPaths,
+    regenie_config: config.RegenieConfig,
+    phenotype_name: str,
+) -> Path:
+    """Write run metadata before native engine execution starts."""
+    effective_config_path = output_run_paths.run_directory / "effective_config.toml"
+    config.write_toml(regenie_config, effective_config_path)
+    extend_run_manifest(output_run_paths.run_directory, regenie_config, phenotype_name, effective_config_path)
+    return effective_config_path
 
 
 def extend_run_manifest(

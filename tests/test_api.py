@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 import g
 from g import api, types
 from g.interface import config
@@ -124,6 +126,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     assert artifacts.output_run_directory == Path("results/output.g/trait.regenie2_linear.run")
     assert artifacts.final_parquet == Path("results/output.g/trait.regenie2_linear.run/final.parquet")
     assert artifacts.final_regenie is None
+    assert artifacts.effective_config == Path("results/output.g/trait.regenie2_linear.run/effective_config.toml")
     mock_configure_jax_device.assert_called_once_with(types.Device.CPU)
     mock_prepare_output_run.assert_called_once()
     assert mock_pipeline.call_args.kwargs["existing_manifest"] == {"committed_chunks": []}
@@ -136,6 +139,43 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     mock_finalize_regenie.assert_not_called()
     mock_extend_run_manifest.assert_called_once()
     mock_write_toml.assert_called_once()
+
+
+def test_regenie_writes_run_start_metadata_before_pipeline_failure() -> None:
+    run_paths = OutputRunPaths(
+        run_directory=Path("results/output.g/trait.regenie2_linear.run"),
+        chunks_directory=Path("results/output.g/trait.regenie2_linear.run/chunks"),
+    )
+    call_order: list[str] = []
+
+    def record_write_toml(*args: object) -> None:
+        del args
+        call_order.append("effective_config")
+
+    def record_extend_run_manifest(*args: object) -> None:
+        del args
+        call_order.append("manifest")
+
+    def fail_pipeline(**kwargs: object) -> Path:
+        del kwargs
+        call_order.append("pipeline")
+        message = "pipeline failed"
+        raise RuntimeError(message)
+
+    with (
+        patch("g.api.configure_jax_device"),
+        patch(
+            "g.api.output.prepare_output_run",
+            return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
+        ),
+        patch("g.api.run_regenie2_linear_bgen_pipeline", side_effect=fail_pipeline),
+        patch("g.api.extend_run_manifest", side_effect=record_extend_run_manifest),
+        patch("g.interface.config.write_toml", side_effect=record_write_toml),
+        pytest.raises(RuntimeError, match="pipeline failed"),
+    ):
+        api.regenie(build_minimal_config())
+
+    assert call_order == ["effective_config", "manifest", "pipeline"]
 
 
 def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_config() -> None:
@@ -289,16 +329,26 @@ def test_multi_run_plan_forwards_existing_manifests() -> None:
     )
     existing_manifests = ({"phenotype_name": "one"}, {"phenotype_name": "two"})
 
-    with patch(
-        "g.api.output.prepare_output_run",
-        side_effect=(
-            output.PreparedOutputRun(run_paths[0], existing_manifests[0]),
-            output.PreparedOutputRun(run_paths[1], existing_manifests[1]),
+    with (
+        patch(
+            "g.api.output.prepare_output_run",
+            side_effect=(
+                output.PreparedOutputRun(run_paths[0], existing_manifests[0]),
+                output.PreparedOutputRun(run_paths[1], existing_manifests[1]),
+            ),
+        ),
+        patch(
+            "g.api.write_run_start_metadata",
+            side_effect=(Path("run/one/effective_config.toml"), Path("run/two/effective_config.toml")),
         ),
     ):
         plan = api.build_regenie_multi_run_plan(regenie_config, Path("run"))
 
     assert plan.output_run_paths_by_phenotype == run_paths
+    assert plan.effective_config_paths == (
+        Path("run/one/effective_config.toml"),
+        Path("run/two/effective_config.toml"),
+    )
     assert plan.existing_manifests_by_phenotype == existing_manifests
     with patch("g.api.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_pipeline:
         api.dispatch_multi_engine_pipeline(
