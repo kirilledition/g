@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
+import enum
+import hashlib
 import json
 import logging
 import re
@@ -17,10 +20,22 @@ logger = logging.getLogger(__name__)
 OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
-RUN_MANIFEST_SCHEMA_VERSION = 3
+RUN_MANIFEST_SCHEMA_VERSION = 4
+OUTPUT_SCHEMA_VERSION = 1
+DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT = 64
+DEFAULT_JAX_ENABLE_X64 = False
+DEFAULT_JAX_MATMUL_PRECISION = "float32"
+RESUME_POLICY = "manifest_committed_chunks"
 DEFAULT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_WRITER_THREAD_COUNT = 8
 DEFAULT_CHUNKS_PER_ARROW_FILE = 4
+
+
+class MultiPhenotypeSampleMode(enum.StrEnum):
+    """Sample inclusion policy for one output run."""
+
+    SINGLE_PHENOTYPE = "single_phenotype"
+    COMPLETE_CASE_INTERSECTION = "complete_case_intersection"
 
 
 @dataclass(frozen=True)
@@ -112,6 +127,68 @@ def build_binary_correction_plan_manifest(binary_correction_plan: types.BinaryCo
     }
 
 
+def normalize_execution_plan_value(value: typing.Any) -> typing.Any:
+    """Normalize execution-plan values for stable JSON hashing."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return normalize_execution_plan_value(dataclasses.asdict(value))
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {
+            str(key): normalize_execution_plan_value(item_value)
+            for key, item_value in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, list | tuple):
+        return [normalize_execution_plan_value(item_value) for item_value in value]
+    return value
+
+
+def build_execution_plan_hash(execution_plan: dict[str, typing.Any]) -> str:
+    """Build a stable SHA-256 hash for compute/output-affecting run state."""
+    normalized_execution_plan = normalize_execution_plan_value(execution_plan)
+    execution_plan_bytes = json.dumps(
+        normalized_execution_plan,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(execution_plan_bytes).hexdigest()
+
+
+def build_jax_policy_manifest(
+    *,
+    device: types.Device = types.Device.CPU,
+    matmul_precision: types.JaxMatmulPrecision | None = None,
+) -> dict[str, typing.Any]:
+    """Build manifest fields for JAX precision and backend policy."""
+    return {
+        "device": device.value,
+        "enable_x64": DEFAULT_JAX_ENABLE_X64,
+        "matmul_precision": DEFAULT_JAX_MATMUL_PRECISION if matmul_precision is None else matmul_precision.value,
+    }
+
+
+def build_output_writer_manifest(
+    *,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    finalize_parquet: bool = False,
+    writer_thread_count: int = DEFAULT_WRITER_THREAD_COUNT,
+    writer_queue_depth: int = DEFAULT_WRITER_QUEUE_DEPTH,
+    chunks_per_arrow_file: int = DEFAULT_CHUNKS_PER_ARROW_FILE,
+    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+) -> dict[str, typing.Any]:
+    """Build manifest fields for output materialization and writer settings."""
+    return {
+        "output_format": output_format.value,
+        "finalize_parquet": finalize_parquet,
+        "writer_thread_count": writer_thread_count,
+        "writer_queue_depth": writer_queue_depth,
+        "chunks_per_arrow_file": chunks_per_arrow_file,
+        "arrow_compression": arrow_compression.value,
+    }
+
+
 def build_current_run_manifest_header(
     *,
     association_mode: types.AssociationMode,
@@ -129,26 +206,121 @@ def build_current_run_manifest_header(
     binary_correction_plan: types.BinaryCorrectionPlan,
     trusted_no_missing_diploid: bool,
     sample_key_mode: types.SampleKeyMode,
+    binary_kernel_config: typing.Any | None = None,
+    bgen_decode_tile_variant_count: int = DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
+    jax_device: types.Device = types.Device.CPU,
+    jax_matmul_precision: types.JaxMatmulPrecision | None = None,
+    multi_phenotype_sample_mode: MultiPhenotypeSampleMode = MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    finalize_parquet: bool = False,
+    writer_thread_count: int = DEFAULT_WRITER_THREAD_COUNT,
+    writer_queue_depth: int = DEFAULT_WRITER_QUEUE_DEPTH,
+    chunks_per_arrow_file: int = DEFAULT_CHUNKS_PER_ARROW_FILE,
+    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
 ) -> dict[str, typing.Any]:
     """Build immutable run manifest fields from the current execution plan."""
-    return {
+    bgen_fingerprint = build_file_fingerprint(bgen_path)
+    sample_fingerprint = build_file_fingerprint(sample_path)
+    phenotype_file_fingerprint = build_file_fingerprint(phenotype_path)
+    covariate_file_fingerprint = build_file_fingerprint(covariate_path)
+    prediction_list_fingerprint = build_file_fingerprint(prediction_list_path)
+    binary_correction_plan_manifest = build_binary_correction_plan_manifest(binary_correction_plan)
+    output_writer_manifest = build_output_writer_manifest(
+        output_format=output_format,
+        finalize_parquet=finalize_parquet,
+        writer_thread_count=writer_thread_count,
+        writer_queue_depth=writer_queue_depth,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression,
+    )
+    jax_policy_manifest = build_jax_policy_manifest(device=jax_device, matmul_precision=jax_matmul_precision)
+    execution_plan = normalize_execution_plan_value(
+        {
+            "manifest_schema_version": RUN_MANIFEST_SCHEMA_VERSION,
+            "output_schema_version": OUTPUT_SCHEMA_VERSION,
+            "association_mode": association_mode,
+            "bgen": bgen_fingerprint,
+            "sample": sample_fingerprint,
+            "phenotype_file": phenotype_file_fingerprint,
+            "phenotype_name": phenotype_name,
+            "covariate_file": covariate_file_fingerprint,
+            "covariate_names": covariate_names,
+            "prediction_list": prediction_list_fingerprint,
+            "sample_count": sample_count,
+            "variant_count": variant_count,
+            "chunk_size": chunk_size,
+            "variant_limit": variant_limit,
+            "binary_correction_plan": binary_correction_plan_manifest,
+            "binary_kernel_config": binary_kernel_config,
+            "trusted_no_missing_diploid": trusted_no_missing_diploid,
+            "trusted_bgen_validation_mode": trusted_bgen_validation_mode,
+            "sample_key_mode": sample_key_mode,
+            "bgen_decode_tile_variant_count": bgen_decode_tile_variant_count,
+            "jax_policy": jax_policy_manifest,
+            "multi_phenotype_sample_mode": multi_phenotype_sample_mode,
+            "output_writer": output_writer_manifest,
+            "resume_policy": RESUME_POLICY,
+        }
+    )
+    header = {
         "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
+        "output_schema_version": OUTPUT_SCHEMA_VERSION,
         "association_mode": str(association_mode),
-        "bgen": build_file_fingerprint(bgen_path),
-        "sample": build_file_fingerprint(sample_path),
-        "phenotype_file": build_file_fingerprint(phenotype_path),
+        "bgen": bgen_fingerprint,
+        "sample": sample_fingerprint,
+        "phenotype_file": phenotype_file_fingerprint,
         "phenotype_name": phenotype_name,
-        "covariate_file": build_file_fingerprint(covariate_path),
+        "covariate_file": covariate_file_fingerprint,
         "covariate_names": list(covariate_names),
-        "prediction_list": build_file_fingerprint(prediction_list_path),
+        "prediction_list": prediction_list_fingerprint,
         "sample_count": sample_count,
         "variant_count": variant_count,
         "chunk_size": chunk_size,
         "variant_limit": variant_limit,
-        "binary_correction_plan": build_binary_correction_plan_manifest(binary_correction_plan),
+        "binary_correction_plan": binary_correction_plan_manifest,
+        "binary_kernel_config": normalize_execution_plan_value(binary_kernel_config),
         "trusted_no_missing_diploid": trusted_no_missing_diploid,
+        "trusted_bgen_validation_mode": str(trusted_bgen_validation_mode),
         "sample_key_mode": str(sample_key_mode),
+        "bgen_decode_tile_variant_count": bgen_decode_tile_variant_count,
+        "jax_policy": jax_policy_manifest,
+        "multi_phenotype_sample_mode": multi_phenotype_sample_mode.value,
+        "output_writer": output_writer_manifest,
+        "resume_policy": RESUME_POLICY,
+        "execution_plan": execution_plan,
     }
+    header["execution_plan_hash"] = build_execution_plan_hash(execution_plan)
+    return header
+
+
+def find_first_manifest_mismatch_path(
+    manifest_value: typing.Any,
+    current_value: typing.Any,
+    field_path: str,
+) -> str | None:
+    """Return the first nested field path that differs between two manifest values."""
+    if isinstance(manifest_value, dict) and isinstance(current_value, dict):
+        for key in sorted(set(manifest_value) | set(current_value)):
+            nested_path = f"{field_path}.{key}"
+            if key not in manifest_value or key not in current_value:
+                return nested_path
+            mismatch_path = find_first_manifest_mismatch_path(manifest_value[key], current_value[key], nested_path)
+            if mismatch_path is not None:
+                return mismatch_path
+        return None
+    if isinstance(manifest_value, list) and isinstance(current_value, list):
+        for index, (manifest_item, current_item) in enumerate(zip(manifest_value, current_value, strict=False)):
+            nested_path = f"{field_path}[{index}]"
+            mismatch_path = find_first_manifest_mismatch_path(manifest_item, current_item, nested_path)
+            if mismatch_path is not None:
+                return mismatch_path
+        if len(manifest_value) != len(current_value):
+            return field_path
+        return None
+    if manifest_value != current_value:
+        return field_path
+    return None
 
 
 def validate_manifest_compatibility(
@@ -160,8 +332,9 @@ def validate_manifest_compatibility(
         if field_name not in manifest:
             message = f"Run manifest field '{field_name}' is missing."
             raise ValueError(message)
-        if manifest[field_name] != current_value:
-            message = f"Run manifest field '{field_name}' is incompatible with the requested run."
+        mismatch_path = find_first_manifest_mismatch_path(manifest[field_name], current_value, field_name)
+        if mismatch_path is not None:
+            message = f"Run manifest field '{mismatch_path}' is incompatible with the requested run."
             raise ValueError(message)
 
 

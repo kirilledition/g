@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import typing
 from pathlib import Path
@@ -13,6 +14,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from g import _core, types
+from g.compute import regenie2_binary_types
 from g.io import output
 from g.types import AssociationMode
 
@@ -106,6 +108,7 @@ def build_test_header(
     tmp_path: Path,
     *,
     association_mode: AssociationMode = AssociationMode.REGENIE2_LINEAR,
+    binary_kernel_config: typing.Any | None = None,
 ) -> dict[str, typing.Any]:
     bgen_path = tmp_path / "study.bgen"
     sample_path = tmp_path / "study.sample"
@@ -130,6 +133,7 @@ def build_test_header(
         binary_correction_plan=types.BinaryCorrectionPlan(),
         trusted_no_missing_diploid=False,
         sample_key_mode=types.SampleKeyMode.IID,
+        binary_kernel_config=binary_kernel_config,
     )
 
 
@@ -308,6 +312,30 @@ def test_prepare_output_run_strict_resume_validates_manifest_chunks(tmp_path: Pa
     assert initialized_output_run.committed_chunk_identifiers == frozenset({0, 2})
 
 
+def test_fast_resume_trusts_only_manifest_committed_chunks(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path)
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    initialize_test_output_run(prepared_output_run, current_header)
+    (prepared_output_run.output_run_paths.chunks_directory / "chunk_000000000.arrow").write_bytes(b"staged")
+
+    resumed_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=True,
+    )
+    initialized_output_run = initialize_test_output_run(resumed_output_run, current_header, resume=True)
+
+    assert initialized_output_run.committed_chunk_identifiers == frozenset()
+    manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    assert manifest is not None
+    assert manifest["resume_policy"] == output.RESUME_POLICY
+    assert manifest["committed_chunks"] == []
+
+
 def test_initialize_output_run_rejects_incompatible_manifest_even_in_fast_mode(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
     prepared_output_run = output.prepare_output_run(
@@ -329,6 +357,22 @@ def test_initialize_output_run_rejects_incompatible_manifest_even_in_fast_mode(t
         initialize_test_output_run(resumed_output_run, current_header, resume=True)
 
 
+def build_test_binary_kernel_config() -> regenie2_binary_types.BinaryKernelConfig:
+    """Build a non-default binary kernel config for manifest tests."""
+    return regenie2_binary_types.BinaryKernelConfig(
+        maximum_null_iterations=13,
+        null_logistic_coefficient_tolerance=1.0e-5,
+        firth_batch_size=7,
+        firth_candidate_capacity=11,
+        firth_maximum_iterations=17,
+        firth_gradient_tolerance=2.0e-5,
+        firth_coefficient_tolerance=3.0e-5,
+        firth_likelihood_tolerance=4.0e-5,
+        firth_maximum_step_size=6.0,
+        use_block_firth_math=True,
+    )
+
+
 @pytest.mark.parametrize(
     ("field_name", "replacement_value"),
     [
@@ -346,8 +390,25 @@ def test_initialize_output_run_rejects_incompatible_manifest_even_in_fast_mode(t
             "binary_correction_plan",
             {"method": "firth_approximate", "p_threshold": 0.01, "firth_se": False},
         ),
+        ("binary_kernel_config", output.normalize_execution_plan_value(build_test_binary_kernel_config())),
         ("trusted_no_missing_diploid", True),
+        ("trusted_bgen_validation_mode", "assume_validated"),
         ("sample_key_mode", "fid_iid"),
+        ("output_schema_version", 2),
+        ("bgen_decode_tile_variant_count", 128),
+        ("jax_policy", {"device": "gpu", "enable_x64": False, "matmul_precision": "highest"}),
+        ("multi_phenotype_sample_mode", "complete_case_intersection"),
+        (
+            "output_writer",
+            {
+                "output_format": "arrow",
+                "finalize_parquet": False,
+                "writer_thread_count": 2,
+                "writer_queue_depth": 3,
+                "chunks_per_arrow_file": 2,
+                "arrow_compression": "none",
+            },
+        ),
         ("variant_limit", 8),
     ],
 )
@@ -375,6 +436,70 @@ def test_initialize_output_run_rejects_manifest_header_mismatch(
     )
 
     with pytest.raises(ValueError, match=field_name):
+        initialize_test_output_run(resumed_output_run, current_header, resume=True)
+
+
+@pytest.mark.parametrize(
+    ("nested_field_name", "replacement_value"),
+    [
+        ("association_mode", "regenie2_binary"),
+        ("phenotype_name", "other_trait"),
+        ("covariate_names", ["intercept", "age"]),
+        ("prediction_list", {"path": "/different/predictions.list", "size": 1, "mtime_ns": 2}),
+        (
+            "binary_correction_plan",
+            {"method": "firth_approximate", "p_threshold": 0.01, "firth_se": False},
+        ),
+        ("binary_kernel_config", output.normalize_execution_plan_value(build_test_binary_kernel_config())),
+        ("sample_key_mode", "fid_iid"),
+        ("output_schema_version", 2),
+        ("trusted_no_missing_diploid", True),
+        ("bgen_decode_tile_variant_count", 128),
+        ("chunk_size", 4),
+    ],
+)
+def test_initialize_output_run_rejects_execution_plan_hash_mismatch(
+    tmp_path: Path,
+    nested_field_name: str,
+    replacement_value: typing.Any,
+) -> None:
+    current_header = build_test_header(tmp_path)
+    manifest_header = copy.deepcopy(current_header)
+    manifest_header["execution_plan"][nested_field_name] = replacement_value
+    manifest_header["execution_plan_hash"] = output.build_execution_plan_hash(manifest_header["execution_plan"])
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / f"output-execution-plan-{nested_field_name}",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    resumed_output_run = output.prepare_output_run(
+        output_root=tmp_path / f"output-execution-plan-{nested_field_name}",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=True,
+    )
+
+    with pytest.raises(ValueError, match=rf"execution_plan\.{nested_field_name}"):
+        initialize_test_output_run(resumed_output_run, current_header, resume=True)
+
+
+def test_initialize_output_run_rejects_execution_plan_hash_only_mismatch(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path)
+    manifest_header = dict(current_header)
+    manifest_header["execution_plan_hash"] = "0" * 64
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output-execution-plan-hash",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    output.write_run_manifest(prepared_output_run.output_run_paths, {**manifest_header, "committed_chunks": []})
+    resumed_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output-execution-plan-hash",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=True,
+    )
+
+    with pytest.raises(ValueError, match="execution_plan_hash"):
         initialize_test_output_run(resumed_output_run, current_header, resume=True)
 
 
