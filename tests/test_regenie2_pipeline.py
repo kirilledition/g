@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import queue
+import threading
 import typing
 from pathlib import Path
 from types import SimpleNamespace
@@ -206,6 +208,70 @@ class SparseOnlyChunkStats(ExplodingChunkStats):
     @property
     def is_sparse_candidate(self) -> np.ndarray:
         return np.asarray([True, False], dtype=np.bool_)
+
+
+def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> None:
+    result_queue: queue.Queue[
+        callbacks.Regenie2ResultWriteWorkItem | callbacks.Regenie2MultiResultWriteWorkItem | None
+    ] = queue.Queue(maxsize=1)
+    result_queue.put_nowait(None)
+    stop_event = threading.Event()
+    result_worker_thread = threading.Thread(target=stop_event.wait, name="failed-result-worker")
+    result_worker_thread.start()
+    callback = object.__new__(callbacks.NativeBgenCallbackRunner)
+    callback.result_queue = result_queue
+    callback.result_worker_error = RuntimeError("writer failed")
+    callback.result_worker_thread = result_worker_thread
+
+    try:
+        callback.stop_result_worker()
+    finally:
+        stop_event.set()
+        result_worker_thread.join()
+
+    assert result_queue.full()
+
+
+def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
+    result_queue: queue.Queue[
+        callbacks.Regenie2ResultWriteWorkItem | callbacks.Regenie2MultiResultWriteWorkItem | None
+    ] = queue.Queue(maxsize=1)
+    result_queue.put_nowait(None)
+    stop_event = threading.Event()
+    result_worker_thread = threading.Thread(target=stop_event.wait, name="blocked-result-worker")
+    result_worker_thread.start()
+    callback = object.__new__(callbacks.NativeBgenCallbackRunner)
+    callback.result_queue = result_queue
+    callback.result_worker_error = None
+    callback.result_worker_thread = result_worker_thread
+
+    try:
+        with (
+            patch("g.engine.callbacks.RESULT_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
+            np.testing.assert_raises_regex(callbacks.NativeBgenWorkerShutdownError, "blocked-result-worker"),
+        ):
+            callback.stop_result_worker()
+    finally:
+        stop_event.set()
+        result_worker_thread.join()
+
+
+def test_join_result_worker_raises_when_worker_does_not_stop() -> None:
+    stop_event = threading.Event()
+    result_worker_thread = threading.Thread(target=stop_event.wait, name="stuck-result-worker")
+    result_worker_thread.start()
+    callback = object.__new__(callbacks.NativeBgenCallbackRunner)
+    callback.result_worker_thread = result_worker_thread
+
+    try:
+        with (
+            patch("g.engine.callbacks.RESULT_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
+            np.testing.assert_raises_regex(callbacks.NativeBgenWorkerShutdownError, "stuck-result-worker"),
+        ):
+            callback.join_result_worker()
+    finally:
+        stop_event.set()
+        result_worker_thread.join()
 
 
 def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -> None:

@@ -25,6 +25,19 @@ from g.compute import (
 )
 from g.engine import timing
 
+RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 5.0
+
+
+class NativeBgenWorkerShutdownError(RuntimeError):
+    """Raised when a native callback worker does not stop cleanly."""
+
+    def __init__(self, *, worker_name: str, timeout_seconds: float) -> None:
+        """Initialize a worker shutdown error."""
+        self.worker_name = worker_name
+        self.timeout_seconds = timeout_seconds
+        message = f"native pipeline worker {worker_name!r} did not stop within {timeout_seconds:.1f} seconds"
+        super().__init__(message)
+
 
 @dataclass(frozen=True)
 class PreprocessedDosageChunkWorkItem:
@@ -464,7 +477,7 @@ class NativeBgenCallbackRunner:
         self.put_dosage_work_item(None)
         self.worker_thread.join()
         self.stop_result_worker()
-        self.result_worker_thread.join()
+        self.join_result_worker()
         self.raise_worker_error_if_present()
 
     def abort(self) -> None:
@@ -476,12 +489,31 @@ class NativeBgenCallbackRunner:
 
     def stop_result_worker(self) -> None:
         """Signal the result worker to exit after queued results drain."""
-        while True:
+        stop_deadline = time.monotonic() + RESULT_WORKER_JOIN_TIMEOUT_SECONDS
+        while time.monotonic() < stop_deadline:
+            if self.result_worker_error is not None:
+                return
+            if not self.result_worker_thread.is_alive():
+                return
+            timeout_seconds = max(0.0, min(0.1, stop_deadline - time.monotonic()))
             try:
-                self.result_queue.put(None, timeout=0.1)
+                self.result_queue.put(None, timeout=timeout_seconds)
                 return
             except queue.Full:
                 continue
+        raise NativeBgenWorkerShutdownError(
+            worker_name=self.result_worker_thread.name,
+            timeout_seconds=RESULT_WORKER_JOIN_TIMEOUT_SECONDS,
+        )
+
+    def join_result_worker(self) -> None:
+        """Join the result writer worker with a bounded shutdown wait."""
+        self.result_worker_thread.join(timeout=RESULT_WORKER_JOIN_TIMEOUT_SECONDS)
+        if self.result_worker_thread.is_alive():
+            raise NativeBgenWorkerShutdownError(
+                worker_name=self.result_worker_thread.name,
+                timeout_seconds=RESULT_WORKER_JOIN_TIMEOUT_SECONDS,
+            )
 
     def acquire_dosage_buffer(self, sample_count: int, variant_count: int) -> npt.NDArray[np.float32]:
         """Return a reusable host dosage buffer for Rust to fill."""
