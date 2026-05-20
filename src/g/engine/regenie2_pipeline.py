@@ -332,6 +332,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
         trusted_no_missing_diploid=trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
         correction_plan=types.BinaryCorrectionPlan(),
+        kernel_config=None,
         stage_timing_recorder=stage_timing_recorder,
         alignment_config=alignment_config,
         association_mode=types.AssociationMode.REGENIE2_LINEAR,
@@ -361,6 +362,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
+    kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
 ) -> tuple[Path | None, ...]:
@@ -387,6 +389,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
         trusted_no_missing_diploid=trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
         correction_plan=correction_plan,
+        kernel_config=kernel_config,
         stage_timing_recorder=stage_timing_recorder,
         alignment_config=alignment_config,
         association_mode=types.AssociationMode.REGENIE2_BINARY,
@@ -416,12 +419,14 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     correction_plan: types.BinaryCorrectionPlan,
+    kernel_config: regenie2_binary_types.BinaryKernelConfig | None,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None,
     association_mode: types.AssociationMode,
 ) -> tuple[Path | None, ...]:
     """Shared implementation for native multi-phenotype BGEN pipelines."""
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
+    resolved_kernel_config = kernel_config or regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
     use_variant_major = True
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
     engine_start_time = time.perf_counter()
@@ -522,6 +527,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
             writer_sessions=writer_sessions,
             committed_chunk_identifier_sets=committed_chunk_identifier_sets,
             correction_plan=correction_plan,
+            kernel_config=resolved_kernel_config,
             staging_depth=staging_depth,
             stage_timing_recorder=stage_timing_recorder,
         )

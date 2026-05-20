@@ -269,6 +269,7 @@ def dispatch_multi_phenotype_engine_pipeline(
         return run_regenie2_multi_phenotype_binary_bgen_pipeline(
             **common_arguments,
             correction_plan=plan.binary_correction_plan,
+            kernel_config=plan.kernel_config.binary_kernel_config,
         )
     return run_regenie2_multi_phenotype_linear_bgen_pipeline(**common_arguments)
 

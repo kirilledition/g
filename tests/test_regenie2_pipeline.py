@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import queue
 import threading
 import typing
@@ -654,6 +655,102 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
     assert mock_variant_major_compute.call_args.kwargs["kernel_config"] is kernel_config
     mock_sample_major_compute.assert_not_called()
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
+
+
+def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config() -> None:
+    writer_sessions = (FakeWriterSession(), FakeWriterSession())
+    kernel_config = dataclasses.replace(
+        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
+        maximum_null_iterations=3,
+        null_logistic_coefficient_tolerance=1.0e-12,
+        firth_batch_size=1,
+        firth_maximum_iterations=3,
+        firth_gradient_tolerance=1.0e-8,
+        firth_coefficient_tolerance=1.0e-8,
+        firth_likelihood_tolerance=1.0e-8,
+        firth_maximum_step_size=1.0,
+        use_block_firth_math=True,
+    )
+    result = regenie2_binary_types.Regenie2MultiBinaryChunkResult(
+        beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
+        standard_error=jnp.asarray([[0.5, 0.6], [0.7, 0.8]], dtype=jnp.float32),
+        chi_squared=jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([[5.0, 6.0], [7.0, 8.0]], dtype=jnp.float32),
+        extra_code=jnp.asarray(
+            [
+                [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.FIRTH.value],
+                [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.FIRTH.value],
+            ],
+            dtype=jnp.int32,
+        ),
+        valid_mask=jnp.asarray([[True, True], [True, True]]),
+        firth_iteration_count=jnp.asarray([[0, 2], [0, 2]], dtype=jnp.int32),
+        firth_failure_code=jnp.asarray(
+            [
+                [types.FirthFailureCode.NONE.value, types.FirthFailureCode.NONE.value],
+                [types.FirthFailureCode.NONE.value, types.FirthFailureCode.NONE.value],
+            ],
+            dtype=jnp.int32,
+        ),
+        firth_convergence_reason_code=jnp.asarray(
+            [
+                [
+                    regenie2_binary.FirthConvergenceReason.NONE.value,
+                    regenie2_binary.FirthConvergenceReason.CONVERGED.value,
+                ],
+                [
+                    regenie2_binary.FirthConvergenceReason.NONE.value,
+                    regenie2_binary.FirthConvergenceReason.CONVERGED.value,
+                ],
+            ],
+            dtype=jnp.int32,
+        ),
+    )
+    chromosome_state = SimpleNamespace(
+        fitted_probability=jnp.asarray([[0.5, 0.5], [0.5, 0.5]], dtype=jnp.float32),
+        null_logistic_iteration_count=jnp.asarray([3, 3], dtype=jnp.int32),
+    )
+    callback = callbacks.MultiBinaryRegenie2PipelineCallback(
+        run_input=build_native_multi_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_sessions=writer_sessions,
+        committed_chunk_identifier_sets=(set(), set()),
+        correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
+        kernel_config=kernel_config,
+    )
+    variant_major_genotype_matrix = np.asarray(
+        [
+            [1.0, 2.0],
+            [3.0, 4.0],
+        ],
+        dtype=np.float32,
+    )
+    chunk_stats = SimpleNamespace(is_sparse_candidate=np.asarray([True, False], dtype=np.bool_))
+
+    with (
+        patch(
+            "g.compute.regenie2_binary.prepare_regenie2_multi_binary_chromosome_state",
+            return_value=chromosome_state,
+        ) as mock_prepare,
+        patch(
+            "g.compute.regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state",
+            return_value=result,
+        ) as mock_compute,
+    ):
+        callback.compute_preprocessed_variant_major_dosage_chunk(
+            metadata=build_native_metadata(),
+            genotype_matrix_by_variant=variant_major_genotype_matrix,
+            chunk_stats=typing.cast("typing.Any", chunk_stats),
+        )
+        callback.finish()
+
+    assert mock_prepare.call_args.args[3] is kernel_config
+    genotype_matrix = mock_compute.call_args.kwargs["genotype_matrix"]
+    np.testing.assert_array_equal(np.asarray(genotype_matrix), np.transpose(variant_major_genotype_matrix))
+    sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
+    np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False])
+    assert mock_compute.call_args.kwargs["kernel_config"] is kernel_config
+    assert tuple(len(writer_session.native_chunks) for writer_session in writer_sessions) == (1, 1)
 
 
 def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
