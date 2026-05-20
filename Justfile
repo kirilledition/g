@@ -393,6 +393,10 @@ test:
 codex-tasks-sync:
     {{server_env}} && uv run python scripts/codex_task_farm.py sync-manifest
 
+# Check Codex task farm prerequisites
+codex-tasks-doctor *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py doctor {{arguments}}
+
 # List Codex task farm tasks
 codex-tasks-list *arguments:
     {{server_env}} && uv run python scripts/codex_task_farm.py list {{arguments}}
@@ -413,9 +417,9 @@ codex-tasks-review +arguments:
 codex-tasks-integrate +arguments:
     {{server_env}} && uv run python scripts/codex_task_farm.py integrate {{arguments}}
 
-# Integrate all implemented/reviewed Codex task branches into main in order
-codex-tasks-integrate-ready:
-    {{server_env}} && uv run python scripts/codex_task_farm.py integrate-ready
+# Integrate all reviewed Codex task branches into the integration worktree in order
+codex-tasks-integrate-ready *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py integrate-ready {{arguments}}
 
 upgrade-python-deps:
     {{server_env}} && uv sync -U --group dev --group gpu

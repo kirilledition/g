@@ -10,6 +10,8 @@ import enum
 import json
 import os
 import re
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -22,20 +24,11 @@ REPO_RELATIVE_SOURCE_PATH = Path("docs/code-review.md")
 REPO_RELATIVE_MANIFEST_PATH = Path("docs/code-review.tasks.json")
 REPO_RELATIVE_STATE_DIRECTORY = Path(".codex-task-worktrees")
 DEFAULT_WORKTREE_ROOT = "../g-worktrees"
+DEFAULT_INTEGRATION_WORKTREE = "../g-worktrees/integration-code-review"
+DEFAULT_INTEGRATION_BRANCH = "integration/code-review"
 MANIFEST_VERSION = 1
 
-CANONICAL_TASK_KEYS = {
-    "id",
-    "slug",
-    "title",
-    "category",
-    "source_start_line",
-    "source_end_line",
-    "body_markdown",
-    "guidance_markdown",
-    "branch",
-    "worktree",
-}
+PRESERVED_MANUAL_KEYS = {"dependencies", "status", "enabled", "assignee", "notes", "manual_expected_paths"}
 
 
 class TaskStatus(enum.StrEnum):
@@ -81,6 +74,38 @@ class CommandResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+@dataclasses.dataclass(frozen=True)
+class WorkerLaunch:
+    """Detached or foreground worker process."""
+
+    task_identifier: int
+    process_identifier: int
+    process: subprocess.Popen[str]
+
+
+@dataclasses.dataclass(frozen=True)
+class WorkerCompletion:
+    """Classification of a finished worker."""
+
+    status: TaskStatus
+    final_message_exists: bool
+    worktree_clean: bool
+    branch_ahead: bool
+    exit_code: int | None
+    verification: str
+    reason: str
+
+
+@dataclasses.dataclass(frozen=True)
+class DoctorCheck:
+    """One doctor check result."""
+
+    name: str
+    passed: bool
+    warning: bool
+    message: str
 
 
 def repository_root() -> Path:
@@ -237,6 +262,10 @@ def default_manifest() -> JsonObject:
             "reviewer_reasoning_effort": "xhigh",
             "integrator_model": "gpt-5.5",
             "integrator_reasoning_effort": "xhigh",
+            "worker_dangerously_bypass_approvals": False,
+            "integrator_dangerously_bypass_approvals": False,
+            "integration_worktree": DEFAULT_INTEGRATION_WORKTREE,
+            "integration_branch": DEFAULT_INTEGRATION_BRANCH,
             "jobs": 5,
         },
         "tasks": [],
@@ -276,9 +305,9 @@ def build_task_record(defaults: JsonObject, parsed_task: ParsedTask, existing_ta
     }
     if existing_task is None:
         return task_record
-    for key, value in existing_task.items():
-        if key not in CANONICAL_TASK_KEYS:
-            task_record[key] = value
+    for key in PRESERVED_MANUAL_KEYS:
+        if key in existing_task:
+            task_record[key] = existing_task[key]
     return task_record
 
 
@@ -393,6 +422,161 @@ def ensure_task_worktree(repository_directory: Path, task: JsonObject, base_bran
     return worktree_path
 
 
+def ensure_integration_worktree(repository_directory: Path, defaults: JsonObject) -> Path:
+    """Create the integration worktree if it is missing."""
+    base_branch = str(defaults.get("base_branch", "main"))
+    integration_branch = str(defaults.get("integration_branch", DEFAULT_INTEGRATION_BRANCH))
+    integration_worktree = str(defaults.get("integration_worktree", DEFAULT_INTEGRATION_WORKTREE))
+    worktree_path = resolve_manifest_path(repository_directory, integration_worktree)
+    if worktree_path.exists():
+        return worktree_path
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    if git_branch_exists(repository_directory, integration_branch):
+        command_arguments = ["git", "worktree", "add", str(worktree_path), integration_branch]
+    else:
+        command_arguments = ["git", "worktree", "add", "-b", integration_branch, str(worktree_path), base_branch]
+    ensure_success(run_command(command_arguments, cwd=repository_directory))
+    return worktree_path
+
+
+def git_worktree_is_clean(worktree_path: Path) -> bool:
+    """Return whether a worktree has no uncommitted changes."""
+    if not worktree_path.exists():
+        return False
+    command_result = run_command(["git", "status", "--short"], cwd=worktree_path)
+    return command_result.returncode == 0 and not command_result.stdout.strip()
+
+
+def git_branch_ahead_count(worktree_path: Path, base_branch: str) -> int:
+    """Return how many commits HEAD is ahead of the base branch."""
+    command_result = run_command(["git", "rev-list", "--count", f"{base_branch}..HEAD"], cwd=worktree_path)
+    if command_result.returncode != 0:
+        return 0
+    stripped_stdout = command_result.stdout.strip()
+    if not stripped_stdout:
+        return 0
+    return int(stripped_stdout)
+
+
+def read_worker_exit_code(exit_code_path: Path) -> int | None:
+    """Read a worker wrapper exit code if present."""
+    if not exit_code_path.exists():
+        return None
+    stripped_text = exit_code_path.read_text().strip()
+    if not stripped_text:
+        return None
+    return int(stripped_text)
+
+
+def classify_worker_completion(
+    repository_directory: Path,
+    manifest: JsonObject,
+    task: JsonObject,
+) -> WorkerCompletion:
+    """Classify a finished worker from final output, git state, and wrapper exit code."""
+    defaults = typing.cast("JsonObject", manifest["defaults"])
+    task_identifier = int(task["id"])
+    run_directory = state_directory(repository_directory, manifest) / "runs" / f"{task_identifier:02d}"
+    final_message_exists = (run_directory / "worker-final.md").exists()
+    worktree_path = resolve_manifest_path(repository_directory, str(task["worktree"]))
+    worktree_clean = git_worktree_is_clean(worktree_path)
+    branch_ahead = git_branch_ahead_count(worktree_path, str(defaults.get("base_branch", "main"))) > 0
+    exit_code_path = run_directory / "exit-code.txt"
+    try:
+        exit_code = read_worker_exit_code(exit_code_path)
+    except ValueError:
+        return WorkerCompletion(
+            status=TaskStatus.BLOCKED,
+            final_message_exists=final_message_exists,
+            worktree_clean=worktree_clean,
+            branch_ahead=branch_ahead,
+            exit_code=None,
+            verification="invalid-exit-code",
+            reason="worker exit-code.txt is not an integer",
+        )
+    if exit_code is not None and exit_code != 0:
+        return WorkerCompletion(
+            status=TaskStatus.BLOCKED,
+            final_message_exists=final_message_exists,
+            worktree_clean=worktree_clean,
+            branch_ahead=branch_ahead,
+            exit_code=exit_code,
+            verification="failed",
+            reason=f"worker exited with {exit_code}",
+        )
+    if not final_message_exists:
+        return WorkerCompletion(
+            status=TaskStatus.BLOCKED,
+            final_message_exists=False,
+            worktree_clean=worktree_clean,
+            branch_ahead=branch_ahead,
+            exit_code=exit_code,
+            verification="missing-final",
+            reason="worker final message is missing",
+        )
+    if not worktree_clean:
+        return WorkerCompletion(
+            status=TaskStatus.BLOCKED,
+            final_message_exists=True,
+            worktree_clean=False,
+            branch_ahead=branch_ahead,
+            exit_code=exit_code,
+            verification="dirty-worktree",
+            reason="task worktree has uncommitted changes",
+        )
+    if not branch_ahead:
+        return WorkerCompletion(
+            status=TaskStatus.BLOCKED,
+            final_message_exists=True,
+            worktree_clean=True,
+            branch_ahead=False,
+            exit_code=exit_code,
+            verification="no-task-commit",
+            reason="task branch has no commits ahead of base",
+        )
+    if exit_code is None:
+        return WorkerCompletion(
+            status=TaskStatus.IMPLEMENTED,
+            final_message_exists=True,
+            worktree_clean=True,
+            branch_ahead=True,
+            exit_code=None,
+            verification="legacy-unverified",
+            reason="legacy run has no wrapper exit-code.txt",
+        )
+    return WorkerCompletion(
+        status=TaskStatus.IMPLEMENTED,
+        final_message_exists=True,
+        worktree_clean=True,
+        branch_ahead=True,
+        exit_code=exit_code,
+        verification="verified",
+        reason="worker completed cleanly",
+    )
+
+
+def write_worker_wrapper(
+    wrapper_path: Path,
+    prompt_path: Path,
+    exit_code_path: Path,
+    command_arguments: list[str],
+) -> None:
+    """Write the per-task worker wrapper."""
+    script = "\n".join(
+        [
+            "#!/usr/bin/env bash",
+            "set +e",
+            f"{shlex.join(command_arguments)} < {shlex.quote(str(prompt_path))}",
+            "worker_exit_code=$?",
+            f"printf '%s\\n' \"${{worker_exit_code}}\" > {shlex.quote(str(exit_code_path))}",
+            "exit \"${worker_exit_code}\"",
+            "",
+        ]
+    )
+    wrapper_path.write_text(script)
+    wrapper_path.chmod(0o755)
+
+
 def build_worker_prompt(task: JsonObject) -> str:
     """Build the implementation prompt for a worker agent."""
     return f"""You are a Codex implementation worker in a dedicated git worktree.
@@ -429,7 +613,7 @@ Lead with findings ordered by severity. If there are no findings, say that expli
 """
 
 
-def build_integration_prompt(task: JsonObject, review_report_path: Path | None) -> str:
+def build_integration_prompt(task: JsonObject, review_report_path: Path | None, integration_branch: str) -> str:
     """Build the integration prompt for the main agent."""
     review_instruction = (
         f"Read the review report at {review_report_path} before merging."
@@ -438,14 +622,14 @@ def build_integration_prompt(task: JsonObject, review_report_path: Path | None) 
     )
     return f"""You are the main integration agent for this repository.
 
-Integrate task branch {task["branch"]} into main.
+Integrate task branch {task["branch"]} into the integration branch {integration_branch}.
 
 Task {task["id"]}: {task["title"]}
 {review_instruction}
 
 Requirements:
-- Start by checking that main is clean and up to date enough for a local merge.
-- Inspect the task commits and diff against main.
+- Start by checking that the integration worktree is clean and on {integration_branch}.
+- Inspect the task commits and diff against the base branch.
 - Resolve merge conflicts if they occur.
 - Fix concrete review findings before committing.
 - Run the narrow relevant tests first, then the broadest feasible project check.
@@ -456,9 +640,16 @@ Do not merge unrelated branches. Do not touch data/. Do not revert user changes 
 """
 
 
-def build_worker_command(worktree_path: Path, model: str, reasoning_effort: str, final_message_path: Path) -> list[str]:
+def build_worker_command(
+    worktree_path: Path,
+    model: str,
+    reasoning_effort: str,
+    final_message_path: Path,
+    *,
+    dangerously_bypass_approvals: bool,
+) -> list[str]:
     """Build the worker Codex command."""
-    return [
+    command_arguments = [
         "codex",
         "--cd",
         str(worktree_path),
@@ -466,20 +657,21 @@ def build_worker_command(worktree_path: Path, model: str, reasoning_effort: str,
         model,
         "-c",
         f'model_reasoning_effort="{reasoning_effort}"',
-        "--dangerously-bypass-approvals-and-sandbox",
         "exec",
         "--json",
         "-o",
         str(final_message_path),
         "-",
     ]
+    if dangerously_bypass_approvals:
+        command_arguments.insert(7, "--dangerously-bypass-approvals-and-sandbox")
+    return command_arguments
 
 
 def build_review_command(
     worktree_path: Path,
     model: str,
     reasoning_effort: str,
-    base_branch: str,
     final_message_path: Path,
 ) -> list[str]:
     """Build the Codex review command."""
@@ -487,15 +679,15 @@ def build_review_command(
         "codex",
         "--cd",
         str(worktree_path),
-        "exec",
-        "review",
         "-m",
         model,
         "-c",
         f'model_reasoning_effort="{reasoning_effort}"',
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--base",
-        base_branch,
+        "exec",
+        "--sandbox",
+        "read-only",
+        "--ask-for-approval",
+        "never",
         "--json",
         "-o",
         str(final_message_path),
@@ -504,30 +696,34 @@ def build_review_command(
 
 
 def build_integration_command(
-    repository_directory: Path,
+    integration_worktree_path: Path,
     worktree_path: Path,
     model: str,
     reasoning_effort: str,
     final_message_path: Path,
+    *,
+    dangerously_bypass_approvals: bool,
 ) -> list[str]:
     """Build the integration Codex command."""
-    return [
+    command_arguments = [
         "codex",
         "--cd",
-        str(repository_directory),
+        str(integration_worktree_path),
         "--add-dir",
         str(worktree_path),
         "-m",
         model,
         "-c",
         f'model_reasoning_effort="{reasoning_effort}"',
-        "--dangerously-bypass-approvals-and-sandbox",
         "exec",
         "--json",
         "-o",
         str(final_message_path),
         "-",
     ]
+    if dangerously_bypass_approvals:
+        command_arguments.insert(9, "--dangerously-bypass-approvals-and-sandbox")
+    return command_arguments
 
 
 def running_process_exists(process_identifier: int) -> bool:
@@ -569,6 +765,64 @@ def set_runtime_task_status(state: JsonObject, task: JsonObject, status: TaskSta
     status_updates[str(task["id"])] = utc_timestamp()
 
 
+def record_worker_completion(state: JsonObject, task: JsonObject, completion: WorkerCompletion) -> None:
+    """Record worker completion details in runtime state."""
+    set_runtime_task_status(state, task, completion.status)
+    worker_results = typing.cast("JsonObject", state.setdefault("worker_results", {}))
+    worker_results[str(task["id"])] = {
+        "branch_ahead": completion.branch_ahead,
+        "exit_code": completion.exit_code,
+        "final_message_exists": completion.final_message_exists,
+        "reason": completion.reason,
+        "verification": completion.verification,
+        "worktree_clean": completion.worktree_clean,
+    }
+
+
+def tasks_by_identifier(manifest: JsonObject) -> dict[int, JsonObject]:
+    """Return manifest tasks keyed by task id."""
+    return {int(task["id"]): task for task in selected_tasks(manifest, [])}
+
+
+def dependency_identifiers(task: JsonObject) -> list[int]:
+    """Return normalized dependency task identifiers."""
+    dependencies = task.get("dependencies", [])
+    if not isinstance(dependencies, list):
+        raise ValueError(f"Task {task['id']} dependencies must be a list.")
+    identifiers: list[int] = []
+    for dependency in dependencies:
+        if not isinstance(dependency, int):
+            raise ValueError(f"Task {task['id']} has non-integer dependency {dependency!r}.")
+        identifiers.append(dependency)
+    return identifiers
+
+
+def ensure_dependencies_ready(
+    manifest: JsonObject,
+    state: JsonObject,
+    tasks: list[JsonObject],
+    allowed_statuses: set[str],
+    operation: str,
+) -> None:
+    """Raise if selected tasks have dependencies that do not satisfy an operation."""
+    indexed_tasks = tasks_by_identifier(manifest)
+    for task in tasks:
+        for dependency_identifier in dependency_identifiers(task):
+            dependency_task = indexed_tasks.get(dependency_identifier)
+            if dependency_task is None:
+                raise ValueError(
+                    f"Task {task['id']} cannot {operation}: dependency {dependency_identifier} is missing.",
+                )
+            if not bool(dependency_task.get("enabled", True)):
+                continue
+            dependency_status = runtime_task_status(state, dependency_task)
+            if dependency_status not in allowed_statuses:
+                raise ValueError(
+                    f"Task {task['id']} cannot {operation}: dependency {dependency_identifier} is "
+                    f"{dependency_status}, expected one of {sorted(allowed_statuses)}.",
+                )
+
+
 def refresh_runtime_statuses(repository_directory: Path, manifest: JsonObject) -> None:
     """Refresh task statuses from detached worker state."""
     state_path = state_directory(repository_directory, manifest) / "state.json"
@@ -591,10 +845,12 @@ def refresh_runtime_statuses(repository_directory: Path, manifest: JsonObject) -
         if runtime_task_status(state, task) != TaskStatus.RUNNING.value:
             continue
         run_directory = state_directory(repository_directory, manifest) / "runs" / f"{task_identifier:02d}"
-        if (run_directory / "worker-final.md").exists():
-            set_runtime_task_status(state, task, TaskStatus.IMPLEMENTED)
-        else:
+        if not run_directory.exists():
             set_runtime_task_status(state, task, TaskStatus.BLOCKED)
+            changed = True
+            continue
+        completion = classify_worker_completion(repository_directory, manifest, task)
+        record_worker_completion(state, task, completion)
         changed = True
     if changed:
         save_state(state_path, state)
@@ -605,8 +861,8 @@ def launch_worker(
     repository_directory: Path,
     manifest: JsonObject,
     task: JsonObject,
-    wait_for_completion: bool,
-) -> int:
+    dangerously_bypass_approvals: bool,
+) -> WorkerLaunch:
     """Launch one Codex worker."""
     defaults = typing.cast("JsonObject", manifest["defaults"])
     base_branch = str(defaults.get("base_branch", "main"))
@@ -618,6 +874,8 @@ def launch_worker(
     jsonl_log_path = run_directory / "worker.jsonl"
     stderr_log_path = run_directory / "worker.stderr.log"
     prompt_path = run_directory / "worker-prompt.md"
+    wrapper_path = run_directory / "worker-wrapper.sh"
+    exit_code_path = run_directory / "exit-code.txt"
     prompt = build_worker_prompt(task)
     prompt_path.write_text(prompt)
     command_arguments = build_worker_command(
@@ -625,24 +883,108 @@ def launch_worker(
         model=str(defaults.get("worker_model", "gpt-5.5")),
         reasoning_effort=str(defaults.get("worker_reasoning_effort", "high")),
         final_message_path=final_message_path,
+        dangerously_bypass_approvals=dangerously_bypass_approvals,
     )
+    write_worker_wrapper(wrapper_path, prompt_path, exit_code_path, command_arguments)
     with jsonl_log_path.open("w") as stdout_log, stderr_log_path.open("w") as stderr_log:
         process = subprocess.Popen(
-            command_arguments,
+            ["bash", str(wrapper_path)],
             cwd=repository_directory,
-            stdin=subprocess.PIPE,
             stdout=stdout_log,
             stderr=stderr_log,
             text=True,
             start_new_session=True,
         )
-        if process.stdin is None:
-            raise RuntimeError("Codex worker process did not expose stdin.")
-        process.stdin.write(prompt)
-        process.stdin.close()
-        if wait_for_completion:
-            return process.wait()
-        return process.pid
+        return WorkerLaunch(
+            task_identifier=task_identifier,
+            process_identifier=process.pid,
+            process=process,
+        )
+
+
+def make_doctor_check(name: str, *, passed: bool, message: str, warning: bool = False) -> DoctorCheck:
+    """Create a doctor check."""
+    return DoctorCheck(name=name, passed=passed, warning=warning, message=message)
+
+
+def doctor_command_check(command_name: str, *, warning: bool = False) -> DoctorCheck:
+    """Check that a command exists on PATH."""
+    if shutil.which(command_name) is not None:
+        return make_doctor_check(command_name, passed=True, message=f"{command_name} found", warning=False)
+    return make_doctor_check(command_name, passed=False, message=f"missing command: {command_name}", warning=warning)
+
+
+def doctor_file_check(repository_directory: Path, relative_path: Path) -> DoctorCheck:
+    """Check that a required repository file exists."""
+    path = repository_directory / relative_path
+    return make_doctor_check(
+        relative_path.as_posix(),
+        passed=path.exists(),
+        message=f"{relative_path.as_posix()} exists",
+    )
+
+
+def collect_doctor_checks(repository_directory: Path, manifest: JsonObject, *, strict: bool) -> list[DoctorCheck]:
+    """Collect task-farm environment checks."""
+    defaults = typing.cast("JsonObject", manifest["defaults"])
+    base_branch = str(defaults.get("base_branch", "main"))
+    checks = [
+        doctor_command_check("git"),
+        doctor_command_check("codex"),
+        doctor_command_check("nix", warning=not strict),
+        make_doctor_check(
+            "repo root",
+            passed=(repository_directory / ".git").exists(),
+            message=f"repo root: {repository_directory}",
+        ),
+        doctor_file_check(repository_directory, REPO_RELATIVE_SOURCE_PATH),
+        doctor_file_check(repository_directory, Path("Justfile")),
+        doctor_file_check(repository_directory, Path("AGENTS.md")),
+        doctor_file_check(repository_directory, Path("docs/STYLEGUIDE.md")),
+    ]
+    base_branch_exists = git_branch_exists(repository_directory, base_branch)
+    checks.append(
+        make_doctor_check(
+            "base branch",
+            passed=base_branch_exists,
+            message=f"base branch {base_branch} exists",
+        )
+    )
+    current_branch_result = run_command(["git", "branch", "--show-current"], cwd=repository_directory)
+    current_branch = current_branch_result.stdout.strip()
+    clean_result = run_command(["git", "status", "--short"], cwd=repository_directory)
+    main_checkout_clean = (
+        current_branch_result.returncode == 0
+        and clean_result.returncode == 0
+        and current_branch == base_branch
+        and not clean_result.stdout.strip()
+    )
+    checks.append(
+        make_doctor_check(
+            "clean main checkout",
+            passed=main_checkout_clean,
+            message=f"current branch={current_branch or '<detached>'}, dirty={bool(clean_result.stdout.strip())}",
+        )
+    )
+    return checks
+
+
+def command_doctor(arguments: argparse.Namespace) -> int:
+    """Handle doctor."""
+    repository_directory = repository_root()
+    manifest = load_manifest(repository_directory)
+    checks = collect_doctor_checks(repository_directory, manifest, strict=bool(arguments.strict))
+    exit_code = 0
+    for check in checks:
+        if check.passed:
+            prefix = "ok"
+        elif check.warning:
+            prefix = "warning"
+        else:
+            prefix = "fail"
+            exit_code = 1
+        print(f"{prefix}: {check.name}: {check.message}")
+    return exit_code
 
 
 def command_sync_manifest(arguments: argparse.Namespace) -> int:
@@ -676,6 +1018,9 @@ def command_run(arguments: argparse.Namespace) -> int:
     jobs = int(arguments.jobs if arguments.jobs is not None else defaults.get("jobs", 5))
     wait_for_completion = bool(arguments.wait)
     force = bool(arguments.force)
+    dangerously_bypass_approvals = bool(
+        arguments.dangerous or defaults.get("worker_dangerously_bypass_approvals", False),
+    )
     candidates = selected_tasks(manifest, typing.cast("list[int]", arguments.task))
     runnable_tasks: list[JsonObject] = []
     for task in candidates:
@@ -689,33 +1034,50 @@ def command_run(arguments: argparse.Namespace) -> int:
     if not runnable_tasks:
         print("No runnable tasks selected.")
         return 0
+    ensure_dependencies_ready(
+        manifest,
+        state,
+        runnable_tasks,
+        {TaskStatus.MERGED.value},
+        "run",
+    )
 
     runs = typing.cast("JsonObject", state.setdefault("runs", {}))
     exit_code = 0
+    launched_workers: list[WorkerLaunch] = []
     for task in runnable_tasks:
         set_runtime_task_status(state, task, TaskStatus.RUNNING)
         save_state(state_path, state)
-        result = launch_worker(
+        launched_worker = launch_worker(
             repository_directory=repository_directory,
             manifest=manifest,
             task=task,
-            wait_for_completion=wait_for_completion,
+            dangerously_bypass_approvals=dangerously_bypass_approvals,
         )
         task_identifier = int(task["id"])
         runs[str(task_identifier)] = {
-            "pid": result if not wait_for_completion else None,
-            "returncode": result if wait_for_completion else None,
+            "pid": launched_worker.process_identifier,
+            "returncode": None,
             "started_at": utc_timestamp(),
             "branch": task["branch"],
             "worktree": task["worktree"],
         }
+        launched_workers.append(launched_worker)
         print(f"Launched task {task_identifier:02d}: {task['branch']}")
-        if wait_for_completion and result != 0:
-            set_runtime_task_status(state, task, TaskStatus.BLOCKED)
-            exit_code = result
-        elif wait_for_completion:
-            set_runtime_task_status(state, task, TaskStatus.IMPLEMENTED)
         save_state(state_path, state)
+    if wait_for_completion:
+        for launched_worker in launched_workers:
+            returncode = launched_worker.process.wait()
+            task = next(task for task in runnable_tasks if int(task["id"]) == launched_worker.task_identifier)
+            run = runs.get(str(launched_worker.task_identifier), {})
+            if isinstance(run, dict):
+                run["returncode"] = returncode
+                run["finished_at"] = utc_timestamp()
+            completion = classify_worker_completion(repository_directory, manifest, task)
+            record_worker_completion(state, task, completion)
+            if completion.status == TaskStatus.BLOCKED and exit_code == 0:
+                exit_code = returncode or 1
+            save_state(state_path, state)
     save_state(state_path, state)
     return exit_code
 
@@ -758,6 +1120,18 @@ def command_review(arguments: argparse.Namespace) -> int:
     tasks = selected_tasks(manifest, typing.cast("list[int]", arguments.task))
     if not tasks:
         raise ValueError("Select at least one task to review.")
+    ensure_dependencies_ready(
+        manifest,
+        state,
+        tasks,
+        {
+            TaskStatus.IMPLEMENTED.value,
+            TaskStatus.REVIEWED.value,
+            TaskStatus.INTEGRATING.value,
+            TaskStatus.MERGED.value,
+        },
+        "review",
+    )
     exit_code = 0
     for task in tasks:
         worktree_path = resolve_manifest_path(repository_directory, str(task["worktree"]))
@@ -772,7 +1146,6 @@ def command_review(arguments: argparse.Namespace) -> int:
             worktree_path=worktree_path,
             model=str(defaults.get("reviewer_model", "gpt-5.5")),
             reasoning_effort=str(defaults.get("reviewer_reasoning_effort", "xhigh")),
-            base_branch=str(defaults.get("base_branch", "main")),
             final_message_path=final_message_path,
         )
         completed_process = subprocess.run(
@@ -807,6 +1180,18 @@ def command_integrate(arguments: argparse.Namespace) -> int:
     tasks = selected_tasks(manifest, typing.cast("list[int]", arguments.task))
     if not tasks:
         raise ValueError("Select at least one task to integrate.")
+    ensure_dependencies_ready(
+        manifest,
+        state,
+        tasks,
+        {TaskStatus.MERGED.value},
+        "integrate",
+    )
+    dangerously_bypass_approvals = bool(
+        arguments.dangerous or defaults.get("integrator_dangerously_bypass_approvals", False),
+    )
+    integration_worktree_path = ensure_integration_worktree(repository_directory, defaults)
+    integration_branch = str(defaults.get("integration_branch", DEFAULT_INTEGRATION_BRANCH))
     exit_code = 0
     for task in tasks:
         worktree_path = resolve_manifest_path(repository_directory, str(task["worktree"]))
@@ -819,18 +1204,19 @@ def command_integrate(arguments: argparse.Namespace) -> int:
         jsonl_log_path = integration_directory / f"{task_identifier:02d}.jsonl"
         review_report_path = state_directory(repository_directory, manifest) / "reviews" / f"{task_identifier:02d}.md"
         command_arguments = build_integration_command(
-            repository_directory=repository_directory,
+            integration_worktree_path=integration_worktree_path,
             worktree_path=worktree_path,
             model=str(defaults.get("integrator_model", "gpt-5.5")),
             reasoning_effort=str(defaults.get("integrator_reasoning_effort", "xhigh")),
             final_message_path=final_message_path,
+            dangerously_bypass_approvals=dangerously_bypass_approvals,
         )
         set_runtime_task_status(state, task, TaskStatus.INTEGRATING)
         save_state(state_path, state)
         completed_process = subprocess.run(
             command_arguments,
-            cwd=repository_directory,
-            input=build_integration_prompt(task, review_report_path),
+            cwd=integration_worktree_path,
+            input=build_integration_prompt(task, review_report_path, integration_branch),
             check=False,
             capture_output=True,
             text=True,
@@ -857,13 +1243,16 @@ def command_integrate_ready(arguments: argparse.Namespace) -> int:
     refresh_runtime_statuses(repository_directory, manifest)
     state_path = state_directory(repository_directory, manifest) / "state.json"
     state = load_state(state_path)
+    allowed_statuses = {TaskStatus.REVIEWED.value}
+    if bool(arguments.allow_unreviewed):
+        allowed_statuses.add(TaskStatus.IMPLEMENTED.value)
     ready_identifiers = [
         int(task["id"])
         for task in selected_tasks(manifest, [])
-        if runtime_task_status(state, task) in {TaskStatus.IMPLEMENTED.value, TaskStatus.REVIEWED.value}
+        if runtime_task_status(state, task) in allowed_statuses
     ]
     if not ready_identifiers:
-        print("No implemented or reviewed tasks are ready to integrate.")
+        print("No reviewed tasks are ready to integrate.")
         return 0
     arguments.task = ready_identifiers
     return command_integrate(arguments)
@@ -877,6 +1266,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
     sync_parser = subparsers.add_parser("sync-manifest", help="Regenerate docs/code-review.tasks.json.")
     sync_parser.set_defaults(handler=command_sync_manifest)
 
+    doctor_parser = subparsers.add_parser("doctor", help="Check task-farm prerequisites.")
+    doctor_parser.add_argument("--strict", action="store_true", help="Treat missing optional tools as failures.")
+    doctor_parser.set_defaults(handler=command_doctor)
+
     list_parser = subparsers.add_parser("list", help="List tasks from the manifest.")
     list_parser.add_argument("--task", action="append", type=int, default=[], help="Task id to list.")
     list_parser.set_defaults(handler=command_list)
@@ -886,6 +1279,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--jobs", type=int, help="Maximum number of tasks to launch.")
     run_parser.add_argument("--wait", action="store_true", help="Wait for launched workers to finish.")
     run_parser.add_argument("--force", action="store_true", help="Launch tasks regardless of recorded status.")
+    run_parser.add_argument("--dangerous", action="store_true", help="Allow workers to bypass approvals and sandbox.")
     run_parser.set_defaults(handler=command_run)
 
     status_parser = subparsers.add_parser("status", help="Show worker and worktree status.")
@@ -898,9 +1292,24 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
     integrate_parser = subparsers.add_parser("integrate", help="Run the main integration agent.")
     integrate_parser.add_argument("task", nargs="+", type=int, help="Task id to integrate.")
+    integrate_parser.add_argument(
+        "--dangerous",
+        action="store_true",
+        help="Allow integrator to bypass approvals and sandbox.",
+    )
     integrate_parser.set_defaults(handler=command_integrate)
 
     integrate_ready_parser = subparsers.add_parser("integrate-ready", help="Integrate implemented tasks in order.")
+    integrate_ready_parser.add_argument(
+        "--allow-unreviewed",
+        action="store_true",
+        help="Allow implemented tasks without reviewed status.",
+    )
+    integrate_ready_parser.add_argument(
+        "--dangerous",
+        action="store_true",
+        help="Allow integrator to bypass approvals and sandbox.",
+    )
     integrate_ready_parser.set_defaults(handler=command_integrate_ready)
     return parser
 

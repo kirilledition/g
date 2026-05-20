@@ -1,12 +1,16 @@
 {
   "defaults": {
     "base_branch": "main",
+    "integration_branch": "integration/code-review",
+    "integration_worktree": "../g-worktrees/integration-code-review",
+    "integrator_dangerously_bypass_approvals": false,
     "integrator_model": "gpt-5.5",
     "integrator_reasoning_effort": "xhigh",
     "jobs": 5,
     "reviewer_model": "gpt-5.5",
     "reviewer_reasoning_effort": "xhigh",
     "state_directory": ".codex-task-worktrees",
+    "worker_dangerously_bypass_approvals": false,
     "worker_model": "gpt-5.5",
     "worker_reasoning_effort": "high",
     "worktree_root": "../g-worktrees"
@@ -237,7 +241,10 @@
       "category": "P1/P2 architecture issues",
       "dependencies": [],
       "enabled": true,
-      "expected_paths": [],
+      "expected_paths": [
+        "src/g/engine/callbacks.py:176-178",
+        "src/g/interface/config.py:576-578"
+      ],
       "guidance_markdown": "Either:\n\n```text\nrequire staging_depth >= 1\n```\n\nor make `0` mean a true synchronous/no-staging mode. I would require `>= 1`.",
       "id": 18,
       "kind": "implementation",
