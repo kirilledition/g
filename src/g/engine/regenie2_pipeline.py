@@ -42,7 +42,7 @@ def run_regenie2_linear_bgen_pipeline(
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
-    use_variant_major = trusted_no_missing_diploid
+    use_variant_major = True
     engine_start_time = time.perf_counter()
     engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
@@ -167,7 +167,7 @@ def run_regenie2_binary_bgen_pipeline(
     """Run the native BGEN pipeline for binary REGENIE step 2."""
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
     resolved_kernel_config = kernel_config or regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
-    use_variant_major = trusted_no_missing_diploid
+    use_variant_major = True
     engine_start_time = time.perf_counter()
     engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
@@ -422,7 +422,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
 ) -> tuple[Path | None, ...]:
     """Shared implementation for native multi-phenotype BGEN pipelines."""
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
-    use_variant_major = trusted_no_missing_diploid
+    use_variant_major = True
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
     engine_start_time = time.perf_counter()
     engine = native_dispatch.build_bgen_run_engine(

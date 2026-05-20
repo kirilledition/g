@@ -113,6 +113,8 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
     let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
     let mut selected_dosage_totals = vec![0.0_f32; variant_record_chunk.len()];
     let mut selected_dosage_square_totals = vec![0.0_f32; variant_record_chunk.len()];
+    let selected_observation_counts =
+        vec![i32::try_from(selected_sample_count).unwrap_or(i32::MAX); variant_record_chunk.len()];
     let mut zero_counts = vec![0_i32; variant_record_chunk.len()];
     let mut nonzero_counts = vec![0_i32; variant_record_chunk.len()];
     let mut homozygous_reference_counts = vec![0_i32; variant_record_chunk.len()];
@@ -159,6 +161,8 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
         profile_snapshot: thread_local_profile_snapshot,
         selected_dosage_totals,
         selected_dosage_square_totals,
+        selected_observation_counts,
+        has_missing_values: false,
         zero_counts,
         nonzero_counts,
         homozygous_reference_counts,
@@ -304,6 +308,8 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         profile_snapshot: thread_local_profile_snapshot,
         selected_dosage_total,
         selected_dosage_square_total,
+        selected_observation_count: i32::try_from(selected_sample_count).unwrap_or(i32::MAX),
+        has_missing_values: false,
         zero_count,
         nonzero_count,
         homozygous_reference_count,

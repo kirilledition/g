@@ -20,7 +20,7 @@ mod trusted;
 pub use decode::set_decode_tile_variant_count as set_bgen_decode_tile_variant_count;
 use decode::{
     DosageTileDecodeResult, ThreadScratch, decode_tile_variant_count, decode_variant_dosage_tile_into_row_major_matrix,
-    read_exact_bytes, read_probability_block, read_u32_at, u32_to_usize,
+    decode_variant_major_dosage_tile, read_exact_bytes, read_probability_block, read_u32_at, u32_to_usize,
 };
 pub use metadata::VariantMetadataLists;
 use metadata::VariantRecord;
@@ -334,11 +334,6 @@ impl BgenReaderCore {
         output_pointer_address: usize,
         output_value_count: usize,
     ) -> Result<ChunkStats, BgenError> {
-        if !self.trusted_no_missing_diploid {
-            return Err(BgenError::UnsupportedFormat(
-                "Variant-major preprocessed BGEN reads require trusted_no_missing_diploid.".to_string(),
-            ));
-        }
         let sample_selection = self.prepared_sample_selection_arc()?;
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
         let selected_variant_count = variant_stop.saturating_sub(variant_start);
@@ -365,6 +360,7 @@ impl BgenReaderCore {
         let decode_tile_variant_count = decode_tile_variant_count();
         let mut dosage_sum = Vec::with_capacity(selected_variant_count);
         let mut dosage_square_sum = Vec::with_capacity(selected_variant_count);
+        let mut observation_count = Vec::with_capacity(selected_variant_count);
         let mut zero_count = Vec::with_capacity(selected_variant_count);
         let mut nonzero_count = Vec::with_capacity(selected_variant_count);
         let mut homozygous_reference_count = Vec::with_capacity(selected_variant_count);
@@ -374,31 +370,49 @@ impl BgenReaderCore {
             .par_chunks(decode_tile_variant_count)
             .enumerate()
             .map_init(ThreadScratch::default, |thread_scratch, (tile_index, variant_record_chunk)| {
-                trusted::decode_trusted_variant_major_dosage_tile(
-                    &self.mmap,
-                    self.compression_type,
-                    self.sample_count,
-                    &sample_selection,
-                    variant_record_chunk,
-                    output_pointer_address,
-                    selected_sample_count,
-                    tile_index * decode_tile_variant_count,
-                    profiling_enabled,
-                    thread_scratch,
-                )
+                if self.trusted_no_missing_diploid {
+                    trusted::decode_trusted_variant_major_dosage_tile(
+                        &self.mmap,
+                        self.compression_type,
+                        self.sample_count,
+                        &sample_selection,
+                        variant_record_chunk,
+                        output_pointer_address,
+                        selected_sample_count,
+                        tile_index * decode_tile_variant_count,
+                        profiling_enabled,
+                        thread_scratch,
+                    )
+                } else {
+                    decode_variant_major_dosage_tile(
+                        &self.mmap,
+                        self.compression_type,
+                        self.sample_count,
+                        &sample_selection,
+                        variant_record_chunk,
+                        output_pointer_address,
+                        selected_sample_count,
+                        tile_index * decode_tile_variant_count,
+                        profiling_enabled,
+                        self.trusted_no_missing_diploid,
+                        thread_scratch,
+                    )
+                }
             })
             .collect::<Result<Vec<DosageTileDecodeResult>, BgenError>>()?;
+        let mut has_missing_values = false;
         for decode_result in decode_results {
             profiling.merge_thread_local_snapshot(&decode_result.profile_snapshot);
             dosage_sum.extend(decode_result.selected_dosage_totals);
             dosage_square_sum.extend(decode_result.selected_dosage_square_totals);
+            observation_count.extend(decode_result.selected_observation_counts);
+            has_missing_values |= decode_result.has_missing_values;
             zero_count.extend(decode_result.zero_counts);
             nonzero_count.extend(decode_result.nonzero_counts);
             homozygous_reference_count.extend(decode_result.homozygous_reference_counts);
             heterozygous_count.extend(decode_result.heterozygous_counts);
             homozygous_alternate_count.extend(decode_result.homozygous_alternate_counts);
         }
-        let observation_count = vec![i32::try_from(selected_sample_count).unwrap_or(i32::MAX); selected_variant_count];
         Ok(preprocess::build_chunk_stats_from_summaries(
             dosage_sum,
             dosage_square_sum,
@@ -408,7 +422,7 @@ impl BgenReaderCore {
             homozygous_reference_count,
             heterozygous_count,
             homozygous_alternate_count,
-            false,
+            has_missing_values,
             selected_sample_count,
         ))
     }
