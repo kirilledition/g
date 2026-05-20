@@ -16,6 +16,7 @@ numpy = "0.28.0"
 arrow = { version = "58.3.0", features = ["ipc_compression"] }
 parquet = { version = "58.3.0", default-features = false, features = ["arrow", "zstd"] }
 crossbeam-channel = "0.5.15"
+csv = "1.4.0"
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 memmap2 = "0.9.10"
 rayon = "1.12.0"

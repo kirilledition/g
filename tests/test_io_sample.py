@@ -23,7 +23,7 @@ def align_from_sample_file(sample_path: Path, phenotype_path: Path) -> _core.Nat
 
 def test_native_sample_file_alignment_with_single_identifier_column(tmp_path: Path) -> None:
     sample_path = tmp_path / "study.sample"
-    sample_path.write_text("ID missing\n0 0\nalpha 0\nbeta 0\n", encoding="utf-8")
+    sample_path.write_text("ID   missing\n0   0\nalpha   0\nbeta   0\n", encoding="utf-8")
     phenotype_path = tmp_path / "pheno.txt"
     phenotype_path.write_text("FID\tIID\ttrait\nalpha\talpha\t1.0\nbeta\tbeta\t2.0\n", encoding="utf-8")
 
