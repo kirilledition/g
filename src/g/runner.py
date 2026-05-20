@@ -34,6 +34,35 @@ class RunArtifacts:
     phenotype_artifacts: tuple[RunArtifacts, ...] = ()
 
 
+@dataclass(frozen=True)
+class JaxRuntimePolicy:
+    """Process-global JAX runtime settings selected by the first run.
+
+    Attributes:
+        device: Requested JAX platform.
+        cache_directory: Persistent compilation cache directory.
+        matmul_precision: Requested matmul precision.
+        persistent_cache: Whether persistent compilation caching is enabled.
+        persistent_cache_min_entry_size_bytes: Minimum cache entry size.
+        persistent_cache_min_compile_time_seconds: Minimum compile time for cache entries.
+        xla_autotune_cache: Whether XLA autotune caches are enabled.
+        transfer_guard: Whether transfer guard diagnostics are enabled.
+
+    """
+
+    device: types.Device
+    cache_directory: Path | None
+    matmul_precision: types.JaxMatmulPrecision | None
+    persistent_cache: bool
+    persistent_cache_min_entry_size_bytes: int
+    persistent_cache_min_compile_time_seconds: int
+    xla_autotune_cache: bool
+    transfer_guard: bool
+
+
+CONFIGURED_JAX_RUNTIME_POLICY: JaxRuntimePolicy | None = None
+
+
 def load_regenie2_pipeline_module() -> typing.Any:
     """Load the JAX-heavy REGENIE pipeline module lazily."""
     return importlib.import_module("g.engine.regenie2_pipeline")
@@ -56,8 +85,66 @@ def configure_jax_platform_before_setup_import(device: types.Device) -> None:
     jax_module.config.update("jax_platforms", platform_name)
 
 
+def build_jax_runtime_policy(compute_config: config.GComputeConfig) -> JaxRuntimePolicy:
+    """Build the process-global JAX runtime policy requested by a run."""
+    cache_directory = None
+    if compute_config.jax_cache_dir is not None:
+        cache_directory = compute_config.jax_cache_dir.expanduser()
+    return JaxRuntimePolicy(
+        device=compute_config.device,
+        cache_directory=cache_directory,
+        matmul_precision=compute_config.jax_matmul_precision,
+        persistent_cache=compute_config.jax_persistent_cache,
+        persistent_cache_min_entry_size_bytes=compute_config.jax_persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds=compute_config.jax_persistent_cache_min_compile_time_seconds,
+        xla_autotune_cache=compute_config.jax_xla_autotune_cache,
+        transfer_guard=compute_config.jax_transfer_guard,
+    )
+
+
+def describe_jax_runtime_policy(policy: JaxRuntimePolicy) -> str:
+    """Format a JAX runtime policy for diagnostics."""
+    cache_directory = "<default>" if policy.cache_directory is None else str(policy.cache_directory)
+    matmul_precision = "<default>" if policy.matmul_precision is None else policy.matmul_precision.value
+    return (
+        f"device={policy.device.value}, "
+        f"jax-cache-dir={cache_directory}, "
+        f"jax-matmul-precision={matmul_precision}, "
+        f"jax-persistent-cache={policy.persistent_cache}, "
+        f"jax-persistent-cache-min-entry-size-bytes={policy.persistent_cache_min_entry_size_bytes}, "
+        f"jax-persistent-cache-min-compile-time-seconds={policy.persistent_cache_min_compile_time_seconds}, "
+        f"jax-xla-autotune-cache={policy.xla_autotune_cache}, "
+        f"jax-transfer-guard={policy.transfer_guard}"
+    )
+
+
+def require_compatible_jax_runtime_policy(compute_config: config.GComputeConfig) -> JaxRuntimePolicy:
+    """Return the requested policy or raise when it conflicts with the first run."""
+    requested_policy = build_jax_runtime_policy(compute_config)
+    if CONFIGURED_JAX_RUNTIME_POLICY is None or requested_policy == CONFIGURED_JAX_RUNTIME_POLICY:
+        return requested_policy
+    message = (
+        "JAX runtime is already configured for this Python process with "
+        f"{describe_jax_runtime_policy(CONFIGURED_JAX_RUNTIME_POLICY)}. "
+        "A later run requested incompatible settings: "
+        f"{describe_jax_runtime_policy(requested_policy)}. "
+        "JAX backend, platform, and compilation cache settings are process-global; start a fresh Python process "
+        "for incompatible runtime settings."
+    )
+    raise RuntimeError(message)
+
+
+def mark_jax_runtime_policy_configured(policy: JaxRuntimePolicy) -> None:
+    """Record that JAX has been configured for this process."""
+    global CONFIGURED_JAX_RUNTIME_POLICY
+    CONFIGURED_JAX_RUNTIME_POLICY = policy
+
+
 def configure_runtime_before_jax_import(compute_config: config.GComputeConfig) -> None:
     """Configure JAX platform and runtime before compute modules are imported."""
+    requested_policy = require_compatible_jax_runtime_policy(compute_config)
+    if requested_policy == CONFIGURED_JAX_RUNTIME_POLICY:
+        return
     configure_jax_platform_before_setup_import(compute_config.device)
     load_jax_setup_module().configure_jax_runtime_before_backend_init(
         device=compute_config.device,
@@ -69,6 +156,7 @@ def configure_runtime_before_jax_import(compute_config: config.GComputeConfig) -
         xla_autotune_cache=compute_config.jax_xla_autotune_cache,
         transfer_guard=compute_config.jax_transfer_guard,
     )
+    mark_jax_runtime_policy_configured(requested_policy)
 
 
 def configure_jax_runtime(compute_config: config.GComputeConfig) -> None:

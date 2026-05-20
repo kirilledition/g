@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
@@ -42,6 +45,39 @@ def test_public_package_exposes_only_new_regenie_interface() -> None:
     assert "regenie2_linear" not in g.__all__
     assert "ComputeConfig" not in g.__all__
     assert g.regenie is api.regenie
+
+
+def test_importing_api_does_not_import_jax_heavy_modules() -> None:
+    script = textwrap.dedent(
+        """
+        import sys
+
+        import g.api
+
+        forbidden_modules = (
+            "jax",
+            "jax.numpy",
+            "g.jax_setup",
+            "g.compute.regenie2_linear",
+            "g.compute.regenie2_binary",
+            "g.engine.callbacks",
+            "g.engine.native_dispatch",
+            "g.engine.regenie2_pipeline",
+        )
+        imported_modules = [module_name for module_name in forbidden_modules if module_name in sys.modules]
+        if imported_modules:
+            raise AssertionError(f"unexpected eager imports: {imported_modules}")
+        """
+    )
+
+    completed_process = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed_process.returncode == 0, completed_process.stderr
 
 
 def test_regenie_config_from_options_maps_regenie_names() -> None:
@@ -238,10 +274,103 @@ def test_runtime_bootstrap_sets_jax_platform_before_setup_import() -> None:
             return FakeJaxSetupModule()
         raise AssertionError(f"Unexpected import: {module_name}")
 
-    with patch("g.runner.importlib.import_module", side_effect=import_module):
+    with (
+        patch("g.runner.CONFIGURED_JAX_RUNTIME_POLICY", None),
+        patch("g.runner.importlib.import_module", side_effect=import_module),
+    ):
         runner.configure_runtime_before_jax_import(config.GComputeConfig(device=types.Device.GPU))
 
     assert call_order == ["import:jax", "jax_platforms:cuda", "import:g.jax_setup", "setup"]
+
+
+def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_path: Path) -> None:
+    run_paths = OutputRunPaths(
+        run_directory=Path("results/output.g/trait.regenie2_linear.run"),
+        chunks_directory=Path("results/output.g/trait.regenie2_linear.run/chunks"),
+    )
+    call_order: list[str] = []
+
+    class FakeJaxConfig:
+        def update(self, setting_name: str, value: object) -> None:
+            call_order.append(f"jax:{setting_name}:{value}")
+
+    class FakeJaxModule:
+        config = FakeJaxConfig()
+
+    class FakeJaxSetupModule:
+        def configure_jax_runtime_before_backend_init(self, **kwargs: object) -> None:
+            call_order.append(f"setup:{kwargs['cache_directory']}")
+
+    class FakeTimingModule:
+        def build_stage_timing_recorder(self, stage_timing_path: Path | None) -> None:
+            del stage_timing_path
+
+        def record_stage_duration(self, stage_timing_recorder: object, stage_name: str, start_time: float) -> None:
+            del stage_timing_recorder, start_time
+            call_order.append(f"timing:{stage_name}")
+
+        def write_stage_timing_snapshot(self, stage_timing_recorder: object, stage_timing_path: Path | None) -> None:
+            del stage_timing_recorder, stage_timing_path
+
+    def import_module(module_name: str) -> object:
+        if module_name == "jax":
+            return FakeJaxModule()
+        if module_name == "g.jax_setup":
+            return FakeJaxSetupModule()
+        if module_name == "g.engine.timing":
+            return FakeTimingModule()
+        raise AssertionError(f"Unexpected import: {module_name}")
+
+    first_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "sample": "dataset.sample",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "g-jax-cache-dir": str(tmp_path / "jax-cache"),
+        }
+    )
+    incompatible_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "sample": "dataset.sample",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "g-jax-cache-dir": str(tmp_path / "other-jax-cache"),
+        }
+    )
+
+    with (
+        patch("g.runner.CONFIGURED_JAX_RUNTIME_POLICY", None),
+        patch(
+            "g.execution_plan.output.prepare_output_run",
+            return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
+        ),
+        patch(
+            "g.runner.run_regenie2_linear_bgen_pipeline",
+            return_value=Path("results/output.g/trait.regenie2_linear.run/final.parquet"),
+        ),
+        patch("g.runner.configure_runtime"),
+        patch("g.runner.extend_run_manifest"),
+        patch("g.interface.config.write_toml"),
+        patch("g.runner.importlib.import_module", side_effect=import_module),
+    ):
+        api.regenie(first_config)
+        api.regenie(first_config)
+
+        with pytest.raises(RuntimeError, match=r"JAX runtime is already configured.*incompatible settings"):
+            api.regenie(incompatible_config)
+
+    assert call_order.count(f"setup:{tmp_path / 'jax-cache'}") == 1
+    assert f"setup:{tmp_path / 'other-jax-cache'}" not in call_order
 
 
 def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_config() -> None:
