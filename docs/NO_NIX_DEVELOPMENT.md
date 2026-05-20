@@ -36,3 +36,10 @@ Rust toolchain available:
 cargo fmt
 cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
 ```
+
+Rust coverage also requires `cargo-llvm-cov`:
+
+```bash
+cargo install cargo-llvm-cov
+cargo llvm-cov --workspace --all-targets --fail-under-lines 90
+```

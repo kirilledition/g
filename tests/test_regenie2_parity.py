@@ -110,39 +110,33 @@ def regenie2_parity_results(tmp_path_factory: pytest.TempPathFactory) -> Regenie
     )
 
 
-def test_regenie2_linear_matches_regenie_baseline_beta(
+@pytest.mark.parametrize(
+    ("observed_column", "baseline_column", "absolute_tolerance"),
+    [
+        ("BETA", "baseline_beta", 1.0e-3),
+        ("SE", "baseline_standard_error", 1.0e-3),
+        ("CHISQ", "baseline_chi_squared", 1.5e-2),
+        ("LOG10P", "baseline_log10_p_value", 1.5e-2),
+    ],
+)
+def test_regenie2_linear_matches_regenie_baseline_statistics(
     regenie2_parity_results: Regenie2ParityResults,
+    observed_column: str,
+    baseline_column: str,
+    absolute_tolerance: float,
 ) -> None:
-    """Validate beta estimates match REGENIE within tolerance."""
+    """Validate association statistics match REGENIE within tolerance."""
     merged_results = regenie2_parity_results.observed_results.join(
-        regenie2_parity_results.baseline_results.select("ID", "baseline_beta"),
+        regenie2_parity_results.baseline_results.select("ID", baseline_column),
         on="ID",
         how="inner",
     )
 
     assert merged_results.height == PARITY_VARIANT_LIMIT
     np.testing.assert_allclose(
-        merged_results.get_column("BETA").to_numpy(),
-        merged_results.get_column("baseline_beta").to_numpy(),
-        atol=1.0e-3,
-    )
-
-
-def test_regenie2_linear_matches_regenie_baseline_log10p(
-    regenie2_parity_results: Regenie2ParityResults,
-) -> None:
-    """Validate -log10(p) values match REGENIE within tolerance."""
-    merged_results = regenie2_parity_results.observed_results.join(
-        regenie2_parity_results.baseline_results.select("ID", "baseline_log10_p_value"),
-        on="ID",
-        how="inner",
-    )
-
-    assert merged_results.height == PARITY_VARIANT_LIMIT
-    np.testing.assert_allclose(
-        merged_results.get_column("LOG10P").to_numpy(),
-        merged_results.get_column("baseline_log10_p_value").to_numpy(),
-        atol=1.5e-2,
+        merged_results.get_column(observed_column).to_numpy(),
+        merged_results.get_column(baseline_column).to_numpy(),
+        atol=absolute_tolerance,
     )
 
 

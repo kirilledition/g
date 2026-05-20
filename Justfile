@@ -393,6 +393,17 @@ ci-test:
 test:
     {{server_env}} && uv run pytest tests/
 
+# Run Python coverage gate
+coverage-python:
+    {{server_env}} && uv run pytest tests/ --cov=src/g --cov-report=term-missing --cov-fail-under=90
+
+# Run Rust line coverage gate
+coverage-rust:
+    {{server_env}} && cargo llvm-cov --workspace --all-targets --fail-under-lines 90
+
+# Run all coverage gates
+coverage: coverage-python coverage-rust
+
 # Generate docs/code-review.tasks.json from docs/code-review.md
 codex-tasks-sync:
     {{server_env}} && uv run python scripts/codex_task_farm.py sync-manifest

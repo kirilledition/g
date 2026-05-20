@@ -153,6 +153,27 @@ def chi_squared_to_log10_p_value(chi_squared: jax.Array) -> jax.Array:
     return -log_p_value / jnp.log(10.0)
 
 
+def normalize_high_frequency_diploid_genotypes_sample_major(genotype_matrix: jax.Array) -> jax.Array:
+    """Shift high-frequency diploid dosages to avoid float32 cancellation.
+
+    The model includes an intercept, so subtracting a per-variant constant does
+    not change the residualized genotype or score statistic. It does keep rare
+    reference-allele carriers near zero before float32 matrix products.
+    """
+    genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
+    genotype_mean = jnp.mean(genotype_matrix_float32, axis=0)
+    genotype_offset = jnp.where(genotype_mean > 1.0, 2.0, 0.0)
+    return genotype_matrix_float32 - genotype_offset[None, :]
+
+
+def normalize_high_frequency_diploid_genotypes_variant_major(genotype_matrix_by_variant: jax.Array) -> jax.Array:
+    """Shift high-frequency diploid dosages to avoid float32 cancellation."""
+    genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
+    genotype_mean = jnp.mean(genotype_matrix_by_variant_float32, axis=1)
+    genotype_offset = jnp.where(genotype_mean > 1.0, 2.0, 0.0)
+    return genotype_matrix_by_variant_float32 - genotype_offset[:, None]
+
+
 @jax.jit
 def prepare_regenie2_linear_chromosome_state(
     state: regenie2_linear_types.Regenie2LinearState,
@@ -205,14 +226,15 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
     genotype_matrix: jax.Array,
 ) -> regenie2_linear_types.Regenie2LinearChunkResult:
     """Compute REGENIE step 2 linear association using chromosome-cached state."""
-    score_matrix = chromosome_state.stacked_score_matrix @ genotype_matrix
+    normalized_genotype_matrix = normalize_high_frequency_diploid_genotypes_sample_major(genotype_matrix)
+    score_matrix = chromosome_state.stacked_score_matrix @ normalized_genotype_matrix
     covariate_projection_coordinates = score_matrix[:-1]
     raw_covariance_with_phenotype = score_matrix[-1]
     covariance_with_phenotype = raw_covariance_with_phenotype - (
         chromosome_state.adjusted_residual_projection_coordinates @ covariate_projection_coordinates
     )
 
-    genotype_sum_squares = jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix)
+    genotype_sum_squares = jnp.einsum("ij,ij->j", normalized_genotype_matrix, normalized_genotype_matrix)
     projection_sum_squares = jnp.einsum(
         "ij,ij->j",
         covariate_projection_coordinates,
@@ -269,14 +291,14 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
     genotype_matrix: jax.Array,
 ) -> regenie2_linear_types.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 association."""
-    genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
-    covariate_projection_coordinates = chromosome_state.whitened_covariate_transpose @ genotype_matrix_float32
-    raw_covariance_with_phenotype = chromosome_state.adjusted_residual_matrix @ genotype_matrix_float32
+    normalized_genotype_matrix = normalize_high_frequency_diploid_genotypes_sample_major(genotype_matrix)
+    covariate_projection_coordinates = chromosome_state.whitened_covariate_transpose @ normalized_genotype_matrix
+    raw_covariance_with_phenotype = chromosome_state.adjusted_residual_matrix @ normalized_genotype_matrix
     covariance_with_phenotype = raw_covariance_with_phenotype - (
         chromosome_state.adjusted_residual_projection_coordinate_matrix @ covariate_projection_coordinates
     )
 
-    genotype_sum_squares = jnp.einsum("ij,ij->j", genotype_matrix_float32, genotype_matrix_float32)
+    genotype_sum_squares = jnp.einsum("ij,ij->j", normalized_genotype_matrix, normalized_genotype_matrix)
     projection_sum_squares = jnp.einsum(
         "ij,ij->j",
         covariate_projection_coordinates,
@@ -326,9 +348,16 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
     genotype_sum_squares: jax.Array,
 ) -> regenie2_linear_types.Regenie2LinearChunkResult:
     """Compute quantitative REGENIE step 2 association from variant-major genotypes."""
-    genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
-    genotype_sum_squares_float32 = jnp.asarray(genotype_sum_squares, dtype=jnp.float32)
-    score_matrix = chromosome_state.stacked_score_matrix @ genotype_matrix_by_variant_float32.T
+    del genotype_sum_squares
+    normalized_genotype_matrix_by_variant = normalize_high_frequency_diploid_genotypes_variant_major(
+        genotype_matrix_by_variant
+    )
+    genotype_sum_squares_float32 = jnp.einsum(
+        "ij,ij->i",
+        normalized_genotype_matrix_by_variant,
+        normalized_genotype_matrix_by_variant,
+    )
+    score_matrix = chromosome_state.stacked_score_matrix @ normalized_genotype_matrix_by_variant.T
     covariate_projection_coordinates = score_matrix[:-1]
     raw_covariance_with_phenotype = score_matrix[-1]
     covariance_with_phenotype = raw_covariance_with_phenotype - (
@@ -385,12 +414,19 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
     genotype_sum_squares: jax.Array,
 ) -> regenie2_linear_types.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 from variant-major genotypes."""
-    genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
-    genotype_sum_squares_float32 = jnp.asarray(genotype_sum_squares, dtype=jnp.float32)
-    covariate_projection_coordinates = (
-        chromosome_state.whitened_covariate_transpose @ genotype_matrix_by_variant_float32.T
+    del genotype_sum_squares
+    normalized_genotype_matrix_by_variant = normalize_high_frequency_diploid_genotypes_variant_major(
+        genotype_matrix_by_variant
     )
-    raw_covariance_with_phenotype = chromosome_state.adjusted_residual_matrix @ genotype_matrix_by_variant_float32.T
+    genotype_sum_squares_float32 = jnp.einsum(
+        "ij,ij->i",
+        normalized_genotype_matrix_by_variant,
+        normalized_genotype_matrix_by_variant,
+    )
+    covariate_projection_coordinates = (
+        chromosome_state.whitened_covariate_transpose @ normalized_genotype_matrix_by_variant.T
+    )
+    raw_covariance_with_phenotype = chromosome_state.adjusted_residual_matrix @ normalized_genotype_matrix_by_variant.T
     covariance_with_phenotype = raw_covariance_with_phenotype - (
         chromosome_state.adjusted_residual_projection_coordinate_matrix @ covariate_projection_coordinates
     )

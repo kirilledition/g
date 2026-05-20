@@ -58,9 +58,12 @@ def compute_score_reference_chunk(
     loco_predictions: jax.Array,
 ) -> ReferenceRegenie2LinearChunkResult:
     """Compute the unoptimized score-statistic formula for regression-test comparison."""
+    normalized_genotype_matrix = regenie2_linear.normalize_high_frequency_diploid_genotypes_sample_major(
+        genotype_matrix,
+    )
     adjusted_residual = state.phenotype_residual - loco_predictions
     adjusted_residual_sum_squares = jnp.dot(adjusted_residual, adjusted_residual)
-    covariate_genotype_crossproduct = state.covariate_matrix_transpose @ genotype_matrix
+    covariate_genotype_crossproduct = state.covariate_matrix_transpose @ normalized_genotype_matrix
     covariate_adjusted_residual_crossproduct = state.covariate_matrix_transpose @ adjusted_residual
     genotype_projection = regenie2_linear.solve_positive_definite_system(
         state.covariate_crossproduct_cholesky_factor,
@@ -70,10 +73,10 @@ def compute_score_reference_chunk(
         state.covariate_crossproduct_cholesky_factor,
         covariate_adjusted_residual_crossproduct,
     )
-    genotype_sum_squares = jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix)
+    genotype_sum_squares = jnp.einsum("ij,ij->j", normalized_genotype_matrix, normalized_genotype_matrix)
     projection_sum_squares = jnp.einsum("ij,ij->j", covariate_genotype_crossproduct, genotype_projection)
     genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares - projection_sum_squares, 0.0)
-    raw_covariance_with_phenotype = genotype_matrix.T @ adjusted_residual
+    raw_covariance_with_phenotype = normalized_genotype_matrix.T @ adjusted_residual
     covariance_projection = covariate_genotype_crossproduct.T @ adjusted_residual_projection
     covariance_with_phenotype = raw_covariance_with_phenotype - covariance_projection
     covariance_squared = covariance_with_phenotype * covariance_with_phenotype
@@ -451,6 +454,59 @@ class TestComputeRegenie2LinearChunk:
             atol=1e-5,
         )
         numpy.testing.assert_array_equal(variant_major_result.valid_mask, sample_major_result.valid_mask)
+
+    def test_high_frequency_diploid_dosages_match_float64_reference(self) -> None:
+        """Guard REGENIE parity for mostly-homozygous alternate dosage columns."""
+        sample_count = 2504
+        rng = np.random.default_rng(547528741)
+        covariate_matrix = np.ones((sample_count, 3), dtype=np.float64)
+        covariate_matrix[:, 1] = np.linspace(-1.0, 1.0, sample_count, dtype=np.float64)
+        covariate_matrix[:, 2] = rng.normal(size=sample_count)
+        phenotype_vector = rng.normal(size=sample_count)
+        loco_predictions = rng.normal(scale=0.05, size=sample_count)
+        genotype_matrix = np.full((sample_count, 1), 2.0, dtype=np.float64)
+        genotype_matrix[:5, 0] = 1.0
+
+        phenotype_residual = residualize_against_covariates(covariate_matrix, phenotype_vector)
+        reference_result = compute_regenie_null_mse_formula(
+            covariate_matrix=covariate_matrix,
+            adjusted_residual=phenotype_residual - loco_predictions,
+            genotype_matrix=genotype_matrix,
+        )
+        state = regenie2_linear.prepare_regenie2_linear_state(
+            covariate_matrix=jnp.asarray(covariate_matrix, dtype=jnp.float32),
+            phenotype_vector=jnp.asarray(phenotype_vector, dtype=jnp.float32),
+        )
+        chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
+            state,
+            jnp.asarray(loco_predictions, dtype=jnp.float32),
+        )
+        genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
+
+        sample_major_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
+            chromosome_state=chromosome_state,
+            genotype_matrix=genotype_matrix_float32,
+        )
+        variant_major_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
+            chromosome_state=chromosome_state,
+            genotype_matrix_by_variant=genotype_matrix_float32.T,
+            genotype_sum_squares=jnp.einsum("ij,ij->j", genotype_matrix_float32, genotype_matrix_float32),
+        )
+
+        numpy.testing.assert_allclose(sample_major_result.beta, reference_result.beta, rtol=1e-5, atol=1e-6)
+        numpy.testing.assert_allclose(variant_major_result.beta, reference_result.beta, rtol=1e-5, atol=1e-6)
+        numpy.testing.assert_allclose(
+            sample_major_result.standard_error,
+            reference_result.standard_error,
+            rtol=1e-5,
+            atol=1e-6,
+        )
+        numpy.testing.assert_allclose(
+            variant_major_result.standard_error,
+            reference_result.standard_error,
+            rtol=1e-5,
+            atol=1e-6,
+        )
 
     def test_handles_zero_variance_genotypes(self) -> None:
         """Ensure monomorphic variants are marked invalid."""

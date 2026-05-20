@@ -133,6 +133,102 @@ def test_unknown_and_unsupported_options_raise_clear_errors() -> None:
 
 
 @pytest.mark.parametrize(
+    ("option_name", "error_match"),
+    [
+        ("bed", "--bed is a valid REGENIE option"),
+        ("spa", "--spa is a valid REGENIE option"),
+        ("keep", "--keep is a valid REGENIE option"),
+    ],
+)
+def test_recognized_unsupported_options_use_specific_errors(option_name: str, error_match: str) -> None:
+    raw_options = (
+        {
+            "step": 2,
+            "bt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": "results/output",
+        }
+        if option_name == "spa"
+        else build_valid_quantitative_options()
+    )
+    raw_options[option_name] = "unsupported.txt"
+
+    with pytest.raises(ValueError, match=error_match):
+        config.RegenieConfig.from_options(raw_options)
+
+
+@pytest.mark.parametrize(
+    ("mutated_options", "error_match"),
+    [
+        ({"step": 1}, "--step 1 is recognized"),
+        ({"step": 3}, "requires --step 2"),
+        ({"bgen": None}, "Exactly one genotype source"),
+        ({"phenoFile": None}, "--phenoFile is required"),
+        ({"phenoCol": None}, "At least one --phenoCol"),
+        ({"pred": None}, "--pred is required"),
+        ({"out": None}, "--out is required"),
+        ({"bsize": 0}, "--bsize must be positive"),
+        ({"threads": 0}, "--threads must be positive"),
+        ({"g-variant-limit": 0}, "--g-variant-limit must be positive"),
+        ({"g-writer-threads": 0}, "--g-writer-threads must be positive"),
+        ({"g-writer-queue-depth": 0}, "--g-writer-queue-depth must be positive"),
+        ({"g-output-chunks-per-arrow-file": 0}, "--g-output-chunks-per-arrow-file must be positive"),
+    ],
+)
+def test_config_validation_rejects_required_and_positive_option_errors(
+    mutated_options: dict[str, object],
+    error_match: str,
+) -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options.update(mutated_options)
+
+    with pytest.raises(ValueError, match=error_match):
+        config.RegenieConfig.from_options(raw_options)
+
+
+@pytest.mark.parametrize(
+    ("mutated_options", "error_match"),
+    [
+        ({"pThresh": 0.0}, "--pThresh must be in"),
+        ({"pThresh": 1.0}, "--pThresh must be in"),
+        ({"firth": True, "approx": False}, "Exact --firth is not implemented"),
+        ({"firth": False, "approx": True}, "--approx requires --firth"),
+    ],
+)
+def test_binary_config_validation_rejects_invalid_fallback_combinations(
+    mutated_options: dict[str, object],
+    error_match: str,
+) -> None:
+    raw_options: dict[str, object] = {
+        "step": 2,
+        "bt": True,
+        "bgen": "dataset.bgen",
+        "phenoFile": "phenotype.tsv",
+        "phenoCol": "trait",
+        "pred": "predictions.list",
+        "out": "results/output",
+        "firth": True,
+        "approx": True,
+    }
+    raw_options.update(mutated_options)
+
+    with pytest.raises(ValueError, match=error_match):
+        config.RegenieConfig.from_options(raw_options)
+
+
+def test_repeated_and_list_columns_are_mutually_exclusive() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options["phenoCol"] = ("trait",)
+    raw_options["phenoColList"] = "trait"
+
+    with pytest.raises(ValueError, match="Use either --phenoCol or --phenoColList"):
+        config.RegenieConfig.from_options(raw_options)
+
+
+@pytest.mark.parametrize(
     ("option_name", "option_value"),
     [
         ("firth", True),

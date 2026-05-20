@@ -1057,3 +1057,227 @@ fn parse_covariate_values(covariate_values: &[String]) -> Result<Vec<f32>, Strin
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::{AlignmentInputs, MultiAlignmentInputs, SampleKeyMode, align_multi_sample_data, align_sample_data};
+
+    static NEXT_FIXTURE_ID: AtomicUsize = AtomicUsize::new(0);
+
+    struct FixtureDirectory {
+        path: PathBuf,
+    }
+
+    impl FixtureDirectory {
+        fn new() -> Self {
+            let fixture_id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!("g-sample-tests-{}-{fixture_id}", std::process::id()));
+            fs::create_dir_all(&path).expect("sample test fixture directory should be created");
+            Self { path }
+        }
+
+        fn write_file(&self, file_name: &str, contents: &str) -> String {
+            let path = self.path.join(file_name);
+            fs::write(&path, contents).expect("sample test fixture should be written");
+            path.to_string_lossy().into_owned()
+        }
+    }
+
+    impl Drop for FixtureDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    fn base_alignment_inputs(phenotype_path: String, phenotype_name: &str) -> AlignmentInputs {
+        AlignmentInputs {
+            sample_indices: vec![2, 0, 1],
+            family_identifiers: strings(&["F3", "F1", "F2"]),
+            individual_identifiers: strings(&["I3", "I1", "I2"]),
+            phenotype_path,
+            phenotype_name: phenotype_name.to_string(),
+            covariate_path: None,
+            covariate_names: None,
+            is_binary_trait: false,
+            sample_key_mode: SampleKeyMode::FidIid,
+        }
+    }
+
+    #[test]
+    fn aligns_quantitative_samples_with_covariate_complete_cases_by_fid_iid() {
+        let fixture = FixtureDirectory::new();
+        let phenotype_path =
+            fixture.write_file("phenotypes.tsv", "FID\tIID\ttrait\nF1\tI1\t1.5\nF2\tI2\tNA\nF3\tI3\t2.5\n");
+        let covariate_path =
+            fixture.write_file("covariates.tsv", "FID\tIID\tage\tbatch\nF1\tI1\t41\t0\nF3\tI3\t63\t1\n");
+        let mut inputs = base_alignment_inputs(phenotype_path, "trait");
+        inputs.covariate_path = Some(covariate_path);
+
+        let aligned = align_sample_data(inputs).expect("quantitative sample alignment should succeed");
+
+        assert_eq!(aligned.sample_indices, vec![0, 2]);
+        assert_eq!(aligned.family_identifiers, strings(&["F1", "F3"]));
+        assert_eq!(aligned.individual_identifiers, strings(&["I1", "I3"]));
+        assert_eq!(aligned.phenotype_name, "trait");
+        assert_eq!(aligned.phenotype_vector, vec![1.5, 2.5]);
+        assert_eq!(aligned.covariate_names, strings(&["intercept", "age", "batch"]));
+        assert_eq!(aligned.covariate_row_count, 2);
+        assert_eq!(aligned.covariate_column_count, 3);
+        assert_eq!(aligned.covariate_matrix_values, vec![1.0, 41.0, 0.0, 1.0, 63.0, 1.0]);
+        assert!(!aligned.is_binary_trait);
+    }
+
+    #[test]
+    fn aligns_binary_samples_and_recodes_regenie_case_control_values() {
+        let fixture = FixtureDirectory::new();
+        let phenotype_path = fixture.write_file("phenotypes.tsv", "IID\tcase\nI1\t1\nI2\t2\nI3\t1\n");
+        let inputs = AlignmentInputs {
+            sample_indices: vec![0, 1, 2],
+            family_identifiers: strings(&["F1", "F2", "F3"]),
+            individual_identifiers: strings(&["I1", "I2", "I3"]),
+            phenotype_path,
+            phenotype_name: "case".to_string(),
+            covariate_path: None,
+            covariate_names: None,
+            is_binary_trait: true,
+            sample_key_mode: SampleKeyMode::Iid,
+        };
+
+        let aligned = align_sample_data(inputs).expect("binary sample alignment should succeed");
+
+        assert_eq!(aligned.phenotype_vector, vec![0.0, 1.0, 0.0]);
+        assert_eq!(aligned.covariate_names, strings(&["intercept"]));
+        assert!(aligned.is_binary_trait);
+    }
+
+    #[test]
+    fn rejects_invalid_binary_phenotype_value() {
+        let fixture = FixtureDirectory::new();
+        let phenotype_path = fixture.write_file("phenotypes.tsv", "IID\tcase\nI1\t3\n");
+        let inputs = AlignmentInputs {
+            sample_indices: vec![0],
+            family_identifiers: strings(&["F1"]),
+            individual_identifiers: strings(&["I1"]),
+            phenotype_path,
+            phenotype_name: "case".to_string(),
+            covariate_path: None,
+            covariate_names: None,
+            is_binary_trait: true,
+            sample_key_mode: SampleKeyMode::Iid,
+        };
+
+        let error = align_sample_data(inputs).expect_err("invalid binary phenotype should be rejected");
+
+        assert!(error.contains("Binary phenotype must contain only values 1 and 2"));
+    }
+
+    #[test]
+    fn aligns_multi_phenotype_complete_cases_to_shared_sample_set() {
+        let fixture = FixtureDirectory::new();
+        let phenotype_path = fixture.write_file(
+            "phenotypes.tsv",
+            "FID\tIID\ttrait_a\ttrait_b\nF1\tI1\t10\t20\nF2\tI2\t11\tNA\nF3\tI3\tNA\t22\n",
+        );
+        let inputs = MultiAlignmentInputs {
+            sample_indices: vec![0, 1, 2],
+            family_identifiers: strings(&["F1", "F2", "F3"]),
+            individual_identifiers: strings(&["I1", "I2", "I3"]),
+            phenotype_path,
+            phenotype_names: strings(&["trait_a", "trait_b"]),
+            covariate_path: None,
+            covariate_names: None,
+            is_binary_trait: false,
+            sample_key_mode: SampleKeyMode::FidIid,
+        };
+
+        let aligned = align_multi_sample_data(inputs).expect("multi-phenotype alignment should succeed");
+
+        assert_eq!(aligned.sample_indices, vec![0]);
+        assert_eq!(aligned.phenotype_names, strings(&["trait_a", "trait_b"]));
+        assert_eq!(aligned.phenotype_row_count, 2);
+        assert_eq!(aligned.phenotype_column_count, 1);
+        assert_eq!(aligned.phenotype_matrix_values, vec![10.0, 20.0]);
+        assert_eq!(aligned.covariate_matrix_values, vec![1.0]);
+    }
+
+    #[test]
+    fn rejects_empty_multi_phenotype_request() {
+        let inputs = MultiAlignmentInputs {
+            sample_indices: vec![0],
+            family_identifiers: strings(&["F1"]),
+            individual_identifiers: strings(&["I1"]),
+            phenotype_path: "unused.tsv".to_string(),
+            phenotype_names: Vec::new(),
+            covariate_path: None,
+            covariate_names: None,
+            is_binary_trait: false,
+            sample_key_mode: SampleKeyMode::Iid,
+        };
+
+        let error = align_multi_sample_data(inputs).expect_err("empty phenotype list should be rejected");
+
+        assert!(error.contains("At least one phenotype is required"));
+    }
+
+    #[test]
+    fn rejects_duplicate_iids_when_iid_mode_is_requested() {
+        let inputs = AlignmentInputs {
+            sample_indices: vec![0, 1],
+            family_identifiers: strings(&["F1", "F2"]),
+            individual_identifiers: strings(&["same", "same"]),
+            phenotype_path: "unused.tsv".to_string(),
+            phenotype_name: "trait".to_string(),
+            covariate_path: None,
+            covariate_names: None,
+            is_binary_trait: false,
+            sample_key_mode: SampleKeyMode::Iid,
+        };
+
+        let error = align_sample_data(inputs).expect_err("duplicate IID should be rejected before file IO");
+
+        assert!(error.contains("Duplicate IID 'same'"));
+    }
+
+    #[test]
+    fn rejects_covariate_names_without_covariate_table() {
+        let fixture = FixtureDirectory::new();
+        let phenotype_path = fixture.write_file("phenotypes.tsv", "FID\tIID\ttrait\nF1\tI1\t1\n");
+        let mut inputs = base_alignment_inputs(phenotype_path, "trait");
+        inputs.covariate_names = Some(strings(&["age"]));
+
+        let error = align_sample_data(inputs).expect_err("covariate names require a covariate table");
+
+        assert!(error.contains("Covariate names cannot be provided without a covariate table"));
+    }
+
+    #[test]
+    fn rejects_missing_requested_covariate_column() {
+        let fixture = FixtureDirectory::new();
+        let phenotype_path = fixture.write_file("phenotypes.tsv", "FID\tIID\ttrait\nF1\tI1\t1\n");
+        let covariate_path = fixture.write_file("covariates.tsv", "FID\tIID\tage\nF1\tI1\t40\n");
+        let mut inputs = AlignmentInputs {
+            sample_indices: vec![0],
+            family_identifiers: strings(&["F1"]),
+            individual_identifiers: strings(&["I1"]),
+            phenotype_path,
+            phenotype_name: "trait".to_string(),
+            covariate_path: Some(covariate_path),
+            covariate_names: Some(strings(&["missing"])),
+            is_binary_trait: false,
+            sample_key_mode: SampleKeyMode::FidIid,
+        };
+
+        let error = align_sample_data(inputs.clone()).expect_err("missing covariate should be rejected");
+        inputs.covariate_names = Some(strings(&["age"]));
+        assert!(align_sample_data(inputs).is_ok());
+        assert!(error.contains("Covariate columns are missing"));
+    }
+}

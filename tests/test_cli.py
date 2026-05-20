@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import signal
 import typing
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,11 +11,30 @@ import pytest
 from click.testing import CliRunner
 
 from g import api, types
-from g.cli import app, main, print_success_message
+from g.cli import (
+    app,
+    main,
+    print_success_message,
+    print_warm_cache_message,
+    read_raw_toml,
+    regenie_main,
+    resolve_trusted_bgen_validation_mode,
+)
 from g.engine import shutdown
 from g.interface import options
 
 runner = CliRunner()
+
+
+@dataclass(frozen=True)
+class WarmShape:
+    sample_count: int
+    variant_count: int
+
+
+@dataclass(frozen=True)
+class WarmReport:
+    warmed_shapes: tuple[WarmShape, ...]
 
 
 def test_root_command_without_arguments_shows_help() -> None:
@@ -265,6 +285,34 @@ def test_regenie_command_applies_toml_then_explicit_cli_override(tmp_path: Path)
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
 
 
+def test_regenie_command_applies_explicit_binary_override(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[input]",
+                'bgen = "dataset.bgen"',
+                'phenoFile = "phenotype.tsv"',
+                'phenoCol = "trait"',
+                'pred = "predictions.list"',
+                "[trait]",
+                "step = 2",
+                "qt = true",
+                "[output]",
+                'out = "results/output"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("g.cli.api.regenie", return_value=api.RunArtifacts()) as mock_regenie_api:
+        result = runner.invoke(app, ["regenie", "--config", str(config_path), "--bt"])
+
+    assert result.exit_code == 0
+    regenie_config = mock_regenie_api.call_args.args[0]
+    assert regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
+
+
 def test_config_subcommands_render_and_validate(tmp_path: Path) -> None:
     config_path = tmp_path / "regenie.toml"
 
@@ -277,6 +325,39 @@ def test_config_subcommands_render_and_validate(tmp_path: Path) -> None:
     explain_result = runner.invoke(app, ["config", "explain", "bgen"])
     assert explain_result.exit_code == 0
     assert "supported" in explain_result.output
+
+
+def test_config_init_writes_to_stdout() -> None:
+    result = runner.invoke(app, ["config", "init"])
+
+    assert result.exit_code == 0
+    assert "[input]" in result.output
+    assert "[trait]" in result.output
+
+
+def test_config_validate_reports_invalid_toml_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "invalid.toml"
+    config_path.write_text('[input]\nphenoFile = "phenotype.tsv"\n', encoding="utf-8")
+
+    result = runner.invoke(app, ["config", "validate", str(config_path)])
+
+    assert result.exit_code != 0
+    assert "Exactly one genotype source" in result.output
+
+
+def test_config_explain_lists_all_options() -> None:
+    result = runner.invoke(app, ["config", "explain"])
+
+    assert result.exit_code == 0
+    assert "bgen: supported" in result.output
+    assert "g-output-format: g_extension" in result.output
+
+
+def test_config_explain_reports_unknown_option() -> None:
+    result = runner.invoke(app, ["config", "explain", "not-a-real-option"])
+
+    assert result.exit_code != 0
+    assert "Unknown option: not-a-real-option" in result.output
 
 
 def test_legacy_commands_are_not_registered() -> None:
@@ -298,7 +379,66 @@ def test_print_success_message_reports_run_directory_outputs(capsys: typing.Any)
     assert "final.parquet" in captured.out
 
 
+def test_print_success_message_reports_nested_phenotype_artifacts(capsys: typing.Any) -> None:
+    print_success_message(
+        api.RunArtifacts(
+            phenotype_artifacts=(
+                api.RunArtifacts(output_run_directory=Path("results/trait_a.run")),
+                api.RunArtifacts(
+                    output_run_directory=Path("results/trait_b.run"), final_parquet=Path("trait_b.parquet")
+                ),
+            )
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert "results/trait_a.run" in captured.out
+    assert "results/trait_b.run" in captured.out
+    assert "trait_b.parquet" in captured.out
+
+
+def test_print_warm_cache_message_lists_warmed_shapes(capsys: typing.Any) -> None:
+    print_warm_cache_message(WarmReport(warmed_shapes=(WarmShape(sample_count=12, variant_count=512),)))
+
+    captured = capsys.readouterr()
+    assert "(12, 512)" in captured.out
+
+
+def test_resolve_trusted_bgen_validation_mode_rejects_conflicts() -> None:
+    assert (
+        resolve_trusted_bgen_validation_mode(validate_trusted_bgen=False, assume_trusted_bgen_validated=False)
+        == types.TrustedBgenValidationMode.CACHE_ON_MISS
+    )
+    assert (
+        resolve_trusted_bgen_validation_mode(validate_trusted_bgen=True, assume_trusted_bgen_validated=False)
+        == types.TrustedBgenValidationMode.FORCE_VALIDATE
+    )
+    assert (
+        resolve_trusted_bgen_validation_mode(validate_trusted_bgen=False, assume_trusted_bgen_validated=True)
+        == types.TrustedBgenValidationMode.ASSUME_VALIDATED
+    )
+    with pytest.raises(click.BadParameter, match="mutually exclusive"):
+        resolve_trusted_bgen_validation_mode(validate_trusted_bgen=True, assume_trusted_bgen_validated=True)
+
+
+def test_read_raw_toml_handles_optional_path(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[trait]\nstep = 2\n", encoding="utf-8")
+
+    assert read_raw_toml(None) == {}
+    assert read_raw_toml(config_path) == {"trait": {"step": 2}}
+
+
 def test_main_dispatches_to_click_app() -> None:
     with patch("g.cli.app") as mock_app:
         main()
     mock_app.assert_called_once_with()
+
+
+def test_regenie_main_dispatches_direct_entrypoint() -> None:
+    with patch("g.cli.run_regenie_command.main") as mock_main:
+        regenie_main()
+
+    mock_main.assert_called_once()
+    assert mock_main.call_args.kwargs["prog_name"] == "g-regenie"
+    assert mock_main.call_args.kwargs["standalone_mode"] is True

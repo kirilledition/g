@@ -86,6 +86,7 @@
             zstd
             zlib
             cargo
+            cargo-llvm-cov
             clippy
             rustc
             rustfmt
