@@ -511,6 +511,7 @@ fn format_missing_samples(missing_samples: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -600,6 +601,47 @@ mod tests {
         assert_eq!(trait_count, 2);
         assert_eq!(sample_count, 2);
         assert_eq!(prediction_values, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn multi_prediction_source_reports_iid_and_matrix_consistency_errors() {
+        let fixture = FixtureDirectory::new();
+        let loco_path = fixture.write_file("duplicate-iid.loco", "FID_IID F1_I1 F2_I1\n22 1.0 2.0\n");
+        let prediction_list_path = fixture.write_file("pred.list", &format!("trait {}\n", loco_path.display()));
+
+        let duplicate_target_error = MultiPredictionSource::load(
+            &prediction_list_path,
+            &strings(&["trait"]),
+            &strings(&["F1", "F2"]),
+            &strings(&["I1", "I1"]),
+            SampleKeyMode::Iid,
+        )
+        .expect_err("duplicate target IIDs should fail in IID mode");
+        assert!(matches!(duplicate_target_error, PredictionError::DuplicateTargetIid { .. }));
+
+        let duplicate_loco_error = MultiPredictionSource::load(
+            &prediction_list_path,
+            &strings(&["trait"]),
+            &strings(&["F1"]),
+            &strings(&["I1"]),
+            SampleKeyMode::Iid,
+        )
+        .expect_err("duplicate LOCO IIDs should fail in IID mode");
+        assert!(matches!(duplicate_loco_error, PredictionError::DuplicateLocoIid { .. }));
+
+        let source = MultiPredictionSource {
+            phenotype_names: strings(&["first", "second"]),
+            chromosome_predictions_by_trait: vec![
+                HashMap::from([("22".to_string(), vec![1.0, 2.0])]),
+                HashMap::from([("22".to_string(), vec![3.0])]),
+            ],
+        };
+        let matrix_error =
+            source.chromosome_prediction_matrix("chr22").expect_err("inconsistent trait sample counts should fail");
+        assert!(matches!(
+            matrix_error,
+            PredictionError::LocoPredictionCountMismatch { expected_count: 2, observed_count: 1, .. }
+        ));
     }
 
     #[test]

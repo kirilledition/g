@@ -317,3 +317,179 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         homozygous_alternate_count,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::metadata::VariantRecord;
+    use super::super::sample_selection::build_sample_selection;
+    use super::*;
+
+    fn trusted_probability_block(
+        sample_count: u32,
+        allele_count: u16,
+        minimum_ploidy: u8,
+        maximum_ploidy: u8,
+        sample_ploidy_and_missingness: &[u8],
+        phased_flag: u8,
+        probability_bit_count: u8,
+        probability_bytes: &[u8],
+    ) -> Vec<u8> {
+        let mut block = Vec::new();
+        block.extend_from_slice(&sample_count.to_le_bytes());
+        block.extend_from_slice(&allele_count.to_le_bytes());
+        block.push(minimum_ploidy);
+        block.push(maximum_ploidy);
+        block.extend_from_slice(sample_ploidy_and_missingness);
+        block.push(phased_flag);
+        block.push(probability_bit_count);
+        block.extend_from_slice(probability_bytes);
+        block
+    }
+
+    fn valid_trusted_probability_block(probability_bytes: &[u8]) -> Vec<u8> {
+        trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 0, 8, probability_bytes)
+    }
+
+    fn variant_record(offset: usize, length: usize, identifier: &str) -> VariantRecord {
+        VariantRecord {
+            probability_payload_offset: offset,
+            probability_payload_length: length,
+            declared_uncompressed_block_length: length,
+            chromosome: "22".to_string(),
+            resolved_variant_identifier: identifier.to_string(),
+            position: 1,
+            counted_allele: "A".to_string(),
+            reference_allele: "G".to_string(),
+        }
+    }
+
+    fn validation_error_for(block: &[u8], expected_sample_count: usize) -> String {
+        let mut thread_scratch = ThreadScratch::default();
+        let mut profile_snapshot = ThreadLocalProfileSnapshot::default();
+        validate_variant_compatible_with_trusted_no_missing_diploid(
+            block,
+            CompressionType::None,
+            &variant_record(0, block.len(), "trusted-test"),
+            expected_sample_count,
+            &mut thread_scratch,
+            &mut profile_snapshot,
+        )
+        .expect_err("trusted validation should reject malformed block")
+        .to_string()
+    }
+
+    #[test]
+    fn trusted_validation_accepts_contract_and_rejects_each_assumption() {
+        assert!(all_samples_present_diploid(&[2; 17]));
+        assert!(!all_samples_present_diploid(&[2, 2, 3]));
+        assert!(!all_samples_present_diploid(&[2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2]));
+
+        let valid_block = valid_trusted_probability_block(&[0, 0, 255, 0, 0, 255]);
+        let mut thread_scratch = ThreadScratch::default();
+        let mut profile_snapshot = ThreadLocalProfileSnapshot::default();
+        validate_variant_compatible_with_trusted_no_missing_diploid(
+            &valid_block,
+            CompressionType::None,
+            &variant_record(0, valid_block.len(), "trusted-valid"),
+            3,
+            &mut thread_scratch,
+            &mut profile_snapshot,
+        )
+        .expect("valid trusted probability block should pass");
+
+        assert!(validation_error_for(&valid_block, 2).contains("file header reports"));
+        assert!(
+            validation_error_for(&trusted_probability_block(3, 3, 2, 2, &[2, 2, 2], 0, 8, &[]), 3)
+                .contains("not biallelic")
+        );
+        assert!(
+            validation_error_for(&trusted_probability_block(3, 2, 1, 2, &[2, 2, 2], 0, 8, &[]), 3)
+                .contains("ploidy bounds")
+        );
+        assert!(
+            validation_error_for(&trusted_probability_block(3, 2, 2, 2, &[2, 0x82, 2], 0, 8, &[]), 3)
+                .contains("missing or non-diploid")
+        );
+        assert!(
+            validation_error_for(&trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 1, 8, &[]), 3).contains("phased")
+        );
+        assert!(
+            validation_error_for(&trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 0, 16, &[]), 3)
+                .contains("bits per probability")
+        );
+    }
+
+    #[test]
+    fn trusted_variant_major_decode_writes_selected_samples_and_counts() {
+        let first_block = valid_trusted_probability_block(&[0, 0, 255, 0, 0, 255]);
+        let second_block = valid_trusted_probability_block(&[0, 255, 255, 0, 0, 0]);
+        let second_offset = first_block.len();
+        let mut mmap = first_block.clone();
+        mmap.extend_from_slice(&second_block);
+        let variant_records = [
+            variant_record(0, first_block.len(), "trusted-first"),
+            variant_record(second_offset, second_block.len(), "trusted-second"),
+        ];
+        let sample_selection = build_sample_selection(3, &[2, 0]).expect("subset sample selection should build");
+        let mut output = vec![f32::NAN; 4];
+        let mut thread_scratch = ThreadScratch::default();
+
+        let result = decode_trusted_variant_major_dosage_tile(
+            &mmap,
+            CompressionType::None,
+            3,
+            &sample_selection,
+            &variant_records,
+            output.as_mut_ptr() as usize,
+            2,
+            0,
+            true,
+            &mut thread_scratch,
+        )
+        .expect("trusted variant-major tile should decode");
+        let dosage_lookup = unphased_eight_bit_dosage_lookup();
+
+        assert_eq!(result.selected_observation_counts, vec![2, 2]);
+        assert!(!result.has_missing_values);
+        assert_eq!(result.profile_snapshot.variant_decode_count, 2);
+        assert_eq!(result.profile_snapshot.decode_tile_count, 1);
+        assert!((output[0] - dosage_lookup[usize::from(0_u8) | (usize::from(255_u8) << 8)]).abs() < f32::EPSILON);
+        assert!((output[1] - dosage_lookup[0]).abs() < f32::EPSILON);
+        assert!((output[2] - dosage_lookup[0]).abs() < f32::EPSILON);
+        assert!((output[3] - dosage_lookup[usize::from(0_u8) | (usize::from(255_u8) << 8)]).abs() < f32::EPSILON);
+        assert_eq!(result.nonzero_counts.len(), 2);
+    }
+
+    #[test]
+    fn trusted_variant_major_decode_reports_contract_violations() {
+        let sample_selection = build_sample_selection(3, &[0, 1, 2]).expect("identity sample selection should build");
+        let mut output = vec![0.0_f32; 3];
+
+        for (block, expected_message) in [
+            (trusted_probability_block(2, 2, 2, 2, &[2, 2, 2], 0, 8, &[]), "file header reports"),
+            (trusted_probability_block(3, 3, 2, 2, &[2, 2, 2], 0, 8, &[]), "not biallelic"),
+            (trusted_probability_block(3, 2, 1, 2, &[2, 2, 2], 0, 8, &[]), "ploidy bounds"),
+            (trusted_probability_block(3, 2, 2, 2, &[2, 0x82, 2], 0, 8, &[]), "missing or non-diploid"),
+            (trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 1, 8, &[]), "unphased 8-bit"),
+            (trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 0, 4, &[]), "unphased 8-bit"),
+            (trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 0, 8, &[0, 0]), "Unexpected end"),
+        ] {
+            let mut thread_scratch = ThreadScratch::default();
+            let error = decode_trusted_variant_major_dosage_tile(
+                &block,
+                CompressionType::None,
+                3,
+                &sample_selection,
+                &[variant_record(0, block.len(), "trusted-invalid")],
+                output.as_mut_ptr() as usize,
+                3,
+                0,
+                false,
+                &mut thread_scratch,
+            )
+            .expect_err("invalid trusted block should fail")
+            .to_string();
+            assert!(error.contains(expected_message), "expected '{expected_message}' in '{error}'");
+        }
+    }
+}

@@ -178,3 +178,108 @@ fn parse_chunk_file_name(chunk_file_path: &Path) -> Option<(i64, Option<i64>)> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use arrow::array::{ArrayRef, Float32Array, Int64Array};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::ipc::writer::FileWriter;
+    use arrow::record_batch::RecordBatch;
+
+    use super::{scan_committed_chunk_identifiers, validate_strict_manifest_chunks};
+
+    fn create_test_directory() -> PathBuf {
+        let unique_suffix =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("system time should be after Unix epoch").as_nanos();
+        let directory_path = std::env::temp_dir().join(format!("g-output-resume-test-{unique_suffix}"));
+        std::fs::create_dir_all(&directory_path).expect("resume test directory should be created");
+        directory_path
+    }
+
+    fn write_arrow_file(path: &Path, schema: &Arc<Schema>, columns: Vec<ArrayRef>) {
+        let batch = RecordBatch::try_new(Arc::clone(schema), columns).expect("record batch should build");
+        let file = std::fs::File::create(path).expect("Arrow file should be created");
+        let mut writer = FileWriter::try_new(file, schema.as_ref()).expect("Arrow writer should be created");
+        writer.write(&batch).expect("Arrow batch should be written");
+        writer.finish().expect("Arrow writer should finish");
+    }
+
+    fn required_resume_schema(extra_field: Option<Field>) -> Arc<Schema> {
+        let mut fields = vec![
+            Field::new("chunk_identifier", DataType::Int64, false),
+            Field::new("variant_start_index", DataType::Int64, false),
+            Field::new("variant_stop_index", DataType::Int64, false),
+        ];
+        if let Some(field) = extra_field {
+            fields.push(field);
+        }
+        Arc::new(Schema::new(fields))
+    }
+
+    #[test]
+    fn scan_rejects_range_chunk_arrow_without_chunk_identifier_column() {
+        let directory_path = create_test_directory();
+        let schema = Arc::new(Schema::new(vec![Field::new("not_chunk_identifier", DataType::Int64, false)]));
+        write_arrow_file(
+            &directory_path.join("chunk_0_1.arrow"),
+            &schema,
+            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
+        );
+
+        let error = scan_committed_chunk_identifiers(&directory_path)
+            .expect_err("range chunk without chunk_identifier column should fail")
+            .to_string();
+        assert!(error.contains("chunk identifiers"));
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
+    fn strict_manifest_rejects_missing_columns_and_schema_mismatches() {
+        let directory_path = create_test_directory();
+        let missing_column_schema = Arc::new(Schema::new(vec![Field::new("chunk_identifier", DataType::Int64, false)]));
+        write_arrow_file(
+            &directory_path.join("chunk_0_0.arrow"),
+            &missing_column_schema,
+            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
+        );
+        let missing_column_manifest = r#"{"committed_chunks":[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":1,"row_count":1,"chunk_file_name":"chunk_0_0.arrow"}]}"#;
+        let missing_column_error = validate_strict_manifest_chunks(&directory_path, missing_column_manifest)
+            .expect_err("missing variant_start_index should fail")
+            .to_string();
+        assert!(missing_column_error.contains("variant_start_index"));
+
+        let schema = required_resume_schema(None);
+        write_arrow_file(
+            &directory_path.join("chunk_1_1.arrow"),
+            &schema,
+            vec![
+                Arc::new(Int64Array::from(vec![1])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![1])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![2])) as ArrayRef,
+            ],
+        );
+        let extra_schema = required_resume_schema(Some(Field::new("extra", DataType::Float32, false)));
+        write_arrow_file(
+            &directory_path.join("chunk_2_2.arrow"),
+            &extra_schema,
+            vec![
+                Arc::new(Int64Array::from(vec![2])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![2])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![3])) as ArrayRef,
+                Arc::new(Float32Array::from(vec![0.5])) as ArrayRef,
+            ],
+        );
+        let schema_mismatch_manifest = r#"{"committed_chunks":[{"chunk_identifier":1,"variant_start_index":1,"variant_stop_index":2,"row_count":1,"chunk_file_name":"chunk_1_1.arrow"},{"chunk_identifier":2,"variant_start_index":2,"variant_stop_index":3,"row_count":1,"chunk_file_name":"chunk_2_2.arrow"}]}"#;
+        let schema_mismatch_error = validate_strict_manifest_chunks(&directory_path, schema_mismatch_manifest)
+            .expect_err("strict resume should reject incompatible schemas")
+            .to_string();
+        assert!(schema_mismatch_error.contains("incompatible Arrow schema"));
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+    }
+}
