@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 import typing
 from dataclasses import dataclass
 
@@ -14,6 +15,10 @@ if typing.TYPE_CHECKING:
 
     from g.compute import regenie2_binary_types
     from g.interface import config
+
+
+PHENOTYPE_DIRECTORY_SAFE_CHARACTER_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
+PHENOTYPE_DIRECTORY_MAXIMUM_SLUG_LENGTH = 80
 
 
 @dataclass(frozen=True)
@@ -179,11 +184,12 @@ def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> Regeni
     kernel_config = build_kernel_config(regenie_config)
     phenotype_run_plans = tuple(
         build_phenotype_run_plan(
+            phenotype_index=phenotype_index,
             phenotype_name=phenotype_name,
             association_mode=association_mode,
             output_plan=output_plan,
         )
-        for phenotype_name in regenie_config.input.pheno_columns
+        for phenotype_index, phenotype_name in enumerate(regenie_config.input.pheno_columns, start=1)
     )
     return RegenieExecutionPlan(
         association_mode=association_mode,
@@ -257,13 +263,15 @@ def build_kernel_config(regenie_config: config.RegenieConfig) -> KernelConfig:
 
 def build_phenotype_run_plan(
     *,
+    phenotype_index: int,
     phenotype_name: str,
     association_mode: types.AssociationMode,
     output_plan: OutputPlan,
 ) -> PhenotypeRunPlan:
     """Prepare output paths and resume manifest state for one phenotype."""
+    output_directory_name = build_phenotype_output_directory_name(phenotype_index, phenotype_name)
     prepared_output_run = output.prepare_output_run(
-        output_root=output_plan.output_run_root / phenotype_name,
+        output_root=output_plan.output_run_root / output_directory_name,
         association_mode=association_mode,
         resume=output_plan.resume,
         resume_mode=output_plan.resume_mode,
@@ -274,3 +282,11 @@ def build_phenotype_run_plan(
         existing_manifest=prepared_output_run.existing_manifest,
         effective_config_path=prepared_output_run.output_run_paths.run_directory / "effective_config.toml",
     )
+
+
+def build_phenotype_output_directory_name(phenotype_index: int, phenotype_name: str) -> str:
+    """Build a deterministic safe directory name for one phenotype output."""
+    sanitized_slug = PHENOTYPE_DIRECTORY_SAFE_CHARACTER_PATTERN.sub("_", phenotype_name).strip("._-")
+    if not sanitized_slug:
+        sanitized_slug = "phenotype"
+    return f"trait_{phenotype_index:04d}_{sanitized_slug[:PHENOTYPE_DIRECTORY_MAXIMUM_SLUG_LENGTH]}"
