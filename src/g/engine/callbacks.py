@@ -55,6 +55,8 @@ class Regenie2ResultWriteWorkItem:
     chi_squared: jax.Array
     log10_p_value: jax.Array
     extra_code: jax.Array | None
+    host_dosage_buffer: npt.NDArray[np.float32] | None
+    release_in_flight_slot: bool
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,8 @@ class Regenie2MultiResultWriteWorkItem:
     chi_squared: jax.Array
     log10_p_value: jax.Array
     extra_code: jax.Array | None
+    host_dosage_buffer: npt.NDArray[np.float32] | None
+    release_in_flight_slot: bool
 
 
 class NativeBgenRunInputProtocol(typing.Protocol):
@@ -142,9 +146,22 @@ def put_genotype_matrix_on_device(
     """Transfer a genotype chunk to the active JAX device with optional timing."""
     start_time = time.perf_counter()
     genotype_device_array = jax.device_put(genotype_matrix)
-    block_until_ready(genotype_device_array)
+    if stage_timing_recorder is not None:
+        block_until_ready(genotype_device_array)
     timing.record_stage_duration(stage_timing_recorder, "host_to_device_transfer", start_time)
     return genotype_device_array
+
+
+def block_compute_result_for_timing(
+    *,
+    result_ready_value: jax.Array,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    start_time: float,
+) -> None:
+    """Synchronize chunk compute only when detailed stage timings are enabled."""
+    if stage_timing_recorder is not None:
+        block_until_ready(result_ready_value)
+    timing.record_stage_duration(stage_timing_recorder, "jax_compute", start_time)
 
 
 def write_regenie2_native_chunk_with_optional_timing(
@@ -251,13 +268,15 @@ class NativeBgenCallbackRunner:
         self.stage_timing_recorder = stage_timing_recorder
         self.dosage_queue_depth = max(1, staging_depth)
         self.result_queue_depth = max(1, staging_depth)
+        self.result_in_flight_limit = self.result_queue_depth + 1
         self.dosage_buffer_limit = self.dosage_queue_depth + 1
         self.dosage_queue: queue.Queue[
             PreprocessedDosageChunkWorkItem | PreprocessedVariantMajorDosageChunkWorkItem | None
         ] = queue.Queue(maxsize=self.dosage_queue_depth)
-        self.result_queue: queue.Queue[Regenie2ResultWriteWorkItem | None] = queue.Queue(
-            maxsize=self.result_queue_depth
+        self.result_queue: queue.Queue[Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None] = (
+            queue.Queue(maxsize=self.result_queue_depth)
         )
+        self.result_in_flight_slots = threading.BoundedSemaphore(self.result_in_flight_limit)
         self.free_dosage_buffers: queue.Queue[npt.NDArray[np.float32]] = queue.Queue(maxsize=self.dosage_buffer_limit)
         self.dosage_buffer_count = 0
         self.worker_error: BaseException | None = None
@@ -358,17 +377,20 @@ class NativeBgenCallbackRunner:
                 work_item = self.result_queue.get()
                 if work_item is None:
                     return
-                write_regenie2_native_chunk_with_optional_timing(
-                    writer_session=typing.cast("typing.Any", self).writer_session,
-                    metadata=work_item.metadata,
-                    chunk_stats=work_item.chunk_stats,
-                    beta=work_item.beta,
-                    standard_error=work_item.standard_error,
-                    chi_squared=work_item.chi_squared,
-                    log10_p_value=work_item.log10_p_value,
-                    extra_code=work_item.extra_code,
-                    stage_timing_recorder=self.stage_timing_recorder,
-                )
+                try:
+                    write_regenie2_native_chunk_with_optional_timing(
+                        writer_session=typing.cast("typing.Any", self).writer_session,
+                        metadata=work_item.metadata,
+                        chunk_stats=work_item.chunk_stats,
+                        beta=work_item.beta,
+                        standard_error=work_item.standard_error,
+                        chi_squared=work_item.chi_squared,
+                        log10_p_value=work_item.log10_p_value,
+                        extra_code=work_item.extra_code,
+                        stage_timing_recorder=self.stage_timing_recorder,
+                    )
+                finally:
+                    self.release_result_work_item_buffer(work_item)
         except Exception as error:  # noqa: BLE001
             self.result_worker_error = error
 
@@ -399,7 +421,10 @@ class NativeBgenCallbackRunner:
             message = f"native pipeline result writer worker failed: {self.result_worker_error}"
             raise RuntimeError(message) from self.result_worker_error
 
-    def put_result_write_item(self, work_item: Regenie2ResultWriteWorkItem | None) -> None:
+    def put_result_write_item(
+        self,
+        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
+    ) -> None:
         """Put a computed result into the bounded materialization/write queue."""
         while True:
             self.raise_worker_error_if_present()
@@ -413,6 +438,26 @@ class NativeBgenCallbackRunner:
                     self.stage_timing_recorder, "result_queue_producer_blocking", put_start_time
                 )
                 continue
+
+    def acquire_result_in_flight_slot(self) -> None:
+        """Reserve capacity for one chunk of pending GPU result work."""
+        while True:
+            self.raise_worker_error_if_present()
+            acquire_start_time = time.perf_counter()
+            if self.result_in_flight_slots.acquire(timeout=0.1):
+                timing.record_stage_duration(
+                    self.stage_timing_recorder, "result_in_flight_slot_acquire", acquire_start_time
+                )
+                return
+            timing.record_stage_duration(
+                self.stage_timing_recorder,
+                "result_in_flight_producer_blocking",
+                acquire_start_time,
+            )
+
+    def release_result_in_flight_slot(self) -> None:
+        """Release capacity for one completed chunk of GPU result work."""
+        self.result_in_flight_slots.release()
 
     def finish(self) -> None:
         """Wait until all queued JAX work has been written."""
@@ -476,6 +521,25 @@ class NativeBgenCallbackRunner:
         if isinstance(dosage_buffer, np.ndarray):
             self.release_dosage_buffer(typing.cast("npt.NDArray[np.float32]", dosage_buffer))
 
+    def get_releasable_dosage_buffer(
+        self,
+        dosage_buffer: jax.Array | npt.NDArray[np.float32],
+    ) -> npt.NDArray[np.float32] | None:
+        """Return a host dosage buffer reference when it belongs to the reusable pool."""
+        if isinstance(dosage_buffer, np.ndarray):
+            return typing.cast("npt.NDArray[np.float32]", dosage_buffer)
+        return None
+
+    def release_result_work_item_buffer(
+        self,
+        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
+    ) -> None:
+        """Release resources after a dependent JAX result is materialized."""
+        if work_item.host_dosage_buffer is not None:
+            self.release_dosage_buffer(work_item.host_dosage_buffer)
+        if work_item.release_in_flight_slot:
+            self.release_result_in_flight_slot()
+
 
 class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     """Compute/write callback used by the native BGEN pipeline for quantitative traits."""
@@ -512,18 +576,28 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one Rust-preprocessed chunk and enqueue its result for writing."""
-        result = self.compute_linear_result(variant_metadata=variant_metadata, genotype_matrix=genotype_matrix)
-        self.put_result_write_item(
-            Regenie2ResultWriteWorkItem(
-                metadata=variant_metadata,
-                chunk_stats=chunk_stats,
-                beta=result.beta,
-                standard_error=result.standard_error,
-                chi_squared=result.chi_squared,
-                log10_p_value=result.log10_p_value,
-                extra_code=None,
+        host_dosage_buffer = self.get_releasable_dosage_buffer(genotype_matrix)
+        self.acquire_result_in_flight_slot()
+        try:
+            result = self.compute_linear_result(variant_metadata=variant_metadata, genotype_matrix=genotype_matrix)
+            self.put_result_write_item(
+                Regenie2ResultWriteWorkItem(
+                    metadata=variant_metadata,
+                    chunk_stats=chunk_stats,
+                    beta=result.beta,
+                    standard_error=result.standard_error,
+                    chi_squared=result.chi_squared,
+                    log10_p_value=result.log10_p_value,
+                    extra_code=None,
+                    host_dosage_buffer=host_dosage_buffer,
+                    release_in_flight_slot=True,
+                )
             )
-        )
+        except Exception:
+            if host_dosage_buffer is not None:
+                self.release_dosage_buffer(host_dosage_buffer)
+            self.release_result_in_flight_slot()
+            raise
 
     def compute_preprocessed_variant_major_chunk(
         self,
@@ -533,22 +607,32 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one variant-major chunk and enqueue its result for writing."""
-        result = self.compute_linear_variant_major_result(
-            variant_metadata=variant_metadata,
-            genotype_matrix_by_variant=genotype_matrix_by_variant,
-            genotype_sum_squares=jax.device_put(chunk_stats.imputed_dosage_square_sum),
-        )
-        self.put_result_write_item(
-            Regenie2ResultWriteWorkItem(
-                metadata=variant_metadata,
-                chunk_stats=chunk_stats,
-                beta=result.beta,
-                standard_error=result.standard_error,
-                chi_squared=result.chi_squared,
-                log10_p_value=result.log10_p_value,
-                extra_code=None,
+        host_dosage_buffer = self.get_releasable_dosage_buffer(genotype_matrix_by_variant)
+        self.acquire_result_in_flight_slot()
+        try:
+            result = self.compute_linear_variant_major_result(
+                variant_metadata=variant_metadata,
+                genotype_matrix_by_variant=genotype_matrix_by_variant,
+                genotype_sum_squares=jax.device_put(chunk_stats.imputed_dosage_square_sum),
             )
-        )
+            self.put_result_write_item(
+                Regenie2ResultWriteWorkItem(
+                    metadata=variant_metadata,
+                    chunk_stats=chunk_stats,
+                    beta=result.beta,
+                    standard_error=result.standard_error,
+                    chi_squared=result.chi_squared,
+                    log10_p_value=result.log10_p_value,
+                    extra_code=None,
+                    host_dosage_buffer=host_dosage_buffer,
+                    release_in_flight_slot=True,
+                )
+            )
+        except Exception:
+            if host_dosage_buffer is not None:
+                self.release_dosage_buffer(host_dosage_buffer)
+            self.release_result_in_flight_slot()
+            raise
 
     def enqueue_linear_result_for_write(
         self,
@@ -556,6 +640,8 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
         result: regenie2_linear_types.Regenie2LinearChunkResult,
+        host_dosage_buffer: npt.NDArray[np.float32] | None = None,
+        release_in_flight_slot: bool = False,
     ) -> None:
         """Enqueue a linear result for materialization and writing."""
         self.put_result_write_item(
@@ -567,6 +653,8 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 chi_squared=result.chi_squared,
                 log10_p_value=result.log10_p_value,
                 extra_code=None,
+                host_dosage_buffer=host_dosage_buffer,
+                release_in_flight_slot=release_in_flight_slot,
             )
         )
 
@@ -582,15 +670,17 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         assert self.current_chromosome_state is not None
 
         genotype_device_array = put_genotype_matrix_on_device(genotype_matrix_by_variant, self.stage_timing_recorder)
-        self.release_numpy_dosage_buffer(genotype_matrix_by_variant)
         compute_start_time = time.perf_counter()
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
             chromosome_state=self.current_chromosome_state,
             genotype_matrix_by_variant=genotype_device_array,
             genotype_sum_squares=genotype_sum_squares,
         )
-        block_until_ready(result.log10_p_value)
-        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        block_compute_result_for_timing(
+            result_ready_value=result.log10_p_value,
+            stage_timing_recorder=self.stage_timing_recorder,
+            start_time=compute_start_time,
+        )
         return result
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
@@ -624,14 +714,16 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         assert self.current_chromosome_state is not None
 
         genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
-        self.release_numpy_dosage_buffer(genotype_matrix)
         compute_start_time = time.perf_counter()
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
             chromosome_state=self.current_chromosome_state,
             genotype_matrix=genotype_device_array,
         )
-        block_until_ready(result.log10_p_value)
-        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        block_compute_result_for_timing(
+            result_ready_value=result.log10_p_value,
+            stage_timing_recorder=self.stage_timing_recorder,
+            start_time=compute_start_time,
+        )
         return result
 
 
@@ -672,18 +764,21 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 if work_item is None:
                     return
                 multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
-                write_regenie2_multi_native_chunk_with_optional_timing(
-                    writer_sessions=self.writer_sessions,
-                    committed_chunk_identifier_sets=self.committed_chunk_identifier_sets,
-                    metadata=multi_work_item.metadata,
-                    chunk_stats=multi_work_item.chunk_stats,
-                    beta=multi_work_item.beta,
-                    standard_error=multi_work_item.standard_error,
-                    chi_squared=multi_work_item.chi_squared,
-                    log10_p_value=multi_work_item.log10_p_value,
-                    extra_code=multi_work_item.extra_code,
-                    stage_timing_recorder=self.stage_timing_recorder,
-                )
+                try:
+                    write_regenie2_multi_native_chunk_with_optional_timing(
+                        writer_sessions=self.writer_sessions,
+                        committed_chunk_identifier_sets=self.committed_chunk_identifier_sets,
+                        metadata=multi_work_item.metadata,
+                        chunk_stats=multi_work_item.chunk_stats,
+                        beta=multi_work_item.beta,
+                        standard_error=multi_work_item.standard_error,
+                        chi_squared=multi_work_item.chi_squared,
+                        log10_p_value=multi_work_item.log10_p_value,
+                        extra_code=multi_work_item.extra_code,
+                        stage_timing_recorder=self.stage_timing_recorder,
+                    )
+                finally:
+                    self.release_result_work_item_buffer(multi_work_item)
         except Exception as error:  # noqa: BLE001
             self.result_worker_error = error
 
@@ -695,18 +790,34 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one sample-major Rust-preprocessed chunk and enqueue multi-trait results."""
-        self.prepare_chromosome_state(variant_metadata)
-        assert self.current_chromosome_state is not None
-        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
-        self.release_numpy_dosage_buffer(genotype_matrix)
-        compute_start_time = time.perf_counter()
-        result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state(
-            chromosome_state=self.current_chromosome_state,
-            genotype_matrix=genotype_device_array,
-        )
-        block_until_ready(result.log10_p_value)
-        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
-        self.enqueue_multi_result_for_write(variant_metadata=variant_metadata, chunk_stats=chunk_stats, result=result)
+        host_dosage_buffer = self.get_releasable_dosage_buffer(genotype_matrix)
+        self.acquire_result_in_flight_slot()
+        try:
+            self.prepare_chromosome_state(variant_metadata)
+            assert self.current_chromosome_state is not None
+            genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
+            compute_start_time = time.perf_counter()
+            result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state(
+                chromosome_state=self.current_chromosome_state,
+                genotype_matrix=genotype_device_array,
+            )
+            block_compute_result_for_timing(
+                result_ready_value=result.log10_p_value,
+                stage_timing_recorder=self.stage_timing_recorder,
+                start_time=compute_start_time,
+            )
+            self.enqueue_multi_result_for_write(
+                variant_metadata=variant_metadata,
+                chunk_stats=chunk_stats,
+                result=result,
+                host_dosage_buffer=host_dosage_buffer,
+                release_in_flight_slot=True,
+            )
+        except Exception:
+            if host_dosage_buffer is not None:
+                self.release_dosage_buffer(host_dosage_buffer)
+            self.release_result_in_flight_slot()
+            raise
 
     def compute_preprocessed_variant_major_chunk(
         self,
@@ -716,19 +827,38 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one variant-major Rust-preprocessed chunk and enqueue multi-trait results."""
-        self.prepare_chromosome_state(variant_metadata)
-        assert self.current_chromosome_state is not None
-        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix_by_variant, self.stage_timing_recorder)
-        self.release_numpy_dosage_buffer(genotype_matrix_by_variant)
-        compute_start_time = time.perf_counter()
-        result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
-            chromosome_state=self.current_chromosome_state,
-            genotype_matrix_by_variant=genotype_device_array,
-            genotype_sum_squares=jax.device_put(chunk_stats.imputed_dosage_square_sum),
-        )
-        block_until_ready(result.log10_p_value)
-        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
-        self.enqueue_multi_result_for_write(variant_metadata=variant_metadata, chunk_stats=chunk_stats, result=result)
+        host_dosage_buffer = self.get_releasable_dosage_buffer(genotype_matrix_by_variant)
+        self.acquire_result_in_flight_slot()
+        try:
+            self.prepare_chromosome_state(variant_metadata)
+            assert self.current_chromosome_state is not None
+            genotype_device_array = put_genotype_matrix_on_device(
+                genotype_matrix_by_variant,
+                self.stage_timing_recorder,
+            )
+            compute_start_time = time.perf_counter()
+            result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
+                chromosome_state=self.current_chromosome_state,
+                genotype_matrix_by_variant=genotype_device_array,
+                genotype_sum_squares=jax.device_put(chunk_stats.imputed_dosage_square_sum),
+            )
+            block_compute_result_for_timing(
+                result_ready_value=result.log10_p_value,
+                stage_timing_recorder=self.stage_timing_recorder,
+                start_time=compute_start_time,
+            )
+            self.enqueue_multi_result_for_write(
+                variant_metadata=variant_metadata,
+                chunk_stats=chunk_stats,
+                result=result,
+                host_dosage_buffer=host_dosage_buffer,
+                release_in_flight_slot=True,
+            )
+        except Exception:
+            if host_dosage_buffer is not None:
+                self.release_dosage_buffer(host_dosage_buffer)
+            self.release_result_in_flight_slot()
+            raise
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
         """Prepare cached multi-linear chromosome state for the metadata chromosome."""
@@ -751,6 +881,8 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
         result: regenie2_linear_types.Regenie2MultiLinearChunkResult,
+        host_dosage_buffer: npt.NDArray[np.float32] | None = None,
+        release_in_flight_slot: bool = False,
     ) -> None:
         """Enqueue a multi-linear result for materialization and writing."""
         self.put_result_write_item(
@@ -764,6 +896,8 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     chi_squared=result.chi_squared,
                     log10_p_value=result.log10_p_value,
                     extra_code=None,
+                    host_dosage_buffer=host_dosage_buffer,
+                    release_in_flight_slot=release_in_flight_slot,
                 ),
             )
         )
@@ -808,12 +942,26 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one Rust-preprocessed chunk and enqueue its result for writing."""
-        result = self.compute_binary_result(
-            variant_metadata=variant_metadata,
-            genotype_matrix=genotype_matrix,
-            sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
-        )
-        self.enqueue_binary_result_for_write(variant_metadata=variant_metadata, chunk_stats=chunk_stats, result=result)
+        host_dosage_buffer = self.get_releasable_dosage_buffer(genotype_matrix)
+        self.acquire_result_in_flight_slot()
+        try:
+            result = self.compute_binary_result(
+                variant_metadata=variant_metadata,
+                genotype_matrix=genotype_matrix,
+                sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
+            )
+            self.enqueue_binary_result_for_write(
+                variant_metadata=variant_metadata,
+                chunk_stats=chunk_stats,
+                result=result,
+                host_dosage_buffer=host_dosage_buffer,
+                release_in_flight_slot=True,
+            )
+        except Exception:
+            if host_dosage_buffer is not None:
+                self.release_dosage_buffer(host_dosage_buffer)
+            self.release_result_in_flight_slot()
+            raise
 
     def enqueue_binary_result_for_write(
         self,
@@ -821,6 +969,8 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
         result: regenie2_binary_types.Regenie2BinaryChunkResult,
+        host_dosage_buffer: npt.NDArray[np.float32] | None = None,
+        release_in_flight_slot: bool = False,
     ) -> None:
         """Enqueue a binary result for materialization and writing."""
         self.put_result_write_item(
@@ -832,6 +982,8 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 chi_squared=result.chi_squared,
                 log10_p_value=result.log10_p_value,
                 extra_code=result.extra_code,
+                host_dosage_buffer=host_dosage_buffer,
+                release_in_flight_slot=release_in_flight_slot,
             )
         )
 
@@ -883,7 +1035,6 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         assert self.current_chromosome_state is not None
 
         genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
-        self.release_numpy_dosage_buffer(genotype_matrix)
         compute_start_time = time.perf_counter()
         result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
             chromosome_state=self.current_chromosome_state,
@@ -892,8 +1043,11 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             sparse_candidate_mask=sparse_candidate_mask,
             kernel_config=self.kernel_config,
         )
-        block_until_ready(result.log10_p_value)
-        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
+        block_compute_result_for_timing(
+            result_ready_value=result.log10_p_value,
+            stage_timing_recorder=self.stage_timing_recorder,
+            start_time=compute_start_time,
+        )
         record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
         return result
 
@@ -905,33 +1059,52 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one variant-major chunk and enqueue its result for writing."""
-        self.prepare_chromosome_state(variant_metadata)
-        assert self.current_chromosome_state is not None
+        host_dosage_buffer = self.get_releasable_dosage_buffer(genotype_matrix_by_variant)
+        self.acquire_result_in_flight_slot()
+        try:
+            self.prepare_chromosome_state(variant_metadata)
+            assert self.current_chromosome_state is not None
 
-        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix_by_variant, self.stage_timing_recorder)
-        self.release_numpy_dosage_buffer(genotype_matrix_by_variant)
-        compute_start_time = time.perf_counter()
-        if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
-            variant_major_module = regenie2_binary_variant_major_experimental
-            result = variant_major_module.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
-                chromosome_state=self.current_chromosome_state,
-                genotype_matrix_by_variant=genotype_device_array,
-                correction_plan=self.correction_plan,
-                sparse_candidate_mask=None,
-                kernel_config=self.kernel_config,
+            genotype_device_array = put_genotype_matrix_on_device(
+                genotype_matrix_by_variant,
+                self.stage_timing_recorder,
             )
-        else:
-            result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
-                chromosome_state=self.current_chromosome_state,
-                genotype_matrix=jnp.transpose(genotype_device_array),
-                correction_plan=self.correction_plan,
-                sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
-                kernel_config=self.kernel_config,
+            compute_start_time = time.perf_counter()
+            if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
+                variant_major_module = regenie2_binary_variant_major_experimental
+                result = variant_major_module.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+                    chromosome_state=self.current_chromosome_state,
+                    genotype_matrix_by_variant=genotype_device_array,
+                    correction_plan=self.correction_plan,
+                    sparse_candidate_mask=None,
+                    kernel_config=self.kernel_config,
+                )
+            else:
+                result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
+                    chromosome_state=self.current_chromosome_state,
+                    genotype_matrix=jnp.transpose(genotype_device_array),
+                    correction_plan=self.correction_plan,
+                    sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
+                    kernel_config=self.kernel_config,
+                )
+            block_compute_result_for_timing(
+                result_ready_value=result.log10_p_value,
+                stage_timing_recorder=self.stage_timing_recorder,
+                start_time=compute_start_time,
             )
-        block_until_ready(result.log10_p_value)
-        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
-        record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
-        self.enqueue_binary_result_for_write(variant_metadata=variant_metadata, chunk_stats=chunk_stats, result=result)
+            record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
+            self.enqueue_binary_result_for_write(
+                variant_metadata=variant_metadata,
+                chunk_stats=chunk_stats,
+                result=result,
+                host_dosage_buffer=host_dosage_buffer,
+                release_in_flight_slot=True,
+            )
+        except Exception:
+            if host_dosage_buffer is not None:
+                self.release_dosage_buffer(host_dosage_buffer)
+            self.release_result_in_flight_slot()
+            raise
 
 
 class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
@@ -973,18 +1146,21 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 if work_item is None:
                     return
                 multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
-                write_regenie2_multi_native_chunk_with_optional_timing(
-                    writer_sessions=self.writer_sessions,
-                    committed_chunk_identifier_sets=self.committed_chunk_identifier_sets,
-                    metadata=multi_work_item.metadata,
-                    chunk_stats=multi_work_item.chunk_stats,
-                    beta=multi_work_item.beta,
-                    standard_error=multi_work_item.standard_error,
-                    chi_squared=multi_work_item.chi_squared,
-                    log10_p_value=multi_work_item.log10_p_value,
-                    extra_code=multi_work_item.extra_code,
-                    stage_timing_recorder=self.stage_timing_recorder,
-                )
+                try:
+                    write_regenie2_multi_native_chunk_with_optional_timing(
+                        writer_sessions=self.writer_sessions,
+                        committed_chunk_identifier_sets=self.committed_chunk_identifier_sets,
+                        metadata=multi_work_item.metadata,
+                        chunk_stats=multi_work_item.chunk_stats,
+                        beta=multi_work_item.beta,
+                        standard_error=multi_work_item.standard_error,
+                        chi_squared=multi_work_item.chi_squared,
+                        log10_p_value=multi_work_item.log10_p_value,
+                        extra_code=multi_work_item.extra_code,
+                        stage_timing_recorder=self.stage_timing_recorder,
+                    )
+                finally:
+                    self.release_result_work_item_buffer(multi_work_item)
         except Exception as error:  # noqa: BLE001
             self.result_worker_error = error
 
@@ -996,20 +1172,36 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one sample-major Rust-preprocessed chunk and enqueue multi-trait results."""
-        self.prepare_chromosome_state(variant_metadata)
-        assert self.current_chromosome_state is not None
-        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
-        self.release_numpy_dosage_buffer(genotype_matrix)
-        compute_start_time = time.perf_counter()
-        result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
-            chromosome_state=self.current_chromosome_state,
-            genotype_matrix=genotype_device_array,
-            correction_plan=self.correction_plan,
-            sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
-        )
-        block_until_ready(result.log10_p_value)
-        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
-        self.enqueue_multi_result_for_write(variant_metadata=variant_metadata, chunk_stats=chunk_stats, result=result)
+        host_dosage_buffer = self.get_releasable_dosage_buffer(genotype_matrix)
+        self.acquire_result_in_flight_slot()
+        try:
+            self.prepare_chromosome_state(variant_metadata)
+            assert self.current_chromosome_state is not None
+            genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
+            compute_start_time = time.perf_counter()
+            result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
+                chromosome_state=self.current_chromosome_state,
+                genotype_matrix=genotype_device_array,
+                correction_plan=self.correction_plan,
+                sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
+            )
+            block_compute_result_for_timing(
+                result_ready_value=result.log10_p_value,
+                stage_timing_recorder=self.stage_timing_recorder,
+                start_time=compute_start_time,
+            )
+            self.enqueue_multi_result_for_write(
+                variant_metadata=variant_metadata,
+                chunk_stats=chunk_stats,
+                result=result,
+                host_dosage_buffer=host_dosage_buffer,
+                release_in_flight_slot=True,
+            )
+        except Exception:
+            if host_dosage_buffer is not None:
+                self.release_dosage_buffer(host_dosage_buffer)
+            self.release_result_in_flight_slot()
+            raise
 
     def compute_preprocessed_variant_major_chunk(
         self,
@@ -1019,28 +1211,47 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Compute one variant-major Rust-preprocessed chunk and enqueue multi-trait results."""
-        self.prepare_chromosome_state(variant_metadata)
-        assert self.current_chromosome_state is not None
-        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix_by_variant, self.stage_timing_recorder)
-        self.release_numpy_dosage_buffer(genotype_matrix_by_variant)
-        compute_start_time = time.perf_counter()
-        if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
-            result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
-                chromosome_state=self.current_chromosome_state,
-                genotype_matrix_by_variant=genotype_device_array,
-                correction_plan=self.correction_plan,
-                sparse_candidate_mask=None,
+        host_dosage_buffer = self.get_releasable_dosage_buffer(genotype_matrix_by_variant)
+        self.acquire_result_in_flight_slot()
+        try:
+            self.prepare_chromosome_state(variant_metadata)
+            assert self.current_chromosome_state is not None
+            genotype_device_array = put_genotype_matrix_on_device(
+                genotype_matrix_by_variant,
+                self.stage_timing_recorder,
             )
-        else:
-            result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
-                chromosome_state=self.current_chromosome_state,
-                genotype_matrix=jnp.transpose(genotype_device_array),
-                correction_plan=self.correction_plan,
-                sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
+            compute_start_time = time.perf_counter()
+            if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
+                result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
+                    chromosome_state=self.current_chromosome_state,
+                    genotype_matrix_by_variant=genotype_device_array,
+                    correction_plan=self.correction_plan,
+                    sparse_candidate_mask=None,
+                )
+            else:
+                result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
+                    chromosome_state=self.current_chromosome_state,
+                    genotype_matrix=jnp.transpose(genotype_device_array),
+                    correction_plan=self.correction_plan,
+                    sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
+                )
+            block_compute_result_for_timing(
+                result_ready_value=result.log10_p_value,
+                stage_timing_recorder=self.stage_timing_recorder,
+                start_time=compute_start_time,
             )
-        block_until_ready(result.log10_p_value)
-        timing.record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
-        self.enqueue_multi_result_for_write(variant_metadata=variant_metadata, chunk_stats=chunk_stats, result=result)
+            self.enqueue_multi_result_for_write(
+                variant_metadata=variant_metadata,
+                chunk_stats=chunk_stats,
+                result=result,
+                host_dosage_buffer=host_dosage_buffer,
+                release_in_flight_slot=True,
+            )
+        except Exception:
+            if host_dosage_buffer is not None:
+                self.release_dosage_buffer(host_dosage_buffer)
+            self.release_result_in_flight_slot()
+            raise
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
         """Prepare cached multi-binary chromosome state for the metadata chromosome."""
@@ -1075,6 +1286,8 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
         result: regenie2_binary_types.Regenie2MultiBinaryChunkResult,
+        host_dosage_buffer: npt.NDArray[np.float32] | None = None,
+        release_in_flight_slot: bool = False,
     ) -> None:
         """Enqueue a multi-binary result for materialization and writing."""
         self.put_result_write_item(
@@ -1088,6 +1301,8 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     chi_squared=result.chi_squared,
                     log10_p_value=result.log10_p_value,
                     extra_code=result.extra_code,
+                    host_dosage_buffer=host_dosage_buffer,
+                    release_in_flight_slot=release_in_flight_slot,
                 ),
             )
         )

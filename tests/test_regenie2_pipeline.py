@@ -10,7 +10,7 @@ import numpy as np
 
 from g import types
 from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, regenie2_linear_types
-from g.engine import callbacks, native_dispatch, regenie2_pipeline
+from g.engine import callbacks, native_dispatch, regenie2_pipeline, timing
 from g.io import output, source
 
 if typing.TYPE_CHECKING:
@@ -243,6 +243,119 @@ def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -
 
     assert len(writer_session.native_chunks) == 1
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
+
+
+def test_linear_callback_does_not_block_chunk_compute_without_timing() -> None:
+    writer_session = FakeWriterSession()
+    result = regenie2_linear_types.Regenie2LinearChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    callback = callbacks.LinearRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+    )
+    callback.current_chromosome = "22"
+    callback.current_chromosome_state = typing.cast(
+        "regenie2_linear_types.Regenie2LinearChromosomeState",
+        "chromosome-state",
+    )
+
+    with (
+        patch(
+            "g.compute.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
+            return_value=result,
+        ),
+        patch("g.engine.callbacks.block_until_ready") as mock_block_until_ready,
+    ):
+        callback.compute_linear_result(
+            variant_metadata=build_native_metadata(),
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+        )
+        callback.finish()
+
+    mock_block_until_ready.assert_not_called()
+
+
+def test_linear_callback_blocks_chunk_compute_with_timing() -> None:
+    writer_session = FakeWriterSession()
+    result = regenie2_linear_types.Regenie2LinearChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    stage_timing_recorder = timing.StageTimingRecorder()
+    callback = callbacks.LinearRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+        stage_timing_recorder=stage_timing_recorder,
+    )
+    callback.current_chromosome = "22"
+    callback.current_chromosome_state = typing.cast(
+        "regenie2_linear_types.Regenie2LinearChromosomeState",
+        "chromosome-state",
+    )
+
+    with (
+        patch(
+            "g.compute.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
+            return_value=result,
+        ),
+        patch("g.engine.callbacks.block_until_ready") as mock_block_until_ready,
+    ):
+        callback.compute_linear_result(
+            variant_metadata=build_native_metadata(),
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+        )
+        callback.finish()
+
+    assert mock_block_until_ready.call_count == 2
+    snapshot = stage_timing_recorder.snapshot()
+    assert snapshot.stage_counts["host_to_device_transfer"] == 1
+    assert snapshot.stage_counts["jax_compute"] == 1
+
+
+def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
+    writer_session = FakeWriterSession()
+    callback = callbacks.LinearRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+        staging_depth=1,
+    )
+    host_dosage_buffer = np.ones((2, 2), dtype=np.float32)
+    callback.acquire_result_in_flight_slot()
+    callback.acquire_result_in_flight_slot()
+
+    assert callback.result_in_flight_slots.acquire(blocking=False) is False
+
+    callback.put_result_write_item(
+        callbacks.Regenie2ResultWriteWorkItem(
+            metadata=build_native_metadata(),
+            chunk_stats=typing.cast("typing.Any", ExplodingChunkStats()),
+            beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+            standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+            chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+            log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+            extra_code=None,
+            host_dosage_buffer=host_dosage_buffer,
+            release_in_flight_slot=True,
+        )
+    )
+    callback.finish()
+
+    assert callback.result_in_flight_slots.acquire(blocking=False) is True
+    callback.release_result_in_flight_slot()
+    callback.release_result_in_flight_slot()
+    assert callback.free_dosage_buffers.get_nowait() is host_dosage_buffer
+    assert len(writer_session.native_chunks) == 1
 
 
 def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats() -> None:
