@@ -122,6 +122,13 @@ class SampleKeyMode(enum.StrEnum):
     FID_IID = "fid_iid"
 
 
+class MultiPhenotypeSampleMode(enum.StrEnum):
+    """Sample handling for requests containing multiple phenotypes."""
+
+    PER_PHENOTYPE = "per-phenotype"
+    COMPLETE_CASE = "complete-case"
+
+
 class ArrayMemoryOrder(enum.StrEnum):
     """NumPy array memory layout selector."""
 

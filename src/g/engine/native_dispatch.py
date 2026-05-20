@@ -46,7 +46,7 @@ class NativeBgenRunInput:
 
 @dataclass(frozen=True)
 class NativeBgenMultiRunInput:
-    """Sample-aligned inputs for a shared multi-phenotype native BGEN run.
+    """Sample-aligned inputs for an opt-in complete-case multi-phenotype native BGEN run.
 
     Attributes:
         native_multi_aligned_sample_data: Rust-owned complete-case aligned multi-phenotype data.

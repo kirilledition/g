@@ -75,6 +75,7 @@ class GComputeConfig:
     trusted_no_missing_diploid: bool = False
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS
     sample_key_mode: types.SampleKeyMode = types.SampleKeyMode.IID
+    multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode = types.MultiPhenotypeSampleMode.PER_PHENOTYPE
     firth_batch_size: int = DEFAULT_FIRTH_BATCH_SIZE
     firth_candidate_capacity: int = DEFAULT_FIRTH_CANDIDATE_CAPACITY
     binary_null_maximum_iterations: int = DEFAULT_BINARY_NULL_MAXIMUM_ITERATIONS
@@ -257,6 +258,14 @@ def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
             ),
             sample_key_mode=types.SampleKeyMode(
                 str(normalized_options.get("g-sample-key-mode", types.SampleKeyMode.IID.value))
+            ),
+            multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode(
+                str(
+                    normalized_options.get(
+                        "g-multi-phenotype-sample-mode",
+                        types.MultiPhenotypeSampleMode.PER_PHENOTYPE.value,
+                    )
+                )
             ),
             firth_batch_size=int(normalized_options.get("g-firth-batch-size", DEFAULT_FIRTH_BATCH_SIZE)),
             firth_candidate_capacity=int(
@@ -454,6 +463,8 @@ def normalize_option_name(option_name: str) -> str:
         "trusted_bgen_validation_mode": "g-trusted-bgen-validation-mode",
         "g_sample_key_mode": "g-sample-key-mode",
         "sample_key_mode": "g-sample-key-mode",
+        "g_multi_phenotype_sample_mode": "g-multi-phenotype-sample-mode",
+        "multi_phenotype_sample_mode": "g-multi-phenotype-sample-mode",
         "g_output_format": "g-output-format",
         "output_format": "g-output-format",
         "g_output_run_directory": "g-output-run-directory",
@@ -706,6 +717,7 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             "trusted-no-missing-diploid": config.g_compute.trusted_no_missing_diploid,
             "trusted-bgen-validation-mode": config.g_compute.trusted_bgen_validation_mode.value,
             "sample-key-mode": config.g_compute.sample_key_mode.value,
+            "multi-phenotype-sample-mode": config.g_compute.multi_phenotype_sample_mode.value,
             "firth-batch-size": config.g_compute.firth_batch_size,
             "firth-candidate-capacity": config.g_compute.firth_candidate_capacity,
             "binary-null-maximum-iterations": config.g_compute.binary_null_maximum_iterations,

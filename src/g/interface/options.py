@@ -63,6 +63,7 @@ class OptionSpec:
 DEVICE_VALUES = tuple(item.value for item in types.Device)
 TRUSTED_BGEN_VALIDATION_MODE_VALUES = tuple(item.value for item in types.TrustedBgenValidationMode)
 SAMPLE_KEY_MODE_VALUES = tuple(item.value for item in types.SampleKeyMode)
+MULTI_PHENOTYPE_SAMPLE_MODE_VALUES = tuple(item.value for item in types.MultiPhenotypeSampleMode)
 OUTPUT_FORMAT_VALUES = tuple(item.value for item in types.OutputFormat)
 RESUME_MODE_VALUES = tuple(item.value for item in types.ResumeMode)
 JAX_MATMUL_PRECISION_VALUES = tuple(item.value for item in types.JaxMatmulPrecision)
@@ -359,6 +360,16 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         "Sample key mode.",
         cli_flags=("--g-sample-key-mode", "g_sample_key_mode"),
         accepted_values=SAMPLE_KEY_MODE_VALUES,
+    ),
+    OptionSpec(
+        "g-multi-phenotype-sample-mode",
+        "g_multi_phenotype_sample_mode",
+        SupportLevel.G_EXTENSION,
+        "g.compute",
+        "Multi-phenotype sample mode. complete-case batches phenotypes on the shared complete-case "
+        "intersection and is not equivalent to separate single-phenotype REGENIE runs.",
+        cli_flags=("--g-multi-phenotype-sample-mode", "g_multi_phenotype_sample_mode"),
+        accepted_values=MULTI_PHENOTYPE_SAMPLE_MODE_VALUES,
     ),
     OptionSpec(
         "g-output-format",

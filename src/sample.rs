@@ -248,6 +248,10 @@ pub fn align_sample_data(inputs: AlignmentInputs) -> Result<AlignedSampleData, S
     )
 }
 
+/// Align several phenotypes to one shared complete-case sample set.
+///
+/// This intentionally intersects all per-trait valid sample sets and therefore
+/// is not equivalent to running each phenotype through `align_sample_data`.
 pub fn align_multi_sample_data(inputs: MultiAlignmentInputs) -> Result<MultiAlignedSampleData, String> {
     if inputs.phenotype_names.is_empty() {
         return Err("At least one phenotype is required for multi-phenotype alignment.".to_string());
