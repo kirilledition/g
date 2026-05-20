@@ -1152,6 +1152,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         writer_sessions: tuple[typing.Any, ...],
         committed_chunk_identifier_sets: tuple[set[int], ...],
         correction_plan: types.BinaryCorrectionPlan,
+        kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
         staging_depth: int = 1,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
     ) -> None:
@@ -1161,6 +1162,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.writer_sessions = writer_sessions
         self.committed_chunk_identifier_sets = committed_chunk_identifier_sets
         self.correction_plan = correction_plan
+        self.kernel_config = kernel_config
         self.regenie_state = regenie2_binary.prepare_regenie2_multi_binary_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_matrix=run_input.phenotype_matrix,
@@ -1219,6 +1221,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix=genotype_device_array,
                 correction_plan=self.correction_plan,
                 sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
+                kernel_config=self.kernel_config,
             )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
@@ -1262,6 +1265,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     genotype_matrix_by_variant=genotype_device_array,
                     correction_plan=self.correction_plan,
                     sparse_candidate_mask=None,
+                    kernel_config=self.kernel_config,
                 )
             else:
                 result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
@@ -1269,6 +1273,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     genotype_matrix=jnp.transpose(genotype_device_array),
                     correction_plan=self.correction_plan,
                     sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
+                    kernel_config=self.kernel_config,
                 )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
@@ -1299,6 +1304,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.regenie_state,
             loco_offset,
             self.correction_plan,
+            self.kernel_config,
         )
         block_until_ready(self.current_chromosome_state.fitted_probability)
         if self.stage_timing_recorder is not None:

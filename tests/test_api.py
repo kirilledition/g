@@ -348,6 +348,46 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"].firth_batch_size == 5
 
 
+def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "bt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoColList": "trait_a,trait_b",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "firth": True,
+            "approx": True,
+            "g-firth-batch-size": 5,
+        }
+    )
+    run_paths = (
+        output.OutputRunPaths(Path("run/trait_a"), Path("run/trait_a/chunks")),
+        output.OutputRunPaths(Path("run/trait_b"), Path("run/trait_b/chunks")),
+    )
+
+    with (
+        patch(
+            "g.execution_plan.output.prepare_output_run",
+            side_effect=(
+                output.PreparedOutputRun(run_paths[0], None),
+                output.PreparedOutputRun(run_paths[1], None),
+            ),
+        ),
+        patch("g.runner.run_regenie2_multi_phenotype_binary_bgen_pipeline") as mock_binary_pipeline,
+    ):
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        runner.dispatch_multi_phenotype_engine_pipeline(
+            plan=plan,
+            stage_timing_recorder=None,
+        )
+
+    assert mock_binary_pipeline.call_args.kwargs["kernel_config"] is plan.kernel_config.binary_kernel_config
+    assert mock_binary_pipeline.call_args.kwargs["kernel_config"].firth_batch_size == 5
+
+
 def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:
     with patch("g.api.runner.regenie") as mock_runner_regenie:
         mock_runner_regenie.return_value = api.RunArtifacts(
