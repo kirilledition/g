@@ -178,7 +178,6 @@ jobs:
 
   rust-clippy-beta:
     name: rust-clippy-beta
-    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -199,6 +198,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run beta Clippy as an advisory check
+        continue-on-error: true
         run: >
           cargo clippy --workspace --all-targets --locked --
           -D warnings
@@ -306,7 +306,6 @@ jobs:
 
   rust-msrv:
     name: rust-msrv
-    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -326,11 +325,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Check minimum supported Rust version
+        continue-on-error: true
         run: cargo check --workspace --all-targets --locked
 
   rust-minimal-versions:
     name: rust-minimal-versions
-    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -350,9 +349,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Resolve direct minimal dependency versions
+        continue-on-error: true
         run: cargo update -Zdirect-minimal-versions
 
       - name: Check direct minimal dependency versions
+        continue-on-error: true
         run: cargo check --workspace --all-targets
 
   coverage:
@@ -407,6 +408,7 @@ jobs:
         run: uv sync --group dev --frozen
 
       - name: Generate Python coverage
+        continue-on-error: true
         run: >
           uv run --no-sync pytest tests/
           -m "not phase0_data and not phase1_parity"
@@ -416,6 +418,7 @@ jobs:
           --cov-fail-under=0
 
       - name: Generate Rust coverage
+        continue-on-error: true
         run: >
           cargo llvm-cov --workspace --lcov
           --output-path coverage-rust.lcov
@@ -429,8 +432,8 @@ jobs:
           use_oidc: true
           fail_ci_if_error: false
 
-  required-pr-ci:
-    name: required-pr-ci
+  ci:
+    name: ci
     if: ${{ always() }}
     needs:
       - format
