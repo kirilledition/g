@@ -37,7 +37,7 @@ jobs:
 
       - name: Restore science data cache
         id: science-data-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: data
           key: science-data-${{ runner.os }}-${{ hashFiles('scripts/fetch_1kg.py', 'scripts/simulate_phenos.py', 'scripts/benchmark.py', 'scripts/evaluate_phase1.py', 'pyproject.toml', 'Cargo.lock', 'uv.lock') }}
@@ -83,7 +83,7 @@ jobs:
 
       - name: Save science data cache
         if: ${{ always() && steps.science-data-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: data
           key: ${{ steps.science-data-cache.outputs.cache-primary-key }}
