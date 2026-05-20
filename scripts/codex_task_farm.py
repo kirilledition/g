@@ -549,21 +549,29 @@ def save_state(state_path: Path, state: JsonObject) -> None:
     write_json_object(state_path, state)
 
 
-def set_task_status(task: JsonObject, status: TaskStatus) -> None:
-    """Set a task status."""
-    task["status"] = status.value
-    task["updated_at"] = utc_timestamp()
+def runtime_task_status(state: JsonObject, task: JsonObject) -> str:
+    """Return the current runtime status for a task."""
+    statuses = typing.cast("JsonObject", state.get("statuses", {}))
+    task_identifier = str(task["id"])
+    status = statuses.get(task_identifier, task.get("status", TaskStatus.READY.value))
+    return str(status)
 
 
-def refresh_runtime_statuses(repository_directory: Path, manifest: JsonObject) -> bool:
+def set_runtime_task_status(state: JsonObject, task: JsonObject, status: TaskStatus) -> None:
+    """Set a task status in ignored runtime state."""
+    statuses = typing.cast("JsonObject", state.setdefault("statuses", {}))
+    statuses[str(task["id"])] = status.value
+    status_updates = typing.cast("JsonObject", state.setdefault("status_updated_at", {}))
+    status_updates[str(task["id"])] = utc_timestamp()
+
+
+def refresh_runtime_statuses(repository_directory: Path, manifest: JsonObject) -> None:
     """Refresh task statuses from detached worker state."""
     state_path = state_directory(repository_directory, manifest) / "state.json"
     state = load_state(state_path)
     runs = typing.cast("JsonObject", state.get("runs", {}))
     changed = False
     for task in selected_tasks(manifest, []):
-        if str(task.get("status")) != TaskStatus.RUNNING.value:
-            continue
         task_identifier = int(task["id"])
         run = runs.get(str(task_identifier), {})
         if not isinstance(run, dict):
@@ -572,14 +580,20 @@ def refresh_runtime_statuses(repository_directory: Path, manifest: JsonObject) -
         if not isinstance(pid, int):
             continue
         if running_process_exists(pid):
+            if runtime_task_status(state, task) == TaskStatus.READY.value:
+                set_runtime_task_status(state, task, TaskStatus.RUNNING)
+                changed = True
+            continue
+        if runtime_task_status(state, task) != TaskStatus.RUNNING.value:
             continue
         run_directory = state_directory(repository_directory, manifest) / "runs" / f"{task_identifier:02d}"
         if (run_directory / "worker-final.md").exists():
-            set_task_status(task, TaskStatus.IMPLEMENTED)
+            set_runtime_task_status(state, task, TaskStatus.IMPLEMENTED)
         else:
-            set_task_status(task, TaskStatus.BLOCKED)
+            set_runtime_task_status(state, task, TaskStatus.BLOCKED)
         changed = True
-    return changed
+    if changed:
+        save_state(state_path, state)
 
 
 def launch_worker(
@@ -622,14 +636,8 @@ def launch_worker(
             raise RuntimeError("Codex worker process did not expose stdin.")
         process.stdin.write(prompt)
         process.stdin.close()
-        set_task_status(task, TaskStatus.RUNNING)
         if wait_for_completion:
-            returncode = process.wait()
-            if returncode == 0:
-                set_task_status(task, TaskStatus.IMPLEMENTED)
-            else:
-                set_task_status(task, TaskStatus.BLOCKED)
-            return returncode
+            return process.wait()
         return process.pid
 
 
@@ -645,11 +653,11 @@ def command_list(arguments: argparse.Namespace) -> int:
     """Handle list."""
     repository_directory = repository_root()
     manifest = load_manifest(repository_directory)
+    refresh_runtime_statuses(repository_directory, manifest)
+    state_path = state_directory(repository_directory, manifest) / "state.json"
+    state = load_state(state_path)
     for task in selected_tasks(manifest, typing.cast("list[int]", arguments.task)):
-        print(
-            f"{int(task['id']):02d}  {task.get('status', TaskStatus.READY.value)!s:12}"
-            f"  {task['branch']}  {task['title']}"
-        )
+        print(f"{int(task['id']):02d}  {runtime_task_status(state, task):12}  {task['branch']}  {task['title']}")
     return 0
 
 
@@ -657,9 +665,10 @@ def command_run(arguments: argparse.Namespace) -> int:
     """Handle run."""
     repository_directory = repository_root()
     manifest = load_manifest(repository_directory)
-    if refresh_runtime_statuses(repository_directory, manifest):
-        save_manifest(repository_directory, manifest)
+    refresh_runtime_statuses(repository_directory, manifest)
     defaults = typing.cast("JsonObject", manifest["defaults"])
+    state_path = state_directory(repository_directory, manifest) / "state.json"
+    state = load_state(state_path)
     jobs = int(arguments.jobs if arguments.jobs is not None else defaults.get("jobs", 5))
     wait_for_completion = bool(arguments.wait)
     force = bool(arguments.force)
@@ -671,17 +680,17 @@ def command_run(arguments: argparse.Namespace) -> int:
         if not bool(task.get("enabled", True)):
             continue
         runnable_statuses = {TaskStatus.READY.value}
-        if force or str(task.get("status", TaskStatus.READY.value)) in runnable_statuses:
+        if force or runtime_task_status(state, task) in runnable_statuses:
             runnable_tasks.append(task)
     if not runnable_tasks:
         print("No runnable tasks selected.")
         return 0
 
-    state_path = state_directory(repository_directory, manifest) / "state.json"
-    state = load_state(state_path)
     runs = typing.cast("JsonObject", state.setdefault("runs", {}))
     exit_code = 0
     for task in runnable_tasks:
+        set_runtime_task_status(state, task, TaskStatus.RUNNING)
+        save_state(state_path, state)
         result = launch_worker(
             repository_directory=repository_directory,
             manifest=manifest,
@@ -698,8 +707,11 @@ def command_run(arguments: argparse.Namespace) -> int:
         }
         print(f"Launched task {task_identifier:02d}: {task['branch']}")
         if wait_for_completion and result != 0:
+            set_runtime_task_status(state, task, TaskStatus.BLOCKED)
             exit_code = result
-    save_manifest(repository_directory, manifest)
+        elif wait_for_completion:
+            set_runtime_task_status(state, task, TaskStatus.IMPLEMENTED)
+        save_state(state_path, state)
     save_state(state_path, state)
     return exit_code
 
@@ -708,8 +720,7 @@ def command_status(arguments: argparse.Namespace) -> int:
     """Handle status."""
     repository_directory = repository_root()
     manifest = load_manifest(repository_directory)
-    if refresh_runtime_statuses(repository_directory, manifest):
-        save_manifest(repository_directory, manifest)
+    refresh_runtime_statuses(repository_directory, manifest)
     state_path = state_directory(repository_directory, manifest) / "state.json"
     state = load_state(state_path)
     runs = typing.cast("JsonObject", state.get("runs", {}))
@@ -726,7 +737,7 @@ def command_status(arguments: argparse.Namespace) -> int:
             git_status = run_command(["git", "status", "--short"], cwd=worktree_path)
             worktree_state = "dirty" if git_status.stdout.strip() else "clean"
         print(
-            f"{task_identifier:02d}  status={task.get('status')}  alive={alive}"
+            f"{task_identifier:02d}  status={runtime_task_status(state, task)}  alive={alive}"
             f"  final={final_message_exists}  worktree={worktree_state}  {task['title']}"
         )
     return 0
@@ -736,7 +747,10 @@ def command_review(arguments: argparse.Namespace) -> int:
     """Handle review."""
     repository_directory = repository_root()
     manifest = load_manifest(repository_directory)
+    refresh_runtime_statuses(repository_directory, manifest)
     defaults = typing.cast("JsonObject", manifest["defaults"])
+    state_path = state_directory(repository_directory, manifest) / "state.json"
+    state = load_state(state_path)
     tasks = selected_tasks(manifest, typing.cast("list[int]", arguments.task))
     if not tasks:
         raise ValueError("Select at least one task to review.")
@@ -769,12 +783,12 @@ def command_review(arguments: argparse.Namespace) -> int:
         if completed_process.stderr:
             (review_directory / f"{task_identifier:02d}.stderr.log").write_text(completed_process.stderr)
         if completed_process.returncode == 0:
-            set_task_status(task, TaskStatus.REVIEWED)
+            set_runtime_task_status(state, task, TaskStatus.REVIEWED)
             print(f"Reviewed task {task_identifier:02d}: {final_message_path}")
         else:
             exit_code = completed_process.returncode
             print(f"Review failed for task {task_identifier:02d}; see {jsonl_log_path}.", file=sys.stderr)
-    save_manifest(repository_directory, manifest)
+        save_state(state_path, state)
     return exit_code
 
 
@@ -782,7 +796,10 @@ def command_integrate(arguments: argparse.Namespace) -> int:
     """Handle integrate."""
     repository_directory = repository_root()
     manifest = load_manifest(repository_directory)
+    refresh_runtime_statuses(repository_directory, manifest)
     defaults = typing.cast("JsonObject", manifest["defaults"])
+    state_path = state_directory(repository_directory, manifest) / "state.json"
+    state = load_state(state_path)
     tasks = selected_tasks(manifest, typing.cast("list[int]", arguments.task))
     if not tasks:
         raise ValueError("Select at least one task to integrate.")
@@ -804,8 +821,8 @@ def command_integrate(arguments: argparse.Namespace) -> int:
             reasoning_effort=str(defaults.get("integrator_reasoning_effort", "xhigh")),
             final_message_path=final_message_path,
         )
-        set_task_status(task, TaskStatus.INTEGRATING)
-        save_manifest(repository_directory, manifest)
+        set_runtime_task_status(state, task, TaskStatus.INTEGRATING)
+        save_state(state_path, state)
         completed_process = subprocess.run(
             command_arguments,
             cwd=repository_directory,
@@ -818,14 +835,14 @@ def command_integrate(arguments: argparse.Namespace) -> int:
         if completed_process.stderr:
             (integration_directory / f"{task_identifier:02d}.stderr.log").write_text(completed_process.stderr)
         if completed_process.returncode == 0:
-            set_task_status(task, TaskStatus.MERGED)
+            set_runtime_task_status(state, task, TaskStatus.MERGED)
             print(f"Integrated task {task_identifier:02d}: {final_message_path}")
         else:
-            set_task_status(task, TaskStatus.BLOCKED)
+            set_runtime_task_status(state, task, TaskStatus.BLOCKED)
             exit_code = completed_process.returncode
             print(f"Integration failed for task {task_identifier:02d}; see {jsonl_log_path}.", file=sys.stderr)
             break
-    save_manifest(repository_directory, manifest)
+        save_state(state_path, state)
     return exit_code
 
 
@@ -833,12 +850,13 @@ def command_integrate_ready(arguments: argparse.Namespace) -> int:
     """Handle integrate-ready."""
     repository_directory = repository_root()
     manifest = load_manifest(repository_directory)
-    if refresh_runtime_statuses(repository_directory, manifest):
-        save_manifest(repository_directory, manifest)
+    refresh_runtime_statuses(repository_directory, manifest)
+    state_path = state_directory(repository_directory, manifest) / "state.json"
+    state = load_state(state_path)
     ready_identifiers = [
         int(task["id"])
         for task in selected_tasks(manifest, [])
-        if str(task.get("status")) in {TaskStatus.IMPLEMENTED.value, TaskStatus.REVIEWED.value}
+        if runtime_task_status(state, task) in {TaskStatus.IMPLEMENTED.value, TaskStatus.REVIEWED.value}
     ]
     if not ready_identifiers:
         print("No implemented or reviewed tasks are ready to integrate.")

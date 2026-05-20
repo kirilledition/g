@@ -145,11 +145,15 @@ def test_refresh_runtime_statuses_marks_finished_detached_worker(tmp_path: Path)
                 "7": {
                     "pid": 999999999,
                 }
-            }
+            },
+            "statuses": {
+                "7": "running",
+            },
         },
     )
 
-    changed = codex_task_farm.refresh_runtime_statuses(tmp_path, manifest)
+    codex_task_farm.refresh_runtime_statuses(tmp_path, manifest)
+    state = codex_task_farm.read_json_object(tmp_path / ".state" / "state.json")
 
-    assert changed is True
-    assert manifest["tasks"][0]["status"] == "implemented"
+    assert manifest["tasks"][0]["status"] == "running"
+    assert state["statuses"]["7"] == "implemented"
