@@ -1079,17 +1079,24 @@ def refresh_runtime_statuses(repository_directory: Path, manifest: JsonObject) -
         pid = run.get("pid")
         if not isinstance(pid, int):
             continue
+        run_directory = state_directory(repository_directory, manifest) / "runs" / f"{task_identifier:02d}"
         if running_process_exists(pid):
-            if runtime_task_status(state, task) == TaskStatus.READY.value:
+            if runtime_task_status(state, task) != TaskStatus.RUNNING.value:
                 set_runtime_task_status(state, task, TaskStatus.RUNNING)
                 changed = True
             continue
-        if runtime_task_status(state, task) != TaskStatus.RUNNING.value:
-            continue
-        run_directory = state_directory(repository_directory, manifest) / "runs" / f"{task_identifier:02d}"
         if not run_directory.exists():
             set_runtime_task_status(state, task, TaskStatus.BLOCKED)
             changed = True
+            continue
+        final_message_path = run_directory / "worker-final.md"
+        exit_code_path = run_directory / "exit-code.txt"
+        if not final_message_path.exists() and not exit_code_path.exists():
+            if runtime_task_status(state, task) != TaskStatus.RUNNING.value:
+                set_runtime_task_status(state, task, TaskStatus.RUNNING)
+                changed = True
+            continue
+        if runtime_task_status(state, task) not in {TaskStatus.RUNNING.value, TaskStatus.BLOCKED.value}:
             continue
         completion = classify_worker_completion(repository_directory, manifest, task)
         record_worker_completion(state, task, completion)

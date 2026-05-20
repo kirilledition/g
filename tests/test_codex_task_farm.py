@@ -406,6 +406,49 @@ def test_prune_stale_runtime_state_archives_mismatched_task_identity() -> None:
     assert len(state["archived_stale_entries"]) == 2
 
 
+def test_refresh_keeps_unobservable_incomplete_worker_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = codex_task_farm.default_manifest()
+    manifest["defaults"]["state_directory"] = ".state"
+    manifest["tasks"] = [
+        {
+            "id": 1,
+            "slug": "task",
+            "branch": "codex/task",
+            "worktree": "../worktrees/task",
+            "source_start_line": 1,
+            "source_end_line": 10,
+            "status": "ready",
+        }
+    ]
+    state_path = tmp_path / ".state" / "state.json"
+    run_directory = tmp_path / ".state" / "runs" / "01"
+    run_directory.mkdir(parents=True)
+    codex_task_farm.write_json_object(
+        state_path,
+        {
+            "runs": {
+                "1": {
+                    "pid": 123,
+                    "branch": "codex/task",
+                    "worktree": "../worktrees/task",
+                }
+            },
+            "statuses": {"1": "blocked"},
+            "task_identities": {"1": codex_task_farm.task_runtime_identity(manifest["tasks"][0])},
+        },
+    )
+    monkeypatch.setattr(codex_task_farm, "running_process_exists", lambda process_identifier: False)
+
+    codex_task_farm.refresh_runtime_statuses(tmp_path, manifest)
+
+    state = codex_task_farm.read_json_object(state_path)
+    assert state["statuses"] == {"1": "running"}
+    assert state["worker_results"] == {}
+
+
 def test_run_wait_launches_all_workers_before_waiting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest = codex_task_farm.default_manifest()
     manifest["defaults"]["state_directory"] = ".state"
