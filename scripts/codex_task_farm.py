@@ -738,6 +738,7 @@ Do not merge unrelated branches. Do not touch data/. Do not revert user changes 
 
 def build_worker_command(
     worktree_path: Path,
+    git_metadata_path: Path | None,
     model: str,
     reasoning_effort: str,
     final_message_path: Path,
@@ -749,18 +750,24 @@ def build_worker_command(
         "codex",
         "--cd",
         str(worktree_path),
-        "-m",
-        model,
-        "-c",
-        f'model_reasoning_effort="{reasoning_effort}"',
-        "exec",
-        "--json",
-        "-o",
-        str(final_message_path),
-        "-",
     ]
+    if git_metadata_path is not None:
+        command_arguments.extend(["--add-dir", str(git_metadata_path)])
+    command_arguments.extend(
+        [
+            "-m",
+            model,
+            "-c",
+            f'model_reasoning_effort="{reasoning_effort}"',
+            "exec",
+            "--json",
+            "-o",
+            str(final_message_path),
+            "-",
+        ]
+    )
     if dangerously_bypass_approvals:
-        command_arguments.insert(7, "--dangerously-bypass-approvals-and-sandbox")
+        command_arguments.insert(command_arguments.index("exec"), "--dangerously-bypass-approvals-and-sandbox")
     return command_arguments
 
 
@@ -794,6 +801,7 @@ def build_review_command(
 def build_integration_command(
     integration_worktree_path: Path,
     worktree_path: Path,
+    git_metadata_path: Path | None,
     model: str,
     reasoning_effort: str,
     final_message_path: Path,
@@ -807,18 +815,24 @@ def build_integration_command(
         str(integration_worktree_path),
         "--add-dir",
         str(worktree_path),
-        "-m",
-        model,
-        "-c",
-        f'model_reasoning_effort="{reasoning_effort}"',
-        "exec",
-        "--json",
-        "-o",
-        str(final_message_path),
-        "-",
     ]
+    if git_metadata_path is not None:
+        command_arguments.extend(["--add-dir", str(git_metadata_path)])
+    command_arguments.extend(
+        [
+            "-m",
+            model,
+            "-c",
+            f'model_reasoning_effort="{reasoning_effort}"',
+            "exec",
+            "--json",
+            "-o",
+            str(final_message_path),
+            "-",
+        ]
+    )
     if dangerously_bypass_approvals:
-        command_arguments.insert(9, "--dangerously-bypass-approvals-and-sandbox")
+        command_arguments.insert(command_arguments.index("exec"), "--dangerously-bypass-approvals-and-sandbox")
     return command_arguments
 
 
@@ -1132,6 +1146,7 @@ def launch_worker(
     prompt_path.write_text(prompt)
     command_arguments = build_worker_command(
         worktree_path=worktree_path,
+        git_metadata_path=repository_directory / ".git",
         model=str(defaults.get("worker_model", "gpt-5.5")),
         reasoning_effort=str(defaults.get("worker_reasoning_effort", "high")),
         final_message_path=final_message_path,
@@ -1475,6 +1490,7 @@ def command_integrate(arguments: argparse.Namespace) -> int:
         command_arguments = build_integration_command(
             integration_worktree_path=integration_worktree_path,
             worktree_path=worktree_path,
+            git_metadata_path=repository_directory / ".git",
             model=str(defaults.get("integrator_model", "gpt-5.5")),
             reasoning_effort=str(defaults.get("integrator_reasoning_effort", "xhigh")),
             final_message_path=final_message_path,

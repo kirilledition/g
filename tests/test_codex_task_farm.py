@@ -134,6 +134,7 @@ def test_load_manifest_requires_explicit_sync(tmp_path: Path) -> None:
 def test_codex_command_builders_default_to_safe_execution() -> None:
     worker_command = codex_task_farm.build_worker_command(
         worktree_path=Path("/repo/worktree"),
+        git_metadata_path=Path("/repo/.git"),
         model="gpt-5.5",
         reasoning_effort="high",
         final_message_path=Path("/state/final.md"),
@@ -148,6 +149,7 @@ def test_codex_command_builders_default_to_safe_execution() -> None:
     integration_command = codex_task_farm.build_integration_command(
         integration_worktree_path=Path("/repo/integration"),
         worktree_path=Path("/repo/worktree"),
+        git_metadata_path=Path("/repo/.git"),
         model="gpt-5.5",
         reasoning_effort="xhigh",
         final_message_path=Path("/state/integration.md"),
@@ -155,6 +157,7 @@ def test_codex_command_builders_default_to_safe_execution() -> None:
     )
 
     assert "--dangerously-bypass-approvals-and-sandbox" not in worker_command
+    assert worker_command[:5] == ["codex", "--cd", "/repo/worktree", "--add-dir", "/repo/.git"]
     assert worker_command[-1] == "-"
     assert review_command == [
         "codex",
@@ -175,13 +178,22 @@ def test_codex_command_builders_default_to_safe_execution() -> None:
         "-",
     ]
     assert "--dangerously-bypass-approvals-and-sandbox" not in review_command
-    assert integration_command[:5] == ["codex", "--cd", "/repo/integration", "--add-dir", "/repo/worktree"]
+    assert integration_command[:7] == [
+        "codex",
+        "--cd",
+        "/repo/integration",
+        "--add-dir",
+        "/repo/worktree",
+        "--add-dir",
+        "/repo/.git",
+    ]
     assert "--dangerously-bypass-approvals-and-sandbox" not in integration_command
 
 
 def test_dangerous_flag_adds_bypass_only_for_worker_and_integrator() -> None:
     worker_command = codex_task_farm.build_worker_command(
         worktree_path=Path("/repo/worktree"),
+        git_metadata_path=Path("/repo/.git"),
         model="gpt-5.5",
         reasoning_effort="high",
         final_message_path=Path("/state/final.md"),
@@ -190,6 +202,7 @@ def test_dangerous_flag_adds_bypass_only_for_worker_and_integrator() -> None:
     integration_command = codex_task_farm.build_integration_command(
         integration_worktree_path=Path("/repo/integration"),
         worktree_path=Path("/repo/worktree"),
+        git_metadata_path=Path("/repo/.git"),
         model="gpt-5.5",
         reasoning_effort="xhigh",
         final_message_path=Path("/state/integration.md"),
