@@ -69,6 +69,22 @@ pub(crate) fn mark_run_manifest_finalized(
         manifest_object.insert("final_parquet".to_string(), Value::String(final_parquet_path.display().to_string()));
         manifest_object.insert("final_row_count".to_string(), json!(row_count));
         manifest_object.insert("final_chunk_file_count".to_string(), json!(chunk_file_count));
+        manifest_object.remove("interrupted");
+        manifest_object.remove("interrupted_signal");
+        Ok(())
+    })
+}
+
+pub(crate) fn mark_run_manifest_interrupted(run_directory: &Path, signal_name: &str) -> Result<(), String> {
+    update_run_manifest(run_directory, |manifest| {
+        let manifest_object =
+            manifest.as_object_mut().ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
+        manifest_object.insert("finalized".to_string(), Value::Bool(false));
+        manifest_object.insert("interrupted".to_string(), Value::Bool(true));
+        manifest_object.insert("interrupted_signal".to_string(), Value::String(signal_name.to_string()));
+        manifest_object.remove("final_parquet");
+        manifest_object.remove("final_row_count");
+        manifest_object.remove("final_chunk_file_count");
         Ok(())
     })
 }
@@ -152,6 +168,31 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(committed_chunk_identifiers, vec![0, 2]);
+
+        std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn marks_manifest_interrupted_without_final_outputs() {
+        let run_directory = create_test_directory();
+        let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
+        std::fs::write(
+            &manifest_path,
+            "{\n  \"committed_chunks\": [],\n  \"finalized\": true,\n  \"final_parquet\": \"old.parquet\",\n  \"final_row_count\": 1,\n  \"final_chunk_file_count\": 1\n}\n",
+        )
+        .expect("manifest should be written");
+
+        mark_run_manifest_interrupted(&run_directory, "SIGTERM").expect("manifest should be marked interrupted");
+
+        let manifest_text = std::fs::read_to_string(&manifest_path).expect("manifest should be readable");
+        let manifest = serde_json::from_str::<Value>(&manifest_text).expect("manifest should be JSON");
+
+        assert_eq!(manifest.get("finalized").and_then(Value::as_bool), Some(false));
+        assert_eq!(manifest.get("interrupted").and_then(Value::as_bool), Some(true));
+        assert_eq!(manifest.get("interrupted_signal").and_then(Value::as_str), Some("SIGTERM"));
+        assert!(manifest.get("final_parquet").is_none());
+        assert!(manifest.get("final_row_count").is_none());
+        assert!(manifest.get("final_chunk_file_count").is_none());
 
         std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
     }

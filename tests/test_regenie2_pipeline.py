@@ -13,7 +13,7 @@ import pytest
 
 from g import types
 from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, regenie2_linear_types
-from g.engine import callbacks, native_dispatch, regenie2_pipeline, timing
+from g.engine import callbacks, native_dispatch, regenie2_pipeline, shutdown, timing
 from g.io import output, source
 
 
@@ -60,6 +60,7 @@ class FakeWriterSession:
     def __init__(self) -> None:
         self.finished = False
         self.aborted = False
+        self.interrupted_signal_name: str | None = None
         self.native_chunks: list[dict[str, object]] = []
 
     def write_regenie2_native_chunk(self, **kwargs: object) -> None:
@@ -68,6 +69,9 @@ class FakeWriterSession:
     def finish(self) -> str:
         self.finished = True
         return "results/final.parquet"
+
+    def finish_interrupted(self, signal_name: str) -> None:
+        self.interrupted_signal_name = signal_name
 
     def abort(self) -> None:
         self.aborted = True
@@ -728,6 +732,111 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert prediction_source.phenotype_name == "trait"
     assert prediction_source.native_aligned_sample_data is run_input.native_aligned_sample_data
     assert prediction_source.sample_key_mode == "iid"
+
+
+class FinishTrackingCallback:
+    def __init__(self) -> None:
+        self.finished = False
+        self.aborted = False
+
+    def finish(self) -> None:
+        self.finished = True
+
+    def abort(self) -> None:
+        self.aborted = True
+
+
+class GracefulShutdownRunEngine(FakeRunEngine):
+    def run_bgen_dosage_buffered_chunks(
+        self,
+        sample_indices: np.ndarray,
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int:
+        self.run_method = "buffered"
+        self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
+        raise shutdown.GracefulShutdownRequested(shutdown.ShutdownSignal(number=2, name="SIGINT", exit_code=130))
+
+
+class HardInterruptRunEngine(FakeRunEngine):
+    def run_bgen_dosage_buffered_chunks(
+        self,
+        sample_indices: np.ndarray,
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int:
+        self.run_method = "buffered"
+        self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
+        raise KeyboardInterrupt
+
+
+def test_native_dispatch_graceful_shutdown_drains_and_marks_writer_interrupted() -> None:
+    engine = GracefulShutdownRunEngine("study.bgen", chunk_size=32)
+    callback = FinishTrackingCallback()
+    writer_session = FakeWriterSession()
+
+    with pytest.raises(shutdown.GracefulShutdownRequested):
+        native_dispatch.run_bgen_engine_with_callback(
+            engine=typing.cast("typing.Any", engine),
+            run_input=build_native_run_input(),
+            committed_chunk_identifiers={0},
+            writer_session=writer_session,
+            callback=callback,
+            stage_timing_recorder=None,
+            variant_major_dosage=False,
+        )
+
+    assert callback.finished is True
+    assert callback.aborted is False
+    assert writer_session.interrupted_signal_name == "SIGINT"
+    assert writer_session.finished is False
+    assert writer_session.aborted is False
+
+
+def test_native_dispatch_hard_interrupt_aborts_callback_and_writer() -> None:
+    engine = HardInterruptRunEngine("study.bgen", chunk_size=32)
+    callback = FinishTrackingCallback()
+    writer_session = FakeWriterSession()
+
+    with pytest.raises(KeyboardInterrupt):
+        native_dispatch.run_bgen_engine_with_callback(
+            engine=typing.cast("typing.Any", engine),
+            run_input=build_native_run_input(),
+            committed_chunk_identifiers={0},
+            writer_session=writer_session,
+            callback=callback,
+            stage_timing_recorder=None,
+            variant_major_dosage=False,
+        )
+
+    assert callback.finished is False
+    assert callback.aborted is True
+    assert writer_session.interrupted_signal_name is None
+    assert writer_session.finished is False
+    assert writer_session.aborted is True
+
+
+def test_multi_dispatch_graceful_shutdown_drains_and_marks_all_writers_interrupted() -> None:
+    engine = GracefulShutdownRunEngine("study.bgen", chunk_size=32)
+    callback = FinishTrackingCallback()
+    writer_sessions = (FakeWriterSession(), FakeWriterSession())
+
+    with pytest.raises(shutdown.GracefulShutdownRequested):
+        regenie2_pipeline.run_bgen_engine_with_multi_callback(
+            engine=typing.cast("typing.Any", engine),
+            run_input=build_native_multi_run_input(),
+            committed_chunk_identifiers={0},
+            writer_sessions=writer_sessions,
+            callback=callback,
+            stage_timing_recorder=None,
+            variant_major_dosage=False,
+        )
+
+    assert callback.finished is True
+    assert callback.aborted is False
+    assert tuple(writer_session.interrupted_signal_name for writer_session in writer_sessions) == ("SIGINT", "SIGINT")
+    assert tuple(writer_session.finished for writer_session in writer_sessions) == (False, False)
+    assert tuple(writer_session.aborted for writer_session in writer_sessions) == (False, False)
 
 
 def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None:

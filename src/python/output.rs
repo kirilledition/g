@@ -107,6 +107,11 @@ impl OutputWriterSession {
             .map_err(output_writer_error_to_py)
     }
 
+    #[allow(clippy::needless_pass_by_value)]
+    fn finish_interrupted(&self, signal_name: String) -> PyResult<()> {
+        self.inner.finish_interrupted(&signal_name).map_err(output_writer_error_to_py)
+    }
+
     fn abort(&self) -> PyResult<()> {
         self.inner.abort().map_err(output_writer_error_to_py)
     }

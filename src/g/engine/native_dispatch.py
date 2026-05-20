@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 import typing
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ import numpy as np
 import numpy.typing as npt
 
 from g import _core, types
-from g.engine import timing, trusted_validation
+from g.engine import shutdown, timing, trusted_validation
 from g.io import source
 
 
@@ -272,6 +273,57 @@ def build_bgen_run_engine(
     return engine
 
 
+def finish_callback_drain(
+    *,
+    callback: object,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+) -> None:
+    """Wait for queued callback work to drain."""
+    callback_finish_start_time = time.perf_counter()
+    typing.cast("typing.Any", callback).finish()
+    timing.record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
+
+
+def finish_writer_session(
+    *,
+    writer_session: typing.Any,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+) -> str | None:
+    """Finish the writer session and optionally finalize Parquet output."""
+    writer_finish_start_time = time.perf_counter()
+    final_parquet_path = writer_session.finish()
+    timing.record_stage_duration(
+        stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
+    )
+    return typing.cast("str | None", final_parquet_path)
+
+
+def finish_writer_session_interrupted(
+    *,
+    writer_session: typing.Any,
+    shutdown_request: shutdown.GracefulShutdownRequested,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+) -> None:
+    """Flush writer output for an interrupted run without final Parquet."""
+    writer_finish_start_time = time.perf_counter()
+    writer_session.finish_interrupted(shutdown_request.signal_name)
+    timing.record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)
+
+
+def abort_callback(callback: object) -> None:
+    """Request callback worker shutdown when supported."""
+    abort_callback_method = getattr(callback, "abort", None)
+    if callable(abort_callback_method):
+        with contextlib.suppress(Exception):
+            abort_callback_method()
+
+
+def abort_writer_session(writer_session: typing.Any) -> None:
+    """Abort one writer session."""
+    with contextlib.suppress(Exception):
+        writer_session.abort()
+
+
 def run_bgen_engine_with_callback(
     *,
     engine: _core.Regenie2RunEngine,
@@ -286,6 +338,7 @@ def run_bgen_engine_with_callback(
     ] = timing.write_stage_timing_snapshot,
 ) -> Path | None:
     """Run native BGEN chunk delivery and close the output writer."""
+    callback_finished = False
     try:
         if stage_timing_recorder is not None:
             engine.reset_profile()
@@ -307,19 +360,31 @@ def run_bgen_engine_with_callback(
         timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
         if stage_timing_recorder is not None:
             stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
-        callback_finish_start_time = time.perf_counter()
-        typing.cast("typing.Any", callback).finish()
-        timing.record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
-        writer_finish_start_time = time.perf_counter()
-        final_parquet_path = writer_session.finish()
-        timing.record_stage_duration(
-            stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
+        finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
+        callback_finished = True
+        final_parquet_path = finish_writer_session(
+            writer_session=writer_session,
+            stage_timing_recorder=stage_timing_recorder,
         )
-    except Exception:
-        abort_callback = getattr(callback, "abort", None)
-        if callable(abort_callback):
-            abort_callback()
-        writer_session.abort()
+    except shutdown.GracefulShutdownRequested as shutdown_request:
+        try:
+            if not callback_finished:
+                finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
+            finish_writer_session_interrupted(
+                writer_session=writer_session,
+                shutdown_request=shutdown_request,
+                stage_timing_recorder=stage_timing_recorder,
+            )
+        except BaseException:
+            abort_callback(callback)
+            abort_writer_session(writer_session)
+            stage_timing_snapshot_writer(stage_timing_recorder, None)
+            raise
+        stage_timing_snapshot_writer(stage_timing_recorder, None)
+        raise
+    except BaseException:
+        abort_callback(callback)
+        abort_writer_session(writer_session)
         stage_timing_snapshot_writer(stage_timing_recorder, None)
         raise
     stage_timing_snapshot_writer(stage_timing_recorder, None)

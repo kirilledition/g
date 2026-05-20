@@ -505,6 +505,43 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
     assert manifest["final_row_count"] == 4
 
 
+def test_output_writer_finish_interrupted_flushes_commits_without_final_parquet(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path)
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    initialize_test_output_run(prepared_output_run, current_header)
+    writer_session = output.create_output_writer_session(
+        prepared_output_run.output_run_paths,
+        AssociationMode.REGENIE2_LINEAR,
+        writer_thread_count=1,
+        writer_queue_depth=1,
+        finalize_parquet=True,
+    )
+    callback = NativeChunkWritingCallback(writer_session)
+    try:
+        engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
+        engine.run_bgen_dosage_buffered_chunks(np.arange(4, dtype=np.int64), callback)
+        writer_session.finish_interrupted("SIGTERM")
+    except Exception:
+        writer_session.abort()
+        raise
+
+    manifest = json.loads(
+        output.get_run_manifest_path(prepared_output_run.output_run_paths).read_text(encoding="utf-8")
+    )
+    assert [chunk["chunk_identifier"] for chunk in manifest["committed_chunks"]] == [0, 2]
+    assert manifest["finalized"] is False
+    assert manifest["interrupted"] is True
+    assert manifest["interrupted_signal"] == "SIGTERM"
+    assert "final_parquet" not in manifest
+    assert "final_row_count" not in manifest
+    assert "final_chunk_file_count" not in manifest
+    assert not (prepared_output_run.output_run_paths.run_directory / "final.parquet").exists()
+
+
 def test_finalize_chunks_to_parquet_writes_empty_schema_when_no_chunks_exist(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
     prepared_output_run = output.prepare_output_run(

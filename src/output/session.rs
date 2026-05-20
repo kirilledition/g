@@ -159,6 +159,18 @@ impl OutputWriterSession {
         Ok(Some(final_parquet_path))
     }
 
+    pub fn finish_interrupted(&self, signal_name: &str) -> Result<(), OutputWriterError> {
+        self.close_writer_sender(OutputCoordinatorJob::Finish)?;
+        self.join_coordinator_thread()?;
+        self.join_writer_threads()?;
+        self.raise_if_worker_failed()?;
+        let chunk_commits = self.take_worker_commits()?;
+        manifest::record_run_manifest_chunk_commits(&self.config.run_directory, chunk_commits)
+            .map_err(OutputWriterError::runtime)?;
+        manifest::mark_run_manifest_interrupted(&self.config.run_directory, signal_name)
+            .map_err(OutputWriterError::runtime)
+    }
+
     pub fn abort(&self) -> Result<(), OutputWriterError> {
         self.close_writer_sender(OutputCoordinatorJob::Abort)?;
         self.join_coordinator_thread()?;

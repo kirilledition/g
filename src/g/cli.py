@@ -10,6 +10,7 @@ from pathlib import Path
 import click
 
 from g import api, types
+from g.engine import shutdown
 from g.interface import config, options
 
 
@@ -51,6 +52,15 @@ def print_warm_cache_message(report: typing.Any) -> None:
         f"({shape.sample_count}, {shape.variant_count})" for shape in report.warmed_shapes
     )
     click.echo(f"Success. Warmed JAX cache shapes: {warmed_shape_descriptions}")
+
+
+def print_interrupted_message(shutdown_request: shutdown.GracefulShutdownRequested) -> None:
+    """Print a concise interrupted-run message."""
+    click.echo(
+        f"Interrupted by {shutdown_request.signal_name}. "
+        "Flushed queued chunks and saved committed output for --resume.",
+        err=True,
+    )
 
 
 def resolve_trusted_bgen_validation_mode(
@@ -162,7 +172,12 @@ def regenie_options(function: typing.Callable[..., typing.Any]) -> typing.Callab
 def run_regenie_command(context: click.Context, **parameters: typing.Any) -> None:
     """Run a REGENIE-compatible step 2 association scan."""
     regenie_config = build_regenie_config_from_cli(context, parameters)
-    artifacts = api.regenie(regenie_config)
+    try:
+        with shutdown.install_graceful_shutdown_handlers():
+            artifacts = api.regenie(regenie_config)
+    except shutdown.GracefulShutdownRequested as shutdown_request:
+        print_interrupted_message(shutdown_request)
+        raise click.exceptions.Exit(shutdown_request.exit_code) from shutdown_request
     print_success_message(artifacts)
 
 

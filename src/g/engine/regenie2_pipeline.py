@@ -9,7 +9,7 @@ from pathlib import Path
 
 from g import _core, types
 from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear
-from g.engine import callbacks, native_dispatch, preflight, timing
+from g.engine import callbacks, native_dispatch, preflight, shutdown, timing
 from g.io import output, source
 
 REGENIE_COMPUTE_PATCH_TARGETS = (regenie2_binary, regenie2_linear)
@@ -578,6 +578,7 @@ def run_bgen_engine_with_multi_callback(
     variant_major_dosage: bool = False,
 ) -> tuple[Path | None, ...]:
     """Run native BGEN chunk delivery once and close all per-phenotype writers."""
+    callback_finished = False
     try:
         if stage_timing_recorder is not None:
             engine.reset_profile()
@@ -598,9 +599,8 @@ def run_bgen_engine_with_multi_callback(
         timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
         if stage_timing_recorder is not None:
             stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
-        callback_finish_start_time = time.perf_counter()
-        typing.cast("typing.Any", callback).finish()
-        timing.record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
+        native_dispatch.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
+        callback_finished = True
         writer_finish_start_time = time.perf_counter()
         final_parquet_paths = tuple(
             None if (final_path := writer_session.finish()) is None else Path(final_path)
@@ -609,12 +609,26 @@ def run_bgen_engine_with_multi_callback(
         timing.record_stage_duration(
             stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
         )
-    except Exception:
-        abort_callback = getattr(callback, "abort", None)
-        if callable(abort_callback):
-            abort_callback()
+    except shutdown.GracefulShutdownRequested as shutdown_request:
+        try:
+            if not callback_finished:
+                native_dispatch.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
+            writer_finish_start_time = time.perf_counter()
+            for writer_session in writer_sessions:
+                writer_session.finish_interrupted(shutdown_request.signal_name)
+            timing.record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)
+        except BaseException:
+            native_dispatch.abort_callback(callback)
+            for writer_session in writer_sessions:
+                native_dispatch.abort_writer_session(writer_session)
+            timing.write_stage_timing_snapshot(stage_timing_recorder, None)
+            raise
+        timing.write_stage_timing_snapshot(stage_timing_recorder, None)
+        raise
+    except BaseException:
+        native_dispatch.abort_callback(callback)
         for writer_session in writer_sessions:
-            writer_session.abort()
+            native_dispatch.abort_writer_session(writer_session)
         timing.write_stage_timing_snapshot(stage_timing_recorder, None)
         raise
     timing.write_stage_timing_snapshot(stage_timing_recorder, None)

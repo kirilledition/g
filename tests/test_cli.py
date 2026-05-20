@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import signal
 import typing
 from pathlib import Path
 from unittest.mock import patch
 
 import click
+import pytest
 from click.testing import CliRunner
 
 from g import api, types
 from g.cli import app, main, print_success_message
+from g.engine import shutdown
 from g.interface import options
 
 runner = CliRunner()
@@ -83,6 +86,52 @@ def test_regenie_command_dispatches_config_api() -> None:
     assert regenie_config.trait.bsize == 4096
     assert regenie_config.g_compute.device == types.Device.GPU
     assert "final.parquet" in result.output
+
+
+def test_regenie_command_returns_signal_exit_code_for_graceful_shutdown() -> None:
+    shutdown_request = shutdown.GracefulShutdownRequested(
+        shutdown.ShutdownSignal(number=int(signal.SIGINT), name="SIGINT", exit_code=130)
+    )
+    with patch("g.cli.api.regenie", side_effect=shutdown_request):
+        result = runner.invoke(
+            app,
+            [
+                "regenie",
+                "--step",
+                "2",
+                "--bgen",
+                "dataset.bgen",
+                "--sample",
+                "dataset.sample",
+                "--phenoFile",
+                "phenotype.tsv",
+                "--phenoCol",
+                "trait",
+                "--pred",
+                "predictions.list",
+                "--out",
+                "results/output",
+                "--qt",
+            ],
+        )
+
+    assert result.exit_code == 130
+    assert "Interrupted by SIGINT" in result.output
+    assert "saved committed output for --resume" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_graceful_shutdown_controller_escalates_second_signal() -> None:
+    previous_sigint_handler = signal.getsignal(signal.SIGINT)
+    controller = shutdown.GracefulShutdownController()
+
+    with controller:
+        with pytest.raises(shutdown.GracefulShutdownRequested):
+            controller.handle_signal(int(signal.SIGINT), None)
+        with pytest.raises(KeyboardInterrupt):
+            controller.handle_signal(int(signal.SIGINT), None)
+
+    assert signal.getsignal(signal.SIGINT) == previous_sigint_handler
 
 
 def test_regenie_command_options_are_generated_from_specs() -> None:

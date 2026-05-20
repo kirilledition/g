@@ -693,6 +693,7 @@ impl Regenie2RunEngine {
         let committed_identifier_set = build_committed_identifier_set(committed_chunk_identifiers);
         let chunk_specs = self.engine.plan_chunks(&committed_identifier_set).map_err(convert_genotype_error)?;
         for chunk_spec in &chunk_specs {
+            py.check_signals()?;
             let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
             let output_array_object =
                 callback.call_method1("acquire_dosage_buffer", (sample_index_values.len(), selected_variant_count))?;
@@ -755,6 +756,7 @@ impl Regenie2RunEngine {
         let committed_identifier_set = build_committed_identifier_set(committed_chunk_identifiers);
         let chunk_specs = self.engine.plan_chunks(&committed_identifier_set).map_err(convert_genotype_error)?;
         for chunk_spec in &chunk_specs {
+            py.check_signals()?;
             let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
             let output_array_object = callback.call_method1(
                 "acquire_variant_major_dosage_buffer",
