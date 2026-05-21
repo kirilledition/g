@@ -32,6 +32,14 @@ class BinaryChunkDiagnostics:
         firth_max_iteration_failure_count: Firth candidates that hit the iteration limit.
         firth_invalid_statistic_failure_count: Firth candidates with invalid final statistics.
         firth_step_halving_failure_count: Firth candidates that exhausted step-halving attempts.
+        pseudo_firth_attempt_count: Candidates that attempted scalar pseudo-Firth.
+        pseudo_firth_success_count: Candidates that finished through scalar pseudo-Firth.
+        nr_zero_start_attempt_count: Candidates that attempted zero-start Newton-Raphson fallback.
+        nr_zero_start_success_count: Candidates that finished through zero-start Newton-Raphson fallback.
+        nr_warm_start_attempt_count: Candidates that attempted warm-start Newton-Raphson fallback.
+        nr_warm_start_success_count: Candidates that finished through warm-start Newton-Raphson fallback.
+        sparse_correction_count: Candidates corrected through carrier-only sparse inputs.
+        dense_correction_count: Candidates corrected through dense inputs.
 
     """
 
@@ -46,6 +54,14 @@ class BinaryChunkDiagnostics:
     firth_max_iteration_failure_count: jax.Array
     firth_invalid_statistic_failure_count: jax.Array
     firth_step_halving_failure_count: jax.Array
+    pseudo_firth_attempt_count: jax.Array
+    pseudo_firth_success_count: jax.Array
+    nr_zero_start_attempt_count: jax.Array
+    nr_zero_start_success_count: jax.Array
+    nr_warm_start_attempt_count: jax.Array
+    nr_warm_start_success_count: jax.Array
+    sparse_correction_count: jax.Array
+    dense_correction_count: jax.Array
 
 
 def count_binary_chunk_diagnostics(
@@ -97,4 +113,21 @@ def count_binary_chunk_diagnostics(
             result.firth_failure_code == types.FirthFailureCode.STEP_HALVING.value,
             dtype=jnp.int32,
         ),
+        pseudo_firth_attempt_count=jnp.sum(result.pseudo_firth_iteration_count > 0, dtype=jnp.int32),
+        pseudo_firth_success_count=jnp.sum(
+            result.firth_correction_code == types.FirthCorrectionCode.PSEUDO_FIRTH.value,
+            dtype=jnp.int32,
+        ),
+        nr_zero_start_attempt_count=jnp.sum(result.nr_zero_start_iteration_count > 0, dtype=jnp.int32),
+        nr_zero_start_success_count=jnp.sum(
+            result.firth_correction_code == types.FirthCorrectionCode.NEWTON_RAPHSON_ZERO_START.value,
+            dtype=jnp.int32,
+        ),
+        nr_warm_start_attempt_count=jnp.sum(result.nr_warm_start_iteration_count > 0, dtype=jnp.int32),
+        nr_warm_start_success_count=jnp.sum(
+            result.firth_correction_code == types.FirthCorrectionCode.NEWTON_RAPHSON_WARM_START.value,
+            dtype=jnp.int32,
+        ),
+        sparse_correction_count=jnp.sum(result.firth_sparse_correction_mask & firth_attempt_mask, dtype=jnp.int32),
+        dense_correction_count=jnp.sum((~result.firth_sparse_correction_mask) & firth_attempt_mask, dtype=jnp.int32),
     )

@@ -91,6 +91,15 @@ class FirthFailureCode(enum.IntEnum):
     STEP_HALVING = 4
 
 
+class FirthCorrectionCode(enum.IntEnum):
+    """Integer labels for the final binary approximate-Firth branch."""
+
+    NONE = 0
+    PSEUDO_FIRTH = 1
+    NEWTON_RAPHSON_ZERO_START = 2
+    NEWTON_RAPHSON_WARM_START = 3
+
+
 @dataclass(frozen=True)
 class BinaryCorrectionPlan:
     """Normalized binary fallback execution plan.

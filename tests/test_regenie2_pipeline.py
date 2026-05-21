@@ -476,6 +476,11 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
             [regenie2_binary.FirthConvergenceReason.NONE.value, regenie2_binary.FirthConvergenceReason.CONVERGED.value],
             dtype=jnp.int32,
         ),
+        firth_correction_code=jnp.zeros(2, dtype=jnp.int32),
+        firth_sparse_correction_mask=jnp.zeros(2, dtype=jnp.bool_),
+        pseudo_firth_iteration_count=jnp.zeros(2, dtype=jnp.int32),
+        nr_zero_start_iteration_count=jnp.zeros(2, dtype=jnp.int32),
+        nr_warm_start_iteration_count=jnp.zeros(2, dtype=jnp.int32),
     )
     callback = callbacks.BinaryRegenie2PipelineCallback(
         run_input=build_native_run_input(),
@@ -542,6 +547,11 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
             ],
             dtype=jnp.int32,
         ),
+        firth_correction_code=jnp.zeros(3, dtype=jnp.int32),
+        firth_sparse_correction_mask=jnp.zeros(3, dtype=jnp.bool_),
+        pseudo_firth_iteration_count=jnp.zeros(3, dtype=jnp.int32),
+        nr_zero_start_iteration_count=jnp.zeros(3, dtype=jnp.int32),
+        nr_warm_start_iteration_count=jnp.zeros(3, dtype=jnp.int32),
     )
     callback = callbacks.BinaryRegenie2PipelineCallback(
         run_input=build_native_run_input(),
@@ -634,6 +644,11 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
             ],
             dtype=jnp.int32,
         ),
+        firth_correction_code=jnp.zeros(3, dtype=jnp.int32),
+        firth_sparse_correction_mask=jnp.zeros(3, dtype=jnp.bool_),
+        pseudo_firth_iteration_count=jnp.zeros(3, dtype=jnp.int32),
+        nr_zero_start_iteration_count=jnp.zeros(3, dtype=jnp.int32),
+        nr_warm_start_iteration_count=jnp.zeros(3, dtype=jnp.int32),
     )
     callback = callbacks.BinaryRegenie2PipelineCallback(
         run_input=build_native_run_input(),
@@ -728,6 +743,11 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
             ],
             dtype=jnp.int32,
         ),
+        firth_correction_code=jnp.zeros((2, 2), dtype=jnp.int32),
+        firth_sparse_correction_mask=jnp.zeros((2, 2), dtype=jnp.bool_),
+        pseudo_firth_iteration_count=jnp.zeros((2, 2), dtype=jnp.int32),
+        nr_zero_start_iteration_count=jnp.zeros((2, 2), dtype=jnp.int32),
+        nr_warm_start_iteration_count=jnp.zeros((2, 2), dtype=jnp.int32),
     )
     chromosome_state = SimpleNamespace(
         fitted_probability=jnp.asarray([[0.5, 0.5], [0.5, 0.5]], dtype=jnp.float32),

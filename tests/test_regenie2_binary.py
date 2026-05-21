@@ -120,6 +120,35 @@ def build_chromosome_state() -> tuple[
     return genotype_matrix, chromosome_state
 
 
+def build_chunk_result_with_empty_firth_diagnostics(
+    *,
+    beta: jax.Array,
+    standard_error: jax.Array,
+    chi_squared: jax.Array,
+    log10_p_value: jax.Array,
+    extra_code: jax.Array,
+    valid_mask: jax.Array,
+) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+    """Build a chunk result with zeroed Firth diagnostics."""
+    variant_count = extra_code.shape[0]
+    return regenie2_binary_types.Regenie2BinaryChunkResult(
+        beta=beta,
+        standard_error=standard_error,
+        chi_squared=chi_squared,
+        log10_p_value=log10_p_value,
+        extra_code=extra_code,
+        valid_mask=valid_mask,
+        firth_iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
+        firth_failure_code=jnp.zeros((variant_count,), dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.zeros((variant_count,), dtype=jnp.int32),
+        firth_correction_code=jnp.zeros((variant_count,), dtype=jnp.int32),
+        firth_sparse_correction_mask=jnp.zeros((variant_count,), dtype=jnp.bool_),
+        pseudo_firth_iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
+        nr_zero_start_iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
+        nr_warm_start_iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
+    )
+
+
 def build_variant_major_parity_fixture() -> BinaryVariantMajorParityFixture:
     """Build a fixture with covariates, LOCO offsets, imputed dosages, and edge variants."""
     covariate_matrix = jnp.asarray(
@@ -752,16 +781,13 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
         candidate_genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
+    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
         log10_p_value=score_result.log10_p_value,
         extra_code=jnp.asarray([types.BinaryExtraCode.FIRTH.value], dtype=jnp.int32),
         valid_mask=jnp.asarray([True]),
-        firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
-        firth_failure_code=jnp.asarray([types.FirthFailureCode.NONE.value], dtype=jnp.int32),
-        firth_convergence_reason_code=jnp.asarray([regenie2_binary.FirthConvergenceReason.NONE.value], dtype=jnp.int32),
     )
 
     result = regenie2_binary.apply_device_candidate_corrections(
@@ -791,16 +817,13 @@ def test_firth_candidate_max_iteration_failure_is_labelled() -> None:
         candidate_genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
+    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
         log10_p_value=score_result.log10_p_value,
         extra_code=jnp.asarray([types.BinaryExtraCode.FIRTH.value], dtype=jnp.int32),
         valid_mask=jnp.asarray([True]),
-        firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
-        firth_failure_code=jnp.asarray([types.FirthFailureCode.NONE.value], dtype=jnp.int32),
-        firth_convergence_reason_code=jnp.asarray([regenie2_binary.FirthConvergenceReason.NONE.value], dtype=jnp.int32),
     )
     maximum_iteration_kernel_config = dataclasses.replace(
         regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
@@ -842,16 +865,13 @@ def test_null_firth_failure_propagates_to_candidate_failure() -> None:
         candidate_genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
+    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
         log10_p_value=score_result.log10_p_value,
         extra_code=jnp.asarray([types.BinaryExtraCode.FIRTH.value], dtype=jnp.int32),
         valid_mask=jnp.asarray([True]),
-        firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
-        firth_failure_code=jnp.asarray([types.FirthFailureCode.NONE.value], dtype=jnp.int32),
-        firth_convergence_reason_code=jnp.asarray([regenie2_binary.FirthConvergenceReason.NONE.value], dtype=jnp.int32),
     )
 
     result = regenie2_binary.apply_device_candidate_corrections(
@@ -878,16 +898,13 @@ def test_firth_se_changes_only_successful_firth_standard_error() -> None:
         candidate_genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
+    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
         log10_p_value=score_result.log10_p_value,
         extra_code=jnp.asarray([types.BinaryExtraCode.FIRTH.value], dtype=jnp.int32),
         valid_mask=jnp.asarray([True]),
-        firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
-        firth_failure_code=jnp.asarray([types.FirthFailureCode.NONE.value], dtype=jnp.int32),
-        firth_convergence_reason_code=jnp.asarray([regenie2_binary.FirthConvergenceReason.NONE.value], dtype=jnp.int32),
     )
     firth_se_plan = types.BinaryCorrectionPlan(
         method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
@@ -946,16 +963,13 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback() -> None
         genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
+    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
         log10_p_value=score_result.log10_p_value,
         extra_code=jnp.full((genotype_matrix.shape[1],), types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32),
         valid_mask=jnp.ones((genotype_matrix.shape[1],), dtype=jnp.bool_),
-        firth_iteration_count=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
-        firth_failure_code=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
-        firth_convergence_reason_code=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
     )
 
     overflow_kernel_config = dataclasses.replace(
@@ -1008,16 +1022,13 @@ def test_firth_correction_kernel_config_retraces_same_shape_without_cache_clear(
         genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
+    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
         log10_p_value=score_result.log10_p_value,
         extra_code=jnp.full((genotype_matrix.shape[1],), types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32),
         valid_mask=jnp.ones((genotype_matrix.shape[1],), dtype=jnp.bool_),
-        firth_iteration_count=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
-        firth_failure_code=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
-        firth_convergence_reason_code=jnp.zeros((genotype_matrix.shape[1],), dtype=jnp.int32),
     )
     small_batch_config = dataclasses.replace(
         regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
@@ -1279,16 +1290,13 @@ def test_failed_firth_lanes_become_test_fail() -> None:
         genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = regenie2_binary_types.Regenie2BinaryChunkResult(
+    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
         log10_p_value=score_result.log10_p_value,
         extra_code=jnp.asarray([types.BinaryExtraCode.FIRTH.value], dtype=jnp.int32),
         valid_mask=jnp.asarray([True]),
-        firth_iteration_count=jnp.asarray([0], dtype=jnp.int32),
-        firth_failure_code=jnp.asarray([types.FirthFailureCode.NONE.value], dtype=jnp.int32),
-        firth_convergence_reason_code=jnp.asarray([regenie2_binary.FirthConvergenceReason.NONE.value], dtype=jnp.int32),
     )
 
     corrected_result = regenie2_binary.apply_device_candidate_corrections(

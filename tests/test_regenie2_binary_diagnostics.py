@@ -13,9 +13,15 @@ def build_binary_chunk_result(
     extra_code: jax.Array,
     firth_iteration_count: jax.Array,
     firth_failure_code: jax.Array,
+    firth_correction_code: jax.Array | None = None,
+    firth_sparse_correction_mask: jax.Array | None = None,
+    pseudo_firth_iteration_count: jax.Array | None = None,
+    nr_zero_start_iteration_count: jax.Array | None = None,
+    nr_warm_start_iteration_count: jax.Array | None = None,
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     variant_count = extra_code.shape[0]
     zeros = jnp.zeros(variant_count, dtype=jnp.float32)
+    zero_integers = jnp.zeros(variant_count, dtype=jnp.int32)
     return regenie2_binary_types.Regenie2BinaryChunkResult(
         beta=zeros,
         standard_error=zeros,
@@ -26,6 +32,21 @@ def build_binary_chunk_result(
         firth_iteration_count=firth_iteration_count,
         firth_failure_code=firth_failure_code,
         firth_convergence_reason_code=jnp.zeros(variant_count, dtype=jnp.int32),
+        firth_correction_code=zero_integers if firth_correction_code is None else firth_correction_code,
+        firth_sparse_correction_mask=(
+            jnp.zeros(variant_count, dtype=jnp.bool_)
+            if firth_sparse_correction_mask is None
+            else firth_sparse_correction_mask
+        ),
+        pseudo_firth_iteration_count=(
+            zero_integers if pseudo_firth_iteration_count is None else pseudo_firth_iteration_count
+        ),
+        nr_zero_start_iteration_count=(
+            zero_integers if nr_zero_start_iteration_count is None else nr_zero_start_iteration_count
+        ),
+        nr_warm_start_iteration_count=(
+            zero_integers if nr_warm_start_iteration_count is None else nr_warm_start_iteration_count
+        ),
     )
 
 
@@ -45,6 +66,9 @@ def test_binary_chunk_diagnostics_report_zeroes_without_firth_candidates() -> No
     assert int(diagnostics.firth_iteration_max) == 0
     assert int(diagnostics.firth_converged_count) == 0
     assert int(diagnostics.firth_failed_count) == 0
+    assert int(diagnostics.pseudo_firth_attempt_count) == 0
+    assert int(diagnostics.nr_zero_start_attempt_count) == 0
+    assert int(diagnostics.nr_warm_start_attempt_count) == 0
 
 
 def test_binary_chunk_diagnostics_count_all_failure_categories() -> None:
@@ -72,6 +96,21 @@ def test_binary_chunk_diagnostics_count_all_failure_categories() -> None:
             ],
             dtype=jnp.int32,
         ),
+        firth_correction_code=jnp.asarray(
+            [
+                types.FirthCorrectionCode.PSEUDO_FIRTH.value,
+                types.FirthCorrectionCode.NONE.value,
+                types.FirthCorrectionCode.NONE.value,
+                types.FirthCorrectionCode.NONE.value,
+                types.FirthCorrectionCode.NONE.value,
+                types.FirthCorrectionCode.NEWTON_RAPHSON_ZERO_START.value,
+            ],
+            dtype=jnp.int32,
+        ),
+        firth_sparse_correction_mask=jnp.asarray([False, True, False, False, True, False], dtype=jnp.bool_),
+        pseudo_firth_iteration_count=jnp.asarray([3, 2, 2, 1, 4, 0], dtype=jnp.int32),
+        nr_zero_start_iteration_count=jnp.asarray([0, 0, 3, 0, 0, 2], dtype=jnp.int32),
+        nr_warm_start_iteration_count=jnp.asarray([0, 1, 0, 0, 2, 0], dtype=jnp.int32),
     )
 
     diagnostics = regenie2_binary_diagnostics.count_binary_chunk_diagnostics(result)
@@ -94,3 +133,11 @@ def test_binary_chunk_diagnostics_count_all_failure_categories() -> None:
         ),
         np.asarray([1, 1, 1, 1]),
     )
+    assert int(diagnostics.pseudo_firth_attempt_count) == 5
+    assert int(diagnostics.pseudo_firth_success_count) == 1
+    assert int(diagnostics.nr_zero_start_attempt_count) == 2
+    assert int(diagnostics.nr_zero_start_success_count) == 1
+    assert int(diagnostics.nr_warm_start_attempt_count) == 2
+    assert int(diagnostics.nr_warm_start_success_count) == 0
+    assert int(diagnostics.sparse_correction_count) == 2
+    assert int(diagnostics.dense_correction_count) == 3

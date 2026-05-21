@@ -138,6 +138,11 @@ class Regenie2BinaryChunkResult:
         firth_iteration_count: Number of Firth iterations per variant, or zero for non-Firth rows.
         firth_failure_code: Integer value from `types.FirthFailureCode`, or zero for non-failed rows.
         firth_convergence_reason_code: Internal Firth termination-reason integer.
+        firth_correction_code: Integer value from `types.FirthCorrectionCode`.
+        firth_sparse_correction_mask: Whether the approximate correction used carrier-only sparse inputs.
+        pseudo_firth_iteration_count: Scalar pseudo-Firth iterations per variant.
+        nr_zero_start_iteration_count: Scalar Newton-Raphson zero-start iterations per variant.
+        nr_warm_start_iteration_count: Scalar Newton-Raphson warm-start iterations per variant.
 
     """
 
@@ -150,6 +155,11 @@ class Regenie2BinaryChunkResult:
     firth_iteration_count: jax.Array
     firth_failure_code: jax.Array
     firth_convergence_reason_code: jax.Array
+    firth_correction_code: jax.Array
+    firth_sparse_correction_mask: jax.Array
+    pseudo_firth_iteration_count: jax.Array
+    nr_zero_start_iteration_count: jax.Array
+    nr_warm_start_iteration_count: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -223,6 +233,11 @@ class Regenie2MultiBinaryChunkResult:
         firth_iteration_count: Firth iteration counts with shape ``traits x variants``.
         firth_failure_code: Values from `types.FirthFailureCode` with shape ``traits x variants``.
         firth_convergence_reason_code: Internal Firth termination-reason integers with shape ``traits x variants``.
+        firth_correction_code: Values from `types.FirthCorrectionCode` with shape ``traits x variants``.
+        firth_sparse_correction_mask: Sparse carrier-only correction flags with shape ``traits x variants``.
+        pseudo_firth_iteration_count: Scalar pseudo-Firth iteration counts with shape ``traits x variants``.
+        nr_zero_start_iteration_count: Scalar zero-start NR iteration counts with shape ``traits x variants``.
+        nr_warm_start_iteration_count: Scalar warm-start NR iteration counts with shape ``traits x variants``.
 
     """
 
@@ -235,3 +250,8 @@ class Regenie2MultiBinaryChunkResult:
     firth_iteration_count: jax.Array
     firth_failure_code: jax.Array
     firth_convergence_reason_code: jax.Array
+    firth_correction_code: jax.Array
+    firth_sparse_correction_mask: jax.Array
+    pseudo_firth_iteration_count: jax.Array
+    nr_zero_start_iteration_count: jax.Array
+    nr_warm_start_iteration_count: jax.Array
