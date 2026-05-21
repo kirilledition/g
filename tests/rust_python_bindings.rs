@@ -73,6 +73,7 @@ fn registered_python_module_exercises_core_bindings() -> PyResult<()> {
     write_minimal_bgen_header(&no_sample_bgen_path);
     let run_directory = fixture.path.join("run");
     let chunks_directory = run_directory.join("chunks");
+    let log_path = fixture.path.join("trace.jsonl");
     fs::create_dir_all(&chunks_directory).expect("chunk directory should be created");
     fs::write(run_directory.join("run_manifest.json"), "{}\n").expect("manifest should be initialized");
 
@@ -91,6 +92,7 @@ fn registered_python_module_exercises_core_bindings() -> PyResult<()> {
         globals.set_item("no_sample_bgen_path", no_sample_bgen_path.to_string_lossy().as_ref())?;
         globals.set_item("run_directory", run_directory.to_string_lossy().as_ref())?;
         globals.set_item("chunks_directory", chunks_directory.to_string_lossy().as_ref())?;
+        globals.set_item("log_path", log_path.to_string_lossy().as_ref())?;
         globals.set_item("site_packages_path", python_site_packages_path().to_string_lossy().as_ref())?;
 
         py.run(
@@ -99,9 +101,29 @@ fn registered_python_module_exercises_core_bindings() -> PyResult<()> {
 import sys
 import os
 sys.path.insert(0, site_packages_path)
+import types
+g_package = types.ModuleType("g")
+g_package.__path__ = []
+g_package._core = _core
+sys.modules["g"] = g_package
+sys.modules["g._core"] = _core
+import logging
 import numpy as np
 
+try:
+    _core.initialize_logging(log_filter="[", log_stderr=False)
+    raise AssertionError("invalid tracing filter should fail")
+except ValueError:
+    pass
+assert _core.initialize_logging(log_filter="info", log_file=log_path, log_stderr=False) is True
+assert _core.initialize_logging(log_filter="debug", log_file=log_path, log_stderr=False) is False
+logging.warning("python warning reaches tracing")
 assert _core.hello_from_bin() == "Hello from g!"
+_core.shutdown_logging()
+with open(log_path, encoding="utf-8") as log_file:
+    log_text = log_file.read()
+assert "python warning reaches tracing" in log_text
+assert "hello_from_bin called" in log_text
 chunks = _core.plan_genotype_chunks(12, 5, [0, 3, 9, 12], None, [5])
 assert [(chunk.variant_start_index, chunk.variant_stop_index) for chunk in chunks] == [(0, 3), (3, 5), (9, 10), (10, 12)]
 

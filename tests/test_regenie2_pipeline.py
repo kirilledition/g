@@ -78,6 +78,18 @@ class FakeWriterSession:
         self.aborted = True
 
 
+class NoFinalWriterSession:
+    def __init__(self) -> None:
+        self.finished = False
+        self.aborted = False
+
+    def finish(self) -> None:
+        self.finished = True
+
+    def abort(self) -> None:
+        self.aborted = True
+
+
 class FakeRunEngine:
     instances: typing.ClassVar[list[FakeRunEngine]] = []
 
@@ -96,8 +108,15 @@ class FakeRunEngine:
         self.variant_count = 10
         self.run_arguments: tuple[np.ndarray, object, list[int] | None] | None = None
         self.run_method: str | None = None
+        self.reset_profile_count = 0
         self.validation_count = 0
         FakeRunEngine.instances.append(self)
+
+    def reset_profile(self) -> None:
+        self.reset_profile_count += 1
+
+    def profile_snapshot(self) -> dict[str, int]:
+        return {"variant_decode_count": 7}
 
     def validate_trusted_no_missing_diploid(self) -> None:
         self.validation_count += 1
@@ -911,6 +930,41 @@ def test_native_dispatch_hard_interrupt_aborts_callback_and_writer() -> None:
     assert writer_session.interrupted_signal_name is None
     assert writer_session.finished is False
     assert writer_session.aborted is True
+
+
+def test_native_dispatch_records_profile_and_allows_no_final_path() -> None:
+    engine = FakeRunEngine("study.bgen", chunk_size=32)
+    callback = FinishTrackingCallback()
+    writer_session = NoFinalWriterSession()
+    stage_timing_recorder = timing.StageTimingRecorder()
+    snapshot_calls: list[tuple[timing.StageTimingRecorder | None, Path | None]] = []
+
+    def record_snapshot(
+        recorder: timing.StageTimingRecorder | None,
+        stage_timing_path: Path | None,
+    ) -> None:
+        snapshot_calls.append((recorder, stage_timing_path))
+
+    final_path = native_dispatch.run_bgen_engine_with_callback(
+        engine=typing.cast("typing.Any", engine),
+        run_input=build_native_run_input(),
+        committed_chunk_identifiers={2, 1},
+        writer_session=writer_session,
+        callback=callback,
+        stage_timing_recorder=stage_timing_recorder,
+        variant_major_dosage=False,
+        stage_timing_snapshot_writer=record_snapshot,
+    )
+
+    assert final_path is None
+    assert callback.finished is True
+    assert writer_session.finished is True
+    assert writer_session.aborted is False
+    assert engine.reset_profile_count == 1
+    assert engine.run_arguments is not None
+    assert engine.run_arguments[2] == [1, 2]
+    assert stage_timing_recorder.snapshot().native_bgen_profile == {"variant_decode_count": 7}
+    assert len(snapshot_calls) == 1
 
 
 def test_multi_dispatch_graceful_shutdown_drains_and_marks_all_writers_interrupted() -> None:

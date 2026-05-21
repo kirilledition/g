@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import time
 import typing
 from dataclasses import dataclass
@@ -16,6 +17,8 @@ import numpy.typing as npt
 from g import _core, types
 from g.engine import shutdown, timing, trusted_validation
 from g.io import source
+
+logger = logging.getLogger(__name__)
 
 
 class SampleAlignmentConfigProtocol(typing.Protocol):
@@ -257,6 +260,7 @@ def build_bgen_run_engine(
     trusted_bgen_validator: typing.Callable[..., None] | None = None,
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN run engine once for alignment and chunk delivery."""
+    logger.debug("Constructing native BGEN run engine.")
     engine = _core.Regenie2RunEngine(
         str(genotype_source_config.source_path),
         chunk_size=chunk_size,
@@ -264,6 +268,7 @@ def build_bgen_run_engine(
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
     if trusted_no_missing_diploid:
+        logger.debug("Validating trusted no-missing diploid BGEN mode.")
         resolved_trusted_bgen_validator = trusted_bgen_validator or trusted_validation.validate_trusted_bgen_with_cache
         resolved_trusted_bgen_validator(
             engine=engine,
@@ -280,6 +285,7 @@ def finish_callback_drain(
 ) -> None:
     """Wait for queued callback work to drain."""
     callback_finish_start_time = time.perf_counter()
+    logger.debug("Draining native callback worker queues.")
     typing.cast("typing.Any", callback).finish()
     timing.record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
 
@@ -291,6 +297,7 @@ def finish_writer_session(
 ) -> str | None:
     """Finish the writer session and optionally finalize Parquet output."""
     writer_finish_start_time = time.perf_counter()
+    logger.debug("Finishing output writer and optional Parquet finalization.")
     final_parquet_path = writer_session.finish()
     timing.record_stage_duration(
         stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
@@ -306,6 +313,7 @@ def finish_writer_session_interrupted(
 ) -> None:
     """Flush writer output for an interrupted run without final Parquet."""
     writer_finish_start_time = time.perf_counter()
+    logger.info("Flushing interrupted output writer after %s.", shutdown_request.signal_name)
     writer_session.finish_interrupted(shutdown_request.signal_name)
     timing.record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)
 
@@ -345,19 +353,25 @@ def run_bgen_engine_with_callback(
         engine_delivery_start_time = time.perf_counter()
         sample_indices = run_input.sample_indices
         committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
+        logger.debug(
+            "Starting native BGEN delivery: committed_chunk_count=%s variant_major_dosage=%s.",
+            len(committed_chunk_identifier_list),
+            variant_major_dosage,
+        )
         if variant_major_dosage:
-            engine.run_bgen_variant_major_dosage_buffered_chunks(
+            processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
                 sample_indices,
                 callback,
                 committed_chunk_identifiers=committed_chunk_identifier_list,
             )
         else:
-            engine.run_bgen_dosage_buffered_chunks(
+            processed_chunk_count = engine.run_bgen_dosage_buffered_chunks(
                 sample_indices,
                 callback,
                 committed_chunk_identifiers=committed_chunk_identifier_list,
             )
         timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
+        logger.debug("Native BGEN delivery finished: processed_chunk_count=%s.", processed_chunk_count)
         if stage_timing_recorder is not None:
             stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
         finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
@@ -367,6 +381,7 @@ def run_bgen_engine_with_callback(
             stage_timing_recorder=stage_timing_recorder,
         )
     except shutdown.GracefulShutdownRequested as shutdown_request:
+        logger.info("Native BGEN delivery interrupted by %s.", shutdown_request.signal_name)
         try:
             if not callback_finished:
                 finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
@@ -383,11 +398,13 @@ def run_bgen_engine_with_callback(
         stage_timing_snapshot_writer(stage_timing_recorder, None)
         raise
     except BaseException:
+        logger.exception("Native BGEN delivery failed.")
         abort_callback(callback)
         abort_writer_session(writer_session)
         stage_timing_snapshot_writer(stage_timing_recorder, None)
         raise
     stage_timing_snapshot_writer(stage_timing_recorder, None)
+    logger.info("Native BGEN pipeline finished.")
     if final_parquet_path is None:
         return None
     return Path(final_parquet_path)

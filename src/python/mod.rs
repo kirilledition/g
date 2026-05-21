@@ -16,8 +16,10 @@ use crate::pipeline::Regenie2RunEngineCore;
 use crate::regenie::{MultiPredictionSource as NativeMultiPredictionSource, PredictionError, PredictionSource};
 use crate::sample::{AlignedSampleData, AlignmentInputs, MultiAlignedSampleData, MultiAlignmentInputs, SampleKeyMode};
 
+mod logging;
 mod output;
 
+use logging::{initialize_logging, shutdown_logging};
 use output::{
     OutputWriterSession, finalize_output_run_chunks, scan_committed_chunk_identifiers, validate_strict_manifest_chunks,
 };
@@ -987,6 +989,7 @@ fn align_multi_sample_data_from_sample_file(
 
 #[pyfunction]
 fn hello_from_bin() -> String {
+    tracing::info!(target: "g.native", "hello_from_bin called");
     "Hello from g!".to_string()
 }
 
@@ -1124,6 +1127,8 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(configure_rayon_global_thread_pool, module)?)?;
+    module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;
+    module.add_function(wrap_pyfunction!(shutdown_logging, module)?)?;
     module.add_function(wrap_pyfunction!(hello_from_bin, module)?)?;
     module.add_function(wrap_pyfunction!(plan_genotype_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(align_sample_data, module)?)?;

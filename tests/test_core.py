@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -10,9 +13,71 @@ TEST_DATA_DIRECTORY = Path(__file__).parent / "data" / "bgen"
 HAPLOTYPES_BGEN_PATH = TEST_DATA_DIRECTORY / "haplotypes.bgen"
 
 
+def run_logging_subprocess(script: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_hello_from_bin_returns_expected_message() -> None:
     """Ensure the extension module exports a simple health-check string."""
     assert _core.hello_from_bin() == "Hello from g!"
+
+
+def test_initialize_logging_is_idempotent_and_writes_python_and_rust_jsonl(tmp_path: Path) -> None:
+    log_path = tmp_path / "g.jsonl"
+
+    completed_process = run_logging_subprocess(
+        "\n".join(
+            [
+                "import logging",
+                "from g import _core",
+                f"log_path = {str(log_path)!r}",
+                'first_result = _core.initialize_logging(log_filter="info", log_file=log_path, log_stderr=False)',
+                'second_result = _core.initialize_logging(log_filter="debug", log_file=log_path, log_stderr=False)',
+                'logging.warning("python warning reaches tracing")',
+                "_core.hello_from_bin()",
+                "_core.shutdown_logging()",
+                "print(first_result, second_result)",
+            ]
+        )
+    )
+
+    log_text = log_path.read_text(encoding="utf-8")
+    records = [json.loads(line) for line in log_text.splitlines() if line]
+
+    assert completed_process.stdout.strip() == "True False"
+    assert records
+    assert "python warning reaches tracing" in log_text
+    assert "hello_from_bin called" in log_text
+
+
+def test_initialize_logging_defaults_to_info_filter(tmp_path: Path) -> None:
+    log_path = tmp_path / "g-default.jsonl"
+
+    run_logging_subprocess(
+        "\n".join(
+            [
+                "import logging",
+                "from g import _core",
+                f"log_path = {str(log_path)!r}",
+                "_core.initialize_logging(log_file=log_path, log_stderr=False)",
+                "_core.hello_from_bin()",
+                'logging.warning("default warning is visible")',
+                "_core.shutdown_logging()",
+            ]
+        )
+    )
+
+    log_text = log_path.read_text(encoding="utf-8")
+    records = [json.loads(line) for line in log_text.splitlines() if line]
+
+    assert records
+    assert "default warning is visible" in log_text
+    assert "hello_from_bin called" in log_text
 
 
 def test_plan_genotype_chunks_splits_by_boundaries_and_resume_state() -> None:

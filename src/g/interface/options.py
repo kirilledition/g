@@ -632,6 +632,33 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         cli_flags=("--g-stage-timings-json", "g_stage_timings_json"),
         type=OptionValueType.PATH,
     ),
+    OptionSpec(
+        "g-log-filter",
+        "g_log_filter",
+        SupportLevel.G_EXTENSION,
+        "g.diagnostics",
+        "Rust/Python tracing filter.",
+        cli_flags=("--g-log-filter", "g_log_filter"),
+    ),
+    OptionSpec(
+        "g-log-file",
+        "g_log_file",
+        SupportLevel.G_EXTENSION,
+        "g.diagnostics",
+        "Write JSONL tracing logs to this file.",
+        cli_flags=("--g-log-file", "g_log_file"),
+        type=OptionValueType.PATH,
+    ),
+    OptionSpec(
+        "g-log-stderr",
+        "g_log_stderr",
+        SupportLevel.G_EXTENSION,
+        "g.diagnostics",
+        "Write compact tracing logs to stderr.",
+        cli_flags=("--g-log-stderr/--no-g-log-stderr", "g_log_stderr"),
+        type=OptionValueType.BOOLEAN,
+        is_flag=True,
+    ),
 )
 
 OPTION_SPECS: tuple[OptionSpec, ...] = SUPPORTED_REGENIE_OPTIONS + UNSUPPORTED_REGENIE_OPTIONS + G_OPTIONS

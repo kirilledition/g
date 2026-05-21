@@ -66,6 +66,9 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-jax-xla-autotune-cache": True,
         "g-jax-transfer-guard": True,
         "g-stage-timings-json": "timings.json",
+        "g-log-filter": "g=debug",
+        "g-log-file": "logs/g.jsonl",
+        "g-log-stderr": False,
     }
 
     regenie_config = config.RegenieConfig.from_options(raw_options)
@@ -83,12 +86,23 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_output.chunks_per_arrow_file == 2
     assert regenie_config.g_output.arrow_compression == types.ArrowCompression.NONE
     assert regenie_config.g_diagnostics.stage_timings_json == Path("timings.json")
+    assert regenie_config.g_diagnostics.log_filter == "g=debug"
+    assert regenie_config.g_diagnostics.log_file == Path("logs/g.jsonl")
+    assert regenie_config.g_diagnostics.log_stderr is False
 
 
 def test_every_supported_option_has_explain_metadata() -> None:
     for option_name in options.supported_option_names() | options.unsupported_option_names():
         explanation = options.explain_option(option_name)
         assert option_name in explanation
+
+
+def test_logging_diagnostics_default_to_info_stderr() -> None:
+    diagnostics_config = config.GDiagnosticsConfig()
+
+    assert diagnostics_config.log_filter == "info"
+    assert diagnostics_config.log_file is None
+    assert diagnostics_config.log_stderr is True
 
 
 def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
@@ -108,6 +122,9 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
             "g-firth-batch-size": 8,
             "g-jax-persistent-cache": False,
             "g-stage-timings-json": "timings.json",
+            "g-log-filter": "g=trace",
+            "g-log-file": "logs/g.jsonl",
+            "g-log-stderr": False,
         }
     )
     config_path = tmp_path / "effective_config.toml"
@@ -116,6 +133,29 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
     loaded_config = config.RegenieConfig.from_toml(config_path)
 
     assert loaded_config == regenie_config
+
+
+def test_logging_options_ignore_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("G_LOG_FILTER", "g=info")
+    monkeypatch.setenv("G_LOG_FILE", "logs/environment.jsonl")
+    monkeypatch.setenv("G_LOG_STDERR", "false")
+
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "g-log-filter": "g=debug",
+        }
+    )
+
+    assert regenie_config.g_diagnostics.log_filter == "g=debug"
+    assert regenie_config.g_diagnostics.log_file is None
+    assert regenie_config.g_diagnostics.log_stderr is True
 
 
 def test_unknown_and_unsupported_options_raise_clear_errors() -> None:

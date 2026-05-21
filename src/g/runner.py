@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import logging
 import time
 import typing
 from dataclasses import dataclass
@@ -14,6 +15,8 @@ from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -213,17 +216,37 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> t
 def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
     """Apply native runtime knobs before engine execution."""
     core_module = importlib.import_module("g._core")
+    logger.debug("Configuring native runtime knobs.")
     core_module.configure_bgen_decode_tile_variant_count(compute_config.bgen_decode_tile_variant_count)
     if trait_config.threads is not None:
         with contextlib.suppress(RuntimeError):
             core_module.configure_rayon_global_thread_pool(trait_config.threads)
 
 
+def initialize_logging(diagnostics_config: config.GDiagnosticsConfig) -> None:
+    """Initialize unified Rust/Python logging before runtime setup."""
+    core_module = importlib.import_module("g._core")
+    core_module.initialize_logging(
+        log_filter=diagnostics_config.log_filter,
+        log_file=None if diagnostics_config.log_file is None else str(diagnostics_config.log_file),
+        log_stderr=diagnostics_config.log_stderr,
+    )
+
+
 def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
     """Run the shared REGENIE-compatible config path."""
     config.validate_config(regenie_config)
+    initialize_logging(regenie_config.g_diagnostics)
+    logger.info("Starting REGENIE run.")
     configure_runtime(regenie_config.g_compute, regenie_config.trait)
-    return run_validated_regenie_config(regenie_config)
+    try:
+        artifacts = run_validated_regenie_config(regenie_config)
+    except Exception:
+        logger.exception("REGENIE run failed.")
+        raise
+    else:
+        logger.info("Finished REGENIE run.")
+        return artifacts
 
 
 def run_validated_regenie_config(regenie_config: config.RegenieConfig) -> RunArtifacts:
@@ -232,17 +255,23 @@ def run_validated_regenie_config(regenie_config: config.RegenieConfig) -> RunArt
     stage_timing_recorder = None
     try:
         device_start_time = time.perf_counter()
+        logger.debug("Configuring JAX runtime before backend initialization.")
         configure_runtime_before_jax_import(regenie_config.g_compute)
         stage_timing_recorder = build_stage_timing_recorder(regenie_config.g_diagnostics.stage_timings_json)
         record_stage_duration(stage_timing_recorder, "jax_device_configuration_backend_init", device_start_time)
         output_start_time = time.perf_counter()
+        logger.debug("Building REGENIE execution plan.")
         plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        logger.info("Prepared REGENIE execution plan for %s phenotype(s).", len(plan.phenotype_run_plans))
+        logger.debug("Writing execution plan start metadata.")
         write_execution_plan_start_metadata(regenie_config=regenie_config, plan=plan)
         record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)
+        logger.debug("Dispatching REGENIE execution plan.")
         final_parquet_paths = dispatch_execution_plan(
             plan=plan,
             stage_timing_recorder=stage_timing_recorder,
         )
+        logger.debug("Finalizing REGENIE execution plan.")
         return finalize_execution_plan(
             regenie_config=regenie_config,
             plan=plan,
@@ -251,6 +280,7 @@ def run_validated_regenie_config(regenie_config: config.RegenieConfig) -> RunArt
     finally:
         if stage_timing_recorder is not None:
             record_stage_duration(stage_timing_recorder, "python_api_entry", api_entry_start_time)
+            logger.debug("Writing final stage timing snapshot.")
             write_stage_timing_snapshot(stage_timing_recorder, regenie_config.g_diagnostics.stage_timings_json)
 
 
@@ -262,6 +292,7 @@ def dispatch_execution_plan(
     """Dispatch an execution plan to the native engine layer."""
     if len(plan.phenotype_run_plans) > 1:
         if plan.kernel_config.multi_phenotype_sample_mode == types.MultiPhenotypeSampleMode.PER_PHENOTYPE:
+            logger.debug("Dispatching per-phenotype native engine pipelines.")
             return tuple(
                 dispatch_one_phenotype_engine_pipeline(
                     plan=plan,
@@ -270,10 +301,12 @@ def dispatch_execution_plan(
                 )
                 for phenotype_run_plan in plan.phenotype_run_plans
             )
+        logger.debug("Dispatching multi-phenotype native engine pipeline.")
         return dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=stage_timing_recorder,
         )
+    logger.debug("Dispatching single-phenotype native engine pipeline.")
     return (
         dispatch_one_phenotype_engine_pipeline(
             plan=plan,
@@ -335,11 +368,13 @@ def dispatch_one_phenotype_engine_pipeline(
         }
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
+        logger.debug("Dispatching binary native engine pipeline.")
         return run_regenie2_binary_bgen_pipeline(
             **common_arguments,
             correction_plan=plan.binary_correction_plan,
             kernel_config=plan.kernel_config.binary_kernel_config,
         )
+    logger.debug("Dispatching linear native engine pipeline.")
     return run_regenie2_linear_bgen_pipeline(**common_arguments)
 
 
@@ -368,11 +403,13 @@ def dispatch_multi_phenotype_engine_pipeline(
         }
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
+        logger.debug("Dispatching multi-phenotype binary native engine pipeline.")
         return run_regenie2_multi_phenotype_binary_bgen_pipeline(
             **common_arguments,
             correction_plan=plan.binary_correction_plan,
             kernel_config=plan.kernel_config.binary_kernel_config,
         )
+    logger.debug("Dispatching multi-phenotype linear native engine pipeline.")
     return run_regenie2_multi_phenotype_linear_bgen_pipeline(**common_arguments)
 
 
@@ -424,6 +461,7 @@ def finalize_execution_plan(
             strict=True,
         )
     )
+    logger.info("Finalized REGENIE run artifacts for %s phenotype(s).", len(phenotype_artifacts))
     if len(phenotype_artifacts) == 1:
         return phenotype_artifacts[0]
     return RunArtifacts(phenotype_artifacts=phenotype_artifacts)

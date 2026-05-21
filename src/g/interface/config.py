@@ -29,6 +29,7 @@ DEFAULT_JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
 DEFAULT_OUTPUT_WRITER_THREADS = 8
 DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_OUTPUT_CHUNKS_PER_ARROW_FILE = 4
+DEFAULT_LOG_FILTER = "info"
 QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "spa", "pThresh")
 
 
@@ -118,6 +119,9 @@ class GDiagnosticsConfig:
     """Engine diagnostics settings."""
 
     stage_timings_json: Path | None = None
+    log_filter: str = DEFAULT_LOG_FILTER
+    log_file: Path | None = None
+    log_stderr: bool = True
 
 
 @dataclass(frozen=True)
@@ -161,6 +165,13 @@ def path_or_none(raw_value: typing.Any) -> Path | None:
     if raw_value is None:
         return None
     return Path(str(raw_value))
+
+
+def optional_string(raw_value: typing.Any) -> str | None:
+    """Convert an optional string value."""
+    if raw_value is not None:
+        return str(raw_value)
+    return None
 
 
 def bool_or_false(raw_value: typing.Any) -> bool:
@@ -341,6 +352,9 @@ def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
         ),
         g_diagnostics=GDiagnosticsConfig(
             stage_timings_json=path_or_none(normalized_options.get("g-stage-timings-json")),
+            log_filter=optional_string(normalized_options.get("g-log-filter")) or DEFAULT_LOG_FILTER,
+            log_file=path_or_none(normalized_options.get("g-log-file")),
+            log_stderr=bool_or_default(normalized_options.get("g-log-stderr"), default=True),
         ),
         explicit_options=explicit_options,
     )
@@ -392,6 +406,7 @@ def flatten_option_dictionary(raw_options: typing.Mapping[str, typing.Any]) -> d
         "output": "",
         "g.compute": "g-",
         "g.output": "g-",
+        "g.diagnostics": "g-",
     }
     for option_name, option_value in raw_options.items():
         if isinstance(option_value, dict):
@@ -425,6 +440,9 @@ def flatten_g_section(raw_g_options: typing.Mapping[str, typing.Any]) -> dict[st
     }
     g_diagnostics_aliases = {
         "stage-timings-json": "g-stage-timings-json",
+        "log-filter": "g-log-filter",
+        "log-file": "g-log-file",
+        "log-stderr": "g-log-stderr",
     }
     for section_name, section_options in raw_g_options.items():
         if not isinstance(section_options, dict):
@@ -512,6 +530,12 @@ def normalize_option_name(option_name: str) -> str:
         "g_output_chunks_per_arrow_file": "g-output-chunks-per-arrow-file",
         "g_output_arrow_compression": "g-output-arrow-compression",
         "g_stage_timings_json": "g-stage-timings-json",
+        "g_log_filter": "g-log-filter",
+        "log_filter": "g-log-filter",
+        "g_log_file": "g-log-file",
+        "log_file": "g-log-file",
+        "g_log_stderr": "g-log-stderr",
+        "log_stderr": "g-log-stderr",
         "trusted_no_missing_diploid": "g-trusted-no-missing-diploid",
         "g_trusted_no_missing_diploid": "g-trusted-no-missing-diploid",
     }
@@ -827,6 +851,9 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
         },
         "g.diagnostics": {
             **optional_mapping("stage-timings-json", config.g_diagnostics.stage_timings_json),
+            "log-filter": config.g_diagnostics.log_filter,
+            **optional_mapping("log-file", config.g_diagnostics.log_file),
+            "log-stderr": config.g_diagnostics.log_stderr,
         },
     }
 

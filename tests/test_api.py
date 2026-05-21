@@ -263,6 +263,16 @@ def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
         del kwargs
         call_order.append("jax")
 
+    def record_logging_bootstrap(*args: object, **kwargs: object) -> None:
+        del args
+        del kwargs
+        call_order.append("logging")
+
+    def record_native_runtime_bootstrap(*args: object, **kwargs: object) -> None:
+        del args
+        del kwargs
+        call_order.append("native")
+
     def record_prepare_output_run(*args: object, **kwargs: object) -> PreparedOutputRun:
         del args
         del kwargs
@@ -275,6 +285,8 @@ def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
         return Path("results/output.g/trait.regenie2_linear.run/final.parquet")
 
     with (
+        patch("g.runner.initialize_logging", side_effect=record_logging_bootstrap),
+        patch("g.runner.configure_runtime", side_effect=record_native_runtime_bootstrap),
         patch("g.runner.configure_runtime_before_jax_import", side_effect=record_jax_bootstrap),
         patch("g.execution_plan.output.prepare_output_run", side_effect=record_prepare_output_run),
         patch("g.runner.run_regenie2_linear_bgen_pipeline", side_effect=record_pipeline),
@@ -283,7 +295,53 @@ def test_regenie_bootstraps_jax_before_preparing_execution_plan() -> None:
     ):
         api.regenie(build_minimal_config())
 
-    assert call_order == ["jax", "plan", "pipeline"]
+    assert call_order == ["logging", "native", "jax", "plan", "pipeline"]
+
+
+def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeCoreModule:
+        def initialize_logging(self, **kwargs: object) -> None:
+            calls.append(kwargs)
+
+    diagnostics_config = config.GDiagnosticsConfig(
+        log_filter="g=debug",
+        log_file=tmp_path / "logs" / "g.jsonl",
+        log_stderr=False,
+    )
+
+    with patch("g.runner.importlib.import_module", return_value=FakeCoreModule()) as mock_import_module:
+        runner.initialize_logging(diagnostics_config)
+
+    mock_import_module.assert_called_once_with("g._core")
+    assert calls == [
+        {
+            "log_filter": "g=debug",
+            "log_file": str(tmp_path / "logs" / "g.jsonl"),
+            "log_stderr": False,
+        }
+    ]
+
+
+def test_configure_runtime_sets_native_knobs_and_threads() -> None:
+    calls: list[tuple[str, int]] = []
+
+    class FakeCoreModule:
+        def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
+            calls.append(("tile", tile_variant_count))
+
+        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
+            calls.append(("threads", thread_count))
+
+    with patch("g.runner.importlib.import_module", return_value=FakeCoreModule()) as mock_import_module:
+        runner.configure_runtime(
+            config.GComputeConfig(bgen_decode_tile_variant_count=32),
+            config.TraitConfig(threads=4),
+        )
+
+    mock_import_module.assert_called_once_with("g._core")
+    assert calls == [("tile", 32), ("threads", 4)]
 
 
 def test_runtime_bootstrap_sets_jax_platform_before_setup_import() -> None:
@@ -393,6 +451,7 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
             "g.runner.run_regenie2_linear_bgen_pipeline",
             return_value=Path("results/output.g/trait.regenie2_linear.run/final.parquet"),
         ),
+        patch("g.runner.initialize_logging"),
         patch("g.runner.configure_runtime"),
         patch("g.runner.extend_run_manifest"),
         patch("g.interface.config.write_toml"),

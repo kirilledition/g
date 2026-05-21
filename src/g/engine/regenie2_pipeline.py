@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import typing
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from g.engine import callbacks, native_dispatch, preflight, shutdown, timing
 from g.io import output, source
 
 REGENIE_COMPUTE_PATCH_TARGETS = (regenie2_binary, regenie2_linear)
+logger = logging.getLogger(__name__)
 
 
 def run_regenie2_linear_bgen_pipeline(
@@ -45,9 +47,11 @@ def run_regenie2_linear_bgen_pipeline(
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
+    logger.info("Starting linear REGENIE step 2 BGEN pipeline.")
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
     use_variant_major = True
     engine_start_time = time.perf_counter()
+    logger.debug("Opening native BGEN engine for linear pipeline.")
     engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
@@ -56,7 +60,13 @@ def run_regenie2_linear_bgen_pipeline(
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
     timing.record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
+    logger.debug(
+        "Native BGEN engine opened for linear pipeline: sample_count=%s variant_count=%s.",
+        engine.sample_count,
+        engine.variant_count,
+    )
     alignment_start_time = time.perf_counter()
+    logger.debug("Loading aligned native sample, phenotype, and covariate inputs for linear pipeline.")
     run_input = native_dispatch.load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
@@ -68,6 +78,11 @@ def run_regenie2_linear_bgen_pipeline(
         alignment_config=alignment_config,
     )
     timing.record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
+    logger.debug(
+        "Aligned linear pipeline inputs: sample_count=%s covariate_count=%s.",
+        int(run_input.sample_indices.shape[0]),
+        len(run_input.native_aligned_sample_data.covariate_names),
+    )
     current_header = output.build_current_run_manifest_header(
         association_mode=types.AssociationMode.REGENIE2_LINEAR,
         bgen_path=genotype_source_config.source_path,
@@ -106,6 +121,7 @@ def run_regenie2_linear_bgen_pipeline(
         resume_mode=resume_mode,
     )
     writer_start_time = time.perf_counter()
+    logger.debug("Creating output writer for linear pipeline.")
     writer_session = output.create_output_writer_session(
         output_run_paths,
         types.AssociationMode.REGENIE2_LINEAR,
@@ -118,6 +134,7 @@ def run_regenie2_linear_bgen_pipeline(
     )
     timing.record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
     prediction_start_time = time.perf_counter()
+    logger.debug("Loading REGENIE prediction source for linear pipeline.")
     prediction_source = native_dispatch.build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
@@ -126,7 +143,8 @@ def run_regenie2_linear_bgen_pipeline(
     )
     timing.record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
     preflight_start_time = time.perf_counter()
-    preflight.run_regenie2_preflight(
+    logger.debug("Running preflight validation for linear pipeline.")
+    preflight_report = preflight.run_regenie2_preflight(
         run_input=run_input,
         prediction_source=prediction_source,
         engine=engine,
@@ -134,6 +152,12 @@ def run_regenie2_linear_bgen_pipeline(
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
     timing.record_stage_duration(stage_timing_recorder, "preflight_validation", preflight_start_time)
+    logger.debug(
+        "Preflight validation passed for linear pipeline: sample_count=%s covariate_count=%s chromosome_count=%s.",
+        preflight_report.sample_count,
+        preflight_report.covariate_count,
+        preflight_report.chromosome_count,
+    )
     callback = callbacks.LinearRegenie2PipelineCallback(
         run_input=run_input,
         prediction_source=prediction_source,
@@ -184,10 +208,12 @@ def run_regenie2_binary_bgen_pipeline(
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for binary REGENIE step 2."""
+    logger.info("Starting binary REGENIE step 2 BGEN pipeline.")
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
     resolved_kernel_config = kernel_config or regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
     use_variant_major = True
     engine_start_time = time.perf_counter()
+    logger.debug("Opening native BGEN engine for binary pipeline.")
     engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
@@ -196,7 +222,13 @@ def run_regenie2_binary_bgen_pipeline(
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
     timing.record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
+    logger.debug(
+        "Native BGEN engine opened for binary pipeline: sample_count=%s variant_count=%s.",
+        engine.sample_count,
+        engine.variant_count,
+    )
     alignment_start_time = time.perf_counter()
+    logger.debug("Loading aligned native sample, phenotype, and covariate inputs for binary pipeline.")
     run_input = native_dispatch.load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
@@ -208,6 +240,11 @@ def run_regenie2_binary_bgen_pipeline(
         alignment_config=alignment_config,
     )
     timing.record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
+    logger.debug(
+        "Aligned binary pipeline inputs: sample_count=%s covariate_count=%s.",
+        int(run_input.sample_indices.shape[0]),
+        len(run_input.native_aligned_sample_data.covariate_names),
+    )
     current_header = output.build_current_run_manifest_header(
         association_mode=types.AssociationMode.REGENIE2_BINARY,
         bgen_path=genotype_source_config.source_path,
@@ -247,6 +284,7 @@ def run_regenie2_binary_bgen_pipeline(
         resume_mode=resume_mode,
     )
     writer_start_time = time.perf_counter()
+    logger.debug("Creating output writer for binary pipeline.")
     writer_session = output.create_output_writer_session(
         output_run_paths,
         types.AssociationMode.REGENIE2_BINARY,
@@ -259,6 +297,7 @@ def run_regenie2_binary_bgen_pipeline(
     )
     timing.record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
     prediction_start_time = time.perf_counter()
+    logger.debug("Loading REGENIE prediction source for binary pipeline.")
     prediction_source = native_dispatch.build_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         phenotype_name=phenotype_name,
@@ -267,7 +306,8 @@ def run_regenie2_binary_bgen_pipeline(
     )
     timing.record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
     preflight_start_time = time.perf_counter()
-    preflight.run_regenie2_preflight(
+    logger.debug("Running preflight validation for binary pipeline.")
+    preflight_report = preflight.run_regenie2_preflight(
         run_input=run_input,
         prediction_source=prediction_source,
         engine=engine,
@@ -275,6 +315,12 @@ def run_regenie2_binary_bgen_pipeline(
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
     timing.record_stage_duration(stage_timing_recorder, "preflight_validation", preflight_start_time)
+    logger.debug(
+        "Preflight validation passed for binary pipeline: sample_count=%s covariate_count=%s chromosome_count=%s.",
+        preflight_report.sample_count,
+        preflight_report.covariate_count,
+        preflight_report.chromosome_count,
+    )
     callback = callbacks.BinaryRegenie2PipelineCallback(
         run_input=run_input,
         prediction_source=prediction_source,
@@ -489,11 +535,13 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
             "sample handling is intended."
         )
         raise ValueError(message)
+    logger.info("Starting multi-phenotype REGENIE step 2 BGEN pipeline.")
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
     resolved_kernel_config = kernel_config or regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
     use_variant_major = True
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
     engine_start_time = time.perf_counter()
+    logger.debug("Opening native BGEN engine for multi-phenotype pipeline.")
     engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
@@ -502,7 +550,13 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
     timing.record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
+    logger.debug(
+        "Native BGEN engine opened for multi-phenotype pipeline: sample_count=%s variant_count=%s.",
+        engine.sample_count,
+        engine.variant_count,
+    )
     alignment_start_time = time.perf_counter()
+    logger.debug("Loading aligned native sample, phenotype, and covariate inputs for multi-phenotype pipeline.")
     run_input = native_dispatch.load_native_bgen_multi_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
@@ -514,6 +568,12 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         alignment_config=alignment_config,
     )
     timing.record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
+    logger.debug(
+        "Aligned multi-phenotype pipeline inputs: sample_count=%s phenotype_count=%s covariate_count=%s.",
+        int(run_input.sample_indices.shape[0]),
+        len(run_input.phenotype_names),
+        len(run_input.native_multi_aligned_sample_data.covariate_names),
+    )
     current_headers = tuple(
         output.build_current_run_manifest_header(
             association_mode=association_mode,
@@ -570,6 +630,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         set(initialized_output_run.committed_chunk_identifiers) for initialized_output_run in initialized_output_runs
     )
     writer_start_time = time.perf_counter()
+    logger.debug("Creating output writers for multi-phenotype pipeline.")
     writer_sessions = tuple(
         output.create_output_writer_session(
             output_run_paths,
@@ -585,6 +646,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     )
     timing.record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
     prediction_start_time = time.perf_counter()
+    logger.debug("Loading REGENIE prediction source for multi-phenotype pipeline.")
     prediction_source = native_dispatch.build_multi_regenie_prediction_source(
         prediction_list_path=prediction_list_path,
         run_input=run_input,
@@ -592,6 +654,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     )
     timing.record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
     preflight_start_time = time.perf_counter()
+    logger.debug("Running preflight validation for multi-phenotype pipeline.")
     run_multi_preflight(
         run_input=run_input,
         prediction_source=prediction_source,
@@ -599,6 +662,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
     timing.record_stage_duration(stage_timing_recorder, "preflight_validation", preflight_start_time)
+    logger.debug("Preflight validation passed for multi-phenotype pipeline.")
     if association_mode == types.AssociationMode.REGENIE2_BINARY:
         callback = callbacks.MultiBinaryRegenie2PipelineCallback(
             run_input=run_input,
@@ -669,24 +733,31 @@ def run_bgen_engine_with_multi_callback(
             engine.reset_profile()
         engine_delivery_start_time = time.perf_counter()
         committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
+        logger.debug(
+            "Starting multi-phenotype native BGEN delivery: committed_chunk_count=%s variant_major_dosage=%s.",
+            len(committed_chunk_identifier_list),
+            variant_major_dosage,
+        )
         if variant_major_dosage:
-            engine.run_bgen_variant_major_dosage_buffered_chunks(
+            processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
                 run_input.sample_indices,
                 callback,
                 committed_chunk_identifiers=committed_chunk_identifier_list,
             )
         else:
-            engine.run_bgen_dosage_buffered_chunks(
+            processed_chunk_count = engine.run_bgen_dosage_buffered_chunks(
                 run_input.sample_indices,
                 callback,
                 committed_chunk_identifiers=committed_chunk_identifier_list,
             )
         timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
+        logger.debug("Multi-phenotype native BGEN delivery finished: processed_chunk_count=%s.", processed_chunk_count)
         if stage_timing_recorder is not None:
             stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
         native_dispatch.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
         callback_finished = True
         writer_finish_start_time = time.perf_counter()
+        logger.debug("Finishing multi-phenotype output writers and optional Parquet finalization.")
         final_parquet_paths = tuple(
             None if (final_path := writer_session.finish()) is None else Path(final_path)
             for writer_session in writer_sessions
@@ -695,6 +766,7 @@ def run_bgen_engine_with_multi_callback(
             stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
         )
     except shutdown.GracefulShutdownRequested as shutdown_request:
+        logger.info("Multi-phenotype native BGEN delivery interrupted by %s.", shutdown_request.signal_name)
         try:
             if not callback_finished:
                 native_dispatch.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
@@ -711,10 +783,12 @@ def run_bgen_engine_with_multi_callback(
         timing.write_stage_timing_snapshot(stage_timing_recorder, None)
         raise
     except BaseException:
+        logger.exception("Multi-phenotype native BGEN delivery failed.")
         native_dispatch.abort_callback(callback)
         for writer_session in writer_sessions:
             native_dispatch.abort_writer_session(writer_session)
         timing.write_stage_timing_snapshot(stage_timing_recorder, None)
         raise
     timing.write_stage_timing_snapshot(stage_timing_recorder, None)
+    logger.info("Multi-phenotype native BGEN pipeline finished.")
     return final_parquet_paths
