@@ -85,7 +85,7 @@ def test_configure_jax_runtime_before_backend_init_sets_platform_first(tmp_path:
         configure_jax_runtime_before_backend_init(device=Device.CPU, cache_directory=cache_directory)
 
     assert mock_update.call_args_list[0].args == ("jax_platforms", "cpu")
-    assert ("jax_enable_x64", False) in [call.args for call in mock_update.call_args_list]
+    assert ("jax_enable_x64", True) in [call.args for call in mock_update.call_args_list]
     assert ("jax_compilation_cache_dir", str(cache_directory)) in [call.args for call in mock_update.call_args_list]
 
 

@@ -163,15 +163,15 @@ fn build_regenie_step2_record_batch(
 ) -> Result<RecordBatch, String> {
     let row_count = chunk_job.chunk_handle.row_count();
     let columns: Vec<ArrayRef> = vec![
-        Arc::new(schema::build_dictionary_string_array(&chunk_job.chunk_handle.metadata.chromosome)?),
+        Arc::new(StringArray::from(chunk_job.chunk_handle.metadata.chromosome.clone())),
         Arc::new(Int64Array::from(chunk_job.chunk_handle.metadata.position.clone())),
         Arc::new(StringArray::from(chunk_job.chunk_handle.metadata.variant_identifier.clone())),
-        Arc::new(schema::build_dictionary_string_array(&chunk_job.chunk_handle.metadata.allele_two)?),
-        Arc::new(schema::build_dictionary_string_array(&chunk_job.chunk_handle.metadata.allele_one)?),
+        Arc::new(StringArray::from(chunk_job.chunk_handle.metadata.allele_two.clone())),
+        Arc::new(StringArray::from(chunk_job.chunk_handle.metadata.allele_one.clone())),
         Arc::new(Float32Array::from(chunk_job.chunk_handle.stats.allele_one_frequency.clone())),
         Arc::new(Float32Array::from(chunk_job.chunk_handle.stats.info_score.clone())),
         Arc::new(Int32Array::from(chunk_job.chunk_handle.stats.observation_count.clone())),
-        Arc::new(schema::build_constant_dictionary_string_array(row_count, "ADD")?),
+        Arc::new(StringArray::from(vec!["ADD"; row_count])),
         Arc::new(Float32Array::from(chunk_job.beta)),
         Arc::new(Float32Array::from(chunk_job.se)),
         Arc::new(Float32Array::from(chunk_job.chisq)),
@@ -326,13 +326,7 @@ mod tests {
         let binary_record_batch = build_test_record_batch(build_test_chunk(1, Some(vec![1])));
 
         assert_eq!(linear_record_batch.schema().fields(), binary_record_batch.schema().fields());
-        let extra_array = binary_record_batch
-            .column_by_name("EXTRA")
-            .expect("EXTRA column should exist")
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("EXTRA column should be a string array");
-        assert_eq!(extra_array.value(0), "FIRTH");
+        assert_eq!(binary_record_batch.column_by_name("EXTRA").expect("EXTRA column should exist").null_count(), 1);
     }
 
     #[test]

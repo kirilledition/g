@@ -1009,7 +1009,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             result = self.compute_binary_result(
                 variant_metadata=variant_metadata,
                 genotype_matrix=genotype_matrix,
-                sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
+                sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
             )
             self.enqueue_binary_result_for_write(
                 variant_metadata=variant_metadata,
@@ -1146,7 +1146,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     chromosome_state=self.current_chromosome_state,
                     genotype_matrix=jnp.transpose(genotype_device_array),
                     correction_plan=self.correction_plan,
-                    sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
+                    sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
                     kernel_config=self.kernel_config,
                 )
             block_compute_result_for_timing(
@@ -1247,7 +1247,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 chromosome_state=self.current_chromosome_state,
                 genotype_matrix=genotype_device_array,
                 correction_plan=self.correction_plan,
-                sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
+                sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
                 kernel_config=self.kernel_config,
             )
             block_compute_result_for_timing(
@@ -1299,7 +1299,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     chromosome_state=self.current_chromosome_state,
                     genotype_matrix=jnp.transpose(genotype_device_array),
                     correction_plan=self.correction_plan,
-                    sparse_candidate_mask=jax.device_put(chunk_stats.is_sparse_candidate),
+                    sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
                     kernel_config=self.kernel_config,
                 )
             block_compute_result_for_timing(

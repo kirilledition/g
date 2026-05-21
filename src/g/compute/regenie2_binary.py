@@ -13,11 +13,18 @@ import jax.numpy as jnp
 from g import types
 from g.compute import regenie2_binary_candidate_planning, regenie2_binary_types, regenie2_linear
 
+jax.config.update("jax_enable_x64", val=True)
+
 MINIMUM_PROBABILITY = 1.0e-6
 MINIMUM_VARIANCE = 1.0e-8
 RELATIVE_VARIANCE_TOLERANCE = 1.0e-6
 DEFAULT_MAXIMUM_NULL_ITERATIONS = 50
 NULL_LOGISTIC_COEFFICIENT_TOLERANCE = 1.0e-6
+FIRTH_NULL_MAXIMUM_ITERATIONS = 1000
+FIRTH_NULL_FALLBACK_ITERATION_MULTIPLIER = 5
+FIRTH_NULL_GRADIENT_TOLERANCE = 50.0e-6
+FIRTH_NULL_MAXIMUM_STEP_SIZE = 25.0
+FIRTH_NULL_FALLBACK_STEP_DIVISOR = 5.0
 INITIAL_RESPONSE_SCALE = 4.863891244002886
 BINARY_CASE_THRESHOLD = 0.5
 ALLELE_COUNT_MULTIPLIER = 2.0
@@ -89,6 +96,21 @@ BinaryVariantMajorChunkComputeFunction = typing.Callable[
     ],
     regenie2_binary_types.Regenie2BinaryChunkResult,
 ]
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class RegenieGenotypeFlipResult:
+    """REGENIE-style genotype coding for score and correction lanes.
+
+    Attributes:
+        genotype_matrix_by_variant: Candidate genotypes coded to the minor allele when REGENIE would flip.
+        flip_mask: Per-candidate flag indicating that beta must be flipped back for A1 output.
+
+    """
+
+    genotype_matrix_by_variant: jax.Array
+    flip_mask: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -232,6 +254,7 @@ class NullFirthFitResult:
     """Result of the covariate-only Firth null fit.
 
     Attributes:
+        coefficients: Final covariate coefficients, or the last attempted coefficients on failure.
         penalized_log_likelihood: Final trusted penalized log-likelihood, or NaN on failure.
         iteration_count: Number of solver iterations performed.
         convergence_reason_code: Internal termination-reason code.
@@ -239,10 +262,65 @@ class NullFirthFitResult:
 
     """
 
+    coefficients: jax.Array
     penalized_log_likelihood: jax.Array
     iteration_count: jax.Array
     convergence_reason_code: jax.Array
     converged: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class NullFirthComponents:
+    """Intermediate quantities for REGENIE-style null Firth Newton-Raphson."""
+
+    probability_vector: jax.Array
+    weight_vector: jax.Array
+    information_matrix: jax.Array
+    information_cholesky_factor: jax.Array
+    deviance: jax.Array
+    leverage_vector: jax.Array
+    modified_score: jax.Array
+    valid: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class NullFirthNewtonRaphsonState:
+    """Loop state for covariate-only null Firth Newton-Raphson."""
+
+    coefficients: jax.Array
+    deviance: jax.Array
+    converged: jax.Array
+    failed: jax.Array
+    iteration_count: jax.Array
+    termination_reason_code: jax.Array
+    previous_score_maximum: jax.Array
+    score_increase_count: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class NullFirthLineSearchState:
+    """Line-search state for covariate-only null Firth Newton-Raphson."""
+
+    attempt_count: jax.Array
+    next_coefficient_step: jax.Array
+    accepted_coefficients: jax.Array
+    accepted_deviance: jax.Array
+    accepted: jax.Array
+    valid: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class NullFirthLineSearchResult:
+    """Result of null Firth deviance-decreasing step-halving."""
+
+    coefficients: jax.Array
+    deviance: jax.Array
+    accepted: jax.Array
+    valid: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -461,12 +539,9 @@ def compute_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
 
 def compute_regenie_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
     """Compute probabilities with REGENIE's glm-style endpoint clipping."""
-    epsilon = jnp.maximum(
-        jnp.asarray(REGENIE_NUMERICAL_EPSILON, dtype=linear_predictor.dtype),
-        jnp.asarray(MINIMUM_PROBABILITY, dtype=linear_predictor.dtype),
-    )
-    lower_probability = epsilon
-    upper_probability = 1.0 - epsilon
+    epsilon = jnp.asarray(REGENIE_NUMERICAL_EPSILON, dtype=linear_predictor.dtype)
+    lower_probability = epsilon / (1.0 + epsilon)
+    upper_probability = jnp.reciprocal(1.0 + epsilon)
     return jnp.where(
         linear_predictor > REGENIE_LOGISTIC_MAXIMUM_ETA,
         upper_probability,
@@ -484,10 +559,11 @@ def compute_logistic_deviance(
     active_sample_mask: jax.Array,
 ) -> jax.Array:
     """Compute REGENIE's Bernoulli deviance over active samples."""
+    epsilon = jnp.asarray(REGENIE_NUMERICAL_EPSILON, dtype=probability_vector.dtype)
     clipped_probability = jnp.clip(
         probability_vector,
-        MINIMUM_PROBABILITY,
-        1.0 - MINIMUM_PROBABILITY,
+        epsilon / (1.0 + epsilon),
+        jnp.reciprocal(1.0 + epsilon),
     )
     negative_log_likelihood = -jnp.where(
         phenotype_vector > BINARY_CASE_THRESHOLD,
@@ -597,8 +673,13 @@ def prepare_regenie2_binary_chromosome_state(
         lower=True,
     )
     if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
+        null_firth_coefficients = jnp.asarray(null_logistic_coefficients, dtype=jnp.float64)
+        null_firth_offset = state.covariate_matrix.astype(jnp.float64) @ null_firth_coefficients + jnp.asarray(
+            loco_offset_float32, dtype=jnp.float64
+        )
         null_firth_result = NullFirthFitResult(
-            penalized_log_likelihood=jnp.asarray(0.0, dtype=jnp.float32),
+            coefficients=null_firth_coefficients,
+            penalized_log_likelihood=jnp.asarray(0.0, dtype=jnp.float64),
             iteration_count=jnp.asarray(0, dtype=jnp.int32),
             convergence_reason_code=jnp.asarray(FirthConvergenceReason.NONE.value, dtype=jnp.int32),
             converged=jnp.asarray(1, dtype=jnp.bool_),
@@ -611,10 +692,15 @@ def prepare_regenie2_binary_chromosome_state(
             initial_coefficients=null_logistic_coefficients,
             kernel_config=kernel_config,
         )
+        null_firth_offset = state.covariate_matrix.astype(jnp.float64) @ null_firth_result.coefficients + jnp.asarray(
+            loco_offset_float32, dtype=jnp.float64
+        )
     return regenie2_binary_types.Regenie2BinaryChromosomeState(
         covariate_matrix=state.covariate_matrix,
         phenotype_vector=state.phenotype_vector,
         null_logistic_coefficients=null_logistic_coefficients,
+        null_firth_coefficients=null_firth_result.coefficients,
+        null_firth_offset=null_firth_offset,
         fitted_probability=fitted_probability,
         score_residual=score_residual,
         loco_offset=loco_offset_float32,
@@ -655,6 +741,8 @@ def prepare_regenie2_multi_binary_chromosome_state(
         covariate_matrix=state.covariate_matrix,
         phenotype_matrix=state.phenotype_matrix,
         null_logistic_coefficients=chromosome_states.null_logistic_coefficients,
+        null_firth_coefficients=chromosome_states.null_firth_coefficients,
+        null_firth_offset_matrix=chromosome_states.null_firth_offset,
         fitted_probability=chromosome_states.fitted_probability,
         score_residual=chromosome_states.score_residual,
         loco_offset_matrix=chromosome_states.loco_offset,
@@ -676,7 +764,9 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     """Compute the uncorrected score-test result for one binary chunk."""
-    genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
+    raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix, dtype=jnp.float32).T
+    genotype_flip_result = build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
+    genotype_matrix_float32 = genotype_flip_result.genotype_matrix_by_variant.T
     weighted_genotype_matrix = chromosome_state.square_root_weight[:, None] * genotype_matrix_float32
     projection_coordinates = chromosome_state.weighted_genotype_projection_matrix @ weighted_genotype_matrix
     weighted_genotype_sum_squares = jnp.einsum("ij,ij->j", weighted_genotype_matrix, weighted_genotype_matrix)
@@ -687,7 +777,11 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     positive_variance_mask = compute_positive_variance_mask(variance, weighted_genotype_sum_squares)
     statistic_mask = positive_variance_mask & null_logistic_converged
     inverse_variance = jnp.where(statistic_mask, jnp.reciprocal(variance), 0.0)
-    beta = jnp.where(statistic_mask, score * inverse_variance, jnp.nan)
+    beta = jnp.where(
+        statistic_mask,
+        jnp.where(genotype_flip_result.flip_mask, -score * inverse_variance, score * inverse_variance),
+        jnp.nan,
+    )
     standard_error = jnp.where(statistic_mask, jnp.sqrt(inverse_variance), jnp.nan)
     chi_squared = jnp.where(
         null_logistic_converged,
@@ -734,6 +828,8 @@ def build_single_binary_chromosome_state_from_multi(
         covariate_matrix=chromosome_state.covariate_matrix,
         phenotype_vector=chromosome_state.phenotype_matrix[trait_index],
         null_logistic_coefficients=chromosome_state.null_logistic_coefficients[trait_index],
+        null_firth_coefficients=chromosome_state.null_firth_coefficients[trait_index],
+        null_firth_offset=chromosome_state.null_firth_offset_matrix[trait_index],
         fitted_probability=chromosome_state.fitted_probability[trait_index],
         score_residual=chromosome_state.score_residual[trait_index],
         loco_offset=chromosome_state.loco_offset_matrix[trait_index],
@@ -1262,7 +1358,10 @@ def fit_scalar_pseudo_firth(
         ),
     )
     standard_error = jnp.sqrt(jnp.reciprocal(final_components.genotype_information))
-    log10_p_value = regenie2_linear.chi_squared_to_log10_p_value(jnp.maximum(chi_squared, 0.0))
+    log10_p_value = jnp.asarray(
+        regenie2_linear.chi_squared_to_log10_p_value(jnp.maximum(chi_squared, 0.0)),
+        dtype=initial_beta.dtype,
+    )
     valid = final_state.converged & (~failed) & jnp.isfinite(standard_error) & (standard_error > 0.0)
     return ScalarFirthAttemptResult(
         beta=final_state.beta,
@@ -1472,7 +1571,10 @@ def fit_scalar_newton_raphson_firth(
     ).astype(jnp.int32)
     failed = final_state.failed | maximum_iteration_failure | negative_lrt_failure | (~final_components.valid)
     standard_error = jnp.sqrt(jnp.reciprocal(final_components.genotype_information))
-    log10_p_value = regenie2_linear.chi_squared_to_log10_p_value(jnp.maximum(chi_squared, 0.0))
+    log10_p_value = jnp.asarray(
+        regenie2_linear.chi_squared_to_log10_p_value(jnp.maximum(chi_squared, 0.0)),
+        dtype=initial_beta.dtype,
+    )
     valid = final_state.converged & (~failed) & jnp.isfinite(standard_error) & (standard_error > 0.0)
     return ScalarFirthAttemptResult(
         beta=final_state.beta,
@@ -1502,6 +1604,9 @@ def fit_single_variant_regenie_approximate_firth(
 ) -> FirthVariantResult:
     """Fit one REGENIE-equivalent scalar approximate-Firth candidate."""
     scalar_dtype = offset_vector.dtype
+    phenotype_vector = jnp.asarray(phenotype_vector, dtype=scalar_dtype)
+    genotype_vector = jnp.asarray(genotype_vector, dtype=scalar_dtype)
+    warm_start_beta = jnp.asarray(warm_start_beta, dtype=scalar_dtype)
     all_sample_mask = jnp.ones_like(phenotype_vector, dtype=jnp.bool_)
     active_sample_mask = jnp.where(sparse_correction, carrier_sample_mask, all_sample_mask)
     null_probability_vector = compute_regenie_logistic_probability(offset_vector)
@@ -1612,7 +1717,7 @@ def fit_single_variant_regenie_approximate_firth(
         beta=jnp.where(skip_firth, jnp.nan, selected_beta),
         standard_error=jnp.where(skip_firth, jnp.nan, selected_standard_error),
         chi_squared=jnp.where(skip_firth, jnp.nan, selected_chi_squared),
-        log10_p_value=jnp.where(skip_firth, jnp.nan, selected_log10_p_value),
+        log10_p_value=jnp.asarray(jnp.where(skip_firth, jnp.nan, selected_log10_p_value), dtype=scalar_dtype),
         penalized_log_likelihood=jnp.where(skip_firth, jnp.nan, -0.5 * selected_deviance),
         converged_mask=valid_mask,
         valid_mask=valid_mask,
@@ -1627,7 +1732,9 @@ def fit_single_variant_regenie_approximate_firth(
             + jnp.where(run_zero_start, zero_start_result.iteration_count, jnp.asarray(0, dtype=jnp.int32))
             + jnp.where(run_warm_start, warm_start_result.iteration_count, jnp.asarray(0, dtype=jnp.int32)),
         ),
-        failure_code=jnp.where(skip_firth | valid_mask, types.FirthFailureCode.NONE.value, failure_code),
+        failure_code=jnp.where(skip_firth | valid_mask, types.FirthFailureCode.NONE.value, failure_code).astype(
+            jnp.int32
+        ),
         convergence_reason_code=jnp.where(
             skip_firth,
             FirthConvergenceReason.NONE.value,
@@ -1759,134 +1866,215 @@ def compute_covariate_only_adjusted_weight_components(
     )
 
 
-def fit_covariate_only_firth_null_model(
+def compute_null_firth_components(
+    *,
+    covariate_matrix: jax.Array,
+    phenotype_vector: jax.Array,
+    loco_offset: jax.Array,
+    coefficients: jax.Array,
+) -> NullFirthComponents:
+    """Compute REGENIE null Firth score and deviance quantities."""
+    linear_predictor = covariate_matrix @ coefficients + loco_offset
+    probability_vector = compute_regenie_logistic_probability(linear_predictor)
+    weight_vector = probability_vector * (1.0 - probability_vector)
+    information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
+    information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
+    log_determinant = 2.0 * jnp.sum(jnp.log(jnp.diag(information_cholesky_factor)))
+    deviance = (
+        compute_logistic_deviance(
+            phenotype_vector,
+            probability_vector,
+            jnp.ones_like(phenotype_vector, dtype=jnp.bool_),
+        )
+        - log_determinant
+    )
+    projected_covariate_matrix = regenie2_linear.solve_positive_definite_system(
+        information_cholesky_factor,
+        covariate_matrix.T,
+    ).T
+    leverage_vector = weight_vector * jnp.einsum("ij,ij->i", projected_covariate_matrix, covariate_matrix)
+    modified_score = covariate_matrix.T @ (
+        phenotype_vector - probability_vector + leverage_vector * (BINARY_CASE_THRESHOLD - probability_vector)
+    )
+    valid = (
+        jnp.all(jnp.isfinite(coefficients))
+        & jnp.all(jnp.isfinite(probability_vector))
+        & jnp.all(jnp.isfinite(weight_vector))
+        & jnp.all(jnp.isfinite(information_cholesky_factor))
+        & jnp.isfinite(deviance)
+        & jnp.all(jnp.isfinite(leverage_vector))
+        & jnp.all(jnp.isfinite(modified_score))
+    )
+    return NullFirthComponents(
+        probability_vector=probability_vector,
+        weight_vector=weight_vector,
+        information_matrix=information_matrix,
+        information_cholesky_factor=information_cholesky_factor,
+        deviance=deviance,
+        leverage_vector=leverage_vector,
+        modified_score=modified_score,
+        valid=valid,
+    )
+
+
+def run_null_firth_line_search(
+    *,
+    covariate_matrix: jax.Array,
+    phenotype_vector: jax.Array,
+    loco_offset: jax.Array,
+    current_coefficients: jax.Array,
+    current_deviance: jax.Array,
+    coefficient_step: jax.Array,
+) -> NullFirthLineSearchResult:
+    """Accept the first null Firth step that decreases penalized deviance."""
+
+    def condition_function(state: NullFirthLineSearchState) -> jax.Array:
+        return (state.attempt_count < FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS) & (~state.accepted) & state.valid
+
+    def body_function(state: NullFirthLineSearchState) -> NullFirthLineSearchState:
+        candidate_coefficients = current_coefficients + state.next_coefficient_step
+        candidate_components = compute_null_firth_components(
+            covariate_matrix=covariate_matrix,
+            phenotype_vector=phenotype_vector,
+            loco_offset=loco_offset,
+            coefficients=candidate_coefficients,
+        )
+        accepted = candidate_components.valid & (candidate_components.deviance < current_deviance)
+        return NullFirthLineSearchState(
+            attempt_count=state.attempt_count + jnp.asarray(1, dtype=jnp.int32),
+            next_coefficient_step=state.next_coefficient_step * BINARY_CASE_THRESHOLD,
+            accepted_coefficients=jnp.where(accepted, candidate_coefficients, state.accepted_coefficients),
+            accepted_deviance=jnp.where(accepted, candidate_components.deviance, state.accepted_deviance),
+            accepted=accepted,
+            valid=state.valid & candidate_components.valid,
+        )
+
+    final_state = jax.lax.while_loop(
+        condition_function,
+        body_function,
+        NullFirthLineSearchState(
+            attempt_count=jnp.asarray(0, dtype=jnp.int32),
+            next_coefficient_step=coefficient_step,
+            accepted_coefficients=current_coefficients,
+            accepted_deviance=current_deviance,
+            accepted=jnp.asarray(0, dtype=jnp.bool_),
+            valid=jnp.asarray(1, dtype=jnp.bool_),
+        ),
+    )
+    return NullFirthLineSearchResult(
+        coefficients=final_state.accepted_coefficients,
+        deviance=final_state.accepted_deviance,
+        accepted=final_state.accepted,
+        valid=final_state.valid,
+    )
+
+
+def fit_covariate_only_firth_null_model_once(
+    *,
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
     loco_offset: jax.Array,
     initial_coefficients: jax.Array,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
+    maximum_iterations: int,
+    maximum_step_size: float,
+    tolerance: float,
+    check_score_increase: bool,
 ) -> NullFirthFitResult:
-    """Fit the covariate-only Firth null model and return diagnostics."""
+    """Run one REGENIE-style covariate-only null Firth attempt."""
+    scalar_dtype = covariate_matrix.dtype
+    tolerance_value = jnp.asarray(tolerance, dtype=scalar_dtype)
+    maximum_step_size_value = jnp.asarray(maximum_step_size, dtype=scalar_dtype)
 
-    def compute_null_penalized_log_likelihood(coefficients: jax.Array) -> jax.Array:
-        probability_vector = compute_logistic_probability(covariate_matrix @ coefficients + loco_offset)
-        weight_vector = jnp.maximum(probability_vector * (1.0 - probability_vector), MINIMUM_VARIANCE)
-        information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
-        information_matrix = (
-            information_matrix + jnp.eye(information_matrix.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
-        )
-        information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
-        return compute_firth_penalized_log_likelihood_from_cholesky(
-            probability_vector=probability_vector,
-            phenotype_vector=phenotype_vector,
-            information_cholesky_factor=information_cholesky_factor,
-        )
+    def condition_function(state: NullFirthNewtonRaphsonState) -> jax.Array:
+        return (state.iteration_count < maximum_iterations) & (~state.converged) & (~state.failed)
 
-    def condition_function(state: FirthState) -> jax.Array:
-        return (state.iteration_count < kernel_config.firth_maximum_iterations) & (~state.converged) & (~state.failed)
-
-    def body_function(state: FirthState) -> FirthState:
-        linear_predictor = covariate_matrix @ state.coefficients + loco_offset
-        probability_vector = compute_logistic_probability(linear_predictor)
-        weight_vector = jnp.maximum(probability_vector * (1.0 - probability_vector), MINIMUM_VARIANCE)
-        information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
-        information_matrix = (
-            information_matrix + jnp.eye(information_matrix.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
-        )
-        information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
-        current_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky(
-            probability_vector=probability_vector,
-            phenotype_vector=phenotype_vector,
-            information_cholesky_factor=information_cholesky_factor,
-        )
-        current_failed = (~jnp.isfinite(current_penalized_log_likelihood)) | (
-            ~jnp.all(jnp.isfinite(state.coefficients))
-        )
-        adjusted_weight_components = compute_covariate_only_adjusted_weight_components(
+    def body_function(state: NullFirthNewtonRaphsonState) -> NullFirthNewtonRaphsonState:
+        components = compute_null_firth_components(
             covariate_matrix=covariate_matrix,
-            probability_vector=probability_vector,
-            information_matrix=information_matrix,
             phenotype_vector=phenotype_vector,
+            loco_offset=loco_offset,
+            coefficients=state.coefficients,
         )
-        adjusted_score = covariate_matrix.T @ adjusted_weight_components.adjusted_weight_vector
-        second_hessian = (covariate_matrix.T * adjusted_weight_components.second_weight_vector) @ covariate_matrix
-        second_hessian = second_hessian + jnp.eye(second_hessian.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
-        coefficient_step = solve_from_positive_definite_matrix(second_hessian, adjusted_score)
-        current_failed = (
-            current_failed | (~jnp.all(jnp.isfinite(adjusted_score))) | (~jnp.all(jnp.isfinite(coefficient_step)))
+        updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)
+        score_maximum = jnp.max(jnp.abs(components.modified_score))
+        converged = components.valid & (score_maximum < tolerance_value) & (updated_iteration_count >= 2)
+        score_increased = score_maximum > state.previous_score_maximum
+        score_increase_count = jnp.where(
+            score_increased,
+            state.score_increase_count + jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+        score_increase_failed = check_score_increase & (score_increase_count > 25)
+        coefficient_step = regenie2_linear.solve_positive_definite_system(
+            components.information_cholesky_factor,
+            components.modified_score,
         )
         maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
-        step_scale = jnp.minimum(
-            1.0, kernel_config.firth_maximum_step_size / jnp.maximum(maximum_coefficient_step, MINIMUM_VARIANCE)
-        )
-        scaled_coefficient_step = coefficient_step * step_scale
-        backtracking_result = run_firth_step_halving(
+        step_scale = jnp.maximum(maximum_coefficient_step / maximum_step_size_value, 1.0)
+        scaled_coefficient_step = coefficient_step / step_scale
+        line_search_result = run_null_firth_line_search(
+            covariate_matrix=covariate_matrix,
+            phenotype_vector=phenotype_vector,
+            loco_offset=loco_offset,
             current_coefficients=state.coefficients,
-            current_penalized_log_likelihood=state.penalized_log_likelihood,
+            current_deviance=components.deviance,
             coefficient_step=scaled_coefficient_step,
-            evaluate_penalized_log_likelihood=compute_null_penalized_log_likelihood,
-            kernel_config=kernel_config,
         )
-        step_halving_failed = (~current_failed) & backtracking_result.exhausted
-        updated_failed = current_failed | step_halving_failed
-        updated_converged = compute_firth_convergence_mask(
-            current_penalized_log_likelihood=state.penalized_log_likelihood,
-            candidate_penalized_log_likelihood=backtracking_result.penalized_log_likelihood,
-            coefficient_step=backtracking_result.coefficient_step,
-            adjusted_score=adjusted_score,
-            kernel_config=kernel_config,
-        ) & (~updated_failed)
-        updated_reason_code = jnp.where(
-            step_halving_failed,
-            FirthConvergenceReason.STEP_HALVING_EXHAUSTED.value,
+        step_halving_failed = (~converged) & (~line_search_result.accepted)
+        numerical_failed = (
+            (~components.valid)
+            | (~jnp.all(jnp.isfinite(coefficient_step)))
+            | ((~converged) & (~line_search_result.valid))
+        )
+        failed = numerical_failed | score_increase_failed | step_halving_failed
+        reason_code = jnp.where(
+            score_increase_failed,
+            FirthConvergenceReason.STEP_SIZE_INCREASE.value,
             jnp.where(
-                current_failed,
-                FirthConvergenceReason.NUMERICAL_FAILURE.value,
-                jnp.where(updated_converged, FirthConvergenceReason.CONVERGED.value, FirthConvergenceReason.NONE.value),
+                step_halving_failed,
+                FirthConvergenceReason.STEP_HALVING_EXHAUSTED.value,
+                jnp.where(
+                    numerical_failed,
+                    FirthConvergenceReason.NUMERICAL_FAILURE.value,
+                    jnp.where(converged, FirthConvergenceReason.CONVERGED.value, FirthConvergenceReason.NONE.value),
+                ),
             ),
         ).astype(jnp.int32)
-        return FirthState(
-            coefficients=jnp.where(updated_failed, state.coefficients, backtracking_result.coefficients),
-            penalized_log_likelihood=jnp.where(
-                updated_failed,
-                state.penalized_log_likelihood,
-                backtracking_result.penalized_log_likelihood,
+        return NullFirthNewtonRaphsonState(
+            coefficients=jnp.where(converged | failed, state.coefficients, line_search_result.coefficients),
+            deviance=jnp.where(converged, components.deviance, line_search_result.deviance),
+            converged=converged & (~failed),
+            failed=failed,
+            iteration_count=updated_iteration_count,
+            termination_reason_code=reason_code,
+            previous_score_maximum=jnp.where(
+                score_maximum < state.previous_score_maximum, score_maximum, state.previous_score_maximum
             ),
-            converged=updated_converged,
-            failed=updated_failed,
-            iteration_count=state.iteration_count + jnp.asarray(1, dtype=jnp.int32),
-            termination_reason_code=updated_reason_code,
+            score_increase_count=score_increase_count,
         )
 
-    initial_probability_vector = compute_logistic_probability(covariate_matrix @ initial_coefficients + loco_offset)
-    initial_weight_vector = jnp.maximum(
-        initial_probability_vector * (1.0 - initial_probability_vector), MINIMUM_VARIANCE
-    )
-    initial_information_matrix = (covariate_matrix.T * initial_weight_vector) @ covariate_matrix
-    initial_information_matrix = (
-        initial_information_matrix + jnp.eye(initial_information_matrix.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
-    )
-    initial_information_cholesky_factor = jnp.linalg.cholesky(initial_information_matrix)
-    initial_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky(
-        probability_vector=initial_probability_vector,
+    initial_components = compute_null_firth_components(
+        covariate_matrix=covariate_matrix,
         phenotype_vector=phenotype_vector,
-        information_cholesky_factor=initial_information_cholesky_factor,
+        loco_offset=loco_offset,
+        coefficients=initial_coefficients,
     )
-    initial_failed = (~jnp.isfinite(initial_penalized_log_likelihood)) | (~jnp.all(jnp.isfinite(initial_coefficients)))
     final_state = jax.lax.while_loop(
         condition_function,
         body_function,
-        FirthState(
+        NullFirthNewtonRaphsonState(
             coefficients=initial_coefficients,
-            penalized_log_likelihood=initial_penalized_log_likelihood,
+            deviance=initial_components.deviance,
             converged=jnp.asarray(0, dtype=jnp.bool_),
-            failed=initial_failed,
+            failed=~initial_components.valid,
             iteration_count=jnp.asarray(0, dtype=jnp.int32),
             termination_reason_code=jnp.where(
-                initial_failed,
-                FirthConvergenceReason.NUMERICAL_FAILURE.value,
+                initial_components.valid,
                 FirthConvergenceReason.NONE.value,
+                FirthConvergenceReason.NUMERICAL_FAILURE.value,
             ).astype(jnp.int32),
+            previous_score_maximum=jnp.asarray(jnp.inf, dtype=scalar_dtype),
+            score_increase_count=jnp.asarray(0, dtype=jnp.int32),
         ),
     )
     max_iteration_failure = (~final_state.converged) & (~final_state.failed)
@@ -1895,16 +2083,133 @@ def fit_covariate_only_firth_null_model(
         FirthConvergenceReason.MAX_ITERATIONS.value,
         final_state.termination_reason_code,
     ).astype(jnp.int32)
-    trusted_penalized_log_likelihood = jnp.where(
-        final_state.converged,
-        final_state.penalized_log_likelihood,
-        jnp.asarray(jnp.nan, dtype=jnp.float32),
-    )
     return NullFirthFitResult(
-        penalized_log_likelihood=trusted_penalized_log_likelihood,
+        coefficients=final_state.coefficients,
+        penalized_log_likelihood=jnp.where(
+            final_state.converged,
+            -BINARY_CASE_THRESHOLD * final_state.deviance,
+            jnp.asarray(jnp.nan, dtype=scalar_dtype),
+        ),
         iteration_count=final_state.iteration_count,
         convergence_reason_code=convergence_reason_code,
         converged=final_state.converged,
+    )
+
+
+def fit_covariate_only_firth_null_model(
+    covariate_matrix: jax.Array,
+    phenotype_vector: jax.Array,
+    loco_offset: jax.Array,
+    initial_coefficients: jax.Array,
+    kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
+) -> NullFirthFitResult:
+    """Fit the covariate-only Firth null model and return diagnostics."""
+    del kernel_config
+
+    covariate_matrix_float64 = jnp.asarray(covariate_matrix, dtype=jnp.float64)
+    phenotype_vector_float64 = jnp.asarray(phenotype_vector, dtype=jnp.float64)
+    loco_offset_float64 = jnp.asarray(loco_offset, dtype=jnp.float64)
+    initial_coefficients_float64 = jnp.asarray(initial_coefficients, dtype=jnp.float64)
+    zero_start_coefficients = jnp.zeros_like(initial_coefficients_float64).at[0].set(-jnp.mean(loco_offset_float64))
+
+    first_result = fit_covariate_only_firth_null_model_once(
+        covariate_matrix=covariate_matrix_float64,
+        phenotype_vector=phenotype_vector_float64,
+        loco_offset=loco_offset_float64,
+        initial_coefficients=initial_coefficients_float64,
+        maximum_iterations=FIRTH_NULL_MAXIMUM_ITERATIONS,
+        maximum_step_size=FIRTH_NULL_MAXIMUM_STEP_SIZE,
+        tolerance=FIRTH_NULL_GRADIENT_TOLERANCE,
+        check_score_increase=True,
+    )
+    second_result = fit_covariate_only_firth_null_model_once(
+        covariate_matrix=covariate_matrix_float64,
+        phenotype_vector=phenotype_vector_float64,
+        loco_offset=loco_offset_float64,
+        initial_coefficients=zero_start_coefficients,
+        maximum_iterations=FIRTH_NULL_MAXIMUM_ITERATIONS,
+        maximum_step_size=FIRTH_NULL_MAXIMUM_STEP_SIZE,
+        tolerance=FIRTH_NULL_GRADIENT_TOLERANCE,
+        check_score_increase=True,
+    )
+    fallback_maximum_iterations = FIRTH_NULL_MAXIMUM_ITERATIONS * FIRTH_NULL_FALLBACK_ITERATION_MULTIPLIER
+    fallback_maximum_step_size = FIRTH_NULL_MAXIMUM_STEP_SIZE / FIRTH_NULL_FALLBACK_STEP_DIVISOR
+    third_result = fit_covariate_only_firth_null_model_once(
+        covariate_matrix=covariate_matrix_float64,
+        phenotype_vector=phenotype_vector_float64,
+        loco_offset=loco_offset_float64,
+        initial_coefficients=zero_start_coefficients,
+        maximum_iterations=fallback_maximum_iterations,
+        maximum_step_size=fallback_maximum_step_size,
+        tolerance=FIRTH_NULL_GRADIENT_TOLERANCE,
+        check_score_increase=True,
+    )
+    fourth_result = fit_covariate_only_firth_null_model_once(
+        covariate_matrix=covariate_matrix_float64,
+        phenotype_vector=phenotype_vector_float64,
+        loco_offset=loco_offset_float64,
+        initial_coefficients=initial_coefficients_float64,
+        maximum_iterations=fallback_maximum_iterations,
+        maximum_step_size=fallback_maximum_step_size,
+        tolerance=FIRTH_NULL_GRADIENT_TOLERANCE,
+        check_score_increase=False,
+    )
+    use_first_result = first_result.converged
+    use_second_result = (~use_first_result) & second_result.converged
+    use_third_result = (~use_first_result) & (~use_second_result) & third_result.converged
+    selected_coefficients = jnp.where(
+        use_first_result,
+        first_result.coefficients,
+        jnp.where(
+            use_second_result,
+            second_result.coefficients,
+            jnp.where(use_third_result, third_result.coefficients, fourth_result.coefficients),
+        ),
+    )
+    selected_penalized_log_likelihood = jnp.where(
+        use_first_result,
+        first_result.penalized_log_likelihood,
+        jnp.where(
+            use_second_result,
+            second_result.penalized_log_likelihood,
+            jnp.where(
+                use_third_result,
+                third_result.penalized_log_likelihood,
+                fourth_result.penalized_log_likelihood,
+            ),
+        ),
+    )
+    selected_iteration_count = jnp.where(
+        use_first_result,
+        first_result.iteration_count,
+        jnp.where(
+            use_second_result,
+            second_result.iteration_count,
+            jnp.where(use_third_result, third_result.iteration_count, fourth_result.iteration_count),
+        ),
+    )
+    selected_reason_code = jnp.where(
+        use_first_result,
+        first_result.convergence_reason_code,
+        jnp.where(
+            use_second_result,
+            second_result.convergence_reason_code,
+            jnp.where(use_third_result, third_result.convergence_reason_code, fourth_result.convergence_reason_code),
+        ),
+    ).astype(jnp.int32)
+    selected_converged = (
+        first_result.converged | second_result.converged | third_result.converged | fourth_result.converged
+    )
+    return NullFirthFitResult(
+        coefficients=selected_coefficients,
+        penalized_log_likelihood=jnp.where(
+            selected_converged,
+            selected_penalized_log_likelihood,
+            jnp.asarray(jnp.nan, dtype=jnp.float64),
+        ),
+        iteration_count=selected_iteration_count,
+        convergence_reason_code=selected_reason_code,
+        converged=selected_converged,
     )
 
 
@@ -2164,7 +2469,7 @@ def fit_single_variant_firth_logistic_regression(
     beta = final_state.coefficients[-1]
     standard_error = jnp.sqrt(jnp.where(genotype_variance > 0.0, genotype_variance, jnp.nan))
     chi_squared = jnp.maximum(2.0 * (final_penalized_log_likelihood - null_penalized_log_likelihood), 0.0)
-    log10_p_value = regenie2_linear.chi_squared_to_log10_p_value(chi_squared)
+    log10_p_value = jnp.asarray(regenie2_linear.chi_squared_to_log10_p_value(chi_squared), dtype=jnp.float64)
     valid_mask = (
         (~skip_firth)
         & final_state.converged
@@ -2193,15 +2498,17 @@ def fit_single_variant_firth_logistic_regression(
     ).astype(jnp.int32)
     failure_code = map_firth_reason_code_to_failure_code(convergence_reason_code)
     return FirthVariantResult(
-        beta=jnp.where(skip_firth, jnp.nan, beta),
-        standard_error=jnp.where(skip_firth, jnp.nan, standard_error),
-        chi_squared=jnp.where(skip_firth, jnp.nan, chi_squared),
-        log10_p_value=jnp.where(skip_firth, jnp.nan, log10_p_value),
-        penalized_log_likelihood=jnp.where(skip_firth, jnp.nan, final_penalized_log_likelihood),
+        beta=jnp.asarray(jnp.where(skip_firth, jnp.nan, beta), dtype=jnp.float64),
+        standard_error=jnp.asarray(jnp.where(skip_firth, jnp.nan, standard_error), dtype=jnp.float64),
+        chi_squared=jnp.asarray(jnp.where(skip_firth, jnp.nan, chi_squared), dtype=jnp.float64),
+        log10_p_value=jnp.asarray(jnp.where(skip_firth, jnp.nan, log10_p_value), dtype=jnp.float64),
+        penalized_log_likelihood=jnp.asarray(
+            jnp.where(skip_firth, jnp.nan, final_penalized_log_likelihood), dtype=jnp.float64
+        ),
         converged_mask=jnp.where(skip_firth, jnp.asarray(0, dtype=jnp.bool_), final_state.converged),
         valid_mask=valid_mask,
         iteration_count=jnp.where(skip_firth, jnp.asarray(0, dtype=jnp.int32), final_state.iteration_count),
-        failure_code=jnp.where(skip_firth, types.FirthFailureCode.NONE.value, failure_code),
+        failure_code=jnp.where(skip_firth, types.FirthFailureCode.NONE.value, failure_code).astype(jnp.int32),
         convergence_reason_code=jnp.where(
             skip_firth,
             FirthConvergenceReason.NONE.value,
@@ -2211,7 +2518,7 @@ def fit_single_variant_firth_logistic_regression(
             skip_firth | (~valid_mask),
             types.FirthCorrectionCode.NONE.value,
             types.FirthCorrectionCode.NEWTON_RAPHSON_WARM_START.value,
-        ),
+        ).astype(jnp.int32),
         sparse_correction_mask=jnp.asarray(0, dtype=jnp.bool_),
         pseudo_firth_iteration_count=jnp.asarray(0, dtype=jnp.int32),
         nr_zero_start_iteration_count=jnp.asarray(0, dtype=jnp.int32),
@@ -2295,9 +2602,28 @@ def residualize_and_scale_genotypes_for_approximate_firth(
     return weighted_residual_matrix_by_variant / chromosome_state.square_root_weight[None, :]
 
 
+def build_regenie_flipped_genotypes(
+    genotype_matrix_by_variant: jax.Array,
+) -> RegenieGenotypeFlipResult:
+    """Code variant-major genotypes the way REGENIE does before testing."""
+    allele_count = jnp.sum(genotype_matrix_by_variant, axis=1)
+    flip_threshold = jnp.asarray(genotype_matrix_by_variant.shape[1], dtype=genotype_matrix_by_variant.dtype)
+    flip_mask = allele_count > flip_threshold
+    flipped_genotype_matrix_by_variant = jnp.where(
+        flip_mask[:, None],
+        ALLELE_COUNT_MULTIPLIER - genotype_matrix_by_variant,
+        genotype_matrix_by_variant,
+    )
+    return RegenieGenotypeFlipResult(
+        genotype_matrix_by_variant=flipped_genotype_matrix_by_variant,
+        flip_mask=flip_mask,
+    )
+
+
 def compute_firth_variantwise(
     covariate_matrix: jax.Array,
     null_logistic_coefficients: jax.Array,
+    null_firth_offset: jax.Array,
     phenotype_vector: jax.Array,
     genotype_matrix_by_variant: jax.Array,
     raw_genotype_matrix_by_variant: jax.Array,
@@ -2309,7 +2635,8 @@ def compute_firth_variantwise(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> FirthVariantResult:
     """Compute device-side Firth fits for a padded set of candidate lanes."""
-    offset_vector = covariate_matrix @ null_logistic_coefficients + loco_offset
+    scalar_offset_vector = jnp.asarray(null_firth_offset, dtype=jnp.float64)
+    scalar_phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
 
     def fit_variant(
         genotype_vector: jax.Array,
@@ -2320,16 +2647,12 @@ def compute_firth_variantwise(
     ) -> FirthVariantResult:
         if not kernel_config.use_block_firth_math:
             return fit_single_variant_regenie_approximate_firth(
-                phenotype_vector=phenotype_vector,
-                genotype_vector=genotype_vector,
-                offset_vector=offset_vector,
+                phenotype_vector=scalar_phenotype_vector,
+                genotype_vector=jnp.asarray(genotype_vector, dtype=jnp.float64),
+                offset_vector=scalar_offset_vector,
                 carrier_sample_mask=raw_genotype_vector > SPARSE_CARRIER_DOSAGE_THRESHOLD,
                 sparse_correction=sparse_correction,
-                warm_start_beta=jnp.where(
-                    jnp.isfinite(variant_initial_coefficients[-1]),
-                    variant_initial_coefficients[-1],
-                    jnp.asarray(0.0, dtype=variant_initial_coefficients.dtype),
-                ),
+                warm_start_beta=jnp.asarray(0.0, dtype=jnp.float64),
                 skip_firth=skip_firth,
                 null_failed=~jnp.isfinite(null_penalized_log_likelihood),
                 kernel_config=kernel_config,
@@ -2359,11 +2682,11 @@ def build_empty_firth_variant_result(
 ) -> FirthVariantResult:
     """Build a placeholder Firth result for skipped padded batches."""
     return FirthVariantResult(
-        beta=jnp.full((batch_size,), jnp.nan, dtype=jnp.float32),
-        standard_error=jnp.full((batch_size,), jnp.nan, dtype=jnp.float32),
-        chi_squared=jnp.full((batch_size,), jnp.nan, dtype=jnp.float32),
-        log10_p_value=jnp.full((batch_size,), jnp.nan, dtype=jnp.float32),
-        penalized_log_likelihood=jnp.full((batch_size,), jnp.nan, dtype=jnp.float32),
+        beta=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
+        standard_error=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
+        chi_squared=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
+        log10_p_value=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
+        penalized_log_likelihood=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
         converged_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
         valid_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
         iteration_count=jnp.zeros((batch_size,), dtype=jnp.int32),
@@ -2408,12 +2731,22 @@ def apply_device_candidate_corrections_firth(
             flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
             flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
             raw_genotype_matrix_by_variant = jnp.take(genotype_matrix_float32, flat_fallback_indices, axis=1).T
+            genotype_flip_result = build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
+            firth_raw_genotype_matrix_by_variant = (
+                raw_genotype_matrix_by_variant
+                if kernel_config.use_block_firth_math
+                else genotype_flip_result.genotype_matrix_by_variant
+            )
+            if kernel_config.use_block_firth_math:
+                flat_genotype_flip_mask = jnp.zeros_like(flat_active_mask)
+            else:
+                flat_genotype_flip_mask = genotype_flip_result.flip_mask
             genotype_matrix_by_variant = jnp.where(
                 kernel_config.use_block_firth_math,
-                raw_genotype_matrix_by_variant,
+                firth_raw_genotype_matrix_by_variant,
                 residualize_and_scale_genotypes_for_approximate_firth(
                     chromosome_state,
-                    raw_genotype_matrix_by_variant,
+                    firth_raw_genotype_matrix_by_variant,
                 ),
             )
             if sparse_candidate_mask is None:
@@ -2425,7 +2758,7 @@ def apply_device_candidate_corrections_firth(
                 )
             heuristic_firth_mask = (
                 compute_firth_pre_dispatch_mask_without_mask(
-                    genotype_matrix_by_variant=raw_genotype_matrix_by_variant,
+                    genotype_matrix_by_variant=firth_raw_genotype_matrix_by_variant,
                     phenotype_vector=chromosome_state.phenotype_vector,
                 )
                 | flat_sparse_candidate_mask
@@ -2441,14 +2774,35 @@ def apply_device_candidate_corrections_firth(
             genotype_matrix_by_variant = ordered_candidate_inputs.genotype_matrix_by_variant
             heuristic_firth_mask = ordered_candidate_inputs.heuristic_firth_mask
             raw_genotype_matrix_by_variant = jnp.take(genotype_matrix_float32, flat_fallback_indices, axis=1).T
+            genotype_flip_result = build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
+            firth_raw_genotype_matrix_by_variant = (
+                raw_genotype_matrix_by_variant
+                if kernel_config.use_block_firth_math
+                else genotype_flip_result.genotype_matrix_by_variant
+            )
+            if kernel_config.use_block_firth_math:
+                flat_genotype_flip_mask = jnp.zeros_like(flat_active_mask)
+            else:
+                flat_genotype_flip_mask = genotype_flip_result.flip_mask
+            flat_sparse_candidate_mask = (
+                jnp.take(jnp.asarray(sparse_candidate_mask, dtype=jnp.bool_), flat_fallback_indices, axis=0)
+                & flat_active_mask
+                if sparse_candidate_mask is not None
+                else jnp.zeros_like(flat_active_mask)
+            )
             standard_initial_coefficients = jnp.broadcast_to(
                 chromosome_state.null_logistic_coefficients[None, :],
                 (genotype_matrix_by_variant.shape[0], chromosome_state.null_logistic_coefficients.shape[0]),
             )
+            standard_initial_beta = (
+                jnp.take(result.beta, flat_fallback_indices, axis=0)
+                if kernel_config.use_block_firth_math
+                else jnp.zeros_like(jnp.take(result.beta, flat_fallback_indices, axis=0))
+            )
             standard_initial_coefficients = jnp.concatenate(
                 [
                     standard_initial_coefficients,
-                    jnp.take(result.beta, flat_fallback_indices, axis=0)[:, None],
+                    standard_initial_beta[:, None],
                 ],
                 axis=1,
             )
@@ -2467,10 +2821,10 @@ def apply_device_candidate_corrections_firth(
             batch_count = batch_plan.fallback_index_matrix.shape[0]
             active_batch_count = (fallback_count + firth_batch_size - 1) // firth_batch_size
             genotype_batches = genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
-            raw_genotype_batches = raw_genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
+            raw_genotype_batches = firth_raw_genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
             initial_coefficient_batches = initial_coefficients.reshape((batch_count, firth_batch_size, -1))
             active_mask_batches = flat_active_mask.reshape((batch_count, firth_batch_size))
-            sparse_correction_mask_batches = heuristic_firth_mask.reshape((batch_count, firth_batch_size))
+            sparse_correction_mask_batches = flat_sparse_candidate_mask.reshape((batch_count, firth_batch_size))
             empty_firth_variant_result = build_empty_firth_variant_result(firth_batch_size)
 
             def compute_firth_batch(
@@ -2483,6 +2837,7 @@ def apply_device_candidate_corrections_firth(
                     return compute_firth_variantwise(
                         covariate_matrix=chromosome_state.covariate_matrix,
                         null_logistic_coefficients=chromosome_state.null_logistic_coefficients,
+                        null_firth_offset=chromosome_state.null_firth_offset,
                         phenotype_vector=chromosome_state.phenotype_vector,
                         genotype_matrix_by_variant=genotype_batches[batch_index],
                         raw_genotype_matrix_by_variant=raw_genotype_batches[batch_index],
@@ -2527,7 +2882,11 @@ def apply_device_candidate_corrections_firth(
             active_flat_positions = batch_plan.active_flat_position_vector
             active_fallback_indices = flat_fallback_indices[active_flat_positions]
             active_valid_mask = firth_result.valid_mask[active_flat_positions]
-            active_firth_beta = firth_result.beta[active_flat_positions]
+            active_firth_beta = jnp.where(
+                flat_genotype_flip_mask[active_flat_positions],
+                -firth_result.beta[active_flat_positions],
+                firth_result.beta[active_flat_positions],
+            )
             active_firth_chi_squared = firth_result.chi_squared[active_flat_positions]
             active_firth_standard_error = firth_result.standard_error[active_flat_positions]
             invalid_firth_statistic = jnp.full_like(active_firth_beta, jnp.nan)
@@ -2557,10 +2916,16 @@ def apply_device_candidate_corrections_firth(
                 active_valid_mask, types.BinaryExtraCode.FIRTH.value, types.BinaryExtraCode.TEST_FAIL.value
             ).astype(jnp.int32)
             return regenie2_binary_types.Regenie2BinaryChunkResult(
-                beta=result.beta.at[active_fallback_indices].set(merged_beta),
-                standard_error=result.standard_error.at[active_fallback_indices].set(merged_standard_error),
-                chi_squared=result.chi_squared.at[active_fallback_indices].set(merged_chi_squared),
-                log10_p_value=result.log10_p_value.at[active_fallback_indices].set(merged_log10_p_value),
+                beta=result.beta.at[active_fallback_indices].set(jnp.asarray(merged_beta, dtype=result.beta.dtype)),
+                standard_error=result.standard_error.at[active_fallback_indices].set(
+                    jnp.asarray(merged_standard_error, dtype=result.standard_error.dtype)
+                ),
+                chi_squared=result.chi_squared.at[active_fallback_indices].set(
+                    jnp.asarray(merged_chi_squared, dtype=result.chi_squared.dtype)
+                ),
+                log10_p_value=result.log10_p_value.at[active_fallback_indices].set(
+                    jnp.asarray(merged_log10_p_value, dtype=result.log10_p_value.dtype)
+                ),
                 extra_code=result.extra_code.at[active_fallback_indices].set(merged_extra_code),
                 valid_mask=result.valid_mask.at[active_fallback_indices].set(active_valid_mask),
                 firth_iteration_count=result.firth_iteration_count.at[active_fallback_indices].set(

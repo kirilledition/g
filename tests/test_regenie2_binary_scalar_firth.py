@@ -24,7 +24,7 @@ def build_scalar_fixture() -> tuple[regenie2_binary_types.Regenie2BinaryChromoso
         dtype=jnp.float32,
     )
     phenotype_vector = jnp.asarray([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
-    genotype_vector = jnp.asarray([0.0, 0.0, 0.0, 0.0, 2.0, 2.0, 2.0, 2.0], dtype=jnp.float32)
+    genotype_vector = jnp.asarray([0.0, 2.0, 0.0, 0.0, 2.0, 0.0, 2.0, 0.0], dtype=jnp.float32)
     state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state,
@@ -89,7 +89,7 @@ def test_scalar_pseudo_firth_components_match_formula() -> None:
 
 def test_scalar_approximate_firth_uses_nr_fallback_after_pseudo_attempt() -> None:
     chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
-    offset_vector = chromosome_state.covariate_matrix @ chromosome_state.null_logistic_coefficients
+    offset_vector = chromosome_state.null_firth_offset
 
     result = regenie2_binary.fit_single_variant_regenie_approximate_firth(
         phenotype_vector=chromosome_state.phenotype_vector,
@@ -110,7 +110,7 @@ def test_scalar_approximate_firth_uses_nr_fallback_after_pseudo_attempt() -> Non
 
 def test_sparse_carrier_only_flag_is_recorded_for_sparse_candidate() -> None:
     chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
-    offset_vector = chromosome_state.covariate_matrix @ chromosome_state.null_logistic_coefficients
+    offset_vector = chromosome_state.null_firth_offset
 
     result = regenie2_binary.fit_single_variant_regenie_approximate_firth(
         phenotype_vector=chromosome_state.phenotype_vector,
@@ -145,7 +145,7 @@ def test_collinear_scalar_candidate_gets_numerical_failure_label() -> None:
     result = regenie2_binary.fit_single_variant_regenie_approximate_firth(
         phenotype_vector=phenotype_vector,
         genotype_vector=genotype_vector,
-        offset_vector=chromosome_state.covariate_matrix @ chromosome_state.null_logistic_coefficients,
+        offset_vector=chromosome_state.null_firth_offset,
         carrier_sample_mask=raw_genotype_vector > regenie2_binary.SPARSE_CARRIER_DOSAGE_THRESHOLD,
         sparse_correction=jnp.asarray(0, dtype=jnp.bool_),
         warm_start_beta=jnp.asarray(0.0, dtype=jnp.float32),

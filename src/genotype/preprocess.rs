@@ -233,7 +233,12 @@ pub fn build_chunk_stats_from_summaries(
         let allele_count = dosage_sum[variant_index];
         let reference_allele_count = (2.0 * count_float) - allele_count;
         let current_minor_allele_count = allele_count.min(reference_allele_count);
-        let zero_density = zero_count[variant_index] as f32 / count_float;
+        let regenie_flipped_zero_count = if allele_count > reference_allele_count {
+            homozygous_alternate_count[variant_index]
+        } else {
+            zero_count[variant_index]
+        };
+        let zero_density = regenie_flipped_zero_count as f32 / count_float;
         let current_sparse_candidate = zero_density >= SPARSE_ZERO_DENSITY_THRESHOLD;
 
         allele_one_frequency.push(allele_frequency);
@@ -343,6 +348,8 @@ mod tests {
         assert_eq!(stats.nonzero_count, vec![1, 2]);
         assert!(stats.is_sparse_candidate[0]);
         assert!(stats.is_rare_sparse_firth_candidate[0]);
+        assert!(stats.is_sparse_candidate[1]);
+        assert!(stats.is_rare_sparse_firth_candidate[1]);
         assert_eq!(stats.info_score, vec![Some(0.799_999_95), Some(1.0)]);
     }
 }

@@ -213,7 +213,7 @@ def test_native_writer_records_output_stage_timings_when_requested(tmp_path: Pat
     assert timing_payload["output_metrics"]["writer_row_count"] == 4
 
 
-def test_native_binary_writer_maps_extra_code_to_label(tmp_path: Path) -> None:
+def test_native_binary_writer_maps_successful_correction_extra_code_to_null(tmp_path: Path) -> None:
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
     write_native_chunks(
         output_run_paths, AssociationMode.REGENIE2_BINARY, extra_code_value=types.BinaryExtraCode.FIRTH.value
@@ -221,7 +221,7 @@ def test_native_binary_writer_maps_extra_code_to_label(tmp_path: Path) -> None:
 
     frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
     assert frame.columns == EXPECTED_CHUNK_COLUMNS
-    assert frame.get_column("EXTRA").to_list() == ["FIRTH", "FIRTH", "FIRTH", "FIRTH"]
+    assert frame.get_column("EXTRA").to_list() == [None, None, None, None]
 
 
 def test_native_binary_writer_maps_test_fail_extra_code_to_label(tmp_path: Path) -> None:
@@ -395,7 +395,7 @@ def build_test_binary_kernel_config() -> regenie2_binary_types.BinaryKernelConfi
         ("sample_key_mode", "fid_iid"),
         ("output_schema_version", 2),
         ("bgen_decode_tile_variant_count", 128),
-        ("jax_policy", {"device": "gpu", "enable_x64": False, "matmul_precision": "highest"}),
+        ("jax_policy", {"device": "gpu", "enable_x64": True, "matmul_precision": "highest"}),
         ("multi_phenotype_sample_mode", "complete_case_intersection"),
         (
             "output_writer",
@@ -636,7 +636,7 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
 
     parquet_frame = pl.read_parquet(parquet_path)
     assert parquet_frame.columns == EXPECTED_FINAL_COLUMNS
-    assert parquet_frame.get_column("EXTRA").to_list() == ["FIRTH", "FIRTH", "FIRTH", "FIRTH"]
+    assert parquet_frame.get_column("EXTRA").to_list() == [None, None, None, None]
     parquet_schema = pq.ParquetFile(parquet_path).schema_arrow
     assert parquet_schema.names == EXPECTED_FINAL_COLUMNS
     assert parquet_schema.field("INFO").nullable

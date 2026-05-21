@@ -232,7 +232,7 @@ class ExplodingChunkStats:
 
 class SparseOnlyChunkStats(ExplodingChunkStats):
     @property
-    def is_sparse_candidate(self) -> np.ndarray:
+    def is_rare_sparse_firth_candidate(self) -> np.ndarray:
         return np.asarray([True, False], dtype=np.bool_)
 
 
@@ -577,7 +577,7 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
         allele_one=["A", "C", "G"],
         allele_two=["G", "T", "A"],
     )
-    chunk_stats = SimpleNamespace(is_sparse_candidate=np.asarray([True, False, True], dtype=np.bool_))
+    chunk_stats = SimpleNamespace(is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_))
 
     with (
         patch(
@@ -665,7 +665,7 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
         ],
         dtype=np.float32,
     )
-    chunk_stats = SimpleNamespace(is_sparse_candidate=np.asarray([True, False, True], dtype=np.bool_))
+    chunk_stats = SimpleNamespace(is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_))
 
     with (
         patch(
@@ -769,7 +769,7 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         ],
         dtype=np.float32,
     )
-    chunk_stats = SimpleNamespace(is_sparse_candidate=np.asarray([True, False], dtype=np.bool_))
+    chunk_stats = SimpleNamespace(is_rare_sparse_firth_candidate=np.asarray([True, False], dtype=np.bool_))
 
     with (
         patch(

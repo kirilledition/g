@@ -19,7 +19,9 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     """Compute the variant-major score test for one binary chunk."""
-    genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
+    raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
+    genotype_flip_result = regenie2_binary.build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
+    genotype_matrix_by_variant_float32 = genotype_flip_result.genotype_matrix_by_variant
     weighted_genotype_matrix_by_variant = (
         genotype_matrix_by_variant_float32 * chromosome_state.square_root_weight[None, :]
     )
@@ -38,7 +40,11 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     positive_variance_mask = regenie2_binary.compute_positive_variance_mask(variance, weighted_genotype_sum_squares)
     statistic_mask = positive_variance_mask & null_logistic_converged
     inverse_variance = jnp.where(statistic_mask, jnp.reciprocal(variance), 0.0)
-    beta = jnp.where(statistic_mask, score * inverse_variance, jnp.nan)
+    beta = jnp.where(
+        statistic_mask,
+        jnp.where(genotype_flip_result.flip_mask, -score * inverse_variance, score * inverse_variance),
+        jnp.nan,
+    )
     standard_error = jnp.where(statistic_mask, jnp.sqrt(inverse_variance), jnp.nan)
     chi_squared = jnp.where(
         null_logistic_converged,
@@ -114,12 +120,24 @@ def apply_device_candidate_corrections_firth_variant_major(
                 axis=0,
             )
             raw_candidate_genotype_matrix_by_variant = candidate_genotype_matrix_by_variant
+            genotype_flip_result = regenie2_binary.build_regenie_flipped_genotypes(
+                raw_candidate_genotype_matrix_by_variant
+            )
+            firth_raw_candidate_genotype_matrix_by_variant = (
+                raw_candidate_genotype_matrix_by_variant
+                if kernel_config.use_block_firth_math
+                else genotype_flip_result.genotype_matrix_by_variant
+            )
+            if kernel_config.use_block_firth_math:
+                flat_genotype_flip_mask = jnp.zeros_like(flat_active_mask)
+            else:
+                flat_genotype_flip_mask = genotype_flip_result.flip_mask
             candidate_genotype_matrix_by_variant = jnp.where(
                 kernel_config.use_block_firth_math,
-                raw_candidate_genotype_matrix_by_variant,
+                firth_raw_candidate_genotype_matrix_by_variant,
                 regenie2_binary.residualize_and_scale_genotypes_for_approximate_firth(
                     chromosome_state,
-                    raw_candidate_genotype_matrix_by_variant,
+                    firth_raw_candidate_genotype_matrix_by_variant,
                 ),
             )
             if sparse_candidate_mask is None:
@@ -131,7 +149,7 @@ def apply_device_candidate_corrections_firth_variant_major(
                 )
             heuristic_firth_mask = (
                 regenie2_binary.compute_firth_pre_dispatch_mask_without_mask(
-                    genotype_matrix_by_variant=raw_candidate_genotype_matrix_by_variant,
+                    genotype_matrix_by_variant=firth_raw_candidate_genotype_matrix_by_variant,
                     phenotype_vector=chromosome_state.phenotype_vector,
                 )
                 | flat_sparse_candidate_mask
@@ -151,6 +169,24 @@ def apply_device_candidate_corrections_firth_variant_major(
                 flat_fallback_indices,
                 axis=0,
             )
+            genotype_flip_result = regenie2_binary.build_regenie_flipped_genotypes(
+                raw_candidate_genotype_matrix_by_variant
+            )
+            firth_raw_candidate_genotype_matrix_by_variant = (
+                raw_candidate_genotype_matrix_by_variant
+                if kernel_config.use_block_firth_math
+                else genotype_flip_result.genotype_matrix_by_variant
+            )
+            if kernel_config.use_block_firth_math:
+                flat_genotype_flip_mask = jnp.zeros_like(flat_active_mask)
+            else:
+                flat_genotype_flip_mask = genotype_flip_result.flip_mask
+            flat_sparse_candidate_mask = (
+                jnp.take(jnp.asarray(sparse_candidate_mask, dtype=jnp.bool_), flat_fallback_indices, axis=0)
+                & flat_active_mask
+                if sparse_candidate_mask is not None
+                else jnp.zeros_like(flat_active_mask)
+            )
             standard_initial_coefficients = jnp.broadcast_to(
                 chromosome_state.null_logistic_coefficients[None, :],
                 (
@@ -158,10 +194,15 @@ def apply_device_candidate_corrections_firth_variant_major(
                     chromosome_state.null_logistic_coefficients.shape[0],
                 ),
             )
+            standard_initial_beta = (
+                jnp.take(result.beta, flat_fallback_indices, axis=0)
+                if kernel_config.use_block_firth_math
+                else jnp.zeros_like(jnp.take(result.beta, flat_fallback_indices, axis=0))
+            )
             standard_initial_coefficients = jnp.concatenate(
                 [
                     standard_initial_coefficients,
-                    jnp.take(result.beta, flat_fallback_indices, axis=0)[:, None],
+                    standard_initial_beta[:, None],
                 ],
                 axis=1,
             )
@@ -180,10 +221,12 @@ def apply_device_candidate_corrections_firth_variant_major(
             batch_count = batch_plan.fallback_index_matrix.shape[0]
             active_batch_count = (fallback_count + firth_batch_size - 1) // firth_batch_size
             genotype_batches = candidate_genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
-            raw_genotype_batches = raw_candidate_genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
+            raw_genotype_batches = firth_raw_candidate_genotype_matrix_by_variant.reshape(
+                (batch_count, firth_batch_size, -1)
+            )
             initial_coefficient_batches = initial_coefficients.reshape((batch_count, firth_batch_size, -1))
             active_mask_batches = flat_active_mask.reshape((batch_count, firth_batch_size))
-            sparse_correction_mask_batches = heuristic_firth_mask.reshape((batch_count, firth_batch_size))
+            sparse_correction_mask_batches = flat_sparse_candidate_mask.reshape((batch_count, firth_batch_size))
             empty_firth_variant_result = regenie2_binary.build_empty_firth_variant_result(firth_batch_size)
 
             def compute_firth_batch(
@@ -196,6 +239,7 @@ def apply_device_candidate_corrections_firth_variant_major(
                     return regenie2_binary.compute_firth_variantwise(
                         covariate_matrix=chromosome_state.covariate_matrix,
                         null_logistic_coefficients=chromosome_state.null_logistic_coefficients,
+                        null_firth_offset=chromosome_state.null_firth_offset,
                         phenotype_vector=chromosome_state.phenotype_vector,
                         genotype_matrix_by_variant=genotype_batches[batch_index],
                         raw_genotype_matrix_by_variant=raw_genotype_batches[batch_index],
@@ -240,7 +284,11 @@ def apply_device_candidate_corrections_firth_variant_major(
             active_flat_positions = batch_plan.active_flat_position_vector
             active_fallback_indices = flat_fallback_indices[active_flat_positions]
             active_valid_mask = firth_result.valid_mask[active_flat_positions]
-            active_firth_beta = firth_result.beta[active_flat_positions]
+            active_firth_beta = jnp.where(
+                flat_genotype_flip_mask[active_flat_positions],
+                -firth_result.beta[active_flat_positions],
+                firth_result.beta[active_flat_positions],
+            )
             active_firth_chi_squared = firth_result.chi_squared[active_flat_positions]
             active_firth_standard_error = firth_result.standard_error[active_flat_positions]
             invalid_firth_statistic = jnp.full_like(active_firth_beta, jnp.nan)
@@ -272,10 +320,16 @@ def apply_device_candidate_corrections_firth_variant_major(
                 types.BinaryExtraCode.TEST_FAIL.value,
             ).astype(jnp.int32)
             return regenie2_binary_types.Regenie2BinaryChunkResult(
-                beta=result.beta.at[active_fallback_indices].set(merged_beta),
-                standard_error=result.standard_error.at[active_fallback_indices].set(merged_standard_error),
-                chi_squared=result.chi_squared.at[active_fallback_indices].set(merged_chi_squared),
-                log10_p_value=result.log10_p_value.at[active_fallback_indices].set(merged_log10_p_value),
+                beta=result.beta.at[active_fallback_indices].set(jnp.asarray(merged_beta, dtype=result.beta.dtype)),
+                standard_error=result.standard_error.at[active_fallback_indices].set(
+                    jnp.asarray(merged_standard_error, dtype=result.standard_error.dtype)
+                ),
+                chi_squared=result.chi_squared.at[active_fallback_indices].set(
+                    jnp.asarray(merged_chi_squared, dtype=result.chi_squared.dtype)
+                ),
+                log10_p_value=result.log10_p_value.at[active_fallback_indices].set(
+                    jnp.asarray(merged_log10_p_value, dtype=result.log10_p_value.dtype)
+                ),
                 extra_code=result.extra_code.at[active_fallback_indices].set(merged_extra_code),
                 valid_mask=result.valid_mask.at[active_fallback_indices].set(active_valid_mask),
                 firth_iteration_count=result.firth_iteration_count.at[active_fallback_indices].set(
