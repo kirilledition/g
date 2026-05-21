@@ -66,6 +66,7 @@ def test_preflight_accepts_valid_binary_inputs() -> None:
         run_input=build_run_input(),
         prediction_source=FakePredictionSource({"1": np.asarray([0.1, 0.2, 0.3], dtype=np.float32)}),
         engine=FakeEngine(["1", "1"]),
+        variant_limit=None,
         is_binary_trait=True,
         trusted_no_missing_diploid=False,
     )
@@ -81,6 +82,7 @@ def test_preflight_rejects_non_finite_predictions() -> None:
             run_input=build_run_input(),
             prediction_source=FakePredictionSource({"1": np.zeros(3), "2": np.asarray([0.0, np.nan, 0.0])}),
             engine=FakeEngine(["1", "2"]),
+            variant_limit=None,
             is_binary_trait=False,
             trusted_no_missing_diploid=False,
         )
@@ -101,6 +103,7 @@ def test_preflight_rejects_rank_deficient_covariates() -> None:
             ),
             prediction_source=FakePredictionSource({"1": np.zeros(3)}),
             engine=FakeEngine(["1"]),
+            variant_limit=None,
             is_binary_trait=False,
             trusted_no_missing_diploid=False,
         )
@@ -112,6 +115,32 @@ def test_preflight_rejects_binary_trait_without_cases() -> None:
             run_input=build_run_input(phenotype_vector=np.asarray([0.0, 0.0, 0.0], dtype=np.float32)),
             prediction_source=FakePredictionSource({"1": np.zeros(3)}),
             engine=FakeEngine(["1"]),
+            variant_limit=None,
             is_binary_trait=True,
+            trusted_no_missing_diploid=False,
+        )
+
+
+def test_preflight_variant_limit_ignores_later_chromosomes() -> None:
+    report = preflight.run_regenie2_preflight(
+        run_input=build_run_input(),
+        prediction_source=FakePredictionSource({"1": np.zeros(3)}),
+        engine=FakeEngine(["1", "1", "2"]),
+        variant_limit=2,
+        is_binary_trait=False,
+        trusted_no_missing_diploid=False,
+    )
+
+    assert report.chromosome_count == 1
+
+
+def test_preflight_without_variant_limit_requires_all_chromosomes() -> None:
+    with pytest.raises(KeyError):
+        preflight.run_regenie2_preflight(
+            run_input=build_run_input(),
+            prediction_source=FakePredictionSource({"1": np.zeros(3)}),
+            engine=FakeEngine(["1", "1", "2"]),
+            variant_limit=None,
+            is_binary_trait=False,
             trusted_no_missing_diploid=False,
         )

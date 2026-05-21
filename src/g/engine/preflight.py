@@ -34,6 +34,7 @@ def run_regenie2_preflight(
     run_input: typing.Any,
     prediction_source: typing.Any,
     engine: typing.Any,
+    variant_limit: int | None,
     is_binary_trait: bool,
     trusted_no_missing_diploid: bool,
 ) -> PreflightReport:
@@ -53,7 +54,7 @@ def run_regenie2_preflight(
     if is_binary_trait:
         validate_binary_phenotype(phenotype_vector)
 
-    required_chromosomes = collect_required_chromosomes(engine)
+    required_chromosomes = collect_required_chromosomes(engine, variant_limit)
     for chromosome in required_chromosomes:
         prediction_values = np.asarray(prediction_source.get_chromosome_predictions(chromosome))
         if prediction_values.shape[0] != sample_count:
@@ -118,13 +119,17 @@ def validate_binary_phenotype(phenotype_vector: np.ndarray) -> None:
         raise ValueError(message)
 
 
-def collect_required_chromosomes(engine: typing.Any) -> tuple[str, ...]:
+def collect_required_chromosomes(engine: typing.Any, variant_limit: int | None) -> tuple[str, ...]:
     """Collect chromosome labels represented in the native BGEN engine."""
     variant_count = int(engine.variant_count)
     if variant_count <= 0:
         message = "BGEN input contains no variants."
         raise ValueError(message)
-    chromosome_values, _, _, _, _ = engine.variant_metadata_slice(0, variant_count)
+    scanned_variant_count = variant_count if variant_limit is None else min(variant_count, variant_limit)
+    if scanned_variant_count <= 0:
+        message = "BGEN scan contains no variants."
+        raise ValueError(message)
+    chromosome_values, _, _, _, _ = engine.variant_metadata_slice(0, scanned_variant_count)
     required_chromosomes: list[str] = []
     seen_chromosomes: set[str] = set()
     for chromosome_value in chromosome_values:

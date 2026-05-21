@@ -148,6 +148,7 @@ def run_regenie2_linear_bgen_pipeline(
         run_input=run_input,
         prediction_source=prediction_source,
         engine=engine,
+        variant_limit=variant_limit,
         is_binary_trait=False,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
@@ -311,6 +312,7 @@ def run_regenie2_binary_bgen_pipeline(
         run_input=run_input,
         prediction_source=prediction_source,
         engine=engine,
+        variant_limit=variant_limit,
         is_binary_trait=True,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
@@ -659,6 +661,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         run_input=run_input,
         prediction_source=prediction_source,
         engine=engine,
+        variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
     )
     timing.record_stage_duration(stage_timing_recorder, "preflight_validation", preflight_start_time)
@@ -700,6 +703,7 @@ def run_multi_preflight(
     run_input: native_dispatch.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
     engine: _core.Regenie2RunEngine,
+    variant_limit: int | None,
     trusted_no_missing_diploid: bool,
 ) -> None:
     """Run existing single-trait preflight checks for every trait in a multi run."""
@@ -711,6 +715,7 @@ def run_multi_preflight(
             ),
             prediction_source=SingleTraitPredictionView(prediction_source, trait_index),
             engine=engine,
+            variant_limit=variant_limit,
             is_binary_trait=run_input.is_binary_trait,
             trusted_no_missing_diploid=trusted_no_missing_diploid,
         )

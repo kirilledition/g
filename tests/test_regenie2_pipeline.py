@@ -802,6 +802,10 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
                 or output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0}))
             ),
         ),
+        patch(
+            "g.engine.regenie2_pipeline.preflight.run_regenie2_preflight",
+            return_value=SimpleNamespace(sample_count=2, covariate_count=1, chromosome_count=1),
+        ) as mock_preflight,
         patch.object(
             regenie2_linear,
             "prepare_regenie2_linear_state",
@@ -844,6 +848,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert callback.dosage_queue_depth == 3
     assert callback.dosage_buffer_limit == 4
     assert committed_chunk_identifiers == [0, 64]
+    assert mock_preflight.call_args.kwargs["variant_limit"] == 100
     prediction_source = FakePredictionSource.instances[0]
     assert prediction_source.prediction_list_path == "pred.list"
     assert prediction_source.phenotype_name == "trait"
@@ -1022,6 +1027,10 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             ),
         ),
         patch(
+            "g.engine.regenie2_pipeline.preflight.run_regenie2_preflight",
+            return_value=SimpleNamespace(sample_count=2, covariate_count=1, chromosome_count=1),
+        ) as mock_preflight,
+        patch(
             "g.compute.regenie2_binary.prepare_regenie2_binary_state",
             return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
         ),
@@ -1054,6 +1063,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     assert isinstance(callback, callbacks.BinaryRegenie2PipelineCallback)
     assert callback.kernel_config is kernel_config
     assert committed_chunk_identifiers == [0, 64]
+    assert mock_preflight.call_args.kwargs["variant_limit"] == 100
 
 
 def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> None:
@@ -1116,7 +1126,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
             "g.engine.native_dispatch.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
-        patch("g.engine.regenie2_pipeline.run_multi_preflight"),
+        patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
         patch(
             "g.engine.regenie2_pipeline.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_sessions.pop(0),
@@ -1172,6 +1182,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert isinstance(callback, callbacks.MultiLinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [32]
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
+    assert mock_run_multi_preflight.call_args.kwargs["variant_limit"] == 100
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
 
 

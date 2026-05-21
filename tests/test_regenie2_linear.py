@@ -103,12 +103,17 @@ def compute_score_reference_chunk(
         jnp.sqrt(null_mean_squared_error * genotype_residual_sum_squares_inverse),
         jnp.nan,
     )
+    valid_statistic_mask = positive_genotype_residual_mask & positive_null_mean_squared_error_mask
     chi_squared = jnp.where(
-        positive_genotype_residual_mask & positive_null_mean_squared_error_mask,
+        valid_statistic_mask,
         covariance_squared * genotype_residual_sum_squares_inverse / null_mean_squared_error,
-        0.0,
+        jnp.nan,
     )
-    log10_p_value = regenie2_linear.chi_squared_to_log10_p_value(chi_squared)
+    log10_p_value = jnp.where(
+        valid_statistic_mask,
+        regenie2_linear.chi_squared_to_log10_p_value(chi_squared),
+        jnp.nan,
+    )
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
     return ReferenceRegenie2LinearChunkResult(
         beta=beta,
@@ -546,6 +551,112 @@ class TestComputeRegenie2LinearChunk:
 
         assert not result.valid_mask[0]
         assert result.valid_mask[1]
+        assert jnp.isnan(result.chi_squared[0])
+        assert jnp.isnan(result.log10_p_value[0])
+        assert jnp.isfinite(result.chi_squared[1])
+        assert jnp.isfinite(result.log10_p_value[1])
+
+    def test_invalid_variants_emit_nan_statistics_for_sample_and_variant_major_paths(self) -> None:
+        """Ensure invalid quantitative rows do not look like valid null associations."""
+        sample_count = 32
+        covariate_count = 2
+
+        rng = np.random.default_rng(17)
+        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
+        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
+        phenotype_vector = jnp.asarray(rng.standard_normal(sample_count), dtype=jnp.float32)
+        genotype_matrix = jnp.asarray(
+            np.column_stack(
+                [
+                    np.zeros(sample_count, dtype=np.float32),
+                    rng.choice([0, 1, 2], size=sample_count).astype(np.float32),
+                ]
+            ),
+            dtype=jnp.float32,
+        )
+        loco_predictions = jnp.zeros(sample_count, dtype=jnp.float32)
+
+        state = regenie2_linear.prepare_regenie2_linear_state(
+            covariate_matrix=jnp.asarray(covariate_matrix),
+            phenotype_vector=phenotype_vector,
+        )
+        chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(state, loco_predictions)
+        sample_major_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
+            chromosome_state=chromosome_state,
+            genotype_matrix=genotype_matrix,
+        )
+        variant_major_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
+            chromosome_state=chromosome_state,
+            genotype_matrix_by_variant=genotype_matrix.T,
+            genotype_sum_squares=jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix),
+        )
+
+        numpy.testing.assert_array_equal(np.asarray(sample_major_result.valid_mask), np.asarray([False, True]))
+        numpy.testing.assert_array_equal(np.asarray(variant_major_result.valid_mask), np.asarray([False, True]))
+        assert jnp.isnan(sample_major_result.chi_squared[0])
+        assert jnp.isnan(sample_major_result.log10_p_value[0])
+        assert jnp.isnan(variant_major_result.chi_squared[0])
+        assert jnp.isnan(variant_major_result.log10_p_value[0])
+        assert jnp.isfinite(sample_major_result.chi_squared[1])
+        assert jnp.isfinite(sample_major_result.log10_p_value[1])
+        assert jnp.isfinite(variant_major_result.chi_squared[1])
+        assert jnp.isfinite(variant_major_result.log10_p_value[1])
+
+    def test_invalid_multi_trait_variants_emit_nan_statistics(self) -> None:
+        """Ensure multi-trait invalid quantitative rows emit NaN statistics."""
+        sample_count = 40
+        covariate_count = 2
+        trait_count = 2
+
+        rng = np.random.default_rng(23)
+        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
+        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
+        phenotype_matrix = jnp.asarray(rng.standard_normal((trait_count, sample_count)), dtype=jnp.float32)
+        genotype_matrix = jnp.asarray(
+            np.column_stack(
+                [
+                    np.zeros(sample_count, dtype=np.float32),
+                    rng.choice([0, 1, 2], size=sample_count).astype(np.float32),
+                ]
+            ),
+            dtype=jnp.float32,
+        )
+        loco_prediction_matrix = jnp.zeros((trait_count, sample_count), dtype=jnp.float32)
+
+        multi_state = regenie2_linear.prepare_regenie2_multi_linear_state(
+            covariate_matrix=jnp.asarray(covariate_matrix),
+            phenotype_matrix=phenotype_matrix,
+        )
+        multi_chromosome_state = regenie2_linear.prepare_regenie2_multi_linear_chromosome_state(
+            multi_state,
+            loco_prediction_matrix,
+        )
+        sample_major_result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state(
+            multi_chromosome_state,
+            genotype_matrix,
+        )
+        variant_major_result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
+            chromosome_state=multi_chromosome_state,
+            genotype_matrix_by_variant=genotype_matrix.T,
+            genotype_sum_squares=jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix),
+        )
+
+        numpy.testing.assert_array_equal(
+            np.asarray(sample_major_result.valid_mask),
+            np.asarray([[False, True], [False, True]]),
+        )
+        numpy.testing.assert_array_equal(
+            np.asarray(variant_major_result.valid_mask),
+            np.asarray([[False, True], [False, True]]),
+        )
+        assert jnp.all(jnp.isnan(sample_major_result.chi_squared[:, 0]))
+        assert jnp.all(jnp.isnan(sample_major_result.log10_p_value[:, 0]))
+        assert jnp.all(jnp.isnan(variant_major_result.chi_squared[:, 0]))
+        assert jnp.all(jnp.isnan(variant_major_result.log10_p_value[:, 0]))
+        assert jnp.all(jnp.isfinite(sample_major_result.chi_squared[:, 1]))
+        assert jnp.all(jnp.isfinite(sample_major_result.log10_p_value[:, 1]))
+        assert jnp.all(jnp.isfinite(variant_major_result.chi_squared[:, 1]))
+        assert jnp.all(jnp.isfinite(variant_major_result.log10_p_value[:, 1]))
 
     def test_loco_adjustment_affects_results(self) -> None:
         """Ensure LOCO predictions affect the association statistics."""

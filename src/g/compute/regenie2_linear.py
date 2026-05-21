@@ -283,13 +283,14 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
         jnp.nan,
     )
 
+    valid_statistic_mask = positive_genotype_residual_mask & positive_null_mean_squared_error_mask
     chi_squared = jnp.where(
-        positive_genotype_residual_mask & positive_null_mean_squared_error_mask,
+        valid_statistic_mask,
         covariance_squared * genotype_residual_sum_squares_inverse / null_mean_squared_error,
-        0.0,
+        jnp.nan,
     )
 
-    log10_p_value = chi_squared_to_log10_p_value(chi_squared)
+    log10_p_value = jnp.where(valid_statistic_mask, chi_squared_to_log10_p_value(chi_squared), jnp.nan)
 
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
 
@@ -342,12 +343,13 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
         jnp.sqrt(null_mean_squared_error[:, None] * genotype_residual_sum_squares_inverse[None, :]),
         jnp.nan,
     )
+    valid_statistic_mask = positive_genotype_residual_mask[None, :] & positive_null_mean_squared_error_mask[:, None]
     chi_squared = jnp.where(
-        positive_genotype_residual_mask[None, :] & positive_null_mean_squared_error_mask[:, None],
+        valid_statistic_mask,
         covariance_squared * genotype_residual_sum_squares_inverse[None, :] / null_mean_squared_error[:, None],
-        0.0,
+        jnp.nan,
     )
-    log10_p_value = chi_squared_to_log10_p_value(chi_squared)
+    log10_p_value = jnp.where(valid_statistic_mask, chi_squared_to_log10_p_value(chi_squared), jnp.nan)
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
     return regenie2_linear_types.Regenie2MultiLinearChunkResult(
         beta=beta,
@@ -408,12 +410,13 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
         jnp.sqrt(null_mean_squared_error * genotype_residual_sum_squares_inverse),
         jnp.nan,
     )
+    valid_statistic_mask = positive_genotype_residual_mask & positive_null_mean_squared_error_mask
     chi_squared = jnp.where(
-        positive_genotype_residual_mask & positive_null_mean_squared_error_mask,
+        valid_statistic_mask,
         covariance_squared * genotype_residual_sum_squares_inverse / null_mean_squared_error,
-        0.0,
+        jnp.nan,
     )
-    log10_p_value = chi_squared_to_log10_p_value(chi_squared)
+    log10_p_value = jnp.where(valid_statistic_mask, chi_squared_to_log10_p_value(chi_squared), jnp.nan)
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
     return regenie2_linear_types.Regenie2LinearChunkResult(
         beta=beta,
@@ -473,12 +476,13 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
         jnp.sqrt(null_mean_squared_error[:, None] * genotype_residual_sum_squares_inverse[None, :]),
         jnp.nan,
     )
+    valid_statistic_mask = positive_genotype_residual_mask[None, :] & positive_null_mean_squared_error_mask[:, None]
     chi_squared = jnp.where(
-        positive_genotype_residual_mask[None, :] & positive_null_mean_squared_error_mask[:, None],
+        valid_statistic_mask,
         covariance_squared * genotype_residual_sum_squares_inverse[None, :] / null_mean_squared_error[:, None],
-        0.0,
+        jnp.nan,
     )
-    log10_p_value = chi_squared_to_log10_p_value(chi_squared)
+    log10_p_value = jnp.where(valid_statistic_mask, chi_squared_to_log10_p_value(chi_squared), jnp.nan)
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
     return regenie2_linear_types.Regenie2MultiLinearChunkResult(
         beta=beta,
