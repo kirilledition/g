@@ -35,9 +35,6 @@ EXPECTED_FINAL_COLUMNS = [
     "EXTRA",
 ]
 EXPECTED_CHUNK_COLUMNS = [
-    "chunk_identifier",
-    "variant_start_index",
-    "variant_stop_index",
     *EXPECTED_FINAL_COLUMNS,
 ]
 TEST_DATA_DIRECTORY = Path(__file__).resolve().parent / "data" / "bgen"
@@ -183,6 +180,8 @@ def test_native_writer_uses_shared_schema_and_null_placeholders(tmp_path: Path) 
 
     frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
     assert frame.columns == EXPECTED_CHUNK_COLUMNS
+    chunk_schema = pyarrow.ipc.open_file(output.iter_sorted_chunk_file_paths(tmp_path)[0]).schema
+    assert b"g.output.chunk_commits" in (chunk_schema.metadata or {})
     assert frame.get_column("TEST").to_list() == ["ADD", "ADD", "ADD", "ADD"]
     assert frame.get_column("INFO").to_list() == [1.0, 1.0, 1.0, 1.0]
     assert frame.get_column("EXTRA").to_list() == [None, None, None, None]

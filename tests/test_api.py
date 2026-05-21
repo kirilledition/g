@@ -206,7 +206,7 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     assert mock_pipeline.call_args.kwargs["covariate_names"] == ("age", "sex")
     assert mock_pipeline.call_args.kwargs["prediction_list_path"] == Path("predictions.list")
     assert mock_pipeline.call_args.kwargs["alignment_config"].sample_key_mode == types.SampleKeyMode.IID
-    assert mock_pipeline.call_args.kwargs["chunks_per_arrow_file"] == 4
+    assert mock_pipeline.call_args.kwargs["chunks_per_arrow_file"] == 16
     assert mock_pipeline.call_args.kwargs["arrow_compression"] == types.ArrowCompression.ZSTD
     mock_extend_run_manifest.assert_called_once()
     mock_write_toml.assert_called_once()

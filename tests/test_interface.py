@@ -364,6 +364,16 @@ def test_quantitative_trait_accepts_defaulted_binary_threshold() -> None:
     assert regenie_config.binary.p_threshold == config.DEFAULT_P_THRESHOLD
 
 
+def test_output_tuning_defaults_come_from_packaged_default_config() -> None:
+    default_options = config.load_default_option_dictionary()
+    default_output_options = default_options["g"]["output"]
+    regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
+
+    assert regenie_config.g_output.writer_threads == default_output_options["writer-threads"]
+    assert regenie_config.g_output.writer_queue_depth == default_output_options["writer-queue-depth"]
+    assert regenie_config.g_output.chunks_per_arrow_file == default_output_options["chunks-per-arrow-file"]
+
+
 def test_quantitative_execution_plan_rejects_direct_binary_only_config() -> None:
     regenie_config = config.RegenieConfig(
         input=config.InputConfig(

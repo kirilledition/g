@@ -742,14 +742,22 @@ def test_output_stage_benchmark_builds_recommended_matrix() -> None:
         small_chunk_size=1024,
         large_chunk_size=8192,
         many_phenotype_count=8,
+        writer_thread_counts=(4,),
+        writer_queue_depth_multipliers=(4,),
+        chunks_per_arrow_file_values=(16,),
+        arrow_compressions=(output_stage_benchmark.types.ArrowCompression.ZSTD,),
     )
 
     assert len(cases) == 8
     assert {benchmark_case.finalize_parquet for benchmark_case in cases} == {False, True}
     assert {benchmark_case.phenotype_count for benchmark_case in cases} == {1, 8}
     assert {benchmark_case.chunk_size for benchmark_case in cases} == {1024, 8192}
-    assert "arrow_chunks_single_phenotype_small_bsize_1024" in {benchmark_case.name for benchmark_case in cases}
-    assert "parquet_final_8_phenotypes_large_bsize_8192" in {benchmark_case.name for benchmark_case in cases}
+    assert "arrow_chunks_single_phenotype_small_bsize_1024_writer4_queue16_chunks16_zstd" in {
+        benchmark_case.name for benchmark_case in cases
+    }
+    assert "parquet_final_8_phenotypes_large_bsize_8192_writer4_queue16_chunks16_zstd" in {
+        benchmark_case.name for benchmark_case in cases
+    }
 
 
 def test_output_stage_benchmark_prepares_multi_phenotype_resources(tmp_path: Path) -> None:

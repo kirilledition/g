@@ -146,12 +146,12 @@ class OutputWriterSession:
         run_directory: str,
         chunks_directory: str,
         association_mode: str,
-        writer_thread_count: int = 1,
-        writer_queue_depth: int = 1,
-        finalize_parquet: bool = True,
-        chunks_per_arrow_file: int = 4,
-        arrow_compression: str = "zstd",
-        collect_stage_timings: bool = False,
+        writer_thread_count: int,
+        writer_queue_depth: int,
+        finalize_parquet: bool,
+        chunks_per_arrow_file: int,
+        arrow_compression: str,
+        collect_stage_timings: bool,
     ) -> None: ...
     def write_regenie2_native_chunk(
         self,
@@ -168,6 +168,18 @@ class OutputWriterSession:
     def finish_interrupted(self, signal_name: str) -> None: ...
     def abort(self) -> None: ...
 
+def write_regenie2_multi_native_chunk(
+    *,
+    writer_sessions: list[OutputWriterSession],
+    active_trait_indices: list[int],
+    metadata: VariantMetadata,
+    chunk_stats: ChunkStats,
+    beta: npt.NDArray[np.float32],
+    standard_error: npt.NDArray[np.float32],
+    chi_squared: npt.NDArray[np.float32],
+    log10_p_value: npt.NDArray[np.float32],
+    extra_code: npt.NDArray[np.int32] | None = None,
+) -> None: ...
 def finalize_output_run_chunks(
     run_directory: str,
     chunks_directory: str,

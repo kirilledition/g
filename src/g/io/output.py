@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from g import _core, types
+from g.interface import config
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,9 @@ DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT = 64
 DEFAULT_JAX_ENABLE_X64 = False
 DEFAULT_JAX_MATMUL_PRECISION = "float32"
 RESUME_POLICY = "manifest_committed_chunks"
-DEFAULT_WRITER_QUEUE_DEPTH = 4
-DEFAULT_WRITER_THREAD_COUNT = 8
-DEFAULT_CHUNKS_PER_ARROW_FILE = 4
+DEFAULT_WRITER_QUEUE_DEPTH = config.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
+DEFAULT_WRITER_THREAD_COUNT = config.DEFAULT_OUTPUT_WRITER_THREADS
+DEFAULT_CHUNKS_PER_ARROW_FILE = config.DEFAULT_OUTPUT_CHUNKS_PER_ARROW_FILE
 
 
 class MultiPhenotypeSampleMode(enum.StrEnum):

@@ -37,9 +37,9 @@ jax-transfer-guard = false
 
 [g.output]
 format = "parquet"
-writer-threads = 8
-writer-queue-depth = 4
-chunks-per-arrow-file = 4
+writer-threads = 4
+writer-queue-depth = 16
+chunks-per-arrow-file = 16
 arrow-compression = "zstd"
 resume = false
 resume-mode = "fast"

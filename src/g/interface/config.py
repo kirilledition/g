@@ -27,12 +27,22 @@ DEFAULT_FIRTH_MAXIMUM_STEP_SIZE = 5.0
 DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT = 64
 DEFAULT_JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = -1
 DEFAULT_JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
-DEFAULT_OUTPUT_WRITER_THREADS = 8
-DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH = 4
-DEFAULT_OUTPUT_CHUNKS_PER_ARROW_FILE = 4
 DEFAULT_LOG_FILTER = "info"
 DEFAULT_CONFIG_RESOURCE = "config.default.toml"
 QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "spa", "pThresh")
+
+
+def load_default_g_output_option(option_name: str) -> typing.Any:
+    """Load one packaged default output option."""
+    default_config_resource = importlib.resources.files("g").joinpath(DEFAULT_CONFIG_RESOURCE)
+    with default_config_resource.open("rb") as config_file:
+        default_options = tomllib.load(config_file)
+    return default_options["g"]["output"][option_name]
+
+
+DEFAULT_OUTPUT_WRITER_THREADS = int(load_default_g_output_option("writer-threads"))
+DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH = int(load_default_g_output_option("writer-queue-depth"))
+DEFAULT_OUTPUT_CHUNKS_PER_ARROW_FILE = int(load_default_g_output_option("chunks-per-arrow-file"))
 
 
 @dataclass(frozen=True)

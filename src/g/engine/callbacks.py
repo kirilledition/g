@@ -244,8 +244,28 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
 
     chunk_identifier = int(metadata.variant_start_index)
     write_start_time = time.perf_counter()
+    active_trait_indices = tuple(
+        trait_index
+        for trait_index, _writer_session in enumerate(writer_sessions)
+        if chunk_identifier not in committed_chunk_identifier_sets[trait_index]
+    )
+    if all(isinstance(writer_session, _core.OutputWriterSession) for writer_session in writer_sessions):
+        _core.write_regenie2_multi_native_chunk(
+            writer_sessions=list(writer_sessions),
+            active_trait_indices=list(active_trait_indices),
+            metadata=metadata,
+            chunk_stats=chunk_stats,
+            beta=host_values["beta"],
+            standard_error=host_values["standard_error"],
+            chi_squared=host_values["chi_squared"],
+            log10_p_value=host_values["log10_p_value"],
+            extra_code=host_values["extra_code"],
+        )
+        timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
+        timing.record_stage_duration(stage_timing_recorder, "multi_trait_output_write_total", write_start_time)
+        return
     for trait_index, writer_session in enumerate(writer_sessions):
-        if chunk_identifier in committed_chunk_identifier_sets[trait_index]:
+        if trait_index not in active_trait_indices:
             continue
         per_trait_write_start_time = time.perf_counter()
         extra_code_slice = None
