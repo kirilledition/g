@@ -90,6 +90,180 @@ def test_tuning_benchmark_builds_queue_depth_values() -> None:
     assert tuning_benchmark.build_queue_depth_values(4, (1, 2)) == (4, 8)
 
 
+def test_deep_profile_collects_regenie_and_g_stage_totals(tmp_path: Path) -> None:
+    g_stage_path = tmp_path / "g.stage_timings.json"
+    regenie_profile_path = tmp_path / "regenie.profile.json"
+    g_stage_path.write_text(
+        json.dumps({"stage_totals_seconds": {"native_engine_delivery": 2.0}}),
+        encoding="utf-8",
+    )
+    regenie_profile_path.write_text(
+        json.dumps({"stage_totals_seconds": {"bgen_decode_impute_filter": 3.0}}),
+        encoding="utf-8",
+    )
+    g_trial = deep_profile.TrialResult(
+        name="g_trial",
+        implementation="g",
+        trait_type="quantitative",
+        device="gpu",
+        status="success",
+        wall_time_seconds=5.0,
+        output_row_count=10,
+        stdout_log_path="stdout",
+        stderr_log_path="stderr",
+        command_arguments=[],
+        environment_overrides={},
+        stage_timing_path=str(g_stage_path),
+    )
+    regenie_trial = deep_profile.TrialResult(
+        name="regenie_trial",
+        implementation="regenie",
+        trait_type="quantitative",
+        device="external_cpu",
+        status="success",
+        wall_time_seconds=6.0,
+        output_row_count=10,
+        stdout_log_path="stdout",
+        stderr_log_path="stderr",
+        command_arguments=[],
+        environment_overrides={},
+        regenie_profile_path=str(regenie_profile_path),
+    )
+    aggregates = [
+        deep_profile.aggregate_trial_results(
+            name="headline_g_quantitative_gpu",
+            implementation="g",
+            trait_type="quantitative",
+            device="gpu",
+            warmup_count=0,
+            trial_results=[g_trial],
+        ),
+        deep_profile.aggregate_trial_results(
+            name="headline_regenie_quantitative",
+            implementation="regenie",
+            trait_type="quantitative",
+            device="external_cpu",
+            warmup_count=0,
+            trial_results=[regenie_trial],
+        ),
+    ]
+
+    stage_totals = deep_profile.collect_stage_totals(aggregates)
+
+    assert stage_totals["headline_g_quantitative_gpu:native_engine_delivery"] == 2.0
+    assert stage_totals["headline_regenie_quantitative:bgen_decode_impute_filter"] == 3.0
+
+
+def test_deep_profile_builds_stage_comparison_rows(tmp_path: Path) -> None:
+    g_stage_path = tmp_path / "g.stage_timings.json"
+    regenie_profile_path = tmp_path / "regenie.profile.json"
+    g_stage_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "native_engine_delivery": 2.0,
+                    "jax_compute": 4.0,
+                    "output_write": 1.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    regenie_profile_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "block_read": 4.0,
+                    "association_compute": 8.0,
+                    "block_output": 2.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    g_trial = deep_profile.TrialResult(
+        name="g_trial",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        status="success",
+        wall_time_seconds=5.0,
+        output_row_count=10,
+        stdout_log_path="stdout",
+        stderr_log_path="stderr",
+        command_arguments=[],
+        environment_overrides={},
+        stage_timing_path=str(g_stage_path),
+    )
+    regenie_trial = deep_profile.TrialResult(
+        name="regenie_trial",
+        implementation="regenie",
+        trait_type="binary",
+        device="external_cpu",
+        status="success",
+        wall_time_seconds=10.0,
+        output_row_count=10,
+        stdout_log_path="stdout",
+        stderr_log_path="stderr",
+        command_arguments=[],
+        environment_overrides={},
+        regenie_profile_path=str(regenie_profile_path),
+    )
+    aggregates = [
+        deep_profile.aggregate_trial_results(
+            name="headline_regenie_binary",
+            implementation="regenie",
+            trait_type="binary",
+            device="external_cpu",
+            warmup_count=0,
+            trial_results=[regenie_trial],
+        ),
+        deep_profile.aggregate_trial_results(
+            name="headline_g_binary_gpu",
+            implementation="g",
+            trait_type="binary",
+            device="gpu",
+            warmup_count=0,
+            trial_results=[g_trial],
+        ),
+    ]
+
+    rows = deep_profile.build_stage_comparison_rows(aggregates)
+    bgen_row = next(row for row in rows if row["stage_group"] == "bgen_decode")
+    findings = deep_profile.build_algorithmic_findings(rows)
+
+    assert bgen_row["regenie_seconds"] == 4.0
+    assert bgen_row["g_seconds"] == 2.0
+    assert bgen_row["g_speedup_ratio"] == 2.0
+    assert any("BGEN delivery" in finding for finding in findings)
+
+
+def test_deep_profile_algorithmic_findings_respect_speedup_direction() -> None:
+    rows: list[dict[str, float | str]] = [
+        {
+            "trait_type": "quantitative",
+            "g_device": "cpu",
+            "stage_group": "input_setup",
+            "regenie_seconds": 4.0,
+            "g_seconds": 2.0,
+            "g_speedup_ratio": 2.0,
+        },
+        {
+            "trait_type": "binary",
+            "g_device": "cpu",
+            "stage_group": "output",
+            "regenie_seconds": 1.0,
+            "g_seconds": 4.0,
+            "g_speedup_ratio": 0.25,
+        },
+    ]
+
+    findings = deep_profile.build_algorithmic_findings(rows)
+
+    assert any("quantitative/cpu: g is faster in input_setup" in finding for finding in findings)
+    assert any("binary/cpu: REGENIE remains faster in output" in finding for finding in findings)
+
+
 def test_binary_firth_parity_harness_synthetic_fixture_passes() -> None:
     comparison = binary_firth_parity.compare_binary_paths(
         inputs=binary_firth_parity.build_synthetic_inputs(),

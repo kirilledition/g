@@ -55,6 +55,7 @@
 #include "Interaction.hpp"
 #include "Masks.hpp"
 #include "Data.hpp"
+#include "RegenieProfile.hpp"
 
 #ifdef WITH_HTSLIB
 #include "remeta/regenie_ld_matrix_writer.hpp"
@@ -2243,13 +2244,28 @@ void Data::test_snps_fast() {
 #endif
   sout << endl;
 
-  file_read_initialization(); // set up files for reading
-  read_pheno_and_cov(&files, &params, &in_filters, &pheno_data, &m_ests, &Gblock, sout);   // read phenotype and covariate files
-  prep_run(&files, &in_filters, &params, &pheno_data, &m_ests, sout); // check blup files and adjust for covariates
-  set_blocks_for_testing();   // set number of blocks
+  {
+    regenie_profile::ScopedStage profile_stage("input_file_initialization");
+    file_read_initialization(); // set up files for reading
+  }
+  regenie_profile::set_metadata("n_samples", static_cast<uint64_t>(params.n_samples));
+  regenie_profile::set_metadata("stream_bgen", params.streamBGEN ? "true" : "false");
+  {
+    regenie_profile::ScopedStage profile_stage("phenotype_covariate_load");
+    read_pheno_and_cov(&files, &params, &in_filters, &pheno_data, &m_ests, &Gblock, sout);   // read phenotype and covariate files
+  }
+  {
+    regenie_profile::ScopedStage profile_stage("step2_setup");
+    prep_run(&files, &in_filters, &params, &pheno_data, &m_ests, sout); // check blup files and adjust for covariates
+    set_blocks_for_testing();   // set number of blocks
+  }
+  regenie_profile::set_metadata("total_n_block", params.total_n_block);
   print_usage_info(&params, &files, sout);
   print_test_info();
-  setup_output(&ofile, out, ofile_split, out_split); // result file
+  {
+    regenie_profile::ScopedStage profile_stage("output_setup");
+    setup_output(&ofile, out, ofile_split, out_split); // result file
+  }
   if(params.w_interaction && (params.trait_mode==0) && !params.no_robust && !params.force_robust) 
     nullHLM.prep_run(&pheno_data, &params);
   if(params.trait_mode) set_nullreg_mat();
@@ -2282,13 +2298,19 @@ void Data::test_snps_fast() {
 
     if(!params.getCorMat){
       // read polygenic effect predictions from step 1
-      blup_read_chr(false, chrom, m_ests, files, in_filters, pheno_data, params, sout);
+      {
+        regenie_profile::ScopedStage profile_stage("prediction_load");
+        blup_read_chr(false, chrom, m_ests, files, in_filters, pheno_data, params, sout);
+      }
 
       // compute phenotype residual (adjusting for BLUP [and covariates for non-QTs])
-      if(params.trait_mode == 1) compute_res_bin(chrom);
-      else if(params.trait_mode == 2) compute_res_count(chrom);
-      else if(params.trait_mode == 3) compute_res_cox(chrom);
-      else compute_res();
+      {
+        regenie_profile::ScopedStage profile_stage("null_residual_setup");
+        if(params.trait_mode == 1) compute_res_bin(chrom);
+        else if(params.trait_mode == 2) compute_res_count(chrom);
+        else if(params.trait_mode == 3) compute_res_cox(chrom);
+        else compute_res();
+      }
 
       // print y/x/logreg offset used for level 1 
       if(params.debug) write_inputs();
@@ -2315,38 +2337,48 @@ void Data::test_snps_fast() {
       analyze_block(chrom, bs, &snp_tally, block_info);
 
       // print the results
-      for (auto const& snp_data : block_info){
+      {
+        regenie_profile::ScopedStage profile_stage("block_output");
+        for (auto const& snp_data : block_info){
 
-        if( snp_data.ignored ) {
-          snp_tally.n_ignored_snps++;
-          continue;
-        }
-
-        snp_tally.n_ignored_tests += snp_data.ignored_trait.count();
-        if(params.firth || params.use_SPA) {
-          n_corrected += (!snp_data.ignored_trait && snp_data.is_corrected).count();
-          snp_tally.n_failed_tests += (!snp_data.ignored_trait && snp_data.test_fail).count();
-          if(params.w_interaction) {
-            n_corrected += (2 + params.ncov_interaction) * snp_data.is_corrected_inter.count(); // main, inter & joint
-            snp_tally.n_failed_tests += (2 + params.ncov_interaction) * (snp_data.is_corrected_inter && snp_data.test_fail_inter).count(); // main, inter & joint
-          }
-        }
-
-        for(int j = 0; j < params.n_pheno; ++j) {
-
-          if( !params.pheno_pass(j) || snp_data.ignored_trait(j) ) {
-            if(!params.split_by_pheno) // if using single file, print NAs for snp/trait sum stats
-              ofile << snp_data.sum_stats[j];
-
+          if( snp_data.ignored ) {
+            regenie_profile::increment_counter("ignored_variants");
+            snp_tally.n_ignored_snps++;
             continue;
           }
 
-          if(params.split_by_pheno)
-            (*ofile_split[j]) << snp_data.sum_stats[j]; // add test info
-          else
-            ofile << snp_data.sum_stats[j]; // add test info
-        }
+          regenie_profile::increment_counter("tested_variants");
+          regenie_profile::increment_counter("ignored_tests", snp_data.ignored_trait.count());
+          snp_tally.n_ignored_tests += snp_data.ignored_trait.count();
+          if(params.firth || params.use_SPA) {
+            uint64_t const corrected_tests = (!snp_data.ignored_trait && snp_data.is_corrected).count();
+            uint64_t const failed_tests = (!snp_data.ignored_trait && snp_data.test_fail).count();
+            regenie_profile::increment_counter("corrected_tests", corrected_tests);
+            regenie_profile::increment_counter("failed_tests", failed_tests);
+            n_corrected += corrected_tests;
+            snp_tally.n_failed_tests += failed_tests;
+            if(params.w_interaction) {
+              n_corrected += (2 + params.ncov_interaction) * snp_data.is_corrected_inter.count(); // main, inter & joint
+              snp_tally.n_failed_tests += (2 + params.ncov_interaction) * (snp_data.is_corrected_inter && snp_data.test_fail_inter).count(); // main, inter & joint
+            }
+          }
 
+          for(int j = 0; j < params.n_pheno; ++j) {
+
+            if( !params.pheno_pass(j) || snp_data.ignored_trait(j) ) {
+              if(!params.split_by_pheno) // if using single file, print NAs for snp/trait sum stats
+                ofile << snp_data.sum_stats[j];
+
+              continue;
+            }
+
+            if(params.split_by_pheno)
+              (*ofile_split[j]) << snp_data.sum_stats[j]; // add test info
+            else
+              ofile << snp_data.sum_stats[j]; // add test info
+          }
+
+        }
       }
 
       snp_tally.snp_count += bs;
@@ -2362,6 +2394,9 @@ void Data::test_snps_fast() {
 // test SNPs in block
 void Data::analyze_block(int const& chrom, int const& n_snps, tally* snp_tally, vector<variant_block> &all_snps_info){
 
+  regenie_profile::ScopedStage profile_stage("block_total");
+  regenie_profile::increment_counter("blocks");
+  regenie_profile::increment_counter("variants_requested", n_snps);
   auto t1 = std::chrono::high_resolution_clock::now();
   auto const bgen_loading_nanoseconds_before = get_step2_bgen_loading_nanoseconds();
   const int start = snp_tally->snp_count;
@@ -2371,10 +2406,16 @@ void Data::analyze_block(int const& chrom, int const& n_snps, tally* snp_tally, 
   vector<uint64> indices(n_snps);
   std::iota(indices.begin(), indices.end(), start);
 
-  readChunk(indices, chrom, snp_data_blocks, insize, outsize, all_snps_info);
+  {
+    regenie_profile::ScopedStage read_stage("block_read");
+    readChunk(indices, chrom, snp_data_blocks, insize, outsize, all_snps_info);
+  }
 
   // analyze using openmp
-  compute_tests_mt(chrom, indices, snp_data_blocks, insize, outsize, all_snps_info);
+  {
+    regenie_profile::ScopedStage compute_stage("association_compute");
+    compute_tests_mt(chrom, indices, snp_data_blocks, insize, outsize, all_snps_info);
+  }
   //compute_tests_st(chrom, indices, snp_data_blocks, insize, outsize, all_snps_info); // this is slower
 
   auto const bgen_loading_nanoseconds_after = get_step2_bgen_loading_nanoseconds();
@@ -2507,8 +2548,10 @@ void Data::compute_tests_mt(int const& chrom, vector<uint64> indices,vector< vec
       reset_thread(&(Gblock.thread_data[thread_num]), params);
 
       // check if g is sparse
-      if (!params.w_interaction)
+      if (!params.w_interaction) {
+        regenie_profile::ScopedStage profile_stage("sparse_check");
         check_sparse_G(isnp, thread_num, &Gblock, params.n_samples, in_filters.ind_in_analysis, block_info->n_zero, params.prop_zero_thr);
+      }
 
       if (params.w_interaction)
       {
@@ -2518,9 +2561,10 @@ void Data::compute_tests_mt(int const& chrom, vector<uint64> indices,vector< vec
       }
 
       // for QTs with non-sparse G: residualize and re-scale
-      if (!params.skip_cov_res && (params.trait_mode == 0) && !Gblock.thread_data[thread_num].is_sparse)
+      if (!params.skip_cov_res && (params.trait_mode == 0) && !Gblock.thread_data[thread_num].is_sparse) {
+        regenie_profile::ScopedStage profile_stage("covariate_projection");
         residualize_geno(pheno_data.new_cov, Gblock.Gmat.col(isnp), block_info, params);
-      else block_info->scale_fac = 1;
+      } else block_info->scale_fac = 1;
 
       // skip SNP if fails filters
       if (block_info->ignored || params.getCorMat)
@@ -4455,4 +4499,3 @@ void Data::print_ld(SpMat& Gmat, ArrayXi& indices_ld, ArrayXb& is_absent, Files*
   exit_early();
 
 }
-

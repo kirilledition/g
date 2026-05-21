@@ -40,6 +40,7 @@
 #include "Masks.hpp"
 #include "Data.hpp"
 #include "MCC.hpp"
+#include "RegenieProfile.hpp"
 
 using namespace std;
 using namespace Eigen;
@@ -342,6 +343,8 @@ void compute_score_qt_mcc(int const& isnp, int const& snp_index, int const& thre
 // score test stat for QT
 void compute_score_qt(int const& isnp, int const& snp_index, int const& thread_num, string const& test_string, string const& model_type, const Ref<const MatrixXd>& yres, const Ref<const RowVectorXd>& p_sd_yres, struct param const& params, struct phenodt& pheno_data, struct geno_block& gblock, variant_block* block_info, vector<snp> const& snpinfo, struct in_files& files, mstream& sout){
 
+  regenie_profile::ScopedStage profile_stage("qt_score");
+  regenie_profile::increment_counter("qt_score_variants");
   bool run_full_test = true; // disable this for QTs // !params.skip_cov_res;
   double denum = 0, gsc = block_info->flipped ? (4 * params.n_samples + block_info->scale_fac) : block_info->scale_fac;
   string tmpstr; // for sum stats
@@ -469,6 +472,8 @@ void compute_score_qt(int const& isnp, int const& snp_index, int const& thread_n
 
 void compute_score_bt(int const& isnp, int const& snp_index, int const& chrom, int const& thread_num, string const& test_string, string const& model_type, const Ref<const MatrixXd>& yres, struct param const& params, struct phenodt& pheno_data, struct geno_block& gblock, variant_block* block_info, vector<snp> const& snpinfo, struct ests const& m_ests, struct f_ests& fest, struct in_files& files, mstream& sout){
 
+  regenie_profile::ScopedStage profile_stage("bt_score");
+  regenie_profile::increment_counter("bt_score_variants");
   string tmpstr; 
   VectorXd GW, XtWG;
   SpVec GWs;
@@ -1987,6 +1992,7 @@ void get_beta_start_firth(struct f_ests* firth_est, struct ests const* m_ests){
 
 void check_pval_snp(variant_block* block_info, data_thread* dt_thr, int const& chrom, int const& ph, int const& isnp, struct phenodt& pheno_data, struct geno_block& gblock, struct ests const& m_ests, struct f_ests& fest, struct param const& params, mstream& sout){
 
+  regenie_profile::ScopedStage profile_stage("correction_candidate_check");
   // if firth isn't used, or Tstat < threshold, no correction done
   if(!block_info->is_corrected(ph) || (fabs(dt_thr->stats(ph)) <= params.z_thr)){
     get_sumstats(false, ph, dt_thr);
@@ -1997,6 +2003,7 @@ void check_pval_snp(variant_block* block_info, data_thread* dt_thr, int const& c
 
   if(params.firth){ // firth
     
+    regenie_profile::increment_counter("firth_candidate_tests");
     run_firth_correction_snp(chrom, ph, isnp, gblock, block_info, dt_thr, pheno_data, m_ests, fest, params, sout);
     if(block_info->test_fail(ph)) {
       get_sumstats(true, ph, dt_thr);
@@ -2012,6 +2019,7 @@ void check_pval_snp(variant_block* block_info, data_thread* dt_thr, int const& c
 
   } else if(params.use_SPA) { // spa
 
+    regenie_profile::increment_counter("spa_candidate_tests");
     run_SPA_test(block_info->test_fail(ph), ph, dt_thr, pheno_data.masked_indivs.col(ph).array(), m_ests, params);
     if(block_info->test_fail(ph)) {
       get_sumstats(true, ph, dt_thr);
@@ -2042,6 +2050,7 @@ void get_sumstats(bool const& no_pv, int const& ph, data_thread* dt_thr) {
 
 void run_firth_correction_snp(int const& chrom, int const& ph, int const& isnp, struct geno_block& gblock, variant_block* block_info, data_thread* dt_thr, struct phenodt& pheno_data, struct ests const& m_ests, struct f_ests& fest, struct param const& params, mstream& sout){
 
+  regenie_profile::ScopedStage profile_stage("firth_correction");
   if(!params.firth_approx){ // exact firth
     if (params.trait_mode == 1) {
       // obtain null deviance (set SNP effect to 0 and compute max. pen. LL)
@@ -2066,6 +2075,7 @@ void run_firth_correction_snp(int const& chrom, int const& ph, int const& isnp, 
 }
 
 void run_SPA_test(bool& test_fail, int const& ph, data_thread* dt_thr, const Ref<const ArrayXb>& mask, struct ests const& m_ests, struct param const& params){
+  regenie_profile::ScopedStage profile_stage("spa_correction");
   run_SPA_test_snp(dt_thr->chisq_val(ph), dt_thr->pval_log(ph), dt_thr->stats(ph), dt_thr->denum(ph), dt_thr->fastSPA, dt_thr->Gsparse, dt_thr->Gres.array(), m_ests.Y_hat_p.col(ph).array(), m_ests.Gamma_sqrt.col(ph).array(), mask, test_fail, params.tol_spa, params.niter_max_spa, params.missing_value_double, params.nl_dbl_dmin);
 }
 

@@ -44,6 +44,7 @@
 #include "Masks.hpp"
 #include "HLM.hpp"
 #include "Data.hpp"
+#include "RegenieProfile.hpp"
 
 #include <boost/exception/all.hpp>
 #include <boost/math/special_functions/gamma.hpp>
@@ -61,8 +62,15 @@ MeasureTime::~MeasureTime(){ }
 
 int main( int argc, char** argv ) {
 
+  regenie_profile::initialize(argc, argv);
   Data data;
   read_params_and_check(argc, argv, &data.params, &data.files, &data.in_filters, &data.runtime, data.sout);
+  regenie_profile::set_metadata("version", VERSION_NUMBER);
+  regenie_profile::set_metadata("file_type", data.params.file_type);
+  regenie_profile::set_metadata("trait_mode", data.params.trait_mode);
+  regenie_profile::set_metadata("block_size", data.params.block_size);
+  regenie_profile::set_metadata("threads", data.params.threads);
+  regenie_profile::set_metadata("n_pheno", data.params.n_pheno);
 
   try {// after opening sout
 
@@ -74,22 +82,29 @@ int main( int argc, char** argv ) {
 
   } catch (bad_alloc& badAlloc) {
     data.sout << "ERROR: bad_alloc caught, not enough memory (" << badAlloc.what() << ")\n";
+    regenie_profile::finalize("failed", badAlloc.what());
     exit(EXIT_FAILURE);
   } catch (const std::string& msg){ 
     data.sout << "ERROR: " << msg << endl;
+    regenie_profile::finalize("failed", msg);
     exit(EXIT_FAILURE);
   } catch (const char* msg) {
     std::string str_msg = msg;
     data.sout <<  "ERROR: " <<  str_msg << endl;
+    regenie_profile::finalize("failed", str_msg);
     exit(EXIT_FAILURE);
   } catch (boost::exception const& e) {
     data.sout << "ERROR: " << boost::diagnostic_information(e) << endl;
+    regenie_profile::finalize("failed", boost::diagnostic_information(e));
     exit(EXIT_FAILURE);
   } catch (std::exception const&  e) {
     data.sout << "ERROR: " << e.what() << endl;
+    regenie_profile::finalize("failed", e.what());
     exit(EXIT_FAILURE);
   } catch (...) {
-    data.sout << boost::current_exception_diagnostic_information() << endl;
+    std::string diagnostic = boost::current_exception_diagnostic_information();
+    data.sout << diagnostic << endl;
+    regenie_profile::finalize("failed", diagnostic);
     exit(EXIT_FAILURE);
 }
 
@@ -97,6 +112,7 @@ int main( int argc, char** argv ) {
 
   data.sout << "\nElapsed time : " << std::chrono::duration<double>(data.runtime.end - data.runtime.begin).count() << "s" << endl;
   data.sout << "End time: " << ctime(&data.runtime.end_time_info) << endl; 
+  regenie_profile::finalize("success");
 
 }
 
