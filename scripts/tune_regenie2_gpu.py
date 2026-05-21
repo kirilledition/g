@@ -43,7 +43,7 @@ benchmark_regenie_comparison = load_script_module(
 
 DEFAULT_OUTPUT_DIRECTORY = Path("data/benchmarks/regenie2_gpu_tuning")
 DEFAULT_BGEN_PRE_SWEEP_CHUNK_SIZE = 8192
-DEFAULT_BGEN_PATH_MODE = benchmark_bgen_reader.BenchmarkPathMode.SAMPLE_MAJOR_BUFFERED
+DEFAULT_BGEN_PATH_MODE = benchmark_bgen_reader.BenchmarkPathMode.VARIANT_MAJOR_BUFFERED
 
 
 class TraitSelection(enum.StrEnum):

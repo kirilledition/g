@@ -34,14 +34,23 @@ pub(super) struct VariantDecodeResult {
 pub(super) struct DosageTileDecodeResult {
     pub(super) profile_snapshot: ThreadLocalProfileSnapshot,
     pub(super) selected_dosage_totals: Vec<f32>,
-    pub(super) selected_dosage_square_totals: Vec<f32>,
-    pub(super) selected_observation_counts: Vec<i32>,
+}
+
+pub(super) struct VariantMajorTileStatsMut<'a> {
+    pub(super) dosage_sum: &'a mut [f32],
+    pub(super) dosage_square_sum: &'a mut [f32],
+    pub(super) observation_count: &'a mut [i32],
+    pub(super) zero_count: &'a mut [i32],
+    pub(super) nonzero_count: &'a mut [i32],
+    pub(super) homozygous_reference_count: &'a mut [i32],
+    pub(super) heterozygous_count: &'a mut [i32],
+    pub(super) homozygous_alternate_count: &'a mut [i32],
+}
+
+#[derive(Debug)]
+pub(super) struct VariantMajorTileDecodeResult {
+    pub(super) profile_snapshot: ThreadLocalProfileSnapshot,
     pub(super) has_missing_values: bool,
-    pub(super) zero_counts: Vec<i32>,
-    pub(super) nonzero_counts: Vec<i32>,
-    pub(super) homozygous_reference_counts: Vec<i32>,
-    pub(super) heterozygous_counts: Vec<i32>,
-    pub(super) homozygous_alternate_counts: Vec<i32>,
 }
 
 fn build_variant_decode_result(
@@ -198,18 +207,7 @@ pub(super) fn decode_variant_dosage_tile_into_row_major_matrix(
             .unwrap_or(u64::MAX);
     }
 
-    Ok(DosageTileDecodeResult {
-        profile_snapshot: thread_local_profile_snapshot,
-        selected_dosage_totals,
-        selected_dosage_square_totals: Vec::new(),
-        selected_observation_counts: Vec::new(),
-        has_missing_values: false,
-        zero_counts: Vec::new(),
-        nonzero_counts: Vec::new(),
-        homozygous_reference_counts: Vec::new(),
-        heterozygous_counts: Vec::new(),
-        homozygous_alternate_counts: Vec::new(),
-    })
+    Ok(DosageTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_totals })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -224,17 +222,11 @@ pub(super) fn decode_variant_major_dosage_tile(
     tile_variant_start_index: usize,
     profiling_enabled: bool,
     trusted_no_missing_diploid: bool,
+    tile_stats: &mut VariantMajorTileStatsMut<'_>,
     thread_scratch: &mut ThreadScratch,
-) -> Result<DosageTileDecodeResult, BgenError> {
+) -> Result<VariantMajorTileDecodeResult, BgenError> {
+    validate_variant_major_tile_stats_lengths(tile_stats, variant_record_chunk.len())?;
     let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
-    let mut selected_dosage_totals = vec![0.0_f32; variant_record_chunk.len()];
-    let mut selected_dosage_square_totals = vec![0.0_f32; variant_record_chunk.len()];
-    let mut selected_observation_counts = vec![0_i32; variant_record_chunk.len()];
-    let mut zero_counts = vec![0_i32; variant_record_chunk.len()];
-    let mut nonzero_counts = vec![0_i32; variant_record_chunk.len()];
-    let mut homozygous_reference_counts = vec![0_i32; variant_record_chunk.len()];
-    let mut heterozygous_counts = vec![0_i32; variant_record_chunk.len()];
-    let mut homozygous_alternate_counts = vec![0_i32; variant_record_chunk.len()];
     let mut has_missing_values = false;
     for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
         let variant_decode_result = decode_variant_dosages_into_variant_major_matrix(
@@ -251,15 +243,15 @@ pub(super) fn decode_variant_major_dosage_tile(
             thread_scratch,
         )?;
         let variant_profile_snapshot = variant_decode_result.profile_snapshot;
-        selected_dosage_totals[tile_variant_index] = variant_decode_result.selected_dosage_total;
-        selected_dosage_square_totals[tile_variant_index] = variant_decode_result.selected_dosage_square_total;
-        selected_observation_counts[tile_variant_index] = variant_decode_result.selected_observation_count;
+        tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.selected_dosage_total;
+        tile_stats.dosage_square_sum[tile_variant_index] = variant_decode_result.selected_dosage_square_total;
+        tile_stats.observation_count[tile_variant_index] = variant_decode_result.selected_observation_count;
         has_missing_values |= variant_decode_result.has_missing_values;
-        zero_counts[tile_variant_index] = variant_decode_result.zero_count;
-        nonzero_counts[tile_variant_index] = variant_decode_result.nonzero_count;
-        homozygous_reference_counts[tile_variant_index] = variant_decode_result.homozygous_reference_count;
-        heterozygous_counts[tile_variant_index] = variant_decode_result.heterozygous_count;
-        homozygous_alternate_counts[tile_variant_index] = variant_decode_result.homozygous_alternate_count;
+        tile_stats.zero_count[tile_variant_index] = variant_decode_result.zero_count;
+        tile_stats.nonzero_count[tile_variant_index] = variant_decode_result.nonzero_count;
+        tile_stats.homozygous_reference_count[tile_variant_index] = variant_decode_result.homozygous_reference_count;
+        tile_stats.heterozygous_count[tile_variant_index] = variant_decode_result.heterozygous_count;
+        tile_stats.homozygous_alternate_count[tile_variant_index] = variant_decode_result.homozygous_alternate_count;
         thread_local_profile_snapshot.compressed_block_fetch_ns += variant_profile_snapshot.compressed_block_fetch_ns;
         thread_local_profile_snapshot.compressed_block_fetch_count +=
             variant_profile_snapshot.compressed_block_fetch_count;
@@ -276,18 +268,25 @@ pub(super) fn decode_variant_major_dosage_tile(
         thread_local_profile_snapshot.output_byte_count += variant_profile_snapshot.output_byte_count;
     }
     thread_local_profile_snapshot.decode_tile_count += 1;
-    Ok(DosageTileDecodeResult {
-        profile_snapshot: thread_local_profile_snapshot,
-        selected_dosage_totals,
-        selected_dosage_square_totals,
-        selected_observation_counts,
-        has_missing_values,
-        zero_counts,
-        nonzero_counts,
-        homozygous_reference_counts,
-        heterozygous_counts,
-        homozygous_alternate_counts,
-    })
+    Ok(VariantMajorTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, has_missing_values })
+}
+
+pub(super) fn validate_variant_major_tile_stats_lengths(
+    tile_stats: &VariantMajorTileStatsMut<'_>,
+    variant_count: usize,
+) -> Result<(), BgenError> {
+    if tile_stats.dosage_sum.len() == variant_count
+        && tile_stats.dosage_square_sum.len() == variant_count
+        && tile_stats.observation_count.len() == variant_count
+        && tile_stats.zero_count.len() == variant_count
+        && tile_stats.nonzero_count.len() == variant_count
+        && tile_stats.homozygous_reference_count.len() == variant_count
+        && tile_stats.heterozygous_count.len() == variant_count
+        && tile_stats.homozygous_alternate_count.len() == variant_count
+    {
+        return Ok(());
+    }
+    Err(BgenError::Range(format!("Variant-major tile stats shape mismatch for {variant_count} variants.")))
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments, clippy::too_many_lines)]
@@ -936,7 +935,7 @@ fn decode_variant_dosages_into_variant_major_matrix(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
     sample_ploidy_and_missingness: &[u8],
     packed_probability_bytes: &[u8],
@@ -978,10 +977,55 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
     let mut heterozygous_count = 0_i32;
     let mut homozygous_alternate_count = 0_i32;
 
-    for (file_sample_index, (ploidy_and_missingness, probability_pair)) in sample_ploidy_and_missingness
-        .iter()
-        .zip(packed_probability_bytes[..expected_probability_byte_count].chunks_exact(2))
-        .enumerate()
+    let probability_pairs = packed_probability_bytes[..expected_probability_byte_count].chunks_exact(2);
+    if !sample_selection.is_identity && all_samples_present {
+        for (selected_index, file_sample_index) in sample_selection.selected_file_indices.iter().copied().enumerate() {
+            let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
+                BgenError::InvalidFormat("Integer overflow while indexing 8-bit BGEN probabilities.".to_string())
+            })?;
+            let probability_pair =
+                read_exact_bytes(&packed_probability_bytes[..expected_probability_byte_count], probability_offset, 2)?;
+            let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
+            let dosage_value = dosage_lookup[packed_probability_index];
+            unsafe {
+                // Selected sample order maps directly to the caller's output row order.
+                output_pointer.add(variant_row_offset + selected_index).write(dosage_value);
+            }
+            selected_dosage_total += dosage_value;
+            selected_dosage_square_total += dosage_value * dosage_value;
+            selected_observation_count += 1;
+            preprocess::increment_dosage_summary_counts(
+                dosage_value,
+                &mut zero_count,
+                &mut nonzero_count,
+                &mut homozygous_reference_count,
+                &mut heterozygous_count,
+                &mut homozygous_alternate_count,
+            );
+        }
+        record_variant_major_decode_profile(
+            &mut thread_local_profile_snapshot,
+            probability_decode_start_time,
+            output_write_start_time,
+            selected_sample_count,
+        )?;
+
+        return Ok(VariantDecodeResult {
+            profile_snapshot: thread_local_profile_snapshot,
+            selected_dosage_total,
+            selected_dosage_square_total,
+            selected_observation_count,
+            has_missing_values: false,
+            zero_count,
+            nonzero_count,
+            homozygous_reference_count,
+            heterozygous_count,
+            homozygous_alternate_count,
+        });
+    }
+
+    for (file_sample_index, (ploidy_and_missingness, probability_pair)) in
+        sample_ploidy_and_missingness.iter().zip(probability_pairs).enumerate()
     {
         let observed_ploidy = ploidy_and_missingness & PLOIDY_MASK;
         if observed_ploidy != 2 {

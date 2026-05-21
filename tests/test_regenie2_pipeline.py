@@ -110,6 +110,7 @@ class FakeRunEngine:
         self.run_method: str | None = None
         self.reset_profile_count = 0
         self.validation_count = 0
+        self.trusted_validation_mark_count = 0
         FakeRunEngine.instances.append(self)
 
     def reset_profile(self) -> None:
@@ -120,6 +121,9 @@ class FakeRunEngine:
 
     def validate_trusted_no_missing_diploid(self) -> None:
         self.validation_count += 1
+
+    def mark_trusted_no_missing_diploid_validated(self) -> None:
+        self.trusted_validation_mark_count += 1
 
     def variant_metadata_slice(
         self,

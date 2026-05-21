@@ -846,7 +846,7 @@ def run_bgen_sweep(
                     "--repeat-count",
                     str(arguments.tuning_trials),
                     "--path-modes",
-                    benchmark_bgen_reader.BenchmarkPathMode.SAMPLE_MAJOR_BUFFERED.value,
+                    benchmark_bgen_reader.BenchmarkPathMode.VARIANT_MAJOR_BUFFERED.value,
                 ]
             )
             case_report = benchmark_bgen_reader.run_case_subprocess(

@@ -72,6 +72,7 @@ def validate_trusted_bgen_with_cache(
     )
     cache_path = trusted_bgen_validation_cache_path(fingerprint)
     if validation_mode == types.TrustedBgenValidationMode.CACHE_ON_MISS and cache_path.exists():
+        engine.mark_trusted_no_missing_diploid_validated()
         return
     engine.validate_trusted_no_missing_diploid()
     cache_path.parent.mkdir(parents=True, exist_ok=True)

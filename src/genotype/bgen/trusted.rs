@@ -1,8 +1,9 @@
 use std::time::Instant;
 
 use super::decode::{
-    DosageTileDecodeResult, ThreadScratch, VariantDecodeResult, read_exact_bytes, read_probability_block, read_u8_at,
-    read_u16_at, read_u32_at, u32_to_usize, unphased_eight_bit_dosage_lookup,
+    ThreadScratch, VariantDecodeResult, VariantMajorTileDecodeResult, VariantMajorTileStatsMut, read_exact_bytes,
+    read_probability_block, read_u8_at, read_u16_at, read_u32_at, u32_to_usize, unphased_eight_bit_dosage_lookup,
+    validate_variant_major_tile_stats_lengths,
 };
 use super::metadata::VariantRecord;
 use super::profile::{ThreadLocalProfileSnapshot, elapsed_nanoseconds};
@@ -108,18 +109,11 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
     selected_sample_count: usize,
     tile_variant_start_index: usize,
     profiling_enabled: bool,
+    tile_stats: &mut VariantMajorTileStatsMut<'_>,
     thread_scratch: &mut ThreadScratch,
-) -> Result<DosageTileDecodeResult, BgenError> {
+) -> Result<VariantMajorTileDecodeResult, BgenError> {
+    validate_variant_major_tile_stats_lengths(tile_stats, variant_record_chunk.len())?;
     let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
-    let mut selected_dosage_totals = vec![0.0_f32; variant_record_chunk.len()];
-    let mut selected_dosage_square_totals = vec![0.0_f32; variant_record_chunk.len()];
-    let selected_observation_counts =
-        vec![i32::try_from(selected_sample_count).unwrap_or(i32::MAX); variant_record_chunk.len()];
-    let mut zero_counts = vec![0_i32; variant_record_chunk.len()];
-    let mut nonzero_counts = vec![0_i32; variant_record_chunk.len()];
-    let mut homozygous_reference_counts = vec![0_i32; variant_record_chunk.len()];
-    let mut heterozygous_counts = vec![0_i32; variant_record_chunk.len()];
-    let mut homozygous_alternate_counts = vec![0_i32; variant_record_chunk.len()];
     for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
         let variant_decode_result = decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
             mmap,
@@ -134,13 +128,14 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
             thread_scratch,
         )?;
         let variant_profile_snapshot = variant_decode_result.profile_snapshot;
-        selected_dosage_totals[tile_variant_index] = variant_decode_result.selected_dosage_total;
-        selected_dosage_square_totals[tile_variant_index] = variant_decode_result.selected_dosage_square_total;
-        zero_counts[tile_variant_index] = variant_decode_result.zero_count;
-        nonzero_counts[tile_variant_index] = variant_decode_result.nonzero_count;
-        homozygous_reference_counts[tile_variant_index] = variant_decode_result.homozygous_reference_count;
-        heterozygous_counts[tile_variant_index] = variant_decode_result.heterozygous_count;
-        homozygous_alternate_counts[tile_variant_index] = variant_decode_result.homozygous_alternate_count;
+        tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.selected_dosage_total;
+        tile_stats.dosage_square_sum[tile_variant_index] = variant_decode_result.selected_dosage_square_total;
+        tile_stats.observation_count[tile_variant_index] = variant_decode_result.selected_observation_count;
+        tile_stats.zero_count[tile_variant_index] = variant_decode_result.zero_count;
+        tile_stats.nonzero_count[tile_variant_index] = variant_decode_result.nonzero_count;
+        tile_stats.homozygous_reference_count[tile_variant_index] = variant_decode_result.homozygous_reference_count;
+        tile_stats.heterozygous_count[tile_variant_index] = variant_decode_result.heterozygous_count;
+        tile_stats.homozygous_alternate_count[tile_variant_index] = variant_decode_result.homozygous_alternate_count;
         thread_local_profile_snapshot.compressed_block_fetch_ns += variant_profile_snapshot.compressed_block_fetch_ns;
         thread_local_profile_snapshot.compressed_block_fetch_count +=
             variant_profile_snapshot.compressed_block_fetch_count;
@@ -157,18 +152,7 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
         thread_local_profile_snapshot.output_byte_count += variant_profile_snapshot.output_byte_count;
     }
     thread_local_profile_snapshot.decode_tile_count += 1;
-    Ok(DosageTileDecodeResult {
-        profile_snapshot: thread_local_profile_snapshot,
-        selected_dosage_totals,
-        selected_dosage_square_totals,
-        selected_observation_counts,
-        has_missing_values: false,
-        zero_counts,
-        nonzero_counts,
-        homozygous_reference_counts,
-        heterozygous_counts,
-        homozygous_alternate_counts,
-    })
+    Ok(VariantMajorTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, has_missing_values: false })
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
@@ -225,14 +209,8 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         )));
     }
 
-    let sample_ploidy_and_missingness = read_exact_bytes(probability_block, cursor, sample_count)?;
+    read_exact_bytes(probability_block, cursor, sample_count)?;
     cursor += sample_count;
-    if !all_samples_present_diploid(sample_ploidy_and_missingness) {
-        return Err(BgenError::UnsupportedFormat(format!(
-            "Variant '{}' contains missing or non-diploid samples, but variant-major trusted reads require no missing diploid genotypes.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
 
     let phased_flag = read_u8_at(probability_block, cursor)?;
     cursor += 1;
@@ -263,30 +241,47 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
     let mut homozygous_reference_count = 0_i32;
     let mut heterozygous_count = 0_i32;
     let mut homozygous_alternate_count = 0_i32;
-    for (file_sample_index, probability_pair) in packed_probability_bytes.chunks_exact(2).enumerate() {
-        let selected_index = if sample_selection.is_identity {
-            file_sample_index
-        } else {
-            sample_selection.file_to_selected_index[file_sample_index]
-        };
-        if selected_index == usize::MAX {
-            continue;
+    if sample_selection.is_identity {
+        for (selected_index, probability_pair) in packed_probability_bytes.chunks_exact(2).enumerate() {
+            let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
+            let dosage_value = dosage_lookup[packed_probability_index];
+            selected_dosage_total += dosage_value;
+            selected_dosage_square_total += dosage_value * dosage_value;
+            preprocess::increment_dosage_summary_counts(
+                dosage_value,
+                &mut zero_count,
+                &mut nonzero_count,
+                &mut homozygous_reference_count,
+                &mut heterozygous_count,
+                &mut homozygous_alternate_count,
+            );
+            unsafe {
+                // Each parallel worker owns a distinct variant row in the variant-major output matrix.
+                output_pointer.add(variant_row_offset + selected_index).write(dosage_value);
+            }
         }
-        let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
-        let dosage_value = dosage_lookup[packed_probability_index];
-        selected_dosage_total += dosage_value;
-        selected_dosage_square_total += dosage_value * dosage_value;
-        preprocess::increment_dosage_summary_counts(
-            dosage_value,
-            &mut zero_count,
-            &mut nonzero_count,
-            &mut homozygous_reference_count,
-            &mut heterozygous_count,
-            &mut homozygous_alternate_count,
-        );
-        unsafe {
-            // Each parallel worker owns a distinct variant row in the variant-major output matrix.
-            output_pointer.add(variant_row_offset + selected_index).write(dosage_value);
+    } else {
+        for (selected_index, file_sample_index) in sample_selection.selected_file_indices.iter().copied().enumerate() {
+            let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
+                BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
+            })?;
+            let probability_pair = read_exact_bytes(packed_probability_bytes, probability_offset, 2)?;
+            let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
+            let dosage_value = dosage_lookup[packed_probability_index];
+            selected_dosage_total += dosage_value;
+            selected_dosage_square_total += dosage_value * dosage_value;
+            preprocess::increment_dosage_summary_counts(
+                dosage_value,
+                &mut zero_count,
+                &mut nonzero_count,
+                &mut homozygous_reference_count,
+                &mut heterozygous_count,
+                &mut homozygous_alternate_count,
+            );
+            unsafe {
+                // Selected sample order maps directly to the caller's output row order.
+                output_pointer.add(variant_row_offset + selected_index).write(dosage_value);
+            }
         }
     }
     if let Some(output_write_start_time) = output_write_start_time {
@@ -433,7 +428,25 @@ mod tests {
         let sample_selection = build_sample_selection(3, &[2, 0]).expect("subset sample selection should build");
         let mut output = vec![f32::NAN; 4];
         let mut thread_scratch = ThreadScratch::default();
+        let mut dosage_sum = vec![0.0_f32; 2];
+        let mut dosage_square_sum = vec![0.0_f32; 2];
+        let mut observation_count = vec![0_i32; 2];
+        let mut zero_count = vec![0_i32; 2];
+        let mut nonzero_count = vec![0_i32; 2];
+        let mut homozygous_reference_count = vec![0_i32; 2];
+        let mut heterozygous_count = vec![0_i32; 2];
+        let mut homozygous_alternate_count = vec![0_i32; 2];
 
+        let mut tile_stats = VariantMajorTileStatsMut {
+            dosage_sum: &mut dosage_sum,
+            dosage_square_sum: &mut dosage_square_sum,
+            observation_count: &mut observation_count,
+            zero_count: &mut zero_count,
+            nonzero_count: &mut nonzero_count,
+            homozygous_reference_count: &mut homozygous_reference_count,
+            heterozygous_count: &mut heterozygous_count,
+            homozygous_alternate_count: &mut homozygous_alternate_count,
+        };
         let result = decode_trusted_variant_major_dosage_tile(
             &mmap,
             CompressionType::None,
@@ -444,12 +457,13 @@ mod tests {
             2,
             0,
             true,
+            &mut tile_stats,
             &mut thread_scratch,
         )
         .expect("trusted variant-major tile should decode");
         let dosage_lookup = unphased_eight_bit_dosage_lookup();
 
-        assert_eq!(result.selected_observation_counts, vec![2, 2]);
+        assert_eq!(observation_count, vec![2, 2]);
         assert!(!result.has_missing_values);
         assert_eq!(result.profile_snapshot.variant_decode_count, 2);
         assert_eq!(result.profile_snapshot.decode_tile_count, 1);
@@ -457,7 +471,7 @@ mod tests {
         assert!((output[1] - dosage_lookup[0]).abs() < f32::EPSILON);
         assert!((output[2] - dosage_lookup[0]).abs() < f32::EPSILON);
         assert!((output[3] - dosage_lookup[usize::from(0_u8) | (usize::from(255_u8) << 8)]).abs() < f32::EPSILON);
-        assert_eq!(result.nonzero_counts.len(), 2);
+        assert_eq!(nonzero_count.len(), 2);
     }
 
     #[test]
@@ -469,12 +483,29 @@ mod tests {
             (trusted_probability_block(2, 2, 2, 2, &[2, 2, 2], 0, 8, &[]), "file header reports"),
             (trusted_probability_block(3, 3, 2, 2, &[2, 2, 2], 0, 8, &[]), "not biallelic"),
             (trusted_probability_block(3, 2, 1, 2, &[2, 2, 2], 0, 8, &[]), "ploidy bounds"),
-            (trusted_probability_block(3, 2, 2, 2, &[2, 0x82, 2], 0, 8, &[]), "missing or non-diploid"),
             (trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 1, 8, &[]), "unphased 8-bit"),
             (trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 0, 4, &[]), "unphased 8-bit"),
             (trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 0, 8, &[0, 0]), "Unexpected end"),
         ] {
             let mut thread_scratch = ThreadScratch::default();
+            let mut dosage_sum = vec![0.0_f32; 1];
+            let mut dosage_square_sum = vec![0.0_f32; 1];
+            let mut observation_count = vec![0_i32; 1];
+            let mut zero_count = vec![0_i32; 1];
+            let mut nonzero_count = vec![0_i32; 1];
+            let mut homozygous_reference_count = vec![0_i32; 1];
+            let mut heterozygous_count = vec![0_i32; 1];
+            let mut homozygous_alternate_count = vec![0_i32; 1];
+            let mut tile_stats = VariantMajorTileStatsMut {
+                dosage_sum: &mut dosage_sum,
+                dosage_square_sum: &mut dosage_square_sum,
+                observation_count: &mut observation_count,
+                zero_count: &mut zero_count,
+                nonzero_count: &mut nonzero_count,
+                homozygous_reference_count: &mut homozygous_reference_count,
+                heterozygous_count: &mut heterozygous_count,
+                homozygous_alternate_count: &mut homozygous_alternate_count,
+            };
             let error = decode_trusted_variant_major_dosage_tile(
                 &block,
                 CompressionType::None,
@@ -485,6 +516,7 @@ mod tests {
                 3,
                 0,
                 false,
+                &mut tile_stats,
                 &mut thread_scratch,
             )
             .expect_err("invalid trusted block should fail")

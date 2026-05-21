@@ -110,7 +110,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     argument_parser.add_argument("--chunk-sizes", default="8192")
     argument_parser.add_argument("--variant-limit", type=int, default=16384)
     argument_parser.add_argument("--repeat-count", type=int, default=5)
-    argument_parser.add_argument("--path-modes", default="sample_major_buffered")
+    argument_parser.add_argument("--path-modes", default="variant_major_buffered")
     argument_parser.add_argument("--decode-tile-variant-count", type=int)
     argument_parser.add_argument("--decode-tile-variant-counts", default="")
     argument_parser.add_argument("--rayon-thread-count", type=int)

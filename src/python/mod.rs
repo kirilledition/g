@@ -502,6 +502,10 @@ impl Regenie2RunEngine {
         self.engine.reader().validate_trusted_no_missing_diploid().map_err(convert_bgen_error)
     }
 
+    fn mark_trusted_no_missing_diploid_validated(&self) -> PyResult<()> {
+        self.engine.reader().mark_trusted_no_missing_diploid_validated().map_err(convert_bgen_error)
+    }
+
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (sample_indices, callback, committed_chunk_identifiers=None))]
     fn run_bgen_dosage_buffered_chunks<'py>(
