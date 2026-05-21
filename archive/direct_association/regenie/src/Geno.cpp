@@ -30,6 +30,7 @@
 #include "Regenie.hpp"
 #include "Files.hpp"
 #include "Geno.hpp"
+#include "RegenieProfile.hpp"
 #include "db/sqlite3.hpp"
 
 using namespace std;
@@ -1987,8 +1988,10 @@ void check_bgen(const string& bgen_file, string const& file_type, bool& zlib_com
 void readChunkFromBGENFileToG(vector<uint64> const& indices, const int& chrom, vector<snp> const& snpinfo, struct param const* params, Ref<MatrixXd> Gmat, BgenParser& bgen, struct filter const* filters, const Ref<const MatrixXb>& masked_indivs, const Ref<const MatrixXd>& phenotypes_raw, vector<variant_block> &all_snps_info, mstream& sout) {
 
   Step2BgenLoadingTimer step2_bgen_loading_timer;
+  regenie_profile::ScopedStage profile_stage("bgen_decode_impute_filter");
 
   int const bs = indices.size();
+  regenie_profile::increment_counter("bgen_decoded_variants", bs);
   int lval, ncarriers, nmales;
   uint32_t index ;
   double ds, total, mac, mval, ival, info_num, sum_pos;
@@ -2151,10 +2154,12 @@ void readChunkFromBGENFileToG(vector<uint64> const& indices, const int& chrom, v
 void readChunkFromBGEN(std::istream* bfile, vector<uint32_t>& insize, vector<uint32_t>& outsize, vector<vector<uchar>>& snp_data_blocks, vector<uint64>& indices){
 
   Step2BgenLoadingTimer step2_bgen_loading_timer;
+  regenie_profile::ScopedStage profile_stage("bgen_raw_read");
 
   uint16_t SNPID_size = 0, RSID_size = 0, chromosome_size = 0 , numberOfAlleles = 0 ;
   uint32_t position = 0, allele_size = 0;
   int n_snps = indices.size();
+  regenie_profile::increment_counter("bgen_raw_blocks", n_snps);
   string tmp_buffer;
 
   // extract genotype data blocks single-threaded
@@ -2217,6 +2222,8 @@ void parseSNP(const int& isnp, const int &chrom, vector<uchar>* geno_block, cons
 void parseSnpfromBGEN(const int& isnp, const int &chrom, vector<uchar>* geno_block, const uint32_t& insize, const uint32_t& outsize, struct param const* params, struct filter const* filters, const Ref<const MatrixXb>& masked_indivs, const Ref<const MatrixXd>& phenotypes_raw, const snp* infosnp, struct geno_block* gblock, variant_block* snp_data, mstream& sout){
 
   Step2BgenLoadingTimer step2_bgen_loading_timer;
+  regenie_profile::ScopedStage profile_stage("bgen_decode_impute_filter");
+  regenie_profile::increment_counter("bgen_decoded_variants");
 
   uint minploidy = 0, maxploidy = 0, phasing = 0, bits_prob = 0;
   uint16_t numberOfAlleles = 0 ;
@@ -3207,6 +3214,7 @@ void check_sparse_G(int const& isnp, int const& thread_num, struct geno_block* g
 
   if(snp_data->is_sparse) // get nonzero entries
     snp_data->Gsparse = mask.select(Geno,0).matrix().sparseView();
+  regenie_profile::increment_counter(snp_data->is_sparse ? "sparse_paths" : "dense_paths");
 
   // for SPA
   if( snp_data->fastSPA ) snp_data->fastSPA = snp_data->is_sparse;

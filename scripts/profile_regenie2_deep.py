@@ -91,6 +91,7 @@ class TrialResult:
     environment_overrides: dict[str, str]
     output_path: str | None = None
     stage_timing_path: str | None = None
+    regenie_profile_path: str | None = None
     device_diagnostics: dict[str, typing.Any] | None = None
     notes: str | None = None
 
@@ -623,6 +624,7 @@ def run_regenie_trial(
     """Run one original REGENIE step 2 trial."""
     output_directory.mkdir(parents=True, exist_ok=True)
     output_prefix = output_directory / name
+    regenie_profile_path = output_directory / f"{name}.regenie_profile.json"
     command_arguments = build_regenie_step2_command(
         trait_type=trait_type,
         regenie_executable=regenie_executable,
@@ -635,7 +637,7 @@ def run_regenie_trial(
         trait_type=trait_type,
         device="external_cpu",
         command_arguments=command_arguments,
-        environment_overrides={},
+        environment_overrides={"REGENIE_PROFILE_JSON": str(regenie_profile_path)},
         log_directory=log_directory,
     )
     output_row_count = comparison_benchmark.count_regenie_step2_rows(output_prefix)
@@ -645,6 +647,7 @@ def run_regenie_trial(
         result,
         output_row_count=output_row_count,
         output_path=str(output_path) if output_path.exists() else None,
+        regenie_profile_path=str(regenie_profile_path) if regenie_profile_path.exists() else None,
     )
 
 
@@ -1057,18 +1060,200 @@ def build_runtime_comparisons(aggregate_results: list[AggregateResult]) -> dict[
     return comparisons
 
 
+REGENIE_STAGE_GROUPS: dict[str, tuple[str, ...]] = {
+    "input_setup": (
+        "input_file_initialization",
+        "phenotype_covariate_load",
+        "prediction_load",
+        "step2_setup",
+        "null_residual_setup",
+    ),
+    "bgen_decode": ("block_read", "bgen_raw_read", "bgen_decode_impute_filter"),
+    "association_compute": (
+        "association_compute",
+        "sparse_check",
+        "covariate_projection",
+        "qt_score",
+        "bt_score",
+        "correction_candidate_check",
+        "firth_correction",
+        "spa_correction",
+    ),
+    "output": ("output_setup", "block_output"),
+}
+
+G_STAGE_GROUPS: dict[str, tuple[str, ...]] = {
+    "input_setup": (
+        "bgen_engine_open_index_setup",
+        "sample_phenotype_covariate_alignment",
+        "prediction_source_load",
+        "preflight_validation",
+        "chromosome_state_preparation",
+        "output_run_preparation",
+        "output_writer_preparation",
+    ),
+    "bgen_decode": ("native_engine_delivery",),
+    "association_compute": (
+        "host_to_device_transfer",
+        "jax_compute",
+        "device_to_host_materialization",
+    ),
+    "output": (
+        "output_write",
+        "single_trait_output_write",
+        "multi_trait_output_write_total",
+        "writer_finish_and_parquet_finalization",
+        "callback_drain",
+    ),
+}
+
+
+def read_json_file(path: str | None) -> dict[str, typing.Any] | None:
+    """Read a JSON file when the path exists."""
+    if path is None:
+        return None
+    json_path = Path(path)
+    if not json_path.exists():
+        return None
+    return typing.cast("dict[str, typing.Any]", json.loads(json_path.read_text(encoding="utf-8")))
+
+
+def collect_trial_stage_totals(trial: TrialResult) -> dict[str, float]:
+    """Collect raw stage totals for one g or REGENIE trial."""
+    stage_payload = read_json_file(trial.stage_timing_path)
+    if stage_payload is None:
+        stage_payload = read_json_file(trial.regenie_profile_path)
+    if stage_payload is None:
+        return {}
+    return {stage_name: float(seconds) for stage_name, seconds in stage_payload.get("stage_totals_seconds", {}).items()}
+
+
 def collect_stage_totals(aggregate_results: list[AggregateResult]) -> dict[str, float]:
-    """Collect representative stage totals from g trials."""
+    """Collect representative stage totals from g and REGENIE trials."""
     stage_totals: dict[str, float] = {}
     for aggregate_result in aggregate_results:
         for trial in aggregate_result.trials:
-            if trial.stage_timing_path is None or not Path(trial.stage_timing_path).exists():
-                continue
-            payload = json.loads(Path(trial.stage_timing_path).read_text(encoding="utf-8"))
-            for stage_name, seconds in payload.get("stage_totals_seconds", {}).items():
+            for stage_name, seconds in collect_trial_stage_totals(trial).items():
                 key = f"{aggregate_result.name}:{stage_name}"
-                stage_totals[key] = float(seconds)
+                stage_totals[key] = seconds
     return stage_totals
+
+
+def build_grouped_stage_totals(
+    stage_totals: dict[str, float],
+    stage_groups: dict[str, tuple[str, ...]],
+) -> dict[str, float]:
+    """Map raw stage totals into common comparison groups."""
+    grouped_totals: dict[str, float] = {}
+    for group_name, raw_stage_names in stage_groups.items():
+        grouped_totals[group_name] = sum(stage_totals.get(stage_name, 0.0) for stage_name in raw_stage_names)
+    return grouped_totals
+
+
+def representative_stage_totals(aggregate_result: AggregateResult) -> dict[str, float]:
+    """Return stage totals from the median-ish successful trial for an aggregate."""
+    successful_trials = [
+        trial for trial in aggregate_result.trials if trial.status == "success" and trial.wall_time_seconds is not None
+    ]
+    if not successful_trials:
+        return {}
+    sorted_trials = sorted(successful_trials, key=lambda trial: typing.cast("float", trial.wall_time_seconds))
+    median_index = len(sorted_trials) // 2
+    return collect_trial_stage_totals(sorted_trials[median_index])
+
+
+def build_stage_comparison_rows(aggregate_results: list[AggregateResult]) -> list[dict[str, float | str]]:
+    """Build stage-by-stage REGENIE versus g comparison rows."""
+    rows: list[dict[str, float | str]] = []
+    results_by_trait = {
+        result.trait_type: result
+        for result in aggregate_results
+        if result.implementation == "regenie" and result.median_wall_time_seconds is not None
+    }
+    for regenie_trait_type, regenie_result in results_by_trait.items():
+        regenie_grouped_totals = build_grouped_stage_totals(
+            representative_stage_totals(regenie_result),
+            REGENIE_STAGE_GROUPS,
+        )
+        for g_result in aggregate_results:
+            if (
+                g_result.implementation != "g"
+                or g_result.trait_type != regenie_trait_type
+                or g_result.median_wall_time_seconds is None
+            ):
+                continue
+            g_grouped_totals = build_grouped_stage_totals(representative_stage_totals(g_result), G_STAGE_GROUPS)
+            for stage_group in REGENIE_STAGE_GROUPS:
+                regenie_seconds = regenie_grouped_totals.get(stage_group, 0.0)
+                g_seconds = g_grouped_totals.get(stage_group, 0.0)
+                speedup_ratio = regenie_seconds / g_seconds if g_seconds > 0.0 else 0.0
+                rows.append(
+                    {
+                        "trait_type": regenie_trait_type,
+                        "g_device": g_result.device,
+                        "stage_group": stage_group,
+                        "regenie_seconds": regenie_seconds,
+                        "g_seconds": g_seconds,
+                        "g_speedup_ratio": speedup_ratio,
+                    }
+                )
+    return rows
+
+
+def build_algorithmic_findings(stage_comparison_rows: list[dict[str, float | str]]) -> list[str]:
+    """Explain likely source-level reasons for measured stage gaps."""
+    findings: list[str] = []
+    for row in stage_comparison_rows:
+        stage_group = str(row["stage_group"])
+        speedup_ratio = float(row["g_speedup_ratio"])
+        trait_type = str(row["trait_type"])
+        device = str(row["g_device"])
+        if stage_group == "bgen_decode" and speedup_ratio > 1.0:
+            findings.append(
+                f"{trait_type}/{device}: g is faster in BGEN delivery, consistent with its native buffered decoder "
+                "and larger chunk pipeline versus REGENIE's per-block BGEN read/decode path."
+            )
+        elif stage_group == "association_compute" and speedup_ratio > 1.0:
+            findings.append(
+                f"{trait_type}/{device}: g is faster in association compute, consistent with vectorized chunk scoring "
+                "and GPU/JAX execution when available."
+            )
+        elif stage_group == "output" and speedup_ratio > 1.0:
+            findings.append(
+                f"{trait_type}/{device}: g is faster in output, consistent with chunked Arrow/Parquet writes instead "
+                "of REGENIE's per-variant text formatting loop."
+            )
+        elif stage_group == "bgen_decode" and speedup_ratio > 0.0 and speedup_ratio < 1.0:
+            findings.append(
+                f"{trait_type}/{device}: REGENIE remains faster in measured BGEN delivery; the g timing group maps "
+                "to inclusive native engine delivery, so it can also include downstream compute and correction work. "
+                "Split that timer before attributing the whole gap to decoding."
+            )
+        elif stage_group == "association_compute" and speedup_ratio > 0.0 and speedup_ratio < 1.0:
+            findings.append(
+                f"{trait_type}/{device}: REGENIE remains faster in association compute; likely gaps include "
+                "REGENIE's sparse genotype checks, OpenMP score/correction scheduling, and correction thresholds "
+                "that avoid expensive fallback work on most variants."
+            )
+        elif stage_group == "output" and speedup_ratio > 0.0 and speedup_ratio < 1.0:
+            findings.append(
+                f"{trait_type}/{device}: REGENIE remains faster in output; likely gaps include g callback draining, "
+                "Parquet finalization, and writer queue overhead for this workload."
+            )
+        elif speedup_ratio > 1.0:
+            findings.append(
+                f"{trait_type}/{device}: g is faster in {stage_group}; this points to lower orchestration overhead "
+                "or more compact data movement in the measured g path."
+            )
+        elif speedup_ratio > 0.0 and speedup_ratio < 1.0:
+            findings.append(
+                f"{trait_type}/{device}: REGENIE remains faster in {stage_group}; likely gaps include REGENIE's "
+                "sparse genotype paths, OpenMP scheduling, null-model reuse, correction thresholds, or lower "
+                "formatting overhead for this workload."
+            )
+        elif speedup_ratio == 1.0:
+            findings.append(f"{trait_type}/{device}: {stage_group} is effectively tied between g and REGENIE.")
+    return sorted(set(findings))
 
 
 def build_summary_markdown(
@@ -1076,6 +1261,8 @@ def build_summary_markdown(
     aggregate_results: list[AggregateResult],
     comparisons: dict[str, dict[str, float]],
     stage_totals: dict[str, float],
+    stage_comparison_rows: list[dict[str, float | str]],
+    algorithmic_findings: list[str],
 ) -> str:
     """Build the human-readable campaign summary."""
     lines = ["# Landau Deep REGENIE Step 2 Profile", ""]
@@ -1103,6 +1290,31 @@ def build_summary_markdown(
             )
     else:
         lines.append("- No successful direct comparisons were available.")
+    lines.extend(["", "## Stage Comparisons", ""])
+    if stage_comparison_rows:
+        lines.append(
+            "_Stage timings are inclusive cumulative seconds from each profiler, so nested stages can overlap and "
+            "can exceed headline wall time._"
+        )
+        lines.append("")
+        lines.append("| trait | g device | stage | REGENIE s | g s | g speedup |")
+        lines.append("| --- | --- | --- | ---: | ---: | ---: |")
+        for row in stage_comparison_rows:
+            lines.append(
+                "| "
+                f"{row['trait_type']} | {row['g_device']} | {row['stage_group']} | "
+                f"{float(row['regenie_seconds']):.6f} | "
+                f"{float(row['g_seconds']):.6f} | "
+                f"{float(row['g_speedup_ratio']):.4f}x |"
+            )
+    else:
+        lines.append("- No paired stage timing JSON files were available.")
+    lines.extend(["", "## Algorithmic Findings", ""])
+    if algorithmic_findings:
+        for finding in algorithmic_findings:
+            lines.append(f"- {finding}")
+    else:
+        lines.append("- Re-run with successful REGENIE and g profile JSON files to generate source-level findings.")
     lines.extend(["", "## Ranked Bottlenecks", ""])
     if stage_totals:
         for stage_name, seconds in sorted(stage_totals.items(), key=lambda item: item[1], reverse=True)[:20]:
@@ -1305,6 +1517,8 @@ def main() -> None:
         )
     comparisons = build_runtime_comparisons(headline_results)
     stage_totals = collect_stage_totals(headline_results)
+    stage_comparison_rows = build_stage_comparison_rows(headline_results)
+    algorithmic_findings = build_algorithmic_findings(stage_comparison_rows)
     summary_payload = {
         "preflight": preflight_metadata,
         "setup_results": [dataclasses.asdict(result) for result in setup_results],
@@ -1313,6 +1527,8 @@ def main() -> None:
         "headline_results": [dataclasses.asdict(result) for result in headline_results],
         "comparisons": comparisons,
         "stage_totals": stage_totals,
+        "stage_comparisons": stage_comparison_rows,
+        "algorithmic_findings": algorithmic_findings,
         "deep_profiles": deep_profile_results,
     }
     (output_directory / "summary.json").write_text(json.dumps(summary_payload, indent=2) + "\n", encoding="utf-8")
@@ -1321,6 +1537,8 @@ def main() -> None:
             aggregate_results=headline_results,
             comparisons=comparisons,
             stage_totals=stage_totals,
+            stage_comparison_rows=stage_comparison_rows,
+            algorithmic_findings=algorithmic_findings,
         ),
         encoding="utf-8",
     )
