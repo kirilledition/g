@@ -145,6 +145,13 @@ uv run g config validate regenie.toml
 uv run g regenie --config regenie.toml --g-device gpu
 ```
 
+Runtime configuration is resolved in this order: packaged defaults from
+`src/g/config.default.toml`, values in `--config`, then explicit CLI flags. The
+packaged default file sets safe runtime defaults for trait mode, binary fallback
+knobs, compute, output, and diagnostics, but it intentionally omits
+workload-specific required inputs such as `bgen`, `phenoFile`, `phenoCol`,
+`pred`, and `out`.
+
 Useful execution flags include `--g-device cpu|gpu`, `--bsize`, `--g-variant-limit`, `--g-staging-depth`, `--g-resume`, `--g-trusted-no-missing-diploid`, `--g-writer-threads`, `--g-writer-queue-depth`, JAX cache settings, BGEN decode tiling, and binary/Firth solver settings.
 
 ## Python API

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import importlib.resources
 import os
 import tomllib
 import typing
@@ -30,6 +31,7 @@ DEFAULT_OUTPUT_WRITER_THREADS = 8
 DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH = 4
 DEFAULT_OUTPUT_CHUNKS_PER_ARROW_FILE = 4
 DEFAULT_LOG_FILTER = "info"
+DEFAULT_CONFIG_RESOURCE = "config.default.toml"
 QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "spa", "pThresh")
 
 
@@ -203,13 +205,50 @@ def merge_option_dictionaries(
     for option_name, option_value in override_options.items():
         if option_value is not None:
             merged_options[option_name] = option_value
+    raw_trait_type = override_options.get("trait_type")
+    if raw_trait_type is not None:
+        trait_type = types.RegenieTraitType(str(raw_trait_type))
+        merged_options["qt"] = trait_type == types.RegenieTraitType.QUANTITATIVE
+        merged_options["bt"] = trait_type == types.RegenieTraitType.BINARY
+    if override_options.get("qt") is True:
+        merged_options["bt"] = False
+    if override_options.get("bt") is True:
+        merged_options["qt"] = False
     return merged_options
 
 
 def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
     """Build a normalized config from CLI/TOML/Python option dictionaries."""
-    normalized_options = normalize_option_dictionary(raw_options)
-    explicit_options = frozenset(normalized_options)
+    return from_option_layers(
+        base_options=load_default_option_dictionary(),
+        explicit_option_layers=(raw_options,),
+    )
+
+
+def from_option_layers(
+    *,
+    base_options: typing.Mapping[str, typing.Any],
+    explicit_option_layers: typing.Iterable[typing.Mapping[str, typing.Any]],
+) -> RegenieConfig:
+    """Build a normalized config from base options and explicit override layers."""
+    normalized_options = normalize_option_dictionary(base_options)
+    explicit_option_names: set[str] = set()
+    for raw_option_layer in explicit_option_layers:
+        normalized_option_layer = normalize_option_dictionary(raw_option_layer)
+        normalized_options = merge_option_dictionaries(normalized_options, normalized_option_layer)
+        explicit_option_names.update(normalized_option_layer)
+    return from_normalized_options(
+        normalized_options=normalized_options,
+        explicit_options=frozenset(explicit_option_names),
+    )
+
+
+def from_normalized_options(
+    *,
+    normalized_options: typing.Mapping[str, typing.Any],
+    explicit_options: frozenset[str],
+) -> RegenieConfig:
+    """Build a normalized config from already-merged normalized options."""
     trait_type = resolve_configured_trait_type(normalized_options)
     reject_quantitative_binary_only_options(
         explicit_options=explicit_options,
@@ -739,9 +778,21 @@ def validate_positive_float(option_name: str, value: float) -> None:
 
 def load_toml(path: Path) -> RegenieConfig:
     """Load a configuration from a TOML file."""
-    with path.open("rb") as config_file:
-        raw_config = tomllib.load(config_file)
+    raw_config = read_toml_option_dictionary(path)
     return from_options(raw_config)
+
+
+def load_default_option_dictionary() -> dict[str, typing.Any]:
+    """Load packaged default runtime options."""
+    default_config_resource = importlib.resources.files("g").joinpath(DEFAULT_CONFIG_RESOURCE)
+    with default_config_resource.open("rb") as config_file:
+        return tomllib.load(config_file)
+
+
+def read_toml_option_dictionary(path: Path) -> dict[str, typing.Any]:
+    """Read a TOML option dictionary from disk."""
+    with path.open("rb") as config_file:
+        return tomllib.load(config_file)
 
 
 def write_toml(config: RegenieConfig, path: Path | str) -> None:

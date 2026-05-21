@@ -21,7 +21,7 @@ from g.cli import (
     resolve_trusted_bgen_validation_mode,
 )
 from g.engine import shutdown
-from g.interface import options
+from g.interface import config, options
 
 runner = CliRunner()
 
@@ -114,6 +114,33 @@ def test_regenie_command_dispatches_config_api() -> None:
     assert regenie_config.g_diagnostics.log_file == Path("logs/g.jsonl")
     assert regenie_config.g_diagnostics.log_stderr is False
     assert "final.parquet" in result.output
+
+
+def test_regenie_command_loads_packaged_default_toml() -> None:
+    with patch("g.cli.api.regenie", return_value=api.RunArtifacts()) as mock_regenie_api:
+        result = runner.invoke(
+            app,
+            [
+                "regenie",
+                "--bgen",
+                "dataset.bgen",
+                "--phenoFile",
+                "phenotype.tsv",
+                "--phenoCol",
+                "trait",
+                "--pred",
+                "predictions.list",
+                "--out",
+                "results/output",
+            ],
+        )
+
+    assert result.exit_code == 0
+    regenie_config = mock_regenie_api.call_args.args[0]
+    assert regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
+    assert regenie_config.trait.bsize == config.DEFAULT_BSIZE
+    assert regenie_config.g_compute.device == types.Device.CPU
+    assert regenie_config.g_output.format == types.OutputFormat.PARQUET
 
 
 def test_regenie_command_returns_signal_exit_code_for_graceful_shutdown() -> None:
@@ -278,7 +305,7 @@ def test_regenie_command_applies_toml_then_explicit_cli_override(tmp_path: Path)
                 "[output]",
                 'out = "results/output"',
                 "[g.output]",
-                'format = "parquet"',
+                'format = "arrow"',
             ]
         ),
         encoding="utf-8",
@@ -291,6 +318,47 @@ def test_regenie_command_applies_toml_then_explicit_cli_override(tmp_path: Path)
     regenie_config = mock_regenie_api.call_args.args[0]
     assert regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
     assert regenie_config.trait.bsize == 4096
+    assert regenie_config.g_output.format == types.OutputFormat.ARROW
+
+
+def test_regenie_command_applies_explicit_cli_override_above_both_toml_layers(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[input]",
+                'bgen = "dataset.bgen"',
+                'phenoFile = "phenotype.tsv"',
+                'phenoCol = "trait"',
+                'pred = "predictions.list"',
+                "[output]",
+                'out = "results/output"',
+                "[g.compute]",
+                'device = "gpu"',
+                "[g.output]",
+                'format = "arrow"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("g.cli.api.regenie", return_value=api.RunArtifacts()) as mock_regenie_api:
+        result = runner.invoke(
+            app,
+            [
+                "regenie",
+                "--config",
+                str(config_path),
+                "--g-device",
+                "cpu",
+                "--g-output-format",
+                "parquet",
+            ],
+        )
+
+    assert result.exit_code == 0
+    regenie_config = mock_regenie_api.call_args.args[0]
+    assert regenie_config.g_compute.device == types.Device.CPU
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
 
 

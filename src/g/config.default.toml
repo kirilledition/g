@@ -1,0 +1,50 @@
+[trait]
+step = 2
+qt = true
+bt = false
+bsize = 8192
+
+[binary]
+firth = false
+approx = false
+spa = false
+pThresh = 0.05
+firth-se = false
+
+[g.compute]
+device = "cpu"
+staging-depth = 1
+trusted-no-missing-diploid = false
+trusted-bgen-validation-mode = "cache_on_miss"
+sample-key-mode = "iid"
+multi-phenotype-sample-mode = "per-phenotype"
+firth-batch-size = 64
+firth-candidate-capacity = 1024
+binary-null-maximum-iterations = 50
+binary-null-coefficient-tolerance = 1.0e-6
+firth-maximum-iterations = 50
+firth-gradient-tolerance = 1.0e-4
+firth-coefficient-tolerance = 1.0e-4
+firth-likelihood-tolerance = 1.0e-4
+firth-maximum-step-size = 5.0
+use-block-firth-math = false
+bgen-decode-tile-variant-count = 64
+jax-persistent-cache = true
+jax-persistent-cache-min-entry-size-bytes = -1
+jax-persistent-cache-min-compile-time-seconds = 0
+jax-xla-autotune-cache = false
+jax-transfer-guard = false
+
+[g.output]
+format = "parquet"
+writer-threads = 8
+writer-queue-depth = 4
+chunks-per-arrow-file = 4
+arrow-compression = "zstd"
+resume = false
+resume-mode = "fast"
+finalize-parquet = false
+
+[g.diagnostics]
+log-filter = "info"
+log-stderr = true

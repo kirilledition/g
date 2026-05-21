@@ -105,6 +105,75 @@ def test_logging_diagnostics_default_to_info_stderr() -> None:
     assert diagnostics_config.log_stderr is True
 
 
+def test_packaged_default_toml_is_loaded_for_python_options() -> None:
+    regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
+
+    assert regenie_config.trait.bsize == config.DEFAULT_BSIZE
+    assert regenie_config.g_compute.device == types.Device.CPU
+    assert regenie_config.g_compute.jax_persistent_cache is True
+    assert regenie_config.g_output.format == types.OutputFormat.PARQUET
+    assert regenie_config.g_diagnostics.log_filter == config.DEFAULT_LOG_FILTER
+    assert "pThresh" not in regenie_config.explicit_options
+    assert "firth" not in regenie_config.explicit_options
+
+
+def test_user_toml_overrides_packaged_defaults(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[input]",
+                'bgen = "dataset.bgen"',
+                'phenoFile = "phenotype.tsv"',
+                'phenoCol = "trait"',
+                'pred = "predictions.list"',
+                "[trait]",
+                "bsize = 2048",
+                "[output]",
+                'out = "results/output"',
+                "[g.compute]",
+                'device = "gpu"',
+                "[g.output]",
+                'format = "arrow"',
+                "[g.diagnostics]",
+                'log-filter = "g=debug"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    regenie_config = config.RegenieConfig.from_toml(config_path)
+
+    assert regenie_config.trait.bsize == 2048
+    assert regenie_config.g_compute.device == types.Device.GPU
+    assert regenie_config.g_output.format == types.OutputFormat.ARROW
+    assert regenie_config.g_diagnostics.log_filter == "g=debug"
+
+
+def test_user_toml_binary_trait_overrides_default_quantitative_trait(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[input]",
+                'bgen = "dataset.bgen"',
+                'phenoFile = "phenotype.tsv"',
+                'phenoCol = "trait"',
+                'pred = "predictions.list"',
+                "[trait]",
+                "bt = true",
+                "[output]",
+                'out = "results/output"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    regenie_config = config.RegenieConfig.from_toml(config_path)
+
+    assert regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
+
+
 def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
     regenie_config = config.RegenieConfig.from_options(
         {
@@ -139,6 +208,8 @@ def test_logging_options_ignore_environment(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("G_LOG_FILTER", "g=info")
     monkeypatch.setenv("G_LOG_FILE", "logs/environment.jsonl")
     monkeypatch.setenv("G_LOG_STDERR", "false")
+    monkeypatch.setenv("G_JAX_CACHE_DIR", "/ignored/g/cache")
+    monkeypatch.setenv("JAX_COMPILATION_CACHE_DIR", "/ignored/jax/cache")
 
     regenie_config = config.RegenieConfig.from_options(
         {
@@ -156,6 +227,7 @@ def test_logging_options_ignore_environment(monkeypatch: pytest.MonkeyPatch) -> 
     assert regenie_config.g_diagnostics.log_filter == "g=debug"
     assert regenie_config.g_diagnostics.log_file is None
     assert regenie_config.g_diagnostics.log_stderr is True
+    assert regenie_config.g_compute.jax_cache_dir is None
 
 
 def test_unknown_and_unsupported_options_raise_clear_errors() -> None:

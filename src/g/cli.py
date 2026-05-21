@@ -108,8 +108,10 @@ def build_regenie_config_from_cli(context: click.Context, parameters: dict[str, 
     raw_toml_options = read_raw_toml(parameters.get("config"))
     raw_cli_options = explicit_cli_options(context, parameters)
     try:
-        merged_options = config.merge_option_dictionaries(raw_toml_options, raw_cli_options)
-        return config.RegenieConfig.from_options(merged_options)
+        return config.from_option_layers(
+            base_options=config.load_default_option_dictionary(),
+            explicit_option_layers=(raw_toml_options, raw_cli_options),
+        )
     except ValueError as error:
         raise click.ClickException(str(error)) from error
 
