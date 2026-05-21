@@ -207,7 +207,9 @@ def compare_numeric_column(
     """Compare one numeric result column."""
     production_array = np.asarray(production_values)
     variant_major_array = np.asarray(variant_major_values)
-    maximum_absolute_delta = float(np.nanmax(np.abs(production_array - variant_major_array)))
+    absolute_delta = np.abs(production_array - variant_major_array)
+    non_nan_absolute_delta = absolute_delta[~np.isnan(absolute_delta)]
+    maximum_absolute_delta = float(np.max(non_nan_absolute_delta)) if non_nan_absolute_delta.size > 0 else 0.0
     if np.allclose(
         production_array,
         variant_major_array,

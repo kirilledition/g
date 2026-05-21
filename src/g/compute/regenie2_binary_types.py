@@ -103,6 +103,7 @@ class Regenie2BinaryChromosomeState:
         null_firth_iteration_count: Number of covariate-only Firth iterations.
         null_firth_convergence_reason_code: Internal covariate-only Firth termination-reason code.
         null_logistic_iteration_count: Number of IRLS updates used for the null logistic fit.
+        null_logistic_converged: Whether the null logistic IRLS fit converged.
 
     """
 
@@ -119,6 +120,7 @@ class Regenie2BinaryChromosomeState:
     null_firth_iteration_count: jax.Array
     null_firth_convergence_reason_code: jax.Array
     null_logistic_iteration_count: jax.Array
+    null_logistic_converged: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -186,6 +188,7 @@ class Regenie2MultiBinaryChromosomeState:
         null_firth_iteration_count: Per-trait covariate-only Firth iteration counts.
         null_firth_convergence_reason_code: Per-trait covariate-only Firth termination-reason codes.
         null_logistic_iteration_count: Per-trait null IRLS iteration counts.
+        null_logistic_converged: Per-trait null IRLS convergence flags.
 
     """
 
@@ -202,6 +205,7 @@ class Regenie2MultiBinaryChromosomeState:
     null_firth_iteration_count: jax.Array
     null_firth_convergence_reason_code: jax.Array
     null_logistic_iteration_count: jax.Array
+    null_logistic_converged: jax.Array
 
 
 @jax.tree_util.register_dataclass

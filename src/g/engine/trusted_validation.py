@@ -55,11 +55,15 @@ def validate_trusted_bgen_with_cache(
     validation_mode: types.TrustedBgenValidationMode,
 ) -> None:
     """Validate or trust the no-missing diploid BGEN path according to mode."""
-    if (
-        assume_trusted_no_missing_diploid_validated()
-        or validation_mode == types.TrustedBgenValidationMode.ASSUME_VALIDATED
-    ):
-        return
+    if assume_trusted_no_missing_diploid_validated():
+        message = "Trusted no-missing diploid validation cannot be globally assumed for calculation runs."
+        raise ValueError(message)
+    if validation_mode == types.TrustedBgenValidationMode.ASSUME_VALIDATED:
+        message = (
+            "Trusted no-missing diploid validation mode 'assume_validated' is unsafe for calculation runs. "
+            "Use 'cache_on_miss' or 'force_validate' so BGEN compatibility is checked before decoding."
+        )
+        raise ValueError(message)
     fingerprint = build_trusted_bgen_validation_fingerprint(
         bgen_path=bgen_path,
         sample_count=int(engine.sample_count),

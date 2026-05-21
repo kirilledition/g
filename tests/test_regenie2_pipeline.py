@@ -728,6 +728,7 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
     chromosome_state = SimpleNamespace(
         fitted_probability=jnp.asarray([[0.5, 0.5], [0.5, 0.5]], dtype=jnp.float32),
         null_logistic_iteration_count=jnp.asarray([3, 3], dtype=jnp.int32),
+        null_logistic_converged=jnp.asarray([True, True], dtype=jnp.bool_),
     )
     callback = callbacks.MultiBinaryRegenie2PipelineCallback(
         run_input=build_native_multi_run_input(),
@@ -1193,21 +1194,20 @@ def test_multi_linear_pipeline_requires_explicit_complete_case_sample_mode() -> 
         )
 
 
-def test_build_bgen_run_engine_skips_trusted_validation_when_marked_validated() -> None:
+def test_build_bgen_run_engine_rejects_assumed_trusted_validation() -> None:
     FakeRunEngine.instances.clear()
 
-    with patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine):
-        engine = native_dispatch.build_bgen_run_engine(
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        pytest.raises(ValueError, match="assume_validated"),
+    ):
+        native_dispatch.build_bgen_run_engine(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
             chunk_size=32,
             variant_limit=100,
             trusted_no_missing_diploid=True,
             trusted_bgen_validation_mode=types.TrustedBgenValidationMode.ASSUME_VALIDATED,
         )
-
-    assert isinstance(engine, FakeRunEngine)
-    assert engine.trusted_no_missing_diploid is True
-    assert engine.validation_count == 0
 
 
 def test_build_bgen_run_engine_caches_trusted_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

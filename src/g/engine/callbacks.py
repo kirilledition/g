@@ -1052,6 +1052,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 {
                     "chromosome": chromosome,
                     "iteration_count": int(jax.device_get(self.current_chromosome_state.null_logistic_iteration_count)),
+                    "converged": int(jax.device_get(self.current_chromosome_state.null_logistic_converged)),
                     "firth_iteration_count": int(
                         jax.device_get(self.current_chromosome_state.null_firth_iteration_count)
                     ),
@@ -1315,12 +1316,14 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         block_until_ready(self.current_chromosome_state.fitted_probability)
         if self.stage_timing_recorder is not None:
             iteration_counts = jax.device_get(self.current_chromosome_state.null_logistic_iteration_count)
+            convergence_flags = jax.device_get(self.current_chromosome_state.null_logistic_converged)
             for trait_index, phenotype_name in enumerate(self.run_input.phenotype_names):
                 self.stage_timing_recorder.add_null_logistic_diagnostics(
                     {
                         "chromosome": chromosome,
                         "phenotype": phenotype_name,
                         "iteration_count": int(iteration_counts[trait_index]),
+                        "converged": int(convergence_flags[trait_index]),
                         "correction_method": self.correction_plan.method.value,
                     }
                 )

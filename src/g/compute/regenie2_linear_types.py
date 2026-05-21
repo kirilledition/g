@@ -43,7 +43,7 @@ class Regenie2LinearChromosomeState:
         stacked_score_matrix: Matrix for covariate projection coordinates and phenotype covariance.
         adjusted_residual: Phenotype residual after covariate residualization and LOCO subtraction.
         adjusted_residual_projection_coordinates: Projection of adjusted residual onto whitened covariates.
-        adjusted_residual_sum_squares: Sum of squares of ``adjusted_residual``.
+        adjusted_residual_sum_squares: Sum of squares after removing the covariate projection.
         degrees_of_freedom: Null-model residual degrees of freedom.
 
     """
@@ -114,7 +114,7 @@ class Regenie2MultiLinearChromosomeState:
         whitened_covariate_transpose: Cholesky-whitened covariate transpose.
         adjusted_residual_matrix: Trait-major residuals after covariate residualization and LOCO subtraction.
         adjusted_residual_projection_coordinate_matrix: Per-trait projection onto whitened covariates.
-        adjusted_residual_sum_squares: Per-trait adjusted residual sums of squares.
+        adjusted_residual_sum_squares: Per-trait sums of squares after removing covariate projections.
         degrees_of_freedom: Null-model residual degrees of freedom.
 
     """

@@ -444,6 +444,7 @@ def prepare_regenie2_binary_chromosome_state(
         null_firth_iteration_count=null_firth_result.iteration_count,
         null_firth_convergence_reason_code=null_firth_result.convergence_reason_code,
         null_logistic_iteration_count=null_logistic_fit_state.iteration_count,
+        null_logistic_converged=null_logistic_fit_state.converged,
     )
 
 
@@ -483,6 +484,7 @@ def prepare_regenie2_multi_binary_chromosome_state(
         null_firth_iteration_count=chromosome_states.null_firth_iteration_count,
         null_firth_convergence_reason_code=chromosome_states.null_firth_convergence_reason_code,
         null_logistic_iteration_count=chromosome_states.null_logistic_iteration_count,
+        null_logistic_converged=chromosome_states.null_logistic_converged,
     )
 
 
@@ -500,13 +502,23 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     projection_sum_squares = jnp.einsum("ij,ij->j", projection_coordinates, projection_coordinates)
     variance = jnp.maximum(weighted_genotype_sum_squares - projection_sum_squares, 0.0)
     score = genotype_matrix_float32.T @ chromosome_state.score_residual
+    null_logistic_converged = chromosome_state.null_logistic_converged
     positive_variance_mask = compute_positive_variance_mask(variance, weighted_genotype_sum_squares)
-    inverse_variance = jnp.where(positive_variance_mask, jnp.reciprocal(variance), 0.0)
-    beta = jnp.where(positive_variance_mask, score * inverse_variance, jnp.nan)
-    standard_error = jnp.where(positive_variance_mask, jnp.sqrt(inverse_variance), jnp.nan)
-    chi_squared = jnp.where(positive_variance_mask, score * score * inverse_variance, 0.0)
-    log10_p_value = regenie2_linear.chi_squared_to_log10_p_value(chi_squared)
-    valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
+    statistic_mask = positive_variance_mask & null_logistic_converged
+    inverse_variance = jnp.where(statistic_mask, jnp.reciprocal(variance), 0.0)
+    beta = jnp.where(statistic_mask, score * inverse_variance, jnp.nan)
+    standard_error = jnp.where(statistic_mask, jnp.sqrt(inverse_variance), jnp.nan)
+    chi_squared = jnp.where(
+        null_logistic_converged,
+        jnp.where(positive_variance_mask, score * score * inverse_variance, 0.0),
+        jnp.nan,
+    )
+    log10_p_value = jnp.where(
+        null_logistic_converged,
+        regenie2_linear.chi_squared_to_log10_p_value(chi_squared),
+        jnp.nan,
+    )
+    valid_mask = null_logistic_converged & jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
     extra_code = regenie2_binary_candidate_planning.build_extra_code(log10_p_value, valid_mask, correction_plan)
     return regenie2_binary_types.Regenie2BinaryChunkResult(
         beta=beta,
@@ -546,6 +558,7 @@ def build_single_binary_chromosome_state_from_multi(
         null_firth_iteration_count=chromosome_state.null_firth_iteration_count[trait_index],
         null_firth_convergence_reason_code=chromosome_state.null_firth_convergence_reason_code[trait_index],
         null_logistic_iteration_count=chromosome_state.null_logistic_iteration_count[trait_index],
+        null_logistic_converged=chromosome_state.null_logistic_converged[trait_index],
     )
 
 
@@ -1585,35 +1598,32 @@ def apply_device_candidate_corrections_firth(
             )
             active_flat_positions = batch_plan.active_flat_position_vector
             active_fallback_indices = flat_fallback_indices[active_flat_positions]
-            current_beta = jnp.take(result.beta, active_fallback_indices, axis=0)
-            current_standard_error = jnp.take(result.standard_error, active_fallback_indices, axis=0)
-            current_chi_squared = jnp.take(result.chi_squared, active_fallback_indices, axis=0)
-            current_log10_p_value = jnp.take(result.log10_p_value, active_fallback_indices, axis=0)
             active_valid_mask = firth_result.valid_mask[active_flat_positions]
             active_firth_beta = firth_result.beta[active_flat_positions]
             active_firth_chi_squared = firth_result.chi_squared[active_flat_positions]
             active_firth_standard_error = firth_result.standard_error[active_flat_positions]
+            invalid_firth_statistic = jnp.full_like(active_firth_beta, jnp.nan)
             if correction_plan.firth_se:
                 active_firth_standard_error = jnp.where(
                     active_firth_chi_squared > 0.0,
                     jnp.abs(active_firth_beta) / jnp.sqrt(active_firth_chi_squared),
                     active_firth_standard_error,
                 )
-            merged_beta = jnp.where(active_valid_mask, firth_result.beta[active_flat_positions], current_beta)
+            merged_beta = jnp.where(active_valid_mask, active_firth_beta, invalid_firth_statistic)
             merged_standard_error = jnp.where(
                 active_valid_mask,
                 active_firth_standard_error,
-                current_standard_error,
+                invalid_firth_statistic,
             )
             merged_chi_squared = jnp.where(
                 active_valid_mask,
                 firth_result.chi_squared[active_flat_positions],
-                current_chi_squared,
+                invalid_firth_statistic,
             )
             merged_log10_p_value = jnp.where(
                 active_valid_mask,
                 firth_result.log10_p_value[active_flat_positions],
-                current_log10_p_value,
+                invalid_firth_statistic,
             )
             merged_extra_code = jnp.where(
                 active_valid_mask, types.BinaryExtraCode.FIRTH.value, types.BinaryExtraCode.TEST_FAIL.value

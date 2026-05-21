@@ -242,6 +242,14 @@ def assert_binary_chunk_results_match(
     )
 
 
+def assert_all_result_statistics_nan(result: regenie2_binary_types.Regenie2BinaryChunkResult) -> None:
+    """Assert all association-statistic columns are NaN."""
+    assert np.isnan(np.asarray(result.beta)).all()
+    assert np.isnan(np.asarray(result.standard_error)).all()
+    assert np.isnan(np.asarray(result.chi_squared)).all()
+    assert np.isnan(np.asarray(result.log10_p_value)).all()
+
+
 def test_firth_candidate_capacity_uses_default() -> None:
     assert (
         regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG.firth_candidate_capacity
@@ -300,6 +308,37 @@ def test_null_logistic_kernel_config_retraces_same_shape_without_cache_clear() -
 
     assert int(np.asarray(one_iteration_state.null_logistic_iteration_count)) == 1
     assert int(np.asarray(two_iteration_state.null_logistic_iteration_count)) == 2
+
+
+def test_non_converged_null_logistic_fit_invalidates_score_results() -> None:
+    covariate_matrix, phenotype_vector, genotype_matrix = build_binary_inputs()
+    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
+    kernel_config = dataclasses.replace(
+        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
+        maximum_null_iterations=1,
+        null_logistic_coefficient_tolerance=1.0e-12,
+    )
+    chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
+        state,
+        jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32),
+        kernel_config=kernel_config,
+    )
+
+    result = compute_score_test_chunk(chromosome_state, genotype_matrix, types.BinaryCorrectionPlan())
+    variant_major_result = compute_score_test_chunk_variant_major(
+        chromosome_state,
+        jnp.transpose(genotype_matrix),
+        types.BinaryCorrectionPlan(),
+    )
+
+    assert not bool(np.asarray(chromosome_state.null_logistic_converged))
+    np.testing.assert_array_equal(
+        np.asarray(result.extra_code),
+        np.full((genotype_matrix.shape[1],), types.BinaryExtraCode.TEST_FAIL.value),
+    )
+    assert not np.asarray(result.valid_mask).any()
+    assert_all_result_statistics_nan(result)
+    assert_binary_chunk_results_match(result, variant_major_result)
 
 
 def test_group_firth_candidate_batch_inputs_places_heuristic_lanes_after_regular_lanes() -> None:
@@ -779,6 +818,7 @@ def test_firth_candidate_max_iteration_failure_is_labelled() -> None:
     )
 
     assert int(np.asarray(result.extra_code[0])) == types.BinaryExtraCode.TEST_FAIL.value
+    assert_all_result_statistics_nan(result)
     assert int(np.asarray(result.firth_failure_code[0])) == types.FirthFailureCode.MAX_ITERATIONS.value
     assert (
         int(np.asarray(result.firth_convergence_reason_code[0]))
@@ -822,6 +862,7 @@ def test_null_firth_failure_propagates_to_candidate_failure() -> None:
     )
 
     assert int(np.asarray(result.extra_code[0])) == types.BinaryExtraCode.TEST_FAIL.value
+    assert_all_result_statistics_nan(result)
     assert int(np.asarray(result.firth_failure_code[0])) == types.FirthFailureCode.NUMERICAL.value
     assert (
         int(np.asarray(result.firth_convergence_reason_code[0]))
@@ -877,8 +918,9 @@ def test_firth_se_changes_only_successful_firth_standard_error() -> None:
 
 
 def test_sparse_candidate_mask_does_not_expand_score_candidates() -> None:
-    genotype_matrix, chromosome_state = build_chromosome_state()
-    low_score_genotype_matrix = genotype_matrix[:, :1]
+    fixture = build_variant_major_parity_fixture()
+    chromosome_state = build_variant_major_parity_chromosome_state(fixture, APPROXIMATE_FIRTH_PLAN)
+    low_score_genotype_matrix = fixture.genotype_matrix[:, :1]
     score_result = compute_score_test_chunk(
         chromosome_state,
         low_score_genotype_matrix,
@@ -1258,6 +1300,7 @@ def test_failed_firth_lanes_become_test_fail() -> None:
 
     assert int(np.asarray(corrected_result.extra_code[0])) == types.BinaryExtraCode.TEST_FAIL.value
     assert not bool(np.asarray(corrected_result.valid_mask[0]))
+    assert_all_result_statistics_nan(corrected_result)
 
 
 @pytest.mark.skipif(

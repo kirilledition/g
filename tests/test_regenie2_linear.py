@@ -62,7 +62,6 @@ def compute_score_reference_chunk(
         genotype_matrix,
     )
     adjusted_residual = state.phenotype_residual - loco_predictions
-    adjusted_residual_sum_squares = jnp.dot(adjusted_residual, adjusted_residual)
     covariate_genotype_crossproduct = state.covariate_matrix_transpose @ normalized_genotype_matrix
     covariate_adjusted_residual_crossproduct = state.covariate_matrix_transpose @ adjusted_residual
     genotype_projection = regenie2_linear.solve_positive_definite_system(
@@ -72,6 +71,12 @@ def compute_score_reference_chunk(
     adjusted_residual_projection = regenie2_linear.solve_positive_definite_system(
         state.covariate_crossproduct_cholesky_factor,
         covariate_adjusted_residual_crossproduct,
+    )
+    raw_adjusted_residual_sum_squares = jnp.dot(adjusted_residual, adjusted_residual)
+    adjusted_residual_projection_sum_squares = covariate_adjusted_residual_crossproduct @ adjusted_residual_projection
+    adjusted_residual_sum_squares = jnp.maximum(
+        raw_adjusted_residual_sum_squares - adjusted_residual_projection_sum_squares,
+        0.0,
     )
     genotype_sum_squares = jnp.einsum("ij,ij->j", normalized_genotype_matrix, normalized_genotype_matrix)
     projection_sum_squares = jnp.einsum("ij,ij->j", covariate_genotype_crossproduct, genotype_projection)
@@ -160,9 +165,9 @@ def build_loco_covariate_fixture() -> LinearLocoCovariateFixture:
         genotype_matrix=genotype_matrix,
         loco_predictions=loco_predictions,
         expected_beta=np.asarray([0.0502609, 0.29938, -0.0627165], dtype=np.float64),
-        expected_standard_error=np.asarray([0.427392, 0.402125, 0.464933], dtype=np.float64),
-        expected_chi_squared=np.asarray([0.0138296, 0.554274, 0.0181963], dtype=np.float64),
-        expected_log10_p_value=np.asarray([0.0426872, 0.340486, 0.0492964], dtype=np.float64),
+        expected_standard_error=np.asarray([0.325455, 0.306214, 0.354042], dtype=np.float64),
+        expected_chi_squared=np.asarray([0.0238496, 0.955865, 0.0313802], dtype=np.float64),
+        expected_log10_p_value=np.asarray([0.0568676, 0.483821, 0.0658072], dtype=np.float64),
     )
 
 
@@ -185,7 +190,8 @@ def compute_regenie_null_mse_formula(
     genotype_residual_matrix = residualize_against_covariates(covariate_matrix, genotype_matrix)
     genotype_residual_sum_squares = np.einsum("ij,ij->j", genotype_residual_matrix, genotype_residual_matrix)
     covariance_with_phenotype = genotype_residual_matrix.T @ adjusted_residual
-    adjusted_residual_sum_squares = float(adjusted_residual @ adjusted_residual)
+    residualized_adjusted_residual = residualize_against_covariates(covariate_matrix, adjusted_residual)
+    adjusted_residual_sum_squares = float(residualized_adjusted_residual @ residualized_adjusted_residual)
     null_degrees_of_freedom = covariate_matrix.shape[0] - covariate_matrix.shape[1]
 
     beta = covariance_with_phenotype / genotype_residual_sum_squares
@@ -578,8 +584,8 @@ class TestComputeRegenie2LinearChunk:
         assert not jnp.allclose(result_no_loco.beta, result_with_loco.beta)
         assert not jnp.allclose(result_no_loco.chi_squared, result_with_loco.chi_squared)
 
-    def test_loco_predictions_with_covariate_signal_match_regenie_ordering(self) -> None:
-        """Lock down REGENIE parity when LOCO predictions are not covariate-orthogonal."""
+    def test_loco_predictions_with_covariate_signal_residualize_null_mse(self) -> None:
+        """Lock down null MSE when LOCO predictions are not covariate-orthogonal."""
         fixture = build_loco_covariate_fixture()
         phenotype_residual = residualize_against_covariates(
             fixture.covariate_matrix,
@@ -621,17 +627,17 @@ class TestComputeRegenie2LinearChunk:
             rtol=1e-5,
             atol=1e-7,
         )
-        assert not np.allclose(
+        numpy.testing.assert_allclose(
             alternative_order_result.standard_error,
             fixture.expected_standard_error,
-            rtol=1e-2,
-            atol=1e-4,
+            rtol=1e-5,
+            atol=1e-7,
         )
-        assert not np.allclose(
+        numpy.testing.assert_allclose(
             alternative_order_result.chi_squared,
             fixture.expected_chi_squared,
-            rtol=1e-2,
-            atol=1e-4,
+            rtol=1e-5,
+            atol=1e-7,
         )
 
         state = regenie2_linear.prepare_regenie2_linear_state(

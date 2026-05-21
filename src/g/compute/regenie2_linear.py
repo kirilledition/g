@@ -183,7 +183,15 @@ def prepare_regenie2_linear_chromosome_state(
     loco_predictions_float32 = jnp.asarray(loco_predictions, dtype=jnp.float32)
     adjusted_residual = state.phenotype_residual - loco_predictions_float32
     adjusted_residual_projection_coordinates = state.whitened_covariate_transpose @ adjusted_residual
-    adjusted_residual_sum_squares = jnp.dot(adjusted_residual, adjusted_residual)
+    raw_adjusted_residual_sum_squares = jnp.dot(adjusted_residual, adjusted_residual)
+    adjusted_residual_projection_sum_squares = jnp.dot(
+        adjusted_residual_projection_coordinates,
+        adjusted_residual_projection_coordinates,
+    )
+    adjusted_residual_sum_squares = jnp.maximum(
+        raw_adjusted_residual_sum_squares - adjusted_residual_projection_sum_squares,
+        0.0,
+    )
     stacked_score_matrix = jnp.concatenate(
         [state.whitened_covariate_transpose, adjusted_residual[None, :]],
         axis=0,
@@ -208,7 +216,16 @@ def prepare_regenie2_multi_linear_chromosome_state(
     loco_prediction_matrix_float32 = jnp.asarray(loco_prediction_matrix, dtype=jnp.float32)
     adjusted_residual_matrix = state.phenotype_residual_matrix - loco_prediction_matrix_float32
     adjusted_residual_projection_coordinate_matrix = adjusted_residual_matrix @ state.whitened_covariate_transpose.T
-    adjusted_residual_sum_squares = jnp.einsum("ij,ij->i", adjusted_residual_matrix, adjusted_residual_matrix)
+    raw_adjusted_residual_sum_squares = jnp.einsum("ij,ij->i", adjusted_residual_matrix, adjusted_residual_matrix)
+    adjusted_residual_projection_sum_squares = jnp.einsum(
+        "ij,ij->i",
+        adjusted_residual_projection_coordinate_matrix,
+        adjusted_residual_projection_coordinate_matrix,
+    )
+    adjusted_residual_sum_squares = jnp.maximum(
+        raw_adjusted_residual_sum_squares - adjusted_residual_projection_sum_squares,
+        0.0,
+    )
     return regenie2_linear_types.Regenie2MultiLinearChromosomeState(
         covariate_matrix_transpose=state.covariate_matrix_transpose,
         covariate_crossproduct_cholesky_factor=state.covariate_crossproduct_cholesky_factor,

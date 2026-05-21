@@ -148,5 +148,5 @@ def build_preflight_warnings(
     if residual_degrees_of_freedom < 10:
         warning_messages.append("REGENIE step 2 is running with fewer than 10 residual degrees of freedom.")
     if trusted_no_missing_diploid:
-        warning_messages.append("Trusted no-missing diploid BGEN path is enabled after native validation.")
+        warning_messages.append("Trusted no-missing diploid BGEN path is enabled after compatibility validation.")
     return tuple(warning_messages)
