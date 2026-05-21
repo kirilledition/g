@@ -412,6 +412,21 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
     assert "phenotype_binary" in binary_command
 
 
+def test_g_comparison_runner_resolves_current_output_layout(tmp_path: Path) -> None:
+    output_root_directory = tmp_path / "out.g"
+    output_association_directory = output_root_directory / "trait_0001_phenotype_binary.regenie2_binary.run"
+    output_association_directory.mkdir(parents=True)
+    final_parquet_path = output_association_directory / "final.parquet"
+    final_parquet_path.touch()
+
+    resolved_path = comparison_benchmark.resolve_g_step2_final_parquet_path(
+        output_root_directory=output_root_directory,
+        association_suffix=".regenie2_binary.run",
+    )
+
+    assert resolved_path == final_parquet_path
+
+
 def test_unsupported_g_program_result_marked_not_implemented() -> None:
     result = comparison_benchmark.build_not_implemented_result(
         program_name="g_regenie2_binary_step1",

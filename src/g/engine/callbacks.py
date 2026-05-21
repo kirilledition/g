@@ -25,7 +25,7 @@ from g.compute import (
 )
 from g.engine import timing
 
-RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 5.0
+RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 60.0
 
 
 class NativeBgenWorkerShutdownError(RuntimeError):

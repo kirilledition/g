@@ -375,18 +375,19 @@ def run_g_step2(
     stdout_log_path = log_directory / f"{program_name}.stdout.log"
     stderr_log_path = log_directory / f"{program_name}.stderr.log"
     association_suffix = ".regenie2_binary.run" if trait_type == "binary" else ".regenie2_linear.run"
-    phenotype_name = "phenotype_binary" if trait_type == "binary" else "phenotype_continuous"
-    output_run_directory = output_prefix.with_name(f"{output_prefix.name}.g") / phenotype_name
-    output_association_directory = output_run_directory.with_suffix(association_suffix)
-    if output_association_directory.exists():
+    output_root_directory = output_prefix.with_name(f"{output_prefix.name}.g")
+    for output_association_directory in output_root_directory.glob(f"*{association_suffix}"):
         shutil.rmtree(output_association_directory)
     success, duration_seconds, error_message = run_command_with_logs(
         command_arguments=command_arguments,
         stdout_log_path=stdout_log_path,
         stderr_log_path=stderr_log_path,
     )
-    output_path = output_association_directory / "final.parquet"
-    output_row_count = count_table_rows(output_path)
+    output_path = resolve_g_step2_final_parquet_path(
+        output_root_directory=output_root_directory,
+        association_suffix=association_suffix,
+    )
+    output_row_count = None if output_path is None else count_table_rows(output_path)
     variants_per_second = None
     if output_row_count is not None and duration_seconds > 0:
         variants_per_second = output_row_count / duration_seconds
@@ -403,11 +404,19 @@ def run_g_step2(
         peak_memory_megabytes=None,
         stdout_log_path=str(stdout_log_path),
         stderr_log_path=str(stderr_log_path),
-        output_paths=[str(output_path)] if output_path.exists() else [],
+        output_paths=[str(output_path)] if output_path is not None and output_path.exists() else [],
         output_row_count=output_row_count,
         prediction_list_present=None,
         notes=error_message,
     )
+
+
+def resolve_g_step2_final_parquet_path(*, output_root_directory: Path, association_suffix: str) -> Path | None:
+    """Return the finalized g step 2 Parquet path for one benchmark output root."""
+    output_paths = sorted(output_root_directory.glob(f"*{association_suffix}/final.parquet"))
+    if len(output_paths) == 1:
+        return output_paths[0]
+    return None
 
 
 def load_g_output_frame(g_output_path: Path) -> pl.DataFrame:
