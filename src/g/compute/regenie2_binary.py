@@ -745,22 +745,39 @@ def prepare_regenie2_multi_binary_chromosome_state(
     )
 
 
-@functools.partial(jax.jit, static_argnames=("correction_plan",))
-def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
+def compute_regenie2_binary_score_test_chunk_variant_major_core(
     chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
-    genotype_matrix: jax.Array,
-    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
+    genotype_matrix_by_variant: jax.Array,
+    correction_plan: types.BinaryCorrectionPlan,
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
-    """Compute the uncorrected score-test result for one binary chunk."""
-    raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix, dtype=jnp.float32).T
+    """Compute the binary score test from canonical variant-major genotypes.
+
+    Args:
+        chromosome_state: Chromosome-specific null model state.
+        genotype_matrix_by_variant: Variant-major dosage matrix.
+        correction_plan: Binary fallback/correction policy.
+
+    Returns:
+        Uncorrected score-test result for the chunk.
+
+    """
+    raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
     genotype_flip_result = build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
-    genotype_matrix_float32 = genotype_flip_result.genotype_matrix_by_variant.T
-    weighted_genotype_matrix = chromosome_state.square_root_weight[:, None] * genotype_matrix_float32
-    projection_coordinates = chromosome_state.weighted_genotype_projection_matrix @ weighted_genotype_matrix
-    weighted_genotype_sum_squares = jnp.einsum("ij,ij->j", weighted_genotype_matrix, weighted_genotype_matrix)
-    projection_sum_squares = jnp.einsum("ij,ij->j", projection_coordinates, projection_coordinates)
+    genotype_matrix_by_variant_float32 = genotype_flip_result.genotype_matrix_by_variant
+    weighted_genotype_matrix_by_variant = (
+        genotype_matrix_by_variant_float32 * chromosome_state.square_root_weight[None, :]
+    )
+    projection_coordinates = (
+        weighted_genotype_matrix_by_variant @ chromosome_state.weighted_genotype_projection_matrix.T
+    )
+    weighted_genotype_sum_squares = jnp.einsum(
+        "ij,ij->i",
+        weighted_genotype_matrix_by_variant,
+        weighted_genotype_matrix_by_variant,
+    )
+    projection_sum_squares = jnp.einsum("ij,ij->i", projection_coordinates, projection_coordinates)
     variance = jnp.maximum(weighted_genotype_sum_squares - projection_sum_squares, 0.0)
-    score = genotype_matrix_float32.T @ chromosome_state.score_residual
+    score = genotype_matrix_by_variant_float32 @ chromosome_state.score_residual
     null_logistic_converged = chromosome_state.null_logistic_converged
     positive_variance_mask = compute_positive_variance_mask(variance, weighted_genotype_sum_squares)
     statistic_mask = positive_variance_mask & null_logistic_converged
@@ -798,6 +815,20 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
         pseudo_firth_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
         nr_zero_start_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
         nr_warm_start_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
+    )
+
+
+@functools.partial(jax.jit, static_argnames=("correction_plan",))
+def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
+    chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
+    genotype_matrix: jax.Array,
+    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
+) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+    """Compute the uncorrected score-test result for one binary chunk."""
+    return compute_regenie2_binary_score_test_chunk_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.asarray(genotype_matrix, dtype=jnp.float32).T,
+        correction_plan=correction_plan,
     )
 
 

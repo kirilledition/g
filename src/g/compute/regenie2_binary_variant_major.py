@@ -10,7 +10,7 @@ import jax.numpy as jnp
 
 from g import types
 from g.compute import regenie2_binary, regenie2_binary_candidate_planning, regenie2_binary_types
-from g.compute.common import genotype, pvalue
+from g.compute.common import genotype
 
 
 @functools.partial(jax.jit, static_argnames=("correction_plan",))
@@ -20,60 +20,10 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     """Compute the variant-major score test for one binary chunk."""
-    raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
-    genotype_flip_result = genotype.build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
-    genotype_matrix_by_variant_float32 = genotype_flip_result.genotype_matrix_by_variant
-    weighted_genotype_matrix_by_variant = (
-        genotype_matrix_by_variant_float32 * chromosome_state.square_root_weight[None, :]
-    )
-    projection_coordinates = (
-        weighted_genotype_matrix_by_variant @ chromosome_state.weighted_genotype_projection_matrix.T
-    )
-    weighted_genotype_sum_squares = jnp.einsum(
-        "ij,ij->i",
-        weighted_genotype_matrix_by_variant,
-        weighted_genotype_matrix_by_variant,
-    )
-    projection_sum_squares = jnp.einsum("ij,ij->i", projection_coordinates, projection_coordinates)
-    variance = jnp.maximum(weighted_genotype_sum_squares - projection_sum_squares, 0.0)
-    score = genotype_matrix_by_variant_float32 @ chromosome_state.score_residual
-    null_logistic_converged = chromosome_state.null_logistic_converged
-    positive_variance_mask = regenie2_binary.compute_positive_variance_mask(variance, weighted_genotype_sum_squares)
-    statistic_mask = positive_variance_mask & null_logistic_converged
-    inverse_variance = jnp.where(statistic_mask, jnp.reciprocal(variance), 0.0)
-    beta = jnp.where(
-        statistic_mask,
-        jnp.where(genotype_flip_result.flip_mask, -score * inverse_variance, score * inverse_variance),
-        jnp.nan,
-    )
-    standard_error = jnp.where(statistic_mask, jnp.sqrt(inverse_variance), jnp.nan)
-    chi_squared = jnp.where(
-        null_logistic_converged,
-        jnp.where(positive_variance_mask, score * score * inverse_variance, 0.0),
-        jnp.nan,
-    )
-    log10_p_value = jnp.where(
-        null_logistic_converged,
-        pvalue.chi_squared_to_log10_p_value(chi_squared),
-        jnp.nan,
-    )
-    valid_mask = null_logistic_converged & jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    extra_code = regenie2_binary_candidate_planning.build_extra_code(log10_p_value, valid_mask, correction_plan)
-    return regenie2_binary_types.Regenie2BinaryChunkResult(
-        beta=beta,
-        standard_error=standard_error,
-        chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
-        extra_code=extra_code,
-        valid_mask=valid_mask,
-        firth_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        firth_failure_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        firth_convergence_reason_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        firth_correction_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        firth_sparse_correction_mask=jnp.zeros_like(extra_code, dtype=jnp.bool_),
-        pseudo_firth_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        nr_zero_start_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        nr_warm_start_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
+    return regenie2_binary.compute_regenie2_binary_score_test_chunk_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        correction_plan=correction_plan,
     )
 
 
