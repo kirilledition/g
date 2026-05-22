@@ -22,7 +22,6 @@ class BinaryKernelConfig:
         firth_likelihood_tolerance: Firth penalized-likelihood convergence tolerance.
         firth_maximum_step_size: Maximum absolute Firth coefficient update before step scaling.
         use_block_firth_math: Whether to use the experimental block-matrix Firth path.
-        use_float32_firth_math: Debug-only switch for running null Firth and scalar Firth in float32.
 
     """
 
@@ -36,7 +35,6 @@ class BinaryKernelConfig:
     firth_likelihood_tolerance: float
     firth_maximum_step_size: float
     use_block_firth_math: bool
-    use_float32_firth_math: bool = False
 
     def __post_init__(self) -> None:
         """Validate positive static kernel settings."""

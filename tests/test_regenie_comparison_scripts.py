@@ -101,44 +101,12 @@ def test_binary_regenie_debug_selector_matches_ids_and_indices() -> None:
     assert not selector.matches(variant_identifier="rs2", variant_index=4)
 
 
-def test_binary_regenie_debug_kernel_config_exposes_float32_firth_experiment() -> None:
-    arguments = binary_regenie_debug.build_argument_parser().parse_args(
-        [
-            "--bgen",
-            "study.bgen",
-            "--sample",
-            "study.sample",
-            "--pheno-file",
-            "phenotypes.tsv",
-            "--pheno-col",
-            "trait",
-            "--covar-file",
-            "covariates.tsv",
-            "--covar-col-list",
-            "age,sex",
-            "--pred",
-            "pred.list",
-            "--variant-id",
-            "rs1",
-            "--output-json",
-            "debug.json",
-            "--use-float32-firth-math",
-        ]
-    )
-
-    kernel_config = binary_regenie_debug.build_debug_kernel_config(arguments)
-
-    assert kernel_config.use_float32_firth_math is True
-    assert binary_regenie_debug.regenie2_binary.binary_firth_internal_dtype_name(kernel_config) == "float32"
-
-
 def test_binary_regenie_debug_comparison_reports_nested_numeric_differences() -> None:
     record = binary_regenie_debug.VariantDebugRecord(
         variant_index=0,
         chromosome="22",
         position=100,
         variant_identifier="rs1",
-        firth_internal_dtype="float64",
         allele_zero="A",
         allele_one="G",
         allele_count=2.0,
@@ -205,7 +173,6 @@ def test_binary_regenie_debug_missing_selection_count_handles_id_and_index_match
         chromosome="22",
         position=100,
         variant_identifier="rs1",
-        firth_internal_dtype="float64",
         allele_zero="A",
         allele_one="G",
         allele_count=2.0,

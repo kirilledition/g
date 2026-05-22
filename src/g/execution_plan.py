@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import os
 import re
 import typing
 from dataclasses import dataclass
@@ -20,8 +19,6 @@ if typing.TYPE_CHECKING:
 
 PHENOTYPE_DIRECTORY_SAFE_CHARACTER_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 PHENOTYPE_DIRECTORY_MAXIMUM_SLUG_LENGTH = 80
-FLOAT32_FIRTH_ENVIRONMENT_VARIABLE = "G_BINARY_USE_FLOAT32_FIRTH_MATH"
-TRUE_ENVIRONMENT_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 @dataclass(frozen=True)
@@ -177,16 +174,7 @@ def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie
         firth_likelihood_tolerance=compute_config.firth_likelihood_tolerance,
         firth_maximum_step_size=compute_config.firth_maximum_step_size,
         use_block_firth_math=compute_config.use_block_firth_math,
-        use_float32_firth_math=resolve_float32_firth_debug_mode(),
     )
-
-
-def resolve_float32_firth_debug_mode() -> bool:
-    """Return whether the hidden float32 Firth experiment is enabled."""
-    environment_value = os.environ.get(FLOAT32_FIRTH_ENVIRONMENT_VARIABLE)
-    if environment_value is None:
-        return False
-    return environment_value.strip().lower() in TRUE_ENVIRONMENT_VALUES
 
 
 def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> RegenieExecutionPlan:

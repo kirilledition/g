@@ -165,16 +165,6 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
     assert kernel_config.use_block_firth_math is True
 
 
-def test_build_binary_kernel_config_honors_hidden_float32_firth_debug_env(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv(execution_plan.FLOAT32_FIRTH_ENVIRONMENT_VARIABLE, "true")
-
-    kernel_config = execution_plan.build_binary_kernel_config(config.GComputeConfig())
-
-    assert kernel_config.use_float32_firth_math is True
-
-
 def test_normalize_binary_correction_config_maps_approximate_firth() -> None:
     plan = execution_plan.normalize_binary_correction_config(
         config.BinaryConfig(firth=True, approx=True, p_threshold=0.01)

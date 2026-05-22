@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,10 +8,7 @@ from g import types
 from g.compute import regenie2_binary, regenie2_binary_types
 
 
-def build_scalar_fixture(
-    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
-    kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
-) -> tuple[regenie2_binary_types.Regenie2BinaryChromosomeState, jax.Array, jax.Array]:
+def build_scalar_fixture() -> tuple[regenie2_binary_types.Regenie2BinaryChromosomeState, jax.Array, jax.Array]:
     """Build a deterministic separation fixture for scalar Firth tests."""
     covariate_matrix = jnp.asarray(
         [
@@ -34,77 +29,12 @@ def build_scalar_fixture(
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state,
         jnp.zeros_like(phenotype_vector),
-        correction_plan,
-        kernel_config,
     )
     residualized_genotype_vector = regenie2_binary.residualize_and_scale_genotypes_for_approximate_firth(
         chromosome_state,
         genotype_vector[None, :],
     )[0]
     return chromosome_state, genotype_vector, residualized_genotype_vector
-
-
-def compute_single_lane_firth_result(
-    chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
-    raw_genotype_vector: jax.Array,
-    genotype_vector: jax.Array,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig,
-) -> regenie2_binary.FirthVariantResult:
-    """Run the vectorized Firth lane directly so tests can inspect internal result dtype."""
-    coefficient_count = chromosome_state.covariate_matrix.shape[1] + 1
-    initial_coefficients = jnp.zeros((1, coefficient_count), dtype=regenie2_binary.BINARY_SCORE_DTYPE)
-    return regenie2_binary.compute_firth_variantwise(
-        covariate_matrix=chromosome_state.covariate_matrix,
-        null_logistic_coefficients=chromosome_state.null_logistic_coefficients,
-        null_firth_offset=chromosome_state.null_firth_offset,
-        phenotype_vector=chromosome_state.phenotype_vector,
-        genotype_matrix_by_variant=genotype_vector[None, :],
-        raw_genotype_matrix_by_variant=raw_genotype_vector[None, :],
-        loco_offset=chromosome_state.loco_offset,
-        initial_coefficients=initial_coefficients,
-        skip_firth_mask=jnp.asarray([False], dtype=jnp.bool_),
-        sparse_correction_mask=jnp.asarray([True], dtype=jnp.bool_),
-        null_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood,
-        kernel_config=kernel_config,
-    )
-
-
-def test_default_firth_internal_dtype_remains_float64() -> None:
-    chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture(
-        types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE)
-    )
-
-    result = compute_single_lane_firth_result(
-        chromosome_state,
-        raw_genotype_vector,
-        genotype_vector,
-        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
-    )
-
-    assert chromosome_state.covariate_matrix.dtype == jnp.dtype(regenie2_binary.BINARY_SCORE_DTYPE)
-    assert chromosome_state.null_firth_offset.dtype == jnp.dtype(regenie2_binary.BINARY_FIRTH_REFERENCE_DTYPE)
-    assert result.beta.dtype == jnp.dtype(regenie2_binary.BINARY_FIRTH_REFERENCE_DTYPE)
-    assert result.log10_p_value.dtype == jnp.dtype(regenie2_binary.BINARY_FIRTH_REFERENCE_DTYPE)
-
-
-def test_float32_firth_debug_config_demotes_null_and_scalar_firth_internal_dtype() -> None:
-    kernel_config = dataclasses.replace(regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG, use_float32_firth_math=True)
-    chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture(
-        types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
-        kernel_config,
-    )
-
-    result = compute_single_lane_firth_result(
-        chromosome_state,
-        raw_genotype_vector,
-        genotype_vector,
-        kernel_config,
-    )
-
-    assert chromosome_state.null_firth_coefficients.dtype == jnp.dtype(regenie2_binary.BINARY_SCORE_DTYPE)
-    assert chromosome_state.null_firth_offset.dtype == jnp.dtype(regenie2_binary.BINARY_SCORE_DTYPE)
-    assert result.beta.dtype == jnp.dtype(regenie2_binary.BINARY_SCORE_DTYPE)
-    assert result.log10_p_value.dtype == jnp.dtype(regenie2_binary.BINARY_SCORE_DTYPE)
 
 
 def test_regenie_logistic_deviance_matches_manual_formula() -> None:

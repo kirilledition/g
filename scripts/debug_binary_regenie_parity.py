@@ -70,7 +70,6 @@ class VariantDebugRecord:
         chromosome: Chromosome label.
         position: Genomic position.
         variant_identifier: Variant ID.
-        firth_internal_dtype: Internal dtype used for null Firth and scalar approximate Firth math.
         allele_zero: Output allele 0.
         allele_one: Output allele 1.
         allele_count: Raw allele-one dosage sum.
@@ -113,7 +112,6 @@ class VariantDebugRecord:
     chromosome: str
     position: int
     variant_identifier: str
-    firth_internal_dtype: str
     allele_zero: str
     allele_one: str
     allele_count: float
@@ -190,7 +188,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--regenie-debug-jsonl", type=Path)
     parser.add_argument("--trusted-no-missing-diploid", action="store_true")
-    parser.add_argument("--use-float32-firth-math", action="store_true", help=argparse.SUPPRESS)
     return parser
 
 
@@ -257,14 +254,6 @@ def build_selector(arguments: argparse.Namespace) -> VariantSelector:
         message = "Provide at least one --variant-id or --variant-index."
         raise ValueError(message)
     return VariantSelector(variant_identifiers=variant_identifiers, variant_indices=variant_indices)
-
-
-def build_debug_kernel_config(arguments: argparse.Namespace) -> regenie2_binary_types.BinaryKernelConfig:
-    """Build the internal kernel config used by debug capture."""
-    return dataclasses.replace(
-        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
-        use_float32_firth_math=bool(arguments.use_float32_firth_math),
-    )
 
 
 def compute_score_debug_arrays(
@@ -357,7 +346,6 @@ def build_debug_records_for_chunk(
                 chromosome=str(metadata.chromosome[chunk_offset]),
                 position=int(metadata.position[chunk_offset]),
                 variant_identifier=str(metadata.variant_identifiers[chunk_offset]),
-                firth_internal_dtype=regenie2_binary.binary_firth_internal_dtype_name(kernel_config),
                 allele_zero=str(metadata.allele_two[chunk_offset]),
                 allele_one=str(metadata.allele_one[chunk_offset]),
                 allele_count=float(score_debug_arrays.allele_count[result_offset]),
@@ -573,11 +561,7 @@ def count_missing_selections(*, records: list[VariantDebugRecord], selector: Var
     return len(missing_identifiers) + len(missing_indices)
 
 
-def capture_g_records(
-    arguments: argparse.Namespace,
-    selector: VariantSelector,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig,
-) -> list[VariantDebugRecord]:
+def capture_g_records(arguments: argparse.Namespace, selector: VariantSelector) -> list[VariantDebugRecord]:
     """Run native BGEN streaming and capture selected `g` debug records."""
     engine = _core.Regenie2RunEngine(
         str(arguments.bgen),
@@ -610,7 +594,7 @@ def capture_g_records(
         prediction_source=prediction_source,
         selector=selector,
         correction_plan=correction_plan,
-        kernel_config=kernel_config,
+        kernel_config=regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
     )
     engine.run_bgen_variant_major_dosage_buffered_chunks(run_input.sample_indices, callback)
     return sorted(callback.records, key=lambda record: record.variant_index)
@@ -621,12 +605,10 @@ def main() -> None:
     parser = build_argument_parser()
     arguments = parser.parse_args()
     selector = build_selector(arguments)
-    kernel_config = build_debug_kernel_config(arguments)
-    records = capture_g_records(arguments, selector, kernel_config)
+    records = capture_g_records(arguments, selector)
     reference_records = load_reference_debug_records(arguments.regenie_debug_jsonl)
     comparisons = build_comparisons(records=records, reference_records=reference_records)
     output_payload = {
-        "firth_internal_dtype": regenie2_binary.binary_firth_internal_dtype_name(kernel_config),
         "records": [dataclasses.asdict(record) for record in records],
         "comparisons": [
             {
