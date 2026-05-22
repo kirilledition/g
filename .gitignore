@@ -9,6 +9,11 @@ __pycache__/
 *.pyc
 src/g/_core*.so
 
+# Local REGENIE reference builds.
+/archive/direct_association/regenie/regenie
+/archive/direct_association/regenie/**/*.a
+/archive/direct_association/regenie/**/*.o
+
 .coverage
 
 *.ruff_cache
