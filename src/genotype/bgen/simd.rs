@@ -1,19 +1,7 @@
-use std::sync::OnceLock;
-
 use crate::genotype::preprocess;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const AVX2_SAMPLE_COUNT: usize = 8;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-const AVX512_SAMPLE_COUNT: usize = 16;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TrustedIdentitySimdMode {
-    Auto,
-    Scalar,
-    Avx2,
-    Avx512,
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct TrustedEightBitIdentityDecodeSummary {
@@ -52,24 +40,7 @@ pub(super) fn decode_trusted_unphased_eight_bit_identity_simd_or_scalar(
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
-        let simd_mode = trusted_identity_simd_mode();
-        if simd_mode == TrustedIdentitySimdMode::Avx512
-            && std::arch::is_x86_feature_detected!("avx512f")
-            && std::arch::is_x86_feature_detected!("avx512bw")
-        {
-            // AVX-512 is kept as an explicit benchmark mode; AVX2 is faster on the current target hosts.
-            return unsafe {
-                decode_trusted_unphased_eight_bit_identity_avx512(
-                    packed_probability_bytes,
-                    dosage_lookup,
-                    output_values,
-                )
-            };
-        }
-        if simd_mode != TrustedIdentitySimdMode::Scalar
-            && simd_mode != TrustedIdentitySimdMode::Avx512
-            && std::arch::is_x86_feature_detected!("avx2")
-        {
+        if std::arch::is_x86_feature_detected!("avx2") {
             // The runtime feature check guarantees that the AVX2 implementation is valid on this host.
             return unsafe {
                 decode_trusted_unphased_eight_bit_identity_avx2(packed_probability_bytes, dosage_lookup, output_values)
@@ -78,16 +49,6 @@ pub(super) fn decode_trusted_unphased_eight_bit_identity_simd_or_scalar(
     }
 
     decode_trusted_unphased_eight_bit_identity_scalar(packed_probability_bytes, dosage_lookup, output_values)
-}
-
-fn trusted_identity_simd_mode() -> TrustedIdentitySimdMode {
-    static SIMD_MODE: OnceLock<TrustedIdentitySimdMode> = OnceLock::new();
-    *SIMD_MODE.get_or_init(|| match std::env::var("G_BGEN_TRUSTED_IDENTITY_SIMD_MODE").as_deref() {
-        Ok("scalar") => TrustedIdentitySimdMode::Scalar,
-        Ok("avx2") => TrustedIdentitySimdMode::Avx2,
-        Ok("avx512") => TrustedIdentitySimdMode::Avx512,
-        _ => TrustedIdentitySimdMode::Auto,
-    })
 }
 
 fn decode_trusted_unphased_eight_bit_identity_scalar(
@@ -127,56 +88,10 @@ fn decode_trusted_unphased_eight_bit_identity_scalar_from(
 }
 
 #[cfg(target_arch = "x86")]
-use std::arch::x86::{
-    __m128i, __m256i, _mm_loadu_si128, _mm256_cvtepu16_epi32, _mm256_i32gather_ps, _mm256_loadu_si256,
-    _mm256_storeu_ps, _mm512_cvtepu16_epi32, _mm512_i32gather_ps, _mm512_storeu_ps,
-};
+use std::arch::x86::{__m128i, _mm_loadu_si128, _mm256_cvtepu16_epi32, _mm256_i32gather_ps, _mm256_storeu_ps};
 
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{
-    __m128i, __m256i, _mm_loadu_si128, _mm256_cvtepu16_epi32, _mm256_i32gather_ps, _mm256_loadu_si256,
-    _mm256_storeu_ps, _mm512_cvtepu16_epi32, _mm512_i32gather_ps, _mm512_storeu_ps,
-};
-
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-#[target_feature(enable = "avx,avx512f,avx512bw")]
-#[allow(clippy::cast_ptr_alignment)]
-unsafe fn decode_trusted_unphased_eight_bit_identity_avx512(
-    packed_probability_bytes: &[u8],
-    dosage_lookup: &[f32],
-    output_values: &mut [f32],
-) -> TrustedEightBitIdentityDecodeSummary {
-    let mut decode_summary = TrustedEightBitIdentityDecodeSummary::default();
-    let mut sample_index = 0_usize;
-    while sample_index + AVX512_SAMPLE_COUNT <= output_values.len() {
-        let probability_pointer = unsafe { packed_probability_bytes.as_ptr().add(sample_index * 2).cast::<__m256i>() };
-        let probability_words = unsafe { _mm256_loadu_si256(probability_pointer) };
-        let probability_indices = _mm512_cvtepu16_epi32(probability_words);
-        let dosage_values = unsafe { _mm512_i32gather_ps(probability_indices, dosage_lookup.as_ptr(), 4) };
-        unsafe {
-            _mm512_storeu_ps(output_values.as_mut_ptr().add(sample_index), dosage_values);
-        }
-
-        let mut dosage_chunk = [0.0_f32; AVX512_SAMPLE_COUNT];
-        unsafe {
-            _mm512_storeu_ps(dosage_chunk.as_mut_ptr(), dosage_values);
-        }
-        for dosage_value in dosage_chunk {
-            decode_summary.record_dosage(dosage_value);
-        }
-
-        sample_index += AVX512_SAMPLE_COUNT;
-    }
-
-    decode_trusted_unphased_eight_bit_identity_scalar_from(
-        packed_probability_bytes,
-        dosage_lookup,
-        output_values,
-        sample_index,
-        &mut decode_summary,
-    );
-    decode_summary
-}
+use std::arch::x86_64::{__m128i, _mm_loadu_si128, _mm256_cvtepu16_epi32, _mm256_i32gather_ps, _mm256_storeu_ps};
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
@@ -227,10 +142,7 @@ mod tests {
     }
 
     fn probability_bytes() -> Vec<u8> {
-        vec![
-            0, 0, 255, 0, 0, 255, 128, 0, 0, 128, 64, 64, 255, 255, 3, 252, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100,
-            110, 120, 130, 140, 150, 160,
-        ]
+        vec![0, 0, 255, 0, 0, 255, 128, 0, 0, 128, 64, 64, 255, 255, 3, 252, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
     }
 
     #[test]
@@ -270,27 +182,5 @@ mod tests {
 
         assert_eq!(avx2_output, scalar_output);
         assert_eq!(avx2_summary, scalar_summary);
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    #[test]
-    fn trusted_identity_avx512_matches_scalar_when_available() {
-        if !std::arch::is_x86_feature_detected!("avx512f") || !std::arch::is_x86_feature_detected!("avx512bw") {
-            return;
-        }
-
-        let lookup = dosage_lookup();
-        let probabilities = probability_bytes();
-        let sample_count = probabilities.len() / 2;
-        let mut scalar_output = vec![0.0_f32; sample_count];
-        let mut avx512_output = vec![0.0_f32; sample_count];
-
-        let scalar_summary =
-            decode_trusted_unphased_eight_bit_identity_scalar(&probabilities, lookup, &mut scalar_output);
-        let avx512_summary =
-            unsafe { decode_trusted_unphased_eight_bit_identity_avx512(&probabilities, lookup, &mut avx512_output) };
-
-        assert_eq!(avx512_output, scalar_output);
-        assert_eq!(avx512_summary, scalar_summary);
     }
 }
