@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import time
@@ -29,7 +28,6 @@ PARITY_BETA_ATOL = 1.0e-3
 PARITY_STANDARD_ERROR_ATOL = 1.0e-3
 PARITY_CHI_SQUARED_ATOL = 1.5e-2
 PARITY_LOG10P_ATOL = 1.5e-2
-LINEAR_COMPUTE_DTYPE_ENVIRONMENT_VARIABLE = "GWAS_ENGINE_LINEAR_COMPUTE_DTYPE"
 
 
 @dataclass(frozen=True)
@@ -98,11 +96,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--variant-limit", type=int, help="Optional variant cap for g runs.")
     parser.add_argument("--chunk-size", type=int, default=8192, help="Chunk size for g runs.")
     parser.add_argument(
-        "--g-linear-compute-dtype",
-        choices=("float32", "float64"),
-        help="Internal quantitative g compute dtype override for parity investigation.",
-    )
-    parser.add_argument(
         "--only-quantitative-step2",
         action="store_true",
         help="Benchmark only original regenie quantitative step 2 against g step 2.",
@@ -126,20 +119,14 @@ def run_command_with_logs(
     command_arguments: list[str],
     stdout_log_path: Path,
     stderr_log_path: Path,
-    environment_overrides: dict[str, str] | None = None,
 ) -> tuple[bool, float, str | None]:
     """Run one command and persist logs."""
     start_time = time.perf_counter()
-    command_environment = None
-    if environment_overrides is not None:
-        command_environment = os.environ.copy()
-        command_environment.update(environment_overrides)
     completed_process = subprocess.run(
         command_arguments,
         check=False,
         capture_output=True,
         text=True,
-        env=command_environment,
     )
     duration_seconds = time.perf_counter() - start_time
     stdout_log_path.write_text(completed_process.stdout)
@@ -398,7 +385,6 @@ def run_g_step2(
     command_arguments: list[str],
     output_prefix: Path,
     log_directory: Path,
-    environment_overrides: dict[str, str] | None = None,
 ) -> ComparisonProgramResult:
     """Run one g step2 program and collect metadata."""
     stdout_log_path = log_directory / f"{program_name}.stdout.log"
@@ -411,7 +397,6 @@ def run_g_step2(
         command_arguments=command_arguments,
         stdout_log_path=stdout_log_path,
         stderr_log_path=stderr_log_path,
-        environment_overrides=environment_overrides,
     )
     output_path = resolve_g_step2_final_parquet_path(
         output_root_directory=output_root_directory,
@@ -849,11 +834,6 @@ def main() -> None:
 
     active_trait_type = "binary" if arguments.only_binary_step2 else "quantitative"
     active_trait_label = "binary" if active_trait_type == "binary" else "quantitative"
-    linear_environment_overrides = None
-    if active_trait_type == "quantitative" and arguments.g_linear_compute_dtype is not None:
-        linear_environment_overrides = {
-            LINEAR_COMPUTE_DTYPE_ENVIRONMENT_VARIABLE: str(arguments.g_linear_compute_dtype),
-        }
     g_output_cpu_prefix = arguments.output_dir / (
         "g_regenie2_binary_step2_cpu" if active_trait_type == "binary" else "g_regenie2_qt_step2_cpu"
     )
@@ -874,7 +854,6 @@ def main() -> None:
             command_arguments=g_cpu_command_arguments,
             output_prefix=g_output_cpu_prefix,
             log_directory=log_directory,
-            environment_overrides=linear_environment_overrides,
         )
     )
 
@@ -900,7 +879,6 @@ def main() -> None:
                 command_arguments=g_gpu_command_arguments,
                 output_prefix=g_output_gpu_prefix,
                 log_directory=log_directory,
-                environment_overrides=linear_environment_overrides,
             )
         )
     else:
@@ -1041,7 +1019,6 @@ def main() -> None:
     report_data: dict[str, typing.Any] = {
         "timestamp": datetime.now(UTC).isoformat(),
         "hardware": asdict(baseline_benchmark.collect_hardware_summary()),
-        "g_linear_compute_dtype": arguments.g_linear_compute_dtype,
         "results": [asdict(result) for result in results],
         "comparisons": {
             "quantitative_step2": {

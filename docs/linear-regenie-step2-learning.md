@@ -46,27 +46,13 @@ LOG10P = -log10(P(ChiSq_1 >= CHISQ))
 This is algebraically equivalent to REGENIE's dense strict score path when the
 same sample set, LOCO residual, genotype coding, and output precision are used.
 
-## Dtype Investigation
+## Dtype Policy
 
-Original REGENIE uses Eigen `double` for this path. `g` defaults to float32
-compute and float32 output because the production schema stores `BETA`, `SE`,
-`CHISQ`, and `LOG10P` as Arrow `Float32`.
-
-For parity investigation, set:
-
-```bash
-GWAS_ENGINE_LINEAR_COMPUTE_DTYPE=float64
-```
-
-or pass:
-
-```bash
-scripts/benchmark_regenie_comparison.py --g-linear-compute-dtype float64
-```
-
-This switches linear compute internals to float64 while keeping the public output
-surface unchanged. Any improvement from this switch must be separated from final
-float32 output truncation before changing production defaults.
+Original REGENIE uses Eigen `double` for this path, but current full-chromosome
+CPU and GPU parity checks show that linear float32 compute is not the limiting
+factor for replacement-grade agreement. `g` therefore keeps quantitative step 2
+linear compute and output fixed to float32. There is no runtime dtype switch for
+this path.
 
 ## Debug Workflow
 

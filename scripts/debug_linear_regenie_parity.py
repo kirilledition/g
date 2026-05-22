@@ -168,7 +168,7 @@ def compute_linear_debug_arrays(
     """Compute quantitative score-test internal arrays for selected variants."""
     raw_genotype_matrix_by_variant = jnp.asarray(
         genotype_matrix_by_variant,
-        dtype=regenie2_linear.LINEAR_COMPUTE_DTYPE,
+        dtype=jnp.float32,
     )
     genotype_mean = jnp.mean(raw_genotype_matrix_by_variant, axis=1)
     normalization_offset = jnp.where(genotype_mean > 1.0, 2.0, 0.0)
@@ -226,7 +226,7 @@ def build_debug_records_for_chunk(
     """Build quantitative debug records for selected offsets from one native BGEN chunk."""
     selected_genotype_matrix_by_variant = jnp.asarray(
         genotype_matrix_by_variant[selected_offsets, :],
-        dtype=regenie2_linear.LINEAR_COMPUTE_DTYPE,
+        dtype=jnp.float32,
     )
     result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
         chromosome_state=chromosome_state,
@@ -334,7 +334,7 @@ class LinearVariantDebugCaptureCallback:
         if chromosome not in self.chromosome_states:
             loco_predictions = jnp.asarray(
                 self.prediction_source.get_chromosome_predictions(chromosome),
-                dtype=regenie2_linear.LINEAR_COMPUTE_DTYPE,
+                dtype=jnp.float32,
             )
             self.chromosome_states[chromosome] = regenie2_linear.prepare_regenie2_linear_chromosome_state(
                 self.regenie_state,
@@ -491,7 +491,6 @@ def main() -> None:
             for comparison in comparisons
         ],
         "missing_selection_count": count_missing_selections(records=records, selector=selector),
-        "linear_compute_dtype": str(regenie2_linear.LINEAR_COMPUTE_DTYPE),
     }
     arguments.output_json.parent.mkdir(parents=True, exist_ok=True)
     arguments.output_json.write_text(f"{json.dumps(output_payload, indent=2)}\n", encoding="utf-8")
