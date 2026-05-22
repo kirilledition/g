@@ -8,6 +8,7 @@ use super::decode::{
 use super::metadata::VariantRecord;
 use super::profile::{ThreadLocalProfileSnapshot, elapsed_nanoseconds};
 use super::sample_selection::SampleSelection;
+use super::simd;
 use super::{BgenError, CompressionType};
 use crate::genotype::preprocess;
 
@@ -236,30 +237,30 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
     })?;
     let mut selected_dosage_total = 0.0_f32;
     let mut selected_dosage_square_total = 0.0_f32;
+    let mut selected_observation_count = i32::try_from(selected_sample_count).unwrap_or(i32::MAX);
     let mut zero_count = 0_i32;
     let mut nonzero_count = 0_i32;
     let mut homozygous_reference_count = 0_i32;
     let mut heterozygous_count = 0_i32;
     let mut homozygous_alternate_count = 0_i32;
     if sample_selection.is_identity {
-        for (selected_index, probability_pair) in packed_probability_bytes.chunks_exact(2).enumerate() {
-            let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
-            let dosage_value = dosage_lookup[packed_probability_index];
-            selected_dosage_total += dosage_value;
-            selected_dosage_square_total += dosage_value * dosage_value;
-            preprocess::increment_dosage_summary_counts(
-                dosage_value,
-                &mut zero_count,
-                &mut nonzero_count,
-                &mut homozygous_reference_count,
-                &mut heterozygous_count,
-                &mut homozygous_alternate_count,
-            );
-            unsafe {
-                // Each parallel worker owns a distinct variant row in the variant-major output matrix.
-                output_pointer.add(variant_row_offset + selected_index).write(dosage_value);
-            }
-        }
+        let output_row = unsafe {
+            // Each parallel worker owns a distinct variant row in the variant-major output matrix.
+            std::slice::from_raw_parts_mut(output_pointer.add(variant_row_offset), selected_sample_count)
+        };
+        let decode_summary = simd::decode_trusted_unphased_eight_bit_identity_simd_or_scalar(
+            packed_probability_bytes,
+            dosage_lookup,
+            output_row,
+        );
+        selected_dosage_total = decode_summary.selected_dosage_total;
+        selected_dosage_square_total = decode_summary.selected_dosage_square_total;
+        selected_observation_count = decode_summary.selected_observation_count;
+        zero_count = decode_summary.zero_count;
+        nonzero_count = decode_summary.nonzero_count;
+        homozygous_reference_count = decode_summary.homozygous_reference_count;
+        heterozygous_count = decode_summary.heterozygous_count;
+        homozygous_alternate_count = decode_summary.homozygous_alternate_count;
     } else {
         for (selected_index, file_sample_index) in sample_selection.selected_file_indices.iter().copied().enumerate() {
             let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
@@ -303,7 +304,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         profile_snapshot: thread_local_profile_snapshot,
         selected_dosage_total,
         selected_dosage_square_total,
-        selected_observation_count: i32::try_from(selected_sample_count).unwrap_or(i32::MAX),
+        selected_observation_count,
         has_missing_values: false,
         zero_count,
         nonzero_count,

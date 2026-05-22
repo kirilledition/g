@@ -6,6 +6,7 @@ mod metadata;
 mod profile;
 mod reader;
 mod sample_selection;
+mod simd;
 mod trusted;
 
 pub use decode::set_decode_tile_variant_count as set_bgen_decode_tile_variant_count;
