@@ -223,64 +223,17 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
     genotype_matrix: jax.Array,
 ) -> regenie2_linear_types.Regenie2LinearChunkResult:
     """Compute REGENIE step 2 linear association using chromosome-cached state."""
-    normalized_genotype_matrix = normalize_high_frequency_diploid_genotypes_sample_major(genotype_matrix)
-    score_matrix = chromosome_state.stacked_score_matrix @ normalized_genotype_matrix
-    covariate_projection_coordinates = score_matrix[:-1]
-    raw_covariance_with_phenotype = score_matrix[-1]
-    covariance_with_phenotype = raw_covariance_with_phenotype - (
-        chromosome_state.adjusted_residual_projection_coordinates @ covariate_projection_coordinates
+    multi_result = compute_regenie2_linear_chunk_trait_major_variant_major(
+        whitened_covariate_transpose=chromosome_state.stacked_score_matrix[:-1],
+        adjusted_residual_matrix=chromosome_state.adjusted_residual[None, :],
+        adjusted_residual_projection_coordinate_matrix=chromosome_state.adjusted_residual_projection_coordinates[
+            None, :
+        ],
+        adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares[None],
+        degrees_of_freedom=chromosome_state.degrees_of_freedom,
+        genotype_matrix_by_variant=jnp.asarray(genotype_matrix, dtype=jnp.float32).T,
     )
-
-    genotype_sum_squares = jnp.einsum("ij,ij->j", normalized_genotype_matrix, normalized_genotype_matrix)
-    projection_sum_squares = jnp.einsum(
-        "ij,ij->j",
-        covariate_projection_coordinates,
-        covariate_projection_coordinates,
-    )
-    genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares - projection_sum_squares, 0.0)
-
-    covariance_squared = covariance_with_phenotype * covariance_with_phenotype
-
-    positive_genotype_residual_mask = genotype_residual_sum_squares > 0.0
-    genotype_residual_sum_squares_inverse = jnp.where(
-        positive_genotype_residual_mask,
-        jnp.reciprocal(genotype_residual_sum_squares),
-        0.0,
-    )
-
-    beta = jnp.where(
-        positive_genotype_residual_mask,
-        covariance_with_phenotype * genotype_residual_sum_squares_inverse,
-        jnp.nan,
-    )
-
-    null_mean_squared_error = chromosome_state.adjusted_residual_sum_squares / chromosome_state.degrees_of_freedom
-    positive_null_mean_squared_error_mask = null_mean_squared_error > 0.0
-
-    standard_error = jnp.where(
-        positive_genotype_residual_mask & positive_null_mean_squared_error_mask,
-        jnp.sqrt(null_mean_squared_error * genotype_residual_sum_squares_inverse),
-        jnp.nan,
-    )
-
-    valid_statistic_mask = positive_genotype_residual_mask & positive_null_mean_squared_error_mask
-    chi_squared = jnp.where(
-        valid_statistic_mask,
-        covariance_squared * genotype_residual_sum_squares_inverse / null_mean_squared_error,
-        jnp.nan,
-    )
-
-    log10_p_value = jnp.where(valid_statistic_mask, chi_squared_to_log10_p_value(chi_squared), jnp.nan)
-
-    valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-
-    return regenie2_linear_types.Regenie2LinearChunkResult(
-        beta=beta,
-        standard_error=standard_error,
-        chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
-        valid_mask=valid_mask,
-    )
+    return squeeze_single_trait_linear_result(multi_result)
 
 
 @jax.jit
@@ -289,54 +242,13 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
     genotype_matrix: jax.Array,
 ) -> regenie2_linear_types.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 association."""
-    normalized_genotype_matrix = normalize_high_frequency_diploid_genotypes_sample_major(genotype_matrix)
-    covariate_projection_coordinates = chromosome_state.whitened_covariate_transpose @ normalized_genotype_matrix
-    raw_covariance_with_phenotype = chromosome_state.adjusted_residual_matrix @ normalized_genotype_matrix
-    covariance_with_phenotype = raw_covariance_with_phenotype - (
-        chromosome_state.adjusted_residual_projection_coordinate_matrix @ covariate_projection_coordinates
-    )
-
-    genotype_sum_squares = jnp.einsum("ij,ij->j", normalized_genotype_matrix, normalized_genotype_matrix)
-    projection_sum_squares = jnp.einsum(
-        "ij,ij->j",
-        covariate_projection_coordinates,
-        covariate_projection_coordinates,
-    )
-    genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares - projection_sum_squares, 0.0)
-    positive_genotype_residual_mask = genotype_residual_sum_squares > 0.0
-    genotype_residual_sum_squares_inverse = jnp.where(
-        positive_genotype_residual_mask,
-        jnp.reciprocal(genotype_residual_sum_squares),
-        0.0,
-    )
-
-    covariance_squared = covariance_with_phenotype * covariance_with_phenotype
-    beta = jnp.where(
-        positive_genotype_residual_mask[None, :],
-        covariance_with_phenotype * genotype_residual_sum_squares_inverse[None, :],
-        jnp.nan,
-    )
-    null_mean_squared_error = chromosome_state.adjusted_residual_sum_squares / chromosome_state.degrees_of_freedom
-    positive_null_mean_squared_error_mask = null_mean_squared_error > 0.0
-    standard_error = jnp.where(
-        positive_genotype_residual_mask[None, :] & positive_null_mean_squared_error_mask[:, None],
-        jnp.sqrt(null_mean_squared_error[:, None] * genotype_residual_sum_squares_inverse[None, :]),
-        jnp.nan,
-    )
-    valid_statistic_mask = positive_genotype_residual_mask[None, :] & positive_null_mean_squared_error_mask[:, None]
-    chi_squared = jnp.where(
-        valid_statistic_mask,
-        covariance_squared * genotype_residual_sum_squares_inverse[None, :] / null_mean_squared_error[:, None],
-        jnp.nan,
-    )
-    log10_p_value = jnp.where(valid_statistic_mask, chi_squared_to_log10_p_value(chi_squared), jnp.nan)
-    valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    return regenie2_linear_types.Regenie2MultiLinearChunkResult(
-        beta=beta,
-        standard_error=standard_error,
-        chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
-        valid_mask=valid_mask,
+    return compute_regenie2_linear_chunk_trait_major_variant_major(
+        whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
+        adjusted_residual_matrix=chromosome_state.adjusted_residual_matrix,
+        adjusted_residual_projection_coordinate_matrix=chromosome_state.adjusted_residual_projection_coordinate_matrix,
+        adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares,
+        degrees_of_freedom=chromosome_state.degrees_of_freedom,
+        genotype_matrix_by_variant=jnp.asarray(genotype_matrix, dtype=jnp.float32).T,
     )
 
 
@@ -348,63 +260,17 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
 ) -> regenie2_linear_types.Regenie2LinearChunkResult:
     """Compute quantitative REGENIE step 2 association from variant-major genotypes."""
     del genotype_sum_squares
-    normalized_genotype_matrix_by_variant = normalize_high_frequency_diploid_genotypes_variant_major(
-        genotype_matrix_by_variant
+    multi_result = compute_regenie2_linear_chunk_trait_major_variant_major(
+        whitened_covariate_transpose=chromosome_state.stacked_score_matrix[:-1],
+        adjusted_residual_matrix=chromosome_state.adjusted_residual[None, :],
+        adjusted_residual_projection_coordinate_matrix=chromosome_state.adjusted_residual_projection_coordinates[
+            None, :
+        ],
+        adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares[None],
+        degrees_of_freedom=chromosome_state.degrees_of_freedom,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
     )
-    genotype_sum_squares_compute = jnp.einsum(
-        "ij,ij->i",
-        normalized_genotype_matrix_by_variant,
-        normalized_genotype_matrix_by_variant,
-    )
-    score_matrix = chromosome_state.stacked_score_matrix @ normalized_genotype_matrix_by_variant.T
-    covariate_projection_coordinates = score_matrix[:-1]
-    raw_covariance_with_phenotype = score_matrix[-1]
-    covariance_with_phenotype = raw_covariance_with_phenotype - (
-        chromosome_state.adjusted_residual_projection_coordinates @ covariate_projection_coordinates
-    )
-
-    projection_sum_squares = jnp.einsum(
-        "ij,ij->j",
-        covariate_projection_coordinates,
-        covariate_projection_coordinates,
-    )
-    genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares_compute - projection_sum_squares, 0.0)
-
-    covariance_squared = covariance_with_phenotype * covariance_with_phenotype
-    positive_genotype_residual_mask = genotype_residual_sum_squares > 0.0
-    genotype_residual_sum_squares_inverse = jnp.where(
-        positive_genotype_residual_mask,
-        jnp.reciprocal(genotype_residual_sum_squares),
-        0.0,
-    )
-
-    beta = jnp.where(
-        positive_genotype_residual_mask,
-        covariance_with_phenotype * genotype_residual_sum_squares_inverse,
-        jnp.nan,
-    )
-    null_mean_squared_error = chromosome_state.adjusted_residual_sum_squares / chromosome_state.degrees_of_freedom
-    positive_null_mean_squared_error_mask = null_mean_squared_error > 0.0
-    standard_error = jnp.where(
-        positive_genotype_residual_mask & positive_null_mean_squared_error_mask,
-        jnp.sqrt(null_mean_squared_error * genotype_residual_sum_squares_inverse),
-        jnp.nan,
-    )
-    valid_statistic_mask = positive_genotype_residual_mask & positive_null_mean_squared_error_mask
-    chi_squared = jnp.where(
-        valid_statistic_mask,
-        covariance_squared * genotype_residual_sum_squares_inverse / null_mean_squared_error,
-        jnp.nan,
-    )
-    log10_p_value = jnp.where(valid_statistic_mask, chi_squared_to_log10_p_value(chi_squared), jnp.nan)
-    valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    return regenie2_linear_types.Regenie2LinearChunkResult(
-        beta=beta,
-        standard_error=standard_error,
-        chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
-        valid_mask=valid_mask,
-    )
+    return squeeze_single_trait_linear_result(multi_result)
 
 
 @jax.jit
@@ -415,6 +281,39 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
 ) -> regenie2_linear_types.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 from variant-major genotypes."""
     del genotype_sum_squares
+    return compute_regenie2_linear_chunk_trait_major_variant_major(
+        whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
+        adjusted_residual_matrix=chromosome_state.adjusted_residual_matrix,
+        adjusted_residual_projection_coordinate_matrix=chromosome_state.adjusted_residual_projection_coordinate_matrix,
+        adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares,
+        degrees_of_freedom=chromosome_state.degrees_of_freedom,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+    )
+
+
+def compute_regenie2_linear_chunk_trait_major_variant_major(
+    *,
+    whitened_covariate_transpose: jax.Array,
+    adjusted_residual_matrix: jax.Array,
+    adjusted_residual_projection_coordinate_matrix: jax.Array,
+    adjusted_residual_sum_squares: jax.Array,
+    degrees_of_freedom: jax.Array,
+    genotype_matrix_by_variant: jax.Array,
+) -> regenie2_linear_types.Regenie2MultiLinearChunkResult:
+    """Compute linear score-test statistics for trait-major residuals and variant-major genotypes.
+
+    Args:
+        whitened_covariate_transpose: Cholesky-whitened covariate transpose.
+        adjusted_residual_matrix: Trait-major residuals after LOCO adjustment.
+        adjusted_residual_projection_coordinate_matrix: Per-trait projection onto whitened covariates.
+        adjusted_residual_sum_squares: Per-trait residual sums of squares after covariate projection.
+        degrees_of_freedom: Null-model residual degrees of freedom.
+        genotype_matrix_by_variant: Variant-major dosage matrix.
+
+    Returns:
+        Trait-major association statistics.
+
+    """
     normalized_genotype_matrix_by_variant = normalize_high_frequency_diploid_genotypes_variant_major(
         genotype_matrix_by_variant
     )
@@ -423,12 +322,10 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
         normalized_genotype_matrix_by_variant,
         normalized_genotype_matrix_by_variant,
     )
-    covariate_projection_coordinates = (
-        chromosome_state.whitened_covariate_transpose @ normalized_genotype_matrix_by_variant.T
-    )
-    raw_covariance_with_phenotype = chromosome_state.adjusted_residual_matrix @ normalized_genotype_matrix_by_variant.T
+    covariate_projection_coordinates = whitened_covariate_transpose @ normalized_genotype_matrix_by_variant.T
+    raw_covariance_with_phenotype = adjusted_residual_matrix @ normalized_genotype_matrix_by_variant.T
     covariance_with_phenotype = raw_covariance_with_phenotype - (
-        chromosome_state.adjusted_residual_projection_coordinate_matrix @ covariate_projection_coordinates
+        adjusted_residual_projection_coordinate_matrix @ covariate_projection_coordinates
     )
 
     projection_sum_squares = jnp.einsum(
@@ -449,7 +346,7 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
         covariance_with_phenotype * genotype_residual_sum_squares_inverse[None, :],
         jnp.nan,
     )
-    null_mean_squared_error = chromosome_state.adjusted_residual_sum_squares / chromosome_state.degrees_of_freedom
+    null_mean_squared_error = adjusted_residual_sum_squares / degrees_of_freedom
     positive_null_mean_squared_error_mask = null_mean_squared_error > 0.0
     standard_error = jnp.where(
         positive_genotype_residual_mask[None, :] & positive_null_mean_squared_error_mask[:, None],
@@ -470,6 +367,27 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
         chi_squared=chi_squared,
         log10_p_value=log10_p_value,
         valid_mask=valid_mask,
+    )
+
+
+def squeeze_single_trait_linear_result(
+    result: regenie2_linear_types.Regenie2MultiLinearChunkResult,
+) -> regenie2_linear_types.Regenie2LinearChunkResult:
+    """Remove the trait axis from a single-trait linear result.
+
+    Args:
+        result: Trait-major result with exactly one trait.
+
+    Returns:
+        Single-trait result using the legacy one-dimensional output shape.
+
+    """
+    return regenie2_linear_types.Regenie2LinearChunkResult(
+        beta=result.beta[0],
+        standard_error=result.standard_error[0],
+        chi_squared=result.chi_squared[0],
+        log10_p_value=result.log10_p_value[0],
+        valid_mask=result.valid_mask[0],
     )
 
 
