@@ -679,7 +679,6 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             result = self.compute_linear_variant_major_result(
                 variant_metadata=variant_metadata,
                 genotype_matrix_by_variant=genotype_matrix_by_variant,
-                genotype_sum_squares=jax.device_put(chunk_stats.imputed_dosage_square_sum),
             )
             self.put_result_write_item(
                 Regenie2ResultWriteWorkItem(
@@ -729,7 +728,6 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         *,
         variant_metadata: typing.Any,
         genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
-        genotype_sum_squares: jax.Array,
     ) -> regenie2_linear_types.Regenie2LinearChunkResult:
         """Compute quantitative REGENIE step 2 statistics for a variant-major chunk."""
         self.prepare_chromosome_state(variant_metadata)
@@ -740,7 +738,6 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
             chromosome_state=self.current_chromosome_state,
             genotype_matrix_by_variant=genotype_device_array,
-            genotype_sum_squares=genotype_sum_squares,
         )
         block_compute_result_for_timing(
             result_ready_value=result.log10_p_value,
@@ -906,7 +903,6 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
                 chromosome_state=self.current_chromosome_state,
                 genotype_matrix_by_variant=genotype_device_array,
-                genotype_sum_squares=jax.device_put(chunk_stats.imputed_dosage_square_sum),
             )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,

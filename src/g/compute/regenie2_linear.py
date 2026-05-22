@@ -256,10 +256,8 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
 def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
     chromosome_state: regenie2_linear_types.Regenie2LinearChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-    genotype_sum_squares: jax.Array,
 ) -> regenie2_linear_types.Regenie2LinearChunkResult:
     """Compute quantitative REGENIE step 2 association from variant-major genotypes."""
-    del genotype_sum_squares
     multi_result = compute_regenie2_linear_chunk_trait_major_variant_major(
         whitened_covariate_transpose=chromosome_state.stacked_score_matrix[:-1],
         adjusted_residual_matrix=chromosome_state.adjusted_residual[None, :],
@@ -277,10 +275,8 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
 def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
     chromosome_state: regenie2_linear_types.Regenie2MultiLinearChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-    genotype_sum_squares: jax.Array,
 ) -> regenie2_linear_types.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 from variant-major genotypes."""
-    del genotype_sum_squares
     return compute_regenie2_linear_chunk_trait_major_variant_major(
         whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
         adjusted_residual_matrix=chromosome_state.adjusted_residual_matrix,

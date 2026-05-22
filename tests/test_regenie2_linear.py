@@ -438,11 +438,9 @@ class TestComputeRegenie2LinearChunk:
             chromosome_state=chromosome_state,
             genotype_matrix=genotype_matrix,
         )
-        genotype_square_sum = jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix)
         variant_major_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
             chromosome_state=chromosome_state,
             genotype_matrix_by_variant=genotype_matrix.T,
-            genotype_sum_squares=genotype_square_sum,
         )
 
         numpy.testing.assert_allclose(variant_major_result.beta, sample_major_result.beta, rtol=1e-5, atol=1e-5)
@@ -501,7 +499,6 @@ class TestComputeRegenie2LinearChunk:
         variant_major_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
             chromosome_state=chromosome_state,
             genotype_matrix_by_variant=genotype_matrix_float32.T,
-            genotype_sum_squares=jnp.einsum("ij,ij->j", genotype_matrix_float32, genotype_matrix_float32),
         )
 
         numpy.testing.assert_allclose(sample_major_result.beta, reference_result.beta, rtol=1e-5, atol=1e-6)
@@ -588,7 +585,6 @@ class TestComputeRegenie2LinearChunk:
         variant_major_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
             chromosome_state=chromosome_state,
             genotype_matrix_by_variant=genotype_matrix.T,
-            genotype_sum_squares=jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix),
         )
 
         numpy.testing.assert_array_equal(np.asarray(sample_major_result.valid_mask), np.asarray([False, True]))
@@ -638,7 +634,6 @@ class TestComputeRegenie2LinearChunk:
         variant_major_result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
             chromosome_state=multi_chromosome_state,
             genotype_matrix_by_variant=genotype_matrix.T,
-            genotype_sum_squares=jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix),
         )
 
         numpy.testing.assert_array_equal(
@@ -786,11 +781,9 @@ class TestComputeRegenie2LinearChunk:
             jnp.asarray(fixture.loco_predictions, dtype=jnp.float32),
         )
         genotype_matrix = jnp.asarray(fixture.genotype_matrix, dtype=jnp.float32)
-        genotype_sum_squares = jnp.einsum("ij,ij->j", genotype_matrix, genotype_matrix)
         variant_major_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
             chromosome_state=chromosome_state,
             genotype_matrix_by_variant=genotype_matrix.T,
-            genotype_sum_squares=genotype_sum_squares,
         )
         numpy.testing.assert_allclose(variant_major_result.beta, fixture.expected_beta, rtol=1e-5, atol=1e-6)
         numpy.testing.assert_allclose(
@@ -847,7 +840,6 @@ class TestComputeRegenie2LinearChunk:
             regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
                 chromosome_state=multi_chromosome_state,
                 genotype_matrix_by_variant=genotype_matrix.T,
-                genotype_sum_squares=genotype_sum_squares,
             )
         )
         numpy.testing.assert_allclose(multi_variant_major_result.beta[0], fixture.expected_beta, rtol=1e-5, atol=1e-6)
