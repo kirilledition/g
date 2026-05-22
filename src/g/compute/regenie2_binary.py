@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from g import types
 from g.compute import (
     regenie2_binary_candidate_planning,
+    regenie2_binary_firth_batch,
     regenie2_binary_firth_common,
     regenie2_binary_firth_full,
     regenie2_binary_firth_null,
@@ -29,9 +30,7 @@ MINIMUM_VARIANCE = regenie2_binary_score.MINIMUM_VARIANCE
 RELATIVE_VARIANCE_TOLERANCE = regenie2_binary_score.RELATIVE_VARIANCE_TOLERANCE
 DEFAULT_MAXIMUM_NULL_ITERATIONS = 50
 NULL_LOGISTIC_COEFFICIENT_TOLERANCE = 1.0e-6
-INITIAL_RESPONSE_SCALE = 4.863891244002886
 BINARY_CASE_THRESHOLD = 0.5
-ALLELE_COUNT_MULTIPLIER = 2.0
 FIRTH_GRADIENT_TOLERANCE = 2.5e-4
 FIRTH_COEFFICIENT_TOLERANCE = 2.5e-4
 FIRTH_LIKELIHOOD_TOLERANCE = 2.5e-4
@@ -40,7 +39,7 @@ FIRTH_MAXIMUM_ITERATIONS = 250
 REGENIE_LOGISTIC_MINIMUM_ETA = -30.0
 REGENIE_LOGISTIC_MAXIMUM_ETA = 30.0
 REGENIE_NUMERICAL_EPSILON = 10.0 * 2.220446049250313e-16
-SPARSE_CARRIER_DOSAGE_THRESHOLD = 1.0e-4
+SPARSE_CARRIER_DOSAGE_THRESHOLD = regenie2_binary_firth_batch.SPARSE_CARRIER_DOSAGE_THRESHOLD
 DEFAULT_BINARY_KERNEL_CONFIG = regenie2_binary_types.BinaryKernelConfig(
     maximum_null_iterations=DEFAULT_MAXIMUM_NULL_ITERATIONS,
     null_logistic_coefficient_tolerance=NULL_LOGISTIC_COEFFICIENT_TOLERANCE,
@@ -981,21 +980,9 @@ def compute_firth_pre_dispatch_mask_without_mask(
     phenotype_vector: jax.Array,
 ) -> jax.Array:
     """Identify variants with obvious case-control allele-count separation."""
-    case_mask = phenotype_vector > BINARY_CASE_THRESHOLD
-    control_mask = phenotype_vector < BINARY_CASE_THRESHOLD
-    case_mask_float = case_mask.astype(genotype_matrix_by_variant.dtype)
-    control_mask_float = control_mask.astype(genotype_matrix_by_variant.dtype)
-    case_sample_count = jnp.sum(case_mask_float)
-    control_sample_count = jnp.sum(control_mask_float)
-    case_allele_count = genotype_matrix_by_variant @ case_mask_float
-    control_allele_count = genotype_matrix_by_variant @ control_mask_float
-    case_reference_allele_count = ALLELE_COUNT_MULTIPLIER * case_sample_count - case_allele_count
-    control_reference_allele_count = ALLELE_COUNT_MULTIPLIER * control_sample_count - control_allele_count
-    return (
-        (case_allele_count <= 0.0)
-        | (control_allele_count <= 0.0)
-        | (case_reference_allele_count <= 0.0)
-        | (control_reference_allele_count <= 0.0)
+    return regenie2_binary_firth_batch.compute_firth_pre_dispatch_mask_without_mask(
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        phenotype_vector=phenotype_vector,
     )
 
 
@@ -1005,32 +992,11 @@ def initialize_full_model_coefficients_without_mask(
     phenotype_vector: jax.Array,
 ) -> jax.Array:
     """Initialize full-model coefficients with a pseudo-response regression."""
-    pseudo_response_vector = INITIAL_RESPONSE_SCALE * (phenotype_vector - BINARY_CASE_THRESHOLD)
-    covariate_information_matrix = covariate_matrix.T @ covariate_matrix
-    covariate_information_matrix = jnp.broadcast_to(
-        covariate_information_matrix[None, :, :],
-        (genotype_matrix_by_variant.shape[0], covariate_matrix.shape[1], covariate_matrix.shape[1]),
+    return regenie2_binary_firth_batch.initialize_full_model_coefficients_without_mask(
+        covariate_matrix=covariate_matrix,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        phenotype_vector=phenotype_vector,
     )
-    cross_information_vector = genotype_matrix_by_variant @ covariate_matrix
-    genotype_information = jnp.einsum("ij,ij->i", genotype_matrix_by_variant, genotype_matrix_by_variant)
-    covariate_score = jnp.broadcast_to(
-        (covariate_matrix.T @ pseudo_response_vector)[None, :],
-        (genotype_matrix_by_variant.shape[0], covariate_matrix.shape[1]),
-    )
-    genotype_score = genotype_matrix_by_variant @ pseudo_response_vector
-    stacked_right_hand_side = jnp.stack([covariate_score, cross_information_vector], axis=-1)
-    covariate_and_cross_solutions = jax.vmap(solve_from_positive_definite_matrix)(
-        covariate_information_matrix,
-        stacked_right_hand_side,
-    )
-    covariate_solution = covariate_and_cross_solutions[..., 0]
-    cross_solution = covariate_and_cross_solutions[..., 1]
-    schur_complement = genotype_information - jnp.einsum("ij,ij->i", cross_information_vector, cross_solution)
-    genotype_coefficient = (
-        genotype_score - jnp.einsum("ij,ij->i", cross_information_vector, covariate_solution)
-    ) / schur_complement
-    covariate_coefficients = covariate_solution - cross_solution * genotype_coefficient[:, None]
-    return jnp.concatenate([covariate_coefficients, genotype_coefficient[:, None]], axis=1)
 
 
 def residualize_and_scale_genotypes_for_approximate_firth(
@@ -1038,14 +1004,10 @@ def residualize_and_scale_genotypes_for_approximate_firth(
     genotype_matrix_by_variant: jax.Array,
 ) -> jax.Array:
     """Build REGENIE's approximate-Firth residualized genotype vector."""
-    weighted_genotype_matrix_by_variant = genotype_matrix_by_variant * chromosome_state.square_root_weight[None, :]
-    projection_coordinates = (
-        weighted_genotype_matrix_by_variant @ chromosome_state.weighted_genotype_projection_matrix.T
+    return regenie2_binary_firth_batch.residualize_and_scale_genotypes_for_approximate_firth(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
     )
-    weighted_residual_matrix_by_variant = weighted_genotype_matrix_by_variant - (
-        projection_coordinates @ chromosome_state.weighted_genotype_projection_matrix
-    )
-    return weighted_residual_matrix_by_variant / chromosome_state.square_root_weight[None, :]
 
 
 def build_regenie_flipped_genotypes(
@@ -1070,45 +1032,19 @@ def compute_firth_variantwise(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> FirthVariantResult:
     """Compute device-side Firth fits for a padded set of candidate lanes."""
-    scalar_offset_vector = jnp.asarray(null_firth_offset, dtype=jnp.float64)
-    scalar_phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
-
-    def fit_variant(
-        genotype_vector: jax.Array,
-        raw_genotype_vector: jax.Array,
-        variant_initial_coefficients: jax.Array,
-        skip_firth: jax.Array,
-        sparse_correction: jax.Array,
-    ) -> FirthVariantResult:
-        if not kernel_config.use_block_firth_math:
-            return fit_single_variant_regenie_approximate_firth(
-                phenotype_vector=scalar_phenotype_vector,
-                genotype_vector=jnp.asarray(genotype_vector, dtype=jnp.float64),
-                offset_vector=scalar_offset_vector,
-                carrier_sample_mask=raw_genotype_vector > SPARSE_CARRIER_DOSAGE_THRESHOLD,
-                sparse_correction=sparse_correction,
-                warm_start_beta=jnp.asarray(0.0, dtype=jnp.float64),
-                skip_firth=skip_firth,
-                null_failed=~jnp.isfinite(null_penalized_log_likelihood),
-                kernel_config=kernel_config,
-            )
-        return fit_single_variant_firth_logistic_regression(
-            covariate_matrix=covariate_matrix,
-            phenotype_vector=phenotype_vector,
-            genotype_vector=genotype_vector,
-            loco_offset=loco_offset,
-            initial_coefficients=variant_initial_coefficients,
-            skip_firth=skip_firth,
-            null_penalized_log_likelihood=null_penalized_log_likelihood,
-            kernel_config=kernel_config,
-        )
-
-    return jax.vmap(fit_variant, in_axes=(0, 0, 0, 0, 0))(
-        genotype_matrix_by_variant,
-        raw_genotype_matrix_by_variant,
-        initial_coefficients,
-        skip_firth_mask,
-        sparse_correction_mask,
+    return regenie2_binary_firth_batch.compute_firth_variantwise(
+        covariate_matrix=covariate_matrix,
+        null_logistic_coefficients=null_logistic_coefficients,
+        null_firth_offset=null_firth_offset,
+        phenotype_vector=phenotype_vector,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        raw_genotype_matrix_by_variant=raw_genotype_matrix_by_variant,
+        loco_offset=loco_offset,
+        initial_coefficients=initial_coefficients,
+        skip_firth_mask=skip_firth_mask,
+        sparse_correction_mask=sparse_correction_mask,
+        null_penalized_log_likelihood=null_penalized_log_likelihood,
+        kernel_config=kernel_config,
     )
 
 
@@ -1116,23 +1052,7 @@ def build_empty_firth_variant_result(
     batch_size: int,
 ) -> FirthVariantResult:
     """Build a placeholder Firth result for skipped padded batches."""
-    return FirthVariantResult(
-        beta=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        standard_error=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        chi_squared=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        log10_p_value=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        penalized_log_likelihood=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        converged_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
-        valid_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
-        iteration_count=jnp.zeros((batch_size,), dtype=jnp.int32),
-        failure_code=jnp.zeros((batch_size,), dtype=jnp.int32),
-        convergence_reason_code=jnp.zeros((batch_size,), dtype=jnp.int32),
-        correction_code=jnp.zeros((batch_size,), dtype=jnp.int32),
-        sparse_correction_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
-        pseudo_firth_iteration_count=jnp.zeros((batch_size,), dtype=jnp.int32),
-        nr_zero_start_iteration_count=jnp.zeros((batch_size,), dtype=jnp.int32),
-        nr_warm_start_iteration_count=jnp.zeros((batch_size,), dtype=jnp.int32),
-    )
+    return regenie2_binary_firth_batch.build_empty_firth_variant_result(batch_size)
 
 
 @functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config"))

@@ -9,7 +9,14 @@ import jax
 import jax.numpy as jnp
 
 from g import types
-from g.compute import regenie2_binary, regenie2_binary_candidate_planning, regenie2_binary_score, regenie2_binary_types
+from g.compute import (
+    regenie2_binary,
+    regenie2_binary_candidate_planning,
+    regenie2_binary_firth_batch,
+    regenie2_binary_firth_types,
+    regenie2_binary_score,
+    regenie2_binary_types,
+)
 from g.compute.common import genotype
 
 
@@ -84,7 +91,7 @@ def apply_device_candidate_corrections_firth_variant_major(
             candidate_genotype_matrix_by_variant = jnp.where(
                 kernel_config.use_block_firth_math,
                 firth_raw_candidate_genotype_matrix_by_variant,
-                regenie2_binary.residualize_and_scale_genotypes_for_approximate_firth(
+                regenie2_binary_firth_batch.residualize_and_scale_genotypes_for_approximate_firth(
                     chromosome_state,
                     firth_raw_candidate_genotype_matrix_by_variant,
                 ),
@@ -97,7 +104,7 @@ def apply_device_candidate_corrections_firth_variant_major(
                     & flat_active_mask
                 )
             heuristic_firth_mask = (
-                regenie2_binary.compute_firth_pre_dispatch_mask_without_mask(
+                regenie2_binary_firth_batch.compute_firth_pre_dispatch_mask_without_mask(
                     genotype_matrix_by_variant=firth_raw_candidate_genotype_matrix_by_variant,
                     phenotype_vector=chromosome_state.phenotype_vector,
                 )
@@ -153,10 +160,12 @@ def apply_device_candidate_corrections_firth_variant_major(
                 ],
                 axis=1,
             )
-            heuristic_initial_coefficients = regenie2_binary.initialize_full_model_coefficients_without_mask(
-                covariate_matrix=chromosome_state.covariate_matrix,
-                genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
-                phenotype_vector=chromosome_state.phenotype_vector,
+            heuristic_initial_coefficients = (
+                regenie2_binary_firth_batch.initialize_full_model_coefficients_without_mask(
+                    covariate_matrix=chromosome_state.covariate_matrix,
+                    genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
+                    phenotype_vector=chromosome_state.phenotype_vector,
+                )
             )
             initial_coefficients = jnp.where(
                 heuristic_firth_mask[:, None],
@@ -174,16 +183,16 @@ def apply_device_candidate_corrections_firth_variant_major(
             initial_coefficient_batches = initial_coefficients.reshape((batch_count, firth_batch_size, -1))
             active_mask_batches = flat_active_mask.reshape((batch_count, firth_batch_size))
             sparse_correction_mask_batches = flat_sparse_candidate_mask.reshape((batch_count, firth_batch_size))
-            empty_firth_variant_result = regenie2_binary.build_empty_firth_variant_result(firth_batch_size)
+            empty_firth_variant_result = regenie2_binary_firth_batch.build_empty_firth_variant_result(firth_batch_size)
 
             def compute_firth_batch(
                 carry: None,
                 batch_index: jax.Array,
-            ) -> tuple[None, regenie2_binary.FirthVariantResult]:
+            ) -> tuple[None, regenie2_binary_firth_types.FirthVariantResult]:
                 del carry
 
-                def run_active_batch(_: None) -> regenie2_binary.FirthVariantResult:
-                    return regenie2_binary.compute_firth_variantwise(
+                def run_active_batch(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
+                    return regenie2_binary_firth_batch.compute_firth_variantwise(
                         covariate_matrix=chromosome_state.covariate_matrix,
                         null_logistic_coefficients=chromosome_state.null_logistic_coefficients,
                         null_firth_offset=chromosome_state.null_firth_offset,
@@ -211,7 +220,7 @@ def apply_device_candidate_corrections_firth_variant_major(
                 None,
                 jnp.arange(batch_count, dtype=jnp.int32),
             )
-            firth_result = regenie2_binary.FirthVariantResult(
+            firth_result = regenie2_binary_firth_types.FirthVariantResult(
                 beta=batched_firth_result.beta.reshape((-1,)),
                 standard_error=batched_firth_result.standard_error.reshape((-1,)),
                 chi_squared=batched_firth_result.chi_squared.reshape((-1,)),
