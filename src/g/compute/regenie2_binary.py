@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import functools
 import typing
-from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
@@ -19,6 +18,7 @@ from g.compute import (
     regenie2_binary_firth_null,
     regenie2_binary_firth_scalar,
     regenie2_binary_firth_types,
+    regenie2_binary_null_logistic,
     regenie2_binary_score,
     regenie2_binary_types,
 )
@@ -91,23 +91,7 @@ ScalarNewtonRaphsonState = regenie2_binary_firth_types.ScalarNewtonRaphsonState
 ScalarLineSearchState = regenie2_binary_firth_types.ScalarLineSearchState
 ScalarFirthAttemptResult = regenie2_binary_firth_types.ScalarFirthAttemptResult
 ApproximateFirthCandidateInputs = regenie2_binary_firth_types.ApproximateFirthCandidateInputs
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class NullLogisticFitState:
-    """State for covariate-only null logistic IRLS.
-
-    Attributes:
-        coefficients: Current coefficient estimates.
-        iteration_count: Number of IRLS updates performed.
-        converged: Whether the coefficient update tolerance has been reached.
-
-    """
-
-    coefficients: jax.Array
-    iteration_count: jax.Array
-    converged: jax.Array
+NullLogisticFitState = regenie2_binary_null_logistic.NullLogisticFitState
 
 
 def prepare_regenie2_binary_state(
@@ -158,8 +142,7 @@ def prepare_regenie2_multi_binary_state(
 
 def compute_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
     """Compute clipped logistic probabilities."""
-    probability = jax.nn.sigmoid(linear_predictor)
-    return jnp.clip(probability, MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
+    return regenie2_binary_null_logistic.compute_logistic_probability(linear_predictor)
 
 
 def compute_regenie_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
@@ -220,42 +203,12 @@ def fit_null_logistic_coefficients(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> NullLogisticFitState:
     """Fit a covariate-only logistic null model with a fixed LOCO offset."""
-    covariate_count = covariate_matrix.shape[1]
-    resolved_maximum_iterations = (
-        kernel_config.maximum_null_iterations if maximum_iterations is None else maximum_iterations
-    )
-    coefficient_tolerance = kernel_config.null_logistic_coefficient_tolerance
-
-    def condition_function(state: NullLogisticFitState) -> jax.Array:
-        return (state.iteration_count < resolved_maximum_iterations) & (~state.converged)
-
-    def body_function(state: NullLogisticFitState) -> NullLogisticFitState:
-        linear_predictor = covariate_matrix @ state.coefficients + loco_offset
-        fitted_probability = compute_logistic_probability(linear_predictor)
-        weight_vector = jnp.maximum(fitted_probability * (1.0 - fitted_probability), MINIMUM_VARIANCE)
-        score_vector = covariate_matrix.T @ (phenotype_vector - fitted_probability)
-        information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
-        cholesky_factor = jnp.linalg.cholesky(
-            information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * MINIMUM_VARIANCE
-        )
-        coefficient_delta = linalg.solve_positive_definite_system(cholesky_factor, score_vector)
-        updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)
-        converged = (updated_iteration_count > 0) & (jnp.max(jnp.abs(coefficient_delta)) <= coefficient_tolerance)
-        return NullLogisticFitState(
-            coefficients=state.coefficients + coefficient_delta,
-            iteration_count=updated_iteration_count,
-            converged=converged,
-        )
-
-    initial_coefficients = jnp.zeros(covariate_count, dtype=jnp.float32)
-    return jax.lax.while_loop(
-        condition_function,
-        body_function,
-        NullLogisticFitState(
-            coefficients=initial_coefficients,
-            iteration_count=jnp.asarray(0, dtype=jnp.int32),
-            converged=jnp.asarray(0, dtype=jnp.bool_),
-        ),
+    return regenie2_binary_null_logistic.fit_null_logistic_coefficients(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        loco_offset=loco_offset,
+        maximum_iterations=maximum_iterations,
+        kernel_config=kernel_config,
     )
 
 
