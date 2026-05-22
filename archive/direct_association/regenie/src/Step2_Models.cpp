@@ -42,11 +42,94 @@
 #include "MCC.hpp"
 #include "RegenieProfile.hpp"
 
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
+
 using namespace std;
 using namespace Eigen;
 using namespace boost;
 using boost::math::normal;
 using boost::math::chi_squared;
+
+namespace {
+
+string quote_json_string(string const& input) {
+  string output = "\"";
+  for(char const character : input) {
+    switch(character) {
+      case '\\': output += "\\\\"; break;
+      case '"': output += "\\\""; break;
+      case '\n': output += "\\n"; break;
+      case '\r': output += "\\r"; break;
+      case '\t': output += "\\t"; break;
+      default: output += character; break;
+    }
+  }
+  output += "\"";
+  return output;
+}
+
+void append_qt_debug_record(
+  int const& snp_index,
+  int const& phenotype_index,
+  string const& test_string,
+  string const& model_type,
+  bool const& strict_mode,
+  bool const& sparse_mode,
+  bool const& run_full_test,
+  double const& genotype_scale,
+  double const& denominator,
+  double const& numerator,
+  const Ref<const RowVectorXd>& phenotype_residual_scale,
+  ArrayXd const& phenotype_score_scale,
+  variant_block* block_info,
+  data_thread* thread_data,
+  vector<snp> const& snpinfo
+) {
+  char const* debug_path = std::getenv("REGENIE_QT_DEBUG_JSONL");
+  if((debug_path == nullptr) || (*debug_path == '\0')) return;
+
+  ofstream debug_file(debug_path, ios::out | ios::app);
+  if(!debug_file.good()) return;
+
+  snp const& variant = snpinfo[snp_index];
+  debug_file << setprecision(17)
+             << "{"
+             << "\"variant_index\":" << snp_index
+             << ",\"phenotype_index\":" << phenotype_index
+             << ",\"chromosome\":" << quote_json_string(to_string(variant.chrom))
+             << ",\"position\":" << variant.physpos
+             << ",\"variant_identifier\":" << quote_json_string(variant.ID)
+             << ",\"allele_zero\":" << quote_json_string(variant.allele1)
+             << ",\"allele_one\":" << quote_json_string(variant.allele2)
+             << ",\"test\":" << quote_json_string(test_string)
+             << ",\"model_type\":" << quote_json_string(model_type)
+             << ",\"strict_mode\":" << (strict_mode ? "true" : "false")
+             << ",\"sparse_mode\":" << (sparse_mode ? "true" : "false")
+             << ",\"run_full_test\":" << (run_full_test ? "true" : "false")
+             << ",\"flipped\":" << (block_info->flipped ? "true" : "false")
+             << ",\"ignored\":" << (block_info->ignored ? "true" : "false")
+             << ",\"test_fail\":" << (block_info->test_fail(phenotype_index) ? "true" : "false")
+             << ",\"allele_one_frequency\":" << block_info->af(phenotype_index)
+             << ",\"minor_allele_count\":" << block_info->mac(phenotype_index)
+             << ",\"info_score\":" << block_info->info(phenotype_index)
+             << ",\"observation_count\":" << block_info->ns(phenotype_index)
+             << ",\"scale_fac\":" << block_info->scale_fac
+             << ",\"genotype_scale\":" << genotype_scale
+             << ",\"numerator\":" << numerator
+             << ",\"denominator\":" << denominator
+             << ",\"phenotype_residual_scale\":" << phenotype_residual_scale(phenotype_index)
+             << ",\"phenotype_score_scale\":" << phenotype_score_scale(phenotype_index)
+             << ",\"score_statistic\":" << thread_data->stats(phenotype_index)
+             << ",\"beta\":" << thread_data->bhat(phenotype_index)
+             << ",\"standard_error\":" << thread_data->se_b(phenotype_index)
+             << ",\"chi_squared\":" << thread_data->chisq_val(phenotype_index)
+             << ",\"log10_p_value\":" << thread_data->pval_log(phenotype_index)
+             << "}\n";
+}
+
+}  // namespace
 
 
 void blup_read_chr(bool const& silent, int const& chrom, struct ests& m_ests, struct in_files& files, struct filter const& filters, struct phenodt const& pheno_data, struct param& params, mstream& sout) {
@@ -462,6 +545,25 @@ void compute_score_qt(int const& isnp, int const& snp_index, int const& thread_n
     // get pvalue
     if(params.t_test) get_logp_ttest(dt_thr->pval_log(i), dt_thr->stats(i), params.n_analyzed - params.ncov_analyzed - 1);
     else get_logp(dt_thr->pval_log(i), dt_thr->chisq_val(i));
+
+    double debug_denominator = (run_full_test && !params.strict_mode) ? denum_arr(i) : denum;
+    append_qt_debug_record(
+      snp_index,
+      i,
+      test_string,
+      model_type,
+      params.strict_mode,
+      dt_thr->is_sparse,
+      run_full_test,
+      gsc,
+      debug_denominator,
+      num(i),
+      p_sd_yres,
+      pheno_data.scf_sv,
+      block_info,
+      dt_thr,
+      snpinfo
+    );
 
     if(!params.p_joint_only)
       block_info->sum_stats[i].append( print_sum_stats_line(snp_index, i, tmpstr, test_string, model_type, block_info, dt_thr, snpinfo, files, params) );

@@ -177,6 +177,11 @@ def block_compute_result_for_timing(
     timing.record_stage_duration(stage_timing_recorder, "jax_compute", start_time)
 
 
+def cast_statistic_array_for_native_writer(array: object) -> npt.NDArray[np.float32]:
+    """Cast computed statistics to the public native writer schema dtype."""
+    return np.asarray(array, dtype=np.float32)
+
+
 def write_regenie2_native_chunk_with_optional_timing(
     *,
     writer_session: typing.Any,
@@ -206,10 +211,10 @@ def write_regenie2_native_chunk_with_optional_timing(
     writer_session.write_regenie2_native_chunk(
         metadata=metadata,
         chunk_stats=chunk_stats,
-        beta=host_values["beta"],
-        standard_error=host_values["standard_error"],
-        chi_squared=host_values["chi_squared"],
-        log10_p_value=host_values["log10_p_value"],
+        beta=cast_statistic_array_for_native_writer(host_values["beta"]),
+        standard_error=cast_statistic_array_for_native_writer(host_values["standard_error"]),
+        chi_squared=cast_statistic_array_for_native_writer(host_values["chi_squared"]),
+        log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"]),
         extra_code=host_values["extra_code"],
     )
     timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
@@ -255,10 +260,10 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             active_trait_indices=list(active_trait_indices),
             metadata=metadata,
             chunk_stats=chunk_stats,
-            beta=host_values["beta"],
-            standard_error=host_values["standard_error"],
-            chi_squared=host_values["chi_squared"],
-            log10_p_value=host_values["log10_p_value"],
+            beta=cast_statistic_array_for_native_writer(host_values["beta"]),
+            standard_error=cast_statistic_array_for_native_writer(host_values["standard_error"]),
+            chi_squared=cast_statistic_array_for_native_writer(host_values["chi_squared"]),
+            log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"]),
             extra_code=host_values["extra_code"],
         )
         timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
@@ -274,10 +279,10 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
         writer_session.write_regenie2_native_chunk(
             metadata=metadata,
             chunk_stats=chunk_stats,
-            beta=host_values["beta"][trait_index],
-            standard_error=host_values["standard_error"][trait_index],
-            chi_squared=host_values["chi_squared"][trait_index],
-            log10_p_value=host_values["log10_p_value"][trait_index],
+            beta=cast_statistic_array_for_native_writer(host_values["beta"][trait_index]),
+            standard_error=cast_statistic_array_for_native_writer(host_values["standard_error"][trait_index]),
+            chi_squared=cast_statistic_array_for_native_writer(host_values["chi_squared"][trait_index]),
+            log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"][trait_index]),
             extra_code=extra_code_slice,
         )
         timing.record_stage_duration(

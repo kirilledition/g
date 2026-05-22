@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import os
+import typing
+
 import jax
 import jax.numpy as jnp
 import jax.scipy.stats
 
 from g.compute import regenie2_linear_types
+
+LINEAR_COMPUTE_DTYPE_ENVIRONMENT_VARIABLE = "GWAS_ENGINE_LINEAR_COMPUTE_DTYPE"
+LINEAR_COMPUTE_DTYPE_NAME = os.environ.get(LINEAR_COMPUTE_DTYPE_ENVIRONMENT_VARIABLE, "float32").strip().lower()
+if LINEAR_COMPUTE_DTYPE_NAME == "float64":
+    jax.config.update("jax_enable_x64", val=True)
+
+LINEAR_COMPUTE_DTYPE: typing.Any = jnp.float64 if LINEAR_COMPUTE_DTYPE_NAME == "float64" else jnp.float32
 
 
 def solve_positive_definite_system(
@@ -55,14 +65,14 @@ def prepare_regenie2_linear_state(
         Reusable state for REGENIE step 2 linear chunk computation.
 
     """
-    covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=jnp.float32)
-    phenotype_vector_float32 = jnp.asarray(phenotype_vector, dtype=jnp.float32)
-    sample_count = covariate_matrix_float32.shape[0]
-    covariate_parameter_count = covariate_matrix_float32.shape[1]
+    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=LINEAR_COMPUTE_DTYPE)
+    phenotype_vector_compute = jnp.asarray(phenotype_vector, dtype=LINEAR_COMPUTE_DTYPE)
+    sample_count = covariate_matrix_compute.shape[0]
+    covariate_parameter_count = covariate_matrix_compute.shape[1]
     degrees_of_freedom = sample_count - covariate_parameter_count
 
-    covariate_matrix_transpose = covariate_matrix_float32.T
-    covariate_crossproduct = covariate_matrix_transpose @ covariate_matrix_float32
+    covariate_matrix_transpose = covariate_matrix_compute.T
+    covariate_crossproduct = covariate_matrix_transpose @ covariate_matrix_compute
     covariate_crossproduct_cholesky_factor = jnp.linalg.cholesky(covariate_crossproduct)
     whitened_covariate_transpose = jax.lax.linalg.triangular_solve(
         covariate_crossproduct_cholesky_factor,
@@ -73,18 +83,18 @@ def prepare_regenie2_linear_state(
 
     phenotype_projection = solve_positive_definite_system(
         covariate_crossproduct_cholesky_factor,
-        covariate_matrix_transpose @ phenotype_vector_float32,
+        covariate_matrix_transpose @ phenotype_vector_compute,
     )
-    phenotype_residual = phenotype_vector_float32 - covariate_matrix_float32 @ phenotype_projection
+    phenotype_residual = phenotype_vector_compute - covariate_matrix_compute @ phenotype_projection
 
     return regenie2_linear_types.Regenie2LinearState(
-        covariate_matrix=covariate_matrix_float32,
+        covariate_matrix=covariate_matrix_compute,
         covariate_matrix_transpose=covariate_matrix_transpose,
         covariate_crossproduct_cholesky_factor=covariate_crossproduct_cholesky_factor,
         whitened_covariate_transpose=whitened_covariate_transpose,
         phenotype_residual=phenotype_residual,
         sample_count=jnp.asarray(sample_count, dtype=jnp.int32),
-        degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=jnp.float32),
+        degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=LINEAR_COMPUTE_DTYPE),
     )
 
 
@@ -102,14 +112,14 @@ def prepare_regenie2_multi_linear_state(
         Reusable state for multi-trait REGENIE step 2 linear computation.
 
     """
-    covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=jnp.float32)
-    phenotype_matrix_float32 = jnp.asarray(phenotype_matrix, dtype=jnp.float32)
-    sample_count = covariate_matrix_float32.shape[0]
-    covariate_parameter_count = covariate_matrix_float32.shape[1]
+    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=LINEAR_COMPUTE_DTYPE)
+    phenotype_matrix_compute = jnp.asarray(phenotype_matrix, dtype=LINEAR_COMPUTE_DTYPE)
+    sample_count = covariate_matrix_compute.shape[0]
+    covariate_parameter_count = covariate_matrix_compute.shape[1]
     degrees_of_freedom = sample_count - covariate_parameter_count
 
-    covariate_matrix_transpose = covariate_matrix_float32.T
-    covariate_crossproduct = covariate_matrix_transpose @ covariate_matrix_float32
+    covariate_matrix_transpose = covariate_matrix_compute.T
+    covariate_crossproduct = covariate_matrix_transpose @ covariate_matrix_compute
     covariate_crossproduct_cholesky_factor = jnp.linalg.cholesky(covariate_crossproduct)
     whitened_covariate_transpose = jax.lax.linalg.triangular_solve(
         covariate_crossproduct_cholesky_factor,
@@ -119,18 +129,18 @@ def prepare_regenie2_multi_linear_state(
     )
     phenotype_projection_matrix = solve_positive_definite_system(
         covariate_crossproduct_cholesky_factor,
-        covariate_matrix_transpose @ phenotype_matrix_float32.T,
+        covariate_matrix_transpose @ phenotype_matrix_compute.T,
     )
-    phenotype_residual_matrix = phenotype_matrix_float32 - (covariate_matrix_float32 @ phenotype_projection_matrix).T
+    phenotype_residual_matrix = phenotype_matrix_compute - (covariate_matrix_compute @ phenotype_projection_matrix).T
 
     return regenie2_linear_types.Regenie2MultiLinearState(
-        covariate_matrix=covariate_matrix_float32,
+        covariate_matrix=covariate_matrix_compute,
         covariate_matrix_transpose=covariate_matrix_transpose,
         covariate_crossproduct_cholesky_factor=covariate_crossproduct_cholesky_factor,
         whitened_covariate_transpose=whitened_covariate_transpose,
         phenotype_residual_matrix=phenotype_residual_matrix,
         sample_count=jnp.asarray(sample_count, dtype=jnp.int32),
-        degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=jnp.float32),
+        degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=LINEAR_COMPUTE_DTYPE),
     )
 
 
@@ -148,7 +158,7 @@ def chi_squared_to_log10_p_value(chi_squared: jax.Array) -> jax.Array:
         Negative log10 p-values (-log10(p)).
 
     """
-    safe_chi_squared = jnp.maximum(jnp.asarray(chi_squared, dtype=jnp.float32), 0.0)
+    safe_chi_squared = jnp.maximum(jnp.asarray(chi_squared, dtype=LINEAR_COMPUTE_DTYPE), 0.0)
     log_p_value = jnp.log(2.0) + jax.scipy.stats.norm.logsf(jnp.sqrt(safe_chi_squared))
     return -log_p_value / jnp.log(10.0)
 
@@ -160,18 +170,18 @@ def normalize_high_frequency_diploid_genotypes_sample_major(genotype_matrix: jax
     not change the residualized genotype or score statistic. It does keep rare
     reference-allele carriers near zero before float32 matrix products.
     """
-    genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
-    genotype_mean = jnp.mean(genotype_matrix_float32, axis=0)
+    genotype_matrix_compute = jnp.asarray(genotype_matrix, dtype=LINEAR_COMPUTE_DTYPE)
+    genotype_mean = jnp.mean(genotype_matrix_compute, axis=0)
     genotype_offset = jnp.where(genotype_mean > 1.0, 2.0, 0.0)
-    return genotype_matrix_float32 - genotype_offset[None, :]
+    return genotype_matrix_compute - genotype_offset[None, :]
 
 
 def normalize_high_frequency_diploid_genotypes_variant_major(genotype_matrix_by_variant: jax.Array) -> jax.Array:
     """Shift high-frequency diploid dosages to avoid float32 cancellation."""
-    genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
-    genotype_mean = jnp.mean(genotype_matrix_by_variant_float32, axis=1)
+    genotype_matrix_by_variant_compute = jnp.asarray(genotype_matrix_by_variant, dtype=LINEAR_COMPUTE_DTYPE)
+    genotype_mean = jnp.mean(genotype_matrix_by_variant_compute, axis=1)
     genotype_offset = jnp.where(genotype_mean > 1.0, 2.0, 0.0)
-    return genotype_matrix_by_variant_float32 - genotype_offset[:, None]
+    return genotype_matrix_by_variant_compute - genotype_offset[:, None]
 
 
 @jax.jit
@@ -180,8 +190,8 @@ def prepare_regenie2_linear_chromosome_state(
     loco_predictions: jax.Array,
 ) -> regenie2_linear_types.Regenie2LinearChromosomeState:
     """Prepare chromosome-specific residual state reused across chunks."""
-    loco_predictions_float32 = jnp.asarray(loco_predictions, dtype=jnp.float32)
-    adjusted_residual = state.phenotype_residual - loco_predictions_float32
+    loco_predictions_compute = jnp.asarray(loco_predictions, dtype=LINEAR_COMPUTE_DTYPE)
+    adjusted_residual = state.phenotype_residual - loco_predictions_compute
     adjusted_residual_projection_coordinates = state.whitened_covariate_transpose @ adjusted_residual
     raw_adjusted_residual_sum_squares = jnp.dot(adjusted_residual, adjusted_residual)
     adjusted_residual_projection_sum_squares = jnp.dot(
@@ -213,8 +223,8 @@ def prepare_regenie2_multi_linear_chromosome_state(
     loco_prediction_matrix: jax.Array,
 ) -> regenie2_linear_types.Regenie2MultiLinearChromosomeState:
     """Prepare chromosome-specific multi-trait residual state reused across chunks."""
-    loco_prediction_matrix_float32 = jnp.asarray(loco_prediction_matrix, dtype=jnp.float32)
-    adjusted_residual_matrix = state.phenotype_residual_matrix - loco_prediction_matrix_float32
+    loco_prediction_matrix_compute = jnp.asarray(loco_prediction_matrix, dtype=LINEAR_COMPUTE_DTYPE)
+    adjusted_residual_matrix = state.phenotype_residual_matrix - loco_prediction_matrix_compute
     adjusted_residual_projection_coordinate_matrix = adjusted_residual_matrix @ state.whitened_covariate_transpose.T
     raw_adjusted_residual_sum_squares = jnp.einsum("ij,ij->i", adjusted_residual_matrix, adjusted_residual_matrix)
     adjusted_residual_projection_sum_squares = jnp.einsum(
@@ -371,7 +381,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
     normalized_genotype_matrix_by_variant = normalize_high_frequency_diploid_genotypes_variant_major(
         genotype_matrix_by_variant
     )
-    genotype_sum_squares_float32 = jnp.einsum(
+    genotype_sum_squares_compute = jnp.einsum(
         "ij,ij->i",
         normalized_genotype_matrix_by_variant,
         normalized_genotype_matrix_by_variant,
@@ -388,7 +398,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
         covariate_projection_coordinates,
         covariate_projection_coordinates,
     )
-    genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares_float32 - projection_sum_squares, 0.0)
+    genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares_compute - projection_sum_squares, 0.0)
 
     covariance_squared = covariance_with_phenotype * covariance_with_phenotype
     positive_genotype_residual_mask = genotype_residual_sum_squares > 0.0
@@ -438,7 +448,7 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
     normalized_genotype_matrix_by_variant = normalize_high_frequency_diploid_genotypes_variant_major(
         genotype_matrix_by_variant
     )
-    genotype_sum_squares_float32 = jnp.einsum(
+    genotype_sum_squares_compute = jnp.einsum(
         "ij,ij->i",
         normalized_genotype_matrix_by_variant,
         normalized_genotype_matrix_by_variant,
@@ -456,7 +466,7 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
         covariate_projection_coordinates,
         covariate_projection_coordinates,
     )
-    genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares_float32 - projection_sum_squares, 0.0)
+    genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares_compute - projection_sum_squares, 0.0)
     positive_genotype_residual_mask = genotype_residual_sum_squares > 0.0
     genotype_residual_sum_squares_inverse = jnp.where(
         positive_genotype_residual_mask,

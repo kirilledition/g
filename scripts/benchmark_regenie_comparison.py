@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -25,7 +26,10 @@ else:
 
 
 PARITY_BETA_ATOL = 1.0e-3
+PARITY_STANDARD_ERROR_ATOL = 1.0e-3
+PARITY_CHI_SQUARED_ATOL = 1.5e-2
 PARITY_LOG10P_ATOL = 1.5e-2
+LINEAR_COMPUTE_DTYPE_ENVIRONMENT_VARIABLE = "GWAS_ENGINE_LINEAR_COMPUTE_DTYPE"
 
 
 @dataclass(frozen=True)
@@ -58,9 +62,17 @@ class QuantitativeStep2Agreement:
     beta_max_abs_error: float | None
     beta_mean_abs_error: float | None
     beta_allclose_within_tolerance: bool | None
-    log10p_max_abs_error: float | None
-    log10p_mean_abs_error: float | None
-    log10p_allclose_within_tolerance: bool | None
+    standard_error_max_abs_error: float | None = None
+    standard_error_mean_abs_error: float | None = None
+    standard_error_allclose_within_tolerance: bool | None = None
+    chi_squared_max_abs_error: float | None = None
+    chi_squared_mean_abs_error: float | None = None
+    chi_squared_allclose_within_tolerance: bool | None = None
+    log10p_max_abs_error: float | None = None
+    log10p_mean_abs_error: float | None = None
+    log10p_allclose_within_tolerance: bool | None = None
+    extra_match_rate: float | None = None
+    top_variant_differences: list[dict[str, typing.Any]] | None = None
     notes: str | None = None
 
 
@@ -86,6 +98,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--variant-limit", type=int, help="Optional variant cap for g runs.")
     parser.add_argument("--chunk-size", type=int, default=8192, help="Chunk size for g runs.")
     parser.add_argument(
+        "--g-linear-compute-dtype",
+        choices=("float32", "float64"),
+        help="Internal quantitative g compute dtype override for parity investigation.",
+    )
+    parser.add_argument(
         "--only-quantitative-step2",
         action="store_true",
         help="Benchmark only original regenie quantitative step 2 against g step 2.",
@@ -109,10 +126,21 @@ def run_command_with_logs(
     command_arguments: list[str],
     stdout_log_path: Path,
     stderr_log_path: Path,
+    environment_overrides: dict[str, str] | None = None,
 ) -> tuple[bool, float, str | None]:
     """Run one command and persist logs."""
     start_time = time.perf_counter()
-    completed_process = subprocess.run(command_arguments, check=False, capture_output=True, text=True)
+    command_environment = None
+    if environment_overrides is not None:
+        command_environment = os.environ.copy()
+        command_environment.update(environment_overrides)
+    completed_process = subprocess.run(
+        command_arguments,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=command_environment,
+    )
     duration_seconds = time.perf_counter() - start_time
     stdout_log_path.write_text(completed_process.stdout)
     stderr_log_path.write_text(completed_process.stderr)
@@ -370,6 +398,7 @@ def run_g_step2(
     command_arguments: list[str],
     output_prefix: Path,
     log_directory: Path,
+    environment_overrides: dict[str, str] | None = None,
 ) -> ComparisonProgramResult:
     """Run one g step2 program and collect metadata."""
     stdout_log_path = log_directory / f"{program_name}.stdout.log"
@@ -382,6 +411,7 @@ def run_g_step2(
         command_arguments=command_arguments,
         stdout_log_path=stdout_log_path,
         stderr_log_path=stderr_log_path,
+        environment_overrides=environment_overrides,
     )
     output_path = resolve_g_step2_final_parquet_path(
         output_root_directory=output_root_directory,
@@ -426,7 +456,7 @@ def load_g_output_frame(g_output_path: Path) -> pl.DataFrame:
 
 def scalar_as_float(value: object) -> float:
     """Convert a numeric Polars scalar to a Python float."""
-    return float(typing.cast(float, value))
+    return float(typing.cast("float", value))
 
 
 def cast_variant_key_columns(data_frame: pl.DataFrame, key_columns: list[str]) -> pl.DataFrame:
@@ -445,7 +475,7 @@ def summarize_quantitative_step2_agreement(
     regenie_output_path: Path | None,
     g_output_path: Path | None,
 ) -> QuantitativeStep2Agreement:
-    """Compare beta/log10p agreement for quantitative step2 outputs."""
+    """Compare quantitative step2 agreement across all available statistics."""
     if regenie_output_path is None or g_output_path is None:
         return QuantitativeStep2Agreement(
             comparable=False,
@@ -467,32 +497,39 @@ def summarize_quantitative_step2_agreement(
         set(baseline_frame.columns)
     ):
         key_columns = ["CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"]
-        observed_for_join = cast_variant_key_columns(observed_frame, key_columns).select(
-            *key_columns,
-            pl.col("BETA").alias("BETA_g"),
-            pl.col("LOG10P").alias("LOG10P_g"),
-        )
-        baseline_for_join = cast_variant_key_columns(baseline_frame, key_columns).select(
+        observed_expressions: list[pl.Expr | str] = [*key_columns, pl.col("BETA").alias("BETA_g")]
+        baseline_expressions: list[pl.Expr | str] = [
             *key_columns,
             pl.col("BETA").cast(pl.Float64).alias("BETA_regenie"),
-            pl.col("LOG10P").cast(pl.Float64).alias("LOG10P_regenie"),
-        )
+        ]
+        for column_name in ["SE", "CHISQ", "LOG10P", "EXTRA"]:
+            if column_name in observed_frame.columns and column_name in baseline_frame.columns:
+                observed_expression = pl.col(column_name).alias(f"{column_name}_g")
+                baseline_expression = pl.col(column_name).alias(f"{column_name}_regenie")
+                if column_name != "EXTRA":
+                    baseline_expression = pl.col(column_name).cast(pl.Float64).alias(f"{column_name}_regenie")
+                observed_expressions.append(observed_expression)
+                baseline_expressions.append(baseline_expression)
+        observed_for_join = cast_variant_key_columns(observed_frame, key_columns).select(*observed_expressions)
+        baseline_for_join = cast_variant_key_columns(baseline_frame, key_columns).select(*baseline_expressions)
         merged_frame = observed_for_join.join(
             baseline_for_join,
             on=key_columns,
             how="inner",
         )
     else:
-        observed_for_join = observed_frame.select(
-            "ID",
-            pl.col("BETA").alias("BETA_g"),
-            pl.col("LOG10P").alias("LOG10P_g"),
-        )
-        baseline_for_join = baseline_frame.select(
-            "ID",
-            pl.col("BETA").cast(pl.Float64).alias("BETA_regenie"),
-            pl.col("LOG10P").cast(pl.Float64).alias("LOG10P_regenie"),
-        )
+        observed_expressions = ["ID", pl.col("BETA").alias("BETA_g")]
+        baseline_expressions = ["ID", pl.col("BETA").cast(pl.Float64).alias("BETA_regenie")]
+        for column_name in ["SE", "CHISQ", "LOG10P", "EXTRA"]:
+            if column_name in observed_frame.columns and column_name in baseline_frame.columns:
+                observed_expression = pl.col(column_name).alias(f"{column_name}_g")
+                baseline_expression = pl.col(column_name).alias(f"{column_name}_regenie")
+                if column_name != "EXTRA":
+                    baseline_expression = pl.col(column_name).cast(pl.Float64).alias(f"{column_name}_regenie")
+                observed_expressions.append(observed_expression)
+                baseline_expressions.append(baseline_expression)
+        observed_for_join = observed_frame.select(*observed_expressions)
+        baseline_for_join = baseline_frame.select(*baseline_expressions)
         merged_frame = observed_for_join.join(
             baseline_for_join,
             on="ID",
@@ -511,22 +548,100 @@ def summarize_quantitative_step2_agreement(
             notes="No overlapping variants between outputs.",
         )
     beta_error_series = (merged_frame.get_column("BETA_g") - merged_frame.get_column("BETA_regenie")).abs()
-    log10p_error_series = (merged_frame.get_column("LOG10P_g") - merged_frame.get_column("LOG10P_regenie")).abs()
+    standard_error_series = None
+    chi_squared_error_series = None
+    log10p_error_series = None
+    extra_match_rate = None
+    if "SE_g" in merged_frame.columns and "SE_regenie" in merged_frame.columns:
+        standard_error_series = (merged_frame.get_column("SE_g") - merged_frame.get_column("SE_regenie")).abs()
+    if "CHISQ_g" in merged_frame.columns and "CHISQ_regenie" in merged_frame.columns:
+        chi_squared_error_series = (merged_frame.get_column("CHISQ_g") - merged_frame.get_column("CHISQ_regenie")).abs()
+    if "LOG10P_g" in merged_frame.columns and "LOG10P_regenie" in merged_frame.columns:
+        log10p_error_series = (merged_frame.get_column("LOG10P_g") - merged_frame.get_column("LOG10P_regenie")).abs()
+    if "EXTRA_g" in merged_frame.columns and "EXTRA_regenie" in merged_frame.columns:
+        extra_match_series = normalize_quantitative_extra(
+            merged_frame.get_column("EXTRA_g")
+        ) == normalize_quantitative_extra(merged_frame.get_column("EXTRA_regenie"))
+        extra_match_rate = scalar_as_float(extra_match_series.mean())
     return QuantitativeStep2Agreement(
         comparable=True,
         merged_variant_count=merged_frame.height,
         beta_max_abs_error=scalar_as_float(beta_error_series.max()),
         beta_mean_abs_error=scalar_as_float(beta_error_series.mean()),
         beta_allclose_within_tolerance=bool((beta_error_series <= PARITY_BETA_ATOL).all()),
-        log10p_max_abs_error=scalar_as_float(log10p_error_series.max()),
-        log10p_mean_abs_error=scalar_as_float(log10p_error_series.mean()),
-        log10p_allclose_within_tolerance=bool((log10p_error_series <= PARITY_LOG10P_ATOL).all()),
+        standard_error_max_abs_error=(
+            None if standard_error_series is None else scalar_as_float(standard_error_series.max())
+        ),
+        standard_error_mean_abs_error=(
+            None if standard_error_series is None else scalar_as_float(standard_error_series.mean())
+        ),
+        standard_error_allclose_within_tolerance=(
+            None if standard_error_series is None else bool((standard_error_series <= PARITY_STANDARD_ERROR_ATOL).all())
+        ),
+        chi_squared_max_abs_error=(
+            None if chi_squared_error_series is None else scalar_as_float(chi_squared_error_series.max())
+        ),
+        chi_squared_mean_abs_error=(
+            None if chi_squared_error_series is None else scalar_as_float(chi_squared_error_series.mean())
+        ),
+        chi_squared_allclose_within_tolerance=(
+            None
+            if chi_squared_error_series is None
+            else bool((chi_squared_error_series <= PARITY_CHI_SQUARED_ATOL).all())
+        ),
+        log10p_max_abs_error=None if log10p_error_series is None else scalar_as_float(log10p_error_series.max()),
+        log10p_mean_abs_error=None if log10p_error_series is None else scalar_as_float(log10p_error_series.mean()),
+        log10p_allclose_within_tolerance=(
+            None if log10p_error_series is None else bool((log10p_error_series <= PARITY_LOG10P_ATOL).all())
+        ),
+        extra_match_rate=extra_match_rate,
+        top_variant_differences=build_top_quantitative_differences(merged_frame),
     )
 
 
 def normalize_binary_extra(extra_series: pl.Series) -> pl.Series:
     """Normalize binary correction labels for comparison."""
     return extra_series.fill_null("NA").cast(pl.Utf8)
+
+
+def normalize_quantitative_extra(extra_series: pl.Series) -> pl.Series:
+    """Normalize quantitative EXTRA labels for comparison."""
+    return extra_series.fill_null("NA").cast(pl.Utf8)
+
+
+def build_top_quantitative_differences(merged_frame: pl.DataFrame) -> list[dict[str, typing.Any]]:
+    """Build a compact top-k list of quantitative statistic differences."""
+    statistic_columns = [
+        ("BETA", "BETA_g", "BETA_regenie"),
+        ("SE", "SE_g", "SE_regenie"),
+        ("CHISQ", "CHISQ_g", "CHISQ_regenie"),
+        ("LOG10P", "LOG10P_g", "LOG10P_regenie"),
+    ]
+    key_columns = [
+        column_name
+        for column_name in ["CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"]
+        if column_name in merged_frame.columns
+    ]
+    difference_rows: list[dict[str, typing.Any]] = []
+    for statistic_name, observed_column, baseline_column in statistic_columns:
+        if observed_column not in merged_frame.columns or baseline_column not in merged_frame.columns:
+            continue
+        top_frame = (
+            merged_frame.with_columns((pl.col(observed_column) - pl.col(baseline_column)).abs().alias("_abs_error"))
+            .sort("_abs_error", descending=True)
+            .head(5)
+        )
+        for row in top_frame.iter_rows(named=True):
+            record: dict[str, typing.Any] = {
+                "statistic": statistic_name,
+                "g_value": float(row[observed_column]),
+                "regenie_value": float(row[baseline_column]),
+                "absolute_error": float(row["_abs_error"]),
+            }
+            for key_column in key_columns:
+                record[key_column] = row[key_column]
+            difference_rows.append(record)
+    return sorted(difference_rows, key=lambda row: float(row["absolute_error"]), reverse=True)[:10]
 
 
 def summarize_binary_step2_agreement(
@@ -649,12 +764,16 @@ def write_text_summary(
     lines.append(
         f"g CPU comparable={agreement_cpu.comparable}, merged_variants={agreement_cpu.merged_variant_count}, "
         f"beta_allclose={agreement_cpu.beta_allclose_within_tolerance}, "
+        f"se_allclose={agreement_cpu.standard_error_allclose_within_tolerance}, "
+        f"chisq_allclose={agreement_cpu.chi_squared_allclose_within_tolerance}, "
         f"log10p_allclose={agreement_cpu.log10p_allclose_within_tolerance}",
     )
     if agreement_gpu is not None:
         lines.append(
             f"g GPU comparable={agreement_gpu.comparable}, merged_variants={agreement_gpu.merged_variant_count}, "
             f"beta_allclose={agreement_gpu.beta_allclose_within_tolerance}, "
+            f"se_allclose={agreement_gpu.standard_error_allclose_within_tolerance}, "
+            f"chisq_allclose={agreement_gpu.chi_squared_allclose_within_tolerance}, "
             f"log10p_allclose={agreement_gpu.log10p_allclose_within_tolerance}",
         )
     if binary_agreement_cpu is not None:
@@ -730,10 +849,13 @@ def main() -> None:
 
     active_trait_type = "binary" if arguments.only_binary_step2 else "quantitative"
     active_trait_label = "binary" if active_trait_type == "binary" else "quantitative"
+    linear_environment_overrides = None
+    if active_trait_type == "quantitative" and arguments.g_linear_compute_dtype is not None:
+        linear_environment_overrides = {
+            LINEAR_COMPUTE_DTYPE_ENVIRONMENT_VARIABLE: str(arguments.g_linear_compute_dtype),
+        }
     g_output_cpu_prefix = arguments.output_dir / (
-        "g_regenie2_binary_step2_cpu"
-        if active_trait_type == "binary"
-        else "g_regenie2_qt_step2_cpu"
+        "g_regenie2_binary_step2_cpu" if active_trait_type == "binary" else "g_regenie2_qt_step2_cpu"
     )
     g_cpu_command_arguments = build_g_step2_command(
         uv_executable=uv_executable,
@@ -752,15 +874,14 @@ def main() -> None:
             command_arguments=g_cpu_command_arguments,
             output_prefix=g_output_cpu_prefix,
             log_directory=log_directory,
+            environment_overrides=linear_environment_overrides,
         )
     )
 
     run_gpu = arguments.include_gpu and not arguments.cpu_only
     if run_gpu:
         g_output_gpu_prefix = arguments.output_dir / (
-            "g_regenie2_binary_step2_gpu"
-            if active_trait_type == "binary"
-            else "g_regenie2_qt_step2_gpu"
+            "g_regenie2_binary_step2_gpu" if active_trait_type == "binary" else "g_regenie2_qt_step2_gpu"
         )
         g_gpu_command_arguments = build_g_step2_command(
             uv_executable=uv_executable,
@@ -779,6 +900,7 @@ def main() -> None:
                 command_arguments=g_gpu_command_arguments,
                 output_prefix=g_output_gpu_prefix,
                 log_directory=log_directory,
+                environment_overrides=linear_environment_overrides,
             )
         )
     else:
@@ -919,6 +1041,7 @@ def main() -> None:
     report_data: dict[str, typing.Any] = {
         "timestamp": datetime.now(UTC).isoformat(),
         "hardware": asdict(baseline_benchmark.collect_hardware_summary()),
+        "g_linear_compute_dtype": arguments.g_linear_compute_dtype,
         "results": [asdict(result) for result in results],
         "comparisons": {
             "quantitative_step2": {
