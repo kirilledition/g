@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from g import types
 from g.compute import (
     regenie2_binary_candidate_planning,
+    regenie2_binary_firth_common,
     regenie2_binary_firth_null,
     regenie2_binary_firth_types,
     regenie2_binary_score,
@@ -39,7 +40,6 @@ FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS = 100
 FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS = 25
 FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
 FIRTH_TOLERANCE = 2.5e-4
-FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS = 12
 REGENIE_LOGISTIC_MINIMUM_ETA = -30.0
 REGENIE_LOGISTIC_MAXIMUM_ETA = 30.0
 REGENIE_NUMERICAL_EPSILON = 10.0 * 2.220446049250313e-16
@@ -620,13 +620,11 @@ def compute_firth_penalized_log_likelihood_from_cholesky(
     information_cholesky_factor: jax.Array,
 ) -> jax.Array:
     """Compute Firth-penalized log-likelihood from a Cholesky factor."""
-    clipped_probability = jnp.clip(probability_vector, MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
-    true_class_probability = jnp.where(phenotype_vector == 1.0, clipped_probability, 1.0 - clipped_probability)
-    log_likelihood = jnp.sum(jnp.log(true_class_probability))
-    log_determinant = 2.0 * jnp.sum(jnp.log(jnp.diag(information_cholesky_factor)))
-    cholesky_valid = jnp.all(jnp.isfinite(information_cholesky_factor))
-    penalty_term = jnp.where(cholesky_valid, BINARY_CASE_THRESHOLD * log_determinant, -jnp.inf)
-    return log_likelihood + penalty_term
+    return regenie2_binary_firth_common.compute_firth_penalized_log_likelihood_from_cholesky(
+        probability_vector=probability_vector,
+        phenotype_vector=phenotype_vector,
+        information_cholesky_factor=information_cholesky_factor,
+    )
 
 
 def compute_firth_convergence_mask(
@@ -638,18 +636,13 @@ def compute_firth_convergence_mask(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> jax.Array:
     """Return whether an accepted Firth step satisfies convergence tolerances."""
-    likelihood_delta = candidate_penalized_log_likelihood - current_penalized_log_likelihood
-    finite_mask = (
-        jnp.isfinite(current_penalized_log_likelihood)
-        & jnp.isfinite(candidate_penalized_log_likelihood)
-        & jnp.all(jnp.isfinite(coefficient_step))
-        & jnp.all(jnp.isfinite(adjusted_score))
+    return regenie2_binary_firth_common.compute_firth_convergence_mask(
+        current_penalized_log_likelihood=current_penalized_log_likelihood,
+        candidate_penalized_log_likelihood=candidate_penalized_log_likelihood,
+        coefficient_step=coefficient_step,
+        adjusted_score=adjusted_score,
+        kernel_config=kernel_config,
     )
-    monotonic_mask = likelihood_delta >= -kernel_config.firth_likelihood_tolerance
-    likelihood_tolerance_mask = jnp.abs(likelihood_delta) <= kernel_config.firth_likelihood_tolerance
-    coefficient_tolerance_mask = jnp.max(jnp.abs(coefficient_step)) <= kernel_config.firth_coefficient_tolerance
-    score_tolerance_mask = jnp.max(jnp.abs(adjusted_score)) <= kernel_config.firth_gradient_tolerance
-    return finite_mask & monotonic_mask & likelihood_tolerance_mask & coefficient_tolerance_mask & score_tolerance_mask
 
 
 def run_firth_step_halving(
@@ -661,92 +654,18 @@ def run_firth_step_halving(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> FirthBacktrackingResult:
     """Accept the first bounded Firth step that preserves penalized likelihood."""
-
-    def condition_function(state: FirthBacktrackingState) -> jax.Array:
-        return (state.attempt_count < FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS) & (~state.accepted)
-
-    def body_function(state: FirthBacktrackingState) -> FirthBacktrackingState:
-        candidate_coefficients = current_coefficients + state.next_coefficient_step
-        candidate_penalized_log_likelihood = evaluate_penalized_log_likelihood(candidate_coefficients)
-        accepted = (
-            jnp.isfinite(current_penalized_log_likelihood)
-            & jnp.isfinite(candidate_penalized_log_likelihood)
-            & jnp.all(jnp.isfinite(candidate_coefficients))
-            & jnp.all(jnp.isfinite(state.next_coefficient_step))
-            & (
-                candidate_penalized_log_likelihood
-                >= current_penalized_log_likelihood - kernel_config.firth_likelihood_tolerance
-            )
-        )
-        return FirthBacktrackingState(
-            attempt_count=state.attempt_count + jnp.asarray(1, dtype=jnp.int32),
-            next_coefficient_step=state.next_coefficient_step * BINARY_CASE_THRESHOLD,
-            accepted_coefficient_step=jnp.where(
-                accepted,
-                state.next_coefficient_step,
-                state.accepted_coefficient_step,
-            ),
-            accepted_coefficients=jnp.where(
-                accepted,
-                candidate_coefficients,
-                state.accepted_coefficients,
-            ),
-            accepted_penalized_log_likelihood=jnp.where(
-                accepted,
-                candidate_penalized_log_likelihood,
-                state.accepted_penalized_log_likelihood,
-            ),
-            accepted=accepted,
-        )
-
-    final_state = jax.lax.while_loop(
-        condition_function,
-        body_function,
-        FirthBacktrackingState(
-            attempt_count=jnp.asarray(0, dtype=jnp.int32),
-            next_coefficient_step=coefficient_step,
-            accepted_coefficient_step=jnp.zeros_like(coefficient_step),
-            accepted_coefficients=current_coefficients,
-            accepted_penalized_log_likelihood=current_penalized_log_likelihood,
-            accepted=jnp.asarray(0, dtype=jnp.bool_),
-        ),
-    )
-    exhausted = ~final_state.accepted
-    return FirthBacktrackingResult(
-        coefficient_step=final_state.accepted_coefficient_step,
-        coefficients=final_state.accepted_coefficients,
-        penalized_log_likelihood=final_state.accepted_penalized_log_likelihood,
-        accepted=final_state.accepted,
-        exhausted=exhausted,
+    return regenie2_binary_firth_common.run_firth_step_halving(
+        current_coefficients=current_coefficients,
+        current_penalized_log_likelihood=current_penalized_log_likelihood,
+        coefficient_step=coefficient_step,
+        evaluate_penalized_log_likelihood=evaluate_penalized_log_likelihood,
+        kernel_config=kernel_config,
     )
 
 
 def map_firth_reason_code_to_failure_code(reason_code: jax.Array) -> jax.Array:
     """Map internal Firth termination reasons to public failure labels."""
-    return jnp.where(
-        reason_code == FirthConvergenceReason.MAX_ITERATIONS.value,
-        types.FirthFailureCode.MAX_ITERATIONS.value,
-        jnp.where(
-            reason_code == FirthConvergenceReason.INVALID_STATISTIC.value,
-            types.FirthFailureCode.INVALID_STATISTIC.value,
-            jnp.where(
-                reason_code == FirthConvergenceReason.NEGATIVE_LRT.value,
-                types.FirthFailureCode.INVALID_STATISTIC.value,
-                jnp.where(
-                    (reason_code == FirthConvergenceReason.STEP_HALVING_EXHAUSTED.value)
-                    | (reason_code == FirthConvergenceReason.STEP_SIZE_INCREASE.value),
-                    types.FirthFailureCode.STEP_HALVING.value,
-                    jnp.where(
-                        (reason_code == FirthConvergenceReason.NUMERICAL_FAILURE.value)
-                        | (reason_code == FirthConvergenceReason.NULL_FAILURE.value)
-                        | (reason_code == FirthConvergenceReason.PROBABILITY_FAILURE.value),
-                        types.FirthFailureCode.NUMERICAL.value,
-                        types.FirthFailureCode.NONE.value,
-                    ),
-                ),
-            ),
-        ),
-    ).astype(jnp.int32)
+    return regenie2_binary_firth_common.map_firth_reason_code_to_failure_code(reason_code)
 
 
 def map_scalar_pseudo_firth_failure_to_reason_code(failure_code: jax.Array) -> jax.Array:
