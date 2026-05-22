@@ -25,8 +25,6 @@ from g.compute import (
 )
 from g.compute.common import genotype, linalg
 
-jax.config.update("jax_enable_x64", val=True)
-
 MINIMUM_PROBABILITY = regenie2_binary_config.MINIMUM_PROBABILITY
 MINIMUM_VARIANCE = regenie2_binary_config.MINIMUM_VARIANCE
 RELATIVE_VARIANCE_TOLERANCE = regenie2_binary_config.RELATIVE_VARIANCE_TOLERANCE

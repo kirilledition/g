@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import sys
 import typing
 from pathlib import Path
 from unittest.mock import patch
@@ -110,6 +112,19 @@ def test_configure_jax_runtime_before_backend_init_validates_gpu_after_runtime(t
     assert call_order[0] == "jax_platforms"
     assert "jax_compilation_cache_dir" in call_order
     assert call_order[-1] == "require_gpu_device"
+
+
+def test_compute_import_does_not_configure_jax_runtime() -> None:
+    """Ensure compute modules leave JAX runtime policy to jax_setup."""
+    module_name = "g.compute.regenie2_binary"
+    previous_module = sys.modules.pop(module_name, None)
+    try:
+        with patch("jax.config.update") as mock_update:
+            importlib.import_module(module_name)
+        mock_update.assert_not_called()
+    finally:
+        if previous_module is not None:
+            sys.modules[module_name] = previous_module
 
 
 def test_require_gpu_device_accepts_gpu_platform() -> None:
