@@ -5,8 +5,8 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from g.compute import regenie2_linear_types
 from g.compute.common import linalg
+from g.compute.regenie2_linear import types as regenie2_linear_types
 
 
 def prepare_regenie2_linear_state(

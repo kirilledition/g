@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import typing
+
 import jax
 import jax.numpy as jnp
 
 from g import types
-from g.compute import regenie2_binary_firth_common, regenie2_binary_firth_types, regenie2_binary_types
 from g.compute.common import pvalue
+from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
+from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+
+if typing.TYPE_CHECKING:
+    from g.compute.regenie2_binary import types as regenie2_binary_types
 
 MINIMUM_VARIANCE = 1.0e-8
 BINARY_CASE_THRESHOLD = 0.5

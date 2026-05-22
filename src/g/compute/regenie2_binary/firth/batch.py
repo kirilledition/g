@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import typing
+
 import jax
 import jax.numpy as jnp
 
-from g.compute import (
-    regenie2_binary_firth_full,
-    regenie2_binary_firth_scalar,
-    regenie2_binary_firth_types,
-    regenie2_binary_types,
-)
 from g.compute.common import linalg
+from g.compute.regenie2_binary.firth import full as regenie2_binary_firth_full
+from g.compute.regenie2_binary.firth import scalar as regenie2_binary_firth_scalar
+from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+
+if typing.TYPE_CHECKING:
+    from g.compute.regenie2_binary import types as regenie2_binary_types
 
 INITIAL_RESPONSE_SCALE = 4.863891244002886
 BINARY_CASE_THRESHOLD = 0.5

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from g.compute import regenie2_binary_candidate_planning, regenie2_binary_types
+from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
+from g.compute.regenie2_binary import types as regenie2_binary_types
 
 MINIMUM_PROBABILITY = 1.0e-6
 DEFAULT_MAXIMUM_NULL_ITERATIONS = 50

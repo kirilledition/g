@@ -5,8 +5,8 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from g.compute import regenie2_linear_types
 from g.compute.common import genotype, pvalue
+from g.compute.regenie2_linear import types as regenie2_linear_types
 
 
 def compute_regenie2_linear_chunk_trait_major_variant_major(

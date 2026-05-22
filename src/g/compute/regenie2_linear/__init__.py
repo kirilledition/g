@@ -5,7 +5,9 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from g.compute import regenie2_linear_score, regenie2_linear_state, regenie2_linear_types
+from g.compute.regenie2_linear import score as regenie2_linear_score
+from g.compute.regenie2_linear import state as regenie2_linear_state
+from g.compute.regenie2_linear import types as regenie2_linear_types
 
 
 @jax.jit

@@ -8,14 +8,12 @@ import jax
 import jax.numpy as jnp
 
 from g import types
-from g.compute import (
-    regenie2_binary_config,
-    regenie2_binary_firth_null,
-    regenie2_binary_firth_types,
-    regenie2_binary_null_logistic,
-    regenie2_binary_score,
-    regenie2_binary_types,
-)
+from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logistic
+from g.compute.regenie2_binary import score as regenie2_binary_score
+from g.compute.regenie2_binary import types as regenie2_binary_types
+from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
+from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 
 def prepare_regenie2_binary_state(

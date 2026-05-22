@@ -9,14 +9,11 @@ import jax
 import jax.numpy as jnp
 
 from g import _core, types
-from g.compute import (
-    regenie2_binary,
-    regenie2_binary_config,
-    regenie2_binary_state,
-    regenie2_binary_types,
-    regenie2_linear,
-    regenie2_linear_state,
-)
+from g.compute import regenie2_binary, regenie2_linear
+from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_binary import state as regenie2_binary_state
+from g.compute.regenie2_binary import types as regenie2_binary_types
+from g.compute.regenie2_linear import state as regenie2_linear_state
 from g.engine import callbacks, native_dispatch
 
 if typing.TYPE_CHECKING:
