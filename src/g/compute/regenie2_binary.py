@@ -1029,23 +1029,17 @@ def apply_device_candidate_corrections_firth(
             flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
             raw_genotype_matrix_by_variant = jnp.take(genotype_matrix_float32, flat_fallback_indices, axis=1).T
             genotype_flip_result = build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
-            firth_raw_genotype_matrix_by_variant = (
-                raw_genotype_matrix_by_variant
-                if kernel_config.use_block_firth_math
-                else genotype_flip_result.genotype_matrix_by_variant
-            )
             if kernel_config.use_block_firth_math:
+                firth_raw_genotype_matrix_by_variant = raw_genotype_matrix_by_variant
                 flat_genotype_flip_mask = jnp.zeros_like(flat_active_mask)
+                genotype_matrix_by_variant = firth_raw_genotype_matrix_by_variant
             else:
+                firth_raw_genotype_matrix_by_variant = genotype_flip_result.genotype_matrix_by_variant
                 flat_genotype_flip_mask = genotype_flip_result.flip_mask
-            genotype_matrix_by_variant = jnp.where(
-                kernel_config.use_block_firth_math,
-                firth_raw_genotype_matrix_by_variant,
-                residualize_and_scale_genotypes_for_approximate_firth(
+                genotype_matrix_by_variant = residualize_and_scale_genotypes_for_approximate_firth(
                     chromosome_state,
                     firth_raw_genotype_matrix_by_variant,
-                ),
-            )
+                )
             if sparse_candidate_mask is None:
                 flat_sparse_candidate_mask = jnp.zeros_like(flat_active_mask)
             else:
@@ -1072,14 +1066,11 @@ def apply_device_candidate_corrections_firth(
             heuristic_firth_mask = ordered_candidate_inputs.heuristic_firth_mask
             raw_genotype_matrix_by_variant = jnp.take(genotype_matrix_float32, flat_fallback_indices, axis=1).T
             genotype_flip_result = build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
-            firth_raw_genotype_matrix_by_variant = (
-                raw_genotype_matrix_by_variant
-                if kernel_config.use_block_firth_math
-                else genotype_flip_result.genotype_matrix_by_variant
-            )
             if kernel_config.use_block_firth_math:
+                firth_raw_genotype_matrix_by_variant = raw_genotype_matrix_by_variant
                 flat_genotype_flip_mask = jnp.zeros_like(flat_active_mask)
             else:
+                firth_raw_genotype_matrix_by_variant = genotype_flip_result.genotype_matrix_by_variant
                 flat_genotype_flip_mask = genotype_flip_result.flip_mask
             flat_sparse_candidate_mask = (
                 jnp.take(jnp.asarray(sparse_candidate_mask, dtype=jnp.bool_), flat_fallback_indices, axis=0)
@@ -1103,17 +1094,18 @@ def apply_device_candidate_corrections_firth(
                 ],
                 axis=1,
             )
-            heuristic_initial_coefficients = initialize_full_model_coefficients_without_mask(
-                covariate_matrix=chromosome_state.covariate_matrix,
-                genotype_matrix_by_variant=genotype_matrix_by_variant,
-                phenotype_vector=chromosome_state.phenotype_vector,
-            )
-            initial_coefficients = jnp.where(
-                heuristic_firth_mask[:, None],
-                heuristic_initial_coefficients,
-                standard_initial_coefficients,
-            )
-            if not kernel_config.use_block_firth_math:
+            if kernel_config.use_block_firth_math:
+                heuristic_initial_coefficients = initialize_full_model_coefficients_without_mask(
+                    covariate_matrix=chromosome_state.covariate_matrix,
+                    genotype_matrix_by_variant=genotype_matrix_by_variant,
+                    phenotype_vector=chromosome_state.phenotype_vector,
+                )
+                initial_coefficients = jnp.where(
+                    heuristic_firth_mask[:, None],
+                    heuristic_initial_coefficients,
+                    standard_initial_coefficients,
+                )
+            else:
                 initial_coefficients = standard_initial_coefficients
             batch_count = batch_plan.fallback_index_matrix.shape[0]
             active_batch_count = (fallback_count + firth_batch_size - 1) // firth_batch_size
