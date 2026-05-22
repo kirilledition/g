@@ -9,7 +9,8 @@ import jax
 import jax.numpy as jnp
 
 from g import types
-from g.compute import regenie2_binary, regenie2_binary_candidate_planning, regenie2_binary_types, regenie2_linear
+from g.compute import regenie2_binary, regenie2_binary_candidate_planning, regenie2_binary_types
+from g.compute.common import genotype, pvalue
 
 
 @functools.partial(jax.jit, static_argnames=("correction_plan",))
@@ -20,7 +21,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     """Compute the variant-major score test for one binary chunk."""
     raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
-    genotype_flip_result = regenie2_binary.build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
+    genotype_flip_result = genotype.build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
     genotype_matrix_by_variant_float32 = genotype_flip_result.genotype_matrix_by_variant
     weighted_genotype_matrix_by_variant = (
         genotype_matrix_by_variant_float32 * chromosome_state.square_root_weight[None, :]
@@ -53,7 +54,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     )
     log10_p_value = jnp.where(
         null_logistic_converged,
-        regenie2_linear.chi_squared_to_log10_p_value(chi_squared),
+        pvalue.chi_squared_to_log10_p_value(chi_squared),
         jnp.nan,
     )
     valid_mask = null_logistic_converged & jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
@@ -120,9 +121,7 @@ def apply_device_candidate_corrections_firth_variant_major(
                 axis=0,
             )
             raw_candidate_genotype_matrix_by_variant = candidate_genotype_matrix_by_variant
-            genotype_flip_result = regenie2_binary.build_regenie_flipped_genotypes(
-                raw_candidate_genotype_matrix_by_variant
-            )
+            genotype_flip_result = genotype.build_regenie_flipped_genotypes(raw_candidate_genotype_matrix_by_variant)
             firth_raw_candidate_genotype_matrix_by_variant = (
                 raw_candidate_genotype_matrix_by_variant
                 if kernel_config.use_block_firth_math
@@ -169,9 +168,7 @@ def apply_device_candidate_corrections_firth_variant_major(
                 flat_fallback_indices,
                 axis=0,
             )
-            genotype_flip_result = regenie2_binary.build_regenie_flipped_genotypes(
-                raw_candidate_genotype_matrix_by_variant
-            )
+            genotype_flip_result = genotype.build_regenie_flipped_genotypes(raw_candidate_genotype_matrix_by_variant)
             firth_raw_candidate_genotype_matrix_by_variant = (
                 raw_candidate_genotype_matrix_by_variant
                 if kernel_config.use_block_firth_math

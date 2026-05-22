@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-import jax.scipy.stats
 
 from g.compute import regenie2_linear_types
+from g.compute.common import genotype, linalg, pvalue
 
 
 def solve_positive_definite_system(
@@ -23,19 +23,7 @@ def solve_positive_definite_system(
         Solution to the linear system.
 
     """
-    forward_substitution = jax.lax.linalg.triangular_solve(
-        cholesky_factor,
-        right_hand_side,
-        left_side=True,
-        lower=True,
-    )
-    return jax.lax.linalg.triangular_solve(
-        cholesky_factor,
-        forward_substitution,
-        left_side=True,
-        lower=True,
-        transpose_a=True,
-    )
+    return linalg.solve_positive_definite_system(cholesky_factor, right_hand_side)
 
 
 def prepare_regenie2_linear_state(
@@ -148,9 +136,7 @@ def chi_squared_to_log10_p_value(chi_squared: jax.Array) -> jax.Array:
         Negative log10 p-values (-log10(p)).
 
     """
-    safe_chi_squared = jnp.maximum(jnp.asarray(chi_squared, dtype=jnp.float32), 0.0)
-    log_p_value = jnp.log(2.0) + jax.scipy.stats.norm.logsf(jnp.sqrt(safe_chi_squared))
-    return -log_p_value / jnp.log(10.0)
+    return pvalue.chi_squared_to_log10_p_value(chi_squared)
 
 
 def normalize_high_frequency_diploid_genotypes_sample_major(genotype_matrix: jax.Array) -> jax.Array:
@@ -160,18 +146,12 @@ def normalize_high_frequency_diploid_genotypes_sample_major(genotype_matrix: jax
     not change the residualized genotype or score statistic. It does keep rare
     reference-allele carriers near zero before float32 matrix products.
     """
-    genotype_matrix_compute = jnp.asarray(genotype_matrix, dtype=jnp.float32)
-    genotype_mean = jnp.mean(genotype_matrix_compute, axis=0)
-    genotype_offset = jnp.where(genotype_mean > 1.0, 2.0, 0.0)
-    return genotype_matrix_compute - genotype_offset[None, :]
+    return genotype.normalize_high_frequency_diploid_genotypes_sample_major(genotype_matrix)
 
 
 def normalize_high_frequency_diploid_genotypes_variant_major(genotype_matrix_by_variant: jax.Array) -> jax.Array:
     """Shift high-frequency diploid dosages to avoid float32 cancellation."""
-    genotype_matrix_by_variant_compute = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
-    genotype_mean = jnp.mean(genotype_matrix_by_variant_compute, axis=1)
-    genotype_offset = jnp.where(genotype_mean > 1.0, 2.0, 0.0)
-    return genotype_matrix_by_variant_compute - genotype_offset[:, None]
+    return genotype.normalize_high_frequency_diploid_genotypes_variant_major(genotype_matrix_by_variant)
 
 
 @jax.jit

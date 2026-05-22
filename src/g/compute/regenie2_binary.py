@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 
 from g import types
-from g.compute import regenie2_binary_candidate_planning, regenie2_binary_types, regenie2_linear
+from g.compute import regenie2_binary_candidate_planning, regenie2_binary_types
+from g.compute.common import genotype, linalg, pvalue
 
 jax.config.update("jax_enable_x64", val=True)
 
@@ -98,19 +99,7 @@ BinaryVariantMajorChunkComputeFunction = typing.Callable[
 ]
 
 
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class RegenieGenotypeFlipResult:
-    """REGENIE-style genotype coding for score and correction lanes.
-
-    Attributes:
-        genotype_matrix_by_variant: Candidate genotypes coded to the minor allele when REGENIE would flip.
-        flip_mask: Per-candidate flag indicating that beta must be flipped back for A1 output.
-
-    """
-
-    genotype_matrix_by_variant: jax.Array
-    flip_mask: jax.Array
+RegenieGenotypeFlipResult = genotype.RegenieGenotypeFlipResult
 
 
 @jax.tree_util.register_dataclass
@@ -578,8 +567,7 @@ def solve_from_positive_definite_matrix(
     right_hand_side: jax.Array,
 ) -> jax.Array:
     """Solve a positive-definite system from its matrix form."""
-    cholesky_factor = jnp.linalg.cholesky(positive_definite_matrix)
-    return regenie2_linear.solve_positive_definite_system(cholesky_factor, right_hand_side)
+    return linalg.solve_from_positive_definite_matrix(positive_definite_matrix, right_hand_side)
 
 
 def compute_positive_variance_mask(variance: jax.Array, reference_sum_squares: jax.Array) -> jax.Array:
@@ -615,7 +603,7 @@ def fit_null_logistic_coefficients(
         cholesky_factor = jnp.linalg.cholesky(
             information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * MINIMUM_VARIANCE
         )
-        coefficient_delta = regenie2_linear.solve_positive_definite_system(cholesky_factor, score_vector)
+        coefficient_delta = linalg.solve_positive_definite_system(cholesky_factor, score_vector)
         updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)
         converged = (updated_iteration_count > 0) & (jnp.max(jnp.abs(coefficient_delta)) <= coefficient_tolerance)
         return NullLogisticFitState(
@@ -790,7 +778,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     )
     log10_p_value = jnp.where(
         null_logistic_converged,
-        regenie2_linear.chi_squared_to_log10_p_value(chi_squared),
+        pvalue.chi_squared_to_log10_p_value(chi_squared),
         jnp.nan,
     )
     valid_mask = null_logistic_converged & jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
@@ -1359,7 +1347,7 @@ def fit_scalar_pseudo_firth(
     )
     standard_error = jnp.sqrt(jnp.reciprocal(final_components.genotype_information))
     log10_p_value = jnp.asarray(
-        regenie2_linear.chi_squared_to_log10_p_value(jnp.maximum(chi_squared, 0.0)),
+        pvalue.chi_squared_to_log10_p_value(jnp.maximum(chi_squared, 0.0)),
         dtype=initial_beta.dtype,
     )
     valid = final_state.converged & (~failed) & jnp.isfinite(standard_error) & (standard_error > 0.0)
@@ -1572,7 +1560,7 @@ def fit_scalar_newton_raphson_firth(
     failed = final_state.failed | maximum_iteration_failure | negative_lrt_failure | (~final_components.valid)
     standard_error = jnp.sqrt(jnp.reciprocal(final_components.genotype_information))
     log10_p_value = jnp.asarray(
-        regenie2_linear.chi_squared_to_log10_p_value(jnp.maximum(chi_squared, 0.0)),
+        pvalue.chi_squared_to_log10_p_value(jnp.maximum(chi_squared, 0.0)),
         dtype=initial_beta.dtype,
     )
     valid = final_state.converged & (~failed) & jnp.isfinite(standard_error) & (standard_error > 0.0)
@@ -1888,7 +1876,7 @@ def compute_null_firth_components(
         )
         - log_determinant
     )
-    projected_covariate_matrix = regenie2_linear.solve_positive_definite_system(
+    projected_covariate_matrix = linalg.solve_positive_definite_system(
         information_cholesky_factor,
         covariate_matrix.T,
     ).T
@@ -2005,7 +1993,7 @@ def fit_covariate_only_firth_null_model_once(
             jnp.asarray(0, dtype=jnp.int32),
         )
         score_increase_failed = check_score_increase & (score_increase_count > 25)
-        coefficient_step = regenie2_linear.solve_positive_definite_system(
+        coefficient_step = linalg.solve_positive_definite_system(
             components.information_cholesky_factor,
             components.modified_score,
         )
@@ -2469,7 +2457,7 @@ def fit_single_variant_firth_logistic_regression(
     beta = final_state.coefficients[-1]
     standard_error = jnp.sqrt(jnp.where(genotype_variance > 0.0, genotype_variance, jnp.nan))
     chi_squared = jnp.maximum(2.0 * (final_penalized_log_likelihood - null_penalized_log_likelihood), 0.0)
-    log10_p_value = jnp.asarray(regenie2_linear.chi_squared_to_log10_p_value(chi_squared), dtype=jnp.float64)
+    log10_p_value = jnp.asarray(pvalue.chi_squared_to_log10_p_value(chi_squared), dtype=jnp.float64)
     valid_mask = (
         (~skip_firth)
         & final_state.converged
@@ -2606,18 +2594,7 @@ def build_regenie_flipped_genotypes(
     genotype_matrix_by_variant: jax.Array,
 ) -> RegenieGenotypeFlipResult:
     """Code variant-major genotypes the way REGENIE does before testing."""
-    allele_count = jnp.sum(genotype_matrix_by_variant, axis=1)
-    flip_threshold = jnp.asarray(genotype_matrix_by_variant.shape[1], dtype=genotype_matrix_by_variant.dtype)
-    flip_mask = allele_count > flip_threshold
-    flipped_genotype_matrix_by_variant = jnp.where(
-        flip_mask[:, None],
-        ALLELE_COUNT_MULTIPLIER - genotype_matrix_by_variant,
-        genotype_matrix_by_variant,
-    )
-    return RegenieGenotypeFlipResult(
-        genotype_matrix_by_variant=flipped_genotype_matrix_by_variant,
-        flip_mask=flip_mask,
-    )
+    return genotype.build_regenie_flipped_genotypes(genotype_matrix_by_variant)
 
 
 def compute_firth_variantwise(
