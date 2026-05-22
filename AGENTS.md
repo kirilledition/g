@@ -4,11 +4,13 @@ You are an AI coding assistant working on high-performance GPU-accelerated GWAS 
 
 ## **Environment & Tooling**
 
-* **Package Management:** uv (Python). Run tooling via `nix develop --command ...`
+* **Package Management:** uv (Python).
 * **Task Runner:** just. Always check the Justfile for available project-specific commands.  
 * **Linting & Formatting:** Ensure code passes before committing (use nix develop):  
   * just check
   * just test
+* New features should be implemented in separate git worktrees in ~/Projects/g-worktrees. History of that brunch should be on github. After feature is done, integrate to main and remove the worktree
+* On gauss server use slurm srun on landau node to run code that requires nvidia gpu. Use cantor or other free node with all available cores to run cpu workloads. Do not run heavy computation, compilations, large test suits on head gauss node.
    
 ## **Repository Structure**
 
