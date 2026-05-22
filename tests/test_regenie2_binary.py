@@ -478,6 +478,52 @@ def test_multi_trait_score_kernel_matches_stacked_single_trait_results() -> None
     )
 
 
+def test_multi_trait_score_kernel_variant_major_matches_sample_major() -> None:
+    covariate_matrix, phenotype_vector, genotype_matrix = build_binary_inputs()
+    phenotype_matrix = jnp.stack([phenotype_vector, 1.0 - phenotype_vector], axis=0)
+    loco_offset_matrix = jnp.zeros_like(phenotype_matrix)
+    correction_plan = types.BinaryCorrectionPlan()
+    multi_state = regenie2_binary.prepare_regenie2_multi_binary_state(covariate_matrix, phenotype_matrix)
+    multi_chromosome_state = regenie2_binary.prepare_regenie2_multi_binary_chromosome_state(
+        multi_state,
+        loco_offset_matrix,
+        correction_plan,
+    )
+
+    sample_major_result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
+        multi_chromosome_state,
+        genotype_matrix,
+        correction_plan,
+    )
+    variant_major_result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
+        multi_chromosome_state,
+        jnp.transpose(genotype_matrix),
+        correction_plan,
+    )
+
+    np.testing.assert_allclose(np.asarray(variant_major_result.beta), np.asarray(sample_major_result.beta))
+    np.testing.assert_allclose(
+        np.asarray(variant_major_result.standard_error),
+        np.asarray(sample_major_result.standard_error),
+    )
+    np.testing.assert_allclose(
+        np.asarray(variant_major_result.chi_squared),
+        np.asarray(sample_major_result.chi_squared),
+    )
+    np.testing.assert_allclose(
+        np.asarray(variant_major_result.log10_p_value),
+        np.asarray(sample_major_result.log10_p_value),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(variant_major_result.extra_code),
+        np.asarray(sample_major_result.extra_code),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(variant_major_result.valid_mask),
+        np.asarray(sample_major_result.valid_mask),
+    )
+
+
 @pytest.mark.parametrize("firth_se", [False, True])
 def test_multi_trait_approximate_firth_matches_stacked_single_trait_results(firth_se: object) -> None:
     covariate_matrix, phenotype_vector, genotype_matrix = build_binary_inputs()
