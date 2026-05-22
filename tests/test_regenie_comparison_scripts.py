@@ -48,6 +48,10 @@ binary_firth_parity = load_script_module(
     "binary_firth_parity_script",
     "scripts/compare_binary_firth_paths.py",
 )
+binary_regenie_debug = load_script_module(
+    "binary_regenie_debug_script",
+    "scripts/debug_binary_regenie_parity.py",
+)
 tuning_benchmark = load_script_module(
     "tuning_benchmark_script",
     "scripts/tune_regenie2_gpu.py",
@@ -84,6 +88,129 @@ def test_bgen_reader_benchmark_parses_path_modes() -> None:
 
 def test_bgen_reader_benchmark_parses_boolean_modes() -> None:
     assert bgen_reader_benchmark.parse_boolean_mode_list("trusted,safe") == [True, False]
+
+
+def test_binary_regenie_debug_selector_matches_ids_and_indices() -> None:
+    selector = binary_regenie_debug.VariantSelector(
+        variant_identifiers=frozenset({"rs1"}),
+        variant_indices=frozenset({3}),
+    )
+
+    assert selector.matches(variant_identifier="rs1", variant_index=99)
+    assert selector.matches(variant_identifier="rs2", variant_index=3)
+    assert not selector.matches(variant_identifier="rs2", variant_index=4)
+
+
+def test_binary_regenie_debug_comparison_reports_nested_numeric_differences() -> None:
+    record = binary_regenie_debug.VariantDebugRecord(
+        variant_index=0,
+        chromosome="22",
+        position=100,
+        variant_identifier="rs1",
+        allele_zero="A",
+        allele_one="G",
+        allele_count=2.0,
+        flipped_allele_count=2.0,
+        flip_mask=False,
+        minor_allele_count=2.0,
+        sparse_candidate=False,
+        rare_sparse_firth_candidate=False,
+        carrier_count=1,
+        score=0.5,
+        score_variance=1.5,
+        score_beta=0.1,
+        score_standard_error=0.2,
+        score_chi_squared=0.3,
+        score_log10_p_value=0.4,
+        score_extra_code="score",
+        null_logistic_offset={"sum": 1.0},
+        null_firth_offset={"sum": 2.0},
+        null_logistic_iteration_count=4,
+        null_logistic_converged=True,
+        null_firth_iteration_count=5,
+        null_firth_convergence_reason="converged",
+        firth_correction_branch="pseudo_firth",
+        firth_iteration_count=6,
+        pseudo_firth_iteration_count=6,
+        nr_zero_start_iteration_count=0,
+        nr_warm_start_iteration_count=0,
+        final_beta=0.11,
+        final_standard_error=0.21,
+        final_chi_squared=0.31,
+        final_log10_p_value=0.41,
+        final_extra_code="firth",
+        final_valid=True,
+        firth_failure_code="none",
+        firth_convergence_reason="converged",
+    )
+
+    comparisons = binary_regenie_debug.build_comparisons(
+        records=[record],
+        reference_records={
+            "rs1": {
+                "variant_identifier": "rs1",
+                "final_beta": 0.2,
+                "null_firth_offset": {"sum": 2.0},
+                "score_variance": 1.5,
+            }
+        },
+        tolerance=1.0e-8,
+    )
+
+    assert len(comparisons) == 1
+    assert comparisons[0].variant_identifier == "rs1"
+    assert not comparisons[0].missing_reference
+    assert [difference.path for difference in comparisons[0].differences] == ["final_beta"]
+
+
+def test_binary_regenie_debug_missing_selection_count_handles_id_and_index_match() -> None:
+    selector = binary_regenie_debug.VariantSelector(
+        variant_identifiers=frozenset({"rs1", "missing_rs"}),
+        variant_indices=frozenset({0, 99}),
+    )
+    record = binary_regenie_debug.VariantDebugRecord(
+        variant_index=0,
+        chromosome="22",
+        position=100,
+        variant_identifier="rs1",
+        allele_zero="A",
+        allele_one="G",
+        allele_count=2.0,
+        flipped_allele_count=2.0,
+        flip_mask=False,
+        minor_allele_count=2.0,
+        sparse_candidate=False,
+        rare_sparse_firth_candidate=False,
+        carrier_count=1,
+        score=0.5,
+        score_variance=1.5,
+        score_beta=0.1,
+        score_standard_error=0.2,
+        score_chi_squared=0.3,
+        score_log10_p_value=0.4,
+        score_extra_code="score",
+        null_logistic_offset={"sum": 1.0},
+        null_firth_offset={"sum": 2.0},
+        null_logistic_iteration_count=4,
+        null_logistic_converged=True,
+        null_firth_iteration_count=5,
+        null_firth_convergence_reason="converged",
+        firth_correction_branch="pseudo_firth",
+        firth_iteration_count=6,
+        pseudo_firth_iteration_count=6,
+        nr_zero_start_iteration_count=0,
+        nr_warm_start_iteration_count=0,
+        final_beta=0.11,
+        final_standard_error=0.21,
+        final_chi_squared=0.31,
+        final_log10_p_value=0.41,
+        final_extra_code="firth",
+        final_valid=True,
+        firth_failure_code="none",
+        firth_convergence_reason="converged",
+    )
+
+    assert binary_regenie_debug.count_missing_selections(records=[record], selector=selector) == 2
 
 
 def test_tuning_benchmark_builds_queue_depth_values() -> None:

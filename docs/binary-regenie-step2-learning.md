@@ -727,6 +727,27 @@ final beta, SE, LRT, LOG10P
 failure state
 ```
 
+The repository also includes a small harness for capturing these values from
+the active `g` implementation:
+
+```bash
+uv run python scripts/debug_binary_regenie_parity.py \
+  --bgen data/1kg_chr22_full.bgen \
+  --sample data/1kg_chr22_full.sample \
+  --pheno-file data/pheno_bin.txt \
+  --pheno-col phenotype_binary \
+  --covar-file data/covariates.txt \
+  --covar-col-list age,sex \
+  --pred data/baselines/regenie_step1_pred.list \
+  --variant-id rs545553139 \
+  --output-json data/benchmarks/binary_debug_rs545553139.json
+```
+
+Pass `--regenie-debug-jsonl` with JSONL emitted by an instrumented REGENIE
+build to get numeric field-level diffs for common keys. The script does not
+modify public `g regenie` behavior; it streams selected variants from BGEN and
+emits debug JSON for score-test, sparse, null-model, and scalar Firth internals.
+
 ### Instrument Original REGENIE Temporarily
 
 If local code inspection is not enough, patch the archived REGENIE source in a
@@ -784,7 +805,5 @@ Likely next areas:
   Firth, rather than dense vectors plus masks.
 - Decide whether the legacy full-model JAX Firth path should remain, move to a
   separate experimental module, or be removed.
-- Add a small, documented single-variant parity harness that compares `g`
-  scalar Firth internals to instrumented REGENIE output.
 - Revisit the public numeric output schema if float32 output becomes the final
   limiting factor for parity.
