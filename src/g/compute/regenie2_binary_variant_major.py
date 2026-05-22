@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from g import types
-from g.compute import regenie2_binary, regenie2_binary_candidate_planning, regenie2_binary_types
+from g.compute import regenie2_binary, regenie2_binary_candidate_planning, regenie2_binary_score, regenie2_binary_types
 from g.compute.common import genotype
 
 
@@ -20,7 +20,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     """Compute the variant-major score test for one binary chunk."""
-    return regenie2_binary.compute_regenie2_binary_score_test_chunk_variant_major_core(
+    return regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         correction_plan=correction_plan,
