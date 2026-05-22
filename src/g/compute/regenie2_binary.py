@@ -21,6 +21,7 @@ from g.compute import (
     regenie2_binary_null_logistic,
     regenie2_binary_score,
     regenie2_binary_types,
+    regenie2_binary_variant_major,
 )
 from g.compute.common import genotype, linalg
 
@@ -1335,6 +1336,3 @@ def compute_regenie2_binary_chunk(
         sparse_candidate_mask,
         kernel_config,
     )
-
-
-from g.compute import regenie2_binary_variant_major  # noqa: E402
