@@ -13,7 +13,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from g import types
-from g.compute import regenie2_binary, regenie2_binary_types, regenie2_binary_variant_major
+from g.compute import (
+    regenie2_binary,
+    regenie2_binary_score,
+    regenie2_binary_state,
+    regenie2_binary_types,
+    regenie2_binary_variant_major,
+)
 
 
 @dataclass(frozen=True)
@@ -90,7 +96,9 @@ class NumericColumnComparison:
 
 def build_argument_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
-    parser = argparse.ArgumentParser(description="Compare binary Firth production sample-major and variant-major compute paths.")
+    parser = argparse.ArgumentParser(
+        description="Compare binary Firth production sample-major and variant-major compute paths."
+    )
     parser.add_argument(
         "--input-npz",
         type=Path,
@@ -162,11 +170,11 @@ def load_npz_inputs(input_npz_path: Path) -> BinaryParityInputs:
 
 def prepare_chromosome_state(inputs: BinaryParityInputs) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
     """Prepare the binary chromosome state shared by both paths."""
-    regenie_state = regenie2_binary.prepare_regenie2_binary_state(
+    regenie_state = regenie2_binary_state.prepare_regenie2_binary_state(
         covariate_matrix=inputs.covariate_matrix,
         phenotype_vector=inputs.phenotype_vector,
     )
-    return regenie2_binary.prepare_regenie2_binary_chromosome_state(regenie_state, inputs.loco_offset)
+    return regenie2_binary_state.prepare_regenie2_binary_chromosome_state(regenie_state, inputs.loco_offset)
 
 
 def compute_path_metrics(
@@ -244,7 +252,7 @@ def compare_binary_paths(
         correction_plan,
     )
     genotype_matrix_by_variant = jnp.transpose(inputs.genotype_matrix)
-    variant_major_score_test_result = regenie2_binary_variant_major.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
+    variant_major_score_test_result = regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
         chromosome_state,
         genotype_matrix_by_variant,
         correction_plan,

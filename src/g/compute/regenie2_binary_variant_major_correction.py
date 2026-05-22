@@ -17,8 +17,6 @@ from g.compute import (
 )
 from g.compute.common import genotype
 
-DEFAULT_BINARY_KERNEL_CONFIG = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
-
 
 @functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config"))
 def apply_device_candidate_corrections_firth_variant_major(
@@ -27,7 +25,7 @@ def apply_device_candidate_corrections_firth_variant_major(
     result: regenie2_binary_types.Regenie2BinaryChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
+    kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     """Apply device-resident Firth corrections to variant-major score-test candidates."""
     candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
@@ -305,7 +303,7 @@ def apply_device_candidate_corrections_variant_major(
     result: regenie2_binary_types.Regenie2BinaryChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
+    kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     """Apply binary candidate corrections for variant-major genotype chunks."""
     if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:

@@ -17,7 +17,15 @@ import numpy as np
 import numpy.typing as npt
 
 from g import _core, types
-from g.compute import regenie2_binary, regenie2_binary_types
+from g.compute import (
+    regenie2_binary,
+    regenie2_binary_config,
+    regenie2_binary_firth_batch,
+    regenie2_binary_firth_types,
+    regenie2_binary_state,
+    regenie2_binary_types,
+)
+from g.compute.common import genotype
 from g.engine import native_dispatch
 
 
@@ -238,7 +246,7 @@ def firth_correction_code_name(value: object) -> str:
 
 def firth_convergence_reason_name(value: object) -> str:
     """Render an internal Firth convergence reason code."""
-    return enum_name(regenie2_binary.FirthConvergenceReason, value)
+    return enum_name(regenie2_binary_firth_types.FirthConvergenceReason, value)
 
 
 def parse_covar_column_list(raw_column_list: str) -> tuple[str, ...]:
@@ -262,7 +270,7 @@ def compute_score_debug_arrays(
 ) -> ScoreDebugArrays:
     """Compute score-test internal arrays for selected variants."""
     raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
-    genotype_flip_result = regenie2_binary.build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
+    genotype_flip_result = genotype.build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
     genotype_matrix_by_variant_float32 = genotype_flip_result.genotype_matrix_by_variant
     weighted_genotype_matrix_by_variant = (
         genotype_matrix_by_variant_float32 * chromosome_state.square_root_weight[None, :]
@@ -281,7 +289,7 @@ def compute_score_debug_arrays(
     allele_count = jnp.sum(raw_genotype_matrix_by_variant, axis=1)
     flipped_allele_count = jnp.sum(genotype_matrix_by_variant_float32, axis=1)
     carrier_count = jnp.sum(
-        genotype_matrix_by_variant_float32 > regenie2_binary.SPARSE_CARRIER_DOSAGE_THRESHOLD,
+        genotype_matrix_by_variant_float32 > regenie2_binary_firth_batch.SPARSE_CARRIER_DOSAGE_THRESHOLD,
         axis=1,
     )
     host_values = jax.device_get(
@@ -451,12 +459,12 @@ class BinaryVariantDebugCaptureCallback:
     def prepare_chromosome_state(self, chromosome: str) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
         """Build or reuse the binary chromosome state for one chromosome."""
         if chromosome not in self.chromosome_states:
-            state = regenie2_binary.prepare_regenie2_binary_state(
+            state = regenie2_binary_state.prepare_regenie2_binary_state(
                 self.run_input.covariate_matrix,
                 self.run_input.phenotype_vector,
             )
             loco_offset = jnp.asarray(self.prediction_source.get_chromosome_predictions(chromosome), dtype=jnp.float32)
-            self.chromosome_states[chromosome] = regenie2_binary.prepare_regenie2_binary_chromosome_state(
+            self.chromosome_states[chromosome] = regenie2_binary_state.prepare_regenie2_binary_chromosome_state(
                 state,
                 loco_offset,
                 self.correction_plan,
@@ -594,7 +602,7 @@ def capture_g_records(arguments: argparse.Namespace, selector: VariantSelector) 
         prediction_source=prediction_source,
         selector=selector,
         correction_plan=correction_plan,
-        kernel_config=regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
+        kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
     )
     engine.run_bgen_variant_major_dosage_buffered_chunks(run_input.sample_indices, callback)
     return sorted(callback.records, key=lambda record: record.variant_index)

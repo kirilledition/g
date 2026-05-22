@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from g.compute import regenie2_binary_candidate_planning, regenie2_binary_score, regenie2_binary_types
+from g.compute import regenie2_binary_candidate_planning, regenie2_binary_types
 
 MINIMUM_PROBABILITY = 1.0e-6
-MINIMUM_VARIANCE = regenie2_binary_score.MINIMUM_VARIANCE
-RELATIVE_VARIANCE_TOLERANCE = regenie2_binary_score.RELATIVE_VARIANCE_TOLERANCE
 DEFAULT_MAXIMUM_NULL_ITERATIONS = 50
 NULL_LOGISTIC_COEFFICIENT_TOLERANCE = 1.0e-6
 BINARY_CASE_THRESHOLD = 0.5

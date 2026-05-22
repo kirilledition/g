@@ -17,7 +17,7 @@ import numpy as np
 import numpy.typing as npt
 
 from g import _core
-from g.compute import regenie2_linear, regenie2_linear_types
+from g.compute import regenie2_linear, regenie2_linear_state, regenie2_linear_types
 from g.engine import native_dispatch
 
 
@@ -286,7 +286,7 @@ class LinearVariantDebugCaptureCallback:
         self.run_input = run_input
         self.prediction_source = prediction_source
         self.selector = selector
-        self.regenie_state = regenie2_linear.prepare_regenie2_linear_state(
+        self.regenie_state = regenie2_linear_state.prepare_regenie2_linear_state(
             self.run_input.covariate_matrix,
             self.run_input.phenotype_vector,
         )
@@ -336,7 +336,7 @@ class LinearVariantDebugCaptureCallback:
                 self.prediction_source.get_chromosome_predictions(chromosome),
                 dtype=jnp.float32,
             )
-            self.chromosome_states[chromosome] = regenie2_linear.prepare_regenie2_linear_chromosome_state(
+            self.chromosome_states[chromosome] = regenie2_linear_state.prepare_regenie2_linear_chromosome_state(
                 self.regenie_state,
                 loco_predictions,
             )

@@ -20,14 +20,6 @@ def compute_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
     return jnp.clip(probability, MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
 
 
-def solve_from_positive_definite_matrix(
-    positive_definite_matrix: jax.Array,
-    right_hand_side: jax.Array,
-) -> jax.Array:
-    """Solve a positive-definite system from its matrix form."""
-    return linalg.solve_from_positive_definite_matrix(positive_definite_matrix, right_hand_side)
-
-
 def build_full_model_information_matrix(
     *,
     covariate_information_matrix: jax.Array,
@@ -106,7 +98,10 @@ def compute_full_model_adjusted_weight_components(
 ) -> regenie2_binary_firth_types.AdjustedWeightComponents:
     """Compute leverage-adjusted Firth weights for one full model."""
     variance_vector = jnp.maximum(probability_vector * (1.0 - probability_vector), MINIMUM_VARIANCE)
-    projected_design_matrix = solve_from_positive_definite_matrix(information_matrix, full_design_matrix.T).T
+    projected_design_matrix = linalg.solve_from_positive_definite_matrix(
+        information_matrix,
+        full_design_matrix.T,
+    ).T
     leverage_vector = variance_vector * jnp.einsum("ij,ij->i", projected_design_matrix, full_design_matrix)
     adjusted_weight_vector = (phenotype_vector - probability_vector) + leverage_vector * (
         BINARY_CASE_THRESHOLD - probability_vector
@@ -129,7 +124,10 @@ def compute_full_model_adjusted_weight_components_from_parts(
     """Compute full-model Firth weights without materializing a full design matrix."""
     variance_vector = jnp.maximum(probability_vector * (1.0 - probability_vector), MINIMUM_VARIANCE)
     stacked_design_transpose = jnp.concatenate([covariate_matrix.T, genotype_vector[None, :]], axis=0)
-    projected_design_transpose = solve_from_positive_definite_matrix(information_matrix, stacked_design_transpose)
+    projected_design_transpose = linalg.solve_from_positive_definite_matrix(
+        information_matrix,
+        stacked_design_transpose,
+    )
     projected_covariate_matrix = projected_design_transpose[:-1, :].T
     projected_genotype_vector = projected_design_transpose[-1, :]
     leverage_vector = variance_vector * (
@@ -167,7 +165,10 @@ def compute_covariate_only_adjusted_weight_components(
 ) -> regenie2_binary_firth_types.AdjustedWeightComponents:
     """Compute leverage-adjusted Firth weights for the covariate-only null model."""
     variance_vector = jnp.maximum(probability_vector * (1.0 - probability_vector), MINIMUM_VARIANCE)
-    projected_covariate_matrix = solve_from_positive_definite_matrix(information_matrix, covariate_matrix.T).T
+    projected_covariate_matrix = linalg.solve_from_positive_definite_matrix(
+        information_matrix,
+        covariate_matrix.T,
+    ).T
     leverage_vector = variance_vector * jnp.einsum("ij,ij->i", projected_covariate_matrix, covariate_matrix)
     adjusted_weight_vector = (phenotype_vector - probability_vector) + leverage_vector * (
         BINARY_CASE_THRESHOLD - probability_vector
@@ -296,7 +297,7 @@ def fit_single_variant_firth_logistic_regression(
                 full_design_matrix.T * adjusted_weight_components.second_weight_vector
             ) @ full_design_matrix
         second_hessian = second_hessian + jnp.eye(second_hessian.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
-        coefficient_step = solve_from_positive_definite_matrix(second_hessian, adjusted_score)
+        coefficient_step = linalg.solve_from_positive_definite_matrix(second_hessian, adjusted_score)
         current_failed = (
             current_failed | (~jnp.all(jnp.isfinite(adjusted_score))) | (~jnp.all(jnp.isfinite(coefficient_step)))
         )
@@ -442,7 +443,7 @@ def fit_single_variant_firth_logistic_regression(
     final_second_hessian = (
         final_second_hessian + jnp.eye(final_second_hessian.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
     )
-    genotype_variance = solve_from_positive_definite_matrix(final_second_hessian, unit_genotype_vector)[-1]
+    genotype_variance = linalg.solve_from_positive_definite_matrix(final_second_hessian, unit_genotype_vector)[-1]
     beta = final_state.coefficients[-1]
     standard_error = jnp.sqrt(jnp.where(genotype_variance > 0.0, genotype_variance, jnp.nan))
     chi_squared = jnp.maximum(2.0 * (final_penalized_log_likelihood - null_penalized_log_likelihood), 0.0)

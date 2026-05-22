@@ -7,11 +7,8 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
-from g.compute import regenie2_binary_config, regenie2_binary_types
+from g.compute import regenie2_binary_config, regenie2_binary_score, regenie2_binary_types
 from g.compute.common import linalg
-
-MINIMUM_PROBABILITY = regenie2_binary_config.MINIMUM_PROBABILITY
-MINIMUM_VARIANCE = regenie2_binary_config.MINIMUM_VARIANCE
 
 
 @jax.tree_util.register_dataclass
@@ -34,7 +31,11 @@ class NullLogisticFitState:
 def compute_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
     """Compute clipped logistic probabilities."""
     probability = jax.nn.sigmoid(linear_predictor)
-    return jnp.clip(probability, MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
+    return jnp.clip(
+        probability,
+        regenie2_binary_config.MINIMUM_PROBABILITY,
+        1.0 - regenie2_binary_config.MINIMUM_PROBABILITY,
+    )
 
 
 def fit_null_logistic_coefficients(
@@ -57,11 +58,14 @@ def fit_null_logistic_coefficients(
     def body_function(state: NullLogisticFitState) -> NullLogisticFitState:
         linear_predictor = covariate_matrix @ state.coefficients + loco_offset
         fitted_probability = compute_logistic_probability(linear_predictor)
-        weight_vector = jnp.maximum(fitted_probability * (1.0 - fitted_probability), MINIMUM_VARIANCE)
+        weight_vector = jnp.maximum(
+            fitted_probability * (1.0 - fitted_probability),
+            regenie2_binary_score.MINIMUM_VARIANCE,
+        )
         score_vector = covariate_matrix.T @ (phenotype_vector - fitted_probability)
         information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
         cholesky_factor = jnp.linalg.cholesky(
-            information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * MINIMUM_VARIANCE
+            information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * regenie2_binary_score.MINIMUM_VARIANCE
         )
         coefficient_delta = linalg.solve_positive_definite_system(cholesky_factor, score_vector)
         updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)

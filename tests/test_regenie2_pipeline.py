@@ -13,7 +13,13 @@ import numpy as np
 import pytest
 
 from g import types
-from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, regenie2_linear_types
+from g.compute import (
+    regenie2_binary_config,
+    regenie2_binary_firth_types,
+    regenie2_binary_types,
+    regenie2_linear_state,
+    regenie2_linear_types,
+)
 from g.engine import callbacks, native_dispatch, regenie2_pipeline, shutdown, timing
 from g.io import output, source
 
@@ -323,7 +329,7 @@ def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -
 
     with (
         patch(
-            "g.compute.regenie2_linear.prepare_regenie2_linear_chromosome_state",
+            "g.compute.regenie2_linear_state.prepare_regenie2_linear_chromosome_state",
             return_value="chromosome-state",
         ),
         patch(
@@ -457,7 +463,7 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
 
 def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats() -> None:
     writer_session = FakeWriterSession()
-    kernel_config = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
+    kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
     result = regenie2_binary_types.Regenie2BinaryChunkResult(
         beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
@@ -473,7 +479,10 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
             [types.FirthFailureCode.NONE.value, types.FirthFailureCode.NONE.value], dtype=jnp.int32
         ),
         firth_convergence_reason_code=jnp.asarray(
-            [regenie2_binary.FirthConvergenceReason.NONE.value, regenie2_binary.FirthConvergenceReason.CONVERGED.value],
+            [
+                regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
+                regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
+            ],
             dtype=jnp.int32,
         ),
         firth_correction_code=jnp.zeros(2, dtype=jnp.int32),
@@ -493,7 +502,7 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
 
     with (
         patch(
-            "g.compute.regenie2_binary.prepare_regenie2_binary_chromosome_state",
+            "g.compute.regenie2_binary_state.prepare_regenie2_binary_chromosome_state",
             return_value="chromosome-state",
         ) as mock_prepare,
         patch(
@@ -519,7 +528,7 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
 
 def test_binary_variant_major_callback_transposes_into_sample_major_compute() -> None:
     writer_session = FakeWriterSession()
-    kernel_config = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
+    kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
     result = regenie2_binary_types.Regenie2BinaryChunkResult(
         beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4, 0.5], dtype=jnp.float32),
@@ -541,9 +550,9 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
         ),
         firth_convergence_reason_code=jnp.asarray(
             [
-                regenie2_binary.FirthConvergenceReason.NONE.value,
-                regenie2_binary.FirthConvergenceReason.CONVERGED.value,
-                regenie2_binary.FirthConvergenceReason.CONVERGED.value,
+                regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
+                regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
+                regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
             ],
             dtype=jnp.int32,
         ),
@@ -581,7 +590,7 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
 
     with (
         patch(
-            "g.compute.regenie2_binary.prepare_regenie2_binary_chromosome_state",
+            "g.compute.regenie2_binary_state.prepare_regenie2_binary_chromosome_state",
             return_value="chromosome-state",
         ),
         patch(
@@ -616,7 +625,7 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
 
 def test_binary_score_only_variant_major_callback_uses_direct_variant_major_compute() -> None:
     writer_session = FakeWriterSession()
-    kernel_config = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
+    kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
     result = regenie2_binary_types.Regenie2BinaryChunkResult(
         beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4, 0.5], dtype=jnp.float32),
@@ -638,9 +647,9 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
         ),
         firth_convergence_reason_code=jnp.asarray(
             [
-                regenie2_binary.FirthConvergenceReason.NONE.value,
-                regenie2_binary.FirthConvergenceReason.NONE.value,
-                regenie2_binary.FirthConvergenceReason.NONE.value,
+                regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
+                regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
+                regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
             ],
             dtype=jnp.int32,
         ),
@@ -669,7 +678,7 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
 
     with (
         patch(
-            "g.compute.regenie2_binary.prepare_regenie2_binary_chromosome_state",
+            "g.compute.regenie2_binary_state.prepare_regenie2_binary_chromosome_state",
             return_value="chromosome-state",
         ),
         patch(
@@ -698,7 +707,7 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
 def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config() -> None:
     writer_sessions = (FakeWriterSession(), FakeWriterSession())
     kernel_config = dataclasses.replace(
-        regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG,
+        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
         maximum_null_iterations=3,
         null_logistic_coefficient_tolerance=1.0e-12,
         firth_batch_size=1,
@@ -733,12 +742,12 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         firth_convergence_reason_code=jnp.asarray(
             [
                 [
-                    regenie2_binary.FirthConvergenceReason.NONE.value,
-                    regenie2_binary.FirthConvergenceReason.CONVERGED.value,
+                    regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
+                    regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
                 ],
                 [
-                    regenie2_binary.FirthConvergenceReason.NONE.value,
-                    regenie2_binary.FirthConvergenceReason.CONVERGED.value,
+                    regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
+                    regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
                 ],
             ],
             dtype=jnp.int32,
@@ -773,7 +782,7 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
 
     with (
         patch(
-            "g.compute.regenie2_binary.prepare_regenie2_multi_binary_chromosome_state",
+            "g.compute.regenie2_binary_state.prepare_regenie2_multi_binary_chromosome_state",
             return_value=chromosome_state,
         ) as mock_prepare,
         patch(
@@ -831,7 +840,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             return_value=SimpleNamespace(sample_count=2, covariate_count=1, chromosome_count=1),
         ) as mock_preflight,
         patch.object(
-            regenie2_linear,
+            regenie2_linear_state,
             "prepare_regenie2_linear_state",
             return_value=typing.cast("regenie2_linear_types.Regenie2LinearState", "state"),
         ),
@@ -1025,7 +1034,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     FakePredictionSource.instances.clear()
     writer_session = FakeWriterSession()
     run_input = build_native_run_input()
-    kernel_config = regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
+    kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
     preparation_order: list[str] = []
 
     with (
@@ -1055,7 +1064,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             return_value=SimpleNamespace(sample_count=2, covariate_count=1, chromosome_count=1),
         ) as mock_preflight,
         patch(
-            "g.compute.regenie2_binary.prepare_regenie2_binary_state",
+            "g.compute.regenie2_binary_state.prepare_regenie2_binary_state",
             return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
         ),
     ):
@@ -1109,7 +1118,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> No
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
         ),
         patch(
-            "g.compute.regenie2_binary.prepare_regenie2_binary_state",
+            "g.compute.regenie2_binary_state.prepare_regenie2_binary_state",
             return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
         ),
     ):
@@ -1167,7 +1176,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
             ),
         ),
         patch.object(
-            regenie2_pipeline.regenie2_linear,
+            regenie2_linear_state,
             "prepare_regenie2_multi_linear_state",
             return_value=typing.cast("regenie2_linear_types.Regenie2MultiLinearState", "state"),
         ),

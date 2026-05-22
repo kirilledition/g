@@ -9,21 +9,6 @@ from g.compute import regenie2_linear_types
 from g.compute.common import genotype, pvalue
 
 
-def normalize_high_frequency_diploid_genotypes_variant_major(genotype_matrix_by_variant: jax.Array) -> jax.Array:
-    """Shift high-frequency diploid dosages to avoid float32 cancellation."""
-    return genotype.normalize_high_frequency_diploid_genotypes_variant_major(genotype_matrix_by_variant)
-
-
-def normalize_high_frequency_diploid_genotypes_sample_major(genotype_matrix: jax.Array) -> jax.Array:
-    """Shift high-frequency diploid dosages to avoid float32 cancellation."""
-    return genotype.normalize_high_frequency_diploid_genotypes_sample_major(genotype_matrix)
-
-
-def chi_squared_to_log10_p_value(chi_squared: jax.Array) -> jax.Array:
-    """Convert chi-squared statistics to negative log10 p-values."""
-    return pvalue.chi_squared_to_log10_p_value(chi_squared)
-
-
 def compute_regenie2_linear_chunk_trait_major_variant_major(
     *,
     whitened_covariate_transpose: jax.Array,
@@ -34,7 +19,7 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
     genotype_matrix_by_variant: jax.Array,
 ) -> regenie2_linear_types.Regenie2MultiLinearChunkResult:
     """Compute linear score-test statistics for trait-major residuals and variant-major genotypes."""
-    normalized_genotype_matrix_by_variant = normalize_high_frequency_diploid_genotypes_variant_major(
+    normalized_genotype_matrix_by_variant = genotype.normalize_high_frequency_diploid_genotypes_variant_major(
         genotype_matrix_by_variant
     )
     genotype_sum_squares_compute = jnp.einsum(
@@ -79,7 +64,11 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
         covariance_squared * genotype_residual_sum_squares_inverse[None, :] / null_mean_squared_error[:, None],
         jnp.nan,
     )
-    log10_p_value = jnp.where(valid_statistic_mask, chi_squared_to_log10_p_value(chi_squared), jnp.nan)
+    log10_p_value = jnp.where(
+        valid_statistic_mask,
+        pvalue.chi_squared_to_log10_p_value(chi_squared),
+        jnp.nan,
+    )
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
     return regenie2_linear_types.Regenie2MultiLinearChunkResult(
         beta=beta,

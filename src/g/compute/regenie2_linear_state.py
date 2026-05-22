@@ -9,14 +9,6 @@ from g.compute import regenie2_linear_types
 from g.compute.common import linalg
 
 
-def solve_positive_definite_system(
-    cholesky_factor: jax.Array,
-    right_hand_side: jax.Array,
-) -> jax.Array:
-    """Solve a positive-definite linear system from its Cholesky factor."""
-    return linalg.solve_positive_definite_system(cholesky_factor, right_hand_side)
-
-
 def prepare_regenie2_linear_state(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
@@ -38,7 +30,7 @@ def prepare_regenie2_linear_state(
         lower=True,
     )
 
-    phenotype_projection = solve_positive_definite_system(
+    phenotype_projection = linalg.solve_positive_definite_system(
         covariate_crossproduct_cholesky_factor,
         covariate_matrix_transpose @ phenotype_vector_compute,
     )
@@ -75,7 +67,7 @@ def prepare_regenie2_multi_linear_state(
         left_side=True,
         lower=True,
     )
-    phenotype_projection_matrix = solve_positive_definite_system(
+    phenotype_projection_matrix = linalg.solve_positive_definite_system(
         covariate_crossproduct_cholesky_factor,
         covariate_matrix_transpose @ phenotype_matrix_compute.T,
     )

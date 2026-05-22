@@ -13,11 +13,9 @@ from g.compute import (
     regenie2_binary_firth_null,
     regenie2_binary_firth_types,
     regenie2_binary_null_logistic,
+    regenie2_binary_score,
     regenie2_binary_types,
 )
-
-MINIMUM_VARIANCE = regenie2_binary_config.MINIMUM_VARIANCE
-DEFAULT_BINARY_KERNEL_CONFIG = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
 
 
 def prepare_regenie2_binary_state(
@@ -53,7 +51,7 @@ def prepare_regenie2_binary_chromosome_state(
     state: regenie2_binary_types.Regenie2BinaryState,
     loco_offset: jax.Array,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
-    kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
+    kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
     """Prepare chromosome-specific null logistic state reused across chunks."""
     loco_offset_float32 = jnp.asarray(loco_offset, dtype=jnp.float32)
@@ -68,7 +66,10 @@ def prepare_regenie2_binary_chromosome_state(
     fitted_probability = regenie2_binary_null_logistic.compute_logistic_probability(
         state.covariate_matrix @ null_logistic_coefficients + loco_offset_float32
     )
-    bernoulli_variance = jnp.maximum(fitted_probability * (1.0 - fitted_probability), MINIMUM_VARIANCE)
+    bernoulli_variance = jnp.maximum(
+        fitted_probability * (1.0 - fitted_probability),
+        regenie2_binary_score.MINIMUM_VARIANCE,
+    )
     square_root_weight = jnp.sqrt(bernoulli_variance)
     score_residual = state.phenotype_vector - fitted_probability
     standardized_residual = score_residual / square_root_weight
@@ -77,7 +78,7 @@ def prepare_regenie2_binary_chromosome_state(
     weighted_covariate_crossproduct = weighted_covariate_transpose @ weighted_covariate_matrix
     cholesky_factor = jnp.linalg.cholesky(
         weighted_covariate_crossproduct
-        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
+        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float32) * regenie2_binary_score.MINIMUM_VARIANCE
     )
     weighted_genotype_projection_matrix = jax.lax.linalg.triangular_solve(
         cholesky_factor,
@@ -136,7 +137,7 @@ def prepare_regenie2_multi_binary_chromosome_state(
     state: regenie2_binary_types.Regenie2MultiBinaryState,
     loco_offset_matrix: jax.Array,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
-    kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
+    kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2MultiBinaryChromosomeState:
     """Prepare chromosome-specific null logistic state for all requested binary traits."""
     loco_offset_matrix_float32 = jnp.asarray(loco_offset_matrix, dtype=jnp.float32)

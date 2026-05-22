@@ -830,6 +830,22 @@ This is the right foundation for future multi-phenotype batching.
 
 Do not start by rewriting the Firth math. Start by removing architectural risk without changing behavior.
 
+## Progress notes
+
+Completed cleanup so far:
+
+* Extracted common helpers into `src/g/compute/common/`.
+* Extracted linear state and score implementations out of the legacy linear facade.
+* Extracted binary state, score, null-logistic, Firth, and candidate-correction implementations out of the legacy binary facade.
+* Extracted sample-major and variant-major binary candidate correction modules.
+* Removed trivial compute pass-through wrappers and constant aliases where callers can use the implementation module directly.
+
+Intentional remaining adapters:
+
+* Keep public chunk adapters that transpose sample-major input, unpack chromosome-state fields, or preserve the current JIT boundary.
+* Keep dataclass builder functions where they construct result/state containers rather than only forwarding a call.
+* Treat the next major step as package/file-structure refactoring of `src/g/compute`, before deeper algorithm work such as binary trait-major score batching or candidate-overflow redesign.
+
 ## Phase 1: Extract common helpers
 
 Move these out of linear/binary-specific files:

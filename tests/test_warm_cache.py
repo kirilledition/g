@@ -10,7 +10,10 @@ import numpy as np
 import pytest
 
 from g import types
-from g.compute import regenie2_binary, regenie2_binary_types
+from g.compute import (
+    regenie2_binary_config,
+    regenie2_binary_types,
+)
 from g.engine import warm_cache
 from g.io import source
 
@@ -178,9 +181,9 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
     observed_shapes: list[tuple[int, int]] = []
     ready_values: list[FakeReadyValue] = []
 
-    monkeypatch.setattr(warm_cache.regenie2_linear, "prepare_regenie2_linear_state", lambda **_: object())
+    monkeypatch.setattr(warm_cache.regenie2_linear_state, "prepare_regenie2_linear_state", lambda **_: object())
     monkeypatch.setattr(
-        warm_cache.regenie2_linear,
+        warm_cache.regenie2_linear_state,
         "prepare_regenie2_linear_chromosome_state",
         lambda *_, **__: object(),
     )
@@ -232,13 +235,13 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
     run_input = build_fake_run_input(is_binary_trait=True)
     install_native_dispatch_fakes(monkeypatch, engine=engine, run_input=run_input)
     correction_plan = types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE)
-    kernel_config = dataclasses.replace(regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG, firth_batch_size=4)
+    kernel_config = dataclasses.replace(regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG, firth_batch_size=4)
     observed_shapes: list[tuple[int, int]] = []
     observed_kernel_configs: list[regenie2_binary_types.BinaryKernelConfig] = []
 
-    monkeypatch.setattr(warm_cache.regenie2_binary, "prepare_regenie2_binary_state", lambda **_: object())
+    monkeypatch.setattr(warm_cache.regenie2_binary_state, "prepare_regenie2_binary_state", lambda **_: object())
     monkeypatch.setattr(
-        warm_cache.regenie2_binary,
+        warm_cache.regenie2_binary_state,
         "prepare_regenie2_binary_chromosome_state",
         lambda **keyword_arguments: keyword_arguments,
     )

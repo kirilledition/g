@@ -9,7 +9,14 @@ import jax
 import jax.numpy as jnp
 
 from g import _core, types
-from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear
+from g.compute import (
+    regenie2_binary,
+    regenie2_binary_config,
+    regenie2_binary_state,
+    regenie2_binary_types,
+    regenie2_linear,
+    regenie2_linear_state,
+)
 from g.engine import callbacks, native_dispatch
 
 if typing.TYPE_CHECKING:
@@ -114,11 +121,11 @@ def warm_regenie2_linear_bgen_cache(
         alignment_config=alignment_config,
     )
     chromosome = first_engine_chromosome(engine)
-    regenie_state = regenie2_linear.prepare_regenie2_linear_state(
+    regenie_state = regenie2_linear_state.prepare_regenie2_linear_state(
         covariate_matrix=run_input.covariate_matrix,
         phenotype_vector=run_input.phenotype_vector,
     )
-    chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
+    chromosome_state = regenie2_linear_state.prepare_regenie2_linear_chromosome_state(
         regenie_state,
         jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
     )
@@ -159,7 +166,7 @@ def warm_regenie2_binary_bgen_cache(
     kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for binary REGENIE step 2."""
-    resolved_kernel_config = kernel_config or regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
+    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
     engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
@@ -184,11 +191,11 @@ def warm_regenie2_binary_bgen_cache(
         alignment_config=alignment_config,
     )
     chromosome = first_engine_chromosome(engine)
-    regenie_state = regenie2_binary.prepare_regenie2_binary_state(
+    regenie_state = regenie2_binary_state.prepare_regenie2_binary_state(
         covariate_matrix=run_input.covariate_matrix,
         phenotype_vector=run_input.phenotype_vector,
     )
-    chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
+    chromosome_state = regenie2_binary_state.prepare_regenie2_binary_chromosome_state(
         state=regenie_state,
         loco_offset=jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
         correction_plan=correction_plan,

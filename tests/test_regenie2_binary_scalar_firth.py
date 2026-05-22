@@ -5,7 +5,14 @@ import jax.numpy as jnp
 import numpy as np
 
 from g import types
-from g.compute import regenie2_binary, regenie2_binary_types
+from g.compute import (
+    regenie2_binary,
+    regenie2_binary_config,
+    regenie2_binary_firth_batch,
+    regenie2_binary_firth_scalar,
+    regenie2_binary_state,
+    regenie2_binary_types,
+)
 
 
 def build_scalar_fixture() -> tuple[regenie2_binary_types.Regenie2BinaryChromosomeState, jax.Array, jax.Array]:
@@ -25,12 +32,12 @@ def build_scalar_fixture() -> tuple[regenie2_binary_types.Regenie2BinaryChromoso
     )
     phenotype_vector = jnp.asarray([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
     genotype_vector = jnp.asarray([0.0, 2.0, 0.0, 0.0, 2.0, 0.0, 2.0, 0.0], dtype=jnp.float32)
-    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
-    chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
+    state = regenie2_binary_state.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
+    chromosome_state = regenie2_binary_state.prepare_regenie2_binary_chromosome_state(
         state,
         jnp.zeros_like(phenotype_vector),
     )
-    residualized_genotype_vector = regenie2_binary.residualize_and_scale_genotypes_for_approximate_firth(
+    residualized_genotype_vector = regenie2_binary_firth_batch.residualize_and_scale_genotypes_for_approximate_firth(
         chromosome_state,
         genotype_vector[None, :],
     )[0]
@@ -58,7 +65,7 @@ def test_scalar_pseudo_firth_components_match_formula() -> None:
     offset_vector = jnp.asarray([-0.2, 0.1, 0.3], dtype=jnp.float32)
     active_sample_mask = jnp.asarray([True, True, True], dtype=jnp.bool_)
 
-    components = regenie2_binary.compute_scalar_firth_components(
+    components = regenie2_binary_firth_scalar.compute_scalar_firth_components(
         phenotype_vector=phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=offset_vector,
@@ -91,15 +98,16 @@ def test_scalar_approximate_firth_uses_nr_fallback_after_pseudo_attempt() -> Non
     chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
     offset_vector = chromosome_state.null_firth_offset
 
-    result = regenie2_binary.fit_single_variant_regenie_approximate_firth(
+    result = regenie2_binary_firth_scalar.fit_single_variant_regenie_approximate_firth(
         phenotype_vector=chromosome_state.phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=offset_vector,
-        carrier_sample_mask=raw_genotype_vector > regenie2_binary.SPARSE_CARRIER_DOSAGE_THRESHOLD,
+        carrier_sample_mask=raw_genotype_vector > regenie2_binary_firth_batch.SPARSE_CARRIER_DOSAGE_THRESHOLD,
         sparse_correction=jnp.asarray(1, dtype=jnp.bool_),
         warm_start_beta=jnp.asarray(0.0, dtype=jnp.float32),
         skip_firth=jnp.asarray(0, dtype=jnp.bool_),
         null_failed=jnp.asarray(0, dtype=jnp.bool_),
+        kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
     )
 
     assert bool(np.asarray(result.valid_mask))
@@ -112,15 +120,16 @@ def test_sparse_carrier_only_flag_is_recorded_for_sparse_candidate() -> None:
     chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
     offset_vector = chromosome_state.null_firth_offset
 
-    result = regenie2_binary.fit_single_variant_regenie_approximate_firth(
+    result = regenie2_binary_firth_scalar.fit_single_variant_regenie_approximate_firth(
         phenotype_vector=chromosome_state.phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=offset_vector,
-        carrier_sample_mask=raw_genotype_vector > regenie2_binary.SPARSE_CARRIER_DOSAGE_THRESHOLD,
+        carrier_sample_mask=raw_genotype_vector > regenie2_binary_firth_batch.SPARSE_CARRIER_DOSAGE_THRESHOLD,
         sparse_correction=jnp.asarray(1, dtype=jnp.bool_),
         warm_start_beta=jnp.asarray(0.0, dtype=jnp.float32),
         skip_firth=jnp.asarray(0, dtype=jnp.bool_),
         null_failed=jnp.asarray(0, dtype=jnp.bool_),
+        kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
     )
 
     assert bool(np.asarray(result.sparse_correction_mask))
@@ -134,23 +143,26 @@ def test_collinear_scalar_candidate_gets_numerical_failure_label() -> None:
         dtype=jnp.float32,
     )
     phenotype_vector = jnp.asarray([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
-    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
-    chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(state, jnp.zeros_like(phenotype_vector))
+    state = regenie2_binary_state.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
+    chromosome_state = regenie2_binary_state.prepare_regenie2_binary_chromosome_state(
+        state, jnp.zeros_like(phenotype_vector)
+    )
     raw_genotype_vector = covariate_matrix[:, 1]
-    genotype_vector = regenie2_binary.residualize_and_scale_genotypes_for_approximate_firth(
+    genotype_vector = regenie2_binary_firth_batch.residualize_and_scale_genotypes_for_approximate_firth(
         chromosome_state,
         raw_genotype_vector[None, :],
     )[0]
 
-    result = regenie2_binary.fit_single_variant_regenie_approximate_firth(
+    result = regenie2_binary_firth_scalar.fit_single_variant_regenie_approximate_firth(
         phenotype_vector=phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=chromosome_state.null_firth_offset,
-        carrier_sample_mask=raw_genotype_vector > regenie2_binary.SPARSE_CARRIER_DOSAGE_THRESHOLD,
+        carrier_sample_mask=raw_genotype_vector > regenie2_binary_firth_batch.SPARSE_CARRIER_DOSAGE_THRESHOLD,
         sparse_correction=jnp.asarray(0, dtype=jnp.bool_),
         warm_start_beta=jnp.asarray(0.0, dtype=jnp.float32),
         skip_firth=jnp.asarray(0, dtype=jnp.bool_),
         null_failed=jnp.asarray(0, dtype=jnp.bool_),
+        kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
     )
 
     assert not bool(np.asarray(result.valid_mask))

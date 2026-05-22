@@ -19,14 +19,6 @@ ALLELE_COUNT_MULTIPLIER = 2.0
 SPARSE_CARRIER_DOSAGE_THRESHOLD = 1.0e-4
 
 
-def solve_from_positive_definite_matrix(
-    positive_definite_matrix: jax.Array,
-    right_hand_side: jax.Array,
-) -> jax.Array:
-    """Solve a positive-definite system from its matrix form."""
-    return linalg.solve_from_positive_definite_matrix(positive_definite_matrix, right_hand_side)
-
-
 def compute_firth_pre_dispatch_mask_without_mask(
     genotype_matrix_by_variant: jax.Array,
     phenotype_vector: jax.Array,
@@ -70,7 +62,7 @@ def initialize_full_model_coefficients_without_mask(
     )
     genotype_score = genotype_matrix_by_variant @ pseudo_response_vector
     stacked_right_hand_side = jnp.stack([covariate_score, cross_information_vector], axis=-1)
-    covariate_and_cross_solutions = jax.vmap(solve_from_positive_definite_matrix)(
+    covariate_and_cross_solutions = jax.vmap(linalg.solve_from_positive_definite_matrix)(
         covariate_information_matrix,
         stacked_right_hand_side,
     )

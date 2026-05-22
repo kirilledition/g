@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from g import _core, types
-from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear
+from g.compute import regenie2_binary, regenie2_binary_config, regenie2_binary_types, regenie2_linear
 from g.engine import callbacks, native_dispatch, preflight, shutdown, timing
 from g.io import output, source
 
@@ -211,7 +211,7 @@ def run_regenie2_binary_bgen_pipeline(
     """Run the native BGEN pipeline for binary REGENIE step 2."""
     logger.info("Starting binary REGENIE step 2 BGEN pipeline.")
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
-    resolved_kernel_config = kernel_config or regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
+    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
     use_variant_major = True
     engine_start_time = time.perf_counter()
     logger.debug("Opening native BGEN engine for binary pipeline.")
@@ -461,7 +461,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     sample_mode: types.MultiPhenotypeSampleMode | None = None,
 ) -> tuple[Path | None, ...]:
     """Run the complete-case native BGEN pipeline once for multiple binary phenotypes."""
-    resolved_kernel_config = kernel_config or regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
+    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
     return run_regenie2_multi_phenotype_bgen_pipeline(
         genotype_source_config=genotype_source_config,
         phenotype_path=phenotype_path,
@@ -539,7 +539,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         raise ValueError(message)
     logger.info("Starting multi-phenotype REGENIE step 2 BGEN pipeline.")
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
-    resolved_kernel_config = kernel_config or regenie2_binary.DEFAULT_BINARY_KERNEL_CONFIG
+    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
     use_variant_major = True
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
     engine_start_time = time.perf_counter()
