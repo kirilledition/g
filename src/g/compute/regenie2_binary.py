@@ -15,6 +15,8 @@ from g.compute import regenie2_binary_candidate_planning, regenie2_binary_types,
 
 jax.config.update("jax_enable_x64", val=True)
 
+BINARY_SCORE_DTYPE = jnp.float32
+BINARY_FIRTH_REFERENCE_DTYPE = jnp.float64
 MINIMUM_PROBABILITY = 1.0e-6
 MINIMUM_VARIANCE = 1.0e-8
 RELATIVE_VARIANCE_TOLERANCE = 1.0e-6
@@ -55,6 +57,27 @@ DEFAULT_BINARY_KERNEL_CONFIG = regenie2_binary_types.BinaryKernelConfig(
     firth_maximum_step_size=FIRTH_MAXIMUM_STEP_SIZE,
     use_block_firth_math=False,
 )
+
+
+def resolve_binary_firth_internal_dtype(kernel_config: regenie2_binary_types.BinaryKernelConfig) -> typing.Any:
+    """Return the internal dtype for null Firth and scalar approximate Firth math."""
+    if kernel_config.use_float32_firth_math:
+        return BINARY_SCORE_DTYPE
+    return BINARY_FIRTH_REFERENCE_DTYPE
+
+
+def binary_firth_internal_dtype_name(kernel_config: regenie2_binary_types.BinaryKernelConfig) -> str:
+    """Return a stable label for the configured internal Firth dtype."""
+    if kernel_config.use_float32_firth_math:
+        return "float32"
+    return "float64"
+
+
+def resolve_binary_firth_result_dtype(kernel_config: regenie2_binary_types.BinaryKernelConfig) -> typing.Any:
+    """Return the dtype produced by active Firth correction lanes."""
+    if kernel_config.use_block_firth_math:
+        return BINARY_FIRTH_REFERENCE_DTYPE
+    return resolve_binary_firth_internal_dtype(kernel_config)
 
 
 class FirthConvergenceReason(enum.IntEnum):
@@ -499,8 +522,8 @@ def prepare_regenie2_binary_state(
         Reusable binary step 2 state.
 
     """
-    covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=jnp.float32)
-    phenotype_vector_float32 = jnp.asarray(phenotype_vector, dtype=jnp.float32)
+    covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=BINARY_SCORE_DTYPE)
+    phenotype_vector_float32 = jnp.asarray(phenotype_vector, dtype=BINARY_SCORE_DTYPE)
     return regenie2_binary_types.Regenie2BinaryState(
         covariate_matrix=covariate_matrix_float32,
         phenotype_vector=phenotype_vector_float32,
@@ -522,8 +545,8 @@ def prepare_regenie2_multi_binary_state(
         Reusable multi-trait binary step 2 state.
 
     """
-    covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=jnp.float32)
-    phenotype_matrix_float32 = jnp.asarray(phenotype_matrix, dtype=jnp.float32)
+    covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=BINARY_SCORE_DTYPE)
+    phenotype_matrix_float32 = jnp.asarray(phenotype_matrix, dtype=BINARY_SCORE_DTYPE)
     return regenie2_binary_types.Regenie2MultiBinaryState(
         covariate_matrix=covariate_matrix_float32,
         phenotype_matrix=phenotype_matrix_float32,
@@ -613,7 +636,7 @@ def fit_null_logistic_coefficients(
         score_vector = covariate_matrix.T @ (phenotype_vector - fitted_probability)
         information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
         cholesky_factor = jnp.linalg.cholesky(
-            information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * MINIMUM_VARIANCE
+            information_matrix + jnp.eye(covariate_count, dtype=BINARY_SCORE_DTYPE) * MINIMUM_VARIANCE
         )
         coefficient_delta = regenie2_linear.solve_positive_definite_system(cholesky_factor, score_vector)
         updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)
@@ -624,7 +647,7 @@ def fit_null_logistic_coefficients(
             converged=converged,
         )
 
-    initial_coefficients = jnp.zeros(covariate_count, dtype=jnp.float32)
+    initial_coefficients = jnp.zeros(covariate_count, dtype=BINARY_SCORE_DTYPE)
     return jax.lax.while_loop(
         condition_function,
         body_function,
@@ -644,7 +667,8 @@ def prepare_regenie2_binary_chromosome_state(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
     """Prepare chromosome-specific null logistic state reused across chunks."""
-    loco_offset_float32 = jnp.asarray(loco_offset, dtype=jnp.float32)
+    loco_offset_float32 = jnp.asarray(loco_offset, dtype=BINARY_SCORE_DTYPE)
+    firth_internal_dtype = resolve_binary_firth_internal_dtype(kernel_config)
     null_logistic_fit_state = fit_null_logistic_coefficients(
         state.covariate_matrix,
         state.phenotype_vector,
@@ -664,7 +688,7 @@ def prepare_regenie2_binary_chromosome_state(
     weighted_covariate_crossproduct = weighted_covariate_transpose @ weighted_covariate_matrix
     cholesky_factor = jnp.linalg.cholesky(
         weighted_covariate_crossproduct
-        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
+        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=BINARY_SCORE_DTYPE) * MINIMUM_VARIANCE
     )
     weighted_genotype_projection_matrix = jax.lax.linalg.triangular_solve(
         cholesky_factor,
@@ -673,13 +697,13 @@ def prepare_regenie2_binary_chromosome_state(
         lower=True,
     )
     if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
-        null_firth_coefficients = jnp.asarray(null_logistic_coefficients, dtype=jnp.float64)
-        null_firth_offset = state.covariate_matrix.astype(jnp.float64) @ null_firth_coefficients + jnp.asarray(
-            loco_offset_float32, dtype=jnp.float64
+        null_firth_coefficients = jnp.asarray(null_logistic_coefficients, dtype=firth_internal_dtype)
+        null_firth_offset = state.covariate_matrix.astype(firth_internal_dtype) @ null_firth_coefficients + jnp.asarray(
+            loco_offset_float32, dtype=firth_internal_dtype
         )
         null_firth_result = NullFirthFitResult(
             coefficients=null_firth_coefficients,
-            penalized_log_likelihood=jnp.asarray(0.0, dtype=jnp.float64),
+            penalized_log_likelihood=jnp.asarray(0.0, dtype=firth_internal_dtype),
             iteration_count=jnp.asarray(0, dtype=jnp.int32),
             convergence_reason_code=jnp.asarray(FirthConvergenceReason.NONE.value, dtype=jnp.int32),
             converged=jnp.asarray(1, dtype=jnp.bool_),
@@ -692,9 +716,9 @@ def prepare_regenie2_binary_chromosome_state(
             initial_coefficients=null_logistic_coefficients,
             kernel_config=kernel_config,
         )
-        null_firth_offset = state.covariate_matrix.astype(jnp.float64) @ null_firth_result.coefficients + jnp.asarray(
-            loco_offset_float32, dtype=jnp.float64
-        )
+        null_firth_offset = state.covariate_matrix.astype(
+            firth_internal_dtype
+        ) @ null_firth_result.coefficients + jnp.asarray(loco_offset_float32, dtype=firth_internal_dtype)
     return regenie2_binary_types.Regenie2BinaryChromosomeState(
         covariate_matrix=state.covariate_matrix,
         phenotype_vector=state.phenotype_vector,
@@ -723,7 +747,7 @@ def prepare_regenie2_multi_binary_chromosome_state(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2MultiBinaryChromosomeState:
     """Prepare chromosome-specific null logistic state for all requested binary traits."""
-    loco_offset_matrix_float32 = jnp.asarray(loco_offset_matrix, dtype=jnp.float32)
+    loco_offset_matrix_float32 = jnp.asarray(loco_offset_matrix, dtype=BINARY_SCORE_DTYPE)
 
     def prepare_one_trait(
         phenotype_vector: jax.Array,
@@ -764,7 +788,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     """Compute the uncorrected score-test result for one binary chunk."""
-    raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix, dtype=jnp.float32).T
+    raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix, dtype=BINARY_SCORE_DTYPE).T
     genotype_flip_result = build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
     genotype_matrix_float32 = genotype_flip_result.genotype_matrix_by_variant.T
     weighted_genotype_matrix = chromosome_state.square_root_weight[:, None] * genotype_matrix_float32
@@ -2104,28 +2128,27 @@ def fit_covariate_only_firth_null_model(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> NullFirthFitResult:
     """Fit the covariate-only Firth null model and return diagnostics."""
-    del kernel_config
-
-    covariate_matrix_float64 = jnp.asarray(covariate_matrix, dtype=jnp.float64)
-    phenotype_vector_float64 = jnp.asarray(phenotype_vector, dtype=jnp.float64)
-    loco_offset_float64 = jnp.asarray(loco_offset, dtype=jnp.float64)
-    initial_coefficients_float64 = jnp.asarray(initial_coefficients, dtype=jnp.float64)
-    zero_start_coefficients = jnp.zeros_like(initial_coefficients_float64).at[0].set(-jnp.mean(loco_offset_float64))
+    firth_internal_dtype = resolve_binary_firth_internal_dtype(kernel_config)
+    covariate_matrix_firth = jnp.asarray(covariate_matrix, dtype=firth_internal_dtype)
+    phenotype_vector_firth = jnp.asarray(phenotype_vector, dtype=firth_internal_dtype)
+    loco_offset_firth = jnp.asarray(loco_offset, dtype=firth_internal_dtype)
+    initial_coefficients_firth = jnp.asarray(initial_coefficients, dtype=firth_internal_dtype)
+    zero_start_coefficients = jnp.zeros_like(initial_coefficients_firth).at[0].set(-jnp.mean(loco_offset_firth))
 
     first_result = fit_covariate_only_firth_null_model_once(
-        covariate_matrix=covariate_matrix_float64,
-        phenotype_vector=phenotype_vector_float64,
-        loco_offset=loco_offset_float64,
-        initial_coefficients=initial_coefficients_float64,
+        covariate_matrix=covariate_matrix_firth,
+        phenotype_vector=phenotype_vector_firth,
+        loco_offset=loco_offset_firth,
+        initial_coefficients=initial_coefficients_firth,
         maximum_iterations=FIRTH_NULL_MAXIMUM_ITERATIONS,
         maximum_step_size=FIRTH_NULL_MAXIMUM_STEP_SIZE,
         tolerance=FIRTH_NULL_GRADIENT_TOLERANCE,
         check_score_increase=True,
     )
     second_result = fit_covariate_only_firth_null_model_once(
-        covariate_matrix=covariate_matrix_float64,
-        phenotype_vector=phenotype_vector_float64,
-        loco_offset=loco_offset_float64,
+        covariate_matrix=covariate_matrix_firth,
+        phenotype_vector=phenotype_vector_firth,
+        loco_offset=loco_offset_firth,
         initial_coefficients=zero_start_coefficients,
         maximum_iterations=FIRTH_NULL_MAXIMUM_ITERATIONS,
         maximum_step_size=FIRTH_NULL_MAXIMUM_STEP_SIZE,
@@ -2135,9 +2158,9 @@ def fit_covariate_only_firth_null_model(
     fallback_maximum_iterations = FIRTH_NULL_MAXIMUM_ITERATIONS * FIRTH_NULL_FALLBACK_ITERATION_MULTIPLIER
     fallback_maximum_step_size = FIRTH_NULL_MAXIMUM_STEP_SIZE / FIRTH_NULL_FALLBACK_STEP_DIVISOR
     third_result = fit_covariate_only_firth_null_model_once(
-        covariate_matrix=covariate_matrix_float64,
-        phenotype_vector=phenotype_vector_float64,
-        loco_offset=loco_offset_float64,
+        covariate_matrix=covariate_matrix_firth,
+        phenotype_vector=phenotype_vector_firth,
+        loco_offset=loco_offset_firth,
         initial_coefficients=zero_start_coefficients,
         maximum_iterations=fallback_maximum_iterations,
         maximum_step_size=fallback_maximum_step_size,
@@ -2145,10 +2168,10 @@ def fit_covariate_only_firth_null_model(
         check_score_increase=True,
     )
     fourth_result = fit_covariate_only_firth_null_model_once(
-        covariate_matrix=covariate_matrix_float64,
-        phenotype_vector=phenotype_vector_float64,
-        loco_offset=loco_offset_float64,
-        initial_coefficients=initial_coefficients_float64,
+        covariate_matrix=covariate_matrix_firth,
+        phenotype_vector=phenotype_vector_firth,
+        loco_offset=loco_offset_firth,
+        initial_coefficients=initial_coefficients_firth,
         maximum_iterations=fallback_maximum_iterations,
         maximum_step_size=fallback_maximum_step_size,
         tolerance=FIRTH_NULL_GRADIENT_TOLERANCE,
@@ -2205,7 +2228,7 @@ def fit_covariate_only_firth_null_model(
         penalized_log_likelihood=jnp.where(
             selected_converged,
             selected_penalized_log_likelihood,
-            jnp.asarray(jnp.nan, dtype=jnp.float64),
+            jnp.asarray(jnp.nan, dtype=firth_internal_dtype),
         ),
         iteration_count=selected_iteration_count,
         convergence_reason_code=selected_reason_code,
@@ -2635,8 +2658,9 @@ def compute_firth_variantwise(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> FirthVariantResult:
     """Compute device-side Firth fits for a padded set of candidate lanes."""
-    scalar_offset_vector = jnp.asarray(null_firth_offset, dtype=jnp.float64)
-    scalar_phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
+    firth_internal_dtype = resolve_binary_firth_internal_dtype(kernel_config)
+    scalar_offset_vector = jnp.asarray(null_firth_offset, dtype=firth_internal_dtype)
+    scalar_phenotype_vector = jnp.asarray(phenotype_vector, dtype=firth_internal_dtype)
 
     def fit_variant(
         genotype_vector: jax.Array,
@@ -2648,11 +2672,11 @@ def compute_firth_variantwise(
         if not kernel_config.use_block_firth_math:
             return fit_single_variant_regenie_approximate_firth(
                 phenotype_vector=scalar_phenotype_vector,
-                genotype_vector=jnp.asarray(genotype_vector, dtype=jnp.float64),
+                genotype_vector=jnp.asarray(genotype_vector, dtype=firth_internal_dtype),
                 offset_vector=scalar_offset_vector,
                 carrier_sample_mask=raw_genotype_vector > SPARSE_CARRIER_DOSAGE_THRESHOLD,
                 sparse_correction=sparse_correction,
-                warm_start_beta=jnp.asarray(0.0, dtype=jnp.float64),
+                warm_start_beta=jnp.asarray(0.0, dtype=firth_internal_dtype),
                 skip_firth=skip_firth,
                 null_failed=~jnp.isfinite(null_penalized_log_likelihood),
                 kernel_config=kernel_config,
@@ -2679,14 +2703,16 @@ def compute_firth_variantwise(
 
 def build_empty_firth_variant_result(
     batch_size: int,
+    kernel_config: regenie2_binary_types.BinaryKernelConfig = DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> FirthVariantResult:
     """Build a placeholder Firth result for skipped padded batches."""
+    firth_internal_dtype = resolve_binary_firth_result_dtype(kernel_config)
     return FirthVariantResult(
-        beta=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        standard_error=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        chi_squared=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        log10_p_value=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        penalized_log_likelihood=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
+        beta=jnp.full((batch_size,), jnp.nan, dtype=firth_internal_dtype),
+        standard_error=jnp.full((batch_size,), jnp.nan, dtype=firth_internal_dtype),
+        chi_squared=jnp.full((batch_size,), jnp.nan, dtype=firth_internal_dtype),
+        log10_p_value=jnp.full((batch_size,), jnp.nan, dtype=firth_internal_dtype),
+        penalized_log_likelihood=jnp.full((batch_size,), jnp.nan, dtype=firth_internal_dtype),
         converged_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
         valid_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
         iteration_count=jnp.zeros((batch_size,), dtype=jnp.int32),
@@ -2719,7 +2745,7 @@ def apply_device_candidate_corrections_firth(
     def apply_candidate_corrections() -> regenie2_binary_types.Regenie2BinaryChunkResult:
         firth_batch_size = kernel_config.firth_batch_size
         kernel_candidate_capacity = kernel_config.firth_candidate_capacity
-        genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
+        genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=BINARY_SCORE_DTYPE)
         variant_count = genotype_matrix_float32.shape[1]
 
         def apply_candidate_corrections_with_capacity(
@@ -2825,7 +2851,10 @@ def apply_device_candidate_corrections_firth(
             initial_coefficient_batches = initial_coefficients.reshape((batch_count, firth_batch_size, -1))
             active_mask_batches = flat_active_mask.reshape((batch_count, firth_batch_size))
             sparse_correction_mask_batches = flat_sparse_candidate_mask.reshape((batch_count, firth_batch_size))
-            empty_firth_variant_result = build_empty_firth_variant_result(firth_batch_size)
+            empty_firth_variant_result = build_empty_firth_variant_result(
+                firth_batch_size,
+                kernel_config=kernel_config,
+            )
 
             def compute_firth_batch(
                 carry: None,

@@ -19,7 +19,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     """Compute the variant-major score test for one binary chunk."""
-    raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
+    raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=regenie2_binary.BINARY_SCORE_DTYPE)
     genotype_flip_result = regenie2_binary.build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
     genotype_matrix_by_variant_float32 = genotype_flip_result.genotype_matrix_by_variant
     weighted_genotype_matrix_by_variant = (
@@ -101,7 +101,10 @@ def apply_device_candidate_corrections_firth_variant_major(
     def apply_candidate_corrections() -> regenie2_binary_types.Regenie2BinaryChunkResult:
         firth_batch_size = kernel_config.firth_batch_size
         kernel_candidate_capacity = kernel_config.firth_candidate_capacity
-        genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
+        genotype_matrix_by_variant_float32 = jnp.asarray(
+            genotype_matrix_by_variant,
+            dtype=regenie2_binary.BINARY_SCORE_DTYPE,
+        )
         variant_count = genotype_matrix_by_variant_float32.shape[0]
 
         def apply_candidate_corrections_with_capacity(
@@ -227,7 +230,10 @@ def apply_device_candidate_corrections_firth_variant_major(
             initial_coefficient_batches = initial_coefficients.reshape((batch_count, firth_batch_size, -1))
             active_mask_batches = flat_active_mask.reshape((batch_count, firth_batch_size))
             sparse_correction_mask_batches = flat_sparse_candidate_mask.reshape((batch_count, firth_batch_size))
-            empty_firth_variant_result = regenie2_binary.build_empty_firth_variant_result(firth_batch_size)
+            empty_firth_variant_result = regenie2_binary.build_empty_firth_variant_result(
+                firth_batch_size,
+                kernel_config=kernel_config,
+            )
 
             def compute_firth_batch(
                 carry: None,

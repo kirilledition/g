@@ -446,7 +446,13 @@ Firth use float64. This matters for:
 - `log(I_beta)` and Cholesky log determinants.
 - Rare-variant corrected statistics.
 
-JAX is configured with `jax_enable_x64=True` in the binary compute module.
+JAX is configured with `jax_enable_x64=True` in the binary compute module. The
+score-test path and final output remain float32. The internal
+`BinaryKernelConfig.use_float32_firth_math` toggle exists only to run parity
+experiments that quantify whether null Firth and scalar Firth can be demoted;
+the default keeps the REGENIE-parity float64 path. For full CLI parity
+experiments, set the hidden `G_BINARY_USE_FLOAT32_FIRTH_MATH=true` environment
+variable before launching `g regenie`.
 
 ### Output Writer
 
@@ -744,9 +750,12 @@ uv run python scripts/debug_binary_regenie_parity.py \
 ```
 
 Pass `--regenie-debug-jsonl` with JSONL emitted by an instrumented REGENIE
-build to get numeric field-level diffs for common keys. The script does not
-modify public `g regenie` behavior; it streams selected variants from BGEN and
-emits debug JSON for score-test, sparse, null-model, and scalar Firth internals.
+build to get numeric field-level diffs for common keys. Pass the hidden
+`--use-float32-firth-math` experiment flag, or run public CLI parity checks with
+`G_BINARY_USE_FLOAT32_FIRTH_MATH=true`, to capture the same variants with null
+Firth and scalar Firth demoted to float32. The script does not modify public
+`g regenie` behavior; it streams selected variants from BGEN and emits debug
+JSON for score-test, sparse, null-model, dtype mode, and scalar Firth internals.
 
 ### Instrument Original REGENIE Temporarily
 
@@ -787,7 +796,9 @@ output.
 - Treat carrier-only correction as a native rare-sparse metadata condition.
 - Preserve genotype flipping before residualization and flip beta back only at
   output merge time.
-- Use float64 for null Firth and scalar Firth internals.
+- Use float64 for null Firth and scalar Firth internals by default. Only demote
+  a Firth subpath after a dtype-mode parity run proves candidate selection,
+  Firth branch labels, failures, and corrected statistics remain stable.
 - Keep public output rendering REGENIE-compatible: successful correction is
   null `EXTRA`, failed correction is `TEST_FAIL`.
 - When adding a new branch to a JAX `cond` or `scan`, check dtype and shape
