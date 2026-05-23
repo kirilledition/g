@@ -309,6 +309,27 @@ def build_empty_firth_variant_result(batch_size: int) -> FirthVariantResult:
     )
 
 
+def flatten_batched_firth_variant_result(result: FirthVariantResult) -> FirthVariantResult:
+    """Flatten batched Firth outputs into candidate-lane order."""
+    return FirthVariantResult(
+        beta=result.beta.reshape((-1,)),
+        standard_error=result.standard_error.reshape((-1,)),
+        chi_squared=result.chi_squared.reshape((-1,)),
+        log10_p_value=result.log10_p_value.reshape((-1,)),
+        penalized_log_likelihood=result.penalized_log_likelihood.reshape((-1,)),
+        converged_mask=result.converged_mask.reshape((-1,)),
+        valid_mask=result.valid_mask.reshape((-1,)),
+        iteration_count=result.iteration_count.reshape((-1,)),
+        failure_code=result.failure_code.reshape((-1,)),
+        convergence_reason_code=result.convergence_reason_code.reshape((-1,)),
+        correction_code=result.correction_code.reshape((-1,)),
+        sparse_correction_mask=result.sparse_correction_mask.reshape((-1,)),
+        pseudo_firth_iteration_count=result.pseudo_firth_iteration_count.reshape((-1,)),
+        nr_zero_start_iteration_count=result.nr_zero_start_iteration_count.reshape((-1,)),
+        nr_warm_start_iteration_count=result.nr_warm_start_iteration_count.reshape((-1,)),
+    )
+
+
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class ScalarFirthComponents:

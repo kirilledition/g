@@ -179,23 +179,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
                 None,
                 jnp.arange(batch_count, dtype=jnp.int32),
             )
-            firth_result = regenie2_binary_firth_types.FirthVariantResult(
-                beta=batched_firth_result.beta.reshape((-1,)),
-                standard_error=batched_firth_result.standard_error.reshape((-1,)),
-                chi_squared=batched_firth_result.chi_squared.reshape((-1,)),
-                log10_p_value=batched_firth_result.log10_p_value.reshape((-1,)),
-                penalized_log_likelihood=batched_firth_result.penalized_log_likelihood.reshape((-1,)),
-                converged_mask=batched_firth_result.converged_mask.reshape((-1,)),
-                valid_mask=batched_firth_result.valid_mask.reshape((-1,)),
-                iteration_count=batched_firth_result.iteration_count.reshape((-1,)),
-                failure_code=batched_firth_result.failure_code.reshape((-1,)),
-                convergence_reason_code=batched_firth_result.convergence_reason_code.reshape((-1,)),
-                correction_code=batched_firth_result.correction_code.reshape((-1,)),
-                sparse_correction_mask=batched_firth_result.sparse_correction_mask.reshape((-1,)),
-                pseudo_firth_iteration_count=batched_firth_result.pseudo_firth_iteration_count.reshape((-1,)),
-                nr_zero_start_iteration_count=batched_firth_result.nr_zero_start_iteration_count.reshape((-1,)),
-                nr_warm_start_iteration_count=batched_firth_result.nr_warm_start_iteration_count.reshape((-1,)),
-            )
+            firth_result = regenie2_binary_firth_types.flatten_batched_firth_variant_result(batched_firth_result)
             active_flat_positions = batch_plan.active_flat_position_vector
             active_fallback_indices = flat_fallback_indices[active_flat_positions]
             return regenie2_binary_correction.merge_firth_variant_result_into_chunk(

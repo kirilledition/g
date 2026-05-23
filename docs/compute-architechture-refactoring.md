@@ -897,6 +897,7 @@ Completed cleanup so far:
 * Moved the Firth separation pre-dispatch heuristic from `firth/batch.py` into `regenie2_binary/candidates.py`, keeping candidate-lane ordering decisions with candidate planning.
 * Carried prepared Firth candidate genotypes, flip masks, and sparse masks through candidate grouping, removing the second candidate genotype take/flip after lane ordering.
 * Moved Firth candidate result merging into `regenie2_binary/correction.py`, so `EXTRA`, `TEST_FAIL`, beta-flip restoration, `--firth-se`, and diagnostic merge semantics are owned by the correction module instead of the variant-major dispatch kernel.
+* Moved batched `FirthVariantResult` flattening into `firth/types.py`, keeping Firth result shape construction next to the Firth result container.
 
 Intentional remaining adapters:
 
