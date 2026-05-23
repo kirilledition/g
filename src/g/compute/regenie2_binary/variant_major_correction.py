@@ -30,9 +30,6 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
     candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
     fallback_count = jnp.sum(candidate_mask, dtype=jnp.int32)
 
-    def no_candidate_corrections() -> regenie2_binary_types.Regenie2BinaryChunkResult:
-        return result
-
     def apply_candidate_corrections() -> regenie2_binary_types.Regenie2BinaryChunkResult:
         firth_batch_size = kernel_config.firth_batch_size
         genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
@@ -285,7 +282,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
 
         return apply_candidate_corrections_with_capacity(candidate_capacity)
 
-    return jax.lax.cond(fallback_count > 0, apply_candidate_corrections, no_candidate_corrections)
+    return apply_candidate_corrections()
 
 
 def apply_device_candidate_corrections_firth_variant_major(
