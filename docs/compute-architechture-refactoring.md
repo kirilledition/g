@@ -901,6 +901,7 @@ Completed cleanup so far:
 * Removed the stale unused `ApproximateFirthCandidateInputs` container from `firth/types.py`.
 * Moved fixed-size Firth candidate batch scanning from `variant_major_correction.py` into `firth/batch.py`, leaving variant-major correction responsible for candidate lane preparation, capacity dispatch, and final result merge.
 * Moved Firth candidate initial-coefficient construction into `firth/batch.py`, so the variant-major correction kernel no longer imports the full-model Firth solver directly.
+* Moved Firth candidate lane preparation into `firth/batch.py`, so the variant-major correction kernel no longer owns genotype flipping, sparse lane masks, heuristic lane ordering, or approximate-Firth genotype residualization.
 
 Intentional remaining adapters:
 
