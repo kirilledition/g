@@ -436,16 +436,3 @@ class ScalarFirthAttemptResult:
     valid: jax.Array
     iteration_count: jax.Array
     failure_reason_code: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class ApproximateFirthCandidateInputs:
-    """Prepared scalar approximate-Firth inputs for one candidate."""
-
-    phenotype_vector: jax.Array
-    genotype_vector: jax.Array
-    offset_vector: jax.Array
-    active_sample_mask: jax.Array
-    sparse_correction: jax.Array
-    warm_start_beta: jax.Array
