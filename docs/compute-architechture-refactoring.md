@@ -867,6 +867,7 @@ Completed cleanup so far:
 * Removed stale binary API callable aliases and cast indirection now that public chunk calls directly target the canonical function.
 * Removed the redundant no-candidate branch from the fixed-capacity Firth correction kernel; the host capacity selector already returns before launching that kernel when no Firth candidates exist.
 * Trimmed unused covariate transpose and Cholesky fields from linear chromosome states, and removed the single-trait stacked score matrix adapter in favor of storing the same whitened covariate matrix used by multi-trait linear compute.
+* Removed the stale linear debug-script `genotype_sum_squares` call argument; the production linear compute API no longer receives Rust sum-square stats and intentionally recomputes shifted genotype sums after REGENIE-style high-frequency normalization.
 
 Intentional remaining adapters:
 

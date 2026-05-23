@@ -233,7 +233,6 @@ def build_debug_records_for_chunk(
     result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=selected_genotype_matrix_by_variant,
-        genotype_sum_squares=jnp.asarray(chunk_stats.imputed_dosage_square_sum[selected_offsets]),
     )
     host_result = jax.device_get(result)
     debug_arrays = compute_linear_debug_arrays(chromosome_state, selected_genotype_matrix_by_variant)
