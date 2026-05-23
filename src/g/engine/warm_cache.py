@@ -12,7 +12,6 @@ from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import state as regenie2_binary_state
-from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import state as regenie2_linear_state
 from g.engine import callbacks, native_dispatch
@@ -161,7 +160,7 @@ def warm_regenie2_binary_bgen_cache(
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for binary REGENIE step 2."""
     resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG

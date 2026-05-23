@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
-from g.compute.regenie2_binary import types as regenie2_binary_types
 
 MINIMUM_PROBABILITY = 1.0e-6
 MINIMUM_VARIANCE = 1.0e-8
@@ -31,7 +32,123 @@ REGENIE_LOGISTIC_MINIMUM_ETA = -30.0
 REGENIE_LOGISTIC_MAXIMUM_ETA = 30.0
 REGENIE_NUMERICAL_EPSILON = 10.0 * 2.220446049250313e-16
 
-DEFAULT_BINARY_KERNEL_CONFIG = regenie2_binary_types.BinaryKernelConfig(
+
+@dataclass(frozen=True)
+class BinaryKernelConfig:
+    """Static binary-kernel settings that affect traced JAX programs.
+
+    Attributes:
+        maximum_null_iterations: Maximum IRLS iterations for the null logistic model.
+        null_logistic_coefficient_tolerance: Coefficient convergence tolerance for the null logistic model.
+        firth_batch_size: Fixed batch size for device-resident Firth fallback lanes.
+        firth_candidate_capacity: Preferred fixed candidate capacity before falling back to full chunk capacity.
+        firth_maximum_iterations: Maximum Firth solver iterations.
+        firth_gradient_tolerance: Firth adjusted-score convergence tolerance.
+        firth_coefficient_tolerance: Firth coefficient-step convergence tolerance.
+        firth_likelihood_tolerance: Firth penalized-likelihood convergence tolerance.
+        firth_maximum_step_size: Maximum absolute Firth coefficient update before step scaling.
+        firth_pseudo_maximum_iterations: Maximum approximate pseudo-Firth outer iterations.
+        firth_pseudo_inner_maximum_iterations: Maximum pseudo-response logistic inner iterations.
+        firth_newton_raphson_zero_start_iterations: Maximum zero-start scalar Newton-Raphson iterations.
+        firth_line_search_maximum_attempts: Maximum scalar/full-model Firth line-search attempts.
+        firth_step_halving_maximum_attempts: Maximum full-model Firth step-halving attempts.
+        null_firth_maximum_iterations: Maximum covariate-only null Firth iterations.
+        null_firth_gradient_tolerance: Covariate-only null Firth adjusted-score tolerance.
+        null_firth_maximum_step_size: Covariate-only null Firth maximum coefficient step size.
+        null_firth_fallback_iteration_multiplier: Multiplier for null Firth fallback retry iterations.
+        null_firth_fallback_step_divisor: Divisor for null Firth fallback retry step size.
+        null_firth_line_search_maximum_attempts: Maximum covariate-only null Firth line-search attempts.
+        use_block_firth_math: Whether to use the experimental block-matrix Firth path.
+
+    """
+
+    maximum_null_iterations: int
+    null_logistic_coefficient_tolerance: float
+    firth_batch_size: int
+    firth_candidate_capacity: int
+    firth_maximum_iterations: int
+    firth_gradient_tolerance: float
+    firth_coefficient_tolerance: float
+    firth_likelihood_tolerance: float
+    firth_maximum_step_size: float
+    firth_pseudo_maximum_iterations: int = 50
+    firth_pseudo_inner_maximum_iterations: int = 25
+    firth_newton_raphson_zero_start_iterations: int = 100
+    firth_line_search_maximum_attempts: int = 25
+    firth_step_halving_maximum_attempts: int = 12
+    null_firth_maximum_iterations: int = 1000
+    null_firth_gradient_tolerance: float = 50.0e-6
+    null_firth_maximum_step_size: float = 25.0
+    null_firth_fallback_iteration_multiplier: int = 5
+    null_firth_fallback_step_divisor: float = 5.0
+    null_firth_line_search_maximum_attempts: int = 25
+    use_block_firth_math: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate positive static kernel settings."""
+        if self.maximum_null_iterations <= 0:
+            message = "Maximum null iterations must be positive."
+            raise ValueError(message)
+        if self.null_logistic_coefficient_tolerance <= 0.0:
+            message = "Null logistic coefficient tolerance must be positive."
+            raise ValueError(message)
+        if self.firth_batch_size <= 0:
+            message = "Firth batch size must be positive."
+            raise ValueError(message)
+        if self.firth_candidate_capacity <= 0:
+            message = "Firth candidate capacity must be positive."
+            raise ValueError(message)
+        if self.firth_maximum_iterations <= 0:
+            message = "Firth maximum iterations must be positive."
+            raise ValueError(message)
+        if self.firth_gradient_tolerance <= 0.0:
+            message = "Firth gradient tolerance must be positive."
+            raise ValueError(message)
+        if self.firth_coefficient_tolerance <= 0.0:
+            message = "Firth coefficient tolerance must be positive."
+            raise ValueError(message)
+        if self.firth_likelihood_tolerance <= 0.0:
+            message = "Firth likelihood tolerance must be positive."
+            raise ValueError(message)
+        if self.firth_maximum_step_size <= 0.0:
+            message = "Firth maximum step size must be positive."
+            raise ValueError(message)
+        if self.firth_pseudo_maximum_iterations <= 0:
+            message = "Firth pseudo maximum iterations must be positive."
+            raise ValueError(message)
+        if self.firth_pseudo_inner_maximum_iterations <= 0:
+            message = "Firth pseudo inner maximum iterations must be positive."
+            raise ValueError(message)
+        if self.firth_newton_raphson_zero_start_iterations <= 0:
+            message = "Firth zero-start Newton-Raphson iterations must be positive."
+            raise ValueError(message)
+        if self.firth_line_search_maximum_attempts <= 0:
+            message = "Firth line-search maximum attempts must be positive."
+            raise ValueError(message)
+        if self.firth_step_halving_maximum_attempts <= 0:
+            message = "Firth step-halving maximum attempts must be positive."
+            raise ValueError(message)
+        if self.null_firth_maximum_iterations <= 0:
+            message = "Null Firth maximum iterations must be positive."
+            raise ValueError(message)
+        if self.null_firth_gradient_tolerance <= 0.0:
+            message = "Null Firth gradient tolerance must be positive."
+            raise ValueError(message)
+        if self.null_firth_maximum_step_size <= 0.0:
+            message = "Null Firth maximum step size must be positive."
+            raise ValueError(message)
+        if self.null_firth_fallback_iteration_multiplier <= 0:
+            message = "Null Firth fallback iteration multiplier must be positive."
+            raise ValueError(message)
+        if self.null_firth_fallback_step_divisor <= 0.0:
+            message = "Null Firth fallback step divisor must be positive."
+            raise ValueError(message)
+        if self.null_firth_line_search_maximum_attempts <= 0:
+            message = "Null Firth line-search maximum attempts must be positive."
+            raise ValueError(message)
+
+
+DEFAULT_BINARY_KERNEL_CONFIG = BinaryKernelConfig(
     maximum_null_iterations=DEFAULT_MAXIMUM_NULL_ITERATIONS,
     null_logistic_coefficient_tolerance=NULL_LOGISTIC_COEFFICIENT_TOLERANCE,
     firth_batch_size=regenie2_binary_candidate_planning.DEFAULT_FIRTH_BATCH_SIZE,

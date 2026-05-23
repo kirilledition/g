@@ -14,7 +14,7 @@ from g.io import output, source
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g.compute.regenie2_binary import types as regenie2_binary_types
+    from g.compute.regenie2_binary import config as regenie2_binary_config
 
 
 PHENOTYPE_DIRECTORY_SAFE_CHARACTER_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
@@ -50,7 +50,7 @@ class KernelConfig:
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
     alignment_config: config.GComputeConfig
     multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode
-    binary_kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None
+    binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -160,10 +160,10 @@ def normalize_binary_correction_config(binary_config: config.BinaryConfig) -> ty
     )
 
 
-def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie2_binary_types.BinaryKernelConfig:
+def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie2_binary_config.BinaryKernelConfig:
     """Build immutable binary JAX kernel settings from public compute config."""
-    binary_types_module = importlib.import_module("g.compute.regenie2_binary.types")
-    return binary_types_module.BinaryKernelConfig(
+    binary_config_module = importlib.import_module("g.compute.regenie2_binary.config")
+    return binary_config_module.BinaryKernelConfig(
         maximum_null_iterations=compute_config.binary_null_maximum_iterations,
         null_logistic_coefficient_tolerance=compute_config.binary_null_coefficient_tolerance,
         firth_batch_size=compute_config.firth_batch_size,

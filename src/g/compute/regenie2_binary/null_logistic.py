@@ -9,7 +9,6 @@ import jax.numpy as jnp
 
 from g.compute.common import linalg
 from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.compute.regenie2_binary import types as regenie2_binary_types
 
 
 @jax.tree_util.register_dataclass
@@ -44,7 +43,7 @@ def fit_null_logistic_coefficients(
     phenotype_vector: jax.Array,
     loco_offset: jax.Array,
     maximum_iterations: int | None,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> NullLogisticFitState:
     """Fit a covariate-only logistic null model with a fixed LOCO offset."""
     covariate_count = covariate_matrix.shape[1]

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import typing
-
 import jax
 import jax.numpy as jnp
 
@@ -13,9 +11,6 @@ from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
 from g.compute.regenie2_binary.firth import line_search as regenie2_binary_firth_line_search
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
-
-if typing.TYPE_CHECKING:
-    from g.compute.regenie2_binary import types as regenie2_binary_types
 
 
 def compute_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
@@ -209,7 +204,7 @@ def fit_single_variant_firth_logistic_regression(
     initial_coefficients: jax.Array,
     skip_firth: jax.Array,
     null_penalized_log_likelihood: jax.Array,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Fit one Firth logistic model for a candidate variant."""
     use_block_firth_math = kernel_config.use_block_firth_math

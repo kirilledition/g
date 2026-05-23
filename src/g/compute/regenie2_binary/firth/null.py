@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import typing
-
 import jax
 import jax.numpy as jnp
 
@@ -11,9 +9,6 @@ from g.compute.common import linalg
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
-
-if typing.TYPE_CHECKING:
-    from g.compute.regenie2_binary import types as regenie2_binary_types
 
 FIRTH_DEVIANCE_LOG_DETERMINANT_MULTIPLIER = 0.5
 NULL_FIRTH_STEP_HALVING_SCALE = 0.5
@@ -267,7 +262,7 @@ def fit_covariate_only_firth_null_model(
     phenotype_vector: jax.Array,
     loco_offset: jax.Array,
     initial_coefficients: jax.Array,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.NullFirthFitResult:
     """Fit the covariate-only Firth null model and return diagnostics."""
     covariate_matrix_float64 = jnp.asarray(covariate_matrix, dtype=jnp.float64)

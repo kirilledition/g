@@ -107,7 +107,7 @@ def compute_firth_variantwise(
     skip_firth_mask: jax.Array,
     sparse_correction_mask: jax.Array,
     null_penalized_log_likelihood: jax.Array,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Compute device-side Firth fits for a padded set of candidate lanes."""
     del null_logistic_coefficients

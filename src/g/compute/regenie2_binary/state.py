@@ -91,7 +91,7 @@ def prepare_regenie2_binary_chromosome_state(
     state: regenie2_binary_types.Regenie2BinaryState,
     loco_offset: jax.Array,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
-    kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
     """Prepare chromosome-specific null logistic state reused across chunks."""
     loco_offset_float32 = jnp.asarray(loco_offset, dtype=jnp.float32)
@@ -173,7 +173,7 @@ def prepare_regenie2_multi_binary_chromosome_state(
     state: regenie2_binary_types.Regenie2MultiBinaryState,
     loco_offset_matrix: jax.Array,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
-    kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2MultiBinaryChromosomeState:
     """Prepare chromosome-specific null logistic state for all requested binary traits."""
     loco_offset_matrix_float32 = jnp.asarray(loco_offset_matrix, dtype=jnp.float32)

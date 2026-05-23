@@ -11,7 +11,6 @@ from pathlib import Path
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.engine import callbacks, native_dispatch, preflight, shutdown, telemetry, timing
 from g.io import output, source
@@ -240,7 +239,7 @@ def run_regenie2_binary_bgen_pipeline(
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
-    kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
     telemetry_session: telemetry.TelemetrySession | None = None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
@@ -526,7 +525,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
-    kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
     telemetry_session: telemetry.TelemetrySession | None = None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
@@ -596,7 +595,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     jax_matmul_precision: types.JaxMatmulPrecision | None,
     output_format: types.OutputFormat,
     correction_plan: types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig | None,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None,

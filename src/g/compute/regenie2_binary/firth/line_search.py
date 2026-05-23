@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 if typing.TYPE_CHECKING:
-    from g.compute.regenie2_binary import types as regenie2_binary_types
+    from g.compute.regenie2_binary import config as regenie2_binary_config
 
 FIRTH_STEP_HALVING_SCALE = 0.5
 
@@ -21,7 +21,7 @@ def compute_firth_convergence_mask(
     candidate_penalized_log_likelihood: jax.Array,
     coefficient_step: jax.Array,
     adjusted_score: jax.Array,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> jax.Array:
     """Return whether an accepted Firth step satisfies convergence tolerances."""
     likelihood_delta = candidate_penalized_log_likelihood - current_penalized_log_likelihood
@@ -44,7 +44,7 @@ def run_firth_step_halving(
     current_penalized_log_likelihood: jax.Array,
     coefficient_step: jax.Array,
     evaluate_penalized_log_likelihood: typing.Callable[[jax.Array], jax.Array],
-    kernel_config: regenie2_binary_types.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.FirthBacktrackingResult:
     """Accept the first bounded Firth step that preserves penalized likelihood."""
 

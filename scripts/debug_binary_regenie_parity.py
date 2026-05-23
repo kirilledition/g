@@ -318,7 +318,7 @@ def build_debug_records_for_chunk(
     genotype_matrix_by_variant: npt.NDArray[np.float32],
     selected_offsets: list[int],
     correction_plan: types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> list[VariantDebugRecord]:
     """Build debug records for selected offsets from one native BGEN chunk."""
     selected_genotype_matrix_by_variant = jnp.asarray(
@@ -406,7 +406,7 @@ class BinaryVariantDebugCaptureCallback:
         prediction_source: _core.RegeniePredictionSource,
         selector: VariantSelector,
         correction_plan: types.BinaryCorrectionPlan,
-        kernel_config: regenie2_binary_types.BinaryKernelConfig,
+        kernel_config: regenie2_binary_config.BinaryKernelConfig,
     ) -> None:
         self.run_input = run_input
         self.prediction_source = prediction_source

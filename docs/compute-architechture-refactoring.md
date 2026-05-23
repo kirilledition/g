@@ -874,6 +874,7 @@ Completed cleanup so far:
 * Split binary score-test result containers from Firth-corrected result containers, so score-only kernels no longer allocate empty Firth diagnostic arrays; the Firth correction boundary expands score results only when correction is requested.
 * Removed the stale device-side Firth candidate overflow-mask helper; candidate overflow selection is now host-dispatched through explicit capacity plans.
 * Routed native binary variant-major callbacks directly through variant-major compute APIs for both score-only and approximate-Firth paths, removing variant-major to sample-major to variant-major transpose churn on the hot callback path.
+* Moved `BinaryKernelConfig` from binary result/state types into `regenie2_binary/config.py`, so binary kernel policy lives next to default policy constants instead of the pytree container module.
 
 Intentional remaining adapters:
 

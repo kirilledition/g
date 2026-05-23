@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import typing
-
 import jax
 import jax.numpy as jnp
 
@@ -13,9 +11,6 @@ from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
-
-if typing.TYPE_CHECKING:
-    from g.compute.regenie2_binary import types as regenie2_binary_types
 
 
 def map_scalar_pseudo_firth_failure_to_reason_code(failure_code: jax.Array) -> jax.Array:
@@ -545,7 +540,7 @@ def fit_single_variant_regenie_approximate_firth(
     warm_start_beta: jax.Array,
     skip_firth: jax.Array,
     null_failed: jax.Array,
-    kernel_config: regenie2_binary_types.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Fit one REGENIE-equivalent scalar approximate-Firth candidate."""
     scalar_dtype = offset_vector.dtype

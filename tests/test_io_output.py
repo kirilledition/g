@@ -14,7 +14,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from g import _core, types
-from g.compute.regenie2_binary import types as regenie2_binary_types
+from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.io import output
 from g.types import AssociationMode
 
@@ -356,9 +356,9 @@ def test_initialize_output_run_rejects_incompatible_manifest_even_in_fast_mode(t
         initialize_test_output_run(resumed_output_run, current_header, resume=True)
 
 
-def build_test_binary_kernel_config() -> regenie2_binary_types.BinaryKernelConfig:
+def build_test_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
     """Build a non-default binary kernel config for manifest tests."""
-    return regenie2_binary_types.BinaryKernelConfig(
+    return regenie2_binary_config.BinaryKernelConfig(
         maximum_null_iterations=13,
         null_logistic_coefficient_tolerance=1.0e-5,
         firth_batch_size=7,
