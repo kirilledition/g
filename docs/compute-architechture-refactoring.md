@@ -848,6 +848,7 @@ Completed cleanup so far:
 * Renamed the Firth solver modules to match their statistical roles: `firth/scalar_approx.py` and `firth/full_model.py`.
 * Removed duplicate Firth-local aliases for shared binary case-threshold, minimum-probability, and allele-count constants.
 * Removed the duplicated sample-major Firth candidate-correction implementation; sample-major correction now transposes once and uses the variant-major kernel.
+* Made Firth candidate-capacity planning explicit in `regenie2_binary/candidates.py`, separating bounded and overflow capacities before changing dispatch behavior.
 
 Intentional remaining adapters:
 

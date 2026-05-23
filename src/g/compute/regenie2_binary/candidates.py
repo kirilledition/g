@@ -51,6 +51,20 @@ class FirthCandidateBatchInputs:
     heuristic_firth_mask: jax.Array
 
 
+@dataclass(frozen=True)
+class FirthCandidateCapacityPlan:
+    """Static candidate capacities for normal and overflow Firth correction paths.
+
+    Attributes:
+        bounded_candidate_capacity: Preferred fixed candidate capacity, capped by the current chunk size.
+        overflow_candidate_capacity: Full chunk capacity used when candidate count exceeds the bounded capacity.
+
+    """
+
+    bounded_candidate_capacity: int
+    overflow_candidate_capacity: int
+
+
 def build_extra_code(
     log10_p_value: jax.Array,
     valid_mask: jax.Array,
@@ -77,6 +91,34 @@ def build_extra_code(
         jnp.where(candidate_mask, correction_code, types.BinaryExtraCode.SCORE.value),
         types.BinaryExtraCode.TEST_FAIL.value,
     ).astype(jnp.int32)
+
+
+def build_firth_candidate_capacity_plan(
+    *,
+    variant_count: int,
+    preferred_candidate_capacity: int,
+) -> FirthCandidateCapacityPlan:
+    """Build static capacities for device Firth candidate dispatch."""
+    if variant_count <= 0:
+        message = "Variant count must be positive."
+        raise ValueError(message)
+    if preferred_candidate_capacity <= 0:
+        message = "Preferred Firth candidate capacity must be positive."
+        raise ValueError(message)
+    return FirthCandidateCapacityPlan(
+        bounded_candidate_capacity=min(preferred_candidate_capacity, variant_count),
+        overflow_candidate_capacity=variant_count,
+    )
+
+
+def compute_firth_candidate_overflow_mask(
+    *,
+    fallback_count: jax.Array,
+    capacity_plan: FirthCandidateCapacityPlan,
+) -> jax.Array:
+    """Return whether Firth candidates exceed the preferred bounded capacity."""
+    bounded_candidate_capacity = jnp.asarray(capacity_plan.bounded_candidate_capacity, dtype=fallback_count.dtype)
+    return fallback_count > bounded_candidate_capacity
 
 
 def build_device_firth_batch_plan(

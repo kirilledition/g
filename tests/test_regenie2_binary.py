@@ -317,6 +317,42 @@ def test_device_firth_batch_plan_uses_candidate_capacity() -> None:
     np.testing.assert_array_equal(np.asarray(batch_plan.active_flat_position_vector), [0, 1, 2, 0])
 
 
+def test_firth_candidate_capacity_plan_uses_bounded_capacity_until_overflow() -> None:
+    capacity_plan = regenie2_binary_candidate_planning.build_firth_candidate_capacity_plan(
+        variant_count=7,
+        preferred_candidate_capacity=4,
+    )
+
+    assert capacity_plan.bounded_candidate_capacity == 4
+    assert capacity_plan.overflow_candidate_capacity == 7
+    assert not bool(
+        np.asarray(
+            regenie2_binary_candidate_planning.compute_firth_candidate_overflow_mask(
+                fallback_count=jnp.asarray(4, dtype=jnp.int32),
+                capacity_plan=capacity_plan,
+            )
+        )
+    )
+    assert bool(
+        np.asarray(
+            regenie2_binary_candidate_planning.compute_firth_candidate_overflow_mask(
+                fallback_count=jnp.asarray(5, dtype=jnp.int32),
+                capacity_plan=capacity_plan,
+            )
+        )
+    )
+
+
+def test_firth_candidate_capacity_plan_caps_capacity_at_variant_count() -> None:
+    capacity_plan = regenie2_binary_candidate_planning.build_firth_candidate_capacity_plan(
+        variant_count=3,
+        preferred_candidate_capacity=8,
+    )
+
+    assert capacity_plan.bounded_candidate_capacity == 3
+    assert capacity_plan.overflow_candidate_capacity == 3
+
+
 def test_null_logistic_kernel_config_retraces_same_shape_without_cache_clear() -> None:
     covariate_matrix, phenotype_vector, _ = build_binary_inputs()
     state = regenie2_binary_state.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)

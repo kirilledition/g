@@ -37,6 +37,10 @@ def apply_device_candidate_corrections_firth_variant_major(
         kernel_candidate_capacity = kernel_config.firth_candidate_capacity
         genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
         variant_count = genotype_matrix_by_variant_float32.shape[0]
+        capacity_plan = regenie2_binary_candidate_planning.build_firth_candidate_capacity_plan(
+            variant_count=variant_count,
+            preferred_candidate_capacity=kernel_candidate_capacity,
+        )
 
         def apply_candidate_corrections_with_capacity(
             candidate_capacity: int,
@@ -284,11 +288,13 @@ def apply_device_candidate_corrections_firth_variant_major(
                 ),
             )
 
-        bounded_candidate_capacity = min(kernel_candidate_capacity, variant_count)
         return jax.lax.cond(
-            fallback_count <= bounded_candidate_capacity,
-            lambda _: apply_candidate_corrections_with_capacity(bounded_candidate_capacity),
-            lambda _: apply_candidate_corrections_with_capacity(variant_count),
+            regenie2_binary_candidate_planning.compute_firth_candidate_overflow_mask(
+                fallback_count=fallback_count,
+                capacity_plan=capacity_plan,
+            ),
+            lambda _: apply_candidate_corrections_with_capacity(capacity_plan.overflow_candidate_capacity),
+            lambda _: apply_candidate_corrections_with_capacity(capacity_plan.bounded_candidate_capacity),
             operand=None,
         )
 
