@@ -109,14 +109,8 @@ def build_single_linear_chromosome_state_from_multi(
     """Build a single-trait chromosome state view from a trait-major state."""
     adjusted_residual = chromosome_state.adjusted_residual_matrix[0]
     adjusted_residual_projection_coordinates = chromosome_state.adjusted_residual_projection_coordinate_matrix[0]
-    stacked_score_matrix = jnp.concatenate(
-        [chromosome_state.whitened_covariate_transpose, adjusted_residual[None, :]],
-        axis=0,
-    )
     return regenie2_linear_types.Regenie2LinearChromosomeState(
-        covariate_matrix_transpose=chromosome_state.covariate_matrix_transpose,
-        covariate_crossproduct_cholesky_factor=chromosome_state.covariate_crossproduct_cholesky_factor,
-        stacked_score_matrix=stacked_score_matrix,
+        whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
         adjusted_residual=adjusted_residual,
         adjusted_residual_projection_coordinates=adjusted_residual_projection_coordinates,
         adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares[0],
@@ -143,8 +137,6 @@ def build_multi_linear_chromosome_state(
         0.0,
     )
     return regenie2_linear_types.Regenie2MultiLinearChromosomeState(
-        covariate_matrix_transpose=state.covariate_matrix_transpose,
-        covariate_crossproduct_cholesky_factor=state.covariate_crossproduct_cholesky_factor,
         whitened_covariate_transpose=state.whitened_covariate_transpose,
         adjusted_residual_matrix=adjusted_residual_matrix,
         adjusted_residual_projection_coordinate_matrix=adjusted_residual_projection_coordinate_matrix,

@@ -17,7 +17,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
 ) -> regenie2_linear_types.Regenie2LinearChunkResult:
     """Compute REGENIE step 2 linear association using chromosome-cached state."""
     multi_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
-        whitened_covariate_transpose=chromosome_state.stacked_score_matrix[:-1],
+        whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
         adjusted_residual_matrix=chromosome_state.adjusted_residual[None, :],
         adjusted_residual_projection_coordinate_matrix=chromosome_state.adjusted_residual_projection_coordinates[
             None, :
@@ -52,7 +52,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
 ) -> regenie2_linear_types.Regenie2LinearChunkResult:
     """Compute quantitative REGENIE step 2 association from variant-major genotypes."""
     multi_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
-        whitened_covariate_transpose=chromosome_state.stacked_score_matrix[:-1],
+        whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
         adjusted_residual_matrix=chromosome_state.adjusted_residual[None, :],
         adjusted_residual_projection_coordinate_matrix=chromosome_state.adjusted_residual_projection_coordinates[
             None, :

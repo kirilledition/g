@@ -38,9 +38,7 @@ class Regenie2LinearChromosomeState:
     """Chromosome-specific REGENIE step 2 linear state.
 
     Attributes:
-        covariate_matrix_transpose: Transpose of the covariate design matrix.
-        covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
-        stacked_score_matrix: Matrix for covariate projection coordinates and phenotype covariance.
+        whitened_covariate_transpose: Cholesky-whitened covariate transpose.
         adjusted_residual: Phenotype residual after covariate residualization and LOCO subtraction.
         adjusted_residual_projection_coordinates: Projection of adjusted residual onto whitened covariates.
         adjusted_residual_sum_squares: Sum of squares after removing the covariate projection.
@@ -48,9 +46,7 @@ class Regenie2LinearChromosomeState:
 
     """
 
-    covariate_matrix_transpose: jax.Array
-    covariate_crossproduct_cholesky_factor: jax.Array
-    stacked_score_matrix: jax.Array
+    whitened_covariate_transpose: jax.Array
     adjusted_residual: jax.Array
     adjusted_residual_projection_coordinates: jax.Array
     adjusted_residual_sum_squares: jax.Array
@@ -109,8 +105,6 @@ class Regenie2MultiLinearChromosomeState:
     """Chromosome-specific multi-trait linear state.
 
     Attributes:
-        covariate_matrix_transpose: Transpose of the covariate design matrix.
-        covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
         whitened_covariate_transpose: Cholesky-whitened covariate transpose.
         adjusted_residual_matrix: Trait-major residuals after covariate residualization and LOCO subtraction.
         adjusted_residual_projection_coordinate_matrix: Per-trait projection onto whitened covariates.
@@ -119,8 +113,6 @@ class Regenie2MultiLinearChromosomeState:
 
     """
 
-    covariate_matrix_transpose: jax.Array
-    covariate_crossproduct_cholesky_factor: jax.Array
     whitened_covariate_transpose: jax.Array
     adjusted_residual_matrix: jax.Array
     adjusted_residual_projection_coordinate_matrix: jax.Array

@@ -866,6 +866,7 @@ Completed cleanup so far:
 * Moved the single-to-multi binary chromosome-state view helper from score math into `regenie2_binary/state.py`, keeping state container adapters together.
 * Removed stale binary API callable aliases and cast indirection now that public chunk calls directly target the canonical function.
 * Removed the redundant no-candidate branch from the fixed-capacity Firth correction kernel; the host capacity selector already returns before launching that kernel when no Firth candidates exist.
+* Trimmed unused covariate transpose and Cholesky fields from linear chromosome states, and removed the single-trait stacked score matrix adapter in favor of storing the same whitened covariate matrix used by multi-trait linear compute.
 
 Intentional remaining adapters:
 
