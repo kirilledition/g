@@ -77,16 +77,3 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
         log10_p_value=log10_p_value,
         valid_mask=valid_mask,
     )
-
-
-def squeeze_single_trait_linear_result(
-    result: regenie2_linear_result.Regenie2MultiLinearChunkResult,
-) -> regenie2_linear_result.Regenie2LinearChunkResult:
-    """Remove the trait axis from a single-trait linear result."""
-    return regenie2_linear_result.Regenie2LinearChunkResult(
-        beta=result.beta[0],
-        standard_error=result.standard_error[0],
-        chi_squared=result.chi_squared[0],
-        log10_p_value=result.log10_p_value[0],
-        valid_mask=result.valid_mask[0],
-    )

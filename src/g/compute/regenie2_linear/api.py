@@ -107,7 +107,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
         degrees_of_freedom=chromosome_state.degrees_of_freedom,
         genotype_matrix_by_variant=genotype.convert_sample_major_to_variant_major(genotype_matrix),
     )
-    return regenie2_linear_score.squeeze_single_trait_linear_result(multi_result)
+    return regenie2_linear_result.squeeze_single_trait_linear_result(multi_result)
 
 
 @jax.jit
@@ -142,7 +142,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
         degrees_of_freedom=chromosome_state.degrees_of_freedom,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
     )
-    return regenie2_linear_score.squeeze_single_trait_linear_result(multi_result)
+    return regenie2_linear_result.squeeze_single_trait_linear_result(multi_result)
 
 
 @jax.jit
