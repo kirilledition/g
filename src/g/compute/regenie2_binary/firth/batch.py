@@ -73,3 +73,68 @@ def compute_firth_variantwise(
         skip_firth_mask,
         sparse_correction_mask,
     )
+
+
+def compute_firth_variantwise_fixed_batches(
+    *,
+    covariate_matrix: jax.Array,
+    null_logistic_coefficients: jax.Array,
+    null_firth_offset: jax.Array,
+    phenotype_vector: jax.Array,
+    genotype_matrix_by_variant: jax.Array,
+    raw_genotype_matrix_by_variant: jax.Array,
+    loco_offset: jax.Array,
+    initial_coefficients: jax.Array,
+    active_mask: jax.Array,
+    sparse_correction_mask: jax.Array,
+    fallback_count: jax.Array,
+    firth_batch_size: int,
+    null_penalized_log_likelihood: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Compute Firth fits for flattened candidate lanes using fixed-size batches."""
+    batch_count = active_mask.shape[0] // firth_batch_size
+    active_batch_count = (fallback_count + firth_batch_size - 1) // firth_batch_size
+    genotype_batches = genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
+    raw_genotype_batches = raw_genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
+    initial_coefficient_batches = initial_coefficients.reshape((batch_count, firth_batch_size, -1))
+    active_mask_batches = active_mask.reshape((batch_count, firth_batch_size))
+    sparse_correction_mask_batches = sparse_correction_mask.reshape((batch_count, firth_batch_size))
+    empty_firth_variant_result = regenie2_binary_firth_types.build_empty_firth_variant_result(firth_batch_size)
+
+    def compute_firth_batch(
+        carry: None,
+        batch_index: jax.Array,
+    ) -> tuple[None, regenie2_binary_firth_types.FirthVariantResult]:
+        del carry
+
+        def run_active_batch(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
+            return compute_firth_variantwise(
+                covariate_matrix=covariate_matrix,
+                null_logistic_coefficients=null_logistic_coefficients,
+                null_firth_offset=null_firth_offset,
+                phenotype_vector=phenotype_vector,
+                genotype_matrix_by_variant=genotype_batches[batch_index],
+                raw_genotype_matrix_by_variant=raw_genotype_batches[batch_index],
+                loco_offset=loco_offset,
+                initial_coefficients=initial_coefficient_batches[batch_index],
+                skip_firth_mask=~active_mask_batches[batch_index],
+                sparse_correction_mask=sparse_correction_mask_batches[batch_index],
+                null_penalized_log_likelihood=null_penalized_log_likelihood,
+                kernel_config=kernel_config,
+            )
+
+        batch_result = jax.lax.cond(
+            batch_index < active_batch_count,
+            run_active_batch,
+            lambda _: empty_firth_variant_result,
+            operand=None,
+        )
+        return None, batch_result
+
+    _, batched_firth_result = jax.lax.scan(
+        compute_firth_batch,
+        None,
+        jnp.arange(batch_count, dtype=jnp.int32),
+    )
+    return regenie2_binary_firth_types.flatten_batched_firth_variant_result(batched_firth_result)

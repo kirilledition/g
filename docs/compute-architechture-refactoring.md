@@ -899,6 +899,7 @@ Completed cleanup so far:
 * Moved Firth candidate result merging into `regenie2_binary/correction.py`, so `EXTRA`, `TEST_FAIL`, beta-flip restoration, `--firth-se`, and diagnostic merge semantics are owned by the correction module instead of the variant-major dispatch kernel.
 * Moved batched `FirthVariantResult` flattening into `firth/types.py`, keeping Firth result shape construction next to the Firth result container.
 * Removed the stale unused `ApproximateFirthCandidateInputs` container from `firth/types.py`.
+* Moved fixed-size Firth candidate batch scanning from `variant_major_correction.py` into `firth/batch.py`, leaving variant-major correction responsible for candidate lane preparation, capacity dispatch, and final result merge.
 
 Intentional remaining adapters:
 

@@ -17,7 +17,6 @@ from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
-from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 
 @functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config", "candidate_capacity"))
@@ -133,53 +132,22 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
                 )
             else:
                 initial_coefficients = standard_initial_coefficients
-            batch_count = batch_plan.fallback_index_matrix.shape[0]
-            active_batch_count = (fallback_count + firth_batch_size - 1) // firth_batch_size
-            genotype_batches = candidate_genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
-            raw_genotype_batches = firth_raw_candidate_genotype_matrix_by_variant.reshape(
-                (batch_count, firth_batch_size, -1)
+            firth_result = regenie2_binary_firth_batch.compute_firth_variantwise_fixed_batches(
+                covariate_matrix=chromosome_state.covariate_matrix,
+                null_logistic_coefficients=chromosome_state.null_logistic_coefficients,
+                null_firth_offset=chromosome_state.null_firth_offset,
+                phenotype_vector=chromosome_state.phenotype_vector,
+                genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
+                raw_genotype_matrix_by_variant=firth_raw_candidate_genotype_matrix_by_variant,
+                loco_offset=chromosome_state.loco_offset,
+                initial_coefficients=initial_coefficients,
+                active_mask=flat_active_mask,
+                sparse_correction_mask=flat_sparse_candidate_mask,
+                fallback_count=fallback_count,
+                firth_batch_size=firth_batch_size,
+                null_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood,
+                kernel_config=kernel_config,
             )
-            initial_coefficient_batches = initial_coefficients.reshape((batch_count, firth_batch_size, -1))
-            active_mask_batches = flat_active_mask.reshape((batch_count, firth_batch_size))
-            sparse_correction_mask_batches = flat_sparse_candidate_mask.reshape((batch_count, firth_batch_size))
-            empty_firth_variant_result = regenie2_binary_firth_types.build_empty_firth_variant_result(firth_batch_size)
-
-            def compute_firth_batch(
-                carry: None,
-                batch_index: jax.Array,
-            ) -> tuple[None, regenie2_binary_firth_types.FirthVariantResult]:
-                del carry
-
-                def run_active_batch(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
-                    return regenie2_binary_firth_batch.compute_firth_variantwise(
-                        covariate_matrix=chromosome_state.covariate_matrix,
-                        null_logistic_coefficients=chromosome_state.null_logistic_coefficients,
-                        null_firth_offset=chromosome_state.null_firth_offset,
-                        phenotype_vector=chromosome_state.phenotype_vector,
-                        genotype_matrix_by_variant=genotype_batches[batch_index],
-                        raw_genotype_matrix_by_variant=raw_genotype_batches[batch_index],
-                        loco_offset=chromosome_state.loco_offset,
-                        initial_coefficients=initial_coefficient_batches[batch_index],
-                        skip_firth_mask=~active_mask_batches[batch_index],
-                        sparse_correction_mask=sparse_correction_mask_batches[batch_index],
-                        null_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood,
-                        kernel_config=kernel_config,
-                    )
-
-                batch_result = jax.lax.cond(
-                    batch_index < active_batch_count,
-                    run_active_batch,
-                    lambda _: empty_firth_variant_result,
-                    operand=None,
-                )
-                return None, batch_result
-
-            _, batched_firth_result = jax.lax.scan(
-                compute_firth_batch,
-                None,
-                jnp.arange(batch_count, dtype=jnp.int32),
-            )
-            firth_result = regenie2_binary_firth_types.flatten_batched_firth_variant_result(batched_firth_result)
             active_flat_positions = batch_plan.active_flat_position_vector
             active_fallback_indices = flat_fallback_indices[active_flat_positions]
             return regenie2_binary_correction.merge_firth_variant_result_into_chunk(
