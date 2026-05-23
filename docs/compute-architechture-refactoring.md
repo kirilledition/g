@@ -888,6 +888,7 @@ Completed cleanup so far:
 * Removed the remaining `firth/common.py` catch-all module: full-model penalized likelihood now lives in `firth/full_model.py`, and Firth reason-to-failure mapping lives next to the Firth reason enum in `firth/types.py`.
 * Moved default Firth candidate batch size and capacity into `regenie2_binary/config.py`, so kernel policy no longer imports candidate-dispatch helpers just to construct default config.
 * Moved the linear single-trait result squeeze constructor from score math into `regenie2_linear/result.py`, matching the binary result-module ownership of result-shape adapters.
+* Moved the empty `FirthVariantResult` constructor from `firth/batch.py` into `firth/types.py`, so batching code no longer owns Firth result construction.
 
 Intentional remaining adapters:
 

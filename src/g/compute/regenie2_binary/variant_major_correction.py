@@ -151,7 +151,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
             initial_coefficient_batches = initial_coefficients.reshape((batch_count, firth_batch_size, -1))
             active_mask_batches = flat_active_mask.reshape((batch_count, firth_batch_size))
             sparse_correction_mask_batches = flat_sparse_candidate_mask.reshape((batch_count, firth_batch_size))
-            empty_firth_variant_result = regenie2_binary_firth_batch.build_empty_firth_variant_result(firth_batch_size)
+            empty_firth_variant_result = regenie2_binary_firth_types.build_empty_firth_variant_result(firth_batch_size)
 
             def compute_firth_batch(
                 carry: None,

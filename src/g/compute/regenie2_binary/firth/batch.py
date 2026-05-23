@@ -153,26 +153,3 @@ def compute_firth_variantwise(
         skip_firth_mask,
         sparse_correction_mask,
     )
-
-
-def build_empty_firth_variant_result(
-    batch_size: int,
-) -> regenie2_binary_firth_types.FirthVariantResult:
-    """Build a placeholder Firth result for skipped padded batches."""
-    return regenie2_binary_firth_types.FirthVariantResult(
-        beta=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        standard_error=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        chi_squared=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        log10_p_value=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        penalized_log_likelihood=jnp.full((batch_size,), jnp.nan, dtype=jnp.float64),
-        converged_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
-        valid_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
-        iteration_count=jnp.zeros((batch_size,), dtype=jnp.int32),
-        failure_code=jnp.zeros((batch_size,), dtype=jnp.int32),
-        convergence_reason_code=jnp.zeros((batch_size,), dtype=jnp.int32),
-        correction_code=jnp.zeros((batch_size,), dtype=jnp.int32),
-        sparse_correction_mask=jnp.zeros((batch_size,), dtype=jnp.bool_),
-        pseudo_firth_iteration_count=jnp.zeros((batch_size,), dtype=jnp.int32),
-        nr_zero_start_iteration_count=jnp.zeros((batch_size,), dtype=jnp.int32),
-        nr_warm_start_iteration_count=jnp.zeros((batch_size,), dtype=jnp.int32),
-    )
