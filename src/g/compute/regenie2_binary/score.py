@@ -9,6 +9,7 @@ import jax.numpy as jnp
 
 from g.compute.common import genotype, pvalue
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
+from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import types as regenie2_binary_types
 
 if typing.TYPE_CHECKING:
@@ -88,21 +89,13 @@ def compute_binary_score_test_chunk_variant_major(
     )
     valid_mask = null_logistic_converged & jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
     extra_code = regenie2_binary_candidate_planning.build_extra_code(log10_p_value, valid_mask, correction_plan)
-    return regenie2_binary_types.Regenie2BinaryChunkResult(
+    return regenie2_binary_result.build_binary_score_test_chunk_result(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
         log10_p_value=log10_p_value,
         extra_code=extra_code,
         valid_mask=valid_mask,
-        firth_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        firth_failure_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        firth_convergence_reason_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        firth_correction_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        firth_sparse_correction_mask=jnp.zeros_like(extra_code, dtype=jnp.bool_),
-        pseudo_firth_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        nr_zero_start_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        nr_warm_start_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
     )
 
 
@@ -163,19 +156,11 @@ def compute_multi_binary_score_test_chunk_variant_major(
     )
     valid_mask = null_logistic_converged & jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
     extra_code = regenie2_binary_candidate_planning.build_extra_code(log10_p_value, valid_mask, correction_plan)
-    return regenie2_binary_types.Regenie2MultiBinaryChunkResult(
+    return regenie2_binary_result.build_multi_binary_score_test_chunk_result(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
         log10_p_value=log10_p_value,
         extra_code=extra_code,
         valid_mask=valid_mask,
-        firth_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        firth_failure_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        firth_convergence_reason_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        firth_correction_code=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        firth_sparse_correction_mask=jnp.zeros_like(extra_code, dtype=jnp.bool_),
-        pseudo_firth_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        nr_zero_start_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
-        nr_warm_start_iteration_count=jnp.zeros_like(extra_code, dtype=jnp.int32),
     )

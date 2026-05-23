@@ -843,6 +843,7 @@ Completed cleanup so far:
 * Updated production imports to use the new package-local modules directly.
 * Removed the `g.compute` compatibility exports and updated source, tests, and diagnostic scripts to import package modules directly.
 * Extracted the shared REGENIE binary logistic clipping and deviance helpers out of the binary facade and Firth solvers into `regenie2_binary/logistic.py`.
+* Centralized binary score-test result constructors in `regenie2_binary/result.py` so empty Firth diagnostics are built in one module.
 
 Intentional remaining adapters:
 
