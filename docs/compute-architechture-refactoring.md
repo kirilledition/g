@@ -849,6 +849,7 @@ Completed cleanup so far:
 * Removed duplicate Firth-local aliases for shared binary case-threshold, minimum-probability, and allele-count constants.
 * Removed the duplicated sample-major Firth candidate-correction implementation; sample-major correction now transposes once and uses the variant-major kernel.
 * Made Firth candidate-capacity planning explicit in `regenie2_binary/candidates.py`, separating bounded and overflow capacities before changing dispatch behavior.
+* Extracted the fixed-capacity variant-major Firth correction body into a named kernel, leaving the existing entry point responsible only for capacity selection.
 
 Intentional remaining adapters:
 
