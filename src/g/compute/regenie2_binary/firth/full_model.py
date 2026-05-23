@@ -9,6 +9,7 @@ import jax.numpy as jnp
 
 from g import types
 from g.compute.common import linalg, pvalue
+from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
 from g.compute.regenie2_binary.firth import line_search as regenie2_binary_firth_line_search
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
@@ -16,15 +17,17 @@ from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import types as regenie2_binary_types
 
-MINIMUM_PROBABILITY = 1.0e-6
 MINIMUM_VARIANCE = 1.0e-8
-BINARY_CASE_THRESHOLD = 0.5
 
 
 def compute_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
     """Compute clipped logistic probabilities."""
     probability = jax.nn.sigmoid(linear_predictor)
-    return jnp.clip(probability, MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
+    return jnp.clip(
+        probability,
+        regenie2_binary_config.MINIMUM_PROBABILITY,
+        1.0 - regenie2_binary_config.MINIMUM_PROBABILITY,
+    )
 
 
 def build_full_model_information_matrix(
@@ -111,7 +114,7 @@ def compute_full_model_adjusted_weight_components(
     ).T
     leverage_vector = variance_vector * jnp.einsum("ij,ij->i", projected_design_matrix, full_design_matrix)
     adjusted_weight_vector = (phenotype_vector - probability_vector) + leverage_vector * (
-        BINARY_CASE_THRESHOLD - probability_vector
+        regenie2_binary_config.BINARY_CASE_THRESHOLD - probability_vector
     )
     second_weight_vector = (1.0 + leverage_vector) * variance_vector
     return regenie2_binary_firth_types.AdjustedWeightComponents(
@@ -142,7 +145,7 @@ def compute_full_model_adjusted_weight_components_from_parts(
         + projected_genotype_vector * genotype_vector
     )
     adjusted_weight_vector = (phenotype_vector - probability_vector) + leverage_vector * (
-        BINARY_CASE_THRESHOLD - probability_vector
+        regenie2_binary_config.BINARY_CASE_THRESHOLD - probability_vector
     )
     second_weight_vector = (1.0 + leverage_vector) * variance_vector
     return regenie2_binary_firth_types.AdjustedWeightComponents(
@@ -178,7 +181,7 @@ def compute_covariate_only_adjusted_weight_components(
     ).T
     leverage_vector = variance_vector * jnp.einsum("ij,ij->i", projected_covariate_matrix, covariate_matrix)
     adjusted_weight_vector = (phenotype_vector - probability_vector) + leverage_vector * (
-        BINARY_CASE_THRESHOLD - probability_vector
+        regenie2_binary_config.BINARY_CASE_THRESHOLD - probability_vector
     )
     second_weight_vector = (1.0 + leverage_vector) * variance_vector
     return regenie2_binary_firth_types.AdjustedWeightComponents(

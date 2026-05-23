@@ -846,6 +846,7 @@ Completed cleanup so far:
 * Centralized binary score-test result constructors in `regenie2_binary/result.py` so empty Firth diagnostics are built in one module.
 * Split Firth step-halving and convergence checks from `firth/common.py` into `firth/line_search.py`.
 * Renamed the Firth solver modules to match their statistical roles: `firth/scalar_approx.py` and `firth/full_model.py`.
+* Removed duplicate Firth-local aliases for shared binary case-threshold, minimum-probability, and allele-count constants.
 
 Intentional remaining adapters:
 

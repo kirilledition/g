@@ -9,6 +9,7 @@ import jax.numpy as jnp
 
 from g import types
 from g.compute.common import pvalue
+from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
@@ -17,7 +18,6 @@ if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import types as regenie2_binary_types
 
 MINIMUM_VARIANCE = 1.0e-8
-BINARY_CASE_THRESHOLD = 0.5
 FIRTH_PSEUDO_MAXIMUM_ITERATIONS = 50
 FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS = 100
 FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS = 25
@@ -68,7 +68,9 @@ def compute_scalar_firth_components(
         - jnp.log(genotype_information)
     )
     leverage_vector = genotype_information_diagonal / genotype_information
-    adjusted_response = phenotype_vector + leverage_vector * (BINARY_CASE_THRESHOLD - probability_vector)
+    adjusted_response = phenotype_vector + leverage_vector * (
+        regenie2_binary_config.BINARY_CASE_THRESHOLD - probability_vector
+    )
     score = jnp.sum(jnp.where(active_sample_mask, genotype_vector * (adjusted_response - probability_vector), 0.0))
     valid = (
         jnp.isfinite(genotype_information)
@@ -208,7 +210,9 @@ def fit_scalar_pseudo_firth(
             jnp.abs(state.beta - beta_iteration_14) > 0.1
         )
         leverage_vector = components.genotype_information_diagonal / components.genotype_information
-        adjusted_response = phenotype_vector + leverage_vector * (BINARY_CASE_THRESHOLD - components.probability_vector)
+        adjusted_response = phenotype_vector + leverage_vector * (
+            regenie2_binary_config.BINARY_CASE_THRESHOLD - components.probability_vector
+        )
         logistic_state = fit_scalar_pseudo_logistic_step(
             phenotype_vector=phenotype_vector,
             genotype_vector=genotype_vector,

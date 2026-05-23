@@ -6,10 +6,10 @@ import jax
 import jax.numpy as jnp
 
 from g import types
+from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
-MINIMUM_PROBABILITY = 1.0e-6
-BINARY_CASE_THRESHOLD = 0.5
+FIRTH_PENALTY_LOG_DETERMINANT_MULTIPLIER = 0.5
 
 
 def compute_firth_penalized_log_likelihood_from_cholesky(
@@ -18,12 +18,20 @@ def compute_firth_penalized_log_likelihood_from_cholesky(
     information_cholesky_factor: jax.Array,
 ) -> jax.Array:
     """Compute Firth-penalized log-likelihood from a Cholesky factor."""
-    clipped_probability = jnp.clip(probability_vector, MINIMUM_PROBABILITY, 1.0 - MINIMUM_PROBABILITY)
+    clipped_probability = jnp.clip(
+        probability_vector,
+        regenie2_binary_config.MINIMUM_PROBABILITY,
+        1.0 - regenie2_binary_config.MINIMUM_PROBABILITY,
+    )
     true_class_probability = jnp.where(phenotype_vector == 1.0, clipped_probability, 1.0 - clipped_probability)
     log_likelihood = jnp.sum(jnp.log(true_class_probability))
     log_determinant = 2.0 * jnp.sum(jnp.log(jnp.diag(information_cholesky_factor)))
     cholesky_valid = jnp.all(jnp.isfinite(information_cholesky_factor))
-    penalty_term = jnp.where(cholesky_valid, BINARY_CASE_THRESHOLD * log_determinant, -jnp.inf)
+    penalty_term = jnp.where(
+        cholesky_valid,
+        FIRTH_PENALTY_LOG_DETERMINANT_MULTIPLIER * log_determinant,
+        -jnp.inf,
+    )
     return log_likelihood + penalty_term
 
 

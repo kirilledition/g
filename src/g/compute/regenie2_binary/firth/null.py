@@ -8,13 +8,15 @@ import jax
 import jax.numpy as jnp
 
 from g.compute.common import linalg
+from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import types as regenie2_binary_types
 
-BINARY_CASE_THRESHOLD = 0.5
+FIRTH_DEVIANCE_LOG_DETERMINANT_MULTIPLIER = 0.5
+NULL_FIRTH_STEP_HALVING_SCALE = 0.5
 FIRTH_NULL_MAXIMUM_ITERATIONS = 1000
 FIRTH_NULL_FALLBACK_ITERATION_MULTIPLIER = 5
 FIRTH_NULL_GRADIENT_TOLERANCE = 50.0e-6
@@ -51,7 +53,9 @@ def compute_null_firth_components(
     ).T
     leverage_vector = weight_vector * jnp.einsum("ij,ij->i", projected_covariate_matrix, covariate_matrix)
     modified_score = covariate_matrix.T @ (
-        phenotype_vector - probability_vector + leverage_vector * (BINARY_CASE_THRESHOLD - probability_vector)
+        phenotype_vector
+        - probability_vector
+        + leverage_vector * (regenie2_binary_config.BINARY_CASE_THRESHOLD - probability_vector)
     )
     valid = (
         jnp.all(jnp.isfinite(coefficients))
@@ -101,7 +105,7 @@ def run_null_firth_line_search(
         accepted = candidate_components.valid & (candidate_components.deviance < current_deviance)
         return regenie2_binary_firth_types.NullFirthLineSearchState(
             attempt_count=state.attempt_count + jnp.asarray(1, dtype=jnp.int32),
-            next_coefficient_step=state.next_coefficient_step * BINARY_CASE_THRESHOLD,
+            next_coefficient_step=state.next_coefficient_step * NULL_FIRTH_STEP_HALVING_SCALE,
             accepted_coefficients=jnp.where(accepted, candidate_coefficients, state.accepted_coefficients),
             accepted_deviance=jnp.where(accepted, candidate_components.deviance, state.accepted_deviance),
             accepted=accepted,
@@ -252,7 +256,7 @@ def fit_covariate_only_firth_null_model_once(
         coefficients=final_state.coefficients,
         penalized_log_likelihood=jnp.where(
             final_state.converged,
-            -BINARY_CASE_THRESHOLD * final_state.deviance,
+            -FIRTH_DEVIANCE_LOG_DETERMINANT_MULTIPLIER * final_state.deviance,
             jnp.asarray(jnp.nan, dtype=scalar_dtype),
         ),
         iteration_count=final_state.iteration_count,
