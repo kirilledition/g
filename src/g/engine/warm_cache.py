@@ -8,8 +8,9 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+import g.compute.regenie2_binary as regenie2_binary
+import g.compute.regenie2_linear as regenie2_linear
 from g import _core, types
-from g.compute import regenie2_binary, regenie2_linear
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import types as regenie2_binary_types

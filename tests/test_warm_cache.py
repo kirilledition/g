@@ -10,10 +10,8 @@ import numpy as np
 import pytest
 
 from g import types
-from g.compute import (
-    regenie2_binary_config,
-    regenie2_binary_types,
-)
+from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.engine import warm_cache
 from g.io import source
 

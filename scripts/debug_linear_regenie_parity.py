@@ -16,8 +16,10 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
+import g.compute.regenie2_linear as regenie2_linear
 from g import _core
-from g.compute import regenie2_linear, regenie2_linear_state, regenie2_linear_types
+from g.compute.regenie2_linear import state as regenie2_linear_state
+from g.compute.regenie2_linear import types as regenie2_linear_types
 from g.engine import native_dispatch
 
 

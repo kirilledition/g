@@ -14,7 +14,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from g import _core, types
-from g.compute import regenie2_binary_types
+from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.io import output
 from g.types import AssociationMode
 

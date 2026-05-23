@@ -11,11 +11,12 @@ import numpy as np
 import numpy.testing
 import numpy.typing as npt
 
-from g.compute import regenie2_linear, regenie2_linear_state
+import g.compute.regenie2_linear as regenie2_linear
 from g.compute.common import genotype, linalg, pvalue
+from g.compute.regenie2_linear import state as regenie2_linear_state
 
 if typing.TYPE_CHECKING:
-    from g.compute import regenie2_linear_types
+    from g.compute.regenie2_linear import types as regenie2_linear_types
 
 
 @dataclass(frozen=True)

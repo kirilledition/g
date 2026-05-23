@@ -840,7 +840,8 @@ Completed cleanup so far:
 * Extracted sample-major and variant-major binary candidate correction modules.
 * Removed trivial compute pass-through wrappers and constant aliases where callers can use the implementation module directly.
 * Restructured flat compute files into `regenie2_linear/` and `regenie2_binary/` packages, with binary Firth kernels under `regenie2_binary/firth/`.
-* Updated production imports to use the new package-local modules directly; kept `g.compute` compatibility exports for tests, scripts, and older call sites that still import the former flat module names.
+* Updated production imports to use the new package-local modules directly.
+* Removed the `g.compute` compatibility exports and updated source, tests, and diagnostic scripts to import package modules directly.
 
 Intentional remaining adapters:
 

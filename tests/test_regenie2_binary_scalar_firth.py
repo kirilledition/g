@@ -4,15 +4,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+import g.compute.regenie2_binary as regenie2_binary
 from g import types
-from g.compute import (
-    regenie2_binary,
-    regenie2_binary_config,
-    regenie2_binary_firth_batch,
-    regenie2_binary_firth_scalar,
-    regenie2_binary_state,
-    regenie2_binary_types,
-)
+from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_binary import state as regenie2_binary_state
+from g.compute.regenie2_binary import types as regenie2_binary_types
+from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
+from g.compute.regenie2_binary.firth import scalar as regenie2_binary_firth_scalar
 
 
 def build_scalar_fixture() -> tuple[regenie2_binary_types.Regenie2BinaryChromosomeState, jax.Array, jax.Array]:
