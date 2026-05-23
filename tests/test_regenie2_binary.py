@@ -492,6 +492,17 @@ def test_group_firth_candidate_batch_inputs_places_heuristic_lanes_after_regular
             ],
             dtype=jnp.float32,
         ),
+        raw_genotype_matrix_by_variant=jnp.asarray(
+            [
+                [100.0, 100.0],
+                [110.0, 110.0],
+                [120.0, 120.0],
+                [0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        ),
+        genotype_flip_mask=jnp.asarray([True, False, True, False], dtype=jnp.bool_),
+        sparse_correction_mask=jnp.asarray([False, True, False, False], dtype=jnp.bool_),
         heuristic_firth_mask=jnp.asarray([True, False, True, False], dtype=jnp.bool_),
     )
 
@@ -502,6 +513,12 @@ def test_group_firth_candidate_batch_inputs_places_heuristic_lanes_after_regular
         np.asarray(ordered_inputs.genotype_matrix_by_variant),
         [[11.0, 11.0], [10.0, 10.0], [12.0, 12.0], [0.0, 0.0]],
     )
+    np.testing.assert_array_equal(
+        np.asarray(ordered_inputs.raw_genotype_matrix_by_variant),
+        [[110.0, 110.0], [100.0, 100.0], [120.0, 120.0], [0.0, 0.0]],
+    )
+    np.testing.assert_array_equal(np.asarray(ordered_inputs.genotype_flip_mask), [False, True, True, False])
+    np.testing.assert_array_equal(np.asarray(ordered_inputs.sparse_correction_mask), [True, False, False, False])
 
 
 def test_score_only_plan_produces_no_fallback_candidates() -> None:

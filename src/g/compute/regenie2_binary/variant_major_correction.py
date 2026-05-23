@@ -85,30 +85,18 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
                 flat_fallback_indices=flat_fallback_indices,
                 flat_active_mask=flat_active_mask,
                 genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
+                raw_genotype_matrix_by_variant=firth_raw_candidate_genotype_matrix_by_variant,
+                genotype_flip_mask=flat_genotype_flip_mask,
+                sparse_correction_mask=flat_sparse_candidate_mask,
                 heuristic_firth_mask=heuristic_firth_mask,
             )
             flat_fallback_indices = ordered_candidate_inputs.flat_fallback_indices
             flat_active_mask = ordered_candidate_inputs.flat_active_mask
             candidate_genotype_matrix_by_variant = ordered_candidate_inputs.genotype_matrix_by_variant
+            firth_raw_candidate_genotype_matrix_by_variant = ordered_candidate_inputs.raw_genotype_matrix_by_variant
+            flat_genotype_flip_mask = ordered_candidate_inputs.genotype_flip_mask
+            flat_sparse_candidate_mask = ordered_candidate_inputs.sparse_correction_mask
             heuristic_firth_mask = ordered_candidate_inputs.heuristic_firth_mask
-            raw_candidate_genotype_matrix_by_variant = jnp.take(
-                genotype_matrix_by_variant_float32,
-                flat_fallback_indices,
-                axis=0,
-            )
-            genotype_flip_result = genotype.build_regenie_flipped_genotypes(raw_candidate_genotype_matrix_by_variant)
-            if kernel_config.approximate_firth.use_block_math:
-                firth_raw_candidate_genotype_matrix_by_variant = raw_candidate_genotype_matrix_by_variant
-                flat_genotype_flip_mask = jnp.zeros_like(flat_active_mask)
-            else:
-                firth_raw_candidate_genotype_matrix_by_variant = genotype_flip_result.genotype_matrix_by_variant
-                flat_genotype_flip_mask = genotype_flip_result.flip_mask
-            flat_sparse_candidate_mask = (
-                jnp.take(jnp.asarray(sparse_candidate_mask, dtype=jnp.bool_), flat_fallback_indices, axis=0)
-                & flat_active_mask
-                if sparse_candidate_mask is not None
-                else jnp.zeros_like(flat_active_mask)
-            )
             standard_initial_coefficients = jnp.broadcast_to(
                 chromosome_state.null_logistic_coefficients[None, :],
                 (

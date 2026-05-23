@@ -37,6 +37,9 @@ class FirthCandidateBatchInputs:
         flat_fallback_indices: Candidate variant indices in flattened batch order.
         flat_active_mask: Active-lane mask in flattened batch order.
         genotype_matrix_by_variant: Candidate genotypes in flattened batch order.
+        raw_genotype_matrix_by_variant: Raw candidate genotypes matching the solver's chosen allele orientation.
+        genotype_flip_mask: Whether each candidate lane needs beta sign restoration after correction.
+        sparse_correction_mask: Whether each candidate lane uses sparse carrier-only correction.
         heuristic_firth_mask: Whether each lane uses the separation-oriented initializer.
 
     """
@@ -44,6 +47,9 @@ class FirthCandidateBatchInputs:
     flat_fallback_indices: jax.Array
     flat_active_mask: jax.Array
     genotype_matrix_by_variant: jax.Array
+    raw_genotype_matrix_by_variant: jax.Array
+    genotype_flip_mask: jax.Array
+    sparse_correction_mask: jax.Array
     heuristic_firth_mask: jax.Array
 
 
@@ -154,6 +160,9 @@ def group_firth_candidate_batch_inputs(
     flat_fallback_indices: jax.Array,
     flat_active_mask: jax.Array,
     genotype_matrix_by_variant: jax.Array,
+    raw_genotype_matrix_by_variant: jax.Array,
+    genotype_flip_mask: jax.Array,
+    sparse_correction_mask: jax.Array,
     heuristic_firth_mask: jax.Array,
 ) -> FirthCandidateBatchInputs:
     """Group likely long-running Firth lanes together before fixed-size batching."""
@@ -164,5 +173,8 @@ def group_firth_candidate_batch_inputs(
         flat_fallback_indices=jnp.take(flat_fallback_indices, sort_order, axis=0),
         flat_active_mask=jnp.take(flat_active_mask, sort_order, axis=0),
         genotype_matrix_by_variant=jnp.take(genotype_matrix_by_variant, sort_order, axis=0),
+        raw_genotype_matrix_by_variant=jnp.take(raw_genotype_matrix_by_variant, sort_order, axis=0),
+        genotype_flip_mask=jnp.take(genotype_flip_mask, sort_order, axis=0),
+        sparse_correction_mask=jnp.take(sparse_correction_mask, sort_order, axis=0),
         heuristic_firth_mask=jnp.take(heuristic_firth_mask, sort_order, axis=0),
     )
