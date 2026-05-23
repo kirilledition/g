@@ -15,7 +15,6 @@ from g.compute.regenie2_binary import correction as regenie2_binary_correction
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
-from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 
 
@@ -97,41 +96,15 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
             flat_genotype_flip_mask = ordered_candidate_inputs.genotype_flip_mask
             flat_sparse_candidate_mask = ordered_candidate_inputs.sparse_correction_mask
             heuristic_firth_mask = ordered_candidate_inputs.heuristic_firth_mask
-            standard_initial_coefficients = jnp.broadcast_to(
-                chromosome_state.null_logistic_coefficients[None, :],
-                (
-                    candidate_genotype_matrix_by_variant.shape[0],
-                    chromosome_state.null_logistic_coefficients.shape[0],
-                ),
+            initial_coefficients = regenie2_binary_firth_batch.build_firth_initial_coefficients(
+                null_logistic_coefficients=chromosome_state.null_logistic_coefficients,
+                score_beta=jnp.take(result.beta, flat_fallback_indices, axis=0),
+                covariate_matrix=chromosome_state.covariate_matrix,
+                genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
+                phenotype_vector=chromosome_state.phenotype_vector,
+                heuristic_firth_mask=heuristic_firth_mask,
+                kernel_config=kernel_config,
             )
-            standard_initial_beta = (
-                jnp.take(result.beta, flat_fallback_indices, axis=0)
-                if kernel_config.approximate_firth.use_block_math
-                else jnp.zeros_like(jnp.take(result.beta, flat_fallback_indices, axis=0))
-            )
-            standard_initial_coefficients = jnp.concatenate(
-                [
-                    standard_initial_coefficients,
-                    standard_initial_beta[:, None],
-                ],
-                axis=1,
-            )
-            if kernel_config.approximate_firth.use_block_math:
-                heuristic_initial_coefficients = (
-                    regenie2_binary_firth_full_model.initialize_full_model_coefficients_without_mask(
-                        covariate_matrix=chromosome_state.covariate_matrix,
-                        genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
-                        phenotype_vector=chromosome_state.phenotype_vector,
-                        kernel_config=kernel_config,
-                    )
-                )
-                initial_coefficients = jnp.where(
-                    heuristic_firth_mask[:, None],
-                    heuristic_initial_coefficients,
-                    standard_initial_coefficients,
-                )
-            else:
-                initial_coefficients = standard_initial_coefficients
             firth_result = regenie2_binary_firth_batch.compute_firth_variantwise_fixed_batches(
                 covariate_matrix=chromosome_state.covariate_matrix,
                 null_logistic_coefficients=chromosome_state.null_logistic_coefficients,
