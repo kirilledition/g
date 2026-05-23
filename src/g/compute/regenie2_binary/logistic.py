@@ -24,6 +24,19 @@ def compute_regenie_logistic_probability(linear_predictor: jax.Array) -> jax.Arr
     )
 
 
+def compute_clipped_logistic_probability(
+    linear_predictor: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+) -> jax.Array:
+    """Compute sigmoid probabilities clipped by configured binary floors."""
+    probability = jax.nn.sigmoid(linear_predictor)
+    return jnp.clip(
+        probability,
+        kernel_config.numerical.minimum_probability,
+        1.0 - kernel_config.numerical.minimum_probability,
+    )
+
+
 def compute_logistic_deviance(
     phenotype_vector: jax.Array,
     probability_vector: jax.Array,

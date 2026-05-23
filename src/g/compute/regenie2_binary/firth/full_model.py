@@ -8,23 +8,11 @@ import jax.numpy as jnp
 from g import types
 from g.compute.common import linalg, pvalue
 from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import line_search as regenie2_binary_firth_line_search
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 FIRTH_PENALTY_LOG_DETERMINANT_MULTIPLIER = 0.5
-
-
-def compute_logistic_probability(
-    linear_predictor: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> jax.Array:
-    """Compute clipped logistic probabilities."""
-    probability = jax.nn.sigmoid(linear_predictor)
-    return jnp.clip(
-        probability,
-        kernel_config.numerical.minimum_probability,
-        1.0 - kernel_config.numerical.minimum_probability,
-    )
 
 
 def build_full_model_information_matrix(
@@ -258,7 +246,7 @@ def fit_single_variant_firth_logistic_regression(
 
     def compute_probability_vector(coefficients: jax.Array) -> jax.Array:
         linear_predictor = covariate_matrix @ coefficients[:-1] + genotype_vector * coefficients[-1] + loco_offset
-        return compute_logistic_probability(linear_predictor, kernel_config)
+        return regenie2_binary_logistic.compute_clipped_logistic_probability(linear_predictor, kernel_config)
 
     def compute_full_penalized_log_likelihood(coefficients: jax.Array) -> jax.Array:
         probability_vector = compute_probability_vector(coefficients)

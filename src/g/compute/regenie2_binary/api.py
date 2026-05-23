@@ -12,6 +12,7 @@ from g import types as g_types
 from g.compute.common import genotype
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
+from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logistic
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
@@ -77,7 +78,7 @@ def prepare_regenie2_binary_chromosome_state(
         kernel_config=kernel_config,
     )
     null_logistic_coefficients = null_logistic_fit_state.coefficients
-    fitted_probability = regenie2_binary_null_logistic.compute_logistic_probability(
+    fitted_probability = regenie2_binary_logistic.compute_clipped_logistic_probability(
         state.covariate_matrix @ null_logistic_coefficients + loco_offset_float32,
         kernel_config,
     )

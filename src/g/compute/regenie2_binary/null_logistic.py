@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from g.compute.common import linalg
+from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 
 if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import config as regenie2_binary_config
@@ -31,19 +32,6 @@ class NullLogisticFitState:
     converged: jax.Array
 
 
-def compute_logistic_probability(
-    linear_predictor: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> jax.Array:
-    """Compute clipped logistic probabilities."""
-    probability = jax.nn.sigmoid(linear_predictor)
-    return jnp.clip(
-        probability,
-        kernel_config.numerical.minimum_probability,
-        1.0 - kernel_config.numerical.minimum_probability,
-    )
-
-
 def fit_null_logistic_coefficients(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
@@ -63,7 +51,10 @@ def fit_null_logistic_coefficients(
 
     def body_function(state: NullLogisticFitState) -> NullLogisticFitState:
         linear_predictor = covariate_matrix @ state.coefficients + loco_offset
-        fitted_probability = compute_logistic_probability(linear_predictor, kernel_config)
+        fitted_probability = regenie2_binary_logistic.compute_clipped_logistic_probability(
+            linear_predictor,
+            kernel_config,
+        )
         weight_vector = jnp.maximum(
             fitted_probability * (1.0 - fitted_probability),
             kernel_config.numerical.minimum_variance,

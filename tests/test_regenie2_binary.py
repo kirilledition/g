@@ -13,7 +13,7 @@ from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import correction as regenie2_binary_correction
-from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logistic
+from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
@@ -856,7 +856,7 @@ def test_full_model_adjusted_weight_components_match_design_matrix_path() -> Non
         + chromosome_state.loco_offset
     )
     kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
-    probability_vector = regenie2_binary_null_logistic.compute_logistic_probability(
+    probability_vector = regenie2_binary_logistic.compute_clipped_logistic_probability(
         linear_predictor,
         kernel_config,
     )
