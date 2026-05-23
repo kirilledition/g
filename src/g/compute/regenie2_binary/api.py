@@ -66,11 +66,12 @@ def prepare_regenie2_binary_chromosome_state(
     )
     null_logistic_coefficients = null_logistic_fit_state.coefficients
     fitted_probability = regenie2_binary_null_logistic.compute_logistic_probability(
-        state.covariate_matrix @ null_logistic_coefficients + loco_offset_float32
+        state.covariate_matrix @ null_logistic_coefficients + loco_offset_float32,
+        kernel_config,
     )
     bernoulli_variance = jnp.maximum(
         fitted_probability * (1.0 - fitted_probability),
-        regenie2_binary_config.MINIMUM_VARIANCE,
+        kernel_config.minimum_variance,
     )
     square_root_weight = jnp.sqrt(bernoulli_variance)
     score_residual = state.phenotype_vector - fitted_probability
@@ -79,8 +80,7 @@ def prepare_regenie2_binary_chromosome_state(
     weighted_covariate_crossproduct = weighted_covariate_transpose @ weighted_covariate_matrix
     cholesky_factor = jnp.linalg.cholesky(
         weighted_covariate_crossproduct
-        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float32)
-        * regenie2_binary_config.MINIMUM_VARIANCE
+        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float32) * kernel_config.minimum_variance
     )
     weighted_genotype_projection_matrix = jax.lax.linalg.triangular_solve(
         cholesky_factor,
@@ -170,17 +170,19 @@ def prepare_regenie2_multi_binary_chromosome_state(
     )
 
 
-@functools.partial(jax.jit, static_argnames=("correction_plan",))
+@functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config"))
 def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan = g_types.BinaryCorrectionPlan(),
+    kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
     """Compute the uncorrected score-test result for one binary chunk."""
     return regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype.convert_sample_major_to_variant_major(genotype_matrix),
         correction_plan=correction_plan,
+        kernel_config=kernel_config,
     )
 
 
@@ -214,6 +216,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
             chromosome_state=chromosome_state,
             genotype_matrix_by_variant=genotype_matrix_by_variant,
             correction_plan=correction_plan,
+            kernel_config=kernel_config,
         )
 
     def compute_one_trait(trait_index: int) -> regenie2_binary_result.Regenie2BinaryChunkResult:
@@ -248,6 +251,7 @@ def compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         correction_plan=correction_plan,
+        kernel_config=kernel_config,
     )
     return regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,

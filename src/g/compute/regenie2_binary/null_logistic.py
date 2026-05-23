@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
 
 from g.compute.common import linalg
-from g.compute.regenie2_binary import config as regenie2_binary_config
+
+if typing.TYPE_CHECKING:
+    from g.compute.regenie2_binary import config as regenie2_binary_config
 
 
 @jax.tree_util.register_dataclass
@@ -28,13 +31,16 @@ class NullLogisticFitState:
     converged: jax.Array
 
 
-def compute_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
+def compute_logistic_probability(
+    linear_predictor: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+) -> jax.Array:
     """Compute clipped logistic probabilities."""
     probability = jax.nn.sigmoid(linear_predictor)
     return jnp.clip(
         probability,
-        regenie2_binary_config.MINIMUM_PROBABILITY,
-        1.0 - regenie2_binary_config.MINIMUM_PROBABILITY,
+        kernel_config.minimum_probability,
+        1.0 - kernel_config.minimum_probability,
     )
 
 
@@ -57,15 +63,15 @@ def fit_null_logistic_coefficients(
 
     def body_function(state: NullLogisticFitState) -> NullLogisticFitState:
         linear_predictor = covariate_matrix @ state.coefficients + loco_offset
-        fitted_probability = compute_logistic_probability(linear_predictor)
+        fitted_probability = compute_logistic_probability(linear_predictor, kernel_config)
         weight_vector = jnp.maximum(
             fitted_probability * (1.0 - fitted_probability),
-            regenie2_binary_config.MINIMUM_VARIANCE,
+            kernel_config.minimum_variance,
         )
         score_vector = covariate_matrix.T @ (phenotype_vector - fitted_probability)
         information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
         cholesky_factor = jnp.linalg.cholesky(
-            information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * regenie2_binary_config.MINIMUM_VARIANCE
+            information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * kernel_config.minimum_variance
         )
         coefficient_delta = linalg.solve_positive_definite_system(cholesky_factor, score_vector)
         updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)

@@ -17,20 +17,25 @@ if typing.TYPE_CHECKING:
     from g import types
 
 
-def compute_positive_variance_mask(variance: jax.Array, reference_sum_squares: jax.Array) -> jax.Array:
+def compute_positive_variance_mask(
+    variance: jax.Array,
+    reference_sum_squares: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+) -> jax.Array:
     """Return a stable positive-variance mask after covariate projection.
 
     Args:
         variance: Residualized score-test variance.
         reference_sum_squares: Pre-projection weighted genotype sum of squares.
+        kernel_config: Binary-kernel numerical policy.
 
     Returns:
         Boolean mask for numerically usable score-test variance.
 
     """
     variance_floor = jnp.maximum(
-        regenie2_binary_config.MINIMUM_VARIANCE,
-        reference_sum_squares * regenie2_binary_config.RELATIVE_VARIANCE_TOLERANCE,
+        kernel_config.minimum_variance,
+        reference_sum_squares * kernel_config.relative_variance_tolerance,
     )
     return variance > variance_floor
 
@@ -39,6 +44,7 @@ def compute_binary_score_test_chunk_variant_major(
     chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     correction_plan: types.BinaryCorrectionPlan,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
     """Compute the binary score test from canonical variant-major genotypes.
 
@@ -46,6 +52,7 @@ def compute_binary_score_test_chunk_variant_major(
         chromosome_state: Chromosome-specific null model state.
         genotype_matrix_by_variant: Variant-major dosage matrix.
         correction_plan: Binary fallback/correction policy.
+        kernel_config: Binary-kernel numerical policy.
 
     Returns:
         Uncorrected score-test result for the chunk.
@@ -56,6 +63,7 @@ def compute_binary_score_test_chunk_variant_major(
         chromosome_state=multi_chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         correction_plan=correction_plan,
+        kernel_config=kernel_config,
     )
     return regenie2_binary_result.squeeze_single_binary_score_result(multi_result)
 
@@ -64,6 +72,7 @@ def compute_multi_binary_score_test_chunk_variant_major(
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     correction_plan: types.BinaryCorrectionPlan,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Compute batched binary score tests for trait-major states and variant-major genotypes.
 
@@ -71,6 +80,7 @@ def compute_multi_binary_score_test_chunk_variant_major(
         chromosome_state: Trait-major chromosome-specific null model state.
         genotype_matrix_by_variant: Variant-major dosage matrix.
         correction_plan: Binary fallback/correction policy.
+        kernel_config: Binary-kernel numerical policy.
 
     Returns:
         Trait-major score-test result for the chunk.
@@ -96,7 +106,7 @@ def compute_multi_binary_score_test_chunk_variant_major(
     variance = jnp.maximum(weighted_genotype_sum_squares - projection_sum_squares, 0.0)
     score = jnp.einsum("vs,ts->tv", genotype_matrix_by_variant_float32, chromosome_state.score_residual)
     null_logistic_converged = chromosome_state.null_logistic_converged[:, None]
-    positive_variance_mask = compute_positive_variance_mask(variance, weighted_genotype_sum_squares)
+    positive_variance_mask = compute_positive_variance_mask(variance, weighted_genotype_sum_squares, kernel_config)
     statistic_mask = positive_variance_mask & null_logistic_converged
     inverse_variance = jnp.where(statistic_mask, jnp.reciprocal(variance), 0.0)
     beta = jnp.where(

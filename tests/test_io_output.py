@@ -361,6 +361,9 @@ def build_test_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConf
     return regenie2_binary_config.BinaryKernelConfig(
         maximum_null_iterations=13,
         null_logistic_coefficient_tolerance=1.0e-5,
+        minimum_probability=1.0e-7,
+        minimum_variance=1.0e-9,
+        relative_variance_tolerance=2.0e-6,
         firth_batch_size=7,
         firth_candidate_capacity=11,
         firth_maximum_iterations=17,

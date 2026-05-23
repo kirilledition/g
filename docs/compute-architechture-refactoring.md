@@ -880,6 +880,7 @@ Completed cleanup so far:
 * Split binary pytree containers out of the old catch-all `regenie2_binary/types.py`: state containers now live in `regenie2_binary/state.py`, result containers live in `regenie2_binary/result.py`, and the obsolete types module was removed.
 * Promoted the remaining Firth scalar policy values into `BinaryKernelConfig` and `GComputeConfig`: pseudo-response scale, sparse-carrier dosage threshold, full-model step-halving scale, and null-Firth step-halving scale. The binary Firth code now reads these through the execution plan instead of hidden module constants.
 * Moved public linear and binary state-preparation entry points into `regenie2_linear/api.py` and `regenie2_binary/api.py`, so production engine callback and warm-cache code now uses the public compute API boundary for both preparation and chunk execution.
+* Promoted binary probability/variance floors and relative score-variance tolerance into `BinaryKernelConfig` and `GComputeConfig`; score tests, null logistic state preparation, and Firth solvers now receive this numerical policy from the execution plan instead of reading module globals directly.
 
 Intentional remaining adapters:
 

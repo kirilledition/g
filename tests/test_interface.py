@@ -51,6 +51,9 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-firth-candidate-capacity": 16,
         "g-binary-null-maximum-iterations": 25,
         "g-binary-null-coefficient-tolerance": 1.0e-5,
+        "g-binary-minimum-probability": 1.0e-7,
+        "g-binary-minimum-variance": 1.0e-9,
+        "g-binary-relative-variance-tolerance": 2.0e-6,
         "g-firth-maximum-iterations": 30,
         "g-firth-gradient-tolerance": 1.0e-5,
         "g-firth-coefficient-tolerance": 1.0e-5,
@@ -89,6 +92,10 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_compute.firth_batch_size == 8
     assert regenie_config.g_compute.firth_candidate_capacity == 16
     assert regenie_config.g_compute.binary_null_maximum_iterations == 25
+    assert regenie_config.g_compute.binary_null_coefficient_tolerance == 1.0e-5
+    assert regenie_config.g_compute.binary_minimum_probability == 1.0e-7
+    assert regenie_config.g_compute.binary_minimum_variance == 1.0e-9
+    assert regenie_config.g_compute.binary_relative_variance_tolerance == 2.0e-6
     assert regenie_config.g_compute.use_block_firth_math is True
     assert regenie_config.g_compute.bgen_decode_tile_variant_count == 32
     assert regenie_config.g_compute.jax_matmul_precision == types.JaxMatmulPrecision.HIGHEST

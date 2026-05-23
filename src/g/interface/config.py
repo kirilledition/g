@@ -19,6 +19,9 @@ DEFAULT_FIRTH_BATCH_SIZE = 64
 DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
 DEFAULT_BINARY_NULL_MAXIMUM_ITERATIONS = 50
 DEFAULT_BINARY_NULL_COEFFICIENT_TOLERANCE = 1.0e-6
+DEFAULT_BINARY_MINIMUM_PROBABILITY = 1.0e-6
+DEFAULT_BINARY_MINIMUM_VARIANCE = 1.0e-8
+DEFAULT_BINARY_RELATIVE_VARIANCE_TOLERANCE = 1.0e-6
 DEFAULT_FIRTH_MAXIMUM_ITERATIONS = 250
 DEFAULT_FIRTH_GRADIENT_TOLERANCE = 2.5e-4
 DEFAULT_FIRTH_COEFFICIENT_TOLERANCE = 2.5e-4
@@ -113,6 +116,9 @@ class GComputeConfig:
     firth_candidate_capacity: int = DEFAULT_FIRTH_CANDIDATE_CAPACITY
     binary_null_maximum_iterations: int = DEFAULT_BINARY_NULL_MAXIMUM_ITERATIONS
     binary_null_coefficient_tolerance: float = DEFAULT_BINARY_NULL_COEFFICIENT_TOLERANCE
+    binary_minimum_probability: float = DEFAULT_BINARY_MINIMUM_PROBABILITY
+    binary_minimum_variance: float = DEFAULT_BINARY_MINIMUM_VARIANCE
+    binary_relative_variance_tolerance: float = DEFAULT_BINARY_RELATIVE_VARIANCE_TOLERANCE
     firth_maximum_iterations: int = DEFAULT_FIRTH_MAXIMUM_ITERATIONS
     firth_gradient_tolerance: float = DEFAULT_FIRTH_GRADIENT_TOLERANCE
     firth_coefficient_tolerance: float = DEFAULT_FIRTH_COEFFICIENT_TOLERANCE
@@ -386,6 +392,18 @@ def from_normalized_options(
                 normalized_options.get(
                     "g-binary-null-coefficient-tolerance",
                     DEFAULT_BINARY_NULL_COEFFICIENT_TOLERANCE,
+                )
+            ),
+            binary_minimum_probability=float(
+                normalized_options.get("g-binary-minimum-probability", DEFAULT_BINARY_MINIMUM_PROBABILITY)
+            ),
+            binary_minimum_variance=float(
+                normalized_options.get("g-binary-minimum-variance", DEFAULT_BINARY_MINIMUM_VARIANCE)
+            ),
+            binary_relative_variance_tolerance=float(
+                normalized_options.get(
+                    "g-binary-relative-variance-tolerance",
+                    DEFAULT_BINARY_RELATIVE_VARIANCE_TOLERANCE,
                 )
             ),
             firth_maximum_iterations=int(
@@ -713,6 +731,9 @@ def normalize_option_name(option_name: str) -> str:
         "g_firth_candidate_capacity": "g-firth-candidate-capacity",
         "g_binary_null_maximum_iterations": "g-binary-null-maximum-iterations",
         "g_binary_null_coefficient_tolerance": "g-binary-null-coefficient-tolerance",
+        "g_binary_minimum_probability": "g-binary-minimum-probability",
+        "g_binary_minimum_variance": "g-binary-minimum-variance",
+        "g_binary_relative_variance_tolerance": "g-binary-relative-variance-tolerance",
         "g_firth_maximum_iterations": "g-firth-maximum-iterations",
         "g_firth_gradient_tolerance": "g-firth-gradient-tolerance",
         "g_firth_coefficient_tolerance": "g-firth-coefficient-tolerance",
@@ -889,6 +910,12 @@ def validate_config(config: RegenieConfig) -> None:
         "--g-binary-null-coefficient-tolerance",
         config.g_compute.binary_null_coefficient_tolerance,
     )
+    validate_probability_floor("--g-binary-minimum-probability", config.g_compute.binary_minimum_probability)
+    validate_positive_float("--g-binary-minimum-variance", config.g_compute.binary_minimum_variance)
+    validate_positive_float(
+        "--g-binary-relative-variance-tolerance",
+        config.g_compute.binary_relative_variance_tolerance,
+    )
     validate_positive_integer("--g-firth-maximum-iterations", config.g_compute.firth_maximum_iterations)
     validate_positive_float("--g-firth-gradient-tolerance", config.g_compute.firth_gradient_tolerance)
     validate_positive_float("--g-firth-coefficient-tolerance", config.g_compute.firth_coefficient_tolerance)
@@ -1022,6 +1049,14 @@ def validate_positive_float(option_name: str, value: float) -> None:
         raise ValueError(message)
 
 
+def validate_probability_floor(option_name: str, value: float) -> None:
+    """Validate that a probability floor remains below a symmetric midpoint."""
+    validate_positive_float(option_name, value)
+    if value >= 0.5:
+        message = f"{option_name} must be less than 0.5."
+        raise ValueError(message)
+
+
 def load_toml(path: Path) -> RegenieConfig:
     """Load a configuration from a TOML file."""
     raw_config = read_toml_option_dictionary(path)
@@ -1115,6 +1150,9 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             "firth-candidate-capacity": config.g_compute.firth_candidate_capacity,
             "binary-null-maximum-iterations": config.g_compute.binary_null_maximum_iterations,
             "binary-null-coefficient-tolerance": config.g_compute.binary_null_coefficient_tolerance,
+            "binary-minimum-probability": config.g_compute.binary_minimum_probability,
+            "binary-minimum-variance": config.g_compute.binary_minimum_variance,
+            "binary-relative-variance-tolerance": config.g_compute.binary_relative_variance_tolerance,
             "firth-maximum-iterations": config.g_compute.firth_maximum_iterations,
             "firth-gradient-tolerance": config.g_compute.firth_gradient_tolerance,
             "firth-coefficient-tolerance": config.g_compute.firth_coefficient_tolerance,

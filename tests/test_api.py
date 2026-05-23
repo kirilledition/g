@@ -151,6 +151,9 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
             firth_candidate_capacity=11,
             binary_null_maximum_iterations=13,
             binary_null_coefficient_tolerance=1.0e-5,
+            binary_minimum_probability=1.0e-7,
+            binary_minimum_variance=1.0e-9,
+            binary_relative_variance_tolerance=2.0e-6,
             firth_maximum_iterations=17,
             firth_gradient_tolerance=2.0e-5,
             firth_coefficient_tolerance=3.0e-5,
@@ -178,6 +181,10 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
     assert kernel_config.firth_batch_size == 7
     assert kernel_config.firth_candidate_capacity == 11
     assert kernel_config.maximum_null_iterations == 13
+    assert kernel_config.null_logistic_coefficient_tolerance == 1.0e-5
+    assert kernel_config.minimum_probability == 1.0e-7
+    assert kernel_config.minimum_variance == 1.0e-9
+    assert kernel_config.relative_variance_tolerance == 2.0e-6
     assert kernel_config.firth_pseudo_maximum_iterations == 19
     assert kernel_config.firth_pseudo_inner_maximum_iterations == 23
     assert kernel_config.firth_newton_raphson_zero_start_iterations == 29
@@ -561,6 +568,9 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
             "g-firth-candidate-capacity": 11,
             "g-binary-null-maximum-iterations": 13,
             "g-binary-null-coefficient-tolerance": 1.0e-5,
+            "g-binary-minimum-probability": 1.0e-7,
+            "g-binary-minimum-variance": 1.0e-9,
+            "g-binary-relative-variance-tolerance": 2.0e-6,
             "g-firth-maximum-iterations": 17,
             "g-firth-gradient-tolerance": 2.0e-5,
             "g-firth-coefficient-tolerance": 3.0e-5,
@@ -603,6 +613,9 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
     assert kernel_config.firth_candidate_capacity == 11
     assert kernel_config.maximum_null_iterations == 13
     assert kernel_config.null_logistic_coefficient_tolerance == 1.0e-5
+    assert kernel_config.minimum_probability == 1.0e-7
+    assert kernel_config.minimum_variance == 1.0e-9
+    assert kernel_config.relative_variance_tolerance == 2.0e-6
     assert kernel_config.firth_maximum_iterations == 17
     assert kernel_config.firth_gradient_tolerance == 2.0e-5
     assert kernel_config.firth_coefficient_tolerance == 3.0e-5

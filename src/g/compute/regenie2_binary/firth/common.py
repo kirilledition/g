@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import typing
+
 import jax
 import jax.numpy as jnp
 
 from g import types
-from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+
+if typing.TYPE_CHECKING:
+    from g.compute.regenie2_binary import config as regenie2_binary_config
 
 FIRTH_PENALTY_LOG_DETERMINANT_MULTIPLIER = 0.5
 
@@ -16,12 +20,13 @@ def compute_firth_penalized_log_likelihood_from_cholesky(
     probability_vector: jax.Array,
     phenotype_vector: jax.Array,
     information_cholesky_factor: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> jax.Array:
     """Compute Firth-penalized log-likelihood from a Cholesky factor."""
     clipped_probability = jnp.clip(
         probability_vector,
-        regenie2_binary_config.MINIMUM_PROBABILITY,
-        1.0 - regenie2_binary_config.MINIMUM_PROBABILITY,
+        kernel_config.minimum_probability,
+        1.0 - kernel_config.minimum_probability,
     )
     true_class_probability = jnp.where(phenotype_vector == 1.0, clipped_probability, 1.0 - clipped_probability)
     log_likelihood = jnp.sum(jnp.log(true_class_probability))

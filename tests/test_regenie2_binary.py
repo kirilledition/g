@@ -791,11 +791,16 @@ def test_full_model_adjusted_weight_components_match_design_matrix_path() -> Non
         + genotype_vector * coefficients[-1]
         + chromosome_state.loco_offset
     )
-    probability_vector = regenie2_binary_null_logistic.compute_logistic_probability(linear_predictor)
+    kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    probability_vector = regenie2_binary_null_logistic.compute_logistic_probability(
+        linear_predictor,
+        kernel_config,
+    )
     information_components = regenie2_binary_firth_full_model.compute_information_components(
         chromosome_state.covariate_matrix,
         genotype_vector,
         probability_vector,
+        kernel_config,
     )
     full_design_matrix = jnp.concatenate([chromosome_state.covariate_matrix, genotype_vector[:, None]], axis=1)
 
@@ -804,6 +809,7 @@ def test_full_model_adjusted_weight_components_match_design_matrix_path() -> Non
         probability_vector=probability_vector,
         information_matrix=information_components.information_matrix,
         phenotype_vector=chromosome_state.phenotype_vector,
+        kernel_config=kernel_config,
     )
     block_components = regenie2_binary_firth_full_model.compute_full_model_adjusted_weight_components_from_parts(
         covariate_matrix=chromosome_state.covariate_matrix,
@@ -811,6 +817,7 @@ def test_full_model_adjusted_weight_components_match_design_matrix_path() -> Non
         probability_vector=probability_vector,
         information_matrix=information_components.information_matrix,
         phenotype_vector=chromosome_state.phenotype_vector,
+        kernel_config=kernel_config,
     )
 
     np.testing.assert_allclose(
@@ -1331,6 +1338,7 @@ def test_variant_major_approximate_firth_candidate_selection_matches_sample_majo
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=jnp.transpose(fixture.genotype_matrix),
         correction_plan=correction_plan,
+        kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
     )
 
     assert_binary_chunk_results_match(sample_major_score_result, variant_major_score_result)

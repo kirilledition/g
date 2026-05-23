@@ -42,6 +42,7 @@ def compute_scalar_firth_components(
     active_sample_mask: jax.Array,
     non_active_deviance: jax.Array,
     beta: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.ScalarFirthComponents:
     """Compute REGENIE scalar approximate-Firth quantities at one beta."""
     linear_predictor = offset_vector + genotype_vector * beta
@@ -62,7 +63,7 @@ def compute_scalar_firth_components(
     score = jnp.sum(jnp.where(active_sample_mask, genotype_vector * (adjusted_response - probability_vector), 0.0))
     valid = (
         jnp.isfinite(genotype_information)
-        & (genotype_information > regenie2_binary_config.MINIMUM_VARIANCE)
+        & (genotype_information > kernel_config.minimum_variance)
         & jnp.isfinite(penalized_deviance)
         & jnp.isfinite(score)
         & jnp.all(jnp.isfinite(probability_vector))
@@ -174,6 +175,7 @@ def fit_scalar_pseudo_firth(
     tolerance: jax.Array,
     inner_maximum_iterations: int,
     maximum_step_size: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
     """Run REGENIE's scalar pseudo-Firth approximate correction."""
 
@@ -190,6 +192,7 @@ def fit_scalar_pseudo_firth(
             active_sample_mask=active_sample_mask,
             non_active_deviance=non_active_deviance,
             beta=state.beta,
+            kernel_config=kernel_config,
         )
         updated_outer_iteration_count = state.outer_iteration_count + jnp.asarray(1, dtype=jnp.int32)
         converged = (jnp.abs(components.score) < tolerance) & (updated_outer_iteration_count >= 2)
@@ -248,6 +251,7 @@ def fit_scalar_pseudo_firth(
         active_sample_mask=active_sample_mask,
         non_active_deviance=non_active_deviance,
         beta=initial_beta,
+        kernel_config=kernel_config,
     )
     final_state = jax.lax.while_loop(
         condition_function,
@@ -276,6 +280,7 @@ def fit_scalar_pseudo_firth(
         active_sample_mask=active_sample_mask,
         non_active_deviance=non_active_deviance,
         beta=final_state.beta,
+        kernel_config=kernel_config,
     )
     maximum_iteration_failure = (~final_state.converged) & (~final_state.failed)
     chi_squared = deviance_null - final_components.penalized_deviance
@@ -321,6 +326,7 @@ def run_scalar_line_search(
     current_penalized_deviance: jax.Array,
     initial_step_size: jax.Array,
     maximum_attempts: int,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.ScalarLineSearchState:
     """Run REGENIE scalar NR step-halving against penalized deviance."""
 
@@ -339,6 +345,7 @@ def run_scalar_line_search(
             active_sample_mask=active_sample_mask,
             non_active_deviance=non_active_deviance,
             beta=candidate_beta,
+            kernel_config=kernel_config,
         )
         accepted = components.valid & (components.penalized_deviance < current_penalized_deviance)
         return regenie2_binary_firth_types.ScalarLineSearchState(
@@ -364,6 +371,7 @@ def run_scalar_line_search(
         active_sample_mask=active_sample_mask,
         non_active_deviance=non_active_deviance,
         beta=current_beta,
+        kernel_config=kernel_config,
     )
     return jax.lax.while_loop(
         condition_function,
@@ -395,6 +403,7 @@ def fit_scalar_newton_raphson_firth(
     tolerance: jax.Array,
     maximum_step_size: jax.Array,
     line_search_maximum_attempts: int,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
     """Run REGENIE's scalar Newton-Raphson approximate-Firth fallback."""
 
@@ -428,6 +437,7 @@ def fit_scalar_newton_raphson_firth(
             current_penalized_deviance=state.penalized_deviance,
             initial_step_size=step_size,
             maximum_attempts=line_search_maximum_attempts,
+            kernel_config=kernel_config,
         )
         accepted_step_size = jnp.where(
             line_search_state.accepted,
@@ -442,6 +452,7 @@ def fit_scalar_newton_raphson_firth(
             active_sample_mask=active_sample_mask,
             non_active_deviance=non_active_deviance,
             beta=updated_beta,
+            kernel_config=kernel_config,
         )
         failed = (~state.failed) & ((~updated_components.valid) | (~line_search_state.valid))
         return regenie2_binary_firth_types.ScalarNewtonRaphsonState(
@@ -468,6 +479,7 @@ def fit_scalar_newton_raphson_firth(
         active_sample_mask=active_sample_mask,
         non_active_deviance=non_active_deviance,
         beta=initial_beta,
+        kernel_config=kernel_config,
     )
     final_state = jax.lax.while_loop(
         condition_function,
@@ -496,6 +508,7 @@ def fit_scalar_newton_raphson_firth(
         active_sample_mask=active_sample_mask,
         non_active_deviance=non_active_deviance,
         beta=final_state.beta,
+        kernel_config=kernel_config,
     )
     maximum_iteration_failure = (~final_state.converged) & (~final_state.failed)
     chi_squared = deviance_null - final_components.penalized_deviance
@@ -581,6 +594,7 @@ def fit_single_variant_regenie_approximate_firth(
         tolerance=tolerance,
         inner_maximum_iterations=kernel_config.firth_pseudo_inner_maximum_iterations,
         maximum_step_size=maximum_step_size,
+        kernel_config=kernel_config,
     )
     run_zero_start = (
         (~pseudo_result.valid) & sparse_correction & (jnp.abs(warm_start_beta) > jnp.asarray(0.0, dtype=scalar_dtype))
@@ -597,6 +611,7 @@ def fit_single_variant_regenie_approximate_firth(
         tolerance=tolerance,
         maximum_step_size=maximum_step_size,
         line_search_maximum_attempts=kernel_config.firth_line_search_maximum_attempts,
+        kernel_config=kernel_config,
     )
     run_warm_start = (~pseudo_result.valid) & (~(run_zero_start & zero_start_result.valid))
     warm_start_result = fit_scalar_newton_raphson_firth(
@@ -611,6 +626,7 @@ def fit_single_variant_regenie_approximate_firth(
         tolerance=tolerance,
         maximum_step_size=maximum_step_size,
         line_search_maximum_attempts=kernel_config.firth_line_search_maximum_attempts,
+        kernel_config=kernel_config,
     )
     use_zero_start = run_zero_start & zero_start_result.valid
     use_warm_start = (~pseudo_result.valid) & (~use_zero_start) & warm_start_result.valid

@@ -166,6 +166,9 @@ def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie
     return binary_config_module.BinaryKernelConfig(
         maximum_null_iterations=compute_config.binary_null_maximum_iterations,
         null_logistic_coefficient_tolerance=compute_config.binary_null_coefficient_tolerance,
+        minimum_probability=compute_config.binary_minimum_probability,
+        minimum_variance=compute_config.binary_minimum_variance,
+        relative_variance_tolerance=compute_config.binary_relative_variance_tolerance,
         firth_batch_size=compute_config.firth_batch_size,
         firth_candidate_capacity=compute_config.firth_candidate_capacity,
         firth_maximum_iterations=compute_config.firth_maximum_iterations,

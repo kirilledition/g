@@ -44,6 +44,9 @@ class BinaryKernelConfig:
     Attributes:
         maximum_null_iterations: Maximum IRLS iterations for the null logistic model.
         null_logistic_coefficient_tolerance: Coefficient convergence tolerance for the null logistic model.
+        minimum_probability: Logistic probability clipping floor.
+        minimum_variance: Bernoulli and information-matrix variance floor.
+        relative_variance_tolerance: Relative score-test variance floor multiplier.
         firth_batch_size: Fixed batch size for device-resident Firth fallback lanes.
         firth_candidate_capacity: Preferred fixed candidate capacity before falling back to full chunk capacity.
         firth_maximum_iterations: Maximum Firth solver iterations.
@@ -72,6 +75,9 @@ class BinaryKernelConfig:
 
     maximum_null_iterations: int
     null_logistic_coefficient_tolerance: float
+    minimum_probability: float
+    minimum_variance: float
+    relative_variance_tolerance: float
     firth_batch_size: int
     firth_candidate_capacity: int
     firth_maximum_iterations: int
@@ -103,6 +109,18 @@ class BinaryKernelConfig:
             raise ValueError(message)
         if self.null_logistic_coefficient_tolerance <= 0.0:
             message = "Null logistic coefficient tolerance must be positive."
+            raise ValueError(message)
+        if self.minimum_probability <= 0.0:
+            message = "Minimum probability must be positive."
+            raise ValueError(message)
+        if self.minimum_probability >= 0.5:
+            message = "Minimum probability must be less than 0.5."
+            raise ValueError(message)
+        if self.minimum_variance <= 0.0:
+            message = "Minimum variance must be positive."
+            raise ValueError(message)
+        if self.relative_variance_tolerance <= 0.0:
+            message = "Relative variance tolerance must be positive."
             raise ValueError(message)
         if self.firth_batch_size <= 0:
             message = "Firth batch size must be positive."
@@ -175,6 +193,9 @@ class BinaryKernelConfig:
 DEFAULT_BINARY_KERNEL_CONFIG = BinaryKernelConfig(
     maximum_null_iterations=DEFAULT_MAXIMUM_NULL_ITERATIONS,
     null_logistic_coefficient_tolerance=NULL_LOGISTIC_COEFFICIENT_TOLERANCE,
+    minimum_probability=MINIMUM_PROBABILITY,
+    minimum_variance=MINIMUM_VARIANCE,
+    relative_variance_tolerance=RELATIVE_VARIANCE_TOLERANCE,
     firth_batch_size=regenie2_binary_candidate_planning.DEFAULT_FIRTH_BATCH_SIZE,
     firth_candidate_capacity=regenie2_binary_candidate_planning.DEFAULT_FIRTH_CANDIDATE_CAPACITY,
     firth_maximum_iterations=FIRTH_MAXIMUM_ITERATIONS,
