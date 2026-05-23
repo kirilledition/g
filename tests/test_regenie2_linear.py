@@ -11,8 +11,8 @@ import numpy as np
 import numpy.testing
 import numpy.typing as npt
 
-import g.compute.regenie2_linear as regenie2_linear
 from g.compute.common import genotype, linalg, pvalue
+from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import state as regenie2_linear_state
 
 if typing.TYPE_CHECKING:

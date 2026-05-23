@@ -331,7 +331,7 @@ def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -
             return_value="chromosome-state",
         ),
         patch(
-            "g.compute.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
+            "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ),
     ):
@@ -368,7 +368,7 @@ def test_linear_callback_does_not_block_chunk_compute_without_timing() -> None:
 
     with (
         patch(
-            "g.compute.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
+            "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ),
         patch("g.engine.callbacks.block_until_ready") as mock_block_until_ready,
@@ -406,7 +406,7 @@ def test_linear_callback_blocks_chunk_compute_with_timing() -> None:
 
     with (
         patch(
-            "g.compute.regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state",
+            "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ),
         patch("g.engine.callbacks.block_until_ready") as mock_block_until_ready,
