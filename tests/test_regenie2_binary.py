@@ -19,7 +19,7 @@ from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary import variant_major as regenie2_binary_variant_major
 from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
-from g.compute.regenie2_binary.firth import full as regenie2_binary_firth_full
+from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import line_search as regenie2_binary_firth_line_search
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
@@ -743,20 +743,20 @@ def test_full_model_adjusted_weight_components_match_design_matrix_path() -> Non
         + chromosome_state.loco_offset
     )
     probability_vector = regenie2_binary_null_logistic.compute_logistic_probability(linear_predictor)
-    information_components = regenie2_binary_firth_full.compute_information_components(
+    information_components = regenie2_binary_firth_full_model.compute_information_components(
         chromosome_state.covariate_matrix,
         genotype_vector,
         probability_vector,
     )
     full_design_matrix = jnp.concatenate([chromosome_state.covariate_matrix, genotype_vector[:, None]], axis=1)
 
-    existing_components = regenie2_binary_firth_full.compute_full_model_adjusted_weight_components(
+    existing_components = regenie2_binary_firth_full_model.compute_full_model_adjusted_weight_components(
         full_design_matrix=full_design_matrix,
         probability_vector=probability_vector,
         information_matrix=information_components.information_matrix,
         phenotype_vector=chromosome_state.phenotype_vector,
     )
-    block_components = regenie2_binary_firth_full.compute_full_model_adjusted_weight_components_from_parts(
+    block_components = regenie2_binary_firth_full_model.compute_full_model_adjusted_weight_components_from_parts(
         covariate_matrix=chromosome_state.covariate_matrix,
         genotype_vector=genotype_vector,
         probability_vector=probability_vector,

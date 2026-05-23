@@ -845,6 +845,7 @@ Completed cleanup so far:
 * Extracted the shared REGENIE binary logistic clipping and deviance helpers out of the binary facade and Firth solvers into `regenie2_binary/logistic.py`.
 * Centralized binary score-test result constructors in `regenie2_binary/result.py` so empty Firth diagnostics are built in one module.
 * Split Firth step-halving and convergence checks from `firth/common.py` into `firth/line_search.py`.
+* Renamed the Firth solver modules to match their statistical roles: `firth/scalar_approx.py` and `firth/full_model.py`.
 
 Intentional remaining adapters:
 

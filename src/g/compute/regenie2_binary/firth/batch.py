@@ -8,8 +8,8 @@ import jax
 import jax.numpy as jnp
 
 from g.compute.common import linalg
-from g.compute.regenie2_binary.firth import full as regenie2_binary_firth_full
-from g.compute.regenie2_binary.firth import scalar as regenie2_binary_firth_scalar
+from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
+from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 if typing.TYPE_CHECKING:
@@ -121,7 +121,7 @@ def compute_firth_variantwise(
         sparse_correction: jax.Array,
     ) -> regenie2_binary_firth_types.FirthVariantResult:
         if not kernel_config.use_block_firth_math:
-            return regenie2_binary_firth_scalar.fit_single_variant_regenie_approximate_firth(
+            return regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
                 phenotype_vector=scalar_phenotype_vector,
                 genotype_vector=jnp.asarray(genotype_vector, dtype=jnp.float64),
                 offset_vector=scalar_offset_vector,
@@ -132,7 +132,7 @@ def compute_firth_variantwise(
                 null_failed=~jnp.isfinite(null_penalized_log_likelihood),
                 kernel_config=kernel_config,
             )
-        return regenie2_binary_firth_full.fit_single_variant_firth_logistic_regression(
+        return regenie2_binary_firth_full_model.fit_single_variant_firth_logistic_regression(
             covariate_matrix=covariate_matrix,
             phenotype_vector=phenotype_vector,
             genotype_vector=genotype_vector,

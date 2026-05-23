@@ -10,7 +10,7 @@ from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
-from g.compute.regenie2_binary.firth import scalar as regenie2_binary_firth_scalar
+from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 
 
 def build_scalar_fixture() -> tuple[regenie2_binary_types.Regenie2BinaryChromosomeState, jax.Array, jax.Array]:
@@ -63,7 +63,7 @@ def test_scalar_pseudo_firth_components_match_formula() -> None:
     offset_vector = jnp.asarray([-0.2, 0.1, 0.3], dtype=jnp.float32)
     active_sample_mask = jnp.asarray([True, True, True], dtype=jnp.bool_)
 
-    components = regenie2_binary_firth_scalar.compute_scalar_firth_components(
+    components = regenie2_binary_firth_scalar_approx.compute_scalar_firth_components(
         phenotype_vector=phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=offset_vector,
@@ -98,7 +98,7 @@ def test_scalar_approximate_firth_uses_nr_fallback_after_pseudo_attempt() -> Non
     chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
     offset_vector = chromosome_state.null_firth_offset
 
-    result = regenie2_binary_firth_scalar.fit_single_variant_regenie_approximate_firth(
+    result = regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
         phenotype_vector=chromosome_state.phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=offset_vector,
@@ -120,7 +120,7 @@ def test_sparse_carrier_only_flag_is_recorded_for_sparse_candidate() -> None:
     chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
     offset_vector = chromosome_state.null_firth_offset
 
-    result = regenie2_binary_firth_scalar.fit_single_variant_regenie_approximate_firth(
+    result = regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
         phenotype_vector=chromosome_state.phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=offset_vector,
@@ -153,7 +153,7 @@ def test_collinear_scalar_candidate_gets_numerical_failure_label() -> None:
         raw_genotype_vector[None, :],
     )[0]
 
-    result = regenie2_binary_firth_scalar.fit_single_variant_regenie_approximate_firth(
+    result = regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
         phenotype_vector=phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=chromosome_state.null_firth_offset,
