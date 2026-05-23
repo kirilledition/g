@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import functools
-import typing
 
 import jax
 
@@ -15,31 +14,6 @@ from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary import variant_major_correction as regenie2_binary_variant_major_correction
-
-BinaryScoreTestChunkComputeFunction = typing.Callable[
-    [regenie2_binary_types.Regenie2BinaryChromosomeState, jax.Array, g_types.BinaryCorrectionPlan],
-    regenie2_binary_types.Regenie2BinaryChunkResult,
-]
-BinaryChunkComputeFunction = typing.Callable[
-    [
-        regenie2_binary_types.Regenie2BinaryChromosomeState,
-        jax.Array,
-        g_types.BinaryCorrectionPlan,
-        jax.Array | None,
-        regenie2_binary_types.BinaryKernelConfig,
-    ],
-    regenie2_binary_types.Regenie2BinaryChunkResult,
-]
-BinaryVariantMajorChunkComputeFunction = typing.Callable[
-    [
-        regenie2_binary_types.Regenie2BinaryChromosomeState,
-        jax.Array,
-        g_types.BinaryCorrectionPlan,
-        jax.Array | None,
-        regenie2_binary_types.BinaryKernelConfig,
-    ],
-    regenie2_binary_types.Regenie2BinaryChunkResult,
-]
 
 
 @functools.partial(jax.jit, static_argnames=("correction_plan",))
@@ -166,14 +140,10 @@ def compute_regenie2_binary_chunk(
     chromosome_state = regenie2_binary_state.prepare_regenie2_binary_chromosome_state(
         state, loco_offset, correction_plan, kernel_config
     )
-    compute_regenie2_binary_chunk_from_state = typing.cast(
-        "BinaryChunkComputeFunction",
-        compute_regenie2_binary_chunk_from_chromosome_state,
-    )
-    return compute_regenie2_binary_chunk_from_state(
-        chromosome_state,
-        genotype_matrix,
-        correction_plan,
-        sparse_candidate_mask,
-        kernel_config,
+    return compute_regenie2_binary_chunk_from_chromosome_state(
+        chromosome_state=chromosome_state,
+        genotype_matrix=genotype_matrix,
+        correction_plan=correction_plan,
+        sparse_candidate_mask=sparse_candidate_mask,
+        kernel_config=kernel_config,
     )
