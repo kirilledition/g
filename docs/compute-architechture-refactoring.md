@@ -115,6 +115,7 @@ src/g/compute/
     null_logistic.py
     score.py
     candidates.py
+    correction.py
     variant_major_correction.py
     diagnostics.py
 
@@ -767,6 +768,7 @@ src/g/compute/
     null_logistic.py
     score.py
     candidates.py
+    correction.py
     variant_major_correction.py
     diagnostics.py
     api.py
@@ -894,6 +896,7 @@ Completed cleanup so far:
 * Moved approximate-Firth genotype residualization from `firth/batch.py` into `firth/scalar_approx.py`, so solver-specific genotype preparation lives with the scalar approximate-Firth solver.
 * Moved the Firth separation pre-dispatch heuristic from `firth/batch.py` into `regenie2_binary/candidates.py`, keeping candidate-lane ordering decisions with candidate planning.
 * Carried prepared Firth candidate genotypes, flip masks, and sparse masks through candidate grouping, removing the second candidate genotype take/flip after lane ordering.
+* Moved Firth candidate result merging into `regenie2_binary/correction.py`, so `EXTRA`, `TEST_FAIL`, beta-flip restoration, `--firth-se`, and diagnostic merge semantics are owned by the correction module instead of the variant-major dispatch kernel.
 
 Intentional remaining adapters:
 

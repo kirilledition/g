@@ -11,6 +11,7 @@ from g import types
 from g.compute.common import genotype
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
 from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_binary import correction as regenie2_binary_correction
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
@@ -197,79 +198,13 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
             )
             active_flat_positions = batch_plan.active_flat_position_vector
             active_fallback_indices = flat_fallback_indices[active_flat_positions]
-            active_valid_mask = firth_result.valid_mask[active_flat_positions]
-            active_firth_beta = jnp.where(
-                flat_genotype_flip_mask[active_flat_positions],
-                -firth_result.beta[active_flat_positions],
-                firth_result.beta[active_flat_positions],
-            )
-            active_firth_chi_squared = firth_result.chi_squared[active_flat_positions]
-            active_firth_standard_error = firth_result.standard_error[active_flat_positions]
-            invalid_firth_statistic = jnp.full_like(active_firth_beta, jnp.nan)
-            if correction_plan.firth_se:
-                active_firth_standard_error = jnp.where(
-                    active_firth_chi_squared > 0.0,
-                    jnp.abs(active_firth_beta) / jnp.sqrt(active_firth_chi_squared),
-                    active_firth_standard_error,
-                )
-            merged_beta = jnp.where(active_valid_mask, active_firth_beta, invalid_firth_statistic)
-            merged_standard_error = jnp.where(
-                active_valid_mask,
-                active_firth_standard_error,
-                invalid_firth_statistic,
-            )
-            merged_chi_squared = jnp.where(
-                active_valid_mask,
-                firth_result.chi_squared[active_flat_positions],
-                invalid_firth_statistic,
-            )
-            merged_log10_p_value = jnp.where(
-                active_valid_mask,
-                firth_result.log10_p_value[active_flat_positions],
-                invalid_firth_statistic,
-            )
-            merged_extra_code = jnp.where(
-                active_valid_mask,
-                types.BinaryExtraCode.FIRTH.value,
-                types.BinaryExtraCode.TEST_FAIL.value,
-            ).astype(jnp.int32)
-            return regenie2_binary_result.Regenie2BinaryChunkResult(
-                beta=result.beta.at[active_fallback_indices].set(jnp.asarray(merged_beta, dtype=result.beta.dtype)),
-                standard_error=result.standard_error.at[active_fallback_indices].set(
-                    jnp.asarray(merged_standard_error, dtype=result.standard_error.dtype)
-                ),
-                chi_squared=result.chi_squared.at[active_fallback_indices].set(
-                    jnp.asarray(merged_chi_squared, dtype=result.chi_squared.dtype)
-                ),
-                log10_p_value=result.log10_p_value.at[active_fallback_indices].set(
-                    jnp.asarray(merged_log10_p_value, dtype=result.log10_p_value.dtype)
-                ),
-                extra_code=result.extra_code.at[active_fallback_indices].set(merged_extra_code),
-                valid_mask=result.valid_mask.at[active_fallback_indices].set(active_valid_mask),
-                firth_iteration_count=result.firth_iteration_count.at[active_fallback_indices].set(
-                    firth_result.iteration_count[active_flat_positions]
-                ),
-                firth_failure_code=result.firth_failure_code.at[active_fallback_indices].set(
-                    firth_result.failure_code[active_flat_positions]
-                ),
-                firth_convergence_reason_code=result.firth_convergence_reason_code.at[active_fallback_indices].set(
-                    firth_result.convergence_reason_code[active_flat_positions]
-                ),
-                firth_correction_code=result.firth_correction_code.at[active_fallback_indices].set(
-                    firth_result.correction_code[active_flat_positions]
-                ),
-                firth_sparse_correction_mask=result.firth_sparse_correction_mask.at[active_fallback_indices].set(
-                    firth_result.sparse_correction_mask[active_flat_positions]
-                ),
-                pseudo_firth_iteration_count=result.pseudo_firth_iteration_count.at[active_fallback_indices].set(
-                    firth_result.pseudo_firth_iteration_count[active_flat_positions]
-                ),
-                nr_zero_start_iteration_count=result.nr_zero_start_iteration_count.at[active_fallback_indices].set(
-                    firth_result.nr_zero_start_iteration_count[active_flat_positions]
-                ),
-                nr_warm_start_iteration_count=result.nr_warm_start_iteration_count.at[active_fallback_indices].set(
-                    firth_result.nr_warm_start_iteration_count[active_flat_positions]
-                ),
+            return regenie2_binary_correction.merge_firth_variant_result_into_chunk(
+                result=result,
+                firth_result=firth_result,
+                active_flat_positions=active_flat_positions,
+                active_fallback_indices=active_fallback_indices,
+                genotype_flip_mask=flat_genotype_flip_mask,
+                firth_se=correction_plan.firth_se,
             )
 
         return apply_candidate_corrections_with_capacity(candidate_capacity)
