@@ -281,6 +281,130 @@ def test_tuning_benchmark_builds_queue_depth_values() -> None:
     assert tuning_benchmark.build_queue_depth_values(4, (1, 2)) == (4, 8)
 
 
+def test_output_stage_benchmark_builds_handoff_timing_metrics(tmp_path: Path) -> None:
+    python_stage_path = tmp_path / "python_stage_timings.json"
+    first_rust_stage_path = tmp_path / "first_output_stage_timings.json"
+    second_rust_stage_path = tmp_path / "second_output_stage_timings.json"
+    python_stage_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "device_to_host_materialization": 2.0,
+                    "output_write": 5.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    first_rust_stage_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "rust_output_metadata_clone": 0.5,
+                    "rust_output_result_buffer_copy": 1.0,
+                    "rust_output_enqueue": 0.25,
+                    "rust_output_writer_record_batch_build": 2.0,
+                    "rust_output_writer_arrow_file_write": 3.0,
+                    "rust_output_writer_total": 6.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    second_rust_stage_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "rust_output_metadata_clone": 0.25,
+                    "rust_output_result_buffer_copy": 0.5,
+                    "rust_output_enqueue": 0.25,
+                    "rust_output_writer_record_batch_build": 1.0,
+                    "rust_output_writer_arrow_file_write": 1.5,
+                    "rust_output_writer_total": 3.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    metrics = output_stage_benchmark.build_output_handoff_timing_metrics(
+        python_stage_timing_path=python_stage_path,
+        rust_stage_timing_paths=(first_rust_stage_path, second_rust_stage_path),
+        wall_time_seconds=20.0,
+    )
+
+    assert metrics.seconds_by_metric["device_to_host_materialization"] == 2.0
+    assert metrics.seconds_by_metric["python_output_write"] == 5.0
+    assert metrics.seconds_by_metric["rust_output_result_buffer_copy"] == 1.5
+    assert metrics.seconds_by_metric["rust_output_writer_record_batch_build"] == 3.0
+    assert metrics.seconds_by_metric["rust_output_writer_arrow_file_write"] == 4.5
+    assert metrics.seconds_by_metric["bridge_residual"] == 2.25
+    assert metrics.seconds_by_metric["measured_output_path"] == 16.0
+    assert metrics.wall_time_percentage_by_metric["bridge_residual"] == 11.25
+    assert metrics.output_path_percentage_by_metric["rust_output_result_buffer_copy"] == 9.375
+
+
+def test_output_stage_benchmark_summarizes_handoff_metrics() -> None:
+    first_timing = output_stage_benchmark.OutputHandoffTimingMetrics(
+        seconds_by_metric={"bridge_residual": 2.0},
+        wall_time_percentage_by_metric={"bridge_residual": 10.0},
+        output_path_percentage_by_metric={"bridge_residual": 20.0},
+    )
+    second_timing = output_stage_benchmark.OutputHandoffTimingMetrics(
+        seconds_by_metric={"bridge_residual": 4.0},
+        wall_time_percentage_by_metric={"bridge_residual": 20.0},
+        output_path_percentage_by_metric={"bridge_residual": 40.0},
+    )
+    trial_results = (
+        output_stage_benchmark.TrialResult(
+            case_name="case",
+            trial_index=0,
+            finalize_parquet=False,
+            phenotype_count=1,
+            chunk_size=1024,
+            writer_thread_count=1,
+            writer_queue_depth=1,
+            chunks_per_arrow_file=4,
+            arrow_compression="none",
+            wall_time_seconds=20.0,
+            python_stage_timing_path="python0.json",
+            rust_stage_timing_paths=("rust0.json",),
+            output_run_directories=("run0",),
+            final_parquet_paths=(),
+            chunk_file_count=1,
+            chunk_bytes=100,
+            final_parquet_bytes=None,
+            handoff_timing=first_timing,
+        ),
+        output_stage_benchmark.TrialResult(
+            case_name="case",
+            trial_index=1,
+            finalize_parquet=False,
+            phenotype_count=1,
+            chunk_size=1024,
+            writer_thread_count=1,
+            writer_queue_depth=1,
+            chunks_per_arrow_file=4,
+            arrow_compression="none",
+            wall_time_seconds=30.0,
+            python_stage_timing_path="python1.json",
+            rust_stage_timing_paths=("rust1.json",),
+            output_run_directories=("run1",),
+            final_parquet_paths=(),
+            chunk_file_count=1,
+            chunk_bytes=200,
+            final_parquet_bytes=None,
+            handoff_timing=second_timing,
+        ),
+    )
+
+    summary = output_stage_benchmark.summarize_trial_group(trial_results)
+
+    assert summary["mean_handoff_timing_seconds"]["bridge_residual"] == 3.0
+    assert summary["mean_handoff_wall_time_percentages"]["bridge_residual"] == 15.0
+    assert summary["mean_handoff_output_path_percentages"]["bridge_residual"] == 30.0
+
+
 def test_deep_profile_collects_regenie_and_g_stage_totals(tmp_path: Path) -> None:
     g_stage_path = tmp_path / "g.stage_timings.json"
     regenie_profile_path = tmp_path / "regenie.profile.json"
