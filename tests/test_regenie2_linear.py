@@ -52,6 +52,7 @@ class LinearFormulaResult:
 
 def compute_score_reference_chunk(
     state: regenie2_linear_state.Regenie2LinearState,
+    covariate_matrix: jax.Array,
     genotype_matrix: jax.Array,
     loco_predictions: jax.Array,
 ) -> ReferenceRegenie2LinearChunkResult:
@@ -59,15 +60,18 @@ def compute_score_reference_chunk(
     normalized_genotype_matrix = genotype.normalize_high_frequency_diploid_genotypes_sample_major(
         genotype_matrix,
     )
+    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jnp.float32)
+    covariate_matrix_transpose = covariate_matrix_compute.T
+    covariate_crossproduct_cholesky_factor = jnp.linalg.cholesky(covariate_matrix_transpose @ covariate_matrix_compute)
     adjusted_residual = state.phenotype_residual - loco_predictions
-    covariate_genotype_crossproduct = state.covariate_matrix_transpose @ normalized_genotype_matrix
-    covariate_adjusted_residual_crossproduct = state.covariate_matrix_transpose @ adjusted_residual
+    covariate_genotype_crossproduct = covariate_matrix_transpose @ normalized_genotype_matrix
+    covariate_adjusted_residual_crossproduct = covariate_matrix_transpose @ adjusted_residual
     genotype_projection = linalg.solve_positive_definite_system(
-        state.covariate_crossproduct_cholesky_factor,
+        covariate_crossproduct_cholesky_factor,
         covariate_genotype_crossproduct,
     )
     adjusted_residual_projection = linalg.solve_positive_definite_system(
-        state.covariate_crossproduct_cholesky_factor,
+        covariate_crossproduct_cholesky_factor,
         covariate_adjusted_residual_crossproduct,
     )
     raw_adjusted_residual_sum_squares = jnp.dot(adjusted_residual, adjusted_residual)
@@ -231,9 +235,6 @@ class TestPrepareRegenie2LinearState:
             phenotype_vector=phenotype_vector,
         )
 
-        assert state.covariate_matrix.shape == (sample_count, covariate_count)
-        assert state.covariate_matrix_transpose.shape == (covariate_count, sample_count)
-        assert state.covariate_crossproduct_cholesky_factor.shape == (covariate_count, covariate_count)
         assert state.whitened_covariate_transpose.shape == (covariate_count, sample_count)
         assert state.phenotype_residual.shape == (sample_count,)
         assert float(state.degrees_of_freedom) == sample_count - covariate_count
@@ -252,7 +253,7 @@ class TestPrepareRegenie2LinearState:
             phenotype_vector=phenotype_vector,
         )
 
-        crossproduct = state.covariate_matrix.T @ state.phenotype_residual
+        crossproduct = covariate_matrix.T @ state.phenotype_residual
         numpy.testing.assert_allclose(crossproduct, jnp.zeros(covariate_count), atol=1e-4)
 
 
@@ -356,6 +357,7 @@ class TestComputeRegenie2LinearChunk:
         )
         reference_result = compute_score_reference_chunk(
             state=state,
+            covariate_matrix=jnp.asarray(covariate_matrix),
             genotype_matrix=genotype_matrix,
             loco_predictions=loco_predictions,
         )

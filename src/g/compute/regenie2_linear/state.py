@@ -16,18 +16,12 @@ class Regenie2LinearState:
     """Precomputed state for REGENIE step 2 linear association.
 
     Attributes:
-        covariate_matrix: Covariate design matrix including intercept.
-        covariate_matrix_transpose: Transpose of the covariate design matrix.
-        covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
         whitened_covariate_transpose: Cholesky-whitened covariate transpose.
         phenotype_residual: Phenotype residualized against covariates.
         degrees_of_freedom: Null-model residual degrees of freedom.
 
     """
 
-    covariate_matrix: jax.Array
-    covariate_matrix_transpose: jax.Array
-    covariate_crossproduct_cholesky_factor: jax.Array
     whitened_covariate_transpose: jax.Array
     phenotype_residual: jax.Array
     degrees_of_freedom: jax.Array
@@ -60,18 +54,12 @@ class Regenie2MultiLinearState:
     """Precomputed state for multi-trait REGENIE step 2 linear association.
 
     Attributes:
-        covariate_matrix: Covariate design matrix including intercept.
-        covariate_matrix_transpose: Transpose of the covariate design matrix.
-        covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
         whitened_covariate_transpose: Cholesky-whitened covariate transpose.
         phenotype_residual_matrix: Trait-major phenotype residuals after covariate projection.
         degrees_of_freedom: Null-model residual degrees of freedom.
 
     """
 
-    covariate_matrix: jax.Array
-    covariate_matrix_transpose: jax.Array
-    covariate_crossproduct_cholesky_factor: jax.Array
     whitened_covariate_transpose: jax.Array
     phenotype_residual_matrix: jax.Array
     degrees_of_freedom: jax.Array
@@ -126,9 +114,6 @@ def build_multi_linear_state(
     phenotype_residual_matrix = phenotype_matrix_compute - (covariate_matrix_compute @ phenotype_projection_matrix).T
 
     return Regenie2MultiLinearState(
-        covariate_matrix=covariate_matrix_compute,
-        covariate_matrix_transpose=covariate_matrix_transpose,
-        covariate_crossproduct_cholesky_factor=covariate_crossproduct_cholesky_factor,
         whitened_covariate_transpose=whitened_covariate_transpose,
         phenotype_residual_matrix=phenotype_residual_matrix,
         degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=jnp.float32),
@@ -140,9 +125,6 @@ def build_single_linear_state_from_multi(
 ) -> Regenie2LinearState:
     """Build a single-trait linear state view from a trait-major state."""
     return Regenie2LinearState(
-        covariate_matrix=state.covariate_matrix,
-        covariate_matrix_transpose=state.covariate_matrix_transpose,
-        covariate_crossproduct_cholesky_factor=state.covariate_crossproduct_cholesky_factor,
         whitened_covariate_transpose=state.whitened_covariate_transpose,
         phenotype_residual=state.phenotype_residual_matrix[0],
         degrees_of_freedom=state.degrees_of_freedom,
@@ -154,9 +136,6 @@ def build_multi_linear_state_from_single(
 ) -> Regenie2MultiLinearState:
     """Build a trait-major linear state view from a single-trait state."""
     return Regenie2MultiLinearState(
-        covariate_matrix=state.covariate_matrix,
-        covariate_matrix_transpose=state.covariate_matrix_transpose,
-        covariate_crossproduct_cholesky_factor=state.covariate_crossproduct_cholesky_factor,
         whitened_covariate_transpose=state.whitened_covariate_transpose,
         phenotype_residual_matrix=state.phenotype_residual[None, :],
         degrees_of_freedom=state.degrees_of_freedom,

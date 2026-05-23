@@ -906,6 +906,7 @@ Completed cleanup so far:
 * Moved linear reusable-state construction into `regenie2_linear/state.py`, so the public linear API no longer owns covariate projection and phenotype residualization math.
 * Moved binary reusable-state and chromosome-state construction into `regenie2_binary/state.py`, so the public binary API no longer owns null logistic, score projection, and null-Firth state assembly.
 * Removed unused `sample_count` fields from linear and binary compute states; kernels derive shapes from carried arrays instead of storing duplicate state.
+* Removed unused covariate matrix, covariate transpose, and Cholesky fields from linear compute states; linear kernels carry only whitened covariate coordinates, residuals, and degrees of freedom.
 
 Intentional remaining adapters:
 
