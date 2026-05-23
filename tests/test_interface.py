@@ -63,6 +63,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-bgen-decode-tile-variant-count": 32,
         "g-jax-cache-dir": "cache/jax",
         "g-jax-matmul-precision": "highest",
+        "g-jax-enable-x64": False,
         "g-jax-persistent-cache": False,
         "g-jax-persistent-cache-min-entry-size-bytes": 1024,
         "g-jax-persistent-cache-min-compile-time-seconds": 1,
@@ -99,6 +100,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_compute.use_block_firth_math is True
     assert regenie_config.g_compute.bgen_decode_tile_variant_count == 32
     assert regenie_config.g_compute.jax_matmul_precision == types.JaxMatmulPrecision.HIGHEST
+    assert regenie_config.g_compute.jax_enable_x64 is False
     assert regenie_config.g_compute.jax_persistent_cache is False
     assert regenie_config.g_output.format == types.OutputFormat.ARROW
     assert regenie_config.g_output.chunks_per_arrow_file == 2
@@ -149,6 +151,7 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
 
     assert regenie_config.trait.bsize == config.DEFAULT_BSIZE
     assert regenie_config.g_compute.device == types.Device.CPU
+    assert regenie_config.g_compute.jax_enable_x64 is True
     assert regenie_config.g_compute.jax_persistent_cache is True
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
     assert regenie_config.g_diagnostics.log_filter == config.DEFAULT_LOG_FILTER
@@ -228,6 +231,7 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
             "g-output-format": "arrow",
             "g-output-arrow-compression": "none",
             "g-firth-batch-size": 8,
+            "g-jax-enable-x64": False,
             "g-jax-persistent-cache": False,
             "g-stage-timings-json": "timings.json",
             "g-log-filter": "g=trace",

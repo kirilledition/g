@@ -9,10 +9,7 @@ from unittest.mock import patch
 if typing.TYPE_CHECKING:
     import pytest
 
-import jax.numpy as jnp
-
 from g.jax_setup import (
-    FLOAT_DTYPE,
     configure_jax_device,
     configure_jax_runtime_before_backend_init,
     require_gpu_device,
@@ -89,6 +86,19 @@ def test_configure_jax_runtime_before_backend_init_sets_platform_first(tmp_path:
     assert mock_update.call_args_list[0].args == ("jax_platforms", "cpu")
     assert ("jax_enable_x64", True) in [call.args for call in mock_update.call_args_list]
     assert ("jax_compilation_cache_dir", str(cache_directory)) in [call.args for call in mock_update.call_args_list]
+
+
+def test_configure_jax_runtime_before_backend_init_can_disable_x64(tmp_path: Path) -> None:
+    cache_directory = tmp_path / "jax-cache"
+
+    with patch("g.jax_setup.jax.config.update") as mock_update:
+        configure_jax_runtime_before_backend_init(
+            device=Device.CPU,
+            cache_directory=cache_directory,
+            enable_x64=False,
+        )
+
+    assert ("jax_enable_x64", False) in [call.args for call in mock_update.call_args_list]
 
 
 def test_configure_jax_runtime_before_backend_init_validates_gpu_after_runtime(tmp_path: Path) -> None:
@@ -198,8 +208,3 @@ def test_require_gpu_device_wraps_jax_plugin_assertion_errors() -> None:
             assert "JAX CUDA plugin failed" in str(error)
         else:
             raise AssertionError("Expected GPU validation to fail when JAX raises AssertionError.")
-
-
-def test_float_dtype_is_float32() -> None:
-    """Ensure the codebase-wide JAX float dtype is fixed to float32."""
-    assert jnp.float32 == FLOAT_DTYPE

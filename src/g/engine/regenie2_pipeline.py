@@ -13,6 +13,7 @@ from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.engine import callbacks, native_dispatch, preflight, shutdown, telemetry, timing
+from g.interface import config
 from g.io import output, source
 
 REGENIE_COMPUTE_PATCH_TARGETS = (regenie2_binary, regenie2_linear)
@@ -44,6 +45,7 @@ def run_regenie2_linear_bgen_pipeline(
     bgen_decode_tile_variant_count: int = output.DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
+    jax_enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
     telemetry_session: telemetry.TelemetrySession | None = None,
@@ -125,6 +127,7 @@ def run_regenie2_linear_bgen_pipeline(
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
         jax_device=jax_device,
         jax_matmul_precision=jax_matmul_precision,
+        jax_enable_x64=jax_enable_x64,
         output_format=output_format,
         finalize_parquet=finalize_parquet,
         writer_thread_count=writer_thread_count,
@@ -237,6 +240,7 @@ def run_regenie2_binary_bgen_pipeline(
     bgen_decode_tile_variant_count: int = output.DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
+    jax_enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None,
@@ -322,6 +326,7 @@ def run_regenie2_binary_bgen_pipeline(
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
         jax_device=jax_device,
         jax_matmul_precision=jax_matmul_precision,
+        jax_enable_x64=jax_enable_x64,
         output_format=output_format,
         finalize_parquet=finalize_parquet,
         writer_thread_count=writer_thread_count,
@@ -456,6 +461,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     bgen_decode_tile_variant_count: int = output.DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
+    jax_enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
     telemetry_session: telemetry.TelemetrySession | None = None,
@@ -487,6 +493,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
         bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
         jax_device=jax_device,
         jax_matmul_precision=jax_matmul_precision,
+        jax_enable_x64=jax_enable_x64,
         output_format=output_format,
         correction_plan=types.BinaryCorrectionPlan(),
         kernel_config=None,
@@ -523,6 +530,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     bgen_decode_tile_variant_count: int = output.DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
+    jax_enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None,
@@ -557,6 +565,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
         bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
         jax_device=jax_device,
         jax_matmul_precision=jax_matmul_precision,
+        jax_enable_x64=jax_enable_x64,
         output_format=output_format,
         correction_plan=correction_plan,
         kernel_config=resolved_kernel_config,
@@ -593,6 +602,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     bgen_decode_tile_variant_count: int,
     jax_device: types.Device,
     jax_matmul_precision: types.JaxMatmulPrecision | None,
+    jax_enable_x64: bool,
     output_format: types.OutputFormat,
     correction_plan: types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
@@ -692,6 +702,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
             trusted_bgen_validation_mode=trusted_bgen_validation_mode,
             jax_device=jax_device,
             jax_matmul_precision=jax_matmul_precision,
+            jax_enable_x64=jax_enable_x64,
             multi_phenotype_sample_mode=output.MultiPhenotypeSampleMode.COMPLETE_CASE_INTERSECTION,
             output_format=output_format,
             finalize_parquet=finalize_parquet,

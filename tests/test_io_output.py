@@ -106,6 +106,7 @@ def build_test_header(
     *,
     association_mode: AssociationMode = AssociationMode.REGENIE2_LINEAR,
     binary_kernel_config: typing.Any | None = None,
+    jax_enable_x64: bool = True,
 ) -> dict[str, typing.Any]:
     bgen_path = tmp_path / "study.bgen"
     sample_path = tmp_path / "study.sample"
@@ -131,7 +132,15 @@ def build_test_header(
         trusted_no_missing_diploid=False,
         sample_key_mode=types.SampleKeyMode.IID,
         binary_kernel_config=binary_kernel_config,
+        jax_enable_x64=jax_enable_x64,
     )
+
+
+def test_current_run_manifest_records_configured_x64_policy(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path, jax_enable_x64=False)
+
+    assert current_header["jax_policy"]["enable_x64"] is False
+    assert current_header["execution_plan"]["jax_policy"]["enable_x64"] is False
 
 
 def initialize_test_output_run(

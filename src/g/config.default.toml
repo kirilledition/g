@@ -47,6 +47,7 @@ null-firth-line-search-maximum-attempts = 25
 null-firth-step-halving-scale = 0.5
 use-block-firth-math = false
 bgen-decode-tile-variant-count = 64
+jax-enable-x64 = true
 jax-persistent-cache = true
 jax-persistent-cache-min-entry-size-bytes = -1
 jax-persistent-cache-min-compile-time-seconds = 0

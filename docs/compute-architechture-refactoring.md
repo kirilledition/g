@@ -976,6 +976,12 @@ Move all JAX config and dtype policy out of compute imports.
 
 Compute should receive explicit kernel configs from the runner/execution plan.
 
+Progress note:
+
+* JAX x64 enablement is now represented in `GComputeConfig`, the runner's process-global runtime policy,
+  and output run manifests. The default remains enabled because current parity-sensitive kernels still rely on it,
+  but the setting is no longer hidden in `jax_setup.py`.
+
 ---
 
 # Priority ranking

@@ -24,7 +24,6 @@ RUN_MANIFEST_FILENAME = "run_manifest.json"
 RUN_MANIFEST_SCHEMA_VERSION = 4
 OUTPUT_SCHEMA_VERSION = 1
 DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT = 64
-DEFAULT_JAX_ENABLE_X64 = True
 DEFAULT_JAX_MATMUL_PRECISION = "float32"
 RESUME_POLICY = "manifest_committed_chunks"
 DEFAULT_WRITER_QUEUE_DEPTH = config.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
@@ -161,11 +160,12 @@ def build_jax_policy_manifest(
     *,
     device: types.Device = types.Device.CPU,
     matmul_precision: types.JaxMatmulPrecision | None = None,
+    enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
 ) -> dict[str, typing.Any]:
     """Build manifest fields for JAX precision and backend policy."""
     return {
         "device": device.value,
-        "enable_x64": DEFAULT_JAX_ENABLE_X64,
+        "enable_x64": enable_x64,
         "matmul_precision": DEFAULT_JAX_MATMUL_PRECISION if matmul_precision is None else matmul_precision.value,
     }
 
@@ -212,6 +212,7 @@ def build_current_run_manifest_header(
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
+    jax_enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
     multi_phenotype_sample_mode: MultiPhenotypeSampleMode = MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     finalize_parquet: bool = False,
@@ -235,7 +236,11 @@ def build_current_run_manifest_header(
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
     )
-    jax_policy_manifest = build_jax_policy_manifest(device=jax_device, matmul_precision=jax_matmul_precision)
+    jax_policy_manifest = build_jax_policy_manifest(
+        device=jax_device,
+        matmul_precision=jax_matmul_precision,
+        enable_x64=jax_enable_x64,
+    )
     execution_plan = normalize_execution_plan_value(
         {
             "manifest_schema_version": RUN_MANIFEST_SCHEMA_VERSION,

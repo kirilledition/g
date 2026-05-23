@@ -43,6 +43,7 @@ DEFAULT_NULL_FIRTH_FALLBACK_STEP_DIVISOR = 5.0
 DEFAULT_NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
 DEFAULT_NULL_FIRTH_STEP_HALVING_SCALE = 0.5
 DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT = 64
+DEFAULT_JAX_ENABLE_X64 = True
 DEFAULT_JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = -1
 DEFAULT_JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
 DEFAULT_LOG_FILTER = "info"
@@ -143,6 +144,7 @@ class GComputeConfig:
     bgen_decode_tile_variant_count: int = DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT
     jax_cache_dir: Path | None = None
     jax_matmul_precision: types.JaxMatmulPrecision | None = None
+    jax_enable_x64: bool = DEFAULT_JAX_ENABLE_X64
     jax_persistent_cache: bool = True
     jax_persistent_cache_min_entry_size_bytes: int = DEFAULT_JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES
     jax_persistent_cache_min_compile_time_seconds: int = DEFAULT_JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS
@@ -508,6 +510,10 @@ def from_normalized_options(
             ),
             jax_cache_dir=path_or_none(normalized_options.get("g-jax-cache-dir")),
             jax_matmul_precision=optional_jax_matmul_precision(normalized_options.get("g-jax-matmul-precision")),
+            jax_enable_x64=bool_or_default(
+                normalized_options.get("g-jax-enable-x64"),
+                default=DEFAULT_JAX_ENABLE_X64,
+            ),
             jax_persistent_cache=bool_or_default(normalized_options.get("g-jax-persistent-cache"), default=True),
             jax_persistent_cache_min_entry_size_bytes=int(
                 normalized_options.get(
@@ -758,6 +764,7 @@ def normalize_option_name(option_name: str) -> str:
         "g_bgen_decode_tile_variant_count": "g-bgen-decode-tile-variant-count",
         "g_jax_cache_dir": "g-jax-cache-dir",
         "g_jax_matmul_precision": "g-jax-matmul-precision",
+        "g_jax_enable_x64": "g-jax-enable-x64",
         "g_jax_persistent_cache": "g-jax-persistent-cache",
         "g_jax_persistent_cache_min_entry_size_bytes": "g-jax-persistent-cache-min-entry-size-bytes",
         "g_jax_persistent_cache_min_compile_time_seconds": "g-jax-persistent-cache-min-compile-time-seconds",
@@ -1160,9 +1167,7 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             "firth-maximum-step-size": config.g_compute.firth_maximum_step_size,
             "firth-pseudo-maximum-iterations": config.g_compute.firth_pseudo_maximum_iterations,
             "firth-pseudo-inner-maximum-iterations": config.g_compute.firth_pseudo_inner_maximum_iterations,
-            "firth-newton-raphson-zero-start-iterations": (
-                config.g_compute.firth_newton_raphson_zero_start_iterations
-            ),
+            "firth-newton-raphson-zero-start-iterations": (config.g_compute.firth_newton_raphson_zero_start_iterations),
             "firth-line-search-maximum-attempts": config.g_compute.firth_line_search_maximum_attempts,
             "firth-step-halving-maximum-attempts": config.g_compute.firth_step_halving_maximum_attempts,
             "firth-initial-response-scale": config.g_compute.firth_initial_response_scale,
@@ -1171,9 +1176,7 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             "null-firth-maximum-iterations": config.g_compute.null_firth_maximum_iterations,
             "null-firth-gradient-tolerance": config.g_compute.null_firth_gradient_tolerance,
             "null-firth-maximum-step-size": config.g_compute.null_firth_maximum_step_size,
-            "null-firth-fallback-iteration-multiplier": (
-                config.g_compute.null_firth_fallback_iteration_multiplier
-            ),
+            "null-firth-fallback-iteration-multiplier": (config.g_compute.null_firth_fallback_iteration_multiplier),
             "null-firth-fallback-step-divisor": config.g_compute.null_firth_fallback_step_divisor,
             "null-firth-line-search-maximum-attempts": config.g_compute.null_firth_line_search_maximum_attempts,
             "null-firth-step-halving-scale": config.g_compute.null_firth_step_halving_scale,
@@ -1184,6 +1187,7 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
                 "jax-matmul-precision",
                 None if config.g_compute.jax_matmul_precision is None else config.g_compute.jax_matmul_precision.value,
             ),
+            "jax-enable-x64": config.g_compute.jax_enable_x64,
             "jax-persistent-cache": config.g_compute.jax_persistent_cache,
             "jax-persistent-cache-min-entry-size-bytes": config.g_compute.jax_persistent_cache_min_entry_size_bytes,
             "jax-persistent-cache-min-compile-time-seconds": (

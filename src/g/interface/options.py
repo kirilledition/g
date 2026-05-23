@@ -724,6 +724,16 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         accepted_values=JAX_MATMUL_PRECISION_VALUES,
     ),
     OptionSpec(
+        "g-jax-enable-x64",
+        "g_jax_enable_x64",
+        SupportLevel.G_EXTENSION,
+        "g.compute",
+        "Enable JAX 64-bit arrays for parity-sensitive kernels.",
+        cli_flags=("--g-jax-enable-x64/--no-g-jax-enable-x64", "g_jax_enable_x64"),
+        type=OptionValueType.BOOLEAN,
+        is_flag=True,
+    ),
+    OptionSpec(
         "g-jax-persistent-cache",
         "g_jax_persistent_cache",
         SupportLevel.G_EXTENSION,

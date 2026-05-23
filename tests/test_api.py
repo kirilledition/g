@@ -469,7 +469,7 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
 
     class FakeJaxSetupModule:
         def configure_jax_runtime_before_backend_init(self, **kwargs: object) -> None:
-            call_order.append(f"setup:{kwargs['cache_directory']}")
+            call_order.append(f"setup:{kwargs['cache_directory']}:{kwargs['enable_x64']}")
 
     class FakeTimingModule:
         def build_stage_timing_recorder(self, stage_timing_path: Path | None) -> None:
@@ -519,6 +519,20 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
             "g-jax-cache-dir": str(tmp_path / "other-jax-cache"),
         }
     )
+    incompatible_x64_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "sample": "dataset.sample",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "g-jax-cache-dir": str(tmp_path / "jax-cache"),
+            "g-jax-enable-x64": False,
+        }
+    )
 
     with (
         patch("g.runner.CONFIGURED_JAX_RUNTIME_POLICY", None),
@@ -541,9 +555,12 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
 
         with pytest.raises(RuntimeError, match=r"JAX runtime is already configured.*incompatible settings"):
             api.regenie(incompatible_config)
+        with pytest.raises(RuntimeError, match=r"jax-enable-x64=True.*jax-enable-x64=False"):
+            api.regenie(incompatible_x64_config)
 
-    assert call_order.count(f"setup:{tmp_path / 'jax-cache'}") == 1
-    assert f"setup:{tmp_path / 'other-jax-cache'}" not in call_order
+    assert call_order.count(f"setup:{tmp_path / 'jax-cache'}:True") == 1
+    assert f"setup:{tmp_path / 'jax-cache'}:False" not in call_order
+    assert f"setup:{tmp_path / 'other-jax-cache'}:True" not in call_order
 
 
 def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_config() -> None:
