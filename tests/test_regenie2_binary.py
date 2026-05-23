@@ -349,7 +349,7 @@ def assert_all_result_statistics_nan(
 def test_firth_candidate_capacity_uses_default() -> None:
     assert (
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.firth_candidate.candidate_capacity
-        == regenie2_binary_candidate_planning.DEFAULT_FIRTH_CANDIDATE_CAPACITY
+        == regenie2_binary_config.DEFAULT_FIRTH_CANDIDATE_CAPACITY
     )
 
 

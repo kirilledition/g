@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
-
 MINIMUM_PROBABILITY = 1.0e-6
 MINIMUM_VARIANCE = 1.0e-8
 RELATIVE_VARIANCE_TOLERANCE = 1.0e-6
@@ -35,6 +33,8 @@ NULL_FIRTH_STEP_HALVING_SCALE = 0.5
 REGENIE_LOGISTIC_MINIMUM_ETA = -30.0
 REGENIE_LOGISTIC_MAXIMUM_ETA = 30.0
 REGENIE_NUMERICAL_EPSILON = 10.0 * 2.220446049250313e-16
+DEFAULT_FIRTH_BATCH_SIZE = 64
+DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
 
 
 @dataclass(frozen=True)
@@ -273,8 +273,8 @@ DEFAULT_BINARY_KERNEL_CONFIG = BinaryKernelConfig(
         coefficient_tolerance=NULL_LOGISTIC_COEFFICIENT_TOLERANCE,
     ),
     firth_candidate=FirthCandidateConfig(
-        batch_size=regenie2_binary_candidate_planning.DEFAULT_FIRTH_BATCH_SIZE,
-        candidate_capacity=regenie2_binary_candidate_planning.DEFAULT_FIRTH_CANDIDATE_CAPACITY,
+        batch_size=DEFAULT_FIRTH_BATCH_SIZE,
+        candidate_capacity=DEFAULT_FIRTH_CANDIDATE_CAPACITY,
     ),
     approximate_firth=ApproximateFirthConfig(
         maximum_iterations=FIRTH_MAXIMUM_ITERATIONS,

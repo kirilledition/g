@@ -11,9 +11,6 @@ import jax.numpy as jnp
 
 from g import types
 
-DEFAULT_FIRTH_BATCH_SIZE = 64
-DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
-
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
