@@ -3,11 +3,14 @@ use crate::genotype::preprocess;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const AVX2_SAMPLE_COUNT: usize = 8;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+const AVX2_PLOIDY_BYTE_COUNT: usize = 32;
 const EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL: f32 = 1.0_f32 / 255.0_f32;
 const EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL: f32 = 1.0_f32 / (255.0_f32 * 255.0_f32);
+const PRESENT_DIPLOID_BYTE_GROUP: [u8; 16] = [2_u8; 16];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(super) struct TrustedEightBitIdentityDecodeSummary {
+pub(super) struct EightBitIdentityDecodeSummary {
     pub(super) selected_dosage_total: f32,
     pub(super) selected_dosage_square_total: f32,
     pub(super) selected_observation_count: i32,
@@ -18,7 +21,7 @@ pub(super) struct TrustedEightBitIdentityDecodeSummary {
     pub(super) homozygous_alternate_count: i32,
 }
 
-impl TrustedEightBitIdentityDecodeSummary {
+impl EightBitIdentityDecodeSummary {
     #[cfg(test)]
     fn record_dosage(&mut self, dosage_value: f32) {
         self.selected_dosage_total += dosage_value;
@@ -56,7 +59,7 @@ impl TrustedEightBitIdentityDecodeSummary {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct TrustedEightBitRawIntegerSummary {
+struct EightBitRawIntegerSummary {
     raw_dosage_total: i64,
     raw_dosage_square_total: u64,
     selected_observation_count: i32,
@@ -67,7 +70,7 @@ struct TrustedEightBitRawIntegerSummary {
     homozygous_alternate_count: i32,
 }
 
-impl TrustedEightBitRawIntegerSummary {
+impl EightBitRawIntegerSummary {
     fn record_raw_dosage_integer(&mut self, raw_dosage_integer: i32) {
         let raw_dosage_integer_i64 = i64::from(raw_dosage_integer);
         self.raw_dosage_total += raw_dosage_integer_i64;
@@ -89,8 +92,8 @@ impl TrustedEightBitRawIntegerSummary {
     }
 
     #[allow(clippy::cast_precision_loss)]
-    fn into_decode_summary(self) -> TrustedEightBitIdentityDecodeSummary {
-        TrustedEightBitIdentityDecodeSummary {
+    fn into_decode_summary(self) -> EightBitIdentityDecodeSummary {
+        EightBitIdentityDecodeSummary {
             selected_dosage_total: self.raw_dosage_total as f32 * EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL,
             selected_dosage_square_total: self.raw_dosage_square_total as f32
                 * EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL,
@@ -104,31 +107,50 @@ impl TrustedEightBitRawIntegerSummary {
     }
 }
 
-pub(super) fn decode_trusted_unphased_eight_bit_identity_simd_or_scalar(
+pub(super) fn decode_unphased_eight_bit_identity_simd_or_scalar(
     packed_probability_bytes: &[u8],
     output_values: &mut [f32],
-) -> TrustedEightBitIdentityDecodeSummary {
+) -> EightBitIdentityDecodeSummary {
     debug_assert_eq!(packed_probability_bytes.len(), output_values.len() * 2);
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         if std::arch::is_x86_feature_detected!("avx2") {
             // Benchmarks on the trusted full-sample path selected raw-integer AVX2 over lookup-gather AVX2.
-            return unsafe {
-                decode_trusted_unphased_eight_bit_identity_raw_avx2(packed_probability_bytes, output_values)
-            };
+            return unsafe { decode_unphased_eight_bit_identity_raw_avx2(packed_probability_bytes, output_values) };
         }
     }
 
-    decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats(packed_probability_bytes, output_values)
+    decode_unphased_eight_bit_identity_raw_scalar_integer_stats(packed_probability_bytes, output_values)
 }
 
-fn decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats(
+pub(super) fn all_samples_present_diploid_simd_or_scalar(sample_ploidy_and_missingness: &[u8]) -> bool {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        if std::arch::is_x86_feature_detected!("avx2") {
+            return unsafe { all_samples_present_diploid_avx2(sample_ploidy_and_missingness) };
+        }
+    }
+
+    all_samples_present_diploid_scalar(sample_ploidy_and_missingness)
+}
+
+fn all_samples_present_diploid_scalar(sample_ploidy_and_missingness: &[u8]) -> bool {
+    let mut ploidy_chunks = sample_ploidy_and_missingness.chunks_exact(PRESENT_DIPLOID_BYTE_GROUP.len());
+    for ploidy_chunk in &mut ploidy_chunks {
+        if ploidy_chunk != PRESENT_DIPLOID_BYTE_GROUP {
+            return false;
+        }
+    }
+    ploidy_chunks.remainder().iter().all(|ploidy_byte| *ploidy_byte == 2)
+}
+
+fn decode_unphased_eight_bit_identity_raw_scalar_integer_stats(
     packed_probability_bytes: &[u8],
     output_values: &mut [f32],
-) -> TrustedEightBitIdentityDecodeSummary {
-    let mut raw_integer_summary = TrustedEightBitRawIntegerSummary::default();
-    decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
+) -> EightBitIdentityDecodeSummary {
+    let mut raw_integer_summary = EightBitRawIntegerSummary::default();
+    decode_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
         packed_probability_bytes,
         output_values,
         0,
@@ -137,11 +159,11 @@ fn decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats(
     raw_integer_summary.into_decode_summary()
 }
 
-fn decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
+fn decode_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
     packed_probability_bytes: &[u8],
     output_values: &mut [f32],
     start_sample_index: usize,
-    raw_integer_summary: &mut TrustedEightBitRawIntegerSummary,
+    raw_integer_summary: &mut EightBitRawIntegerSummary,
 ) {
     for (relative_sample_index, probability_pair) in packed_probability_bytes[start_sample_index * 2..]
         .chunks_exact(2)
@@ -156,13 +178,13 @@ fn decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
 }
 
 #[cfg(test)]
-fn decode_trusted_unphased_eight_bit_identity_lookup_scalar(
+fn decode_unphased_eight_bit_identity_lookup_scalar(
     packed_probability_bytes: &[u8],
     dosage_lookup: &[f32],
     output_values: &mut [f32],
-) -> TrustedEightBitIdentityDecodeSummary {
-    let mut decode_summary = TrustedEightBitIdentityDecodeSummary::default();
-    decode_trusted_unphased_eight_bit_identity_lookup_scalar_from(
+) -> EightBitIdentityDecodeSummary {
+    let mut decode_summary = EightBitIdentityDecodeSummary::default();
+    decode_unphased_eight_bit_identity_lookup_scalar_from(
         packed_probability_bytes,
         dosage_lookup,
         output_values,
@@ -173,12 +195,12 @@ fn decode_trusted_unphased_eight_bit_identity_lookup_scalar(
 }
 
 #[cfg(test)]
-fn decode_trusted_unphased_eight_bit_identity_lookup_scalar_from(
+fn decode_unphased_eight_bit_identity_lookup_scalar_from(
     packed_probability_bytes: &[u8],
     dosage_lookup: &[f32],
     output_values: &mut [f32],
     start_sample_index: usize,
-    decode_summary: &mut TrustedEightBitIdentityDecodeSummary,
+    decode_summary: &mut EightBitIdentityDecodeSummary,
 ) {
     for (relative_sample_index, probability_pair) in packed_probability_bytes[start_sample_index * 2..]
         .chunks_exact(2)
@@ -194,26 +216,21 @@ fn decode_trusted_unphased_eight_bit_identity_lookup_scalar_from(
 }
 
 #[cfg(test)]
-fn decode_trusted_unphased_eight_bit_identity_raw_scalar(
+fn decode_unphased_eight_bit_identity_raw_scalar(
     packed_probability_bytes: &[u8],
     output_values: &mut [f32],
-) -> TrustedEightBitIdentityDecodeSummary {
-    let mut decode_summary = TrustedEightBitIdentityDecodeSummary::default();
-    decode_trusted_unphased_eight_bit_identity_raw_scalar_from(
-        packed_probability_bytes,
-        output_values,
-        0,
-        &mut decode_summary,
-    );
+) -> EightBitIdentityDecodeSummary {
+    let mut decode_summary = EightBitIdentityDecodeSummary::default();
+    decode_unphased_eight_bit_identity_raw_scalar_from(packed_probability_bytes, output_values, 0, &mut decode_summary);
     decode_summary
 }
 
 #[cfg(test)]
-fn decode_trusted_unphased_eight_bit_identity_raw_scalar_from(
+fn decode_unphased_eight_bit_identity_raw_scalar_from(
     packed_probability_bytes: &[u8],
     output_values: &mut [f32],
     start_sample_index: usize,
-    decode_summary: &mut TrustedEightBitIdentityDecodeSummary,
+    decode_summary: &mut EightBitIdentityDecodeSummary,
 ) {
     for (relative_sample_index, probability_pair) in packed_probability_bytes[start_sample_index * 2..]
         .chunks_exact(2)
@@ -239,26 +256,45 @@ fn raw_dosage_value(raw_dosage_integer: i32) -> f32 {
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
-    __m128i, __m256i, _mm_loadu_si128, _mm256_and_si256, _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_mul_ps,
-    _mm256_set1_epi32, _mm256_set1_ps, _mm256_slli_epi32, _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256,
-    _mm256_sub_epi32,
+    __m128i, __m256i, _mm_loadu_si128, _mm256_and_si256, _mm256_cmpeq_epi8, _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32,
+    _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_mul_ps, _mm256_set1_epi8, _mm256_set1_epi32, _mm256_set1_ps,
+    _mm256_slli_epi32, _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_epi32,
 };
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m128i, __m256i, _mm_loadu_si128, _mm256_and_si256, _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_mul_ps,
-    _mm256_set1_epi32, _mm256_set1_ps, _mm256_slli_epi32, _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256,
-    _mm256_sub_epi32,
+    __m128i, __m256i, _mm_loadu_si128, _mm256_and_si256, _mm256_cmpeq_epi8, _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32,
+    _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_mul_ps, _mm256_set1_epi8, _mm256_set1_epi32, _mm256_set1_ps,
+    _mm256_slli_epi32, _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_epi32,
 };
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[allow(clippy::cast_ptr_alignment)]
-unsafe fn decode_trusted_unphased_eight_bit_identity_raw_avx2(
+unsafe fn all_samples_present_diploid_avx2(sample_ploidy_and_missingness: &[u8]) -> bool {
+    let expected_ploidy_and_missingness = _mm256_set1_epi8(2_i8);
+    let mut byte_index = 0_usize;
+    while byte_index + AVX2_PLOIDY_BYTE_COUNT <= sample_ploidy_and_missingness.len() {
+        let ploidy_pointer = unsafe { sample_ploidy_and_missingness.as_ptr().add(byte_index).cast::<__m256i>() };
+        let ploidy_values = unsafe { _mm256_loadu_si256(ploidy_pointer) };
+        let comparison_mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(ploidy_values, expected_ploidy_and_missingness));
+        if comparison_mask != -1 {
+            return false;
+        }
+        byte_index += AVX2_PLOIDY_BYTE_COUNT;
+    }
+
+    all_samples_present_diploid_scalar(&sample_ploidy_and_missingness[byte_index..])
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[allow(clippy::cast_ptr_alignment)]
+unsafe fn decode_unphased_eight_bit_identity_raw_avx2(
     packed_probability_bytes: &[u8],
     output_values: &mut [f32],
-) -> TrustedEightBitIdentityDecodeSummary {
-    let mut raw_integer_summary = TrustedEightBitRawIntegerSummary::default();
+) -> EightBitIdentityDecodeSummary {
+    let mut raw_integer_summary = EightBitRawIntegerSummary::default();
     let probability_byte_mask = _mm256_set1_epi32(0xFF);
     let raw_dosage_base = _mm256_set1_epi32(510);
     let probability_scale_reciprocal = _mm256_set1_ps(EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL);
@@ -291,7 +327,7 @@ unsafe fn decode_trusted_unphased_eight_bit_identity_raw_avx2(
         sample_index += AVX2_SAMPLE_COUNT;
     }
 
-    decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
+    decode_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
         packed_probability_bytes,
         output_values,
         sample_index,
@@ -374,8 +410,8 @@ mod tests {
         probabilities
     }
 
-    fn expected_raw_summary(probabilities: &[u8]) -> TrustedEightBitIdentityDecodeSummary {
-        let mut decode_summary = TrustedEightBitIdentityDecodeSummary::default();
+    fn expected_raw_summary(probabilities: &[u8]) -> EightBitIdentityDecodeSummary {
+        let mut decode_summary = EightBitIdentityDecodeSummary::default();
         for probability_pair in probabilities.chunks_exact(2) {
             decode_summary.record_raw_dosage_integer_from_f32_accumulation(raw_dosage_integer(
                 probability_pair[0],
@@ -385,8 +421,8 @@ mod tests {
         decode_summary
     }
 
-    fn expected_raw_integer_summary(probabilities: &[u8]) -> TrustedEightBitIdentityDecodeSummary {
-        let mut raw_integer_summary = TrustedEightBitRawIntegerSummary::default();
+    fn expected_raw_integer_summary(probabilities: &[u8]) -> EightBitIdentityDecodeSummary {
+        let mut raw_integer_summary = EightBitRawIntegerSummary::default();
         for probability_pair in probabilities.chunks_exact(2) {
             raw_integer_summary.record_raw_dosage_integer(raw_dosage_integer(probability_pair[0], probability_pair[1]));
         }
@@ -412,6 +448,28 @@ mod tests {
     }
 
     #[test]
+    fn all_samples_present_diploid_wrapper_matches_scalar() {
+        for sample_count in TRUSTED_IDENTITY_SAMPLE_COUNTS {
+            let present_ploidy = vec![2_u8; sample_count];
+            assert!(all_samples_present_diploid_simd_or_scalar(&present_ploidy));
+            assert_eq!(
+                all_samples_present_diploid_simd_or_scalar(&present_ploidy),
+                all_samples_present_diploid_scalar(&present_ploidy)
+            );
+
+            for missing_index in 0..sample_count {
+                let mut ploidy = present_ploidy.clone();
+                ploidy[missing_index] = if missing_index % 2 == 0 { 3 } else { 0x82 };
+                assert!(!all_samples_present_diploid_simd_or_scalar(&ploidy));
+                assert_eq!(
+                    all_samples_present_diploid_simd_or_scalar(&ploidy),
+                    all_samples_present_diploid_scalar(&ploidy)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn trusted_identity_wrapper_uses_selected_decode_path() {
         let probabilities = probability_bytes();
         let sample_count = probabilities.len() / 2;
@@ -419,9 +477,8 @@ mod tests {
         let mut wrapper_output = vec![0.0_f32; sample_count];
 
         let expected_summary =
-            decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats(&probabilities, &mut expected_output);
-        let wrapper_summary =
-            decode_trusted_unphased_eight_bit_identity_simd_or_scalar(&probabilities, &mut wrapper_output);
+            decode_unphased_eight_bit_identity_raw_scalar_integer_stats(&probabilities, &mut expected_output);
+        let wrapper_summary = decode_unphased_eight_bit_identity_simd_or_scalar(&probabilities, &mut wrapper_output);
 
         assert_eq!(wrapper_output, expected_output);
         assert_eq!(wrapper_summary, expected_summary);
@@ -437,13 +494,9 @@ mod tests {
                 let sample_count_float =
                     f32::from(u16::try_from(sample_count).expect("test sample count should fit u16"));
 
-                let lookup_summary = decode_trusted_unphased_eight_bit_identity_lookup_scalar(
-                    &probabilities,
-                    lookup,
-                    &mut lookup_output,
-                );
-                let raw_summary =
-                    decode_trusted_unphased_eight_bit_identity_raw_scalar(&probabilities, &mut raw_output);
+                let lookup_summary =
+                    decode_unphased_eight_bit_identity_lookup_scalar(&probabilities, lookup, &mut lookup_output);
+                let raw_summary = decode_unphased_eight_bit_identity_raw_scalar(&probabilities, &mut raw_output);
                 let expected_summary = expected_raw_summary(&probabilities);
 
                 assert!(
@@ -478,7 +531,7 @@ mod tests {
                 let mut output = vec![0.0_f32; sample_count];
 
                 let integer_summary =
-                    decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats(&probabilities, &mut output);
+                    decode_unphased_eight_bit_identity_raw_scalar_integer_stats(&probabilities, &mut output);
                 let expected_summary = expected_raw_integer_summary(&probabilities);
 
                 assert_eq!(integer_summary, expected_summary);
@@ -499,10 +552,9 @@ mod tests {
                 let mut scalar_output = vec![0.0_f32; sample_count];
                 let mut avx2_output = vec![0.0_f32; sample_count];
 
-                let scalar_summary =
-                    decode_trusted_unphased_eight_bit_identity_raw_scalar(&probabilities, &mut scalar_output);
+                let scalar_summary = decode_unphased_eight_bit_identity_raw_scalar(&probabilities, &mut scalar_output);
                 let avx2_summary =
-                    unsafe { decode_trusted_unphased_eight_bit_identity_raw_avx2(&probabilities, &mut avx2_output) };
+                    unsafe { decode_unphased_eight_bit_identity_raw_avx2(&probabilities, &mut avx2_output) };
                 let expected_integer_summary = expected_raw_integer_summary(&probabilities);
 
                 assert_eq!(avx2_output, scalar_output);
@@ -529,12 +581,10 @@ mod tests {
                 let mut scalar_output = vec![0.0_f32; sample_count];
                 let mut avx2_output = vec![0.0_f32; sample_count];
 
-                let scalar_summary = decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats(
-                    &probabilities,
-                    &mut scalar_output,
-                );
+                let scalar_summary =
+                    decode_unphased_eight_bit_identity_raw_scalar_integer_stats(&probabilities, &mut scalar_output);
                 let avx2_summary =
-                    unsafe { decode_trusted_unphased_eight_bit_identity_raw_avx2(&probabilities, &mut avx2_output) };
+                    unsafe { decode_unphased_eight_bit_identity_raw_avx2(&probabilities, &mut avx2_output) };
 
                 assert_eq!(avx2_output, scalar_output);
                 assert_eq!(avx2_summary, scalar_summary);

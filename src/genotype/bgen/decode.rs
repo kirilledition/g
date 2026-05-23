@@ -8,6 +8,7 @@ use flate2::{Decompress, FlushDecompress, Status};
 use super::metadata::VariantRecord;
 use super::profile::{ThreadLocalProfileSnapshot, elapsed_nanoseconds};
 use super::sample_selection::SampleSelection;
+use super::simd;
 use super::trusted;
 use super::{BgenError, CompressionType};
 use crate::genotype::preprocess;
@@ -958,7 +959,6 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
         )));
     }
 
-    let dosage_lookup = unphased_eight_bit_dosage_lookup();
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let output_write_start_time = profiling_enabled.then(Instant::now);
     let output_pointer = output_pointer_address as *mut f32;
@@ -967,6 +967,37 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
     })?;
     let all_samples_present =
         trusted_no_missing_diploid || trusted::all_samples_present_diploid(sample_ploidy_and_missingness);
+
+    if sample_selection.is_identity && all_samples_present {
+        let output_row = unsafe {
+            // Each parallel worker owns a distinct variant row in the variant-major output matrix.
+            std::slice::from_raw_parts_mut(output_pointer.add(variant_row_offset), selected_sample_count)
+        };
+        let decode_summary = simd::decode_unphased_eight_bit_identity_simd_or_scalar(
+            &packed_probability_bytes[..expected_probability_byte_count],
+            output_row,
+        );
+        record_variant_major_decode_profile(
+            &mut thread_local_profile_snapshot,
+            probability_decode_start_time,
+            output_write_start_time,
+            selected_sample_count,
+        )?;
+
+        return Ok(VariantDecodeResult {
+            profile_snapshot: thread_local_profile_snapshot,
+            selected_dosage_total: decode_summary.selected_dosage_total,
+            selected_dosage_square_total: decode_summary.selected_dosage_square_total,
+            selected_observation_count: decode_summary.selected_observation_count,
+            has_missing_values: false,
+            zero_count: decode_summary.zero_count,
+            nonzero_count: decode_summary.nonzero_count,
+            homozygous_reference_count: decode_summary.homozygous_reference_count,
+            heterozygous_count: decode_summary.heterozygous_count,
+            homozygous_alternate_count: decode_summary.homozygous_alternate_count,
+        });
+    }
+
     let mut selected_dosage_total = 0.0_f32;
     let mut selected_dosage_square_total = 0.0_f32;
     let mut selected_observation_count = 0_i32;
@@ -979,6 +1010,48 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
 
     let probability_pairs = packed_probability_bytes[..expected_probability_byte_count].chunks_exact(2);
     if !sample_selection.is_identity && all_samples_present {
+        if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start {
+            let probability_offset = contiguous_file_index_start.checked_mul(2).ok_or_else(|| {
+                BgenError::InvalidFormat("Integer overflow while indexing 8-bit BGEN probabilities.".to_string())
+            })?;
+            let selected_probability_byte_count = selected_sample_count.checked_mul(2).ok_or_else(|| {
+                BgenError::InvalidFormat(
+                    "Integer overflow while slicing selected 8-bit BGEN probabilities.".to_string(),
+                )
+            })?;
+            let selected_probability_bytes = read_exact_bytes(
+                &packed_probability_bytes[..expected_probability_byte_count],
+                probability_offset,
+                selected_probability_byte_count,
+            )?;
+            let output_row = unsafe {
+                // The contiguous selected sample run maps directly to a contiguous output row.
+                std::slice::from_raw_parts_mut(output_pointer.add(variant_row_offset), selected_sample_count)
+            };
+            let decode_summary =
+                simd::decode_unphased_eight_bit_identity_simd_or_scalar(selected_probability_bytes, output_row);
+            record_variant_major_decode_profile(
+                &mut thread_local_profile_snapshot,
+                probability_decode_start_time,
+                output_write_start_time,
+                selected_sample_count,
+            )?;
+
+            return Ok(VariantDecodeResult {
+                profile_snapshot: thread_local_profile_snapshot,
+                selected_dosage_total: decode_summary.selected_dosage_total,
+                selected_dosage_square_total: decode_summary.selected_dosage_square_total,
+                selected_observation_count: decode_summary.selected_observation_count,
+                has_missing_values: false,
+                zero_count: decode_summary.zero_count,
+                nonzero_count: decode_summary.nonzero_count,
+                homozygous_reference_count: decode_summary.homozygous_reference_count,
+                heterozygous_count: decode_summary.heterozygous_count,
+                homozygous_alternate_count: decode_summary.homozygous_alternate_count,
+            });
+        }
+
+        let dosage_lookup = unphased_eight_bit_dosage_lookup();
         for (selected_index, file_sample_index) in sample_selection.selected_file_indices.iter().copied().enumerate() {
             let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
                 BgenError::InvalidFormat("Integer overflow while indexing 8-bit BGEN probabilities.".to_string())
@@ -1024,6 +1097,7 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
         });
     }
 
+    let dosage_lookup = unphased_eight_bit_dosage_lookup();
     for (file_sample_index, (ploidy_and_missingness, probability_pair)) in
         sample_ploidy_and_missingness.iter().zip(probability_pairs).enumerate()
     {
@@ -1465,6 +1539,25 @@ mod tests {
         .expect("trusted identity 8-bit variant-major decode");
         assert!(!identity_result.has_missing_values);
         assert_eq!(identity_result.selected_observation_count, 3);
+
+        let contiguous_subset_selection = build_sample_selection(3, &[1, 2]).expect("contiguous subset selection");
+        let mut contiguous_subset_output = vec![0.0_f32; 2];
+        let contiguous_subset_result = decode_unphased_eight_bit_dosages_into_variant_major_matrix(
+            &[2, 2, 2],
+            &[255, 0, 0, 255, 0, 0],
+            &contiguous_subset_selection,
+            &variant_record,
+            contiguous_subset_output.as_mut_ptr() as usize,
+            0,
+            2,
+            true,
+            false,
+            ThreadLocalProfileSnapshot::default(),
+        )
+        .expect("contiguous subset 8-bit variant-major decode");
+        assert!(!contiguous_subset_result.has_missing_values);
+        assert_eq!(contiguous_subset_result.selected_observation_count, 2);
+        assert_eq!(contiguous_subset_output, vec![1.0, 2.0]);
     }
 
     #[test]

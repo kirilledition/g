@@ -38,6 +38,10 @@ criterion = "0.8.2"
 name = "bgen_read"
 harness = false
 
+[[bench]]
+name = "preprocess"
+harness = false
+
 [profile.perf]
 inherits = "release"
 opt-level = 3

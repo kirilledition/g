@@ -13,14 +13,7 @@ use super::{BgenError, CompressionType};
 use crate::genotype::preprocess;
 
 pub(super) fn all_samples_present_diploid(sample_ploidy_and_missingness: &[u8]) -> bool {
-    const PRESENT_DIPLOID_BYTE_GROUP: [u8; 16] = [2_u8; 16];
-    let mut ploidy_chunks = sample_ploidy_and_missingness.chunks_exact(PRESENT_DIPLOID_BYTE_GROUP.len());
-    for ploidy_chunk in &mut ploidy_chunks {
-        if ploidy_chunk != PRESENT_DIPLOID_BYTE_GROUP {
-            return false;
-        }
-    }
-    ploidy_chunks.remainder().iter().all(|ploidy_byte| *ploidy_byte == 2)
+    simd::all_samples_present_diploid_simd_or_scalar(sample_ploidy_and_missingness)
 }
 
 pub(super) fn validate_variant_compatible_with_trusted_no_missing_diploid(
@@ -230,7 +223,6 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
     let packed_probability_bytes = read_exact_bytes(probability_block, cursor, expected_probability_byte_count)?;
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let output_write_start_time = profiling_enabled.then(Instant::now);
-    let dosage_lookup = unphased_eight_bit_dosage_lookup();
     let output_pointer = output_pointer_address as *mut f32;
     let variant_row_offset = variant_index.checked_mul(selected_sample_count).ok_or_else(|| {
         BgenError::Range("Integer overflow while locating variant-major BGEN output row.".to_string())
@@ -249,7 +241,30 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
             std::slice::from_raw_parts_mut(output_pointer.add(variant_row_offset), selected_sample_count)
         };
         let decode_summary =
-            simd::decode_trusted_unphased_eight_bit_identity_simd_or_scalar(packed_probability_bytes, output_row);
+            simd::decode_unphased_eight_bit_identity_simd_or_scalar(packed_probability_bytes, output_row);
+        selected_dosage_total = decode_summary.selected_dosage_total;
+        selected_dosage_square_total = decode_summary.selected_dosage_square_total;
+        selected_observation_count = decode_summary.selected_observation_count;
+        zero_count = decode_summary.zero_count;
+        nonzero_count = decode_summary.nonzero_count;
+        homozygous_reference_count = decode_summary.homozygous_reference_count;
+        heterozygous_count = decode_summary.heterozygous_count;
+        homozygous_alternate_count = decode_summary.homozygous_alternate_count;
+    } else if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start {
+        let probability_offset = contiguous_file_index_start.checked_mul(2).ok_or_else(|| {
+            BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
+        })?;
+        let selected_probability_byte_count = selected_sample_count.checked_mul(2).ok_or_else(|| {
+            BgenError::InvalidFormat("Integer overflow while slicing selected trusted BGEN probabilities.".to_string())
+        })?;
+        let selected_probability_bytes =
+            read_exact_bytes(packed_probability_bytes, probability_offset, selected_probability_byte_count)?;
+        let output_row = unsafe {
+            // The contiguous selected sample run maps directly to a contiguous output row.
+            std::slice::from_raw_parts_mut(output_pointer.add(variant_row_offset), selected_sample_count)
+        };
+        let decode_summary =
+            simd::decode_unphased_eight_bit_identity_simd_or_scalar(selected_probability_bytes, output_row);
         selected_dosage_total = decode_summary.selected_dosage_total;
         selected_dosage_square_total = decode_summary.selected_dosage_square_total;
         selected_observation_count = decode_summary.selected_observation_count;
@@ -259,6 +274,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         heterozygous_count = decode_summary.heterozygous_count;
         homozygous_alternate_count = decode_summary.homozygous_alternate_count;
     } else {
+        let dosage_lookup = unphased_eight_bit_dosage_lookup();
         for (selected_index, file_sample_index) in sample_selection.selected_file_indices.iter().copied().enumerate() {
             let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
                 BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
@@ -423,7 +439,7 @@ mod tests {
             variant_record(0, first_block.len(), "trusted-first"),
             variant_record(second_offset, second_block.len(), "trusted-second"),
         ];
-        let sample_selection = build_sample_selection(3, &[2, 0]).expect("subset sample selection should build");
+        let sample_selection = build_sample_selection(3, &[1, 2]).expect("subset sample selection should build");
         let mut output = vec![f32::NAN; 4];
         let mut thread_scratch = ThreadScratch::default();
         let mut dosage_sum = vec![0.0_f32; 2];
@@ -465,10 +481,10 @@ mod tests {
         assert!(!result.has_missing_values);
         assert_eq!(result.profile_snapshot.variant_decode_count, 2);
         assert_eq!(result.profile_snapshot.decode_tile_count, 1);
-        assert!((output[0] - dosage_lookup[usize::from(0_u8) | (usize::from(255_u8) << 8)]).abs() < f32::EPSILON);
-        assert!((output[1] - dosage_lookup[0]).abs() < f32::EPSILON);
-        assert!((output[2] - dosage_lookup[0]).abs() < f32::EPSILON);
-        assert!((output[3] - dosage_lookup[usize::from(0_u8) | (usize::from(255_u8) << 8)]).abs() < f32::EPSILON);
+        assert!((output[0] - dosage_lookup[usize::from(255_u8)]).abs() < f32::EPSILON);
+        assert!((output[1] - dosage_lookup[usize::from(0_u8) | (usize::from(255_u8) << 8)]).abs() < f32::EPSILON);
+        assert!((output[2] - dosage_lookup[usize::from(255_u8)]).abs() < f32::EPSILON);
+        assert!((output[3] - dosage_lookup[0]).abs() < f32::EPSILON);
         assert_eq!(nonzero_count.len(), 2);
     }
 

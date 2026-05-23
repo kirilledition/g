@@ -5,12 +5,13 @@ Date: 2026-05-23
 ## Context
 
 The current production SIMD policy is deliberately narrow: AVX2 is the only active x86 SIMD backend, with scalar
-fallbacks for non-AVX2 platforms. The trusted BGEN full-sample, no-missing, diploid, unphased 8-bit
-variant-major path already uses raw-integer AVX2 decode. Runtime SIMD switches and benchmark-only helpers were
-removed after benchmarking selected the raw AVX2 implementation.
+fallbacks for non-AVX2 platforms. The trusted BGEN full-sample, no-missing, diploid, unphased 8-bit variant-major path
+already uses raw-integer AVX2 decode. Runtime SIMD switches and benchmark-only helpers were removed after benchmarking
+selected the raw AVX2 implementation.
 
-This document records remaining SIMD opportunities in the Rust codebase. The priority is BGEN decode work because it
-is the main Rust numeric hot path and already has reader benchmarks and profile counters.
+This document records SIMD opportunities in the Rust codebase and the decisions from the 2026-05-23 follow-up pass. The
+priority was BGEN decode work because it is the main Rust numeric hot path and already has reader benchmarks and profile
+counters.
 
 ## Prior Plan Status
 
@@ -29,9 +30,9 @@ variant-major path:
 
 ## BGEN Findings
 
-### High Priority: Non-Trusted No-Missing 8-Bit Variant-Major Identity Decode
+### Implemented: Non-Trusted No-Missing 8-Bit Variant-Major Identity Decode
 
-The strongest remaining opportunity is the non-trusted unphased 8-bit variant-major identity/full-sample path in
+The strongest remaining opportunity was the non-trusted unphased 8-bit variant-major identity/full-sample path in
 `src/genotype/bgen/decode.rs`. The trusted path now decodes probability bytes directly with raw integer math:
 
 ```text
@@ -39,40 +40,69 @@ raw = 510 - 2*p0 - p1
 dosage = raw / 255
 ```
 
-The non-trusted path still uses scalar lookup-table decode when all samples are present. When the reader discovers that
-the variant is unphased 8-bit, `sample_selection.is_identity` is true, and `all_samples_present_diploid(...)` is true,
-the same contiguous variant-major row shape exists as in the trusted fast path. That should be able to reuse a
-generalized raw-integer AVX2 decoder from `src/genotype/bgen/simd.rs`.
+The non-trusted path previously used scalar lookup-table decode when all samples were present. When the reader discovers
+that the variant is unphased 8-bit, `sample_selection.is_identity` is true, and
+`all_samples_present_diploid(...)` is true, the same contiguous variant-major row shape exists as in the trusted fast
+path. The decoder now reuses a generalized raw-integer AVX2 decoder from `src/genotype/bgen/simd.rs`.
 
-Expected implementation direction:
+Implementation notes:
 
 - Generalize the trusted raw-integer summary type and AVX2 decode function so it is not trusted-path-specific.
 - Add an early branch in the non-trusted variant-major unphased 8-bit decoder for identity plus all-present samples.
 - Keep scalar fallback and no runtime switch.
-- Keep the path only if `bgen_preprocessed_variant_major_trusted_disabled` improves by at least 5% and trusted-path
-  benchmark results do not regress.
-- This is intentionally outside the original trusted-only SIMD plan; the old plan said not to change generic/untrusted
-  behavior during that pass.
+- Keep only the AVX2 implementation selected by benchmark, with scalar fallback for non-AVX2 platforms.
 
-### Medium Priority: AVX2 All-Present Detection Outside Trusted Hot Decode
+`bgen_preprocessed_variant_major_trusted_disabled` on `cantor`, 40 CPUs, `RUSTFLAGS="-C target-cpu=native"`:
 
-`all_samples_present_diploid` currently checks 16-byte chunks against `[2; 16]` and then scans the remainder. This is
-simple and already fairly efficient, but it can be tested with AVX2 by comparing 32 bytes at a time against byte value
-`2` and using a movemask to detect mismatches.
+| chunk size | prior lookup median | final median | time change |
+| --- | ---: | ---: | ---: |
+| 1024 | 5.5348 ms | 3.0523 ms | -44.9% |
+| 2048 | 5.5542 ms | 3.0110 ms | -45.8% |
+| 4096 | 8.9318 ms | 5.1066 ms | -42.8% |
+| 8192 | 16.908 ms | 9.2189 ms | -45.5% |
+| 16384 | 30.387 ms | 16.886 ms | -44.4% |
 
-This is not a remaining trusted hot-path decode issue; that scan was already removed from trusted decode after
-validation. The remaining uses are trusted validation and non-trusted all-present detection. This should be benchmarked
-before keeping it. A microbenchmark win is not enough; it should improve trusted validation time or non-trusted reader
-time in a realistic BGEN benchmark. If benchmark results are noise-level, keep the current scalar chunk comparison.
+### Implemented: AVX2 All-Present Detection Outside Trusted Hot Decode
 
-### Benchmark-Only: Selected-Subset Decode
+`all_samples_present_diploid` used to check 16-byte chunks against `[2; 16]` and then scan the remainder. It now uses
+AVX2 to compare 32 bytes at a time against byte value `2` and falls back to the old scalar chunk scan on non-AVX2
+platforms.
+
+This is not a trusted hot-path decode issue; that scan was already removed from trusted decode after validation. The
+remaining uses are trusted validation and non-trusted all-present detection. In the non-trusted reader benchmark, the
+incremental result was small: no statistically significant change for 1024, 2048, or 8192 chunks, and Criterion-reported
+improvements at 4096 and 16384 chunks. A final full-sample benchmark after all changes stayed within noise for the main
+reader path, so this was kept as a small AVX2-only improvement with scalar fallback.
+
+### Implemented For Dense Runs: Selected-Subset Decode
 
 Selected-subset paths use `selected_file_indices` or `file_to_selected_index`, so the natural access pattern is
 gather/scatter. SIMD is unlikely to help arbitrary sparse or shuffled subsets. A useful subset SIMD path would require
 detecting dense monotonic runs and applying the identity/raw decoder only within those runs.
 
-This was explicitly left out of the trusted SIMD implementation and should remain benchmark-only until workload data
-shows dense selected subsets are common enough to matter.
+The implemented path detects a single contiguous selected file-index run at sample-selection preparation time. For that
+shape, selected input probabilities and output dosages are both contiguous, so generic and trusted variant-major decode
+reuse the raw AVX2 identity decoder. Arbitrary sparse or shuffled subsets remain on the existing scalar lookup path.
+
+`bgen_preprocessed_variant_major_contiguous_subset_trusted_disabled`:
+
+| chunk size | scalar subset median | AVX2 dense-run median | time change |
+| --- | ---: | ---: | ---: |
+| 1024 | 3.6366 ms | 2.6441 ms | -27.3% |
+| 2048 | 3.7166 ms | 2.5660 ms | -31.0% |
+| 4096 | 5.9425 ms | 4.3773 ms | -26.3% |
+| 8192 | 11.041 ms | 7.9102 ms | -28.4% |
+| 16384 | 19.698 ms | 14.339 ms | -27.2% |
+
+`bgen_preprocessed_variant_major_contiguous_subset_trusted_no_missing_diploid`:
+
+| chunk size | scalar subset median | AVX2 dense-run median | time change |
+| --- | ---: | ---: | ---: |
+| 1024 | 3.8501 ms | 2.5668 ms | -33.3% |
+| 2048 | 3.6096 ms | 2.5277 ms | -30.0% |
+| 4096 | 5.9490 ms | 4.3354 ms | -27.1% |
+| 8192 | 11.017 ms | 7.8202 ms | -29.0% |
+| 16384 | 19.719 ms | 14.235 ms | -27.8% |
 
 ### Low Priority: Row-Major Identity Decode
 
@@ -94,15 +124,23 @@ and no-missing paths avoid it. This is not a good first SIMD target.
 
 ## Other Rust Findings
 
-### Genotype Preprocessing
+### Implemented: Genotype Preprocessing
 
 `src/genotype/preprocess.rs` has scalar numeric loops for row-major preprocessing and variant-major summarization. The
-variant-major summarization loop is a plausible SIMD candidate because each variant row is contiguous and the loop
-computes sums, square sums, observation counts, and threshold counts. It is lower priority than BGEN decode because the
-variant-major BGEN reader already computes stats during decode.
+variant-major summarization loop was a plausible SIMD candidate because each variant row is contiguous and the loop
+computes sums, square sums, observation counts, and threshold counts. The implementation now summarizes contiguous
+variant-major rows with AVX2 masks for observed values and dosage thresholds, with scalar fallback for non-AVX2
+platforms and scalar handling for row tails.
 
-A useful future experiment would add a benchmark for `summarize_variant_major_dosage_matrix` over dense no-missing
-float32 rows and compare scalar versus AVX2 reductions. Keep this separate from BGEN decode work.
+Focused `preprocess_variant_major_summary` benchmark over dense no-missing `f32` rows:
+
+| sample count | scalar median | AVX2 median | time change |
+| --- | ---: | ---: | ---: |
+| 1024 | 188.52 us | 35.551 us | -81.1% |
+| 2048 | 374.18 us | 70.256 us | -81.2% |
+| 4096 | 759.30 us | 142.07 us | -81.3% |
+| 8192 | 1.5072 ms | 277.53 us | -81.6% |
+| 16384 | 3.0026 ms | 546.37 us | -81.8% |
 
 ### Chunk Stats Post-Processing
 
@@ -128,12 +166,13 @@ decode and preprocessing.
 
 ## Recommended Order
 
-1. Generalize raw-integer AVX2 decode and apply it to the non-trusted no-missing unphased 8-bit variant-major identity
-   path.
-2. Benchmark AVX2 `all_samples_present_diploid` only for trusted validation and non-trusted all-present detection.
-3. Benchmark AVX2 variant-major summarization in `src/genotype/preprocess.rs`.
-4. Prototype dense selected-subset run detection only if workload data shows selected subsets are common and mostly
-   contiguous.
+Completed in this pass:
 
-Each step should be benchmarked independently on `cantor` with 40-70 CPUs. Keep only paths that improve realistic reader
-or preprocessing benchmarks beyond noise, and remove temporary benchmark switches or helpers before committing.
+1. Generalized raw-integer AVX2 decode and applied it to the non-trusted no-missing unphased 8-bit variant-major identity
+   path.
+2. Benchmarked and kept AVX2 `all_samples_present_diploid` for non-trusted all-present detection and trusted validation.
+3. Benchmarked and kept AVX2 variant-major summarization in `src/genotype/preprocess.rs`.
+4. Benchmarked and kept dense contiguous selected-subset decode for generic and trusted variant-major BGEN reads.
+
+No AVX-512 path, runtime SIMD switch, row-major SIMD path, generic bit-packed/phased SIMD path, missing-value imputation
+SIMD path, or arbitrary gather/scatter subset SIMD path was added.

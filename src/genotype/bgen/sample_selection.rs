@@ -6,6 +6,7 @@ pub(super) struct SampleSelection {
     pub(super) file_to_selected_index: Vec<usize>,
     pub(super) selected_file_indices: Vec<usize>,
     pub(super) is_identity: bool,
+    pub(super) contiguous_file_index_start: Option<usize>,
 }
 
 pub(super) fn build_sample_selection(
@@ -35,10 +36,37 @@ pub(super) fn build_sample_selection(
             is_identity = false;
         }
     }
+    let contiguous_file_index_start = selected_file_indices
+        .first()
+        .copied()
+        .filter(|_| selected_file_indices.windows(2).all(|sample_window| sample_window[1] == sample_window[0] + 1));
     Ok(SampleSelection {
         selected_sample_count: sample_indices.len(),
         file_to_selected_index,
         selected_file_indices,
         is_identity,
+        contiguous_file_index_start,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_sample_selection;
+
+    #[test]
+    fn sample_selection_records_contiguous_file_index_start() {
+        let identity_selection = build_sample_selection(4, &[0, 1, 2, 3]).expect("identity selection should build");
+        assert!(identity_selection.is_identity);
+        assert_eq!(identity_selection.contiguous_file_index_start, Some(0));
+
+        let contiguous_subset = build_sample_selection(5, &[1, 2, 3]).expect("contiguous subset should build");
+        assert!(!contiguous_subset.is_identity);
+        assert_eq!(contiguous_subset.contiguous_file_index_start, Some(1));
+
+        let shuffled_subset = build_sample_selection(5, &[1, 3, 2]).expect("shuffled subset should build");
+        assert_eq!(shuffled_subset.contiguous_file_index_start, None);
+
+        let empty_subset = build_sample_selection(5, &[]).expect("empty subset should build");
+        assert_eq!(empty_subset.contiguous_file_index_start, None);
+    }
 }
