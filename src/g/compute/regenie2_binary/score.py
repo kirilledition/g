@@ -8,8 +8,8 @@ import jax
 import jax.numpy as jnp
 
 from g.compute.common import genotype, pvalue
-from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
 from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_binary import correction as regenie2_binary_correction
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import state as regenie2_binary_state
 
@@ -126,7 +126,7 @@ def compute_multi_binary_score_test_chunk_variant_major(
         jnp.nan,
     )
     valid_mask = null_logistic_converged & jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    extra_code = regenie2_binary_candidate_planning.build_extra_code(log10_p_value, valid_mask, correction_plan)
+    extra_code = regenie2_binary_correction.build_extra_code(log10_p_value, valid_mask, correction_plan)
     return regenie2_binary_result.build_multi_binary_score_test_chunk_result(
         beta=beta,
         standard_error=standard_error,

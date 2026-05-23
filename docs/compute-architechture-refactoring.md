@@ -889,6 +889,7 @@ Completed cleanup so far:
 * Moved default Firth candidate batch size and capacity into `regenie2_binary/config.py`, so kernel policy no longer imports candidate-dispatch helpers just to construct default config.
 * Moved the linear single-trait result squeeze constructor from score math into `regenie2_linear/result.py`, matching the binary result-module ownership of result-shape adapters.
 * Moved the empty `FirthVariantResult` constructor from `firth/batch.py` into `firth/types.py`, so batching code no longer owns Firth result construction.
+* Split score-test correction-label selection into `regenie2_binary/correction.py`, leaving `regenie2_binary/candidates.py` focused on fixed-shape Firth candidate batching and capacity dispatch.
 
 Intentional remaining adapters:
 

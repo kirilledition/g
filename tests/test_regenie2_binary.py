@@ -12,6 +12,7 @@ from g import types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
 from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_binary import correction as regenie2_binary_correction
 from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logistic
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
@@ -504,7 +505,7 @@ def test_group_firth_candidate_batch_inputs_places_heuristic_lanes_after_regular
 
 
 def test_score_only_plan_produces_no_fallback_candidates() -> None:
-    extra_code = regenie2_binary_candidate_planning.build_extra_code(
+    extra_code = regenie2_binary_correction.build_extra_code(
         log10_p_value=jnp.asarray([0.5, 2.0, 8.0], dtype=jnp.float32),
         valid_mask=jnp.asarray([True, True, True], dtype=jnp.bool_),
         correction_plan=types.BinaryCorrectionPlan(),
@@ -805,8 +806,8 @@ def test_p_threshold_controls_fallback_candidate_selection() -> None:
         p_threshold=0.01,
     )
 
-    relaxed_extra_code = regenie2_binary_candidate_planning.build_extra_code(log10_p_value, valid_mask, relaxed_plan)
-    strict_extra_code = regenie2_binary_candidate_planning.build_extra_code(log10_p_value, valid_mask, strict_plan)
+    relaxed_extra_code = regenie2_binary_correction.build_extra_code(log10_p_value, valid_mask, relaxed_plan)
+    strict_extra_code = regenie2_binary_correction.build_extra_code(log10_p_value, valid_mask, strict_plan)
 
     assert np.count_nonzero(np.asarray(relaxed_extra_code) == types.BinaryExtraCode.FIRTH.value) == 2
     assert np.count_nonzero(np.asarray(strict_extra_code) == types.BinaryExtraCode.FIRTH.value) == 1
