@@ -51,6 +51,43 @@ def build_full_model_information_matrix(
     return jnp.concatenate([top_block, bottom_block], axis=0)
 
 
+def initialize_full_model_coefficients_without_mask(
+    covariate_matrix: jax.Array,
+    genotype_matrix_by_variant: jax.Array,
+    phenotype_vector: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+) -> jax.Array:
+    """Initialize full-model coefficients with a pseudo-response regression."""
+    pseudo_response_vector = kernel_config.approximate_firth.initial_response_scale * (
+        phenotype_vector - regenie2_binary_config.BINARY_CASE_THRESHOLD
+    )
+    covariate_information_matrix = covariate_matrix.T @ covariate_matrix
+    covariate_information_matrix = jnp.broadcast_to(
+        covariate_information_matrix[None, :, :],
+        (genotype_matrix_by_variant.shape[0], covariate_matrix.shape[1], covariate_matrix.shape[1]),
+    )
+    cross_information_vector = genotype_matrix_by_variant @ covariate_matrix
+    genotype_information = jnp.einsum("ij,ij->i", genotype_matrix_by_variant, genotype_matrix_by_variant)
+    covariate_score = jnp.broadcast_to(
+        (covariate_matrix.T @ pseudo_response_vector)[None, :],
+        (genotype_matrix_by_variant.shape[0], covariate_matrix.shape[1]),
+    )
+    genotype_score = genotype_matrix_by_variant @ pseudo_response_vector
+    stacked_right_hand_side = jnp.stack([covariate_score, cross_information_vector], axis=-1)
+    covariate_and_cross_solutions = jax.vmap(linalg.solve_from_positive_definite_matrix)(
+        covariate_information_matrix,
+        stacked_right_hand_side,
+    )
+    covariate_solution = covariate_and_cross_solutions[..., 0]
+    cross_solution = covariate_and_cross_solutions[..., 1]
+    schur_complement = genotype_information - jnp.einsum("ij,ij->i", cross_information_vector, cross_solution)
+    genotype_coefficient = (
+        genotype_score - jnp.einsum("ij,ij->i", cross_information_vector, covariate_solution)
+    ) / schur_complement
+    covariate_coefficients = covariate_solution - cross_solution * genotype_coefficient[:, None]
+    return jnp.concatenate([covariate_coefficients, genotype_coefficient[:, None]], axis=1)
+
+
 def compute_firth_penalized_log_likelihood_from_cholesky(
     probability_vector: jax.Array,
     phenotype_vector: jax.Array,

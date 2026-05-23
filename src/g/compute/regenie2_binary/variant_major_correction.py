@@ -14,6 +14,7 @@ from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
+from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 
@@ -128,7 +129,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
             )
             if kernel_config.approximate_firth.use_block_math:
                 heuristic_initial_coefficients = (
-                    regenie2_binary_firth_batch.initialize_full_model_coefficients_without_mask(
+                    regenie2_binary_firth_full_model.initialize_full_model_coefficients_without_mask(
                         covariate_matrix=chromosome_state.covariate_matrix,
                         genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
                         phenotype_vector=chromosome_state.phenotype_vector,

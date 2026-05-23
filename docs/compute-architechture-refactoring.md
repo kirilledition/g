@@ -890,6 +890,7 @@ Completed cleanup so far:
 * Moved the linear single-trait result squeeze constructor from score math into `regenie2_linear/result.py`, matching the binary result-module ownership of result-shape adapters.
 * Moved the empty `FirthVariantResult` constructor from `firth/batch.py` into `firth/types.py`, so batching code no longer owns Firth result construction.
 * Split score-test correction-label selection into `regenie2_binary/correction.py`, leaving `regenie2_binary/candidates.py` focused on fixed-shape Firth candidate batching and capacity dispatch.
+* Moved the full-model Firth pseudo-response initializer from `firth/batch.py` into `firth/full_model.py`, leaving batch code focused on candidate-lane dispatch and scalar/full-model solver selection.
 
 Intentional remaining adapters:
 
