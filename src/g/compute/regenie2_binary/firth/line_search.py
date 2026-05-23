@@ -13,7 +13,6 @@ if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import types as regenie2_binary_types
 
 FIRTH_STEP_HALVING_SCALE = 0.5
-FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS = 12
 
 
 def compute_firth_convergence_mask(
@@ -50,7 +49,7 @@ def run_firth_step_halving(
     """Accept the first bounded Firth step that preserves penalized likelihood."""
 
     def condition_function(state: regenie2_binary_firth_types.FirthBacktrackingState) -> jax.Array:
-        return (state.attempt_count < FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS) & (~state.accepted)
+        return (state.attempt_count < kernel_config.firth_step_halving_maximum_attempts) & (~state.accepted)
 
     def body_function(
         state: regenie2_binary_firth_types.FirthBacktrackingState,

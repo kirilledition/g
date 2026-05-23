@@ -368,6 +368,17 @@ def build_test_binary_kernel_config() -> regenie2_binary_types.BinaryKernelConfi
         firth_coefficient_tolerance=3.0e-5,
         firth_likelihood_tolerance=4.0e-5,
         firth_maximum_step_size=6.0,
+        firth_pseudo_maximum_iterations=19,
+        firth_pseudo_inner_maximum_iterations=23,
+        firth_newton_raphson_zero_start_iterations=29,
+        firth_line_search_maximum_attempts=31,
+        firth_step_halving_maximum_attempts=37,
+        null_firth_maximum_iterations=41,
+        null_firth_gradient_tolerance=5.0e-5,
+        null_firth_maximum_step_size=7.0,
+        null_firth_fallback_iteration_multiplier=43,
+        null_firth_fallback_step_divisor=11.0,
+        null_firth_line_search_maximum_attempts=47,
         use_block_firth_math=True,
     )
 

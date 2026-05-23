@@ -714,6 +714,17 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         firth_coefficient_tolerance=1.0e-8,
         firth_likelihood_tolerance=1.0e-8,
         firth_maximum_step_size=1.0,
+        firth_pseudo_maximum_iterations=2,
+        firth_pseudo_inner_maximum_iterations=2,
+        firth_newton_raphson_zero_start_iterations=2,
+        firth_line_search_maximum_attempts=2,
+        firth_step_halving_maximum_attempts=2,
+        null_firth_maximum_iterations=3,
+        null_firth_gradient_tolerance=1.0e-8,
+        null_firth_maximum_step_size=1.0,
+        null_firth_fallback_iteration_multiplier=2,
+        null_firth_fallback_step_divisor=2.0,
+        null_firth_line_search_maximum_attempts=2,
         use_block_firth_math=True,
     )
     result = regenie2_binary_types.Regenie2MultiBinaryChunkResult(

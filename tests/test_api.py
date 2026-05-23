@@ -156,6 +156,17 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
             firth_coefficient_tolerance=3.0e-5,
             firth_likelihood_tolerance=4.0e-5,
             firth_maximum_step_size=6.0,
+            firth_pseudo_maximum_iterations=19,
+            firth_pseudo_inner_maximum_iterations=23,
+            firth_newton_raphson_zero_start_iterations=29,
+            firth_line_search_maximum_attempts=31,
+            firth_step_halving_maximum_attempts=37,
+            null_firth_maximum_iterations=41,
+            null_firth_gradient_tolerance=5.0e-5,
+            null_firth_maximum_step_size=7.0,
+            null_firth_fallback_iteration_multiplier=43,
+            null_firth_fallback_step_divisor=11.0,
+            null_firth_line_search_maximum_attempts=47,
             use_block_firth_math=True,
         )
     )
@@ -163,6 +174,17 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
     assert kernel_config.firth_batch_size == 7
     assert kernel_config.firth_candidate_capacity == 11
     assert kernel_config.maximum_null_iterations == 13
+    assert kernel_config.firth_pseudo_maximum_iterations == 19
+    assert kernel_config.firth_pseudo_inner_maximum_iterations == 23
+    assert kernel_config.firth_newton_raphson_zero_start_iterations == 29
+    assert kernel_config.firth_line_search_maximum_attempts == 31
+    assert kernel_config.firth_step_halving_maximum_attempts == 37
+    assert kernel_config.null_firth_maximum_iterations == 41
+    assert kernel_config.null_firth_gradient_tolerance == 5.0e-5
+    assert kernel_config.null_firth_maximum_step_size == 7.0
+    assert kernel_config.null_firth_fallback_iteration_multiplier == 43
+    assert kernel_config.null_firth_fallback_step_divisor == 11.0
+    assert kernel_config.null_firth_line_search_maximum_attempts == 47
     assert kernel_config.use_block_firth_math is True
 
 
@@ -536,6 +558,17 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
             "g-firth-coefficient-tolerance": 3.0e-5,
             "g-firth-likelihood-tolerance": 4.0e-5,
             "g-firth-maximum-step-size": 6.0,
+            "g-firth-pseudo-maximum-iterations": 19,
+            "g-firth-pseudo-inner-maximum-iterations": 23,
+            "g-firth-newton-raphson-zero-start-iterations": 29,
+            "g-firth-line-search-maximum-attempts": 31,
+            "g-firth-step-halving-maximum-attempts": 37,
+            "g-null-firth-maximum-iterations": 41,
+            "g-null-firth-gradient-tolerance": 5.0e-5,
+            "g-null-firth-maximum-step-size": 7.0,
+            "g-null-firth-fallback-iteration-multiplier": 43,
+            "g-null-firth-fallback-step-divisor": 11.0,
+            "g-null-firth-line-search-maximum-attempts": 47,
             "g-use-block-firth-math": True,
         }
     )
@@ -563,6 +596,17 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
     assert kernel_config.firth_coefficient_tolerance == 3.0e-5
     assert kernel_config.firth_likelihood_tolerance == 4.0e-5
     assert kernel_config.firth_maximum_step_size == 6.0
+    assert kernel_config.firth_pseudo_maximum_iterations == 19
+    assert kernel_config.firth_pseudo_inner_maximum_iterations == 23
+    assert kernel_config.firth_newton_raphson_zero_start_iterations == 29
+    assert kernel_config.firth_line_search_maximum_attempts == 31
+    assert kernel_config.firth_step_halving_maximum_attempts == 37
+    assert kernel_config.null_firth_maximum_iterations == 41
+    assert kernel_config.null_firth_gradient_tolerance == 5.0e-5
+    assert kernel_config.null_firth_maximum_step_size == 7.0
+    assert kernel_config.null_firth_fallback_iteration_multiplier == 43
+    assert kernel_config.null_firth_fallback_step_divisor == 11.0
+    assert kernel_config.null_firth_line_search_maximum_attempts == 47
     assert kernel_config.use_block_firth_math is True
     assert (
         mock_binary_pipeline.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE

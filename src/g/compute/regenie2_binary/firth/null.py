@@ -17,12 +17,6 @@ if typing.TYPE_CHECKING:
 
 FIRTH_DEVIANCE_LOG_DETERMINANT_MULTIPLIER = 0.5
 NULL_FIRTH_STEP_HALVING_SCALE = 0.5
-FIRTH_NULL_MAXIMUM_ITERATIONS = 1000
-FIRTH_NULL_FALLBACK_ITERATION_MULTIPLIER = 5
-FIRTH_NULL_GRADIENT_TOLERANCE = 50.0e-6
-FIRTH_NULL_MAXIMUM_STEP_SIZE = 25.0
-FIRTH_NULL_FALLBACK_STEP_DIVISOR = 5.0
-FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
 
 
 def compute_null_firth_components(
@@ -86,11 +80,12 @@ def run_null_firth_line_search(
     current_coefficients: jax.Array,
     current_deviance: jax.Array,
     coefficient_step: jax.Array,
+    maximum_attempts: int,
 ) -> regenie2_binary_firth_types.NullFirthLineSearchResult:
     """Accept the first null Firth step that decreases penalized deviance."""
 
     def condition_function(state: regenie2_binary_firth_types.NullFirthLineSearchState) -> jax.Array:
-        return (state.attempt_count < FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS) & (~state.accepted) & state.valid
+        return (state.attempt_count < maximum_attempts) & (~state.accepted) & state.valid
 
     def body_function(
         state: regenie2_binary_firth_types.NullFirthLineSearchState,
@@ -141,6 +136,7 @@ def fit_covariate_only_firth_null_model_once(
     maximum_iterations: int,
     maximum_step_size: float,
     tolerance: float,
+    line_search_maximum_attempts: int,
     check_score_increase: bool,
 ) -> regenie2_binary_firth_types.NullFirthFitResult:
     """Run one REGENIE-style covariate-only null Firth attempt."""
@@ -184,6 +180,7 @@ def fit_covariate_only_firth_null_model_once(
             current_coefficients=state.coefficients,
             current_deviance=components.deviance,
             coefficient_step=scaled_coefficient_step,
+            maximum_attempts=line_search_maximum_attempts,
         )
         step_halving_failed = (~converged) & (~line_search_result.accepted)
         numerical_failed = (
@@ -273,8 +270,6 @@ def fit_covariate_only_firth_null_model(
     kernel_config: regenie2_binary_types.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.NullFirthFitResult:
     """Fit the covariate-only Firth null model and return diagnostics."""
-    del kernel_config
-
     covariate_matrix_float64 = jnp.asarray(covariate_matrix, dtype=jnp.float64)
     phenotype_vector_float64 = jnp.asarray(phenotype_vector, dtype=jnp.float64)
     loco_offset_float64 = jnp.asarray(loco_offset, dtype=jnp.float64)
@@ -286,9 +281,10 @@ def fit_covariate_only_firth_null_model(
         phenotype_vector=phenotype_vector_float64,
         loco_offset=loco_offset_float64,
         initial_coefficients=initial_coefficients_float64,
-        maximum_iterations=FIRTH_NULL_MAXIMUM_ITERATIONS,
-        maximum_step_size=FIRTH_NULL_MAXIMUM_STEP_SIZE,
-        tolerance=FIRTH_NULL_GRADIENT_TOLERANCE,
+        maximum_iterations=kernel_config.null_firth_maximum_iterations,
+        maximum_step_size=kernel_config.null_firth_maximum_step_size,
+        tolerance=kernel_config.null_firth_gradient_tolerance,
+        line_search_maximum_attempts=kernel_config.null_firth_line_search_maximum_attempts,
         check_score_increase=True,
     )
     second_result = fit_covariate_only_firth_null_model_once(
@@ -296,13 +292,18 @@ def fit_covariate_only_firth_null_model(
         phenotype_vector=phenotype_vector_float64,
         loco_offset=loco_offset_float64,
         initial_coefficients=zero_start_coefficients,
-        maximum_iterations=FIRTH_NULL_MAXIMUM_ITERATIONS,
-        maximum_step_size=FIRTH_NULL_MAXIMUM_STEP_SIZE,
-        tolerance=FIRTH_NULL_GRADIENT_TOLERANCE,
+        maximum_iterations=kernel_config.null_firth_maximum_iterations,
+        maximum_step_size=kernel_config.null_firth_maximum_step_size,
+        tolerance=kernel_config.null_firth_gradient_tolerance,
+        line_search_maximum_attempts=kernel_config.null_firth_line_search_maximum_attempts,
         check_score_increase=True,
     )
-    fallback_maximum_iterations = FIRTH_NULL_MAXIMUM_ITERATIONS * FIRTH_NULL_FALLBACK_ITERATION_MULTIPLIER
-    fallback_maximum_step_size = FIRTH_NULL_MAXIMUM_STEP_SIZE / FIRTH_NULL_FALLBACK_STEP_DIVISOR
+    fallback_maximum_iterations = (
+        kernel_config.null_firth_maximum_iterations * kernel_config.null_firth_fallback_iteration_multiplier
+    )
+    fallback_maximum_step_size = (
+        kernel_config.null_firth_maximum_step_size / kernel_config.null_firth_fallback_step_divisor
+    )
     third_result = fit_covariate_only_firth_null_model_once(
         covariate_matrix=covariate_matrix_float64,
         phenotype_vector=phenotype_vector_float64,
@@ -310,7 +311,8 @@ def fit_covariate_only_firth_null_model(
         initial_coefficients=zero_start_coefficients,
         maximum_iterations=fallback_maximum_iterations,
         maximum_step_size=fallback_maximum_step_size,
-        tolerance=FIRTH_NULL_GRADIENT_TOLERANCE,
+        tolerance=kernel_config.null_firth_gradient_tolerance,
+        line_search_maximum_attempts=kernel_config.null_firth_line_search_maximum_attempts,
         check_score_increase=True,
     )
     fourth_result = fit_covariate_only_firth_null_model_once(
@@ -320,7 +322,8 @@ def fit_covariate_only_firth_null_model(
         initial_coefficients=initial_coefficients_float64,
         maximum_iterations=fallback_maximum_iterations,
         maximum_step_size=fallback_maximum_step_size,
-        tolerance=FIRTH_NULL_GRADIENT_TOLERANCE,
+        tolerance=kernel_config.null_firth_gradient_tolerance,
+        line_search_maximum_attempts=kernel_config.null_firth_line_search_maximum_attempts,
         check_score_increase=False,
     )
     use_first_result = first_result.converged

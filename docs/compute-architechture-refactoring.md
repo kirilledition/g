@@ -859,6 +859,7 @@ Completed cleanup so far:
 * Unified linear state preparation around trait-major helpers: single-trait state and chromosome-state preparation now adapt through the same trait-major formulas used by multi-trait linear compute.
 * Routed single-trait binary score testing through the trait-major score kernel, leaving one score-test formula and one genotype-flipping path for score-only binary statistics.
 * Centralized the binary variance floor and relative variance tolerance in `regenie2_binary/config.py` so score, null logistic, state preparation, and Firth solvers share one numerical policy.
+* Promoted Firth retry, line-search, pseudo-Firth, and null-Firth iteration limits into `BinaryKernelConfig`, so these compute-affecting policies are part of the execution plan instead of hidden module constants.
 
 Intentional remaining adapters:
 

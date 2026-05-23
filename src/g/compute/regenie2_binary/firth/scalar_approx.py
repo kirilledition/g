@@ -16,11 +16,6 @@ from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import types as regenie2_binary_types
-FIRTH_PSEUDO_MAXIMUM_ITERATIONS = 50
-FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS = 100
-FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS = 25
-FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
-FIRTH_MAXIMUM_STEP_SIZE = 5.0
 
 
 def map_scalar_pseudo_firth_failure_to_reason_code(failure_code: jax.Array) -> jax.Array:
@@ -100,11 +95,13 @@ def fit_scalar_pseudo_logistic_step(
     initial_genotype_information: jax.Array,
     initial_beta: jax.Array,
     tolerance: jax.Array,
+    maximum_iterations: int,
+    maximum_step_size: jax.Array,
 ) -> regenie2_binary_firth_types.ScalarPseudoLogisticState:
     """Run REGENIE's inner pseudo-response scalar logistic update."""
 
     def condition_function(state: regenie2_binary_firth_types.ScalarPseudoLogisticState) -> jax.Array:
-        return (state.iteration_count < FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS) & (~state.converged) & (~state.failed)
+        return (state.iteration_count < maximum_iterations) & (~state.converged) & (~state.failed)
 
     def body_function(
         state: regenie2_binary_firth_types.ScalarPseudoLogisticState,
@@ -112,7 +109,7 @@ def fit_scalar_pseudo_logistic_step(
         step_size = state.score / state.genotype_information
         absolute_step_size = jnp.abs(step_size)
         step_increased = absolute_step_size > state.previous_step_size
-        step_scale = jnp.maximum(absolute_step_size / FIRTH_MAXIMUM_STEP_SIZE, 1.0)
+        step_scale = jnp.maximum(absolute_step_size / maximum_step_size, 1.0)
         updated_beta = state.beta + step_size / step_scale
         probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(
             offset_vector + genotype_vector * updated_beta
@@ -180,6 +177,8 @@ def fit_scalar_pseudo_firth(
     initial_beta: jax.Array,
     maximum_iterations: int,
     tolerance: jax.Array,
+    inner_maximum_iterations: int,
+    maximum_step_size: jax.Array,
 ) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
     """Run REGENIE's scalar pseudo-Firth approximate correction."""
 
@@ -221,6 +220,8 @@ def fit_scalar_pseudo_firth(
             initial_genotype_information=components.genotype_information,
             initial_beta=state.beta,
             tolerance=tolerance,
+            maximum_iterations=inner_maximum_iterations,
+            maximum_step_size=maximum_step_size,
         )
         failed = (~components.valid) | slow_convergence_failure | logistic_state.failed
         failure_code = jnp.where(
@@ -324,11 +325,12 @@ def run_scalar_line_search(
     current_beta: jax.Array,
     current_penalized_deviance: jax.Array,
     initial_step_size: jax.Array,
+    maximum_attempts: int,
 ) -> regenie2_binary_firth_types.ScalarLineSearchState:
     """Run REGENIE scalar NR step-halving against penalized deviance."""
 
     def condition_function(state: regenie2_binary_firth_types.ScalarLineSearchState) -> jax.Array:
-        return (state.attempt_count < FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS) & (~state.accepted) & state.valid
+        return (state.attempt_count < maximum_attempts) & (~state.accepted) & state.valid
 
     def body_function(
         state: regenie2_binary_firth_types.ScalarLineSearchState,
@@ -397,6 +399,7 @@ def fit_scalar_newton_raphson_firth(
     maximum_iterations: int,
     tolerance: jax.Array,
     maximum_step_size: jax.Array,
+    line_search_maximum_attempts: int,
 ) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
     """Run REGENIE's scalar Newton-Raphson approximate-Firth fallback."""
 
@@ -429,6 +432,7 @@ def fit_scalar_newton_raphson_firth(
             current_beta=state.beta,
             current_penalized_deviance=state.penalized_deviance,
             initial_step_size=step_size,
+            maximum_attempts=line_search_maximum_attempts,
         )
         accepted_step_size = jnp.where(
             line_search_state.accepted,
@@ -564,7 +568,10 @@ def fit_single_variant_regenie_approximate_firth(
     )
     deviance_null = full_null_deviance - jnp.log(null_genotype_information)
     tolerance = jnp.asarray(kernel_config.firth_gradient_tolerance, dtype=scalar_dtype)
-    pseudo_maximum_iterations = min(kernel_config.firth_maximum_iterations // 2, FIRTH_PSEUDO_MAXIMUM_ITERATIONS)
+    pseudo_maximum_iterations = min(
+        kernel_config.firth_maximum_iterations // 2,
+        kernel_config.firth_pseudo_maximum_iterations,
+    )
     newton_maximum_iterations = kernel_config.firth_maximum_iterations // 2
     maximum_step_size = jnp.asarray(kernel_config.firth_maximum_step_size, dtype=scalar_dtype)
     pseudo_result = fit_scalar_pseudo_firth(
@@ -577,6 +584,8 @@ def fit_single_variant_regenie_approximate_firth(
         initial_beta=warm_start_beta,
         maximum_iterations=pseudo_maximum_iterations,
         tolerance=tolerance,
+        inner_maximum_iterations=kernel_config.firth_pseudo_inner_maximum_iterations,
+        maximum_step_size=maximum_step_size,
     )
     run_zero_start = (
         (~pseudo_result.valid) & sparse_correction & (jnp.abs(warm_start_beta) > jnp.asarray(0.0, dtype=scalar_dtype))
@@ -589,9 +598,10 @@ def fit_single_variant_regenie_approximate_firth(
         active_sample_mask=active_sample_mask,
         non_active_deviance=non_active_deviance,
         initial_beta=jnp.asarray(0.0, dtype=scalar_dtype),
-        maximum_iterations=FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS,
+        maximum_iterations=kernel_config.firth_newton_raphson_zero_start_iterations,
         tolerance=tolerance,
         maximum_step_size=maximum_step_size,
+        line_search_maximum_attempts=kernel_config.firth_line_search_maximum_attempts,
     )
     run_warm_start = (~pseudo_result.valid) & (~(run_zero_start & zero_start_result.valid))
     warm_start_result = fit_scalar_newton_raphson_firth(
@@ -605,6 +615,7 @@ def fit_single_variant_regenie_approximate_firth(
         maximum_iterations=newton_maximum_iterations,
         tolerance=tolerance,
         maximum_step_size=maximum_step_size,
+        line_search_maximum_attempts=kernel_config.firth_line_search_maximum_attempts,
     )
     use_zero_start = run_zero_start & zero_start_result.valid
     use_warm_start = (~pseudo_result.valid) & (~use_zero_start) & warm_start_result.valid
