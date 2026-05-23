@@ -25,6 +25,19 @@ class RegenieGenotypeFlipResult:
     flip_mask: jax.Array
 
 
+def convert_sample_major_to_variant_major(genotype_matrix: jax.Array) -> jax.Array:
+    """Convert sample-major dosages to the canonical variant-major compute layout.
+
+    Args:
+        genotype_matrix: Sample-major dosage matrix.
+
+    Returns:
+        Variant-major dosage matrix.
+
+    """
+    return jnp.asarray(genotype_matrix, dtype=jnp.float32).T
+
+
 def normalize_high_frequency_diploid_genotypes_sample_major(genotype_matrix: jax.Array) -> jax.Array:
     """Shift high-frequency diploid dosages to avoid float32 cancellation.
 

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import jax
-import jax.numpy as jnp
 
+from g.compute.common import genotype
 from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
 from g.compute.regenie2_linear import types as regenie2_linear_types
@@ -24,7 +24,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
         ],
         adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares[None],
         degrees_of_freedom=chromosome_state.degrees_of_freedom,
-        genotype_matrix_by_variant=jnp.asarray(genotype_matrix, dtype=jnp.float32).T,
+        genotype_matrix_by_variant=genotype.convert_sample_major_to_variant_major(genotype_matrix),
     )
     return regenie2_linear_score.squeeze_single_trait_linear_result(multi_result)
 
@@ -41,7 +41,7 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
         adjusted_residual_projection_coordinate_matrix=chromosome_state.adjusted_residual_projection_coordinate_matrix,
         adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares,
         degrees_of_freedom=chromosome_state.degrees_of_freedom,
-        genotype_matrix_by_variant=jnp.asarray(genotype_matrix, dtype=jnp.float32).T,
+        genotype_matrix_by_variant=genotype.convert_sample_major_to_variant_major(genotype_matrix),
     )
 
 

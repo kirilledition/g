@@ -6,9 +6,9 @@ import functools
 import typing
 
 import jax
-import jax.numpy as jnp
 
 from g import types as g_types
+from g.compute.common import genotype
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
@@ -51,7 +51,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     """Compute the uncorrected score-test result for one binary chunk."""
     return regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=jnp.asarray(genotype_matrix, dtype=jnp.float32).T,
+        genotype_matrix_by_variant=genotype.convert_sample_major_to_variant_major(genotype_matrix),
         correction_plan=correction_plan,
     )
 
@@ -66,7 +66,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state(
     """Compute multi-trait binary REGENIE step 2 association using one genotype chunk."""
     return compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=jnp.asarray(genotype_matrix, dtype=jnp.float32).T,
+        genotype_matrix_by_variant=genotype.convert_sample_major_to_variant_major(genotype_matrix),
         correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
         kernel_config=kernel_config,
@@ -138,7 +138,7 @@ def compute_regenie2_binary_chunk_from_chromosome_state(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association using cached null state."""
-    genotype_matrix_by_variant = jnp.asarray(genotype_matrix, dtype=jnp.float32).T
+    genotype_matrix_by_variant = genotype.convert_sample_major_to_variant_major(genotype_matrix)
     score_test_result = regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
