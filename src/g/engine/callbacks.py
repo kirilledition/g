@@ -10,7 +10,6 @@ import typing
 from dataclasses import dataclass
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
@@ -1180,22 +1179,18 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 self.stage_timing_recorder,
             )
             compute_start_time = time.perf_counter()
-            if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
-                result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
-                    chromosome_state=self.current_chromosome_state,
-                    genotype_matrix_by_variant=genotype_device_array,
-                    correction_plan=self.correction_plan,
-                    sparse_candidate_mask=None,
-                    kernel_config=self.kernel_config,
-                )
-            else:
-                result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
-                    chromosome_state=self.current_chromosome_state,
-                    genotype_matrix=jnp.transpose(genotype_device_array),
-                    correction_plan=self.correction_plan,
-                    sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
-                    kernel_config=self.kernel_config,
-                )
+            sparse_candidate_mask = (
+                None
+                if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
+                else jax.device_put(chunk_stats.is_rare_sparse_firth_candidate)
+            )
+            result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+                chromosome_state=self.current_chromosome_state,
+                genotype_matrix_by_variant=genotype_device_array,
+                correction_plan=self.correction_plan,
+                sparse_candidate_mask=sparse_candidate_mask,
+                kernel_config=self.kernel_config,
+            )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
@@ -1335,22 +1330,18 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 self.stage_timing_recorder,
             )
             compute_start_time = time.perf_counter()
-            if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
-                result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
-                    chromosome_state=self.current_chromosome_state,
-                    genotype_matrix_by_variant=genotype_device_array,
-                    correction_plan=self.correction_plan,
-                    sparse_candidate_mask=None,
-                    kernel_config=self.kernel_config,
-                )
-            else:
-                result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
-                    chromosome_state=self.current_chromosome_state,
-                    genotype_matrix=jnp.transpose(genotype_device_array),
-                    correction_plan=self.correction_plan,
-                    sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
-                    kernel_config=self.kernel_config,
-                )
+            sparse_candidate_mask = (
+                None
+                if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
+                else jax.device_put(chunk_stats.is_rare_sparse_firth_candidate)
+            )
+            result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
+                chromosome_state=self.current_chromosome_state,
+                genotype_matrix_by_variant=genotype_device_array,
+                correction_plan=self.correction_plan,
+                sparse_candidate_mask=sparse_candidate_mask,
+                kernel_config=self.kernel_config,
+            )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,

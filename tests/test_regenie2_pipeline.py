@@ -524,7 +524,7 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
-def test_binary_variant_major_callback_transposes_into_sample_major_compute() -> None:
+def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute() -> None:
     writer_session = FakeWriterSession()
     kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
     result = regenie2_binary_types.Regenie2BinaryChunkResult(
@@ -592,7 +592,7 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
             return_value="chromosome-state",
         ),
         patch(
-            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state",
+            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
             return_value=result,
         ) as mock_compute,
     ):
@@ -603,17 +603,8 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
         )
         callback.finish()
 
-    genotype_matrix = mock_compute.call_args.kwargs["genotype_matrix"]
-    np.testing.assert_array_equal(
-        np.asarray(genotype_matrix),
-        np.asarray(
-            [
-                [1.0, 3.0, 5.0],
-                [2.0, 4.0, 6.0],
-            ],
-            dtype=np.float32,
-        ),
-    )
+    genotype_matrix_by_variant = mock_compute.call_args.kwargs["genotype_matrix_by_variant"]
+    np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant), variant_major_genotype_matrix)
     sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
     np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False, True])
     assert mock_compute.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
@@ -795,7 +786,7 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
             return_value=chromosome_state,
         ) as mock_prepare,
         patch(
-            "g.compute.regenie2_binary.api.compute_regenie2_multi_binary_chunk_from_chromosome_state",
+            "g.compute.regenie2_binary.api.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major",
             return_value=result,
         ) as mock_compute,
     ):
@@ -807,8 +798,8 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         callback.finish()
 
     assert mock_prepare.call_args.args[3] is kernel_config
-    genotype_matrix = mock_compute.call_args.kwargs["genotype_matrix"]
-    np.testing.assert_array_equal(np.asarray(genotype_matrix), np.transpose(variant_major_genotype_matrix))
+    genotype_matrix_by_variant = mock_compute.call_args.kwargs["genotype_matrix_by_variant"]
+    np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant), variant_major_genotype_matrix)
     sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
     np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False])
     assert mock_compute.call_args.kwargs["kernel_config"] is kernel_config
