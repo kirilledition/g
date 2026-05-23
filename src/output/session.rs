@@ -70,11 +70,29 @@ struct OutputStageTimingAccumulator {
     enqueue_seconds: f64,
     coordinator_flush_seconds: f64,
     writer_record_batch_build_seconds: f64,
+    writer_schema_metadata_build_seconds: f64,
+    writer_metadata_array_build_seconds: f64,
+    writer_statistic_array_build_seconds: f64,
+    writer_test_array_build_seconds: f64,
+    writer_result_array_build_seconds: f64,
+    writer_extra_array_build_seconds: f64,
+    writer_record_batch_try_new_seconds: f64,
     writer_arrow_file_write_seconds: f64,
+    writer_arrow_file_create_seconds: f64,
+    writer_arrow_init_seconds: f64,
+    writer_arrow_batch_write_seconds: f64,
+    writer_arrow_finish_seconds: f64,
+    writer_arrow_rename_seconds: f64,
     writer_total_seconds: f64,
     manifest_commit_seconds: f64,
     finish_total_seconds: f64,
     finalization_list_chunk_files_seconds: f64,
+    finalization_parquet_writer_properties_seconds: f64,
+    finalization_parquet_file_create_seconds: f64,
+    finalization_parquet_writer_init_seconds: f64,
+    finalization_arrow_file_open_seconds: f64,
+    finalization_arrow_reader_init_seconds: f64,
+    finalization_arrow_batch_read_seconds: f64,
     finalization_read_arrow_seconds: f64,
     finalization_project_batch_seconds: f64,
     finalization_write_parquet_seconds: f64,
@@ -89,26 +107,50 @@ struct OutputStageTimingAccumulator {
     writer_chunk_file_count: u64,
     writer_chunk_count: u64,
     writer_row_count: u64,
+    writer_arrow_array_memory_bytes: u64,
+    writer_arrow_file_bytes: u64,
     manifest_commit_count: u64,
     finish_count: u64,
     finalization_chunk_file_count: u64,
     finalization_batch_count: u64,
     finalization_row_count: u64,
+    finalization_arrow_file_bytes: u64,
+    finalization_parquet_file_bytes: u64,
     finalization_count: u64,
 }
 
 impl OutputStageTimingAccumulator {
     fn add_writer_timing(&mut self, timing: RegenieStep2ChunkWriteTiming) {
         self.writer_record_batch_build_seconds += timing.record_batch_build_seconds;
+        self.writer_schema_metadata_build_seconds += timing.schema_metadata_build_seconds;
+        self.writer_metadata_array_build_seconds += timing.metadata_array_build_seconds;
+        self.writer_statistic_array_build_seconds += timing.statistic_array_build_seconds;
+        self.writer_test_array_build_seconds += timing.test_array_build_seconds;
+        self.writer_result_array_build_seconds += timing.result_array_build_seconds;
+        self.writer_extra_array_build_seconds += timing.extra_array_build_seconds;
+        self.writer_record_batch_try_new_seconds += timing.record_batch_try_new_seconds;
         self.writer_arrow_file_write_seconds += timing.arrow_file_write_seconds;
+        self.writer_arrow_file_create_seconds += timing.arrow_file_create_seconds;
+        self.writer_arrow_init_seconds += timing.arrow_writer_init_seconds;
+        self.writer_arrow_batch_write_seconds += timing.arrow_batch_write_seconds;
+        self.writer_arrow_finish_seconds += timing.arrow_writer_finish_seconds;
+        self.writer_arrow_rename_seconds += timing.arrow_file_rename_seconds;
         self.writer_total_seconds += timing.total_seconds;
         self.writer_chunk_file_count += timing.chunk_file_count;
         self.writer_chunk_count += timing.chunk_count;
         self.writer_row_count += timing.row_count;
+        self.writer_arrow_array_memory_bytes += timing.arrow_array_memory_bytes;
+        self.writer_arrow_file_bytes += timing.arrow_file_bytes;
     }
 
     fn add_finalization_timing(&mut self, timing: finalization::RegenieStep2FinalizationTiming) {
         self.finalization_list_chunk_files_seconds += timing.list_chunk_files_seconds;
+        self.finalization_parquet_writer_properties_seconds += timing.parquet_writer_properties_seconds;
+        self.finalization_parquet_file_create_seconds += timing.parquet_file_create_seconds;
+        self.finalization_parquet_writer_init_seconds += timing.parquet_writer_init_seconds;
+        self.finalization_arrow_file_open_seconds += timing.arrow_file_open_seconds;
+        self.finalization_arrow_reader_init_seconds += timing.arrow_reader_init_seconds;
+        self.finalization_arrow_batch_read_seconds += timing.arrow_batch_read_seconds;
         self.finalization_read_arrow_seconds += timing.read_arrow_seconds;
         self.finalization_project_batch_seconds += timing.project_batch_seconds;
         self.finalization_write_parquet_seconds += timing.write_parquet_seconds;
@@ -119,6 +161,8 @@ impl OutputStageTimingAccumulator {
         self.finalization_chunk_file_count += timing.chunk_file_count;
         self.finalization_batch_count += timing.batch_count;
         self.finalization_row_count += timing.row_count;
+        self.finalization_arrow_file_bytes += timing.arrow_file_bytes;
+        self.finalization_parquet_file_bytes += timing.parquet_file_bytes;
         self.finalization_count += 1;
     }
 }
@@ -442,11 +486,29 @@ impl OutputWriterSession {
                 "rust_output_enqueue": stage_timings.enqueue_seconds,
                 "rust_output_coordinator_flush": stage_timings.coordinator_flush_seconds,
                 "rust_output_writer_record_batch_build": stage_timings.writer_record_batch_build_seconds,
+                "rust_output_writer_schema_metadata_build": stage_timings.writer_schema_metadata_build_seconds,
+                "rust_output_writer_metadata_arrays": stage_timings.writer_metadata_array_build_seconds,
+                "rust_output_writer_statistic_arrays": stage_timings.writer_statistic_array_build_seconds,
+                "rust_output_writer_test_array": stage_timings.writer_test_array_build_seconds,
+                "rust_output_writer_result_arrays": stage_timings.writer_result_array_build_seconds,
+                "rust_output_writer_extra_array": stage_timings.writer_extra_array_build_seconds,
+                "rust_output_writer_record_batch_try_new": stage_timings.writer_record_batch_try_new_seconds,
                 "rust_output_writer_arrow_file_write": stage_timings.writer_arrow_file_write_seconds,
+                "rust_output_writer_arrow_file_create": stage_timings.writer_arrow_file_create_seconds,
+                "rust_output_writer_arrow_init": stage_timings.writer_arrow_init_seconds,
+                "rust_output_writer_arrow_batch_write": stage_timings.writer_arrow_batch_write_seconds,
+                "rust_output_writer_arrow_finish": stage_timings.writer_arrow_finish_seconds,
+                "rust_output_writer_arrow_rename": stage_timings.writer_arrow_rename_seconds,
                 "rust_output_writer_total": stage_timings.writer_total_seconds,
                 "rust_output_manifest_commit": stage_timings.manifest_commit_seconds,
                 "rust_output_finish_total": stage_timings.finish_total_seconds,
                 "rust_output_finalization_list_chunk_files": stage_timings.finalization_list_chunk_files_seconds,
+                "rust_output_finalization_parquet_writer_properties": stage_timings.finalization_parquet_writer_properties_seconds,
+                "rust_output_finalization_parquet_file_create": stage_timings.finalization_parquet_file_create_seconds,
+                "rust_output_finalization_parquet_writer_init": stage_timings.finalization_parquet_writer_init_seconds,
+                "rust_output_finalization_arrow_file_open": stage_timings.finalization_arrow_file_open_seconds,
+                "rust_output_finalization_arrow_reader_init": stage_timings.finalization_arrow_reader_init_seconds,
+                "rust_output_finalization_arrow_batch_read": stage_timings.finalization_arrow_batch_read_seconds,
                 "rust_output_finalization_read_arrow": stage_timings.finalization_read_arrow_seconds,
                 "rust_output_finalization_project_batch": stage_timings.finalization_project_batch_seconds,
                 "rust_output_finalization_write_parquet": stage_timings.finalization_write_parquet_seconds,
@@ -461,11 +523,29 @@ impl OutputWriterSession {
                 "rust_output_enqueue": stage_timings.enqueue_count,
                 "rust_output_coordinator_flush": stage_timings.coordinator_flush_count,
                 "rust_output_writer_record_batch_build": stage_timings.writer_chunk_file_count,
+                "rust_output_writer_schema_metadata_build": stage_timings.writer_chunk_file_count,
+                "rust_output_writer_metadata_arrays": stage_timings.writer_chunk_count,
+                "rust_output_writer_statistic_arrays": stage_timings.writer_chunk_count,
+                "rust_output_writer_test_array": stage_timings.writer_chunk_count,
+                "rust_output_writer_result_arrays": stage_timings.writer_chunk_count,
+                "rust_output_writer_extra_array": stage_timings.writer_chunk_count,
+                "rust_output_writer_record_batch_try_new": stage_timings.writer_chunk_count,
                 "rust_output_writer_arrow_file_write": stage_timings.writer_chunk_file_count,
+                "rust_output_writer_arrow_file_create": stage_timings.writer_chunk_file_count,
+                "rust_output_writer_arrow_init": stage_timings.writer_chunk_file_count,
+                "rust_output_writer_arrow_batch_write": stage_timings.writer_chunk_count,
+                "rust_output_writer_arrow_finish": stage_timings.writer_chunk_file_count,
+                "rust_output_writer_arrow_rename": stage_timings.writer_chunk_file_count,
                 "rust_output_writer_total": stage_timings.writer_chunk_file_count,
                 "rust_output_manifest_commit": stage_timings.manifest_commit_count,
                 "rust_output_finish_total": stage_timings.finish_count,
                 "rust_output_finalization_list_chunk_files": stage_timings.finalization_count,
+                "rust_output_finalization_parquet_writer_properties": stage_timings.finalization_count,
+                "rust_output_finalization_parquet_file_create": stage_timings.finalization_count,
+                "rust_output_finalization_parquet_writer_init": stage_timings.finalization_count,
+                "rust_output_finalization_arrow_file_open": stage_timings.finalization_chunk_file_count,
+                "rust_output_finalization_arrow_reader_init": stage_timings.finalization_chunk_file_count,
+                "rust_output_finalization_arrow_batch_read": stage_timings.finalization_batch_count,
                 "rust_output_finalization_read_arrow": stage_timings.finalization_chunk_file_count,
                 "rust_output_finalization_project_batch": stage_timings.finalization_batch_count,
                 "rust_output_finalization_write_parquet": stage_timings.finalization_batch_count,
@@ -478,9 +558,13 @@ impl OutputWriterSession {
                 "writer_chunk_file_count": stage_timings.writer_chunk_file_count,
                 "writer_chunk_count": stage_timings.writer_chunk_count,
                 "writer_row_count": stage_timings.writer_row_count,
+                "writer_arrow_array_memory_bytes": stage_timings.writer_arrow_array_memory_bytes,
+                "writer_arrow_file_bytes": stage_timings.writer_arrow_file_bytes,
                 "finalization_chunk_file_count": stage_timings.finalization_chunk_file_count,
                 "finalization_batch_count": stage_timings.finalization_batch_count,
                 "finalization_row_count": stage_timings.finalization_row_count,
+                "finalization_arrow_file_bytes": stage_timings.finalization_arrow_file_bytes,
+                "finalization_parquet_file_bytes": stage_timings.finalization_parquet_file_bytes,
             },
         });
         let timing_path = self.config.run_directory.join(OUTPUT_STAGE_TIMING_FILE_NAME);

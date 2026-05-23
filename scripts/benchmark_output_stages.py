@@ -28,8 +28,10 @@ RUST_OUTPUT_ENQUEUE_METRIC = "rust_output_enqueue"
 RUST_OUTPUT_WRITER_RECORD_BATCH_BUILD_METRIC = "rust_output_writer_record_batch_build"
 RUST_OUTPUT_WRITER_ARROW_FILE_WRITE_METRIC = "rust_output_writer_arrow_file_write"
 RUST_OUTPUT_WRITER_TOTAL_METRIC = "rust_output_writer_total"
+RUST_OUTPUT_FINALIZATION_TOTAL_METRIC = "rust_output_finalization_total"
 BRIDGE_RESIDUAL_METRIC = "bridge_residual"
 MEASURED_OUTPUT_PATH_METRIC = "measured_output_path"
+MEBIBYTE = 1024.0 * 1024.0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -112,7 +114,9 @@ class TrialResult:
         chunk_file_count: Total Arrow chunk file count across phenotypes.
         chunk_bytes: Total Arrow chunk bytes across phenotypes.
         final_parquet_bytes: Total final Parquet bytes across phenotypes, when written.
+        rust_output_metrics: Summed Rust output counters across phenotype run directories.
         handoff_timing: Derived handoff timing metrics.
+        jax_trace_directory: Optional JAX profiler trace artifact directory.
 
     """
 
@@ -134,6 +138,8 @@ class TrialResult:
     chunk_bytes: int
     final_parquet_bytes: int | None
     handoff_timing: OutputHandoffTimingMetrics
+    rust_output_metrics: dict[str, float] = dataclasses.field(default_factory=dict)
+    jax_trace_directory: str | None = None
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -144,6 +150,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default=types.Device.GPU.value, choices=[device.value for device in types.Device])
     parser.add_argument("--small-bsize", type=int, default=1024, help="Small REGENIE bsize to benchmark.")
     parser.add_argument("--large-bsize", type=int, default=8192, help="Large REGENIE bsize to benchmark.")
+    parser.add_argument(
+        "--extra-bsizes",
+        default="16384",
+        help="Comma-separated additional REGENIE bsize values to benchmark.",
+    )
     parser.add_argument("--many-phenotype-count", type=int, default=8, help="Trait count for many-phenotype runs.")
     parser.add_argument("--variant-limit", type=int, help="Optional variant cap for smoke runs.")
     parser.add_argument("--trials", type=int, default=1, help="Measured trial count per case.")
@@ -155,7 +166,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--chunks-per-arrow-file-values",
-        default="4,8,16,32",
+        default="4,16,64",
         help="Comma-separated chunks-per-Arrow-file values.",
     )
     parser.add_argument(
@@ -164,6 +175,18 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Comma-separated Arrow IPC compression codecs.",
     )
     parser.add_argument("--json-summary-path", type=Path, help="Optional explicit summary JSON path.")
+    parser.add_argument("--markdown-summary-path", type=Path, help="Optional explicit summary Markdown path.")
+    parser.add_argument(
+        "--enable-jax-trace",
+        action="store_true",
+        help="Capture JAX profiler traces for representative trials.",
+    )
+    parser.add_argument(
+        "--jax-trace-case-limit",
+        type=int,
+        default=1,
+        help="Maximum number of benchmark cases to trace when JAX tracing is enabled.",
+    )
     return parser
 
 
@@ -194,14 +217,20 @@ def build_benchmark_cases(
     writer_queue_depth_multipliers: tuple[int, ...],
     chunks_per_arrow_file_values: tuple[int, ...],
     arrow_compressions: tuple[types.ArrowCompression, ...],
+    extra_chunk_sizes: tuple[int, ...] = (),
 ) -> tuple[BenchmarkCase, ...]:
     """Build the output benchmark matrix."""
     cases: list[BenchmarkCase] = []
+    chunk_size_modes = (
+        ("small_bsize", small_chunk_size),
+        ("large_bsize", large_chunk_size),
+        *((f"extra_bsize_{chunk_size}", chunk_size) for chunk_size in extra_chunk_sizes),
+    )
     for finalize_parquet in (False, True):
         output_mode = "parquet_final" if finalize_parquet else "arrow_chunks"
         for phenotype_count in (1, many_phenotype_count):
             phenotype_mode = "single_phenotype" if phenotype_count == 1 else f"{phenotype_count}_phenotypes"
-            for chunk_size_name, chunk_size in (("small_bsize", small_chunk_size), ("large_bsize", large_chunk_size)):
+            for chunk_size_name, chunk_size in chunk_size_modes:
                 for writer_thread_count in writer_thread_counts:
                     for writer_queue_depth_multiplier in writer_queue_depth_multipliers:
                         writer_queue_depth = writer_thread_count * writer_queue_depth_multiplier
@@ -303,6 +332,21 @@ def load_stage_totals(stage_timing_path: Path) -> dict[str, float]:
     }
 
 
+def load_output_metrics(stage_timing_path: Path) -> dict[str, float]:
+    """Load output counters from a Rust timing JSON file."""
+    if not stage_timing_path.exists():
+        return {}
+    timing_payload = json.loads(stage_timing_path.read_text(encoding="utf-8"))
+    output_metrics = timing_payload.get("output_metrics", {})
+    if not isinstance(output_metrics, dict):
+        return {}
+    return {
+        str(metric_name): float(metric_value)
+        for metric_name, metric_value in output_metrics.items()
+        if isinstance(metric_value, int | float)
+    }
+
+
 def sum_stage_totals(stage_timing_paths: tuple[Path, ...]) -> dict[str, float]:
     """Sum stage totals across zero or more timing JSON files."""
     total_stage_seconds: dict[str, float] = {}
@@ -310,6 +354,15 @@ def sum_stage_totals(stage_timing_paths: tuple[Path, ...]) -> dict[str, float]:
         for stage_name, stage_seconds in load_stage_totals(stage_timing_path).items():
             total_stage_seconds[stage_name] = total_stage_seconds.get(stage_name, 0.0) + stage_seconds
     return total_stage_seconds
+
+
+def sum_output_metrics(stage_timing_paths: tuple[Path, ...]) -> dict[str, float]:
+    """Sum Rust output counters across zero or more timing JSON files."""
+    total_metrics: dict[str, float] = {}
+    for stage_timing_path in stage_timing_paths:
+        for metric_name, metric_value in load_output_metrics(stage_timing_path).items():
+            total_metrics[metric_name] = total_metrics.get(metric_name, 0.0) + metric_value
+    return total_metrics
 
 
 def build_metric_percentages(seconds_by_metric: dict[str, float], denominator_seconds: float) -> dict[str, float]:
@@ -339,10 +392,12 @@ def build_output_handoff_timing_metrics(
         rust_metadata_clone_seconds + rust_result_buffer_copy_seconds + rust_enqueue_seconds
     )
     rust_writer_total_seconds = rust_stage_totals.get(RUST_OUTPUT_WRITER_TOTAL_METRIC, 0.0)
+    rust_finalization_total_seconds = rust_stage_totals.get(RUST_OUTPUT_FINALIZATION_TOTAL_METRIC, 0.0)
     measured_output_path_seconds = (
         python_stage_totals.get(DEVICE_TO_HOST_MATERIALIZATION_METRIC, 0.0)
         + python_output_write_seconds
         + rust_writer_total_seconds
+        + rust_finalization_total_seconds
     )
     seconds_by_metric = {
         DEVICE_TO_HOST_MATERIALIZATION_METRIC: python_stage_totals.get(
@@ -362,9 +417,13 @@ def build_output_handoff_timing_metrics(
             0.0,
         ),
         RUST_OUTPUT_WRITER_TOTAL_METRIC: rust_writer_total_seconds,
+        RUST_OUTPUT_FINALIZATION_TOTAL_METRIC: rust_finalization_total_seconds,
         BRIDGE_RESIDUAL_METRIC: bridge_residual_seconds,
         MEASURED_OUTPUT_PATH_METRIC: measured_output_path_seconds,
     }
+    for stage_name, stage_seconds in rust_stage_totals.items():
+        if stage_name.startswith("rust_output_writer_") or stage_name.startswith("rust_output_finalization_"):
+            seconds_by_metric.setdefault(stage_name, stage_seconds)
     return OutputHandoffTimingMetrics(
         seconds_by_metric=seconds_by_metric,
         wall_time_percentage_by_metric=build_metric_percentages(seconds_by_metric, wall_time_seconds),
@@ -408,6 +467,7 @@ def run_trial(
     variant_limit: int | None,
     benchmark_case: BenchmarkCase,
     trial_index: int,
+    enable_jax_trace: bool,
 ) -> TrialResult:
     """Run one output-stage benchmark trial."""
     phenotype_resources = prepare_phenotype_resources(
@@ -444,14 +504,26 @@ def run_trial(
     else:
         options["phenoColList"] = ",".join(phenotype_resources.phenotype_names)
 
+    jax_trace_directory = output_directory / "jax_traces" / trial_name if enable_jax_trace else None
+    if jax_trace_directory is not None:
+        import jax
+
+        jax_trace_directory.mkdir(parents=True, exist_ok=True)
+        jax.profiler.start_trace(str(jax_trace_directory))
+
     start_time = time.perf_counter()
-    artifacts = api.regenie.from_options(options)
+    try:
+        artifacts = api.regenie.from_options(options)
+    finally:
+        if jax_trace_directory is not None:
+            jax.profiler.stop_trace()
     wall_time_seconds = time.perf_counter() - start_time
     output_metrics = collect_trial_output_metrics(flatten_artifacts(artifacts))
     rust_stage_timing_path_strings = typing.cast("tuple[str, ...]", output_metrics["rust_stage_timing_paths"])
+    rust_stage_timing_paths = tuple(Path(path) for path in rust_stage_timing_path_strings)
     handoff_timing = build_output_handoff_timing_metrics(
         python_stage_timing_path=python_stage_timing_path,
-        rust_stage_timing_paths=tuple(Path(path) for path in rust_stage_timing_path_strings),
+        rust_stage_timing_paths=rust_stage_timing_paths,
         wall_time_seconds=wall_time_seconds,
     )
     return TrialResult(
@@ -473,6 +545,8 @@ def run_trial(
         chunk_bytes=int(output_metrics["chunk_bytes"]),
         final_parquet_bytes=typing.cast("int | None", output_metrics["final_parquet_bytes"]),
         handoff_timing=handoff_timing,
+        rust_output_metrics=sum_output_metrics(rust_stage_timing_paths),
+        jax_trace_directory=None if jax_trace_directory is None else str(jax_trace_directory),
     )
 
 
@@ -485,10 +559,47 @@ def summarize_metric_maps(metric_maps: tuple[dict[str, float], ...]) -> dict[str
     }
 
 
+def calculate_rate_per_second(numerator: float, denominator_seconds: float) -> float:
+    """Calculate a throughput rate with a zero-safe denominator."""
+    if denominator_seconds <= 0.0:
+        return 0.0
+    return numerator / denominator_seconds
+
+
 def summarize_trial_group(trial_results: tuple[TrialResult, ...]) -> dict[str, typing.Any]:
     """Summarize repeated trials for one benchmark case."""
     wall_time_values = [trial_result.wall_time_seconds for trial_result in trial_results]
     first_trial = trial_results[0]
+    mean_wall_time_seconds = statistics.fmean(wall_time_values)
+    mean_chunk_bytes = statistics.fmean([trial_result.chunk_bytes for trial_result in trial_results])
+    mean_chunk_file_count = statistics.fmean([trial_result.chunk_file_count for trial_result in trial_results])
+    mean_final_parquet_bytes = statistics.fmean(
+        [trial_result.final_parquet_bytes or 0 for trial_result in trial_results]
+    )
+    mean_rust_output_metrics = summarize_metric_maps(
+        tuple(trial_result.rust_output_metrics for trial_result in trial_results)
+    )
+    mean_writer_seconds = statistics.fmean(
+        [
+            trial_result.handoff_timing.seconds_by_metric.get(RUST_OUTPUT_WRITER_TOTAL_METRIC, 0.0)
+            for trial_result in trial_results
+        ]
+    )
+    mean_finalization_seconds = statistics.fmean(
+        [
+            trial_result.handoff_timing.seconds_by_metric.get(RUST_OUTPUT_FINALIZATION_TOTAL_METRIC, 0.0)
+            for trial_result in trial_results
+        ]
+    )
+    mean_writer_row_count = mean_rust_output_metrics.get("writer_row_count", 0.0)
+    mean_writer_arrow_array_memory_bytes = mean_rust_output_metrics.get("writer_arrow_array_memory_bytes", 0.0)
+    mean_writer_arrow_file_bytes = mean_rust_output_metrics.get("writer_arrow_file_bytes", mean_chunk_bytes)
+    mean_finalization_row_count = mean_rust_output_metrics.get("finalization_row_count", 0.0)
+    mean_finalization_arrow_file_bytes = mean_rust_output_metrics.get("finalization_arrow_file_bytes", mean_chunk_bytes)
+    mean_finalization_parquet_file_bytes = mean_rust_output_metrics.get(
+        "finalization_parquet_file_bytes",
+        mean_final_parquet_bytes,
+    )
     return {
         "case_name": first_trial.case_name,
         "finalize_parquet": first_trial.finalize_parquet,
@@ -499,12 +610,43 @@ def summarize_trial_group(trial_results: tuple[TrialResult, ...]) -> dict[str, t
         "chunks_per_arrow_file": first_trial.chunks_per_arrow_file,
         "arrow_compression": first_trial.arrow_compression,
         "trial_count": len(trial_results),
-        "mean_wall_time_seconds": statistics.fmean(wall_time_values),
+        "mean_wall_time_seconds": mean_wall_time_seconds,
         "median_wall_time_seconds": statistics.median(wall_time_values),
         "min_wall_time_seconds": min(wall_time_values),
         "max_wall_time_seconds": max(wall_time_values),
-        "mean_chunk_file_count": statistics.fmean([trial_result.chunk_file_count for trial_result in trial_results]),
-        "mean_chunk_bytes": statistics.fmean([trial_result.chunk_bytes for trial_result in trial_results]),
+        "mean_chunk_file_count": mean_chunk_file_count,
+        "mean_chunk_bytes": mean_chunk_bytes,
+        "mean_final_parquet_bytes": mean_final_parquet_bytes,
+        "mean_rust_output_metrics": mean_rust_output_metrics,
+        "mean_throughput": {
+            "wall_rows_per_second": calculate_rate_per_second(mean_writer_row_count, mean_wall_time_seconds),
+            "wall_arrow_physical_mib_per_second": calculate_rate_per_second(
+                mean_writer_arrow_file_bytes / MEBIBYTE,
+                mean_wall_time_seconds,
+            ),
+            "writer_rows_per_second": calculate_rate_per_second(mean_writer_row_count, mean_writer_seconds),
+            "writer_logical_mib_per_second": calculate_rate_per_second(
+                mean_writer_arrow_array_memory_bytes / MEBIBYTE,
+                mean_writer_seconds,
+            ),
+            "writer_physical_mib_per_second": calculate_rate_per_second(
+                mean_writer_arrow_file_bytes / MEBIBYTE,
+                mean_writer_seconds,
+            ),
+            "writer_files_per_second": calculate_rate_per_second(mean_chunk_file_count, mean_writer_seconds),
+            "finalization_rows_per_second": calculate_rate_per_second(
+                mean_finalization_row_count,
+                mean_finalization_seconds,
+            ),
+            "finalization_arrow_physical_mib_per_second": calculate_rate_per_second(
+                mean_finalization_arrow_file_bytes / MEBIBYTE,
+                mean_finalization_seconds,
+            ),
+            "finalization_parquet_physical_mib_per_second": calculate_rate_per_second(
+                mean_finalization_parquet_file_bytes / MEBIBYTE,
+                mean_finalization_seconds,
+            ),
+        },
         "mean_handoff_timing_seconds": summarize_metric_maps(
             tuple(trial_result.handoff_timing.seconds_by_metric for trial_result in trial_results)
         ),
@@ -515,6 +657,50 @@ def summarize_trial_group(trial_results: tuple[TrialResult, ...]) -> dict[str, t
             tuple(trial_result.handoff_timing.output_path_percentage_by_metric for trial_result in trial_results)
         ),
     }
+
+
+def build_ranked_bottlenecks(case_summary: dict[str, typing.Any], limit: int = 8) -> list[dict[str, float | str]]:
+    """Rank the largest measured timing buckets for one summarized case."""
+    mean_timing_seconds = typing.cast("dict[str, float]", case_summary["mean_handoff_timing_seconds"])
+    rust_substage_seconds = typing.cast("dict[str, float]", case_summary["mean_handoff_timing_seconds"])
+    candidate_seconds = {
+        metric_name: metric_seconds
+        for metric_name, metric_seconds in (mean_timing_seconds | rust_substage_seconds).items()
+        if metric_name != MEASURED_OUTPUT_PATH_METRIC and metric_seconds > 0.0
+    }
+    wall_time_seconds = float(case_summary["mean_wall_time_seconds"])
+    return [
+        {
+            "metric": metric_name,
+            "seconds": metric_seconds,
+            "wall_time_percentage": calculate_rate_per_second(metric_seconds * 100.0, wall_time_seconds),
+        }
+        for metric_name, metric_seconds in sorted(candidate_seconds.items(), key=lambda item: item[1], reverse=True)[
+            :limit
+        ]
+    ]
+
+
+def choose_recommended_optimization(case_summaries: list[dict[str, typing.Any]]) -> str:
+    """Choose a short recommendation from the observed case summaries."""
+    if not case_summaries:
+        return "No benchmark cases completed."
+    largest_case = max(case_summaries, key=lambda summary: float(summary["mean_wall_time_seconds"]))
+    bottlenecks = build_ranked_bottlenecks(largest_case, limit=1)
+    if not bottlenecks:
+        return "No dominant measured output bottleneck was observed."
+    top_metric = str(bottlenecks[0]["metric"])
+    if "finalization" in top_metric:
+        return "Prioritize direct Parquet or removing Arrow reread finalization overhead."
+    if top_metric == RUST_OUTPUT_WRITER_TOTAL_METRIC:
+        return (
+            "Prioritize writer internals, then use the substage timings to choose array build versus Arrow write work."
+        )
+    if "writer_arrow" in top_metric:
+        return "Prioritize Arrow writer throughput, chunk/file layout, and compression policy experiments."
+    if "writer_result_arrays" in top_metric or "writer_metadata_arrays" in top_metric:
+        return "Prioritize writer-side array construction and wide multi-trait output experiments."
+    return f"Prioritize the largest measured bucket: {top_metric}."
 
 
 def build_summary(
@@ -530,18 +716,59 @@ def build_summary(
         )
         for benchmark_case in benchmark_cases
     }
+    case_summaries = [
+        summarize_trial_group(case_trial_results)
+        for case_trial_results in grouped_results.values()
+        if case_trial_results
+    ]
     return {
         "metadata": {
             "device": device.value,
             "pid": os.getpid(),
         },
-        "case_summaries": [
-            summarize_trial_group(case_trial_results)
-            for case_trial_results in grouped_results.values()
-            if case_trial_results
-        ],
+        "case_summaries": case_summaries,
+        "ranked_bottlenecks": {
+            str(case_summary["case_name"]): build_ranked_bottlenecks(case_summary) for case_summary in case_summaries
+        },
+        "recommendation": choose_recommended_optimization(case_summaries),
         "trial_results": [dataclasses.asdict(trial_result) for trial_result in trial_results],
     }
+
+
+def build_markdown_summary(summary: dict[str, typing.Any]) -> str:
+    """Build a short Markdown summary for benchmark output."""
+    case_summaries = typing.cast("list[dict[str, typing.Any]]", summary["case_summaries"])
+    ranked_cases = sorted(case_summaries, key=lambda case_summary: float(case_summary["mean_wall_time_seconds"]))
+    lines = [
+        "# Output Hotspot Profile Summary",
+        "",
+        f"Recommendation: {summary['recommendation']}",
+        "",
+        "## Fastest Cases",
+        "",
+    ]
+    for case_summary in ranked_cases[:5]:
+        throughput = typing.cast("dict[str, float]", case_summary["mean_throughput"])
+        lines.append(
+            "- "
+            f"{case_summary['case_name']}: "
+            f"{float(case_summary['mean_wall_time_seconds']):.3f}s wall, "
+            f"{throughput['writer_physical_mib_per_second']:.2f} MiB/s writer physical"
+        )
+    lines.extend(["", "## Slowest Bottlenecks", ""])
+    ranked_bottlenecks = typing.cast("dict[str, list[dict[str, typing.Any]]]", summary["ranked_bottlenecks"])
+    for case_summary in ranked_cases[-5:]:
+        case_name = str(case_summary["case_name"])
+        bottlenecks = ranked_bottlenecks.get(case_name, [])
+        top_bottleneck = bottlenecks[0] if bottlenecks else {"metric": "none", "seconds": 0.0}
+        lines.append(
+            "- "
+            f"{case_name}: "
+            f"{float(case_summary['mean_wall_time_seconds']):.3f}s wall, "
+            f"top bucket {top_bottleneck['metric']}={float(top_bottleneck['seconds']):.3f}s"
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def main() -> None:
@@ -558,6 +785,7 @@ def main() -> None:
         writer_queue_depth_multipliers=parse_positive_int_list(arguments.writer_queue_depth_multipliers),
         chunks_per_arrow_file_values=parse_positive_int_list(arguments.chunks_per_arrow_file_values),
         arrow_compressions=parse_arrow_compressions(arguments.arrow_compressions),
+        extra_chunk_sizes=parse_positive_int_list(arguments.extra_bsizes) if arguments.extra_bsizes else (),
     )
     trial_results = tuple(
         run_trial(
@@ -567,15 +795,23 @@ def main() -> None:
             variant_limit=arguments.variant_limit,
             benchmark_case=benchmark_case,
             trial_index=trial_index,
+            enable_jax_trace=(
+                arguments.enable_jax_trace
+                and trial_index == 0
+                and benchmark_case_index < int(arguments.jax_trace_case_limit)
+            ),
         )
-        for benchmark_case in benchmark_cases
+        for benchmark_case_index, benchmark_case in enumerate(benchmark_cases)
         for trial_index in range(arguments.trials)
     )
     summary = build_summary(device=device, benchmark_cases=benchmark_cases, trial_results=trial_results)
-    summary_path = arguments.json_summary_path or (arguments.output_dir / "output_stage_benchmark_summary.json")
+    summary_path = arguments.json_summary_path or (arguments.output_dir / "summary.json")
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    markdown_summary_path = arguments.markdown_summary_path or (arguments.output_dir / "summary.md")
+    markdown_summary_path.write_text(build_markdown_summary(summary), encoding="utf-8")
     print(json.dumps(summary, indent=2, sort_keys=True))
     print(f"Wrote summary: {summary_path}")
+    print(f"Wrote Markdown summary: {markdown_summary_path}")
 
 
 if __name__ == "__main__":
