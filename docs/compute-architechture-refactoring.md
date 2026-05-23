@@ -891,6 +891,7 @@ Completed cleanup so far:
 * Moved the empty `FirthVariantResult` constructor from `firth/batch.py` into `firth/types.py`, so batching code no longer owns Firth result construction.
 * Split score-test correction-label selection into `regenie2_binary/correction.py`, leaving `regenie2_binary/candidates.py` focused on fixed-shape Firth candidate batching and capacity dispatch.
 * Moved the full-model Firth pseudo-response initializer from `firth/batch.py` into `firth/full_model.py`, leaving batch code focused on candidate-lane dispatch and scalar/full-model solver selection.
+* Moved approximate-Firth genotype residualization from `firth/batch.py` into `firth/scalar_approx.py`, so solver-specific genotype preparation lives with the scalar approximate-Firth solver.
 
 Intentional remaining adapters:
 

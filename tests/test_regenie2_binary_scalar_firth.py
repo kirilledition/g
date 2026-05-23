@@ -9,7 +9,6 @@ from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary import state as regenie2_binary_state
-from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 
 
@@ -35,10 +34,8 @@ def build_scalar_fixture() -> tuple[regenie2_binary_state.Regenie2BinaryChromoso
         state,
         jnp.zeros_like(phenotype_vector),
     )
-    residualized_genotype_vector = regenie2_binary_firth_batch.residualize_and_scale_genotypes_for_approximate_firth(
-        chromosome_state,
-        genotype_vector[None, :],
-    )[0]
+    residualize_genotypes = regenie2_binary_firth_scalar_approx.residualize_and_scale_genotypes_for_approximate_firth
+    residualized_genotype_vector = residualize_genotypes(chromosome_state, genotype_vector[None, :])[0]
     return chromosome_state, genotype_vector, residualized_genotype_vector
 
 
@@ -150,10 +147,8 @@ def test_collinear_scalar_candidate_gets_numerical_failure_label() -> None:
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(state, jnp.zeros_like(phenotype_vector))
     raw_genotype_vector = covariate_matrix[:, 1]
     kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
-    genotype_vector = regenie2_binary_firth_batch.residualize_and_scale_genotypes_for_approximate_firth(
-        chromosome_state,
-        raw_genotype_vector[None, :],
-    )[0]
+    residualize_genotypes = regenie2_binary_firth_scalar_approx.residualize_and_scale_genotypes_for_approximate_firth
+    genotype_vector = residualize_genotypes(chromosome_state, raw_genotype_vector[None, :])[0]
 
     result = regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
         phenotype_vector=phenotype_vector,

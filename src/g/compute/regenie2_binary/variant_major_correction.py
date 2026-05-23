@@ -15,6 +15,7 @@ from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
+from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 
@@ -61,7 +62,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
                 firth_raw_candidate_genotype_matrix_by_variant = genotype_flip_result.genotype_matrix_by_variant
                 flat_genotype_flip_mask = genotype_flip_result.flip_mask
                 candidate_genotype_matrix_by_variant = (
-                    regenie2_binary_firth_batch.residualize_and_scale_genotypes_for_approximate_firth(
+                    regenie2_binary_firth_scalar_approx.residualize_and_scale_genotypes_for_approximate_firth(
                         chromosome_state,
                         firth_raw_candidate_genotype_matrix_by_variant,
                     )

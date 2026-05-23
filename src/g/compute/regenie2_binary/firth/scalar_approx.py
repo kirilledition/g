@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import typing
+
 import jax
 import jax.numpy as jnp
 
@@ -10,6 +12,9 @@ from g.compute.common import pvalue
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+
+if typing.TYPE_CHECKING:
+    from g.compute.regenie2_binary import state as regenie2_binary_state
 
 
 def map_scalar_pseudo_firth_failure_to_reason_code(failure_code: jax.Array) -> jax.Array:
@@ -31,6 +36,21 @@ def map_scalar_pseudo_firth_failure_to_reason_code(failure_code: jax.Array) -> j
             ),
         ),
     ).astype(jnp.int32)
+
+
+def residualize_and_scale_genotypes_for_approximate_firth(
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
+    genotype_matrix_by_variant: jax.Array,
+) -> jax.Array:
+    """Build REGENIE's approximate-Firth residualized genotype vector."""
+    weighted_genotype_matrix_by_variant = genotype_matrix_by_variant * chromosome_state.square_root_weight[None, :]
+    projection_coordinates = (
+        weighted_genotype_matrix_by_variant @ chromosome_state.weighted_genotype_projection_matrix.T
+    )
+    weighted_residual_matrix_by_variant = weighted_genotype_matrix_by_variant - (
+        projection_coordinates @ chromosome_state.weighted_genotype_projection_matrix
+    )
+    return weighted_residual_matrix_by_variant / chromosome_state.square_root_weight[None, :]
 
 
 def compute_scalar_firth_components(
