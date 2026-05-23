@@ -236,7 +236,6 @@ class TestPrepareRegenie2LinearState:
         assert state.covariate_crossproduct_cholesky_factor.shape == (covariate_count, covariate_count)
         assert state.whitened_covariate_transpose.shape == (covariate_count, sample_count)
         assert state.phenotype_residual.shape == (sample_count,)
-        assert int(state.sample_count) == sample_count
         assert float(state.degrees_of_freedom) == sample_count - covariate_count
 
     def test_phenotype_residual_orthogonal_to_covariates(self) -> None:

@@ -23,13 +23,11 @@ class Regenie2BinaryState:
     Attributes:
         covariate_matrix: Covariate design matrix including intercept.
         phenotype_vector: Binary phenotype vector in 0/1 encoding.
-        sample_count: Number of samples.
 
     """
 
     covariate_matrix: jax.Array
     phenotype_vector: jax.Array
-    sample_count: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -77,13 +75,11 @@ class Regenie2MultiBinaryState:
     Attributes:
         covariate_matrix: Covariate design matrix including intercept.
         phenotype_matrix: Binary phenotype matrix with shape ``traits x samples``.
-        sample_count: Number of samples.
 
     """
 
     covariate_matrix: jax.Array
     phenotype_matrix: jax.Array
-    sample_count: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -133,7 +129,6 @@ def build_binary_state(
     return Regenie2BinaryState(
         covariate_matrix=covariate_matrix_float32,
         phenotype_vector=phenotype_vector_float32,
-        sample_count=jnp.asarray(covariate_matrix_float32.shape[0], dtype=jnp.int32),
     )
 
 
@@ -147,7 +142,6 @@ def build_multi_binary_state(
     return Regenie2MultiBinaryState(
         covariate_matrix=covariate_matrix_float32,
         phenotype_matrix=phenotype_matrix_float32,
-        sample_count=jnp.asarray(covariate_matrix_float32.shape[0], dtype=jnp.int32),
     )
 
 
@@ -250,7 +244,6 @@ def build_multi_binary_chromosome_state(
         trait_state = Regenie2BinaryState(
             covariate_matrix=state.covariate_matrix,
             phenotype_vector=phenotype_vector,
-            sample_count=state.sample_count,
         )
         return build_binary_chromosome_state(trait_state, loco_offset, correction_plan, kernel_config)
 

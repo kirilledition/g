@@ -21,7 +21,6 @@ class Regenie2LinearState:
         covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
         whitened_covariate_transpose: Cholesky-whitened covariate transpose.
         phenotype_residual: Phenotype residualized against covariates.
-        sample_count: Number of samples.
         degrees_of_freedom: Null-model residual degrees of freedom.
 
     """
@@ -31,7 +30,6 @@ class Regenie2LinearState:
     covariate_crossproduct_cholesky_factor: jax.Array
     whitened_covariate_transpose: jax.Array
     phenotype_residual: jax.Array
-    sample_count: jax.Array
     degrees_of_freedom: jax.Array
 
 
@@ -67,7 +65,6 @@ class Regenie2MultiLinearState:
         covariate_crossproduct_cholesky_factor: Lower-triangular Cholesky factor of X'X.
         whitened_covariate_transpose: Cholesky-whitened covariate transpose.
         phenotype_residual_matrix: Trait-major phenotype residuals after covariate projection.
-        sample_count: Number of samples.
         degrees_of_freedom: Null-model residual degrees of freedom.
 
     """
@@ -77,7 +74,6 @@ class Regenie2MultiLinearState:
     covariate_crossproduct_cholesky_factor: jax.Array
     whitened_covariate_transpose: jax.Array
     phenotype_residual_matrix: jax.Array
-    sample_count: jax.Array
     degrees_of_freedom: jax.Array
 
 
@@ -135,7 +131,6 @@ def build_multi_linear_state(
         covariate_crossproduct_cholesky_factor=covariate_crossproduct_cholesky_factor,
         whitened_covariate_transpose=whitened_covariate_transpose,
         phenotype_residual_matrix=phenotype_residual_matrix,
-        sample_count=jnp.asarray(sample_count, dtype=jnp.int32),
         degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=jnp.float32),
     )
 
@@ -150,7 +145,6 @@ def build_single_linear_state_from_multi(
         covariate_crossproduct_cholesky_factor=state.covariate_crossproduct_cholesky_factor,
         whitened_covariate_transpose=state.whitened_covariate_transpose,
         phenotype_residual=state.phenotype_residual_matrix[0],
-        sample_count=state.sample_count,
         degrees_of_freedom=state.degrees_of_freedom,
     )
 
@@ -165,7 +159,6 @@ def build_multi_linear_state_from_single(
         covariate_crossproduct_cholesky_factor=state.covariate_crossproduct_cholesky_factor,
         whitened_covariate_transpose=state.whitened_covariate_transpose,
         phenotype_residual_matrix=state.phenotype_residual[None, :],
-        sample_count=state.sample_count,
         degrees_of_freedom=state.degrees_of_freedom,
     )
 
