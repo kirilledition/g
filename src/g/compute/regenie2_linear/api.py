@@ -5,7 +5,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from g.compute.common import genotype, linalg
+from g.compute.common import genotype
 from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
@@ -35,37 +35,7 @@ def prepare_regenie2_multi_linear_state(
     phenotype_matrix: jax.Array,
 ) -> regenie2_linear_state.Regenie2MultiLinearState:
     """Prepare shared covariate projection and trait-major phenotype residuals."""
-    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jnp.float32)
-    phenotype_matrix_compute = jnp.asarray(phenotype_matrix, dtype=jnp.float32)
-    sample_count = covariate_matrix_compute.shape[0]
-    covariate_parameter_count = covariate_matrix_compute.shape[1]
-    degrees_of_freedom = sample_count - covariate_parameter_count
-
-    covariate_matrix_transpose = covariate_matrix_compute.T
-    covariate_crossproduct = covariate_matrix_transpose @ covariate_matrix_compute
-    covariate_crossproduct_cholesky_factor = jnp.linalg.cholesky(covariate_crossproduct)
-    whitened_covariate_transpose = jax.lax.linalg.triangular_solve(
-        covariate_crossproduct_cholesky_factor,
-        covariate_matrix_transpose,
-        left_side=True,
-        lower=True,
-    )
-
-    phenotype_projection_matrix = linalg.solve_positive_definite_system(
-        covariate_crossproduct_cholesky_factor,
-        covariate_matrix_transpose @ phenotype_matrix_compute.T,
-    )
-    phenotype_residual_matrix = phenotype_matrix_compute - (covariate_matrix_compute @ phenotype_projection_matrix).T
-
-    return regenie2_linear_state.Regenie2MultiLinearState(
-        covariate_matrix=covariate_matrix_compute,
-        covariate_matrix_transpose=covariate_matrix_transpose,
-        covariate_crossproduct_cholesky_factor=covariate_crossproduct_cholesky_factor,
-        whitened_covariate_transpose=whitened_covariate_transpose,
-        phenotype_residual_matrix=phenotype_residual_matrix,
-        sample_count=jnp.asarray(sample_count, dtype=jnp.int32),
-        degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=jnp.float32),
-    )
+    return regenie2_linear_state.build_multi_linear_state(covariate_matrix, phenotype_matrix)
 
 
 @jax.jit

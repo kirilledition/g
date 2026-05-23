@@ -7,6 +7,8 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+from g.compute.common import linalg
+
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
@@ -98,6 +100,44 @@ class Regenie2MultiLinearChromosomeState:
     adjusted_residual_projection_coordinate_matrix: jax.Array
     adjusted_residual_sum_squares: jax.Array
     degrees_of_freedom: jax.Array
+
+
+def build_multi_linear_state(
+    covariate_matrix: jax.Array,
+    phenotype_matrix: jax.Array,
+) -> Regenie2MultiLinearState:
+    """Build shared covariate projection and trait-major phenotype residuals."""
+    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jnp.float32)
+    phenotype_matrix_compute = jnp.asarray(phenotype_matrix, dtype=jnp.float32)
+    sample_count = covariate_matrix_compute.shape[0]
+    covariate_parameter_count = covariate_matrix_compute.shape[1]
+    degrees_of_freedom = sample_count - covariate_parameter_count
+
+    covariate_matrix_transpose = covariate_matrix_compute.T
+    covariate_crossproduct = covariate_matrix_transpose @ covariate_matrix_compute
+    covariate_crossproduct_cholesky_factor = jnp.linalg.cholesky(covariate_crossproduct)
+    whitened_covariate_transpose = jax.lax.linalg.triangular_solve(
+        covariate_crossproduct_cholesky_factor,
+        covariate_matrix_transpose,
+        left_side=True,
+        lower=True,
+    )
+
+    phenotype_projection_matrix = linalg.solve_positive_definite_system(
+        covariate_crossproduct_cholesky_factor,
+        covariate_matrix_transpose @ phenotype_matrix_compute.T,
+    )
+    phenotype_residual_matrix = phenotype_matrix_compute - (covariate_matrix_compute @ phenotype_projection_matrix).T
+
+    return Regenie2MultiLinearState(
+        covariate_matrix=covariate_matrix_compute,
+        covariate_matrix_transpose=covariate_matrix_transpose,
+        covariate_crossproduct_cholesky_factor=covariate_crossproduct_cholesky_factor,
+        whitened_covariate_transpose=whitened_covariate_transpose,
+        phenotype_residual_matrix=phenotype_residual_matrix,
+        sample_count=jnp.asarray(sample_count, dtype=jnp.int32),
+        degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=jnp.float32),
+    )
 
 
 def build_single_linear_state_from_multi(
