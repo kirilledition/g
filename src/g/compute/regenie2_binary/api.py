@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from g import types as g_types
 from g.compute.common import genotype
 from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
 from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logistic
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
@@ -18,6 +19,17 @@ from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import variant_major_correction as regenie2_binary_variant_major_correction
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+
+BinaryChunkDiagnostics = regenie2_binary_diagnostics.BinaryChunkDiagnostics
+Regenie2BinaryState = regenie2_binary_state.Regenie2BinaryState
+Regenie2BinaryChromosomeState = regenie2_binary_state.Regenie2BinaryChromosomeState
+Regenie2MultiBinaryState = regenie2_binary_state.Regenie2MultiBinaryState
+Regenie2MultiBinaryChromosomeState = regenie2_binary_state.Regenie2MultiBinaryChromosomeState
+Regenie2BinaryScoreChunkResult = regenie2_binary_result.Regenie2BinaryScoreChunkResult
+Regenie2BinaryChunkResult = regenie2_binary_result.Regenie2BinaryChunkResult
+Regenie2MultiBinaryScoreChunkResult = regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult
+Regenie2MultiBinaryChunkResult = regenie2_binary_result.Regenie2MultiBinaryChunkResult
+count_binary_chunk_diagnostics = regenie2_binary_diagnostics.count_binary_chunk_diagnostics
 
 
 def prepare_regenie2_binary_state(

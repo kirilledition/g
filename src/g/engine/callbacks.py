@@ -16,12 +16,7 @@ import numpy.typing as npt
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
-from g.compute.regenie2_binary import result as regenie2_binary_result
-from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_linear import api as regenie2_linear
-from g.compute.regenie2_linear import result as regenie2_linear_result
-from g.compute.regenie2_linear import state as regenie2_linear_state
 from g.engine import telemetry, timing
 
 RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 60.0
@@ -128,12 +123,12 @@ def block_until_ready(value: typing.Any) -> None:
 def record_binary_chunk_diagnostics(
     *,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    result: regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult,
+    result: regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult,
 ) -> None:
     """Record binary candidate and Firth diagnostics for one chunk."""
     if stage_timing_recorder is None:
         return
-    diagnostics = jax.device_get(regenie2_binary_diagnostics.count_binary_chunk_diagnostics(result))
+    diagnostics = jax.device_get(regenie2_binary.count_binary_chunk_diagnostics(result))
     stage_timing_recorder.add_binary_chunk_diagnostics(
         {
             "score_test_candidate_count": int(diagnostics.score_test_candidate_count),
@@ -668,7 +663,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             phenotype_vector=run_input.phenotype_vector,
         )
         self.current_chromosome: str | None = None
-        self.current_chromosome_state: regenie2_linear_state.Regenie2LinearChromosomeState | None = None
+        self.current_chromosome_state: regenie2_linear.Regenie2LinearChromosomeState | None = None
         super().__init__(
             worker_name="regenie2-linear-callback",
             staging_depth=staging_depth,
@@ -746,7 +741,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         *,
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
-        result: regenie2_linear_result.Regenie2LinearChunkResult,
+        result: regenie2_linear.Regenie2LinearChunkResult,
         host_dosage_buffer: npt.NDArray[np.float32] | None = None,
         release_in_flight_slot: bool = False,
     ) -> None:
@@ -770,7 +765,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         *,
         variant_metadata: typing.Any,
         genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
-    ) -> regenie2_linear_result.Regenie2LinearChunkResult:
+    ) -> regenie2_linear.Regenie2LinearChunkResult:
         """Compute quantitative REGENIE step 2 statistics for a variant-major chunk."""
         self.prepare_chromosome_state(variant_metadata)
         assert self.current_chromosome_state is not None
@@ -813,7 +808,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         *,
         variant_metadata: typing.Any,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
-    ) -> regenie2_linear_result.Regenie2LinearChunkResult:
+    ) -> regenie2_linear.Regenie2LinearChunkResult:
         """Compute quantitative REGENIE step 2 statistics for one chunk."""
         self.prepare_chromosome_state(variant_metadata)
         assert self.current_chromosome_state is not None
@@ -855,7 +850,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             phenotype_matrix=run_input.phenotype_matrix,
         )
         self.current_chromosome: str | None = None
-        self.current_chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState | None = None
+        self.current_chromosome_state: regenie2_linear.Regenie2MultiLinearChromosomeState | None = None
         super().__init__(
             worker_name="regenie2-multi-linear-callback",
             staging_depth=staging_depth,
@@ -986,7 +981,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         *,
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
-        result: regenie2_linear_result.Regenie2MultiLinearChunkResult,
+        result: regenie2_linear.Regenie2MultiLinearChunkResult,
         host_dosage_buffer: npt.NDArray[np.float32] | None = None,
         release_in_flight_slot: bool = False,
     ) -> None:
@@ -1034,7 +1029,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             phenotype_vector=run_input.phenotype_vector,
         )
         self.current_chromosome: str | None = None
-        self.current_chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState | None = None
+        self.current_chromosome_state: regenie2_binary.Regenie2BinaryChromosomeState | None = None
         super().__init__(
             worker_name="regenie2-binary-callback",
             staging_depth=staging_depth,
@@ -1076,9 +1071,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         *,
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
-        result: (
-            regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult
-        ),
+        result: (regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult),
         host_dosage_buffer: npt.NDArray[np.float32] | None = None,
         release_in_flight_slot: bool = False,
     ) -> None:
@@ -1140,7 +1133,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: typing.Any,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
         sparse_candidate_mask: jax.Array | None = None,
-    ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult:
+    ) -> regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult:
         """Compute binary REGENIE step 2 statistics for one chunk."""
         self.prepare_chromosome_state(variant_metadata)
         assert self.current_chromosome_state is not None
@@ -1240,7 +1233,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             phenotype_matrix=run_input.phenotype_matrix,
         )
         self.current_chromosome: str | None = None
-        self.current_chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState | None = None
+        self.current_chromosome_state: regenie2_binary.Regenie2MultiBinaryChromosomeState | None = None
         super().__init__(
             worker_name="regenie2-multi-binary-callback",
             staging_depth=staging_depth,
@@ -1397,8 +1390,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         *,
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
-        result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult
-        | regenie2_binary_result.Regenie2MultiBinaryChunkResult,
+        result: regenie2_binary.Regenie2MultiBinaryScoreChunkResult | regenie2_binary.Regenie2MultiBinaryChunkResult,
         host_dosage_buffer: npt.NDArray[np.float32] | None = None,
         release_in_flight_slot: bool = False,
     ) -> None:

@@ -10,6 +10,13 @@ from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
 
+Regenie2LinearState = regenie2_linear_state.Regenie2LinearState
+Regenie2LinearChromosomeState = regenie2_linear_state.Regenie2LinearChromosomeState
+Regenie2MultiLinearState = regenie2_linear_state.Regenie2MultiLinearState
+Regenie2MultiLinearChromosomeState = regenie2_linear_state.Regenie2MultiLinearChromosomeState
+Regenie2LinearChunkResult = regenie2_linear_result.Regenie2LinearChunkResult
+Regenie2MultiLinearChunkResult = regenie2_linear_result.Regenie2MultiLinearChunkResult
+
 
 def prepare_regenie2_linear_state(
     covariate_matrix: jax.Array,
