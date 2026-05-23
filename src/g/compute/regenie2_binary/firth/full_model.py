@@ -175,34 +175,6 @@ def compute_full_model_score_components(
     )
 
 
-def compute_covariate_only_adjusted_weight_components(
-    covariate_matrix: jax.Array,
-    probability_vector: jax.Array,
-    information_matrix: jax.Array,
-    phenotype_vector: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> regenie2_binary_firth_types.AdjustedWeightComponents:
-    """Compute leverage-adjusted Firth weights for the covariate-only null model."""
-    variance_vector = jnp.maximum(
-        probability_vector * (1.0 - probability_vector),
-        kernel_config.minimum_variance,
-    )
-    projected_covariate_matrix = linalg.solve_from_positive_definite_matrix(
-        information_matrix,
-        covariate_matrix.T,
-    ).T
-    leverage_vector = variance_vector * jnp.einsum("ij,ij->i", projected_covariate_matrix, covariate_matrix)
-    adjusted_weight_vector = (phenotype_vector - probability_vector) + leverage_vector * (
-        regenie2_binary_config.BINARY_CASE_THRESHOLD - probability_vector
-    )
-    second_weight_vector = (1.0 + leverage_vector) * variance_vector
-    return regenie2_binary_firth_types.AdjustedWeightComponents(
-        leverage_vector=leverage_vector,
-        adjusted_weight_vector=adjusted_weight_vector,
-        second_weight_vector=second_weight_vector,
-    )
-
-
 def fit_single_variant_firth_logistic_regression(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
