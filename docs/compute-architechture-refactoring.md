@@ -111,7 +111,7 @@ src/g/compute/
     null_logistic.py
     score.py
     candidates.py
-    correction.py
+    variant_major_correction.py
     diagnostics.py
 
     firth/
@@ -766,7 +766,7 @@ src/g/compute/
     null_logistic.py
     score.py
     candidates.py
-    correction.py
+    variant_major_correction.py
     diagnostics.py
     api.py
 
@@ -860,6 +860,7 @@ Completed cleanup so far:
 * Routed single-trait binary score testing through the trait-major score kernel, leaving one score-test formula and one genotype-flipping path for score-only binary statistics.
 * Centralized the binary variance floor and relative variance tolerance in `regenie2_binary/config.py` so score, null logistic, state preparation, and Firth solvers share one numerical policy.
 * Promoted Firth retry, line-search, pseudo-Firth, and null-Firth iteration limits into `BinaryKernelConfig`, so these compute-affecting policies are part of the execution plan instead of hidden module constants.
+* Removed the sample-major binary correction adapter module; sample-major public calls now transpose once at the API boundary and call the canonical variant-major correction path directly.
 
 Intentional remaining adapters:
 

@@ -12,11 +12,11 @@ from g import types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
 from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.compute.regenie2_binary import correction as regenie2_binary_correction
 from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logistic
 from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import types as regenie2_binary_types
+from g.compute.regenie2_binary import variant_major_correction as regenie2_binary_variant_major_correction
 from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import line_search as regenie2_binary_firth_line_search
@@ -912,9 +912,9 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
         valid_mask=jnp.asarray([True]),
     )
 
-    result = regenie2_binary_correction.apply_device_candidate_corrections(
+    result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix=candidate_genotype_matrix,
+        genotype_matrix_by_variant=candidate_genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
     )
@@ -954,9 +954,9 @@ def test_firth_candidate_max_iteration_failure_is_labelled() -> None:
         firth_coefficient_tolerance=1.0e-12,
         firth_likelihood_tolerance=1.0e-12,
     )
-    result = regenie2_binary_correction.apply_device_candidate_corrections(
+    result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix=candidate_genotype_matrix,
+        genotype_matrix_by_variant=candidate_genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
         kernel_config=maximum_iteration_kernel_config,
@@ -996,9 +996,9 @@ def test_null_firth_failure_propagates_to_candidate_failure() -> None:
         valid_mask=jnp.asarray([True]),
     )
 
-    result = regenie2_binary_correction.apply_device_candidate_corrections(
+    result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=failed_null_chromosome_state,
-        genotype_matrix=candidate_genotype_matrix,
+        genotype_matrix_by_variant=candidate_genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
     )
@@ -1034,15 +1034,15 @@ def test_firth_se_changes_only_successful_firth_standard_error() -> None:
         firth_se=True,
     )
 
-    default_result = regenie2_binary_correction.apply_device_candidate_corrections(
+    default_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix=candidate_genotype_matrix,
+        genotype_matrix_by_variant=candidate_genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
     )
-    firth_se_result = regenie2_binary_correction.apply_device_candidate_corrections(
+    firth_se_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix=candidate_genotype_matrix,
+        genotype_matrix_by_variant=candidate_genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=firth_se_plan,
     )
@@ -1098,9 +1098,9 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback() -> None
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
         firth_candidate_capacity=1,
     )
-    overflow_result = regenie2_binary_correction.apply_device_candidate_corrections(
+    overflow_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
+        genotype_matrix_by_variant=genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
         kernel_config=overflow_kernel_config,
@@ -1110,9 +1110,9 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback() -> None
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
         firth_candidate_capacity=8,
     )
-    bounded_result = regenie2_binary_correction.apply_device_candidate_corrections(
+    bounded_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
+        genotype_matrix_by_variant=genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
         kernel_config=bounded_kernel_config,
@@ -1163,16 +1163,16 @@ def test_firth_correction_kernel_config_retraces_same_shape_without_cache_clear(
         firth_candidate_capacity=8,
     )
 
-    small_batch_result = regenie2_binary_correction.apply_device_candidate_corrections(
+    small_batch_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
+        genotype_matrix_by_variant=genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
         kernel_config=small_batch_config,
     )
-    larger_batch_result = regenie2_binary_correction.apply_device_candidate_corrections(
+    larger_batch_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
+        genotype_matrix_by_variant=genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
         kernel_config=larger_batch_config,
@@ -1419,9 +1419,9 @@ def test_failed_firth_lanes_become_test_fail() -> None:
         valid_mask=jnp.asarray([True]),
     )
 
-    corrected_result = regenie2_binary_correction.apply_device_candidate_corrections(
+    corrected_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
+        genotype_matrix_by_variant=genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
     )

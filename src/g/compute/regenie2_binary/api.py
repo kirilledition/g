@@ -10,7 +10,6 @@ import jax.numpy as jnp
 
 from g import types as g_types
 from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.compute.regenie2_binary import correction as regenie2_binary_correction
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
@@ -161,9 +160,9 @@ def compute_regenie2_binary_chunk_from_chromosome_state(
         genotype_matrix,
         correction_plan,
     )
-    return regenie2_binary_correction.apply_device_candidate_corrections(
+    return regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
+        genotype_matrix_by_variant=jnp.asarray(genotype_matrix, dtype=jnp.float32).T,
         result=score_test_result,
         correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
