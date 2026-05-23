@@ -504,7 +504,7 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
             return_value="chromosome-state",
         ) as mock_prepare,
         patch(
-            "g.compute.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
+            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state",
             return_value=result,
         ) as mock_compute,
     ):
@@ -592,7 +592,7 @@ def test_binary_variant_major_callback_transposes_into_sample_major_compute() ->
             return_value="chromosome-state",
         ),
         patch(
-            "g.compute.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
+            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state",
             return_value=result,
         ) as mock_compute,
     ):
@@ -684,7 +684,7 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
             return_value=result,
         ) as mock_variant_major_compute,
         patch(
-            "g.compute.regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state",
+            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state",
         ) as mock_sample_major_compute,
     ):
         callback.compute_preprocessed_variant_major_dosage_chunk(
@@ -784,7 +784,7 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
             return_value=chromosome_state,
         ) as mock_prepare,
         patch(
-            "g.compute.regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state",
+            "g.compute.regenie2_binary.api.compute_regenie2_multi_binary_chunk_from_chromosome_state",
             return_value=result,
         ) as mock_compute,
     ):

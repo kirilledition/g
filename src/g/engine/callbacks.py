@@ -14,8 +14,8 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-import g.compute.regenie2_binary as regenie2_binary
 from g import _core, types
+from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
 from g.compute.regenie2_binary import state as regenie2_binary_state
