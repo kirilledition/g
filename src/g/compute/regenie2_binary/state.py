@@ -52,12 +52,9 @@ def build_single_binary_chromosome_state_from_multi(
         covariate_matrix=chromosome_state.covariate_matrix,
         phenotype_vector=chromosome_state.phenotype_matrix[trait_index],
         null_logistic_coefficients=chromosome_state.null_logistic_coefficients[trait_index],
-        null_firth_coefficients=chromosome_state.null_firth_coefficients[trait_index],
         null_firth_offset=chromosome_state.null_firth_offset_matrix[trait_index],
-        fitted_probability=chromosome_state.fitted_probability[trait_index],
         score_residual=chromosome_state.score_residual[trait_index],
         loco_offset=chromosome_state.loco_offset_matrix[trait_index],
-        standardized_residual=chromosome_state.standardized_residual[trait_index],
         square_root_weight=chromosome_state.square_root_weight[trait_index],
         weighted_genotype_projection_matrix=chromosome_state.weighted_genotype_projection_matrix[trait_index],
         null_firth_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood[trait_index],
@@ -76,12 +73,9 @@ def build_multi_binary_chromosome_state_from_single(
         covariate_matrix=chromosome_state.covariate_matrix,
         phenotype_matrix=chromosome_state.phenotype_vector[None, :],
         null_logistic_coefficients=chromosome_state.null_logistic_coefficients[None, :],
-        null_firth_coefficients=chromosome_state.null_firth_coefficients[None, :],
         null_firth_offset_matrix=chromosome_state.null_firth_offset[None, :],
-        fitted_probability=chromosome_state.fitted_probability[None, :],
         score_residual=chromosome_state.score_residual[None, :],
         loco_offset_matrix=chromosome_state.loco_offset[None, :],
-        standardized_residual=chromosome_state.standardized_residual[None, :],
         square_root_weight=chromosome_state.square_root_weight[None, :],
         weighted_genotype_projection_matrix=chromosome_state.weighted_genotype_projection_matrix[None, :, :],
         null_firth_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood[None],
@@ -118,7 +112,6 @@ def prepare_regenie2_binary_chromosome_state(
     )
     square_root_weight = jnp.sqrt(bernoulli_variance)
     score_residual = state.phenotype_vector - fitted_probability
-    standardized_residual = score_residual / square_root_weight
     weighted_covariate_matrix = square_root_weight[:, None] * state.covariate_matrix
     weighted_covariate_transpose = weighted_covariate_matrix.T
     weighted_covariate_crossproduct = weighted_covariate_transpose @ weighted_covariate_matrix
@@ -162,12 +155,9 @@ def prepare_regenie2_binary_chromosome_state(
         covariate_matrix=state.covariate_matrix,
         phenotype_vector=state.phenotype_vector,
         null_logistic_coefficients=null_logistic_coefficients,
-        null_firth_coefficients=null_firth_result.coefficients,
         null_firth_offset=null_firth_offset,
-        fitted_probability=fitted_probability,
         score_residual=score_residual,
         loco_offset=loco_offset_float32,
-        standardized_residual=standardized_residual,
         square_root_weight=square_root_weight,
         weighted_genotype_projection_matrix=weighted_genotype_projection_matrix,
         null_firth_penalized_log_likelihood=null_firth_result.penalized_log_likelihood,
@@ -204,12 +194,9 @@ def prepare_regenie2_multi_binary_chromosome_state(
         covariate_matrix=state.covariate_matrix,
         phenotype_matrix=state.phenotype_matrix,
         null_logistic_coefficients=chromosome_states.null_logistic_coefficients,
-        null_firth_coefficients=chromosome_states.null_firth_coefficients,
         null_firth_offset_matrix=chromosome_states.null_firth_offset,
-        fitted_probability=chromosome_states.fitted_probability,
         score_residual=chromosome_states.score_residual,
         loco_offset_matrix=chromosome_states.loco_offset,
-        standardized_residual=chromosome_states.standardized_residual,
         square_root_weight=chromosome_states.square_root_weight,
         weighted_genotype_projection_matrix=chromosome_states.weighted_genotype_projection_matrix,
         null_firth_penalized_log_likelihood=chromosome_states.null_firth_penalized_log_likelihood,

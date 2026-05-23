@@ -1111,7 +1111,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         )
         chromosome_ready_value = getattr(
             self.current_chromosome_state,
-            "fitted_probability",
+            "score_residual",
             self.current_chromosome_state,
         )
         block_until_ready(chromosome_ready_value)
@@ -1382,7 +1382,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.correction_plan,
             self.kernel_config,
         )
-        block_until_ready(self.current_chromosome_state.fitted_probability)
+        block_until_ready(self.current_chromosome_state.score_residual)
         if self.stage_timing_recorder is not None:
             iteration_counts = jax.device_get(self.current_chromosome_state.null_logistic_iteration_count)
             convergence_flags = jax.device_get(self.current_chromosome_state.null_logistic_converged)

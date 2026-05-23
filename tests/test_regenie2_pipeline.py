@@ -768,7 +768,7 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         nr_warm_start_iteration_count=jnp.zeros((2, 2), dtype=jnp.int32),
     )
     chromosome_state = SimpleNamespace(
-        fitted_probability=jnp.asarray([[0.5, 0.5], [0.5, 0.5]], dtype=jnp.float32),
+        score_residual=jnp.asarray([[0.5, 0.5], [0.5, 0.5]], dtype=jnp.float32),
         null_logistic_iteration_count=jnp.asarray([3, 3], dtype=jnp.int32),
         null_logistic_converged=jnp.asarray([True, True], dtype=jnp.bool_),
     )

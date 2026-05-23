@@ -148,12 +148,9 @@ class Regenie2BinaryChromosomeState:
         covariate_matrix: Covariate design matrix including intercept.
         phenotype_vector: Binary phenotype vector in 0/1 encoding.
         null_logistic_coefficients: Covariate-only null logistic coefficients.
-        null_firth_coefficients: Covariate-only null Firth coefficients.
         null_firth_offset: Covariate-only null Firth linear predictor plus LOCO offset.
-        fitted_probability: Null-model fitted probabilities.
         score_residual: Raw score residual, ``phenotype - fitted_probability``.
         loco_offset: LOCO offset in the logistic linear predictor.
-        standardized_residual: Pearson residual.
         square_root_weight: Square root of Bernoulli variance.
         weighted_genotype_projection_matrix: Cholesky-whitened weighted covariate transpose.
         null_firth_penalized_log_likelihood: Covariate-only Firth null penalized log-likelihood.
@@ -167,12 +164,9 @@ class Regenie2BinaryChromosomeState:
     covariate_matrix: jax.Array
     phenotype_vector: jax.Array
     null_logistic_coefficients: jax.Array
-    null_firth_coefficients: jax.Array
     null_firth_offset: jax.Array
-    fitted_probability: jax.Array
     score_residual: jax.Array
     loco_offset: jax.Array
-    standardized_residual: jax.Array
     square_root_weight: jax.Array
     weighted_genotype_projection_matrix: jax.Array
     null_firth_penalized_log_likelihood: jax.Array
@@ -247,12 +241,9 @@ class Regenie2MultiBinaryChromosomeState:
         covariate_matrix: Shared covariate design matrix including intercept.
         phenotype_matrix: Binary phenotype matrix with shape ``traits x samples``.
         null_logistic_coefficients: Per-trait null logistic coefficients.
-        null_firth_coefficients: Per-trait null Firth coefficients.
         null_firth_offset_matrix: Per-trait null Firth linear predictors plus LOCO offsets.
-        fitted_probability: Per-trait null-model fitted probabilities.
         score_residual: Per-trait raw score residuals.
         loco_offset_matrix: Per-trait LOCO offsets.
-        standardized_residual: Per-trait Pearson residuals.
         square_root_weight: Per-trait square root Bernoulli variance.
         weighted_genotype_projection_matrix: Per-trait weighted covariate projection matrix.
         null_firth_penalized_log_likelihood: Per-trait Firth null penalized log-likelihood.
@@ -266,12 +257,9 @@ class Regenie2MultiBinaryChromosomeState:
     covariate_matrix: jax.Array
     phenotype_matrix: jax.Array
     null_logistic_coefficients: jax.Array
-    null_firth_coefficients: jax.Array
     null_firth_offset_matrix: jax.Array
-    fitted_probability: jax.Array
     score_residual: jax.Array
     loco_offset_matrix: jax.Array
-    standardized_residual: jax.Array
     square_root_weight: jax.Array
     weighted_genotype_projection_matrix: jax.Array
     null_firth_penalized_log_likelihood: jax.Array
