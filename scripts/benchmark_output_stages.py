@@ -20,6 +20,32 @@ DEFAULT_DATA_DIRECTORY = Path("data")
 DEFAULT_OUTPUT_DIRECTORY = Path("data/benchmarks/output_stages")
 DEFAULT_SINGLE_PHENOTYPE_NAME = "phenotype_continuous"
 OUTPUT_STAGE_TIMING_FILE_NAME = "output_stage_timings.json"
+DEVICE_TO_HOST_MATERIALIZATION_METRIC = "device_to_host_materialization"
+PYTHON_OUTPUT_WRITE_METRIC = "python_output_write"
+RUST_OUTPUT_METADATA_CLONE_METRIC = "rust_output_metadata_clone"
+RUST_OUTPUT_RESULT_BUFFER_COPY_METRIC = "rust_output_result_buffer_copy"
+RUST_OUTPUT_ENQUEUE_METRIC = "rust_output_enqueue"
+RUST_OUTPUT_WRITER_RECORD_BATCH_BUILD_METRIC = "rust_output_writer_record_batch_build"
+RUST_OUTPUT_WRITER_ARROW_FILE_WRITE_METRIC = "rust_output_writer_arrow_file_write"
+RUST_OUTPUT_WRITER_TOTAL_METRIC = "rust_output_writer_total"
+BRIDGE_RESIDUAL_METRIC = "bridge_residual"
+MEASURED_OUTPUT_PATH_METRIC = "measured_output_path"
+
+
+@dataclasses.dataclass(frozen=True)
+class OutputHandoffTimingMetrics:
+    """Derived timing metrics for the JAX-host-Rust-Arrow output handoff.
+
+    Attributes:
+        seconds_by_metric: Absolute seconds for each measured or derived metric.
+        wall_time_percentage_by_metric: Metric share of total trial wall time.
+        output_path_percentage_by_metric: Metric share of measured output path time.
+
+    """
+
+    seconds_by_metric: dict[str, float]
+    wall_time_percentage_by_metric: dict[str, float]
+    output_path_percentage_by_metric: dict[str, float]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -86,6 +112,7 @@ class TrialResult:
         chunk_file_count: Total Arrow chunk file count across phenotypes.
         chunk_bytes: Total Arrow chunk bytes across phenotypes.
         final_parquet_bytes: Total final Parquet bytes across phenotypes, when written.
+        handoff_timing: Derived handoff timing metrics.
 
     """
 
@@ -106,6 +133,7 @@ class TrialResult:
     chunk_file_count: int
     chunk_bytes: int
     final_parquet_bytes: int | None
+    handoff_timing: OutputHandoffTimingMetrics
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -260,6 +288,90 @@ def flatten_artifacts(artifacts: api.RunArtifacts) -> tuple[api.RunArtifacts, ..
     return (artifacts,)
 
 
+def load_stage_totals(stage_timing_path: Path) -> dict[str, float]:
+    """Load stage totals from a timing JSON file."""
+    if not stage_timing_path.exists():
+        return {}
+    timing_payload = json.loads(stage_timing_path.read_text(encoding="utf-8"))
+    stage_totals = timing_payload.get("stage_totals_seconds", {})
+    if not isinstance(stage_totals, dict):
+        return {}
+    return {
+        str(stage_name): float(stage_seconds)
+        for stage_name, stage_seconds in stage_totals.items()
+        if isinstance(stage_seconds, int | float)
+    }
+
+
+def sum_stage_totals(stage_timing_paths: tuple[Path, ...]) -> dict[str, float]:
+    """Sum stage totals across zero or more timing JSON files."""
+    total_stage_seconds: dict[str, float] = {}
+    for stage_timing_path in stage_timing_paths:
+        for stage_name, stage_seconds in load_stage_totals(stage_timing_path).items():
+            total_stage_seconds[stage_name] = total_stage_seconds.get(stage_name, 0.0) + stage_seconds
+    return total_stage_seconds
+
+
+def build_metric_percentages(seconds_by_metric: dict[str, float], denominator_seconds: float) -> dict[str, float]:
+    """Build percentage shares for each metric against one denominator."""
+    if denominator_seconds <= 0.0:
+        return dict.fromkeys(seconds_by_metric, 0.0)
+    return {
+        metric_name: (metric_seconds / denominator_seconds) * 100.0
+        for metric_name, metric_seconds in seconds_by_metric.items()
+    }
+
+
+def build_output_handoff_timing_metrics(
+    *,
+    python_stage_timing_path: Path,
+    rust_stage_timing_paths: tuple[Path, ...],
+    wall_time_seconds: float,
+) -> OutputHandoffTimingMetrics:
+    """Build derived output handoff timing metrics for one trial."""
+    python_stage_totals = load_stage_totals(python_stage_timing_path)
+    rust_stage_totals = sum_stage_totals(rust_stage_timing_paths)
+    rust_metadata_clone_seconds = rust_stage_totals.get(RUST_OUTPUT_METADATA_CLONE_METRIC, 0.0)
+    rust_result_buffer_copy_seconds = rust_stage_totals.get(RUST_OUTPUT_RESULT_BUFFER_COPY_METRIC, 0.0)
+    rust_enqueue_seconds = rust_stage_totals.get(RUST_OUTPUT_ENQUEUE_METRIC, 0.0)
+    python_output_write_seconds = python_stage_totals.get("output_write", 0.0)
+    bridge_residual_seconds = python_output_write_seconds - (
+        rust_metadata_clone_seconds + rust_result_buffer_copy_seconds + rust_enqueue_seconds
+    )
+    rust_writer_total_seconds = rust_stage_totals.get(RUST_OUTPUT_WRITER_TOTAL_METRIC, 0.0)
+    measured_output_path_seconds = (
+        python_stage_totals.get(DEVICE_TO_HOST_MATERIALIZATION_METRIC, 0.0)
+        + python_output_write_seconds
+        + rust_writer_total_seconds
+    )
+    seconds_by_metric = {
+        DEVICE_TO_HOST_MATERIALIZATION_METRIC: python_stage_totals.get(
+            DEVICE_TO_HOST_MATERIALIZATION_METRIC,
+            0.0,
+        ),
+        PYTHON_OUTPUT_WRITE_METRIC: python_output_write_seconds,
+        RUST_OUTPUT_METADATA_CLONE_METRIC: rust_metadata_clone_seconds,
+        RUST_OUTPUT_RESULT_BUFFER_COPY_METRIC: rust_result_buffer_copy_seconds,
+        RUST_OUTPUT_ENQUEUE_METRIC: rust_enqueue_seconds,
+        RUST_OUTPUT_WRITER_RECORD_BATCH_BUILD_METRIC: rust_stage_totals.get(
+            RUST_OUTPUT_WRITER_RECORD_BATCH_BUILD_METRIC,
+            0.0,
+        ),
+        RUST_OUTPUT_WRITER_ARROW_FILE_WRITE_METRIC: rust_stage_totals.get(
+            RUST_OUTPUT_WRITER_ARROW_FILE_WRITE_METRIC,
+            0.0,
+        ),
+        RUST_OUTPUT_WRITER_TOTAL_METRIC: rust_writer_total_seconds,
+        BRIDGE_RESIDUAL_METRIC: bridge_residual_seconds,
+        MEASURED_OUTPUT_PATH_METRIC: measured_output_path_seconds,
+    }
+    return OutputHandoffTimingMetrics(
+        seconds_by_metric=seconds_by_metric,
+        wall_time_percentage_by_metric=build_metric_percentages(seconds_by_metric, wall_time_seconds),
+        output_path_percentage_by_metric=build_metric_percentages(seconds_by_metric, measured_output_path_seconds),
+    )
+
+
 def collect_trial_output_metrics(artifacts: tuple[api.RunArtifacts, ...]) -> dict[str, typing.Any]:
     """Collect output artifact metrics across all phenotype runs."""
     output_run_directories = tuple(
@@ -336,6 +448,12 @@ def run_trial(
     artifacts = api.regenie.from_options(options)
     wall_time_seconds = time.perf_counter() - start_time
     output_metrics = collect_trial_output_metrics(flatten_artifacts(artifacts))
+    rust_stage_timing_path_strings = typing.cast("tuple[str, ...]", output_metrics["rust_stage_timing_paths"])
+    handoff_timing = build_output_handoff_timing_metrics(
+        python_stage_timing_path=python_stage_timing_path,
+        rust_stage_timing_paths=tuple(Path(path) for path in rust_stage_timing_path_strings),
+        wall_time_seconds=wall_time_seconds,
+    )
     return TrialResult(
         case_name=benchmark_case.name,
         trial_index=trial_index,
@@ -348,13 +466,23 @@ def run_trial(
         arrow_compression=benchmark_case.arrow_compression.value,
         wall_time_seconds=wall_time_seconds,
         python_stage_timing_path=str(python_stage_timing_path),
-        rust_stage_timing_paths=typing.cast("tuple[str, ...]", output_metrics["rust_stage_timing_paths"]),
+        rust_stage_timing_paths=rust_stage_timing_path_strings,
         output_run_directories=typing.cast("tuple[str, ...]", output_metrics["output_run_directories"]),
         final_parquet_paths=typing.cast("tuple[str, ...]", output_metrics["final_parquet_paths"]),
         chunk_file_count=int(output_metrics["chunk_file_count"]),
         chunk_bytes=int(output_metrics["chunk_bytes"]),
         final_parquet_bytes=typing.cast("int | None", output_metrics["final_parquet_bytes"]),
+        handoff_timing=handoff_timing,
     )
+
+
+def summarize_metric_maps(metric_maps: tuple[dict[str, float], ...]) -> dict[str, float]:
+    """Return per-metric means across trial metric maps."""
+    metric_names = sorted({metric_name for metric_map in metric_maps for metric_name in metric_map})
+    return {
+        metric_name: statistics.fmean(metric_map.get(metric_name, 0.0) for metric_map in metric_maps)
+        for metric_name in metric_names
+    }
 
 
 def summarize_trial_group(trial_results: tuple[TrialResult, ...]) -> dict[str, typing.Any]:
@@ -377,6 +505,15 @@ def summarize_trial_group(trial_results: tuple[TrialResult, ...]) -> dict[str, t
         "max_wall_time_seconds": max(wall_time_values),
         "mean_chunk_file_count": statistics.fmean([trial_result.chunk_file_count for trial_result in trial_results]),
         "mean_chunk_bytes": statistics.fmean([trial_result.chunk_bytes for trial_result in trial_results]),
+        "mean_handoff_timing_seconds": summarize_metric_maps(
+            tuple(trial_result.handoff_timing.seconds_by_metric for trial_result in trial_results)
+        ),
+        "mean_handoff_wall_time_percentages": summarize_metric_maps(
+            tuple(trial_result.handoff_timing.wall_time_percentage_by_metric for trial_result in trial_results)
+        ),
+        "mean_handoff_output_path_percentages": summarize_metric_maps(
+            tuple(trial_result.handoff_timing.output_path_percentage_by_metric for trial_result in trial_results)
+        ),
     }
 
 
