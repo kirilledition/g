@@ -856,6 +856,7 @@ Completed cleanup so far:
 * Moved linear public chunk-compute entry points out of the package facade into `regenie2_linear/api.py`, and updated engine/tests/scripts to import that API module explicitly.
 * Moved binary public chunk-compute entry points out of the package facade into `regenie2_binary/api.py`, matching the intended engine-facing API boundary.
 * Folded the public binary variant-major chunk entry point into `regenie2_binary/api.py` and removed the now-empty `variant_major.py` boundary, so engine code no longer imports that implementation module directly.
+* Unified linear state preparation around trait-major helpers: single-trait state and chromosome-state preparation now adapt through the same trait-major formulas used by multi-trait linear compute.
 
 Intentional remaining adapters:
 
