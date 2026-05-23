@@ -175,9 +175,9 @@ def compute_linear_debug_arrays(
     genotype_mean = jnp.mean(raw_genotype_matrix_by_variant, axis=1)
     normalization_offset = jnp.where(genotype_mean > 1.0, 2.0, 0.0)
     normalized_genotype_matrix_by_variant = raw_genotype_matrix_by_variant - normalization_offset[:, None]
-    whitened_covariate_transpose = chromosome_state.stacked_score_matrix[:-1]
+    whitened_covariate_transpose = chromosome_state.whitened_covariate_transpose
     covariate_projection_coordinates = whitened_covariate_transpose @ normalized_genotype_matrix_by_variant.T
-    raw_covariance_with_phenotype = chromosome_state.stacked_score_matrix[-1] @ normalized_genotype_matrix_by_variant.T
+    raw_covariance_with_phenotype = chromosome_state.adjusted_residual @ normalized_genotype_matrix_by_variant.T
     covariance_with_phenotype = raw_covariance_with_phenotype - (
         chromosome_state.adjusted_residual_projection_coordinates @ covariate_projection_coordinates
     )
