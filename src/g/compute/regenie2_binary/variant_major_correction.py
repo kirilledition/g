@@ -11,6 +11,7 @@ from g import types
 from g.compute.common import genotype
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
 from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
@@ -288,7 +289,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
 def apply_device_candidate_corrections_firth_variant_major(
     chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-    result: regenie2_binary_types.Regenie2BinaryChunkResult,
+    result: regenie2_binary_types.Regenie2BinaryScoreChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
     kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
@@ -296,8 +297,9 @@ def apply_device_candidate_corrections_firth_variant_major(
     """Select bounded or overflow Firth capacity on the host before correction."""
     candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
     fallback_count = regenie2_binary_candidate_planning.count_firth_candidates_on_host(candidate_mask)
+    diagnostic_result = regenie2_binary_result.expand_score_result_with_empty_firth_diagnostics(result)
     if fallback_count == 0:
-        return result
+        return diagnostic_result
     variant_count = genotype_matrix_by_variant.shape[0]
     capacity_plan = regenie2_binary_candidate_planning.build_firth_candidate_capacity_plan(
         variant_count=variant_count,
@@ -310,7 +312,7 @@ def apply_device_candidate_corrections_firth_variant_major(
     return apply_device_candidate_corrections_firth_variant_major_with_capacity(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
-        result=result,
+        result=diagnostic_result,
         correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
         candidate_capacity=candidate_capacity,
@@ -321,11 +323,11 @@ def apply_device_candidate_corrections_firth_variant_major(
 def apply_device_candidate_corrections_variant_major(
     chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-    result: regenie2_binary_types.Regenie2BinaryChunkResult,
+    result: regenie2_binary_types.Regenie2BinaryScoreChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
     kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+) -> regenie2_binary_types.Regenie2BinaryScoreChunkResult | regenie2_binary_types.Regenie2BinaryChunkResult:
     """Apply binary candidate corrections for variant-major genotype chunks."""
     if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
         return result

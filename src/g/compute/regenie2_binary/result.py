@@ -26,23 +26,73 @@ def build_multi_binary_score_test_chunk_result(
     log10_p_value: jax.Array,
     extra_code: jax.Array,
     valid_mask: jax.Array,
-) -> regenie2_binary_types.Regenie2MultiBinaryChunkResult:
-    """Build a multi-trait binary score-test chunk result with empty Firth diagnostics."""
-    return regenie2_binary_types.Regenie2MultiBinaryChunkResult(
+) -> regenie2_binary_types.Regenie2MultiBinaryScoreChunkResult:
+    """Build a multi-trait binary score-test chunk result."""
+    return regenie2_binary_types.Regenie2MultiBinaryScoreChunkResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
         log10_p_value=log10_p_value,
         extra_code=extra_code,
         valid_mask=valid_mask,
-        firth_iteration_count=build_empty_firth_integer_array(extra_code),
-        firth_failure_code=build_empty_firth_integer_array(extra_code),
-        firth_convergence_reason_code=build_empty_firth_integer_array(extra_code),
-        firth_correction_code=build_empty_firth_integer_array(extra_code),
-        firth_sparse_correction_mask=build_empty_firth_boolean_array(extra_code),
-        pseudo_firth_iteration_count=build_empty_firth_integer_array(extra_code),
-        nr_zero_start_iteration_count=build_empty_firth_integer_array(extra_code),
-        nr_warm_start_iteration_count=build_empty_firth_integer_array(extra_code),
+    )
+
+
+def expand_score_result_with_empty_firth_diagnostics(
+    result: regenie2_binary_types.Regenie2BinaryScoreChunkResult,
+) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+    """Add empty Firth diagnostic arrays to a single-trait score result."""
+    return regenie2_binary_types.Regenie2BinaryChunkResult(
+        beta=result.beta,
+        standard_error=result.standard_error,
+        chi_squared=result.chi_squared,
+        log10_p_value=result.log10_p_value,
+        extra_code=result.extra_code,
+        valid_mask=result.valid_mask,
+        firth_iteration_count=build_empty_firth_integer_array(result.extra_code),
+        firth_failure_code=build_empty_firth_integer_array(result.extra_code),
+        firth_convergence_reason_code=build_empty_firth_integer_array(result.extra_code),
+        firth_correction_code=build_empty_firth_integer_array(result.extra_code),
+        firth_sparse_correction_mask=build_empty_firth_boolean_array(result.extra_code),
+        pseudo_firth_iteration_count=build_empty_firth_integer_array(result.extra_code),
+        nr_zero_start_iteration_count=build_empty_firth_integer_array(result.extra_code),
+        nr_warm_start_iteration_count=build_empty_firth_integer_array(result.extra_code),
+    )
+
+
+def expand_multi_score_result_with_empty_firth_diagnostics(
+    result: regenie2_binary_types.Regenie2MultiBinaryScoreChunkResult,
+) -> regenie2_binary_types.Regenie2MultiBinaryChunkResult:
+    """Add empty Firth diagnostic arrays to a multi-trait score result."""
+    return regenie2_binary_types.Regenie2MultiBinaryChunkResult(
+        beta=result.beta,
+        standard_error=result.standard_error,
+        chi_squared=result.chi_squared,
+        log10_p_value=result.log10_p_value,
+        extra_code=result.extra_code,
+        valid_mask=result.valid_mask,
+        firth_iteration_count=build_empty_firth_integer_array(result.extra_code),
+        firth_failure_code=build_empty_firth_integer_array(result.extra_code),
+        firth_convergence_reason_code=build_empty_firth_integer_array(result.extra_code),
+        firth_correction_code=build_empty_firth_integer_array(result.extra_code),
+        firth_sparse_correction_mask=build_empty_firth_boolean_array(result.extra_code),
+        pseudo_firth_iteration_count=build_empty_firth_integer_array(result.extra_code),
+        nr_zero_start_iteration_count=build_empty_firth_integer_array(result.extra_code),
+        nr_warm_start_iteration_count=build_empty_firth_integer_array(result.extra_code),
+    )
+
+
+def squeeze_single_binary_score_result(
+    result: regenie2_binary_types.Regenie2MultiBinaryScoreChunkResult,
+) -> regenie2_binary_types.Regenie2BinaryScoreChunkResult:
+    """Remove the trait axis from a single-trait binary score result."""
+    return regenie2_binary_types.Regenie2BinaryScoreChunkResult(
+        beta=result.beta[0],
+        standard_error=result.standard_error[0],
+        chi_squared=result.chi_squared[0],
+        log10_p_value=result.log10_p_value[0],
+        extra_code=result.extra_code[0],
+        valid_mask=result.valid_mask[0],
     )
 
 

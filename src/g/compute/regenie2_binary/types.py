@@ -178,6 +178,29 @@ class Regenie2BinaryChromosomeState:
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
+class Regenie2BinaryScoreChunkResult:
+    """Score-test association outputs for a REGENIE step 2 binary chunk.
+
+    Attributes:
+        beta: Estimated effect sizes.
+        standard_error: Standard errors of estimates.
+        chi_squared: Chi-squared statistics.
+        log10_p_value: Negative log10 p-values.
+        extra_code: Integer value from `types.BinaryExtraCode` for output rendering.
+        valid_mask: Boolean mask for valid statistics.
+
+    """
+
+    beta: jax.Array
+    standard_error: jax.Array
+    chi_squared: jax.Array
+    log10_p_value: jax.Array
+    extra_code: jax.Array
+    valid_mask: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
 class Regenie2BinaryChunkResult:
     """Association outputs for a REGENIE step 2 binary chunk.
 
@@ -267,6 +290,29 @@ class Regenie2MultiBinaryChromosomeState:
     null_firth_convergence_reason_code: jax.Array
     null_logistic_iteration_count: jax.Array
     null_logistic_converged: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2MultiBinaryScoreChunkResult:
+    """Trait-major score-test outputs for a multi-trait binary chunk.
+
+    Attributes:
+        beta: Estimated effect sizes with shape ``traits x variants``.
+        standard_error: Standard errors with shape ``traits x variants``.
+        chi_squared: Chi-squared statistics with shape ``traits x variants``.
+        log10_p_value: Negative log10 p-values with shape ``traits x variants``.
+        extra_code: Integer values from `types.BinaryExtraCode` with shape ``traits x variants``.
+        valid_mask: Boolean mask for valid statistics with shape ``traits x variants``.
+
+    """
+
+    beta: jax.Array
+    standard_error: jax.Array
+    chi_squared: jax.Array
+    log10_p_value: jax.Array
+    extra_code: jax.Array
+    valid_mask: jax.Array
 
 
 @jax.tree_util.register_dataclass

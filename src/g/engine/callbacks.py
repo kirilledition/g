@@ -129,7 +129,7 @@ def block_until_ready(value: typing.Any) -> None:
 def record_binary_chunk_diagnostics(
     *,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    result: regenie2_binary_types.Regenie2BinaryChunkResult,
+    result: regenie2_binary_types.Regenie2BinaryScoreChunkResult | regenie2_binary_types.Regenie2BinaryChunkResult,
 ) -> None:
     """Record binary candidate and Firth diagnostics for one chunk."""
     if stage_timing_recorder is None:
@@ -1077,7 +1077,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         *,
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
-        result: regenie2_binary_types.Regenie2BinaryChunkResult,
+        result: regenie2_binary_types.Regenie2BinaryScoreChunkResult | regenie2_binary_types.Regenie2BinaryChunkResult,
         host_dosage_buffer: npt.NDArray[np.float32] | None = None,
         release_in_flight_slot: bool = False,
     ) -> None:
@@ -1139,7 +1139,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: typing.Any,
         genotype_matrix: jax.Array | npt.NDArray[np.float32],
         sparse_candidate_mask: jax.Array | None = None,
-    ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+    ) -> regenie2_binary_types.Regenie2BinaryScoreChunkResult | regenie2_binary_types.Regenie2BinaryChunkResult:
         """Compute binary REGENIE step 2 statistics for one chunk."""
         self.prepare_chromosome_state(variant_metadata)
         assert self.current_chromosome_state is not None
@@ -1404,7 +1404,8 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         *,
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
-        result: regenie2_binary_types.Regenie2MultiBinaryChunkResult,
+        result: regenie2_binary_types.Regenie2MultiBinaryScoreChunkResult
+        | regenie2_binary_types.Regenie2MultiBinaryChunkResult,
         host_dosage_buffer: npt.NDArray[np.float32] | None = None,
         release_in_flight_slot: bool = False,
     ) -> None:

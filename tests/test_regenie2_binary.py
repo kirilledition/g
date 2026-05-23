@@ -224,8 +224,10 @@ def build_variant_major_parity_chromosome_state(
 
 
 def assert_binary_chunk_results_match(
-    sample_major_result: regenie2_binary_types.Regenie2BinaryChunkResult,
-    variant_major_result: regenie2_binary_types.Regenie2BinaryChunkResult,
+    sample_major_result: regenie2_binary_types.Regenie2BinaryScoreChunkResult
+    | regenie2_binary_types.Regenie2BinaryChunkResult,
+    variant_major_result: regenie2_binary_types.Regenie2BinaryScoreChunkResult
+    | regenie2_binary_types.Regenie2BinaryChunkResult,
 ) -> None:
     """Assert that sample-major and variant-major binary chunk outputs match."""
     np.testing.assert_allclose(
@@ -264,6 +266,10 @@ def assert_binary_chunk_results_match(
         np.asarray(variant_major_result.valid_mask),
         np.asarray(sample_major_result.valid_mask),
     )
+    if not hasattr(variant_major_result, "firth_iteration_count") and not hasattr(
+        sample_major_result, "firth_iteration_count"
+    ):
+        return
     np.testing.assert_array_equal(
         np.asarray(variant_major_result.firth_iteration_count),
         np.asarray(sample_major_result.firth_iteration_count),
@@ -1251,13 +1257,8 @@ def test_variant_major_score_test_matches_sample_major() -> None:
     np.testing.assert_array_equal(
         np.asarray(variant_major_result.extra_code), np.asarray(sample_major_result.extra_code)
     )
-    np.testing.assert_array_equal(
-        np.asarray(variant_major_result.firth_failure_code), np.asarray(sample_major_result.firth_failure_code)
-    )
-    np.testing.assert_array_equal(
-        np.asarray(variant_major_result.firth_convergence_reason_code),
-        np.asarray(sample_major_result.firth_convergence_reason_code),
-    )
+    assert not hasattr(sample_major_result, "firth_failure_code")
+    assert not hasattr(variant_major_result, "firth_failure_code")
 
 
 def test_variant_major_binary_chunk_matches_sample_major() -> None:
@@ -1315,13 +1316,11 @@ def test_variant_major_score_only_bt_matches_sample_major_with_covariates_loco_a
         correction_plan=correction_plan,
         sparse_candidate_mask=fixture.sparse_candidate_mask,
     )
-    variant_major_result = (
-        regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=jnp.transpose(fixture.genotype_matrix),
-            correction_plan=correction_plan,
-            sparse_candidate_mask=fixture.sparse_candidate_mask,
-        )
+    variant_major_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.transpose(fixture.genotype_matrix),
+        correction_plan=correction_plan,
+        sparse_candidate_mask=fixture.sparse_candidate_mask,
     )
 
     assert_binary_chunk_results_match(sample_major_result, variant_major_result)
@@ -1371,13 +1370,11 @@ def test_variant_major_approximate_firth_matches_sample_major_with_covariates_lo
         correction_plan=correction_plan,
         sparse_candidate_mask=fixture.sparse_candidate_mask,
     )
-    variant_major_result = (
-        regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=jnp.transpose(fixture.genotype_matrix),
-            correction_plan=correction_plan,
-            sparse_candidate_mask=fixture.sparse_candidate_mask,
-        )
+    variant_major_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.transpose(fixture.genotype_matrix),
+        correction_plan=correction_plan,
+        sparse_candidate_mask=fixture.sparse_candidate_mask,
     )
 
     assert_binary_chunk_results_match(sample_major_result, variant_major_result)

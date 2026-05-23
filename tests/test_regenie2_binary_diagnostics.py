@@ -72,6 +72,34 @@ def test_binary_chunk_diagnostics_report_zeroes_without_firth_candidates() -> No
     assert int(diagnostics.nr_warm_start_attempt_count) == 0
 
 
+def test_binary_chunk_diagnostics_accept_score_result_without_firth_arrays() -> None:
+    result = regenie2_binary_types.Regenie2BinaryScoreChunkResult(
+        beta=jnp.zeros(3, dtype=jnp.float32),
+        standard_error=jnp.ones(3, dtype=jnp.float32),
+        chi_squared=jnp.zeros(3, dtype=jnp.float32),
+        log10_p_value=jnp.zeros(3, dtype=jnp.float32),
+        extra_code=jnp.asarray(
+            [
+                types.BinaryExtraCode.SCORE.value,
+                types.BinaryExtraCode.FIRTH.value,
+                types.BinaryExtraCode.TEST_FAIL.value,
+            ],
+            dtype=jnp.int32,
+        ),
+        valid_mask=jnp.asarray([True, True, False], dtype=jnp.bool_),
+    )
+
+    diagnostics = regenie2_binary_diagnostics.count_binary_chunk_diagnostics(result)
+
+    assert int(diagnostics.score_test_candidate_count) == 2
+    assert int(diagnostics.firth_candidate_count) == 0
+    assert int(diagnostics.firth_converged_count) == 0
+    assert int(diagnostics.firth_failed_count) == 0
+    assert int(diagnostics.pseudo_firth_attempt_count) == 0
+    assert int(diagnostics.nr_zero_start_attempt_count) == 0
+    assert int(diagnostics.nr_warm_start_attempt_count) == 0
+
+
 def test_binary_chunk_diagnostics_count_all_failure_categories() -> None:
     result = build_binary_chunk_result(
         extra_code=jnp.asarray(

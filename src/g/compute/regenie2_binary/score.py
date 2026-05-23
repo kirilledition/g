@@ -17,6 +17,7 @@ from g.compute.regenie2_binary import types as regenie2_binary_types
 if typing.TYPE_CHECKING:
     from g import types
 
+
 def compute_positive_variance_mask(variance: jax.Array, reference_sum_squares: jax.Array) -> jax.Array:
     """Return a stable positive-variance mask after covariate projection.
 
@@ -39,7 +40,7 @@ def compute_binary_score_test_chunk_variant_major(
     chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     correction_plan: types.BinaryCorrectionPlan,
-) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+) -> regenie2_binary_types.Regenie2BinaryScoreChunkResult:
     """Compute the binary score test from canonical variant-major genotypes.
 
     Args:
@@ -57,14 +58,14 @@ def compute_binary_score_test_chunk_variant_major(
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         correction_plan=correction_plan,
     )
-    return regenie2_binary_result.squeeze_single_binary_chunk_result(multi_result)
+    return regenie2_binary_result.squeeze_single_binary_score_result(multi_result)
 
 
 def compute_multi_binary_score_test_chunk_variant_major(
     chromosome_state: regenie2_binary_types.Regenie2MultiBinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     correction_plan: types.BinaryCorrectionPlan,
-) -> regenie2_binary_types.Regenie2MultiBinaryChunkResult:
+) -> regenie2_binary_types.Regenie2MultiBinaryScoreChunkResult:
     """Compute batched binary score tests for trait-major states and variant-major genotypes.
 
     Args:

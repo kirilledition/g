@@ -871,6 +871,7 @@ Completed cleanup so far:
 * Collapsed the sample-major binary chunk API into a pure layout adapter that transposes once and calls the canonical variant-major binary chunk path, removing duplicated score-plus-correction orchestration.
 * Trimmed unused binary chromosome-state fields for null Firth coefficients, fitted probabilities, and standardized residuals; kernels keep the consumed null offset, score residual, weights, and diagnostic counters.
 * Removed stale binary result constructors left behind by trait-major score-test routing; score-only binary results are now built only through the multi-trait constructor and squeezed for single-trait callers.
+* Split binary score-test result containers from Firth-corrected result containers, so score-only kernels no longer allocate empty Firth diagnostic arrays; the Firth correction boundary expands score results only when correction is requested.
 
 Intentional remaining adapters:
 
