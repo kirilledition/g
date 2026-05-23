@@ -5,27 +5,17 @@ Host: `cantor`
 
 ## Summary
 
-The remaining trusted identity decode modes from `docs/simd-optimization-plan.md` were implemented and benchmarked.
+The remaining trusted identity decode candidates from `docs/simd-optimization-plan.md` were implemented,
+benchmarked, and then reduced to the winning production path.
 
-- Keep `auto` dispatching to raw AVX2 on AVX2-capable x86 CPUs.
-- Keep lookup scalar as the `auto` fallback on non-AVX2 CPUs.
-- Keep raw scalar only as an internal benchmark/test override because it regressed larger reader chunks.
+- Use raw AVX2 on AVX2-capable x86 CPUs.
+- Use raw scalar only as the portability fallback when AVX2 is unavailable.
+- Remove the runtime SIMD mode switch and benchmark-only public hooks after selecting the winner.
 - Do not pursue AVX-512, selected-subset SIMD, or row-major SIMD for this path.
 
 ## Reader Benchmark
 
-Command shape:
-
-```bash
-srun --nodelist=cantor --cpus-per-task=40 --mem=16G --time=00:45:00 bash -lc \
-  'cd /home/kirill/Projects/g-worktrees/bgen-simd-plan-completion &&
-   . scripts/server_env.sh &&
-   for mode in lookup raw_scalar raw_avx2 auto; do
-     G_BGEN_SIMD=${mode} RUSTFLAGS="-C target-cpu=native" \
-       cargo bench --bench bgen_read bgen_preprocessed_variant_major_trusted_no_missing_diploid \
-       -- --sample-size 10 --measurement-time 1 --warm-up-time 1
-   done'
-```
+These measurements were collected with a temporary internal mode selector that has since been removed.
 
 Median times:
 
@@ -37,21 +27,11 @@ Median times:
 | 8192 | 12.089 ms | 12.366 ms | 9.0766 ms | 9.0681 ms |
 | 16384 | 21.904 ms | 22.138 ms | 16.731 ms | 16.715 ms |
 
-Criterion reported raw AVX2 improved reader time by about 25-27% for chunk sizes 4096-16384. Raw scalar regressed those larger chunks by about 1.7-2.6%, so it is not a production fallback.
+Criterion reported raw AVX2 improved reader time by about 25-27% for chunk sizes 4096-16384. Raw
+scalar regressed those larger chunks by about 1.7-2.6%, so it is only retained as the non-AVX2
+portability fallback.
 
 ## Native Profile Counters
-
-Command shape:
-
-```bash
-srun --nodelist=cantor --cpus-per-task=40 --mem=16G --time=00:15:00 bash -lc \
-  'cd /home/kirill/Projects/g-worktrees/bgen-simd-plan-completion &&
-   . scripts/server_env.sh &&
-   for mode in lookup raw_scalar raw_avx2 auto; do
-     G_BGEN_SIMD=${mode} G_BGEN_PROFILE_CHUNK_SIZE=16384 RUSTFLAGS="-C target-cpu=native" \
-       cargo run --release --example bgen_trusted_profile
-   done'
-```
 
 Single 16,384-variant chunk profile:
 
@@ -71,3 +51,6 @@ Result:
 - Raw AVX2 and auto were consistently faster than lookup.
 - Raw scalar was consistently slower than lookup.
 - Auto and raw AVX2 were effectively equivalent on `cantor`.
+
+The synthetic benchmark and native profile executable were temporary decision tools and are not part
+of the final code.

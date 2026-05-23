@@ -376,17 +376,8 @@ This avoids i32 overflow while still reducing scalar overhead.
 
 ## 1. Do not make AVX512 the default
 
-Given your result, keep AVX512 disabled by default. Add it only as a benchmark-only experiment later:
-
-```text
-G_BGEN_SIMD=avx512
-```
-
-or:
-
-```text
---g-bgen-simd avx512
-```
+Given your result, keep AVX512 disabled by default. Add it only as a temporary benchmark-only
+experiment later, not as a production selector.
 
 but the default dispatch should be:
 
@@ -467,11 +458,7 @@ Your coding agent should not just implement AVX2 and declare victory. It should 
 
 Add Criterion benches for synthetic decompressed probability bytes:
 
-```text
-bench_trusted_identity_decode_8bit_10k_samples
-bench_trusted_identity_decode_8bit_100k_samples
-bench_trusted_identity_decode_8bit_500k_samples
-```
+Cover synthetic decompressed probability bytes at 10k, 100k, and 500k samples.
 
 Use several probability patterns:
 
@@ -554,7 +541,7 @@ zero/nonzero counts
 hom-ref/het/hom-alt counts
 ```
 
-Also add an integration/parity test:
+During development, add an integration/parity test:
 
 ```text
 trusted scalar forced vs trusted AVX2 forced
@@ -563,15 +550,8 @@ same ChunkStats within tight tolerance
 same association output within tolerance
 ```
 
-Add a runtime override for testing:
-
-```text
-G_BGEN_SIMD=scalar
-G_BGEN_SIMD=avx2
-G_BGEN_SIMD=auto
-```
-
-This is important. Without a force-scalar mode, testing dispatch correctness is annoying.
+Use a temporary runtime override only while benchmarking and validating candidate paths. Remove it once
+the fastest correct implementation is selected so production code has a single dispatch policy.
 
 ---
 
@@ -616,11 +596,10 @@ Requirements:
 7. Implement AVX2 runtime-dispatched path using std::arch and is_x86_feature_detected!("avx2").
 8. Keep scalar fallback on all platforms.
 9. Do not enable AVX512 by default. If AVX512 code exists, leave it benchmark-only or behind explicit override.
-10. Add an environment override for benchmarking:
-    G_BGEN_SIMD=auto|scalar|avx2
+10. Use a temporary environment override for benchmarking candidate paths, then remove it before finalizing.
 11. Keep selected-subset/non-identity path scalar for now.
 12. Add Rust tests comparing scalar and AVX2 outputs/stats.
-13. Add Criterion microbenchmarks comparing:
+13. Add temporary Criterion microbenchmarks comparing:
     - old lookup scalar if easy to preserve as private benchmark helper
     - new scalar integer path
     - AVX2 integer path

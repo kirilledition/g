@@ -115,7 +115,6 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
 ) -> Result<VariantMajorTileDecodeResult, BgenError> {
     validate_variant_major_tile_stats_lengths(tile_stats, variant_record_chunk.len())?;
     let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
-    let trusted_identity_decode_mode = simd::trusted_identity_decode_mode_from_environment();
     for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
         let variant_decode_result = decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
             mmap,
@@ -128,7 +127,6 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
             selected_sample_count,
             profiling_enabled,
             thread_scratch,
-            trusted_identity_decode_mode,
         )?;
         let variant_profile_snapshot = variant_decode_result.profile_snapshot;
         tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.selected_dosage_total;
@@ -171,7 +169,6 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
     selected_sample_count: usize,
     profiling_enabled: bool,
     thread_scratch: &mut ThreadScratch,
-    trusted_identity_decode_mode: simd::TrustedIdentityDecodeMode,
 ) -> Result<VariantDecodeResult, BgenError> {
     let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
     let probability_block = read_probability_block(
@@ -251,12 +248,8 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
             // Each parallel worker owns a distinct variant row in the variant-major output matrix.
             std::slice::from_raw_parts_mut(output_pointer.add(variant_row_offset), selected_sample_count)
         };
-        let decode_summary = simd::decode_trusted_unphased_eight_bit_identity_simd_or_scalar(
-            packed_probability_bytes,
-            dosage_lookup,
-            output_row,
-            trusted_identity_decode_mode,
-        );
+        let decode_summary =
+            simd::decode_trusted_unphased_eight_bit_identity_simd_or_scalar(packed_probability_bytes, output_row);
         selected_dosage_total = decode_summary.selected_dosage_total;
         selected_dosage_square_total = decode_summary.selected_dosage_square_total;
         selected_observation_count = decode_summary.selected_observation_count;

@@ -1,33 +1,10 @@
-use std::env;
-
+#[cfg(test)]
 use crate::genotype::preprocess;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const AVX2_SAMPLE_COUNT: usize = 8;
 const EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL: f32 = 1.0_f32 / 255.0_f32;
 const EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL: f32 = 1.0_f32 / (255.0_f32 * 255.0_f32);
-const BGEN_SIMD_MODE_ENVIRONMENT_VARIABLE: &str = "G_BGEN_SIMD";
-const TRUSTED_IDENTITY_MODE_ENVIRONMENT_VARIABLE: &str = "G_BGEN_TRUSTED_IDENTITY_MODE";
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum TrustedIdentityDecodeMode {
-    Auto,
-    Lookup,
-    RawScalar,
-    RawAvx2,
-}
-
-impl TrustedIdentityDecodeMode {
-    fn parse(mode_name: &str) -> Option<Self> {
-        match mode_name {
-            "auto" => Some(Self::Auto),
-            "lookup" => Some(Self::Lookup),
-            "raw_scalar" | "scalar" => Some(Self::RawScalar),
-            "raw_avx2" | "avx2" => Some(Self::RawAvx2),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct TrustedEightBitIdentityDecodeSummary {
@@ -41,27 +18,8 @@ pub(super) struct TrustedEightBitIdentityDecodeSummary {
     pub(super) homozygous_alternate_count: i32,
 }
 
-pub(super) fn trusted_identity_decode_mode_from_environment() -> TrustedIdentityDecodeMode {
-    let mode_name = match env::var(BGEN_SIMD_MODE_ENVIRONMENT_VARIABLE) {
-        Ok(value) => value,
-        Err(env::VarError::NotPresent) => match env::var(TRUSTED_IDENTITY_MODE_ENVIRONMENT_VARIABLE) {
-            Ok(value) => value,
-            Err(env::VarError::NotPresent) => return TrustedIdentityDecodeMode::Auto,
-            Err(env::VarError::NotUnicode(_)) => {
-                panic!("{TRUSTED_IDENTITY_MODE_ENVIRONMENT_VARIABLE} must contain valid UTF-8")
-            }
-        },
-        Err(env::VarError::NotUnicode(_)) => panic!("{BGEN_SIMD_MODE_ENVIRONMENT_VARIABLE} must contain valid UTF-8"),
-    };
-
-    TrustedIdentityDecodeMode::parse(&mode_name).unwrap_or_else(|| {
-        panic!(
-            "{BGEN_SIMD_MODE_ENVIRONMENT_VARIABLE} must be one of auto, lookup, raw_scalar, or raw_avx2; received '{mode_name}'"
-        )
-    })
-}
-
 impl TrustedEightBitIdentityDecodeSummary {
+    #[cfg(test)]
     fn record_dosage(&mut self, dosage_value: f32) {
         self.selected_dosage_total += dosage_value;
         self.selected_dosage_square_total += dosage_value * dosage_value;
@@ -148,34 +106,9 @@ impl TrustedEightBitRawIntegerSummary {
 
 pub(super) fn decode_trusted_unphased_eight_bit_identity_simd_or_scalar(
     packed_probability_bytes: &[u8],
-    dosage_lookup: &[f32],
     output_values: &mut [f32],
-    decode_mode: TrustedIdentityDecodeMode,
 ) -> TrustedEightBitIdentityDecodeSummary {
     debug_assert_eq!(packed_probability_bytes.len(), output_values.len() * 2);
-
-    match decode_mode {
-        TrustedIdentityDecodeMode::Lookup => {
-            return decode_trusted_unphased_eight_bit_identity_lookup_scalar(
-                packed_probability_bytes,
-                dosage_lookup,
-                output_values,
-            );
-        }
-        TrustedIdentityDecodeMode::RawScalar => {
-            return decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats(
-                packed_probability_bytes,
-                output_values,
-            );
-        }
-        TrustedIdentityDecodeMode::RawAvx2 => {
-            return decode_trusted_unphased_eight_bit_identity_raw_avx2_checked(
-                packed_probability_bytes,
-                output_values,
-            );
-        }
-        TrustedIdentityDecodeMode::Auto => {}
-    }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
@@ -187,7 +120,7 @@ pub(super) fn decode_trusted_unphased_eight_bit_identity_simd_or_scalar(
         }
     }
 
-    decode_trusted_unphased_eight_bit_identity_lookup_scalar(packed_probability_bytes, dosage_lookup, output_values)
+    decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats(packed_probability_bytes, output_values)
 }
 
 fn decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats(
@@ -222,6 +155,7 @@ fn decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
     }
 }
 
+#[cfg(test)]
 fn decode_trusted_unphased_eight_bit_identity_lookup_scalar(
     packed_probability_bytes: &[u8],
     dosage_lookup: &[f32],
@@ -238,6 +172,7 @@ fn decode_trusted_unphased_eight_bit_identity_lookup_scalar(
     decode_summary
 }
 
+#[cfg(test)]
 fn decode_trusted_unphased_eight_bit_identity_lookup_scalar_from(
     packed_probability_bytes: &[u8],
     dosage_lookup: &[f32],
@@ -300,52 +235,6 @@ fn raw_dosage_integer(homozygous_reference_probability_byte: u8, heterozygous_pr
 #[allow(clippy::cast_precision_loss)]
 fn raw_dosage_value(raw_dosage_integer: i32) -> f32 {
     raw_dosage_integer as f32 * EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL
-}
-
-pub fn benchmark_decode_trusted_unphased_eight_bit_identity_mode(
-    mode_name: &str,
-    packed_probability_bytes: &[u8],
-    dosage_lookup: &[f32],
-    output_values: &mut [f32],
-) -> u64 {
-    let decode_mode = TrustedIdentityDecodeMode::parse(mode_name)
-        .unwrap_or_else(|| panic!("trusted identity benchmark mode '{mode_name}' is not supported"));
-    let decode_summary = decode_trusted_unphased_eight_bit_identity_simd_or_scalar(
-        packed_probability_bytes,
-        dosage_lookup,
-        output_values,
-        decode_mode,
-    );
-    decode_summary_checksum(decode_summary)
-}
-
-fn decode_summary_checksum(decode_summary: TrustedEightBitIdentityDecodeSummary) -> u64 {
-    u64::from(decode_summary.selected_dosage_total.to_bits())
-        ^ (u64::from(decode_summary.selected_dosage_square_total.to_bits()) << 1)
-        ^ u64::try_from(decode_summary.selected_observation_count).unwrap_or_default()
-        ^ (u64::try_from(decode_summary.zero_count).unwrap_or_default() << 8)
-        ^ (u64::try_from(decode_summary.nonzero_count).unwrap_or_default() << 16)
-        ^ (u64::try_from(decode_summary.homozygous_reference_count).unwrap_or_default() << 24)
-        ^ (u64::try_from(decode_summary.heterozygous_count).unwrap_or_default() << 32)
-        ^ (u64::try_from(decode_summary.homozygous_alternate_count).unwrap_or_default() << 40)
-}
-
-fn decode_trusted_unphased_eight_bit_identity_raw_avx2_checked(
-    packed_probability_bytes: &[u8],
-    output_values: &mut [f32],
-) -> TrustedEightBitIdentityDecodeSummary {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    {
-        assert!(std::arch::is_x86_feature_detected!("avx2"), "raw_avx2 mode requires AVX2 support");
-        unsafe { decode_trusted_unphased_eight_bit_identity_raw_avx2(packed_probability_bytes, output_values) }
-    }
-
-    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-    {
-        let _ = packed_probability_bytes;
-        let _ = output_values;
-        panic!("raw_avx2 mode requires an x86 or x86_64 target");
-    }
 }
 
 #[cfg(target_arch = "x86")]
@@ -524,61 +413,18 @@ mod tests {
 
     #[test]
     fn trusted_identity_wrapper_uses_selected_decode_path() {
-        let lookup = dosage_lookup();
         let probabilities = probability_bytes();
         let sample_count = probabilities.len() / 2;
         let mut expected_output = vec![0.0_f32; sample_count];
         let mut wrapper_output = vec![0.0_f32; sample_count];
 
-        let expected_summary = if cfg!(any(target_arch = "x86", target_arch = "x86_64"))
-            && std::arch::is_x86_feature_detected!("avx2")
-        {
-            decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats(&probabilities, &mut expected_output)
-        } else {
-            decode_trusted_unphased_eight_bit_identity_lookup_scalar(&probabilities, lookup, &mut expected_output)
-        };
-        let wrapper_summary = decode_trusted_unphased_eight_bit_identity_simd_or_scalar(
-            &probabilities,
-            lookup,
-            &mut wrapper_output,
-            TrustedIdentityDecodeMode::Auto,
-        );
+        let expected_summary =
+            decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats(&probabilities, &mut expected_output);
+        let wrapper_summary =
+            decode_trusted_unphased_eight_bit_identity_simd_or_scalar(&probabilities, &mut wrapper_output);
 
         assert_eq!(wrapper_output, expected_output);
         assert_eq!(wrapper_summary, expected_summary);
-    }
-
-    #[test]
-    fn trusted_identity_explicit_modes_select_expected_decode_paths() {
-        let lookup = dosage_lookup();
-        let probabilities = probability_bytes();
-        let sample_count = probabilities.len() / 2;
-        let mut lookup_output = vec![0.0_f32; sample_count];
-        let mut raw_scalar_output = vec![0.0_f32; sample_count];
-        let mut explicit_lookup_output = vec![0.0_f32; sample_count];
-        let mut explicit_raw_scalar_output = vec![0.0_f32; sample_count];
-
-        let lookup_summary =
-            decode_trusted_unphased_eight_bit_identity_lookup_scalar(&probabilities, lookup, &mut lookup_output);
-        let raw_scalar_summary =
-            decode_trusted_unphased_eight_bit_identity_raw_scalar_integer_stats(&probabilities, &mut raw_scalar_output);
-        let explicit_lookup_summary = decode_trusted_unphased_eight_bit_identity_simd_or_scalar(
-            &probabilities,
-            lookup,
-            &mut explicit_lookup_output,
-            TrustedIdentityDecodeMode::Lookup,
-        );
-        let explicit_raw_scalar_summary = decode_trusted_unphased_eight_bit_identity_simd_or_scalar(
-            &probabilities,
-            lookup,
-            &mut explicit_raw_scalar_output,
-            TrustedIdentityDecodeMode::RawScalar,
-        );
-
-        assert_eq!(explicit_lookup_output, lookup_output);
-        assert_eq!(explicit_lookup_summary, lookup_summary);
-        assert_eq!(explicit_raw_scalar_output, raw_scalar_output);
-        assert_eq!(explicit_raw_scalar_summary, raw_scalar_summary);
     }
 
     #[test]
