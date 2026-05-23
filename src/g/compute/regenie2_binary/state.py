@@ -44,6 +44,31 @@ def prepare_regenie2_multi_binary_state(
     )
 
 
+def build_single_binary_chromosome_state_from_multi(
+    chromosome_state: regenie2_binary_types.Regenie2MultiBinaryChromosomeState,
+    trait_index: int | jax.Array,
+) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
+    """Build a single-trait chromosome state view from a multi-trait state."""
+    return regenie2_binary_types.Regenie2BinaryChromosomeState(
+        covariate_matrix=chromosome_state.covariate_matrix,
+        phenotype_vector=chromosome_state.phenotype_matrix[trait_index],
+        null_logistic_coefficients=chromosome_state.null_logistic_coefficients[trait_index],
+        null_firth_coefficients=chromosome_state.null_firth_coefficients[trait_index],
+        null_firth_offset=chromosome_state.null_firth_offset_matrix[trait_index],
+        fitted_probability=chromosome_state.fitted_probability[trait_index],
+        score_residual=chromosome_state.score_residual[trait_index],
+        loco_offset=chromosome_state.loco_offset_matrix[trait_index],
+        standardized_residual=chromosome_state.standardized_residual[trait_index],
+        square_root_weight=chromosome_state.square_root_weight[trait_index],
+        weighted_genotype_projection_matrix=chromosome_state.weighted_genotype_projection_matrix[trait_index],
+        null_firth_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood[trait_index],
+        null_firth_iteration_count=chromosome_state.null_firth_iteration_count[trait_index],
+        null_firth_convergence_reason_code=chromosome_state.null_firth_convergence_reason_code[trait_index],
+        null_logistic_iteration_count=chromosome_state.null_logistic_iteration_count[trait_index],
+        null_logistic_converged=chromosome_state.null_logistic_converged[trait_index],
+    )
+
+
 @functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config"))
 def prepare_regenie2_binary_chromosome_state(
     state: regenie2_binary_types.Regenie2BinaryState,

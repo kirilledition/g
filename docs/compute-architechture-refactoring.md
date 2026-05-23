@@ -852,6 +852,7 @@ Completed cleanup so far:
 * Extracted the fixed-capacity variant-major Firth correction body into a named kernel, leaving the existing entry point responsible only for capacity selection.
 * Moved Firth candidate-count and capacity selection to host-side dispatch, so bounded and overflow fixed-capacity kernels are no longer selected through one heavyweight `lax.cond`; multi-trait Firth now loops over trait-specific fixed-capacity kernels while score-only multi-trait remains vectorized.
 * Moved multi-trait binary result stacking constructors out of the binary facade into `regenie2_binary/result.py`.
+* Moved the multi-to-single binary chromosome-state view helper out of the binary facade into `regenie2_binary/state.py`.
 
 Intentional remaining adapters:
 

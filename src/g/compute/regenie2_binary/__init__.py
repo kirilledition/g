@@ -57,31 +57,6 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     )
 
 
-def build_single_binary_chromosome_state_from_multi(
-    chromosome_state: regenie2_binary_types.Regenie2MultiBinaryChromosomeState,
-    trait_index: jax.Array,
-) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
-    """Build a single-trait chromosome state view from a multi-trait state."""
-    return regenie2_binary_types.Regenie2BinaryChromosomeState(
-        covariate_matrix=chromosome_state.covariate_matrix,
-        phenotype_vector=chromosome_state.phenotype_matrix[trait_index],
-        null_logistic_coefficients=chromosome_state.null_logistic_coefficients[trait_index],
-        null_firth_coefficients=chromosome_state.null_firth_coefficients[trait_index],
-        null_firth_offset=chromosome_state.null_firth_offset_matrix[trait_index],
-        fitted_probability=chromosome_state.fitted_probability[trait_index],
-        score_residual=chromosome_state.score_residual[trait_index],
-        loco_offset=chromosome_state.loco_offset_matrix[trait_index],
-        standardized_residual=chromosome_state.standardized_residual[trait_index],
-        square_root_weight=chromosome_state.square_root_weight[trait_index],
-        weighted_genotype_projection_matrix=chromosome_state.weighted_genotype_projection_matrix[trait_index],
-        null_firth_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood[trait_index],
-        null_firth_iteration_count=chromosome_state.null_firth_iteration_count[trait_index],
-        null_firth_convergence_reason_code=chromosome_state.null_firth_convergence_reason_code[trait_index],
-        null_logistic_iteration_count=chromosome_state.null_logistic_iteration_count[trait_index],
-        null_logistic_converged=chromosome_state.null_logistic_converged[trait_index],
-    )
-
-
 def compute_regenie2_multi_binary_chunk_from_chromosome_state(
     chromosome_state: regenie2_binary_types.Regenie2MultiBinaryChromosomeState,
     genotype_matrix: jax.Array,
@@ -98,7 +73,10 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state(
         )
 
     def compute_one_trait(trait_index: jax.Array) -> regenie2_binary_types.Regenie2BinaryChunkResult:
-        single_chromosome_state = build_single_binary_chromosome_state_from_multi(chromosome_state, trait_index)
+        single_chromosome_state = regenie2_binary_state.build_single_binary_chromosome_state_from_multi(
+            chromosome_state,
+            trait_index,
+        )
         return compute_regenie2_binary_chunk_from_chromosome_state(
             chromosome_state=single_chromosome_state,
             genotype_matrix=genotype_matrix,
@@ -129,7 +107,10 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
         )
 
     def compute_one_trait(trait_index: jax.Array) -> regenie2_binary_types.Regenie2BinaryChunkResult:
-        single_chromosome_state = build_single_binary_chromosome_state_from_multi(chromosome_state, trait_index)
+        single_chromosome_state = regenie2_binary_state.build_single_binary_chromosome_state_from_multi(
+            chromosome_state,
+            trait_index,
+        )
         compute_variant_major_chunk = (
             regenie2_binary_variant_major.compute_regenie2_binary_chunk_from_chromosome_state_variant_major
         )
