@@ -286,7 +286,7 @@ def compute_score_debug_arrays(
     flipped_allele_count = jnp.sum(genotype_matrix_by_variant_float32, axis=1)
     carrier_count = jnp.sum(
         genotype_matrix_by_variant_float32
-        > regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.firth_sparse_carrier_dosage_threshold,
+        > regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.approximate_firth.sparse_carrier_dosage_threshold,
         axis=1,
     )
     host_values = jax.device_get(

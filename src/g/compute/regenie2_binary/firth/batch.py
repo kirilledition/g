@@ -50,7 +50,7 @@ def initialize_full_model_coefficients_without_mask(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> jax.Array:
     """Initialize full-model coefficients with a pseudo-response regression."""
-    pseudo_response_vector = kernel_config.firth_initial_response_scale * (
+    pseudo_response_vector = kernel_config.approximate_firth.initial_response_scale * (
         phenotype_vector - regenie2_binary_config.BINARY_CASE_THRESHOLD
     )
     covariate_information_matrix = covariate_matrix.T @ covariate_matrix
@@ -122,12 +122,13 @@ def compute_firth_variantwise(
         skip_firth: jax.Array,
         sparse_correction: jax.Array,
     ) -> regenie2_binary_firth_types.FirthVariantResult:
-        if not kernel_config.use_block_firth_math:
+        if not kernel_config.approximate_firth.use_block_math:
             return regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
                 phenotype_vector=scalar_phenotype_vector,
                 genotype_vector=jnp.asarray(genotype_vector, dtype=jnp.float64),
                 offset_vector=scalar_offset_vector,
-                carrier_sample_mask=raw_genotype_vector > kernel_config.firth_sparse_carrier_dosage_threshold,
+                carrier_sample_mask=raw_genotype_vector
+                > kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
                 sparse_correction=sparse_correction,
                 warm_start_beta=jnp.asarray(0.0, dtype=jnp.float64),
                 skip_firth=skip_firth,

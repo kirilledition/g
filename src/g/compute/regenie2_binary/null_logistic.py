@@ -39,8 +39,8 @@ def compute_logistic_probability(
     probability = jax.nn.sigmoid(linear_predictor)
     return jnp.clip(
         probability,
-        kernel_config.minimum_probability,
-        1.0 - kernel_config.minimum_probability,
+        kernel_config.numerical.minimum_probability,
+        1.0 - kernel_config.numerical.minimum_probability,
     )
 
 
@@ -54,9 +54,9 @@ def fit_null_logistic_coefficients(
     """Fit a covariate-only logistic null model with a fixed LOCO offset."""
     covariate_count = covariate_matrix.shape[1]
     resolved_maximum_iterations = (
-        kernel_config.maximum_null_iterations if maximum_iterations is None else maximum_iterations
+        kernel_config.null_logistic.maximum_iterations if maximum_iterations is None else maximum_iterations
     )
-    coefficient_tolerance = kernel_config.null_logistic_coefficient_tolerance
+    coefficient_tolerance = kernel_config.null_logistic.coefficient_tolerance
 
     def condition_function(state: NullLogisticFitState) -> jax.Array:
         return (state.iteration_count < resolved_maximum_iterations) & (~state.converged)
@@ -66,12 +66,12 @@ def fit_null_logistic_coefficients(
         fitted_probability = compute_logistic_probability(linear_predictor, kernel_config)
         weight_vector = jnp.maximum(
             fitted_probability * (1.0 - fitted_probability),
-            kernel_config.minimum_variance,
+            kernel_config.numerical.minimum_variance,
         )
         score_vector = covariate_matrix.T @ (phenotype_vector - fitted_probability)
         information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
         cholesky_factor = jnp.linalg.cholesky(
-            information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * kernel_config.minimum_variance
+            information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * kernel_config.numerical.minimum_variance
         )
         coefficient_delta = linalg.solve_positive_definite_system(cholesky_factor, score_vector)
         updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)

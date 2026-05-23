@@ -71,7 +71,7 @@ def prepare_regenie2_binary_chromosome_state(
     )
     bernoulli_variance = jnp.maximum(
         fitted_probability * (1.0 - fitted_probability),
-        kernel_config.minimum_variance,
+        kernel_config.numerical.minimum_variance,
     )
     square_root_weight = jnp.sqrt(bernoulli_variance)
     score_residual = state.phenotype_vector - fitted_probability
@@ -80,7 +80,8 @@ def prepare_regenie2_binary_chromosome_state(
     weighted_covariate_crossproduct = weighted_covariate_transpose @ weighted_covariate_matrix
     cholesky_factor = jnp.linalg.cholesky(
         weighted_covariate_crossproduct
-        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float32) * kernel_config.minimum_variance
+        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float32)
+        * kernel_config.numerical.minimum_variance
     )
     weighted_genotype_projection_matrix = jax.lax.linalg.triangular_solve(
         cholesky_factor,
@@ -289,9 +290,7 @@ def compute_regenie2_binary_chunk(
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association for a genotype chunk."""
-    chromosome_state = prepare_regenie2_binary_chromosome_state(
-        state, loco_offset, correction_plan, kernel_config
-    )
+    chromosome_state = prepare_regenie2_binary_chromosome_state(state, loco_offset, correction_plan, kernel_config)
     return compute_regenie2_binary_chunk_from_chromosome_state(
         chromosome_state=chromosome_state,
         genotype_matrix=genotype_matrix,

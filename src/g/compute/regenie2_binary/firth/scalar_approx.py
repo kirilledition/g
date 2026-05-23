@@ -63,7 +63,7 @@ def compute_scalar_firth_components(
     score = jnp.sum(jnp.where(active_sample_mask, genotype_vector * (adjusted_response - probability_vector), 0.0))
     valid = (
         jnp.isfinite(genotype_information)
-        & (genotype_information > kernel_config.minimum_variance)
+        & (genotype_information > kernel_config.numerical.minimum_variance)
         & jnp.isfinite(penalized_deviance)
         & jnp.isfinite(score)
         & jnp.all(jnp.isfinite(probability_vector))
@@ -575,13 +575,13 @@ def fit_single_variant_regenie_approximate_firth(
         jnp.where(active_sample_mask, genotype_vector * genotype_vector * null_weight_vector, 0.0)
     )
     deviance_null = full_null_deviance - jnp.log(null_genotype_information)
-    tolerance = jnp.asarray(kernel_config.firth_gradient_tolerance, dtype=scalar_dtype)
+    tolerance = jnp.asarray(kernel_config.approximate_firth.gradient_tolerance, dtype=scalar_dtype)
     pseudo_maximum_iterations = min(
-        kernel_config.firth_maximum_iterations // 2,
-        kernel_config.firth_pseudo_maximum_iterations,
+        kernel_config.approximate_firth.maximum_iterations // 2,
+        kernel_config.approximate_firth.pseudo_maximum_iterations,
     )
-    newton_maximum_iterations = kernel_config.firth_maximum_iterations // 2
-    maximum_step_size = jnp.asarray(kernel_config.firth_maximum_step_size, dtype=scalar_dtype)
+    newton_maximum_iterations = kernel_config.approximate_firth.maximum_iterations // 2
+    maximum_step_size = jnp.asarray(kernel_config.approximate_firth.maximum_step_size, dtype=scalar_dtype)
     pseudo_result = fit_scalar_pseudo_firth(
         deviance_null=deviance_null,
         phenotype_vector=phenotype_vector,
@@ -592,7 +592,7 @@ def fit_single_variant_regenie_approximate_firth(
         initial_beta=warm_start_beta,
         maximum_iterations=pseudo_maximum_iterations,
         tolerance=tolerance,
-        inner_maximum_iterations=kernel_config.firth_pseudo_inner_maximum_iterations,
+        inner_maximum_iterations=kernel_config.approximate_firth.pseudo_inner_maximum_iterations,
         maximum_step_size=maximum_step_size,
         kernel_config=kernel_config,
     )
@@ -607,10 +607,10 @@ def fit_single_variant_regenie_approximate_firth(
         active_sample_mask=active_sample_mask,
         non_active_deviance=non_active_deviance,
         initial_beta=jnp.asarray(0.0, dtype=scalar_dtype),
-        maximum_iterations=kernel_config.firth_newton_raphson_zero_start_iterations,
+        maximum_iterations=kernel_config.approximate_firth.newton_raphson_zero_start_iterations,
         tolerance=tolerance,
         maximum_step_size=maximum_step_size,
-        line_search_maximum_attempts=kernel_config.firth_line_search_maximum_attempts,
+        line_search_maximum_attempts=kernel_config.approximate_firth.line_search_maximum_attempts,
         kernel_config=kernel_config,
     )
     run_warm_start = (~pseudo_result.valid) & (~(run_zero_start & zero_start_result.valid))
@@ -625,7 +625,7 @@ def fit_single_variant_regenie_approximate_firth(
         maximum_iterations=newton_maximum_iterations,
         tolerance=tolerance,
         maximum_step_size=maximum_step_size,
-        line_search_maximum_attempts=kernel_config.firth_line_search_maximum_attempts,
+        line_search_maximum_attempts=kernel_config.approximate_firth.line_search_maximum_attempts,
         kernel_config=kernel_config,
     )
     use_zero_start = run_zero_start & zero_start_result.valid

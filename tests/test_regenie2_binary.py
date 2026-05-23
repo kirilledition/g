@@ -80,6 +80,44 @@ def clear_binary_compute_caches() -> None:
     jax.clear_caches()
 
 
+def replace_binary_kernel_config(
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    *,
+    numerical: dict[str, typing.Any] | None = None,
+    null_logistic: dict[str, typing.Any] | None = None,
+    firth_candidate: dict[str, typing.Any] | None = None,
+    approximate_firth: dict[str, typing.Any] | None = None,
+    null_firth: dict[str, typing.Any] | None = None,
+) -> regenie2_binary_config.BinaryKernelConfig:
+    """Replace nested binary kernel config sections in tests."""
+    return dataclasses.replace(
+        kernel_config,
+        numerical=(
+            kernel_config.numerical if numerical is None else dataclasses.replace(kernel_config.numerical, **numerical)
+        ),
+        null_logistic=(
+            kernel_config.null_logistic
+            if null_logistic is None
+            else dataclasses.replace(kernel_config.null_logistic, **null_logistic)
+        ),
+        firth_candidate=(
+            kernel_config.firth_candidate
+            if firth_candidate is None
+            else dataclasses.replace(kernel_config.firth_candidate, **firth_candidate)
+        ),
+        approximate_firth=(
+            kernel_config.approximate_firth
+            if approximate_firth is None
+            else dataclasses.replace(kernel_config.approximate_firth, **approximate_firth)
+        ),
+        null_firth=(
+            kernel_config.null_firth
+            if null_firth is None
+            else dataclasses.replace(kernel_config.null_firth, **null_firth)
+        ),
+    )
+
+
 def jax_backend_is_available(backend_name: str) -> bool:
     try:
         return bool(jax.devices(backend_name))
@@ -311,16 +349,16 @@ def assert_all_result_statistics_nan(
 
 def test_firth_candidate_capacity_uses_default() -> None:
     assert (
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.firth_candidate_capacity
+        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.firth_candidate.candidate_capacity
         == regenie2_binary_candidate_planning.DEFAULT_FIRTH_CANDIDATE_CAPACITY
     )
 
 
 def test_firth_candidate_capacity_rejects_invalid_config() -> None:
     with pytest.raises(ValueError, match="Firth candidate capacity"):
-        dataclasses.replace(
+        replace_binary_kernel_config(
             regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-            firth_candidate_capacity=0,
+            firth_candidate={"candidate_capacity": 0},
         )
 
 
@@ -387,15 +425,13 @@ def test_null_logistic_kernel_config_retraces_same_shape_without_cache_clear() -
     covariate_matrix, phenotype_vector, _ = build_binary_inputs()
     state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
     loco_offset = jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32)
-    one_iteration_config = dataclasses.replace(
+    one_iteration_config = replace_binary_kernel_config(
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-        maximum_null_iterations=1,
-        null_logistic_coefficient_tolerance=1.0e-12,
+        null_logistic={"maximum_iterations": 1, "coefficient_tolerance": 1.0e-12},
     )
-    two_iteration_config = dataclasses.replace(
+    two_iteration_config = replace_binary_kernel_config(
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-        maximum_null_iterations=2,
-        null_logistic_coefficient_tolerance=1.0e-12,
+        null_logistic={"maximum_iterations": 2, "coefficient_tolerance": 1.0e-12},
     )
 
     one_iteration_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
@@ -416,10 +452,9 @@ def test_null_logistic_kernel_config_retraces_same_shape_without_cache_clear() -
 def test_non_converged_null_logistic_fit_invalidates_score_results() -> None:
     covariate_matrix, phenotype_vector, genotype_matrix = build_binary_inputs()
     state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
-    kernel_config = dataclasses.replace(
+    kernel_config = replace_binary_kernel_config(
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-        maximum_null_iterations=1,
-        null_logistic_coefficient_tolerance=1.0e-12,
+        null_logistic={"maximum_iterations": 1, "coefficient_tolerance": 1.0e-12},
     )
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state,
@@ -518,9 +553,7 @@ def test_multi_trait_score_kernel_matches_stacked_single_trait_results() -> None
 
     single_results = []
     for trait_index in range(phenotype_matrix.shape[0]):
-        single_state = regenie2_binary.prepare_regenie2_binary_state(
-            covariate_matrix, phenotype_matrix[trait_index]
-        )
+        single_state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_matrix[trait_index])
         single_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
             single_state,
             loco_offset_matrix[trait_index],
@@ -625,9 +658,7 @@ def test_multi_trait_approximate_firth_matches_stacked_single_trait_results(firt
 
     single_results = []
     for trait_index in range(phenotype_matrix.shape[0]):
-        single_state = regenie2_binary.prepare_regenie2_binary_state(
-            covariate_matrix, phenotype_matrix[trait_index]
-        )
+        single_state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_matrix[trait_index])
         single_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
             single_state,
             loco_offset_matrix[trait_index],
@@ -680,17 +711,18 @@ def test_multi_trait_approximate_firth_honors_non_default_kernel_config() -> Non
         p_threshold=0.999,
         firth_se=True,
     )
-    kernel_config = dataclasses.replace(
+    kernel_config = replace_binary_kernel_config(
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-        maximum_null_iterations=3,
-        null_logistic_coefficient_tolerance=1.0e-12,
-        firth_batch_size=1,
-        firth_maximum_iterations=3,
-        firth_gradient_tolerance=1.0e-8,
-        firth_coefficient_tolerance=1.0e-8,
-        firth_likelihood_tolerance=1.0e-8,
-        firth_maximum_step_size=1.0,
-        use_block_firth_math=True,
+        null_logistic={"maximum_iterations": 3, "coefficient_tolerance": 1.0e-12},
+        firth_candidate={"batch_size": 1},
+        approximate_firth={
+            "maximum_iterations": 3,
+            "gradient_tolerance": 1.0e-8,
+            "coefficient_tolerance": 1.0e-8,
+            "likelihood_tolerance": 1.0e-8,
+            "maximum_step_size": 1.0,
+            "use_block_math": True,
+        },
     )
     sparse_candidate_mask = jnp.asarray([False, True, False], dtype=jnp.bool_)
     multi_state = regenie2_binary.prepare_regenie2_multi_binary_state(covariate_matrix, phenotype_matrix)
@@ -711,9 +743,7 @@ def test_multi_trait_approximate_firth_honors_non_default_kernel_config() -> Non
     single_results = []
     single_chromosome_states = []
     for trait_index in range(phenotype_matrix.shape[0]):
-        single_state = regenie2_binary.prepare_regenie2_binary_state(
-            covariate_matrix, phenotype_matrix[trait_index]
-        )
+        single_state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_matrix[trait_index])
         single_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
             single_state,
             loco_offset_matrix[trait_index],
@@ -962,12 +992,14 @@ def test_firth_candidate_max_iteration_failure_is_labelled() -> None:
         extra_code=jnp.asarray([types.BinaryExtraCode.FIRTH.value], dtype=jnp.int32),
         valid_mask=jnp.asarray([True]),
     )
-    maximum_iteration_kernel_config = dataclasses.replace(
+    maximum_iteration_kernel_config = replace_binary_kernel_config(
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-        firth_maximum_iterations=1,
-        firth_gradient_tolerance=1.0e-12,
-        firth_coefficient_tolerance=1.0e-12,
-        firth_likelihood_tolerance=1.0e-12,
+        approximate_firth={
+            "maximum_iterations": 1,
+            "gradient_tolerance": 1.0e-12,
+            "coefficient_tolerance": 1.0e-12,
+            "likelihood_tolerance": 1.0e-12,
+        },
     )
     result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
@@ -1112,9 +1144,9 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback() -> None
         valid_mask=jnp.ones((genotype_matrix.shape[1],), dtype=jnp.bool_),
     )
 
-    overflow_kernel_config = dataclasses.replace(
+    overflow_kernel_config = replace_binary_kernel_config(
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-        firth_candidate_capacity=1,
+        firth_candidate={"candidate_capacity": 1},
     )
     overflow_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
@@ -1124,9 +1156,9 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback() -> None
         kernel_config=overflow_kernel_config,
     )
 
-    bounded_kernel_config = dataclasses.replace(
+    bounded_kernel_config = replace_binary_kernel_config(
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-        firth_candidate_capacity=8,
+        firth_candidate={"candidate_capacity": 8},
     )
     bounded_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
@@ -1170,15 +1202,13 @@ def test_firth_correction_kernel_config_retraces_same_shape_without_cache_clear(
         extra_code=jnp.full((genotype_matrix.shape[1],), types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32),
         valid_mask=jnp.ones((genotype_matrix.shape[1],), dtype=jnp.bool_),
     )
-    small_batch_config = dataclasses.replace(
+    small_batch_config = replace_binary_kernel_config(
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-        firth_batch_size=1,
-        firth_candidate_capacity=1,
+        firth_candidate={"batch_size": 1, "candidate_capacity": 1},
     )
-    larger_batch_config = dataclasses.replace(
+    larger_batch_config = replace_binary_kernel_config(
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-        firth_batch_size=2,
-        firth_candidate_capacity=8,
+        firth_candidate={"batch_size": 2, "candidate_capacity": 8},
     )
 
     small_batch_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(

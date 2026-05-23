@@ -25,8 +25,8 @@ def compute_firth_penalized_log_likelihood_from_cholesky(
     """Compute Firth-penalized log-likelihood from a Cholesky factor."""
     clipped_probability = jnp.clip(
         probability_vector,
-        kernel_config.minimum_probability,
-        1.0 - kernel_config.minimum_probability,
+        kernel_config.numerical.minimum_probability,
+        1.0 - kernel_config.numerical.minimum_probability,
     )
     true_class_probability = jnp.where(phenotype_vector == 1.0, clipped_probability, 1.0 - clipped_probability)
     log_likelihood = jnp.sum(jnp.log(true_class_probability))

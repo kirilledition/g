@@ -232,7 +232,13 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
     run_input = build_fake_run_input(is_binary_trait=True)
     install_native_dispatch_fakes(monkeypatch, engine=engine, run_input=run_input)
     correction_plan = types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE)
-    kernel_config = dataclasses.replace(regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG, firth_batch_size=4)
+    kernel_config = dataclasses.replace(
+        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        firth_candidate=dataclasses.replace(
+            regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.firth_candidate,
+            batch_size=4,
+        ),
+    )
     observed_shapes: list[tuple[int, int]] = []
     observed_kernel_configs: list[regenie2_binary_config.BinaryKernelConfig] = []
 

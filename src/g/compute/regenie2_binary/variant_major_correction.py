@@ -32,7 +32,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
     fallback_count = jnp.sum(candidate_mask, dtype=jnp.int32)
 
     def apply_candidate_corrections() -> regenie2_binary_result.Regenie2BinaryChunkResult:
-        firth_batch_size = kernel_config.firth_batch_size
+        firth_batch_size = kernel_config.firth_candidate.batch_size
         genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
 
         def apply_candidate_corrections_with_capacity(
@@ -52,7 +52,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
             )
             raw_candidate_genotype_matrix_by_variant = candidate_genotype_matrix_by_variant
             genotype_flip_result = genotype.build_regenie_flipped_genotypes(raw_candidate_genotype_matrix_by_variant)
-            if kernel_config.use_block_firth_math:
+            if kernel_config.approximate_firth.use_block_math:
                 firth_raw_candidate_genotype_matrix_by_variant = raw_candidate_genotype_matrix_by_variant
                 flat_genotype_flip_mask = jnp.zeros_like(flat_active_mask)
                 candidate_genotype_matrix_by_variant = firth_raw_candidate_genotype_matrix_by_variant
@@ -95,7 +95,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
                 axis=0,
             )
             genotype_flip_result = genotype.build_regenie_flipped_genotypes(raw_candidate_genotype_matrix_by_variant)
-            if kernel_config.use_block_firth_math:
+            if kernel_config.approximate_firth.use_block_math:
                 firth_raw_candidate_genotype_matrix_by_variant = raw_candidate_genotype_matrix_by_variant
                 flat_genotype_flip_mask = jnp.zeros_like(flat_active_mask)
             else:
@@ -116,7 +116,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
             )
             standard_initial_beta = (
                 jnp.take(result.beta, flat_fallback_indices, axis=0)
-                if kernel_config.use_block_firth_math
+                if kernel_config.approximate_firth.use_block_math
                 else jnp.zeros_like(jnp.take(result.beta, flat_fallback_indices, axis=0))
             )
             standard_initial_coefficients = jnp.concatenate(
@@ -126,7 +126,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
                 ],
                 axis=1,
             )
-            if kernel_config.use_block_firth_math:
+            if kernel_config.approximate_firth.use_block_math:
                 heuristic_initial_coefficients = (
                     regenie2_binary_firth_batch.initialize_full_model_coefficients_without_mask(
                         covariate_matrix=chromosome_state.covariate_matrix,
@@ -304,7 +304,7 @@ def apply_device_candidate_corrections_firth_variant_major(
     variant_count = genotype_matrix_by_variant.shape[0]
     capacity_plan = regenie2_binary_candidate_planning.build_firth_candidate_capacity_plan(
         variant_count=variant_count,
-        preferred_candidate_capacity=kernel_config.firth_candidate_capacity,
+        preferred_candidate_capacity=kernel_config.firth_candidate.candidate_capacity,
     )
     candidate_capacity = regenie2_binary_candidate_planning.select_firth_candidate_capacity(
         fallback_count=fallback_count,

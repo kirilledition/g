@@ -29,10 +29,12 @@ def compute_firth_convergence_mask(
         & jnp.all(jnp.isfinite(coefficient_step))
         & jnp.all(jnp.isfinite(adjusted_score))
     )
-    monotonic_mask = likelihood_delta >= -kernel_config.firth_likelihood_tolerance
-    likelihood_tolerance_mask = jnp.abs(likelihood_delta) <= kernel_config.firth_likelihood_tolerance
-    coefficient_tolerance_mask = jnp.max(jnp.abs(coefficient_step)) <= kernel_config.firth_coefficient_tolerance
-    score_tolerance_mask = jnp.max(jnp.abs(adjusted_score)) <= kernel_config.firth_gradient_tolerance
+    monotonic_mask = likelihood_delta >= -kernel_config.approximate_firth.likelihood_tolerance
+    likelihood_tolerance_mask = jnp.abs(likelihood_delta) <= kernel_config.approximate_firth.likelihood_tolerance
+    coefficient_tolerance_mask = (
+        jnp.max(jnp.abs(coefficient_step)) <= kernel_config.approximate_firth.coefficient_tolerance
+    )
+    score_tolerance_mask = jnp.max(jnp.abs(adjusted_score)) <= kernel_config.approximate_firth.gradient_tolerance
     return finite_mask & monotonic_mask & likelihood_tolerance_mask & coefficient_tolerance_mask & score_tolerance_mask
 
 
@@ -47,7 +49,7 @@ def run_firth_step_halving(
     """Accept the first bounded Firth step that preserves penalized likelihood."""
 
     def condition_function(state: regenie2_binary_firth_types.FirthBacktrackingState) -> jax.Array:
-        return (state.attempt_count < kernel_config.firth_step_halving_maximum_attempts) & (~state.accepted)
+        return (state.attempt_count < kernel_config.approximate_firth.step_halving_maximum_attempts) & (~state.accepted)
 
     def body_function(
         state: regenie2_binary_firth_types.FirthBacktrackingState,
@@ -61,12 +63,12 @@ def run_firth_step_halving(
             & jnp.all(jnp.isfinite(state.next_coefficient_step))
             & (
                 candidate_penalized_log_likelihood
-                >= current_penalized_log_likelihood - kernel_config.firth_likelihood_tolerance
+                >= current_penalized_log_likelihood - kernel_config.approximate_firth.likelihood_tolerance
             )
         )
         return regenie2_binary_firth_types.FirthBacktrackingState(
             attempt_count=state.attempt_count + jnp.asarray(1, dtype=jnp.int32),
-            next_coefficient_step=state.next_coefficient_step * kernel_config.firth_step_halving_scale,
+            next_coefficient_step=state.next_coefficient_step * kernel_config.approximate_firth.step_halving_scale,
             accepted_coefficient_step=jnp.where(
                 accepted,
                 state.next_coefficient_step,

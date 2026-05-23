@@ -178,29 +178,34 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
         )
     )
 
-    assert kernel_config.firth_batch_size == 7
-    assert kernel_config.firth_candidate_capacity == 11
-    assert kernel_config.maximum_null_iterations == 13
-    assert kernel_config.null_logistic_coefficient_tolerance == 1.0e-5
-    assert kernel_config.minimum_probability == 1.0e-7
-    assert kernel_config.minimum_variance == 1.0e-9
-    assert kernel_config.relative_variance_tolerance == 2.0e-6
-    assert kernel_config.firth_pseudo_maximum_iterations == 19
-    assert kernel_config.firth_pseudo_inner_maximum_iterations == 23
-    assert kernel_config.firth_newton_raphson_zero_start_iterations == 29
-    assert kernel_config.firth_line_search_maximum_attempts == 31
-    assert kernel_config.firth_step_halving_maximum_attempts == 37
-    assert kernel_config.firth_initial_response_scale == 4.5
-    assert kernel_config.firth_sparse_carrier_dosage_threshold == 1.0e-3
-    assert kernel_config.firth_step_halving_scale == 0.25
-    assert kernel_config.null_firth_maximum_iterations == 41
-    assert kernel_config.null_firth_gradient_tolerance == 5.0e-5
-    assert kernel_config.null_firth_maximum_step_size == 7.0
-    assert kernel_config.null_firth_fallback_iteration_multiplier == 43
-    assert kernel_config.null_firth_fallback_step_divisor == 11.0
-    assert kernel_config.null_firth_line_search_maximum_attempts == 47
-    assert kernel_config.null_firth_step_halving_scale == 0.125
-    assert kernel_config.use_block_firth_math is True
+    assert kernel_config.firth_candidate.batch_size == 7
+    assert kernel_config.firth_candidate.candidate_capacity == 11
+    assert kernel_config.null_logistic.maximum_iterations == 13
+    assert kernel_config.null_logistic.coefficient_tolerance == 1.0e-5
+    assert kernel_config.numerical.minimum_probability == 1.0e-7
+    assert kernel_config.numerical.minimum_variance == 1.0e-9
+    assert kernel_config.numerical.relative_variance_tolerance == 2.0e-6
+    assert kernel_config.approximate_firth.maximum_iterations == 17
+    assert kernel_config.approximate_firth.gradient_tolerance == 2.0e-5
+    assert kernel_config.approximate_firth.coefficient_tolerance == 3.0e-5
+    assert kernel_config.approximate_firth.likelihood_tolerance == 4.0e-5
+    assert kernel_config.approximate_firth.maximum_step_size == 6.0
+    assert kernel_config.approximate_firth.pseudo_maximum_iterations == 19
+    assert kernel_config.approximate_firth.pseudo_inner_maximum_iterations == 23
+    assert kernel_config.approximate_firth.newton_raphson_zero_start_iterations == 29
+    assert kernel_config.approximate_firth.line_search_maximum_attempts == 31
+    assert kernel_config.approximate_firth.step_halving_maximum_attempts == 37
+    assert kernel_config.approximate_firth.initial_response_scale == 4.5
+    assert kernel_config.approximate_firth.sparse_carrier_dosage_threshold == 1.0e-3
+    assert kernel_config.approximate_firth.step_halving_scale == 0.25
+    assert kernel_config.null_firth.maximum_iterations == 41
+    assert kernel_config.null_firth.gradient_tolerance == 5.0e-5
+    assert kernel_config.null_firth.maximum_step_size == 7.0
+    assert kernel_config.null_firth.fallback_iteration_multiplier == 43
+    assert kernel_config.null_firth.fallback_step_divisor == 11.0
+    assert kernel_config.null_firth.line_search_maximum_attempts == 47
+    assert kernel_config.null_firth.step_halving_scale == 0.125
+    assert kernel_config.approximate_firth.use_block_math is True
 
 
 def test_normalize_binary_correction_config_maps_approximate_firth() -> None:
@@ -626,34 +631,34 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
         api.regenie(regenie_config)
 
     kernel_config = mock_binary_pipeline.call_args.kwargs["kernel_config"]
-    assert kernel_config.firth_batch_size == 7
-    assert kernel_config.firth_candidate_capacity == 11
-    assert kernel_config.maximum_null_iterations == 13
-    assert kernel_config.null_logistic_coefficient_tolerance == 1.0e-5
-    assert kernel_config.minimum_probability == 1.0e-7
-    assert kernel_config.minimum_variance == 1.0e-9
-    assert kernel_config.relative_variance_tolerance == 2.0e-6
-    assert kernel_config.firth_maximum_iterations == 17
-    assert kernel_config.firth_gradient_tolerance == 2.0e-5
-    assert kernel_config.firth_coefficient_tolerance == 3.0e-5
-    assert kernel_config.firth_likelihood_tolerance == 4.0e-5
-    assert kernel_config.firth_maximum_step_size == 6.0
-    assert kernel_config.firth_pseudo_maximum_iterations == 19
-    assert kernel_config.firth_pseudo_inner_maximum_iterations == 23
-    assert kernel_config.firth_newton_raphson_zero_start_iterations == 29
-    assert kernel_config.firth_line_search_maximum_attempts == 31
-    assert kernel_config.firth_step_halving_maximum_attempts == 37
-    assert kernel_config.firth_initial_response_scale == 4.5
-    assert kernel_config.firth_sparse_carrier_dosage_threshold == 1.0e-3
-    assert kernel_config.firth_step_halving_scale == 0.25
-    assert kernel_config.null_firth_maximum_iterations == 41
-    assert kernel_config.null_firth_gradient_tolerance == 5.0e-5
-    assert kernel_config.null_firth_maximum_step_size == 7.0
-    assert kernel_config.null_firth_fallback_iteration_multiplier == 43
-    assert kernel_config.null_firth_fallback_step_divisor == 11.0
-    assert kernel_config.null_firth_line_search_maximum_attempts == 47
-    assert kernel_config.null_firth_step_halving_scale == 0.125
-    assert kernel_config.use_block_firth_math is True
+    assert kernel_config.firth_candidate.batch_size == 7
+    assert kernel_config.firth_candidate.candidate_capacity == 11
+    assert kernel_config.null_logistic.maximum_iterations == 13
+    assert kernel_config.null_logistic.coefficient_tolerance == 1.0e-5
+    assert kernel_config.numerical.minimum_probability == 1.0e-7
+    assert kernel_config.numerical.minimum_variance == 1.0e-9
+    assert kernel_config.numerical.relative_variance_tolerance == 2.0e-6
+    assert kernel_config.approximate_firth.maximum_iterations == 17
+    assert kernel_config.approximate_firth.gradient_tolerance == 2.0e-5
+    assert kernel_config.approximate_firth.coefficient_tolerance == 3.0e-5
+    assert kernel_config.approximate_firth.likelihood_tolerance == 4.0e-5
+    assert kernel_config.approximate_firth.maximum_step_size == 6.0
+    assert kernel_config.approximate_firth.pseudo_maximum_iterations == 19
+    assert kernel_config.approximate_firth.pseudo_inner_maximum_iterations == 23
+    assert kernel_config.approximate_firth.newton_raphson_zero_start_iterations == 29
+    assert kernel_config.approximate_firth.line_search_maximum_attempts == 31
+    assert kernel_config.approximate_firth.step_halving_maximum_attempts == 37
+    assert kernel_config.approximate_firth.initial_response_scale == 4.5
+    assert kernel_config.approximate_firth.sparse_carrier_dosage_threshold == 1.0e-3
+    assert kernel_config.approximate_firth.step_halving_scale == 0.25
+    assert kernel_config.null_firth.maximum_iterations == 41
+    assert kernel_config.null_firth.gradient_tolerance == 5.0e-5
+    assert kernel_config.null_firth.maximum_step_size == 7.0
+    assert kernel_config.null_firth.fallback_iteration_multiplier == 43
+    assert kernel_config.null_firth.fallback_step_divisor == 11.0
+    assert kernel_config.null_firth.line_search_maximum_attempts == 47
+    assert kernel_config.null_firth.step_halving_scale == 0.125
+    assert kernel_config.approximate_firth.use_block_math is True
     assert (
         mock_binary_pipeline.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
     )
@@ -700,7 +705,7 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
         )
 
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"] is plan.kernel_config.binary_kernel_config
-    assert mock_binary_pipeline.call_args.kwargs["kernel_config"].firth_batch_size == 5
+    assert mock_binary_pipeline.call_args.kwargs["kernel_config"].firth_candidate.batch_size == 5
 
 
 def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
@@ -740,7 +745,7 @@ def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
         )
 
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"] is plan.kernel_config.binary_kernel_config
-    assert mock_binary_pipeline.call_args.kwargs["kernel_config"].firth_batch_size == 5
+    assert mock_binary_pipeline.call_args.kwargs["kernel_config"].firth_candidate.batch_size == 5
 
 
 def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:

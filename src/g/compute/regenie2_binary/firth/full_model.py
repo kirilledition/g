@@ -21,8 +21,8 @@ def compute_logistic_probability(
     probability = jax.nn.sigmoid(linear_predictor)
     return jnp.clip(
         probability,
-        kernel_config.minimum_probability,
-        1.0 - kernel_config.minimum_probability,
+        kernel_config.numerical.minimum_probability,
+        1.0 - kernel_config.numerical.minimum_probability,
     )
 
 
@@ -59,7 +59,7 @@ def compute_information_components(
     """Compute full information components for one genotype lane."""
     weight_vector = jnp.maximum(
         probability_vector * (1.0 - probability_vector),
-        kernel_config.minimum_variance,
+        kernel_config.numerical.minimum_variance,
     )
     weighted_genotype_vector = weight_vector * genotype_vector
     covariate_information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
@@ -110,7 +110,7 @@ def compute_full_model_adjusted_weight_components(
     """Compute leverage-adjusted Firth weights for one full model."""
     variance_vector = jnp.maximum(
         probability_vector * (1.0 - probability_vector),
-        kernel_config.minimum_variance,
+        kernel_config.numerical.minimum_variance,
     )
     projected_design_matrix = linalg.solve_from_positive_definite_matrix(
         information_matrix,
@@ -139,7 +139,7 @@ def compute_full_model_adjusted_weight_components_from_parts(
     """Compute full-model Firth weights without materializing a full design matrix."""
     variance_vector = jnp.maximum(
         probability_vector * (1.0 - probability_vector),
-        kernel_config.minimum_variance,
+        kernel_config.numerical.minimum_variance,
     )
     stacked_design_transpose = jnp.concatenate([covariate_matrix.T, genotype_vector[None, :]], axis=0)
     projected_design_transpose = linalg.solve_from_positive_definite_matrix(
@@ -186,7 +186,7 @@ def fit_single_variant_firth_logistic_regression(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Fit one Firth logistic model for a candidate variant."""
-    use_block_firth_math = kernel_config.use_block_firth_math
+    use_block_firth_math = kernel_config.approximate_firth.use_block_math
     if use_block_firth_math:
         coefficient_count = covariate_matrix.shape[1] + 1
     else:
@@ -212,7 +212,7 @@ def fit_single_variant_firth_logistic_regression(
                 information_components.information_matrix.shape[0],
                 dtype=jnp.float32,
             )
-            * kernel_config.minimum_variance
+            * kernel_config.numerical.minimum_variance
         )
         information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
         return regenie2_binary_firth_common.compute_firth_penalized_log_likelihood_from_cholesky(
@@ -224,7 +224,7 @@ def fit_single_variant_firth_logistic_regression(
 
     def condition_function(state: regenie2_binary_firth_types.FirthState) -> jax.Array:
         return (
-            (state.iteration_count < kernel_config.firth_maximum_iterations)
+            (state.iteration_count < kernel_config.approximate_firth.maximum_iterations)
             & (~state.converged)
             & (~state.failed)
             & (~skip_firth)
@@ -246,7 +246,7 @@ def fit_single_variant_firth_logistic_regression(
                 information_components.information_matrix.shape[0],
                 dtype=jnp.float32,
             )
-            * kernel_config.minimum_variance
+            * kernel_config.numerical.minimum_variance
         )
         information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
         current_penalized_log_likelihood = (
@@ -297,7 +297,8 @@ def fit_single_variant_firth_logistic_regression(
                 full_design_matrix.T * adjusted_weight_components.second_weight_vector
             ) @ full_design_matrix
         second_hessian = (
-            second_hessian + jnp.eye(second_hessian.shape[0], dtype=jnp.float32) * kernel_config.minimum_variance
+            second_hessian
+            + jnp.eye(second_hessian.shape[0], dtype=jnp.float32) * kernel_config.numerical.minimum_variance
         )
         coefficient_step = linalg.solve_from_positive_definite_matrix(second_hessian, adjusted_score)
         current_failed = (
@@ -306,8 +307,8 @@ def fit_single_variant_firth_logistic_regression(
         maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
         step_scale = jnp.minimum(
             1.0,
-            kernel_config.firth_maximum_step_size
-            / jnp.maximum(maximum_coefficient_step, kernel_config.minimum_variance),
+            kernel_config.approximate_firth.maximum_step_size
+            / jnp.maximum(maximum_coefficient_step, kernel_config.numerical.minimum_variance),
         )
         scaled_coefficient_step = coefficient_step * step_scale
         backtracking_result = regenie2_binary_firth_line_search.run_firth_step_halving(
@@ -365,7 +366,7 @@ def fit_single_variant_firth_logistic_regression(
             initial_information_components.information_matrix.shape[0],
             dtype=jnp.float32,
         )
-        * kernel_config.minimum_variance
+        * kernel_config.numerical.minimum_variance
     )
     initial_information_cholesky_factor = jnp.linalg.cholesky(initial_information_matrix)
     initial_penalized_log_likelihood = (
@@ -415,7 +416,7 @@ def fit_single_variant_firth_logistic_regression(
             final_information_components.information_matrix.shape[0],
             dtype=jnp.float32,
         )
-        * kernel_config.minimum_variance
+        * kernel_config.numerical.minimum_variance
     )
     final_information_cholesky_factor = jnp.linalg.cholesky(final_information_matrix)
     final_penalized_log_likelihood = regenie2_binary_firth_common.compute_firth_penalized_log_likelihood_from_cholesky(
@@ -452,7 +453,7 @@ def fit_single_variant_firth_logistic_regression(
         ) @ full_design_matrix
     final_second_hessian = (
         final_second_hessian
-        + jnp.eye(final_second_hessian.shape[0], dtype=jnp.float32) * kernel_config.minimum_variance
+        + jnp.eye(final_second_hessian.shape[0], dtype=jnp.float32) * kernel_config.numerical.minimum_variance
     )
     genotype_variance = linalg.solve_from_positive_definite_matrix(final_second_hessian, unit_genotype_vector)[-1]
     beta = final_state.coefficients[-1]
@@ -473,7 +474,7 @@ def fit_single_variant_firth_logistic_regression(
         (~skip_firth)
         & (~final_state.converged)
         & (~final_state.failed)
-        & (final_state.iteration_count >= kernel_config.firth_maximum_iterations)
+        & (final_state.iteration_count >= kernel_config.approximate_firth.maximum_iterations)
     )
     invalid_statistic_failure_mask = (~skip_firth) & final_state.converged & (~final_state.failed) & (~valid_mask)
     convergence_reason_code = jnp.where(

@@ -278,11 +278,11 @@ def fit_covariate_only_firth_null_model(
         phenotype_vector=phenotype_vector_float64,
         loco_offset=loco_offset_float64,
         initial_coefficients=initial_coefficients_float64,
-        maximum_iterations=kernel_config.null_firth_maximum_iterations,
-        maximum_step_size=kernel_config.null_firth_maximum_step_size,
-        tolerance=kernel_config.null_firth_gradient_tolerance,
-        line_search_maximum_attempts=kernel_config.null_firth_line_search_maximum_attempts,
-        line_search_step_halving_scale=kernel_config.null_firth_step_halving_scale,
+        maximum_iterations=kernel_config.null_firth.maximum_iterations,
+        maximum_step_size=kernel_config.null_firth.maximum_step_size,
+        tolerance=kernel_config.null_firth.gradient_tolerance,
+        line_search_maximum_attempts=kernel_config.null_firth.line_search_maximum_attempts,
+        line_search_step_halving_scale=kernel_config.null_firth.step_halving_scale,
         check_score_increase=True,
     )
     second_result = fit_covariate_only_firth_null_model_once(
@@ -290,18 +290,18 @@ def fit_covariate_only_firth_null_model(
         phenotype_vector=phenotype_vector_float64,
         loco_offset=loco_offset_float64,
         initial_coefficients=zero_start_coefficients,
-        maximum_iterations=kernel_config.null_firth_maximum_iterations,
-        maximum_step_size=kernel_config.null_firth_maximum_step_size,
-        tolerance=kernel_config.null_firth_gradient_tolerance,
-        line_search_maximum_attempts=kernel_config.null_firth_line_search_maximum_attempts,
-        line_search_step_halving_scale=kernel_config.null_firth_step_halving_scale,
+        maximum_iterations=kernel_config.null_firth.maximum_iterations,
+        maximum_step_size=kernel_config.null_firth.maximum_step_size,
+        tolerance=kernel_config.null_firth.gradient_tolerance,
+        line_search_maximum_attempts=kernel_config.null_firth.line_search_maximum_attempts,
+        line_search_step_halving_scale=kernel_config.null_firth.step_halving_scale,
         check_score_increase=True,
     )
     fallback_maximum_iterations = (
-        kernel_config.null_firth_maximum_iterations * kernel_config.null_firth_fallback_iteration_multiplier
+        kernel_config.null_firth.maximum_iterations * kernel_config.null_firth.fallback_iteration_multiplier
     )
     fallback_maximum_step_size = (
-        kernel_config.null_firth_maximum_step_size / kernel_config.null_firth_fallback_step_divisor
+        kernel_config.null_firth.maximum_step_size / kernel_config.null_firth.fallback_step_divisor
     )
     third_result = fit_covariate_only_firth_null_model_once(
         covariate_matrix=covariate_matrix_float64,
@@ -310,9 +310,9 @@ def fit_covariate_only_firth_null_model(
         initial_coefficients=zero_start_coefficients,
         maximum_iterations=fallback_maximum_iterations,
         maximum_step_size=fallback_maximum_step_size,
-        tolerance=kernel_config.null_firth_gradient_tolerance,
-        line_search_maximum_attempts=kernel_config.null_firth_line_search_maximum_attempts,
-        line_search_step_halving_scale=kernel_config.null_firth_step_halving_scale,
+        tolerance=kernel_config.null_firth.gradient_tolerance,
+        line_search_maximum_attempts=kernel_config.null_firth.line_search_maximum_attempts,
+        line_search_step_halving_scale=kernel_config.null_firth.step_halving_scale,
         check_score_increase=True,
     )
     fourth_result = fit_covariate_only_firth_null_model_once(
@@ -322,9 +322,9 @@ def fit_covariate_only_firth_null_model(
         initial_coefficients=initial_coefficients_float64,
         maximum_iterations=fallback_maximum_iterations,
         maximum_step_size=fallback_maximum_step_size,
-        tolerance=kernel_config.null_firth_gradient_tolerance,
-        line_search_maximum_attempts=kernel_config.null_firth_line_search_maximum_attempts,
-        line_search_step_halving_scale=kernel_config.null_firth_step_halving_scale,
+        tolerance=kernel_config.null_firth.gradient_tolerance,
+        line_search_maximum_attempts=kernel_config.null_firth.line_search_maximum_attempts,
+        line_search_step_halving_scale=kernel_config.null_firth.step_halving_scale,
         check_score_increase=False,
     )
     use_first_result = first_result.converged

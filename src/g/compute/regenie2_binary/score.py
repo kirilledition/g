@@ -34,8 +34,8 @@ def compute_positive_variance_mask(
 
     """
     variance_floor = jnp.maximum(
-        kernel_config.minimum_variance,
-        reference_sum_squares * kernel_config.relative_variance_tolerance,
+        kernel_config.numerical.minimum_variance,
+        reference_sum_squares * kernel_config.numerical.relative_variance_tolerance,
     )
     return variance > variance_floor
 
