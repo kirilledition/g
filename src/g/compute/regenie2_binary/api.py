@@ -112,16 +112,9 @@ def compute_regenie2_binary_chunk_from_chromosome_state(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association using cached null state."""
-    genotype_matrix_by_variant = genotype.convert_sample_major_to_variant_major(genotype_matrix)
-    score_test_result = regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
+    return compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
-        correction_plan=correction_plan,
-    )
-    return regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
-        chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
-        result=score_test_result,
+        genotype_matrix_by_variant=genotype.convert_sample_major_to_variant_major(genotype_matrix),
         correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
         kernel_config=kernel_config,
