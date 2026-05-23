@@ -29,12 +29,16 @@ APPROXIMATE_FIRTH_PLAN = types.BinaryCorrectionPlan(
     firth_se=False,
 )
 
+BinaryScoreComputeFunction = typing.Callable[
+    [regenie2_binary_state.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan],
+    regenie2_binary_result.Regenie2BinaryScoreChunkResult,
+]
 BinaryChunkComputeFunction = typing.Callable[
     [regenie2_binary_state.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan],
     regenie2_binary_result.Regenie2BinaryChunkResult,
 ]
 compute_score_test_chunk = typing.cast(
-    "BinaryChunkComputeFunction",
+    "BinaryScoreComputeFunction",
     regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state,
 )
 compute_binary_chunk = typing.cast(
@@ -42,7 +46,7 @@ compute_binary_chunk = typing.cast(
     regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state,
 )
 compute_score_test_chunk_variant_major = typing.cast(
-    "BinaryChunkComputeFunction",
+    "BinaryScoreComputeFunction",
     regenie2_binary_score.compute_binary_score_test_chunk_variant_major,
 )
 compute_binary_chunk_variant_major = typing.cast(
@@ -127,7 +131,7 @@ def build_chromosome_state() -> tuple[
     return genotype_matrix, chromosome_state
 
 
-def build_chunk_result_with_empty_firth_diagnostics(
+def build_forced_score_result(
     *,
     beta: jax.Array,
     standard_error: jax.Array,
@@ -135,25 +139,33 @@ def build_chunk_result_with_empty_firth_diagnostics(
     log10_p_value: jax.Array,
     extra_code: jax.Array,
     valid_mask: jax.Array,
-) -> regenie2_binary_result.Regenie2BinaryChunkResult:
-    """Build a chunk result with zeroed Firth diagnostics."""
-    variant_count = extra_code.shape[0]
-    return regenie2_binary_result.Regenie2BinaryChunkResult(
+) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
+    """Build a score result with caller-provided extra codes."""
+    return regenie2_binary_result.Regenie2BinaryScoreChunkResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
         log10_p_value=log10_p_value,
         extra_code=extra_code,
         valid_mask=valid_mask,
-        firth_iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
-        firth_failure_code=jnp.zeros((variant_count,), dtype=jnp.int32),
-        firth_convergence_reason_code=jnp.zeros((variant_count,), dtype=jnp.int32),
-        firth_correction_code=jnp.zeros((variant_count,), dtype=jnp.int32),
-        firth_sparse_correction_mask=jnp.zeros((variant_count,), dtype=jnp.bool_),
-        pseudo_firth_iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
-        nr_zero_start_iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
-        nr_warm_start_iteration_count=jnp.zeros((variant_count,), dtype=jnp.int32),
     )
+
+
+def require_binary_chunk_result(
+    result: regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult,
+) -> regenie2_binary_result.Regenie2BinaryChunkResult:
+    """Narrow a binary result union to the Firth-diagnostic result shape."""
+    assert isinstance(result, regenie2_binary_result.Regenie2BinaryChunkResult)
+    return result
+
+
+def require_multi_binary_chunk_result(
+    result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult
+    | regenie2_binary_result.Regenie2MultiBinaryChunkResult,
+) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+    """Narrow a multi-binary result union to the Firth-diagnostic result shape."""
+    assert isinstance(result, regenie2_binary_result.Regenie2MultiBinaryChunkResult)
+    return result
 
 
 def build_variant_major_parity_fixture() -> BinaryVariantMajorParityFixture:
@@ -266,25 +278,30 @@ def assert_binary_chunk_results_match(
         np.asarray(variant_major_result.valid_mask),
         np.asarray(sample_major_result.valid_mask),
     )
-    if not hasattr(variant_major_result, "firth_iteration_count") and not hasattr(
-        sample_major_result, "firth_iteration_count"
+    if isinstance(variant_major_result, regenie2_binary_result.Regenie2BinaryScoreChunkResult) and isinstance(
+        sample_major_result,
+        regenie2_binary_result.Regenie2BinaryScoreChunkResult,
     ):
         return
+    variant_major_chunk_result = require_binary_chunk_result(variant_major_result)
+    sample_major_chunk_result = require_binary_chunk_result(sample_major_result)
     np.testing.assert_array_equal(
-        np.asarray(variant_major_result.firth_iteration_count),
-        np.asarray(sample_major_result.firth_iteration_count),
+        np.asarray(variant_major_chunk_result.firth_iteration_count),
+        np.asarray(sample_major_chunk_result.firth_iteration_count),
     )
     np.testing.assert_array_equal(
-        np.asarray(variant_major_result.firth_failure_code),
-        np.asarray(sample_major_result.firth_failure_code),
+        np.asarray(variant_major_chunk_result.firth_failure_code),
+        np.asarray(sample_major_chunk_result.firth_failure_code),
     )
     np.testing.assert_array_equal(
-        np.asarray(variant_major_result.firth_convergence_reason_code),
-        np.asarray(sample_major_result.firth_convergence_reason_code),
+        np.asarray(variant_major_chunk_result.firth_convergence_reason_code),
+        np.asarray(sample_major_chunk_result.firth_convergence_reason_code),
     )
 
 
-def assert_all_result_statistics_nan(result: regenie2_binary_result.Regenie2BinaryChunkResult) -> None:
+def assert_all_result_statistics_nan(
+    result: regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult,
+) -> None:
     """Assert all association-statistic columns are NaN."""
     assert np.isnan(np.asarray(result.beta)).all()
     assert np.isnan(np.asarray(result.standard_error)).all()
@@ -648,7 +665,7 @@ def test_multi_trait_approximate_firth_matches_stacked_single_trait_results(firt
         np.stack([np.asarray(result.extra_code) for result in single_results], axis=0),
     )
     np.testing.assert_array_equal(
-        np.asarray(multi_result.firth_failure_code),
+        np.asarray(require_multi_binary_chunk_result(multi_result).firth_failure_code),
         np.stack([np.asarray(result.firth_failure_code) for result in single_results], axis=0),
     )
 
@@ -900,7 +917,7 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
         candidate_genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
+    forced_candidate_result = build_forced_score_result(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
@@ -915,6 +932,7 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
     )
+    result = require_binary_chunk_result(result)
 
     assert np.isfinite(np.asarray(result.beta[0]))
     assert np.isfinite(np.asarray(result.standard_error[0]))
@@ -936,7 +954,7 @@ def test_firth_candidate_max_iteration_failure_is_labelled() -> None:
         candidate_genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
+    forced_candidate_result = build_forced_score_result(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
@@ -958,6 +976,7 @@ def test_firth_candidate_max_iteration_failure_is_labelled() -> None:
         correction_plan=APPROXIMATE_FIRTH_PLAN,
         kernel_config=maximum_iteration_kernel_config,
     )
+    result = require_binary_chunk_result(result)
 
     assert int(np.asarray(result.extra_code[0])) == types.BinaryExtraCode.TEST_FAIL.value
     assert_all_result_statistics_nan(result)
@@ -984,7 +1003,7 @@ def test_null_firth_failure_propagates_to_candidate_failure() -> None:
         candidate_genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
+    forced_candidate_result = build_forced_score_result(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
@@ -999,6 +1018,7 @@ def test_null_firth_failure_propagates_to_candidate_failure() -> None:
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
     )
+    result = require_binary_chunk_result(result)
 
     assert int(np.asarray(result.extra_code[0])) == types.BinaryExtraCode.TEST_FAIL.value
     assert_all_result_statistics_nan(result)
@@ -1017,7 +1037,7 @@ def test_firth_se_changes_only_successful_firth_standard_error() -> None:
         candidate_genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
+    forced_candidate_result = build_forced_score_result(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
@@ -1070,6 +1090,7 @@ def test_sparse_candidate_mask_does_not_expand_score_candidates() -> None:
         APPROXIMATE_FIRTH_PLAN,
         jnp.asarray([True], dtype=jnp.bool_),
     )
+    sparse_result = require_binary_chunk_result(sparse_result)
 
     assert int(np.asarray(sparse_result.extra_code[0])) == types.BinaryExtraCode.SCORE.value
     assert int(np.asarray(sparse_result.firth_iteration_count[0])) == 0
@@ -1082,7 +1103,7 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback() -> None
         genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
+    forced_candidate_result = build_forced_score_result(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
@@ -1141,7 +1162,7 @@ def test_firth_correction_kernel_config_retraces_same_shape_without_cache_clear(
         genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
+    forced_candidate_result = build_forced_score_result(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
@@ -1399,7 +1420,7 @@ def test_failed_firth_lanes_become_test_fail() -> None:
         genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
     )
-    forced_candidate_result = build_chunk_result_with_empty_firth_diagnostics(
+    forced_candidate_result = build_forced_score_result(
         beta=score_result.beta,
         standard_error=score_result.standard_error,
         chi_squared=score_result.chi_squared,
@@ -1414,6 +1435,7 @@ def test_failed_firth_lanes_become_test_fail() -> None:
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
     )
+    corrected_result = require_binary_chunk_result(corrected_result)
 
     assert int(np.asarray(corrected_result.extra_code[0])) == types.BinaryExtraCode.TEST_FAIL.value
     assert not bool(np.asarray(corrected_result.valid_mask[0]))
