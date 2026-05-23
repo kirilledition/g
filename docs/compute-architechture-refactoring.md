@@ -892,6 +892,7 @@ Completed cleanup so far:
 * Split score-test correction-label selection into `regenie2_binary/correction.py`, leaving `regenie2_binary/candidates.py` focused on fixed-shape Firth candidate batching and capacity dispatch.
 * Moved the full-model Firth pseudo-response initializer from `firth/batch.py` into `firth/full_model.py`, leaving batch code focused on candidate-lane dispatch and scalar/full-model solver selection.
 * Moved approximate-Firth genotype residualization from `firth/batch.py` into `firth/scalar_approx.py`, so solver-specific genotype preparation lives with the scalar approximate-Firth solver.
+* Moved the Firth separation pre-dispatch heuristic from `firth/batch.py` into `regenie2_binary/candidates.py`, keeping candidate-lane ordering decisions with candidate planning.
 
 Intentional remaining adapters:
 

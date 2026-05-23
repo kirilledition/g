@@ -75,7 +75,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
                     & flat_active_mask
                 )
             heuristic_firth_mask = (
-                regenie2_binary_firth_batch.compute_firth_pre_dispatch_mask_without_mask(
+                regenie2_binary_candidate_planning.compute_firth_pre_dispatch_mask_without_mask(
                     genotype_matrix_by_variant=firth_raw_candidate_genotype_matrix_by_variant,
                     phenotype_vector=chromosome_state.phenotype_vector,
                 )

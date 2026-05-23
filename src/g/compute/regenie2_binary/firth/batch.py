@@ -2,39 +2,17 @@
 
 from __future__ import annotations
 
+import typing
+
 import jax
 import jax.numpy as jnp
 
-from g.compute.common import genotype as compute_genotype
-from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
-
-def compute_firth_pre_dispatch_mask_without_mask(
-    genotype_matrix_by_variant: jax.Array,
-    phenotype_vector: jax.Array,
-) -> jax.Array:
-    """Identify variants with obvious case-control allele-count separation."""
-    case_mask = phenotype_vector > regenie2_binary_config.BINARY_CASE_THRESHOLD
-    control_mask = phenotype_vector < regenie2_binary_config.BINARY_CASE_THRESHOLD
-    case_mask_float = case_mask.astype(genotype_matrix_by_variant.dtype)
-    control_mask_float = control_mask.astype(genotype_matrix_by_variant.dtype)
-    case_sample_count = jnp.sum(case_mask_float)
-    control_sample_count = jnp.sum(control_mask_float)
-    case_allele_count = genotype_matrix_by_variant @ case_mask_float
-    control_allele_count = genotype_matrix_by_variant @ control_mask_float
-    case_reference_allele_count = compute_genotype.ALLELE_COUNT_MULTIPLIER * case_sample_count - case_allele_count
-    control_reference_allele_count = (
-        compute_genotype.ALLELE_COUNT_MULTIPLIER * control_sample_count - control_allele_count
-    )
-    return (
-        (case_allele_count <= 0.0)
-        | (control_allele_count <= 0.0)
-        | (case_reference_allele_count <= 0.0)
-        | (control_reference_allele_count <= 0.0)
-    )
+if typing.TYPE_CHECKING:
+    from g.compute.regenie2_binary import config as regenie2_binary_config
 
 
 def compute_firth_variantwise(
