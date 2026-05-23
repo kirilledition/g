@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from g.compute.common import linalg
+from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 if typing.TYPE_CHECKING:
@@ -20,45 +21,6 @@ FIRTH_NULL_GRADIENT_TOLERANCE = 50.0e-6
 FIRTH_NULL_MAXIMUM_STEP_SIZE = 25.0
 FIRTH_NULL_FALLBACK_STEP_DIVISOR = 5.0
 FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
-REGENIE_LOGISTIC_MINIMUM_ETA = -30.0
-REGENIE_LOGISTIC_MAXIMUM_ETA = 30.0
-REGENIE_NUMERICAL_EPSILON = 10.0 * 2.220446049250313e-16
-
-
-def compute_regenie_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
-    """Compute probabilities with REGENIE's glm-style endpoint clipping."""
-    epsilon = jnp.asarray(REGENIE_NUMERICAL_EPSILON, dtype=linear_predictor.dtype)
-    lower_probability = epsilon / (1.0 + epsilon)
-    upper_probability = jnp.reciprocal(1.0 + epsilon)
-    return jnp.where(
-        linear_predictor > REGENIE_LOGISTIC_MAXIMUM_ETA,
-        upper_probability,
-        jnp.where(
-            linear_predictor < REGENIE_LOGISTIC_MINIMUM_ETA,
-            lower_probability,
-            jax.nn.sigmoid(linear_predictor),
-        ),
-    )
-
-
-def compute_logistic_deviance(
-    phenotype_vector: jax.Array,
-    probability_vector: jax.Array,
-    active_sample_mask: jax.Array,
-) -> jax.Array:
-    """Compute REGENIE's Bernoulli deviance over active samples."""
-    epsilon = jnp.asarray(REGENIE_NUMERICAL_EPSILON, dtype=probability_vector.dtype)
-    clipped_probability = jnp.clip(
-        probability_vector,
-        epsilon / (1.0 + epsilon),
-        jnp.reciprocal(1.0 + epsilon),
-    )
-    negative_log_likelihood = -jnp.where(
-        phenotype_vector > BINARY_CASE_THRESHOLD,
-        jnp.log(clipped_probability),
-        jnp.log1p(-clipped_probability),
-    )
-    return 2.0 * jnp.sum(jnp.where(active_sample_mask, negative_log_likelihood, 0.0))
 
 
 def compute_null_firth_components(
@@ -70,13 +32,13 @@ def compute_null_firth_components(
 ) -> regenie2_binary_firth_types.NullFirthComponents:
     """Compute REGENIE null Firth score and deviance quantities."""
     linear_predictor = covariate_matrix @ coefficients + loco_offset
-    probability_vector = compute_regenie_logistic_probability(linear_predictor)
+    probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(linear_predictor)
     weight_vector = probability_vector * (1.0 - probability_vector)
     information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
     information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
     log_determinant = 2.0 * jnp.sum(jnp.log(jnp.diag(information_cholesky_factor)))
     deviance = (
-        compute_logistic_deviance(
+        regenie2_binary_logistic.compute_logistic_deviance(
             phenotype_vector,
             probability_vector,
             jnp.ones_like(phenotype_vector, dtype=jnp.bool_),

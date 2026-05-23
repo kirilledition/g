@@ -42,42 +42,6 @@ BinaryVariantMajorChunkComputeFunction = typing.Callable[
 ]
 
 
-def compute_regenie_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
-    """Compute probabilities with REGENIE's glm-style endpoint clipping."""
-    epsilon = jnp.asarray(regenie2_binary_config.REGENIE_NUMERICAL_EPSILON, dtype=linear_predictor.dtype)
-    lower_probability = epsilon / (1.0 + epsilon)
-    upper_probability = jnp.reciprocal(1.0 + epsilon)
-    return jnp.where(
-        linear_predictor > regenie2_binary_config.REGENIE_LOGISTIC_MAXIMUM_ETA,
-        upper_probability,
-        jnp.where(
-            linear_predictor < regenie2_binary_config.REGENIE_LOGISTIC_MINIMUM_ETA,
-            lower_probability,
-            jax.nn.sigmoid(linear_predictor),
-        ),
-    )
-
-
-def compute_logistic_deviance(
-    phenotype_vector: jax.Array,
-    probability_vector: jax.Array,
-    active_sample_mask: jax.Array,
-) -> jax.Array:
-    """Compute REGENIE's Bernoulli deviance over active samples."""
-    epsilon = jnp.asarray(regenie2_binary_config.REGENIE_NUMERICAL_EPSILON, dtype=probability_vector.dtype)
-    clipped_probability = jnp.clip(
-        probability_vector,
-        epsilon / (1.0 + epsilon),
-        jnp.reciprocal(1.0 + epsilon),
-    )
-    negative_log_likelihood = -jnp.where(
-        phenotype_vector > regenie2_binary_config.BINARY_CASE_THRESHOLD,
-        jnp.log(clipped_probability),
-        jnp.log1p(-clipped_probability),
-    )
-    return 2.0 * jnp.sum(jnp.where(active_sample_mask, negative_log_likelihood, 0.0))
-
-
 @functools.partial(jax.jit, static_argnames=("correction_plan",))
 def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
     chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,

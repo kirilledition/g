@@ -4,9 +4,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-import g.compute.regenie2_binary as regenie2_binary
 from g import types
 from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
@@ -47,7 +47,7 @@ def test_regenie_logistic_deviance_matches_manual_formula() -> None:
     probability_vector = jnp.asarray([0.25, 0.75, 0.50], dtype=jnp.float32)
     active_sample_mask = jnp.asarray([True, True, False], dtype=jnp.bool_)
 
-    deviance = regenie2_binary.compute_logistic_deviance(
+    deviance = regenie2_binary_logistic.compute_logistic_deviance(
         phenotype_vector,
         probability_vector,
         active_sample_mask,
@@ -72,14 +72,16 @@ def test_scalar_pseudo_firth_components_match_formula() -> None:
         beta=jnp.asarray(0.4, dtype=jnp.float32),
     )
 
-    probability_vector = regenie2_binary.compute_regenie_logistic_probability(offset_vector + genotype_vector * 0.4)
+    probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(
+        offset_vector + genotype_vector * 0.4
+    )
     weight_vector = probability_vector * (1.0 - probability_vector)
     genotype_information_diagonal = genotype_vector * genotype_vector * weight_vector
     genotype_information = jnp.sum(genotype_information_diagonal)
     leverage_vector = genotype_information_diagonal / genotype_information
     adjusted_response = phenotype_vector + leverage_vector * (0.5 - probability_vector)
     expected_score = jnp.sum(genotype_vector * (adjusted_response - probability_vector))
-    expected_deviance = regenie2_binary.compute_logistic_deviance(
+    expected_deviance = regenie2_binary_logistic.compute_logistic_deviance(
         phenotype_vector, probability_vector, active_sample_mask
     ) - jnp.log(genotype_information)
 

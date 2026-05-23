@@ -9,6 +9,7 @@ import jax.numpy as jnp
 
 from g import types
 from g.compute.common import pvalue
+from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
@@ -22,45 +23,6 @@ FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS = 100
 FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS = 25
 FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
 FIRTH_MAXIMUM_STEP_SIZE = 5.0
-REGENIE_LOGISTIC_MINIMUM_ETA = -30.0
-REGENIE_LOGISTIC_MAXIMUM_ETA = 30.0
-REGENIE_NUMERICAL_EPSILON = 10.0 * 2.220446049250313e-16
-
-
-def compute_regenie_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
-    """Compute probabilities with REGENIE's glm-style endpoint clipping."""
-    epsilon = jnp.asarray(REGENIE_NUMERICAL_EPSILON, dtype=linear_predictor.dtype)
-    lower_probability = epsilon / (1.0 + epsilon)
-    upper_probability = jnp.reciprocal(1.0 + epsilon)
-    return jnp.where(
-        linear_predictor > REGENIE_LOGISTIC_MAXIMUM_ETA,
-        upper_probability,
-        jnp.where(
-            linear_predictor < REGENIE_LOGISTIC_MINIMUM_ETA,
-            lower_probability,
-            jax.nn.sigmoid(linear_predictor),
-        ),
-    )
-
-
-def compute_logistic_deviance(
-    phenotype_vector: jax.Array,
-    probability_vector: jax.Array,
-    active_sample_mask: jax.Array,
-) -> jax.Array:
-    """Compute REGENIE's Bernoulli deviance over active samples."""
-    epsilon = jnp.asarray(REGENIE_NUMERICAL_EPSILON, dtype=probability_vector.dtype)
-    clipped_probability = jnp.clip(
-        probability_vector,
-        epsilon / (1.0 + epsilon),
-        jnp.reciprocal(1.0 + epsilon),
-    )
-    negative_log_likelihood = -jnp.where(
-        phenotype_vector > BINARY_CASE_THRESHOLD,
-        jnp.log(clipped_probability),
-        jnp.log1p(-clipped_probability),
-    )
-    return 2.0 * jnp.sum(jnp.where(active_sample_mask, negative_log_likelihood, 0.0))
 
 
 def map_scalar_pseudo_firth_failure_to_reason_code(failure_code: jax.Array) -> jax.Array:
@@ -95,14 +57,14 @@ def compute_scalar_firth_components(
 ) -> regenie2_binary_firth_types.ScalarFirthComponents:
     """Compute REGENIE scalar approximate-Firth quantities at one beta."""
     linear_predictor = offset_vector + genotype_vector * beta
-    probability_vector = compute_regenie_logistic_probability(linear_predictor)
+    probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(linear_predictor)
     weight_vector = probability_vector * (1.0 - probability_vector)
     active_weight_vector = jnp.where(active_sample_mask, weight_vector, 0.0)
     genotype_information_diagonal = genotype_vector * genotype_vector * active_weight_vector
     genotype_information = jnp.sum(genotype_information_diagonal)
     penalized_deviance = (
         non_active_deviance
-        + compute_logistic_deviance(phenotype_vector, probability_vector, active_sample_mask)
+        + regenie2_binary_logistic.compute_logistic_deviance(phenotype_vector, probability_vector, active_sample_mask)
         - jnp.log(genotype_information)
     )
     leverage_vector = genotype_information_diagonal / genotype_information
@@ -152,7 +114,9 @@ def fit_scalar_pseudo_logistic_step(
         step_increased = absolute_step_size > state.previous_step_size
         step_scale = jnp.maximum(absolute_step_size / FIRTH_MAXIMUM_STEP_SIZE, 1.0)
         updated_beta = state.beta + step_size / step_scale
-        probability_vector = compute_regenie_logistic_probability(offset_vector + genotype_vector * updated_beta)
+        probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(
+            offset_vector + genotype_vector * updated_beta
+        )
         updated_score = jnp.sum(
             jnp.where(active_sample_mask, genotype_vector * (adjusted_response - probability_vector), 0.0)
         )
@@ -584,9 +548,13 @@ def fit_single_variant_regenie_approximate_firth(
     warm_start_beta = jnp.asarray(warm_start_beta, dtype=scalar_dtype)
     all_sample_mask = jnp.ones_like(phenotype_vector, dtype=jnp.bool_)
     active_sample_mask = jnp.where(sparse_correction, carrier_sample_mask, all_sample_mask)
-    null_probability_vector = compute_regenie_logistic_probability(offset_vector)
-    full_null_deviance = compute_logistic_deviance(phenotype_vector, null_probability_vector, all_sample_mask)
-    active_null_deviance = compute_logistic_deviance(phenotype_vector, null_probability_vector, active_sample_mask)
+    null_probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(offset_vector)
+    full_null_deviance = regenie2_binary_logistic.compute_logistic_deviance(
+        phenotype_vector, null_probability_vector, all_sample_mask
+    )
+    active_null_deviance = regenie2_binary_logistic.compute_logistic_deviance(
+        phenotype_vector, null_probability_vector, active_sample_mask
+    )
     non_active_deviance = jnp.where(sparse_correction, full_null_deviance - active_null_deviance, 0.0)
     null_weight_vector = null_probability_vector * (1.0 - null_probability_vector)
     null_genotype_information = jnp.sum(
