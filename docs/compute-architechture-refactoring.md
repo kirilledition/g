@@ -885,6 +885,7 @@ Completed cleanup so far:
 * Narrowed binary score-only versus Firth-corrected result types in tests, so the split binary result containers can be checked by `ty` without hiding score/Firth result-shape mismatches behind broad unions.
 * Removed the stale covariate-only adjusted-weight helper from the full-model Firth module; covariate-only null Firth has its own implementation in `firth/null.py`, so the full-model module now exposes only helpers used by candidate Firth correction.
 * Moved engine callback type annotations and binary diagnostic counting behind the public linear and binary compute API modules, so production engine code no longer imports compute result, state, or diagnostics implementation modules directly.
+* Removed the remaining `firth/common.py` catch-all module: full-model penalized likelihood now lives in `firth/full_model.py`, and Firth reason-to-failure mapping lives next to the Firth reason enum in `firth/types.py`.
 
 Intentional remaining adapters:
 

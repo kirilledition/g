@@ -6,6 +6,9 @@ import enum
 from dataclasses import dataclass
 
 import jax
+import jax.numpy as jnp
+
+from g import types as g_types
 
 
 class FirthConvergenceReason(enum.IntEnum):
@@ -21,6 +24,34 @@ class FirthConvergenceReason(enum.IntEnum):
     NEGATIVE_LRT = 7
     PROBABILITY_FAILURE = 8
     STEP_SIZE_INCREASE = 9
+
+
+def map_firth_reason_code_to_failure_code(reason_code: jax.Array) -> jax.Array:
+    """Map internal Firth termination reasons to public failure labels."""
+    return jnp.where(
+        reason_code == FirthConvergenceReason.MAX_ITERATIONS.value,
+        g_types.FirthFailureCode.MAX_ITERATIONS.value,
+        jnp.where(
+            reason_code == FirthConvergenceReason.INVALID_STATISTIC.value,
+            g_types.FirthFailureCode.INVALID_STATISTIC.value,
+            jnp.where(
+                reason_code == FirthConvergenceReason.NEGATIVE_LRT.value,
+                g_types.FirthFailureCode.INVALID_STATISTIC.value,
+                jnp.where(
+                    (reason_code == FirthConvergenceReason.STEP_HALVING_EXHAUSTED.value)
+                    | (reason_code == FirthConvergenceReason.STEP_SIZE_INCREASE.value),
+                    g_types.FirthFailureCode.STEP_HALVING.value,
+                    jnp.where(
+                        (reason_code == FirthConvergenceReason.NUMERICAL_FAILURE.value)
+                        | (reason_code == FirthConvergenceReason.NULL_FAILURE.value)
+                        | (reason_code == FirthConvergenceReason.PROBABILITY_FAILURE.value),
+                        g_types.FirthFailureCode.NUMERICAL.value,
+                        g_types.FirthFailureCode.NONE.value,
+                    ),
+                ),
+            ),
+        ),
+    ).astype(jnp.int32)
 
 
 @jax.tree_util.register_dataclass

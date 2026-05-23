@@ -9,7 +9,6 @@ from g import types
 from g.compute.common import pvalue
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
-from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 
@@ -674,7 +673,7 @@ def fit_single_variant_regenie_approximate_firth(
         regenie2_binary_firth_types.FirthConvergenceReason.NULL_FAILURE.value,
         selected_reason_code,
     )
-    failure_code = regenie2_binary_firth_common.map_firth_reason_code_to_failure_code(selected_reason_code)
+    failure_code = regenie2_binary_firth_types.map_firth_reason_code_to_failure_code(selected_reason_code)
     correction_code = jnp.where(
         valid_mask & pseudo_result.valid,
         types.FirthCorrectionCode.PSEUDO_FIRTH.value,

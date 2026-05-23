@@ -8,9 +8,10 @@ import jax.numpy as jnp
 from g import types
 from g.compute.common import linalg, pvalue
 from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
 from g.compute.regenie2_binary.firth import line_search as regenie2_binary_firth_line_search
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+
+FIRTH_PENALTY_LOG_DETERMINANT_MULTIPLIER = 0.5
 
 
 def compute_logistic_probability(
@@ -48,6 +49,30 @@ def build_full_model_information_matrix(
         axis=1,
     )
     return jnp.concatenate([top_block, bottom_block], axis=0)
+
+
+def compute_firth_penalized_log_likelihood_from_cholesky(
+    probability_vector: jax.Array,
+    phenotype_vector: jax.Array,
+    information_cholesky_factor: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+) -> jax.Array:
+    """Compute full-model Firth-penalized log-likelihood from a Cholesky factor."""
+    clipped_probability = jnp.clip(
+        probability_vector,
+        kernel_config.numerical.minimum_probability,
+        1.0 - kernel_config.numerical.minimum_probability,
+    )
+    true_class_probability = jnp.where(phenotype_vector == 1.0, clipped_probability, 1.0 - clipped_probability)
+    log_likelihood = jnp.sum(jnp.log(true_class_probability))
+    log_determinant = 2.0 * jnp.sum(jnp.log(jnp.diag(information_cholesky_factor)))
+    cholesky_valid = jnp.all(jnp.isfinite(information_cholesky_factor))
+    penalty_term = jnp.where(
+        cholesky_valid,
+        FIRTH_PENALTY_LOG_DETERMINANT_MULTIPLIER * log_determinant,
+        -jnp.inf,
+    )
+    return log_likelihood + penalty_term
 
 
 def compute_information_components(
@@ -215,7 +240,7 @@ def fit_single_variant_firth_logistic_regression(
             * kernel_config.numerical.minimum_variance
         )
         information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
-        return regenie2_binary_firth_common.compute_firth_penalized_log_likelihood_from_cholesky(
+        return compute_firth_penalized_log_likelihood_from_cholesky(
             probability_vector=probability_vector,
             phenotype_vector=phenotype_vector,
             information_cholesky_factor=information_cholesky_factor,
@@ -249,13 +274,11 @@ def fit_single_variant_firth_logistic_regression(
             * kernel_config.numerical.minimum_variance
         )
         information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
-        current_penalized_log_likelihood = (
-            regenie2_binary_firth_common.compute_firth_penalized_log_likelihood_from_cholesky(
-                probability_vector=probability_vector,
-                phenotype_vector=phenotype_vector,
-                information_cholesky_factor=information_cholesky_factor,
-                kernel_config=kernel_config,
-            )
+        current_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky(
+            probability_vector=probability_vector,
+            phenotype_vector=phenotype_vector,
+            information_cholesky_factor=information_cholesky_factor,
+            kernel_config=kernel_config,
         )
         current_failed = (~jnp.isfinite(current_penalized_log_likelihood)) | (
             ~jnp.all(jnp.isfinite(state.coefficients))
@@ -369,13 +392,11 @@ def fit_single_variant_firth_logistic_regression(
         * kernel_config.numerical.minimum_variance
     )
     initial_information_cholesky_factor = jnp.linalg.cholesky(initial_information_matrix)
-    initial_penalized_log_likelihood = (
-        regenie2_binary_firth_common.compute_firth_penalized_log_likelihood_from_cholesky(
-            probability_vector=initial_probability_vector,
-            phenotype_vector=phenotype_vector,
-            information_cholesky_factor=initial_information_cholesky_factor,
-            kernel_config=kernel_config,
-        )
+    initial_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky(
+        probability_vector=initial_probability_vector,
+        phenotype_vector=phenotype_vector,
+        information_cholesky_factor=initial_information_cholesky_factor,
+        kernel_config=kernel_config,
     )
     initial_full_failed = (~jnp.isfinite(initial_penalized_log_likelihood)) | (
         ~jnp.all(jnp.isfinite(initial_coefficients))
@@ -419,7 +440,7 @@ def fit_single_variant_firth_logistic_regression(
         * kernel_config.numerical.minimum_variance
     )
     final_information_cholesky_factor = jnp.linalg.cholesky(final_information_matrix)
-    final_penalized_log_likelihood = regenie2_binary_firth_common.compute_firth_penalized_log_likelihood_from_cholesky(
+    final_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky(
         probability_vector=final_probability_vector,
         phenotype_vector=phenotype_vector,
         information_cholesky_factor=final_information_cholesky_factor,
@@ -486,7 +507,7 @@ def fit_single_variant_firth_logistic_regression(
             final_state.termination_reason_code,
         ),
     ).astype(jnp.int32)
-    failure_code = regenie2_binary_firth_common.map_firth_reason_code_to_failure_code(convergence_reason_code)
+    failure_code = regenie2_binary_firth_types.map_firth_reason_code_to_failure_code(convergence_reason_code)
     return regenie2_binary_firth_types.FirthVariantResult(
         beta=jnp.asarray(jnp.where(skip_firth, jnp.nan, beta), dtype=jnp.float64),
         standard_error=jnp.asarray(jnp.where(skip_firth, jnp.nan, standard_error), dtype=jnp.float64),

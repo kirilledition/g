@@ -17,7 +17,6 @@ from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import variant_major_correction as regenie2_binary_variant_major_correction
-from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import line_search as regenie2_binary_firth_line_search
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
@@ -928,7 +927,7 @@ def test_firth_step_halving_exhaustion_returns_failure_result() -> None:
         evaluate_penalized_log_likelihood=evaluate_penalized_log_likelihood,
         kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
     )
-    failure_code = regenie2_binary_firth_common.map_firth_reason_code_to_failure_code(
+    failure_code = regenie2_binary_firth_types.map_firth_reason_code_to_failure_code(
         jnp.asarray(regenie2_binary_firth_types.FirthConvergenceReason.STEP_HALVING_EXHAUSTED.value, dtype=jnp.int32)
     )
 
