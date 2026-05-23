@@ -9,15 +9,12 @@ import jax.numpy as jnp
 
 from g.compute.common import genotype, pvalue
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
+from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import types as regenie2_binary_types
 
 if typing.TYPE_CHECKING:
     from g import types
-
-MINIMUM_VARIANCE = 1.0e-8
-RELATIVE_VARIANCE_TOLERANCE = 1.0e-6
-
 
 def compute_positive_variance_mask(variance: jax.Array, reference_sum_squares: jax.Array) -> jax.Array:
     """Return a stable positive-variance mask after covariate projection.
@@ -30,7 +27,10 @@ def compute_positive_variance_mask(variance: jax.Array, reference_sum_squares: j
         Boolean mask for numerically usable score-test variance.
 
     """
-    variance_floor = jnp.maximum(MINIMUM_VARIANCE, reference_sum_squares * RELATIVE_VARIANCE_TOLERANCE)
+    variance_floor = jnp.maximum(
+        regenie2_binary_config.MINIMUM_VARIANCE,
+        reference_sum_squares * regenie2_binary_config.RELATIVE_VARIANCE_TOLERANCE,
+    )
     return variance > variance_floor
 
 

@@ -6,6 +6,8 @@ from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_pl
 from g.compute.regenie2_binary import types as regenie2_binary_types
 
 MINIMUM_PROBABILITY = 1.0e-6
+MINIMUM_VARIANCE = 1.0e-8
+RELATIVE_VARIANCE_TOLERANCE = 1.0e-6
 DEFAULT_MAXIMUM_NULL_ITERATIONS = 50
 NULL_LOGISTIC_COEFFICIENT_TOLERANCE = 1.0e-6
 BINARY_CASE_THRESHOLD = 0.5

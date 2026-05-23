@@ -9,7 +9,6 @@ import jax.numpy as jnp
 
 from g.compute.common import linalg
 from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import types as regenie2_binary_types
 
 
@@ -62,12 +61,12 @@ def fit_null_logistic_coefficients(
         fitted_probability = compute_logistic_probability(linear_predictor)
         weight_vector = jnp.maximum(
             fitted_probability * (1.0 - fitted_probability),
-            regenie2_binary_score.MINIMUM_VARIANCE,
+            regenie2_binary_config.MINIMUM_VARIANCE,
         )
         score_vector = covariate_matrix.T @ (phenotype_vector - fitted_probability)
         information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
         cholesky_factor = jnp.linalg.cholesky(
-            information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * regenie2_binary_score.MINIMUM_VARIANCE
+            information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * regenie2_binary_config.MINIMUM_VARIANCE
         )
         coefficient_delta = linalg.solve_positive_definite_system(cholesky_factor, score_vector)
         updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)

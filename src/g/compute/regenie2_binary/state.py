@@ -10,7 +10,6 @@ import jax.numpy as jnp
 from g import types
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logistic
-from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
@@ -91,7 +90,7 @@ def prepare_regenie2_binary_chromosome_state(
     )
     bernoulli_variance = jnp.maximum(
         fitted_probability * (1.0 - fitted_probability),
-        regenie2_binary_score.MINIMUM_VARIANCE,
+        regenie2_binary_config.MINIMUM_VARIANCE,
     )
     square_root_weight = jnp.sqrt(bernoulli_variance)
     score_residual = state.phenotype_vector - fitted_probability
@@ -101,7 +100,7 @@ def prepare_regenie2_binary_chromosome_state(
     weighted_covariate_crossproduct = weighted_covariate_transpose @ weighted_covariate_matrix
     cholesky_factor = jnp.linalg.cholesky(
         weighted_covariate_crossproduct
-        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float32) * regenie2_binary_score.MINIMUM_VARIANCE
+        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float32) * regenie2_binary_config.MINIMUM_VARIANCE
     )
     weighted_genotype_projection_matrix = jax.lax.linalg.triangular_solve(
         cholesky_factor,

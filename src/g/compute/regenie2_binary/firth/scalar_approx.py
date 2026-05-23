@@ -16,8 +16,6 @@ from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import types as regenie2_binary_types
-
-MINIMUM_VARIANCE = 1.0e-8
 FIRTH_PSEUDO_MAXIMUM_ITERATIONS = 50
 FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS = 100
 FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS = 25
@@ -74,7 +72,7 @@ def compute_scalar_firth_components(
     score = jnp.sum(jnp.where(active_sample_mask, genotype_vector * (adjusted_response - probability_vector), 0.0))
     valid = (
         jnp.isfinite(genotype_information)
-        & (genotype_information > MINIMUM_VARIANCE)
+        & (genotype_information > regenie2_binary_config.MINIMUM_VARIANCE)
         & jnp.isfinite(penalized_deviance)
         & jnp.isfinite(score)
         & jnp.all(jnp.isfinite(probability_vector))

@@ -17,8 +17,6 @@ from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import types as regenie2_binary_types
 
-MINIMUM_VARIANCE = 1.0e-8
-
 
 def compute_logistic_probability(linear_predictor: jax.Array) -> jax.Array:
     """Compute clipped logistic probabilities."""
@@ -60,7 +58,10 @@ def compute_information_components(
     probability_vector: jax.Array,
 ) -> regenie2_binary_firth_types.InformationComponents:
     """Compute full information components for one genotype lane."""
-    weight_vector = jnp.maximum(probability_vector * (1.0 - probability_vector), MINIMUM_VARIANCE)
+    weight_vector = jnp.maximum(
+        probability_vector * (1.0 - probability_vector),
+        regenie2_binary_config.MINIMUM_VARIANCE,
+    )
     weighted_genotype_vector = weight_vector * genotype_vector
     covariate_information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
     cross_information_vector = weighted_genotype_vector @ covariate_matrix
@@ -107,7 +108,10 @@ def compute_full_model_adjusted_weight_components(
     phenotype_vector: jax.Array,
 ) -> regenie2_binary_firth_types.AdjustedWeightComponents:
     """Compute leverage-adjusted Firth weights for one full model."""
-    variance_vector = jnp.maximum(probability_vector * (1.0 - probability_vector), MINIMUM_VARIANCE)
+    variance_vector = jnp.maximum(
+        probability_vector * (1.0 - probability_vector),
+        regenie2_binary_config.MINIMUM_VARIANCE,
+    )
     projected_design_matrix = linalg.solve_from_positive_definite_matrix(
         information_matrix,
         full_design_matrix.T,
@@ -132,7 +136,10 @@ def compute_full_model_adjusted_weight_components_from_parts(
     phenotype_vector: jax.Array,
 ) -> regenie2_binary_firth_types.AdjustedWeightComponents:
     """Compute full-model Firth weights without materializing a full design matrix."""
-    variance_vector = jnp.maximum(probability_vector * (1.0 - probability_vector), MINIMUM_VARIANCE)
+    variance_vector = jnp.maximum(
+        probability_vector * (1.0 - probability_vector),
+        regenie2_binary_config.MINIMUM_VARIANCE,
+    )
     stacked_design_transpose = jnp.concatenate([covariate_matrix.T, genotype_vector[None, :]], axis=0)
     projected_design_transpose = linalg.solve_from_positive_definite_matrix(
         information_matrix,
@@ -174,7 +181,10 @@ def compute_covariate_only_adjusted_weight_components(
     phenotype_vector: jax.Array,
 ) -> regenie2_binary_firth_types.AdjustedWeightComponents:
     """Compute leverage-adjusted Firth weights for the covariate-only null model."""
-    variance_vector = jnp.maximum(probability_vector * (1.0 - probability_vector), MINIMUM_VARIANCE)
+    variance_vector = jnp.maximum(
+        probability_vector * (1.0 - probability_vector),
+        regenie2_binary_config.MINIMUM_VARIANCE,
+    )
     projected_covariate_matrix = linalg.solve_from_positive_definite_matrix(
         information_matrix,
         covariate_matrix.T,
@@ -227,7 +237,7 @@ def fit_single_variant_firth_logistic_regression(
                 information_components.information_matrix.shape[0],
                 dtype=jnp.float32,
             )
-            * MINIMUM_VARIANCE
+            * regenie2_binary_config.MINIMUM_VARIANCE
         )
         information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
         return regenie2_binary_firth_common.compute_firth_penalized_log_likelihood_from_cholesky(
@@ -259,7 +269,7 @@ def fit_single_variant_firth_logistic_regression(
                 information_components.information_matrix.shape[0],
                 dtype=jnp.float32,
             )
-            * MINIMUM_VARIANCE
+            * regenie2_binary_config.MINIMUM_VARIANCE
         )
         information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
         current_penalized_log_likelihood = (
@@ -306,14 +316,19 @@ def fit_single_variant_firth_logistic_regression(
             second_hessian = (
                 full_design_matrix.T * adjusted_weight_components.second_weight_vector
             ) @ full_design_matrix
-        second_hessian = second_hessian + jnp.eye(second_hessian.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
+        second_hessian = (
+            second_hessian
+            + jnp.eye(second_hessian.shape[0], dtype=jnp.float32) * regenie2_binary_config.MINIMUM_VARIANCE
+        )
         coefficient_step = linalg.solve_from_positive_definite_matrix(second_hessian, adjusted_score)
         current_failed = (
             current_failed | (~jnp.all(jnp.isfinite(adjusted_score))) | (~jnp.all(jnp.isfinite(coefficient_step)))
         )
         maximum_coefficient_step = jnp.max(jnp.abs(coefficient_step))
         step_scale = jnp.minimum(
-            1.0, kernel_config.firth_maximum_step_size / jnp.maximum(maximum_coefficient_step, MINIMUM_VARIANCE)
+            1.0,
+            kernel_config.firth_maximum_step_size
+            / jnp.maximum(maximum_coefficient_step, regenie2_binary_config.MINIMUM_VARIANCE),
         )
         scaled_coefficient_step = coefficient_step * step_scale
         backtracking_result = regenie2_binary_firth_line_search.run_firth_step_halving(
@@ -370,7 +385,7 @@ def fit_single_variant_firth_logistic_regression(
             initial_information_components.information_matrix.shape[0],
             dtype=jnp.float32,
         )
-        * MINIMUM_VARIANCE
+        * regenie2_binary_config.MINIMUM_VARIANCE
     )
     initial_information_cholesky_factor = jnp.linalg.cholesky(initial_information_matrix)
     initial_penalized_log_likelihood = (
@@ -418,7 +433,7 @@ def fit_single_variant_firth_logistic_regression(
             final_information_components.information_matrix.shape[0],
             dtype=jnp.float32,
         )
-        * MINIMUM_VARIANCE
+        * regenie2_binary_config.MINIMUM_VARIANCE
     )
     final_information_cholesky_factor = jnp.linalg.cholesky(final_information_matrix)
     final_penalized_log_likelihood = regenie2_binary_firth_common.compute_firth_penalized_log_likelihood_from_cholesky(
@@ -451,7 +466,8 @@ def fit_single_variant_firth_logistic_regression(
             full_design_matrix.T * final_adjusted_weight_components.second_weight_vector
         ) @ full_design_matrix
     final_second_hessian = (
-        final_second_hessian + jnp.eye(final_second_hessian.shape[0], dtype=jnp.float32) * MINIMUM_VARIANCE
+        final_second_hessian
+        + jnp.eye(final_second_hessian.shape[0], dtype=jnp.float32) * regenie2_binary_config.MINIMUM_VARIANCE
     )
     genotype_variance = linalg.solve_from_positive_definite_matrix(final_second_hessian, unit_genotype_vector)[-1]
     beta = final_state.coefficients[-1]
