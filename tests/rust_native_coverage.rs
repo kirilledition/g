@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use _core::genotype::bgen::{BgenReaderCore, CompressionType, set_bgen_decode_tile_variant_count};
@@ -14,6 +15,7 @@ use _core::sample::{
 };
 
 static NEXT_FIXTURE_ID: AtomicUsize = AtomicUsize::new(0);
+static TRUSTED_SIMD_ENVIRONMENT_LOCK: Mutex<()> = Mutex::new(());
 
 struct FixtureDirectory {
     path: PathBuf,
@@ -68,6 +70,90 @@ fn build_chunk_stats(row_count: usize) -> ChunkStats {
         is_sparse_candidate: vec![false; row_count],
         is_rare_sparse_firth_candidate: vec![false; row_count],
     }
+}
+
+fn assert_float_vectors_close(left_values: &[f32], right_values: &[f32], tolerance: f32) {
+    assert_eq!(left_values.len(), right_values.len());
+    for (left_value, right_value) in left_values.iter().zip(right_values) {
+        assert!(
+            (left_value - right_value).abs() <= tolerance,
+            "float values diverged: left={left_value}, right={right_value}, tolerance={tolerance}"
+        );
+    }
+}
+
+fn assert_trusted_chunk_stats_close(left_stats: &ChunkStats, right_stats: &ChunkStats) {
+    assert_eq!(left_stats.has_missing_values, right_stats.has_missing_values);
+    assert_eq!(left_stats.observation_count, right_stats.observation_count);
+    assert_eq!(left_stats.zero_count, right_stats.zero_count);
+    assert_eq!(left_stats.nonzero_count, right_stats.nonzero_count);
+    assert_eq!(left_stats.homozygous_reference_count, right_stats.homozygous_reference_count);
+    assert_eq!(left_stats.heterozygous_count, right_stats.heterozygous_count);
+    assert_eq!(left_stats.homozygous_alternate_count, right_stats.homozygous_alternate_count);
+    assert_eq!(left_stats.is_sparse_candidate, right_stats.is_sparse_candidate);
+    assert_eq!(left_stats.is_rare_sparse_firth_candidate, right_stats.is_rare_sparse_firth_candidate);
+    assert_float_vectors_close(&left_stats.allele_one_frequency, &right_stats.allele_one_frequency, 1.0e-6);
+    assert_float_vectors_close(&left_stats.dosage_sum, &right_stats.dosage_sum, 1.0e-3);
+    assert_float_vectors_close(&left_stats.dosage_square_sum, &right_stats.dosage_square_sum, 1.0e-3);
+    assert_float_vectors_close(&left_stats.imputed_dosage_square_sum, &right_stats.imputed_dosage_square_sum, 1.0e-3);
+    assert_float_vectors_close(&left_stats.dosage_variance_numerator, &right_stats.dosage_variance_numerator, 1.0e-3);
+    assert_float_vectors_close(&left_stats.allele_count, &right_stats.allele_count, 1.0e-3);
+    assert_float_vectors_close(&left_stats.minor_allele_count, &right_stats.minor_allele_count, 1.0e-3);
+    assert_eq!(left_stats.info_score.len(), right_stats.info_score.len());
+    for (left_info_score, right_info_score) in left_stats.info_score.iter().zip(&right_stats.info_score) {
+        match (left_info_score, right_info_score) {
+            (Some(left_value), Some(right_value)) => {
+                assert!((left_value - right_value).abs() <= 1.0e-6);
+            }
+            (None, None) => {}
+            _ => panic!("info score presence diverged"),
+        }
+    }
+}
+
+fn read_trusted_variant_major_chunk_with_simd_mode(
+    bgen_path: &Path,
+    mode_name: &str,
+    selected_variant_count: usize,
+) -> (Vec<f32>, ChunkStats) {
+    let previous_mode = std::env::var_os("G_BGEN_SIMD");
+    // Safety: this test serializes all SIMD-mode environment changes through
+    // TRUSTED_SIMD_ENVIRONMENT_LOCK before calling this helper.
+    unsafe {
+        std::env::set_var("G_BGEN_SIMD", mode_name);
+    }
+    let reader = BgenReaderCore::open(bgen_path, true).expect("trusted diploid reader should open");
+    reader.mark_trusted_no_missing_diploid_validated().expect("trusted benchmark fixture should be marked validated");
+    let all_sample_indices: Vec<i64> = (0..reader.sample_count())
+        .map(|sample_index| i64::try_from(sample_index).expect("sample index should fit i64"))
+        .collect();
+    reader.prepare_sample_selection(&all_sample_indices).expect("identity sample selection should prepare");
+    let mut output_values = vec![0.0_f32; reader.sample_count() * selected_variant_count];
+    let chunk_stats = reader
+        .read_preprocessed_variant_major_dosage_f32_into_address_prepared(
+            0,
+            selected_variant_count,
+            output_values.as_mut_ptr() as usize,
+            output_values.len(),
+        )
+        .expect("trusted variant-major preprocessed dosages should decode");
+    match previous_mode {
+        Some(value) => {
+            // Safety: this restores the process environment while the same test
+            // lock is held.
+            unsafe {
+                std::env::set_var("G_BGEN_SIMD", value);
+            }
+        }
+        None => {
+            // Safety: this restores the process environment while the same test
+            // lock is held.
+            unsafe {
+                std::env::remove_var("G_BGEN_SIMD");
+            }
+        }
+    }
+    (output_values, chunk_stats)
 }
 
 fn build_metadata(chunk_identifier: i64, row_count: usize) -> VariantMetadataColumns {
@@ -294,6 +380,41 @@ fn bgen_reader_exercises_metadata_dosage_preprocessing_and_profile_paths() {
             )
             .expect("trusted variant-major preprocessed dosages should decode");
         assert_eq!(trusted_stats.allele_one_frequency.len(), 2);
+    }
+}
+
+#[test]
+fn trusted_bgen_identity_forced_simd_modes_match_lookup_chunk() {
+    let trusted_diploid_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/1kg_chr22_full.bgen");
+    if !trusted_diploid_path.exists() {
+        return;
+    }
+
+    let _environment_lock = TRUSTED_SIMD_ENVIRONMENT_LOCK.lock().expect("trusted SIMD environment lock should acquire");
+    let selected_variant_count = 4;
+    let (lookup_output, lookup_stats) =
+        read_trusted_variant_major_chunk_with_simd_mode(&trusted_diploid_path, "lookup", selected_variant_count);
+    let (raw_scalar_output, raw_scalar_stats) =
+        read_trusted_variant_major_chunk_with_simd_mode(&trusted_diploid_path, "raw_scalar", selected_variant_count);
+    let (auto_output, auto_stats) =
+        read_trusted_variant_major_chunk_with_simd_mode(&trusted_diploid_path, "auto", selected_variant_count);
+
+    assert_float_vectors_close(&lookup_output, &raw_scalar_output, 1.0e-6);
+    assert_float_vectors_close(&lookup_output, &auto_output, 1.0e-6);
+    assert_trusted_chunk_stats_close(&lookup_stats, &raw_scalar_stats);
+    assert_trusted_chunk_stats_close(&lookup_stats, &auto_stats);
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        if std::arch::is_x86_feature_detected!("avx2") {
+            let (raw_avx2_output, raw_avx2_stats) = read_trusted_variant_major_chunk_with_simd_mode(
+                &trusted_diploid_path,
+                "raw_avx2",
+                selected_variant_count,
+            );
+            assert_float_vectors_close(&lookup_output, &raw_avx2_output, 1.0e-6);
+            assert_trusted_chunk_stats_close(&lookup_stats, &raw_avx2_stats);
+        }
     }
 }
 
