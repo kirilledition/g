@@ -5,16 +5,16 @@ from __future__ import annotations
 import jax
 
 from g.compute.common import genotype
+from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
-from g.compute.regenie2_linear import types as regenie2_linear_types
 
 
 @jax.jit
 def compute_regenie2_linear_chunk_from_chromosome_state(
-    chromosome_state: regenie2_linear_types.Regenie2LinearChromosomeState,
+    chromosome_state: regenie2_linear_state.Regenie2LinearChromosomeState,
     genotype_matrix: jax.Array,
-) -> regenie2_linear_types.Regenie2LinearChunkResult:
+) -> regenie2_linear_result.Regenie2LinearChunkResult:
     """Compute REGENIE step 2 linear association using chromosome-cached state."""
     multi_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
         whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
@@ -31,9 +31,9 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
 
 @jax.jit
 def compute_regenie2_multi_linear_chunk_from_chromosome_state(
-    chromosome_state: regenie2_linear_types.Regenie2MultiLinearChromosomeState,
+    chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
     genotype_matrix: jax.Array,
-) -> regenie2_linear_types.Regenie2MultiLinearChunkResult:
+) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 association."""
     return regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
         whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
@@ -47,9 +47,9 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
 
 @jax.jit
 def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
-    chromosome_state: regenie2_linear_types.Regenie2LinearChromosomeState,
+    chromosome_state: regenie2_linear_state.Regenie2LinearChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-) -> regenie2_linear_types.Regenie2LinearChunkResult:
+) -> regenie2_linear_result.Regenie2LinearChunkResult:
     """Compute quantitative REGENIE step 2 association from variant-major genotypes."""
     multi_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
         whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
@@ -66,9 +66,9 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
 
 @jax.jit
 def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
-    chromosome_state: regenie2_linear_types.Regenie2MultiLinearChromosomeState,
+    chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-) -> regenie2_linear_types.Regenie2MultiLinearChunkResult:
+) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 from variant-major genotypes."""
     return regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
         whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
@@ -81,10 +81,10 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
 
 
 def compute_regenie2_linear_chunk(
-    state: regenie2_linear_types.Regenie2LinearState,
+    state: regenie2_linear_state.Regenie2LinearState,
     genotype_matrix: jax.Array,
     loco_predictions: jax.Array,
-) -> regenie2_linear_types.Regenie2LinearChunkResult:
+) -> regenie2_linear_result.Regenie2LinearChunkResult:
     """Compute REGENIE step 2 linear association for a genotype chunk.
 
     This implements the REGENIE step 2 score test for quantitative traits:

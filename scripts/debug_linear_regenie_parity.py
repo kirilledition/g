@@ -19,7 +19,6 @@ import numpy.typing as npt
 from g import _core
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import state as regenie2_linear_state
-from g.compute.regenie2_linear import types as regenie2_linear_types
 from g.engine import native_dispatch
 
 
@@ -164,7 +163,7 @@ def build_selector(arguments: argparse.Namespace) -> VariantSelector:
 
 
 def compute_linear_debug_arrays(
-    chromosome_state: regenie2_linear_types.Regenie2LinearChromosomeState,
+    chromosome_state: regenie2_linear_state.Regenie2LinearChromosomeState,
     genotype_matrix_by_variant: jax.Array,
 ) -> LinearDebugArrays:
     """Compute quantitative score-test internal arrays for selected variants."""
@@ -219,7 +218,7 @@ def compute_linear_debug_arrays(
 
 def build_debug_records_for_chunk(
     *,
-    chromosome_state: regenie2_linear_types.Regenie2LinearChromosomeState,
+    chromosome_state: regenie2_linear_state.Regenie2LinearChromosomeState,
     metadata: _core.VariantMetadata,
     chunk_stats: _core.ChunkStats,
     genotype_matrix_by_variant: npt.NDArray[np.float32],
@@ -291,7 +290,7 @@ class LinearVariantDebugCaptureCallback:
             self.run_input.covariate_matrix,
             self.run_input.phenotype_vector,
         )
-        self.chromosome_states: dict[str, regenie2_linear_types.Regenie2LinearChromosomeState] = {}
+        self.chromosome_states: dict[str, regenie2_linear_state.Regenie2LinearChromosomeState] = {}
         self.records: list[VariantDebugRecord] = []
         self.free_buffers: list[npt.NDArray[np.float32]] = []
 
@@ -330,7 +329,7 @@ class LinearVariantDebugCaptureCallback:
             )
         self.free_buffers.append(genotype_matrix_by_variant)
 
-    def prepare_chromosome_state(self, chromosome: str) -> regenie2_linear_types.Regenie2LinearChromosomeState:
+    def prepare_chromosome_state(self, chromosome: str) -> regenie2_linear_state.Regenie2LinearChromosomeState:
         """Build or reuse the quantitative chromosome state for one chromosome."""
         if chromosome not in self.chromosome_states:
             loco_predictions = jnp.asarray(

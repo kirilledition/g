@@ -16,8 +16,8 @@ from g import types
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import state as regenie2_linear_state
-from g.compute.regenie2_linear import types as regenie2_linear_types
 from g.engine import callbacks, native_dispatch, regenie2_pipeline, shutdown, timing
 from g.io import output, source
 
@@ -311,7 +311,7 @@ def test_native_bgen_callback_runner_rejects_nonpositive_staging_depth() -> None
 
 def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -> None:
     writer_session = FakeWriterSession()
-    result = regenie2_linear_types.Regenie2LinearChunkResult(
+    result = regenie2_linear_result.Regenie2LinearChunkResult(
         beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
         chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
@@ -348,7 +348,7 @@ def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -
 
 def test_linear_callback_does_not_block_chunk_compute_without_timing() -> None:
     writer_session = FakeWriterSession()
-    result = regenie2_linear_types.Regenie2LinearChunkResult(
+    result = regenie2_linear_result.Regenie2LinearChunkResult(
         beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
         chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
@@ -362,7 +362,7 @@ def test_linear_callback_does_not_block_chunk_compute_without_timing() -> None:
     )
     callback.current_chromosome = "22"
     callback.current_chromosome_state = typing.cast(
-        "regenie2_linear_types.Regenie2LinearChromosomeState",
+        "regenie2_linear_state.Regenie2LinearChromosomeState",
         "chromosome-state",
     )
 
@@ -384,7 +384,7 @@ def test_linear_callback_does_not_block_chunk_compute_without_timing() -> None:
 
 def test_linear_callback_blocks_chunk_compute_with_timing() -> None:
     writer_session = FakeWriterSession()
-    result = regenie2_linear_types.Regenie2LinearChunkResult(
+    result = regenie2_linear_result.Regenie2LinearChunkResult(
         beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
         chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
@@ -400,7 +400,7 @@ def test_linear_callback_blocks_chunk_compute_with_timing() -> None:
     )
     callback.current_chromosome = "22"
     callback.current_chromosome_state = typing.cast(
-        "regenie2_linear_types.Regenie2LinearChromosomeState",
+        "regenie2_linear_state.Regenie2LinearChromosomeState",
         "chromosome-state",
     )
 
@@ -842,7 +842,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
         patch.object(
             regenie2_linear_state,
             "prepare_regenie2_linear_state",
-            return_value=typing.cast("regenie2_linear_types.Regenie2LinearState", "state"),
+            return_value=typing.cast("regenie2_linear_state.Regenie2LinearState", "state"),
         ),
     ):
         final_path = regenie2_pipeline.run_regenie2_linear_bgen_pipeline(
@@ -1178,7 +1178,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
         patch.object(
             regenie2_linear_state,
             "prepare_regenie2_multi_linear_state",
-            return_value=typing.cast("regenie2_linear_types.Regenie2MultiLinearState", "state"),
+            return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
         ),
     ):
         final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(

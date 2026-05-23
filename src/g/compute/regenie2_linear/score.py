@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 
 from g.compute.common import genotype, pvalue
-from g.compute.regenie2_linear import types as regenie2_linear_types
+from g.compute.regenie2_linear import result as regenie2_linear_result
 
 
 def compute_regenie2_linear_chunk_trait_major_variant_major(
@@ -17,7 +17,7 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
     adjusted_residual_sum_squares: jax.Array,
     degrees_of_freedom: jax.Array,
     genotype_matrix_by_variant: jax.Array,
-) -> regenie2_linear_types.Regenie2MultiLinearChunkResult:
+) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
     """Compute linear score-test statistics for trait-major residuals and variant-major genotypes."""
     normalized_genotype_matrix_by_variant = genotype.normalize_high_frequency_diploid_genotypes_variant_major(
         genotype_matrix_by_variant
@@ -70,7 +70,7 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
         jnp.nan,
     )
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    return regenie2_linear_types.Regenie2MultiLinearChunkResult(
+    return regenie2_linear_result.Regenie2MultiLinearChunkResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
@@ -80,10 +80,10 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
 
 
 def squeeze_single_trait_linear_result(
-    result: regenie2_linear_types.Regenie2MultiLinearChunkResult,
-) -> regenie2_linear_types.Regenie2LinearChunkResult:
+    result: regenie2_linear_result.Regenie2MultiLinearChunkResult,
+) -> regenie2_linear_result.Regenie2LinearChunkResult:
     """Remove the trait axis from a single-trait linear result."""
-    return regenie2_linear_types.Regenie2LinearChunkResult(
+    return regenie2_linear_result.Regenie2LinearChunkResult(
         beta=result.beta[0],
         standard_error=result.standard_error[0],
         chi_squared=result.chi_squared[0],

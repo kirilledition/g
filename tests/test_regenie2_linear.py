@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import typing
 from dataclasses import dataclass
 
 import jax
@@ -14,9 +13,6 @@ import numpy.typing as npt
 from g.compute.common import genotype, linalg, pvalue
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import state as regenie2_linear_state
-
-if typing.TYPE_CHECKING:
-    from g.compute.regenie2_linear import types as regenie2_linear_types
 
 
 @dataclass(frozen=True)
@@ -55,7 +51,7 @@ class LinearFormulaResult:
 
 
 def compute_score_reference_chunk(
-    state: regenie2_linear_types.Regenie2LinearState,
+    state: regenie2_linear_state.Regenie2LinearState,
     genotype_matrix: jax.Array,
     loco_predictions: jax.Array,
 ) -> ReferenceRegenie2LinearChunkResult:
