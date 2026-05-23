@@ -101,6 +101,25 @@ def test_regenie_command_dispatches_config_api() -> None:
                 "--g-log-file",
                 "logs/g.jsonl",
                 "--no-g-log-stderr",
+                "--g-telemetry",
+                "profile",
+                "--g-log-dir",
+                "logs",
+                "--g-progress-interval-seconds",
+                "2",
+                "--g-progress-interval-chunks",
+                "3",
+                "--g-profile-summary-json",
+                "logs/profile.summary.json",
+                "--g-trace-file",
+                "logs/trace.jsonl",
+                "--g-trace-filter",
+                "g=trace",
+                "--g-log-queue-size",
+                "1024",
+                "--no-g-log-lossy",
+                "--g-include-source-location",
+                "--g-include-span-events",
             ],
         )
 
@@ -113,6 +132,17 @@ def test_regenie_command_dispatches_config_api() -> None:
     assert regenie_config.g_diagnostics.log_filter == "g=info"
     assert regenie_config.g_diagnostics.log_file == Path("logs/g.jsonl")
     assert regenie_config.g_diagnostics.log_stderr is False
+    assert regenie_config.g_diagnostics.telemetry == types.TelemetryMode.PROFILE
+    assert regenie_config.g_diagnostics.log_dir == Path("logs")
+    assert regenie_config.g_diagnostics.progress_interval_seconds == 2
+    assert regenie_config.g_diagnostics.progress_interval_chunks == 3
+    assert regenie_config.g_diagnostics.profile_summary_json == Path("logs/profile.summary.json")
+    assert regenie_config.g_diagnostics.trace_file == Path("logs/trace.jsonl")
+    assert regenie_config.g_diagnostics.trace_filter == "g=trace"
+    assert regenie_config.g_diagnostics.log_queue_size == 1024
+    assert regenie_config.g_diagnostics.log_lossy is False
+    assert regenie_config.g_diagnostics.include_source_location is True
+    assert regenie_config.g_diagnostics.include_span_events is True
     assert "final.parquet" in result.output
 
 

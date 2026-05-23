@@ -28,6 +28,10 @@ DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT = 64
 DEFAULT_JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = -1
 DEFAULT_JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
 DEFAULT_LOG_FILTER = "info"
+DEFAULT_TRACE_FILTER = "g.native.bgen=trace,g.output=debug"
+DEFAULT_PROGRESS_INTERVAL_SECONDS = 5.0
+DEFAULT_PROGRESS_INTERVAL_CHUNKS = 10
+DEFAULT_LOG_QUEUE_SIZE = 65536
 DEFAULT_CONFIG_RESOURCE = "config.default.toml"
 QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "spa", "pThresh")
 
@@ -130,10 +134,21 @@ class GOutputConfig:
 class GDiagnosticsConfig:
     """Engine diagnostics settings."""
 
+    telemetry: types.TelemetryMode = types.TelemetryMode.PROGRESS
+    log_dir: Path | None = None
     stage_timings_json: Path | None = None
     log_filter: str = DEFAULT_LOG_FILTER
     log_file: Path | None = None
     log_stderr: bool = True
+    progress_interval_seconds: float = DEFAULT_PROGRESS_INTERVAL_SECONDS
+    progress_interval_chunks: int = DEFAULT_PROGRESS_INTERVAL_CHUNKS
+    profile_summary_json: Path | None = None
+    trace_file: Path | None = None
+    trace_filter: str = DEFAULT_TRACE_FILTER
+    log_queue_size: int = DEFAULT_LOG_QUEUE_SIZE
+    log_lossy: bool = True
+    include_source_location: bool = False
+    include_span_events: bool = False
 
 
 @dataclass(frozen=True)
@@ -400,10 +415,27 @@ def from_normalized_options(
             finalize_parquet=bool_or_false(normalized_options.get("g-finalize-parquet")),
         ),
         g_diagnostics=GDiagnosticsConfig(
+            telemetry=types.TelemetryMode(
+                str(normalized_options.get("g-telemetry", types.TelemetryMode.PROGRESS.value))
+            ),
+            log_dir=path_or_none(normalized_options.get("g-log-dir")),
             stage_timings_json=path_or_none(normalized_options.get("g-stage-timings-json")),
             log_filter=optional_string(normalized_options.get("g-log-filter")) or DEFAULT_LOG_FILTER,
             log_file=path_or_none(normalized_options.get("g-log-file")),
             log_stderr=bool_or_default(normalized_options.get("g-log-stderr"), default=True),
+            progress_interval_seconds=float(
+                normalized_options.get("g-progress-interval-seconds", DEFAULT_PROGRESS_INTERVAL_SECONDS)
+            ),
+            progress_interval_chunks=int(
+                normalized_options.get("g-progress-interval-chunks", DEFAULT_PROGRESS_INTERVAL_CHUNKS)
+            ),
+            profile_summary_json=path_or_none(normalized_options.get("g-profile-summary-json")),
+            trace_file=path_or_none(normalized_options.get("g-trace-file")),
+            trace_filter=optional_string(normalized_options.get("g-trace-filter")) or DEFAULT_TRACE_FILTER,
+            log_queue_size=int(normalized_options.get("g-log-queue-size", DEFAULT_LOG_QUEUE_SIZE)),
+            log_lossy=bool_or_default(normalized_options.get("g-log-lossy"), default=True),
+            include_source_location=bool_or_false(normalized_options.get("g-include-source-location")),
+            include_span_events=bool_or_false(normalized_options.get("g-include-span-events")),
         ),
         explicit_options=explicit_options,
     )
@@ -488,10 +520,21 @@ def flatten_g_section(raw_g_options: typing.Mapping[str, typing.Any]) -> dict[st
         "finalize-parquet": "g-finalize-parquet",
     }
     g_diagnostics_aliases = {
+        "telemetry": "g-telemetry",
+        "log-dir": "g-log-dir",
         "stage-timings-json": "g-stage-timings-json",
         "log-filter": "g-log-filter",
         "log-file": "g-log-file",
         "log-stderr": "g-log-stderr",
+        "progress-interval-seconds": "g-progress-interval-seconds",
+        "progress-interval-chunks": "g-progress-interval-chunks",
+        "profile-summary-json": "g-profile-summary-json",
+        "trace-file": "g-trace-file",
+        "trace-filter": "g-trace-filter",
+        "log-queue-size": "g-log-queue-size",
+        "log-lossy": "g-log-lossy",
+        "include-source-location": "g-include-source-location",
+        "include-span-events": "g-include-span-events",
     }
     for section_name, section_options in raw_g_options.items():
         if not isinstance(section_options, dict):
@@ -578,6 +621,10 @@ def normalize_option_name(option_name: str) -> str:
         "g_jax_transfer_guard": "g-jax-transfer-guard",
         "g_output_chunks_per_arrow_file": "g-output-chunks-per-arrow-file",
         "g_output_arrow_compression": "g-output-arrow-compression",
+        "g_telemetry": "g-telemetry",
+        "telemetry": "g-telemetry",
+        "g_log_dir": "g-log-dir",
+        "log_dir": "g-log-dir",
         "g_stage_timings_json": "g-stage-timings-json",
         "g_log_filter": "g-log-filter",
         "log_filter": "g-log-filter",
@@ -585,6 +632,24 @@ def normalize_option_name(option_name: str) -> str:
         "log_file": "g-log-file",
         "g_log_stderr": "g-log-stderr",
         "log_stderr": "g-log-stderr",
+        "g_progress_interval_seconds": "g-progress-interval-seconds",
+        "progress_interval_seconds": "g-progress-interval-seconds",
+        "g_progress_interval_chunks": "g-progress-interval-chunks",
+        "progress_interval_chunks": "g-progress-interval-chunks",
+        "g_profile_summary_json": "g-profile-summary-json",
+        "profile_summary_json": "g-profile-summary-json",
+        "g_trace_file": "g-trace-file",
+        "trace_file": "g-trace-file",
+        "g_trace_filter": "g-trace-filter",
+        "trace_filter": "g-trace-filter",
+        "g_log_queue_size": "g-log-queue-size",
+        "log_queue_size": "g-log-queue-size",
+        "g_log_lossy": "g-log-lossy",
+        "log_lossy": "g-log-lossy",
+        "g_include_source_location": "g-include-source-location",
+        "include_source_location": "g-include-source-location",
+        "g_include_span_events": "g-include-span-events",
+        "include_span_events": "g-include-span-events",
         "trusted_no_missing_diploid": "g-trusted-no-missing-diploid",
         "g_trusted_no_missing_diploid": "g-trusted-no-missing-diploid",
     }
@@ -720,6 +785,12 @@ def validate_config(config: RegenieConfig) -> None:
     if config.g_output.chunks_per_arrow_file <= 0:
         message = "--g-output-chunks-per-arrow-file must be positive."
         raise ValueError(message)
+    validate_positive_float(
+        "--g-progress-interval-seconds",
+        config.g_diagnostics.progress_interval_seconds,
+    )
+    validate_positive_integer("--g-progress-interval-chunks", config.g_diagnostics.progress_interval_chunks)
+    validate_positive_integer("--g-log-queue-size", config.g_diagnostics.log_queue_size)
     if not (0.0 < config.binary.p_threshold < 1.0):
         message = "--pThresh must be in (0, 1)."
         raise ValueError(message)
@@ -911,10 +982,21 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             "finalize-parquet": config.g_output.finalize_parquet,
         },
         "g.diagnostics": {
+            "telemetry": config.g_diagnostics.telemetry.value,
+            **optional_mapping("log-dir", config.g_diagnostics.log_dir),
             **optional_mapping("stage-timings-json", config.g_diagnostics.stage_timings_json),
             "log-filter": config.g_diagnostics.log_filter,
             **optional_mapping("log-file", config.g_diagnostics.log_file),
             "log-stderr": config.g_diagnostics.log_stderr,
+            "progress-interval-seconds": config.g_diagnostics.progress_interval_seconds,
+            "progress-interval-chunks": config.g_diagnostics.progress_interval_chunks,
+            **optional_mapping("profile-summary-json", config.g_diagnostics.profile_summary_json),
+            **optional_mapping("trace-file", config.g_diagnostics.trace_file),
+            "trace-filter": config.g_diagnostics.trace_filter,
+            "log-queue-size": config.g_diagnostics.log_queue_size,
+            "log-lossy": config.g_diagnostics.log_lossy,
+            "include-source-location": config.g_diagnostics.include_source_location,
+            "include-span-events": config.g_diagnostics.include_span_events,
         },
     }
 

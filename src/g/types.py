@@ -48,6 +48,15 @@ class ArrowCompression(enum.StrEnum):
     NONE = "none"
 
 
+class TelemetryMode(enum.StrEnum):
+    """Run telemetry detail level."""
+
+    OFF = "off"
+    PROGRESS = "progress"
+    PROFILE = "profile"
+    TRACE = "trace"
+
+
 class TrustedBgenValidationMode(enum.StrEnum):
     """Trusted BGEN validation behavior."""
 

@@ -24,7 +24,7 @@ from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary import variant_major as regenie2_binary_variant_major
 from g.compute.regenie2_linear import state as regenie2_linear_state
 from g.compute.regenie2_linear import types as regenie2_linear_types
-from g.engine import timing
+from g.engine import telemetry, timing
 
 RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 60.0
 
@@ -307,6 +307,7 @@ class NativeBgenCallbackRunner:
         worker_name: str,
         staging_depth: int = 1,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
+        telemetry_session: telemetry.TelemetrySession | None = None,
     ) -> None:
         """Initialize shared native callback state."""
         if staging_depth <= 0:
@@ -314,6 +315,8 @@ class NativeBgenCallbackRunner:
             raise ValueError(message)
         self.processed_chunk_count = 0
         self.stage_timing_recorder = stage_timing_recorder
+        self.telemetry_session = telemetry_session
+        self.current_progress_chromosome: str | None = None
         self.dosage_queue_depth = staging_depth
         self.result_queue_depth = staging_depth
         self.result_in_flight_limit = self.result_queue_depth + 1
@@ -406,6 +409,7 @@ class NativeBgenCallbackRunner:
                         chunk_stats=work_item.chunk_stats,
                     )
                     self.processed_chunk_count += 1
+                    self.record_progress(work_item.metadata)
                     continue
                 if isinstance(work_item, PreprocessedDosageChunkWorkItem):
                     self.compute_preprocessed_chunk(
@@ -414,9 +418,39 @@ class NativeBgenCallbackRunner:
                         chunk_stats=work_item.chunk_stats,
                     )
                     self.processed_chunk_count += 1
+                    self.record_progress(work_item.metadata)
                     continue
         except Exception as error:  # noqa: BLE001
             self.worker_error = error
+
+    def record_progress(self, metadata: typing.Any) -> None:
+        """Record throttled progress after one chunk is processed."""
+        if self.telemetry_session is None:
+            return
+        chromosome = get_metadata_chromosome(metadata)
+        if chromosome != self.current_progress_chromosome:
+            if self.current_progress_chromosome is not None:
+                self.telemetry_session.log_event(
+                    "chromosome_completed",
+                    chromosome=self.current_progress_chromosome,
+                    processed_chunk_count=self.processed_chunk_count - 1,
+                )
+            self.current_progress_chromosome = chromosome
+            self.telemetry_session.log_event(
+                "chromosome_started",
+                chromosome=chromosome,
+                processed_chunk_count=self.processed_chunk_count,
+            )
+        variant_start_index = int(metadata.variant_start_index)
+        variant_stop_index = int(metadata.variant_stop_index)
+        self.telemetry_session.log_progress(
+            processed_chunk_count=self.processed_chunk_count,
+            chromosome=chromosome,
+            chunk_identifier=variant_start_index,
+            variant_start_index=variant_start_index,
+            variant_stop_index=variant_stop_index,
+            variant_count=variant_stop_index - variant_start_index,
+        )
 
     def consume_result_write_items(self) -> None:
         """Materialize computed JAX results and write them in order."""
@@ -514,6 +548,13 @@ class NativeBgenCallbackRunner:
         self.stop_result_worker()
         self.join_result_worker()
         self.raise_worker_error_if_present()
+        if self.telemetry_session is not None and self.current_progress_chromosome is not None:
+            self.telemetry_session.log_event(
+                "chromosome_completed",
+                chromosome=self.current_progress_chromosome,
+                processed_chunk_count=self.processed_chunk_count,
+            )
+            self.current_progress_chromosome = None
 
     def abort(self) -> None:
         """Stop the worker after an upstream failure."""
@@ -618,6 +659,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         writer_session: typing.Any,
         staging_depth: int = 1,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
+        telemetry_session: telemetry.TelemetrySession | None = None,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -633,6 +675,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             worker_name="regenie2-linear-callback",
             staging_depth=staging_depth,
             stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
         )
 
     def compute_preprocessed_chunk(
@@ -802,6 +845,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         committed_chunk_identifier_sets: tuple[set[int], ...],
         staging_depth: int = 1,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
+        telemetry_session: telemetry.TelemetrySession | None = None,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -818,6 +862,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             worker_name="regenie2-multi-linear-callback",
             staging_depth=staging_depth,
             stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
         )
 
     def consume_result_write_items(self) -> None:
@@ -978,6 +1023,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
         staging_depth: int = 1,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
+        telemetry_session: telemetry.TelemetrySession | None = None,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -995,6 +1041,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             worker_name="regenie2-binary-callback",
             staging_depth=staging_depth,
             stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
         )
 
     def compute_preprocessed_chunk(
@@ -1184,6 +1231,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
         staging_depth: int = 1,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
+        telemetry_session: telemetry.TelemetrySession | None = None,
     ) -> None:
         """Initialize the callback state."""
         self.run_input = run_input
@@ -1202,6 +1250,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             worker_name="regenie2-multi-binary-callback",
             staging_depth=staging_depth,
             stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
         )
 
     def consume_result_write_items(self) -> None:

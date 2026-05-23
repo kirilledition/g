@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 import g
+import g.engine.telemetry as telemetry_module
 from g import api, execution_plan, runner, types
 from g.interface import config
 from g.io import output
@@ -309,6 +310,12 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
         log_filter="g=debug",
         log_file=tmp_path / "logs" / "g.jsonl",
         log_stderr=False,
+        log_queue_size=1024,
+        log_lossy=False,
+        include_source_location=True,
+        include_span_events=True,
+        trace_file=tmp_path / "logs" / "trace.jsonl",
+        trace_filter="g=trace",
     )
 
     with patch("g.runner.importlib.import_module", return_value=FakeCoreModule()) as mock_import_module:
@@ -320,8 +327,41 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
             "log_filter": "g=debug",
             "log_file": str(tmp_path / "logs" / "g.jsonl"),
             "log_stderr": False,
+            "log_queue_size": 1024,
+            "log_lossy": False,
+            "include_source_location": True,
+            "include_span_events": True,
+            "trace_file": str(tmp_path / "logs" / "trace.jsonl"),
+            "trace_filter": "g=trace",
         }
     ]
+
+
+def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path: Path) -> None:
+    class FakeCoreModule:
+        def initialize_logging(self, **kwargs: object) -> bool:
+            del kwargs
+            return False
+
+    configured_policy = runner.LoggingRuntimePolicy(
+        log_filter="info",
+        log_file=tmp_path / "logs" / "first.jsonl",
+        log_stderr=True,
+        log_queue_size=config.DEFAULT_LOG_QUEUE_SIZE,
+        log_lossy=True,
+        include_source_location=False,
+        include_span_events=False,
+        trace_file=None,
+        trace_filter=config.DEFAULT_TRACE_FILTER,
+    )
+    diagnostics_config = config.GDiagnosticsConfig(log_file=tmp_path / "logs" / "second.jsonl")
+
+    with (
+        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", configured_policy),
+        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
+        pytest.raises(RuntimeError, match="Logging is process-global"),
+    ):
+        runner.initialize_logging(diagnostics_config)
 
 
 def test_configure_runtime_sets_native_knobs_and_threads() -> None:
@@ -412,6 +452,8 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
             return FakeJaxSetupModule()
         if module_name == "g.engine.timing":
             return FakeTimingModule()
+        if module_name == "g.engine.telemetry":
+            return telemetry_module
         raise AssertionError(f"Unexpected import: {module_name}")
 
     first_config = config.RegenieConfig.from_options(

@@ -77,9 +77,13 @@ class StageTimingRecorder:
             )
 
 
-def build_stage_timing_recorder(stage_timing_path: pathlib.Path | None = None) -> StageTimingRecorder | None:
+def build_stage_timing_recorder(
+    stage_timing_path: pathlib.Path | None = None,
+    *,
+    force: bool = False,
+) -> StageTimingRecorder | None:
     """Create a diagnostic stage recorder when requested."""
-    if stage_timing_path is None:
+    if stage_timing_path is None and not force:
         return None
     return StageTimingRecorder()
 
@@ -104,6 +108,60 @@ def write_stage_timing_snapshot(
     }
     stage_timing_path.parent.mkdir(parents=True, exist_ok=True)
     stage_timing_path.write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
+
+
+def write_profile_summary(
+    stage_timing_recorder: StageTimingRecorder | None,
+    profile_summary_path: pathlib.Path | None = None,
+    *,
+    run_id: str | None = None,
+) -> None:
+    """Persist aggregate profile summary metrics when requested."""
+    if stage_timing_recorder is None:
+        return
+    if profile_summary_path is None:
+        return
+    snapshot = stage_timing_recorder.snapshot()
+    payload = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "stage_totals_seconds": snapshot.stage_totals_seconds,
+        "stage_counts": snapshot.stage_counts,
+        "native_bgen_profile": snapshot.native_bgen_profile,
+        "derived_metrics": build_derived_metrics(snapshot),
+        "binary_chunk_summary": build_binary_chunk_summary(snapshot.binary_chunk_diagnostics),
+        "null_logistic_summary": {
+            "chromosome_count": len(snapshot.null_logistic_diagnostics),
+        },
+    }
+    profile_summary_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_summary_path.write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
+
+
+def build_binary_chunk_summary(binary_chunk_diagnostics: tuple[dict[str, int | float], ...]) -> dict[str, int | float]:
+    """Build aggregate binary chunk diagnostic counters."""
+    if not binary_chunk_diagnostics:
+        return {"chunk_count": 0}
+    summary: dict[str, int | float] = {"chunk_count": len(binary_chunk_diagnostics)}
+    sum_keys = (
+        "score_test_candidate_count",
+        "firth_candidate_count",
+        "firth_converged_count",
+        "firth_failed_count",
+        "firth_numerical_failure_count",
+        "firth_max_iteration_failure_count",
+        "firth_invalid_statistic_failure_count",
+        "firth_step_halving_failure_count",
+    )
+    for key in sum_keys:
+        summary[f"{key}_total"] = sum(float(diagnostics.get(key, 0.0)) for diagnostics in binary_chunk_diagnostics)
+    summary["firth_iteration_min"] = min(
+        float(diagnostics.get("firth_iteration_min", 0.0)) for diagnostics in binary_chunk_diagnostics
+    )
+    summary["firth_iteration_max"] = max(
+        float(diagnostics.get("firth_iteration_max", 0.0)) for diagnostics in binary_chunk_diagnostics
+    )
+    return summary
 
 
 def build_derived_metrics(snapshot: StageTimingSnapshot) -> dict[str, float]:

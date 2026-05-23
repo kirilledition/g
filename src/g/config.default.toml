@@ -46,5 +46,13 @@ resume-mode = "fast"
 finalize-parquet = false
 
 [g.diagnostics]
+telemetry = "progress"
 log-filter = "info"
 log-stderr = true
+progress-interval-seconds = 5
+progress-interval-chunks = 10
+trace-filter = "g.native.bgen=trace,g.output=debug"
+log-queue-size = 65536
+log-lossy = true
+include-source-location = false
+include-span-events = false

@@ -38,6 +38,7 @@ def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> 
 
 def test_build_stage_timing_recorder_is_opt_in(tmp_path: Path) -> None:
     assert timing.build_stage_timing_recorder(None) is None
+    assert isinstance(timing.build_stage_timing_recorder(None, force=True), timing.StageTimingRecorder)
     assert isinstance(timing.build_stage_timing_recorder(tmp_path / "timings.json"), timing.StageTimingRecorder)
 
 
@@ -74,6 +75,30 @@ def test_write_stage_timing_snapshot_persists_payload_and_derived_metrics(tmp_pa
         "jax_variant_compute_per_second": 8.0,
         "native_dosage_values_per_second": 40.0,
     }
+
+
+def test_write_profile_summary_persists_aggregate_payload(tmp_path: Path) -> None:
+    output_path = tmp_path / "logs" / "profile.summary.json"
+    recorder = timing.StageTimingRecorder()
+    recorder.add_stage_duration("native_engine_delivery", 2.0)
+    recorder.set_native_bgen_profile({"variant_decode_count": 8})
+    recorder.add_binary_chunk_diagnostics(
+        {
+            "score_test_candidate_count": 2,
+            "firth_candidate_count": 1,
+            "firth_iteration_min": 4,
+            "firth_iteration_max": 8,
+        }
+    )
+
+    timing.write_profile_summary(recorder, output_path, run_id="run-1")
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 1
+    assert payload["run_id"] == "run-1"
+    assert payload["binary_chunk_summary"]["chunk_count"] == 1
+    assert payload["binary_chunk_summary"]["score_test_candidate_count_total"] == 2
+    assert payload["binary_chunk_summary"]["firth_iteration_max"] == 8
 
 
 def test_build_derived_metrics_omits_zero_denominator_values() -> None:

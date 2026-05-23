@@ -13,7 +13,7 @@ import g.compute.regenie2_linear as regenie2_linear
 from g import _core, types
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import types as regenie2_binary_types
-from g.engine import callbacks, native_dispatch, preflight, shutdown, timing
+from g.engine import callbacks, native_dispatch, preflight, shutdown, telemetry, timing
 from g.io import output, source
 
 REGENIE_COMPUTE_PATCH_TARGETS = (regenie2_binary, regenie2_linear)
@@ -47,6 +47,7 @@ def run_regenie2_linear_bgen_pipeline(
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
+    telemetry_session: telemetry.TelemetrySession | None = None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
@@ -68,6 +69,14 @@ def run_regenie2_linear_bgen_pipeline(
         engine.sample_count,
         engine.variant_count,
     )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "bgen_engine_opened",
+            association_mode=types.AssociationMode.REGENIE2_LINEAR.value,
+            phenotype=phenotype_name,
+            sample_count=int(engine.sample_count),
+            variant_count=int(engine.variant_count),
+        )
     alignment_start_time = time.perf_counter()
     logger.debug("Loading aligned native sample, phenotype, and covariate inputs for linear pipeline.")
     run_input = native_dispatch.load_native_bgen_run_input(
@@ -86,6 +95,14 @@ def run_regenie2_linear_bgen_pipeline(
         int(run_input.sample_indices.shape[0]),
         len(run_input.native_aligned_sample_data.covariate_names),
     )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "sample_alignment_completed",
+            association_mode=types.AssociationMode.REGENIE2_LINEAR.value,
+            phenotype=phenotype_name,
+            sample_count=int(run_input.sample_indices.shape[0]),
+            covariate_count=len(run_input.native_aligned_sample_data.covariate_names),
+        )
     current_header = output.build_current_run_manifest_header(
         association_mode=types.AssociationMode.REGENIE2_LINEAR,
         bgen_path=genotype_source_config.source_path,
@@ -145,6 +162,12 @@ def run_regenie2_linear_bgen_pipeline(
         alignment_config=alignment_config,
     )
     timing.record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "prediction_source_loaded",
+            association_mode=types.AssociationMode.REGENIE2_LINEAR.value,
+            phenotype=phenotype_name,
+        )
     preflight_start_time = time.perf_counter()
     logger.debug("Running preflight validation for linear pipeline.")
     preflight_report = preflight.run_regenie2_preflight(
@@ -162,12 +185,22 @@ def run_regenie2_linear_bgen_pipeline(
         preflight_report.covariate_count,
         preflight_report.chromosome_count,
     )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "preflight_completed",
+            association_mode=types.AssociationMode.REGENIE2_LINEAR.value,
+            phenotype=phenotype_name,
+            sample_count=preflight_report.sample_count,
+            covariate_count=preflight_report.covariate_count,
+            chromosome_count=preflight_report.chromosome_count,
+        )
     callback = callbacks.LinearRegenie2PipelineCallback(
         run_input=run_input,
         prediction_source=prediction_source,
         writer_session=writer_session,
         staging_depth=staging_depth,
         stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
     )
     return native_dispatch.run_bgen_engine_with_callback(
         engine=engine,
@@ -209,6 +242,7 @@ def run_regenie2_binary_bgen_pipeline(
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
+    telemetry_session: telemetry.TelemetrySession | None = None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for binary REGENIE step 2."""
@@ -231,6 +265,14 @@ def run_regenie2_binary_bgen_pipeline(
         engine.sample_count,
         engine.variant_count,
     )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "bgen_engine_opened",
+            association_mode=types.AssociationMode.REGENIE2_BINARY.value,
+            phenotype=phenotype_name,
+            sample_count=int(engine.sample_count),
+            variant_count=int(engine.variant_count),
+        )
     alignment_start_time = time.perf_counter()
     logger.debug("Loading aligned native sample, phenotype, and covariate inputs for binary pipeline.")
     run_input = native_dispatch.load_native_bgen_run_input(
@@ -249,6 +291,14 @@ def run_regenie2_binary_bgen_pipeline(
         int(run_input.sample_indices.shape[0]),
         len(run_input.native_aligned_sample_data.covariate_names),
     )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "sample_alignment_completed",
+            association_mode=types.AssociationMode.REGENIE2_BINARY.value,
+            phenotype=phenotype_name,
+            sample_count=int(run_input.sample_indices.shape[0]),
+            covariate_count=len(run_input.native_aligned_sample_data.covariate_names),
+        )
     current_header = output.build_current_run_manifest_header(
         association_mode=types.AssociationMode.REGENIE2_BINARY,
         bgen_path=genotype_source_config.source_path,
@@ -309,6 +359,12 @@ def run_regenie2_binary_bgen_pipeline(
         alignment_config=alignment_config,
     )
     timing.record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "prediction_source_loaded",
+            association_mode=types.AssociationMode.REGENIE2_BINARY.value,
+            phenotype=phenotype_name,
+        )
     preflight_start_time = time.perf_counter()
     logger.debug("Running preflight validation for binary pipeline.")
     preflight_report = preflight.run_regenie2_preflight(
@@ -326,6 +382,15 @@ def run_regenie2_binary_bgen_pipeline(
         preflight_report.covariate_count,
         preflight_report.chromosome_count,
     )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "preflight_completed",
+            association_mode=types.AssociationMode.REGENIE2_BINARY.value,
+            phenotype=phenotype_name,
+            sample_count=preflight_report.sample_count,
+            covariate_count=preflight_report.covariate_count,
+            chromosome_count=preflight_report.chromosome_count,
+        )
     callback = callbacks.BinaryRegenie2PipelineCallback(
         run_input=run_input,
         prediction_source=prediction_source,
@@ -334,6 +399,7 @@ def run_regenie2_binary_bgen_pipeline(
         kernel_config=resolved_kernel_config,
         staging_depth=staging_depth,
         stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
     )
     return native_dispatch.run_bgen_engine_with_callback(
         engine=engine,
@@ -393,6 +459,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
+    telemetry_session: telemetry.TelemetrySession | None = None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
     sample_mode: types.MultiPhenotypeSampleMode | None = None,
 ) -> tuple[Path | None, ...]:
@@ -425,6 +492,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
         correction_plan=types.BinaryCorrectionPlan(),
         kernel_config=None,
         stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
         alignment_config=alignment_config,
         sample_mode=sample_mode,
         association_mode=types.AssociationMode.REGENIE2_LINEAR,
@@ -460,6 +528,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     kernel_config: regenie2_binary_types.BinaryKernelConfig | None = None,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
+    telemetry_session: telemetry.TelemetrySession | None = None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
     sample_mode: types.MultiPhenotypeSampleMode | None = None,
 ) -> tuple[Path | None, ...]:
@@ -493,6 +562,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
         correction_plan=correction_plan,
         kernel_config=resolved_kernel_config,
         stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
         alignment_config=alignment_config,
         sample_mode=sample_mode,
         association_mode=types.AssociationMode.REGENIE2_BINARY,
@@ -528,6 +598,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     correction_plan: types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_types.BinaryKernelConfig | None,
     stage_timing_recorder: timing.StageTimingRecorder | None,
+    telemetry_session: telemetry.TelemetrySession | None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None,
     sample_mode: types.MultiPhenotypeSampleMode | None,
     association_mode: types.AssociationMode,
@@ -560,6 +631,14 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         engine.sample_count,
         engine.variant_count,
     )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "bgen_engine_opened",
+            association_mode=association_mode.value,
+            phenotype_count=len(phenotype_names),
+            sample_count=int(engine.sample_count),
+            variant_count=int(engine.variant_count),
+        )
     alignment_start_time = time.perf_counter()
     logger.debug("Loading aligned native sample, phenotype, and covariate inputs for multi-phenotype pipeline.")
     run_input = native_dispatch.load_native_bgen_multi_run_input(
@@ -579,6 +658,14 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         len(run_input.phenotype_names),
         len(run_input.native_multi_aligned_sample_data.covariate_names),
     )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "sample_alignment_completed",
+            association_mode=association_mode.value,
+            phenotype_count=len(run_input.phenotype_names),
+            sample_count=int(run_input.sample_indices.shape[0]),
+            covariate_count=len(run_input.native_multi_aligned_sample_data.covariate_names),
+        )
     current_headers = tuple(
         output.build_current_run_manifest_header(
             association_mode=association_mode,
@@ -658,6 +745,12 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         alignment_config=alignment_config,
     )
     timing.record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "prediction_source_loaded",
+            association_mode=association_mode.value,
+            phenotype_count=len(run_input.phenotype_names),
+        )
     preflight_start_time = time.perf_counter()
     logger.debug("Running preflight validation for multi-phenotype pipeline.")
     run_multi_preflight(
@@ -669,6 +762,13 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     )
     timing.record_stage_duration(stage_timing_recorder, "preflight_validation", preflight_start_time)
     logger.debug("Preflight validation passed for multi-phenotype pipeline.")
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "preflight_completed",
+            association_mode=association_mode.value,
+            phenotype_count=len(run_input.phenotype_names),
+            sample_count=int(run_input.sample_indices.shape[0]),
+        )
     if association_mode == types.AssociationMode.REGENIE2_BINARY:
         callback = callbacks.MultiBinaryRegenie2PipelineCallback(
             run_input=run_input,
@@ -679,6 +779,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
             kernel_config=resolved_kernel_config,
             staging_depth=staging_depth,
             stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
         )
     else:
         callback = callbacks.MultiLinearRegenie2PipelineCallback(
@@ -688,6 +789,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
             committed_chunk_identifier_sets=committed_chunk_identifier_sets,
             staging_depth=staging_depth,
             stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
         )
     committed_by_every_phenotype = set.intersection(*committed_chunk_identifier_sets)
     return run_bgen_engine_with_multi_callback(

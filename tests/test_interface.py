@@ -65,10 +65,21 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-jax-persistent-cache-min-compile-time-seconds": 1,
         "g-jax-xla-autotune-cache": True,
         "g-jax-transfer-guard": True,
+        "g-telemetry": "trace",
+        "g-log-dir": "logs",
         "g-stage-timings-json": "timings.json",
         "g-log-filter": "g=debug",
         "g-log-file": "logs/g.jsonl",
         "g-log-stderr": False,
+        "g-progress-interval-seconds": 1.5,
+        "g-progress-interval-chunks": 4,
+        "g-profile-summary-json": "logs/profile.summary.json",
+        "g-trace-file": "logs/trace.jsonl",
+        "g-trace-filter": "g=trace",
+        "g-log-queue-size": 1024,
+        "g-log-lossy": False,
+        "g-include-source-location": True,
+        "g-include-span-events": True,
     }
 
     regenie_config = config.RegenieConfig.from_options(raw_options)
@@ -85,10 +96,21 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_output.format == types.OutputFormat.ARROW
     assert regenie_config.g_output.chunks_per_arrow_file == 2
     assert regenie_config.g_output.arrow_compression == types.ArrowCompression.NONE
+    assert regenie_config.g_diagnostics.telemetry == types.TelemetryMode.TRACE
+    assert regenie_config.g_diagnostics.log_dir == Path("logs")
     assert regenie_config.g_diagnostics.stage_timings_json == Path("timings.json")
     assert regenie_config.g_diagnostics.log_filter == "g=debug"
     assert regenie_config.g_diagnostics.log_file == Path("logs/g.jsonl")
     assert regenie_config.g_diagnostics.log_stderr is False
+    assert regenie_config.g_diagnostics.progress_interval_seconds == 1.5
+    assert regenie_config.g_diagnostics.progress_interval_chunks == 4
+    assert regenie_config.g_diagnostics.profile_summary_json == Path("logs/profile.summary.json")
+    assert regenie_config.g_diagnostics.trace_file == Path("logs/trace.jsonl")
+    assert regenie_config.g_diagnostics.trace_filter == "g=trace"
+    assert regenie_config.g_diagnostics.log_queue_size == 1024
+    assert regenie_config.g_diagnostics.log_lossy is False
+    assert regenie_config.g_diagnostics.include_source_location is True
+    assert regenie_config.g_diagnostics.include_span_events is True
 
 
 def test_every_supported_option_has_explain_metadata() -> None:
@@ -100,9 +122,19 @@ def test_every_supported_option_has_explain_metadata() -> None:
 def test_logging_diagnostics_default_to_info_stderr() -> None:
     diagnostics_config = config.GDiagnosticsConfig()
 
+    assert diagnostics_config.telemetry == types.TelemetryMode.PROGRESS
+    assert diagnostics_config.log_dir is None
     assert diagnostics_config.log_filter == "info"
     assert diagnostics_config.log_file is None
     assert diagnostics_config.log_stderr is True
+    assert diagnostics_config.progress_interval_seconds == 5
+    assert diagnostics_config.progress_interval_chunks == 10
+    assert diagnostics_config.profile_summary_json is None
+    assert diagnostics_config.trace_file is None
+    assert diagnostics_config.log_queue_size == 65536
+    assert diagnostics_config.log_lossy is True
+    assert diagnostics_config.include_source_location is False
+    assert diagnostics_config.include_span_events is False
 
 
 def test_packaged_default_toml_is_loaded_for_python_options() -> None:

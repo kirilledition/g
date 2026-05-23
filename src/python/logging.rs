@@ -12,6 +12,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
 
 const DEFAULT_LOG_FILTER: &str = "info";
@@ -21,12 +22,33 @@ static LOGGING_GUARDS: Mutex<Option<Vec<WorkerGuard>>> = Mutex::new(None);
 static PYTHON_LOGGING_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 #[pyfunction]
-#[pyo3(signature = (log_filter=None, log_file=None, log_stderr=true))]
+#[expect(
+    clippy::too_many_arguments,
+    clippy::fn_params_excessive_bools,
+    reason = "PyO3 exposes documented Python logging keyword arguments directly."
+)]
+#[pyo3(signature = (
+    log_filter=None,
+    log_file=None,
+    log_stderr=true,
+    log_queue_size=65536,
+    log_lossy=true,
+    include_source_location=false,
+    include_span_events=false,
+    trace_file=None,
+    trace_filter=None
+))]
 pub fn initialize_logging(
     py: Python<'_>,
     log_filter: Option<String>,
     log_file: Option<String>,
     log_stderr: bool,
+    log_queue_size: usize,
+    log_lossy: bool,
+    include_source_location: bool,
+    include_span_events: bool,
+    trace_file: Option<String>,
+    trace_filter: Option<String>,
 ) -> PyResult<bool> {
     let mut logging_guards = lock_logging_guards()?;
     if logging_guards.is_some() {
@@ -42,21 +64,60 @@ pub fn initialize_logging(
 
     let mut worker_guards = Vec::new();
     let stderr_layer = if log_stderr {
-        let (stderr_writer, stderr_guard) = build_non_blocking_writer(std::io::stderr(), "g-tracing-stderr");
+        let (stderr_writer, stderr_guard) =
+            build_non_blocking_writer(std::io::stderr(), "g-tracing-stderr", log_queue_size, log_lossy);
         worker_guards.push(stderr_guard);
-        Some(tracing_subscriber::fmt::layer().compact().with_writer(stderr_writer).with_ansi(true))
+        let layer = tracing_subscriber::fmt::layer()
+            .compact()
+            .with_writer(stderr_writer)
+            .with_ansi(true)
+            .with_file(include_source_location)
+            .with_line_number(include_source_location)
+            .with_span_events(resolve_span_events(include_span_events));
+        Some(layer.boxed())
     } else {
         None
     };
     let file_layer = if let Some(log_file_path) = log_file {
-        let (file_writer, file_guard) = build_log_file_writer(Path::new(&log_file_path))?;
+        let (file_writer, file_guard) = build_log_file_writer(Path::new(&log_file_path), log_queue_size, log_lossy)?;
         worker_guards.push(file_guard);
-        Some(tracing_subscriber::fmt::layer().json().flatten_event(true).with_ansi(false).with_writer(file_writer))
+        let layer = tracing_subscriber::fmt::layer()
+            .json()
+            .flatten_event(true)
+            .with_ansi(false)
+            .with_writer(file_writer)
+            .with_file(include_source_location)
+            .with_line_number(include_source_location)
+            .with_span_events(resolve_span_events(include_span_events));
+        Some(layer.boxed())
+    } else {
+        None
+    };
+    let trace_layer = if let Some(trace_file_path) = trace_file {
+        let (trace_writer, trace_guard) =
+            build_log_file_writer(Path::new(&trace_file_path), log_queue_size, log_lossy)?;
+        worker_guards.push(trace_guard);
+        let resolved_trace_filter = trace_filter
+            .filter(|candidate_filter| !candidate_filter.trim().is_empty())
+            .unwrap_or_else(|| resolved_log_filter.clone());
+        let trace_environment_filter = EnvFilter::try_new(&resolved_trace_filter)
+            .map_err(|error| PyValueError::new_err(format!("Invalid g trace filter: {error}")))?;
+        let layer = tracing_subscriber::fmt::layer()
+            .json()
+            .flatten_event(true)
+            .with_ansi(false)
+            .with_writer(trace_writer)
+            .with_file(true)
+            .with_line_number(true)
+            .with_span_events(FmtSpan::FULL)
+            .with_filter(trace_environment_filter);
+        Some(layer.boxed())
     } else {
         None
     };
 
-    let subscriber = tracing_subscriber::registry().with(environment_filter).with(stderr_layer).with(file_layer);
+    let subscriber =
+        tracing_subscriber::registry().with(environment_filter).with(stderr_layer).with(file_layer).with(trace_layer);
     if subscriber.try_init().is_err() {
         setup_python_logging(py)?;
         return Ok(false);
@@ -112,7 +173,11 @@ fn register_shutdown_logging(py: Python<'_>) -> PyResult<()> {
     Ok(())
 }
 
-fn build_log_file_writer(path: &Path) -> PyResult<(NonBlocking, WorkerGuard)> {
+fn resolve_span_events(include_span_events: bool) -> FmtSpan {
+    if include_span_events { FmtSpan::FULL } else { FmtSpan::NONE }
+}
+
+fn build_log_file_writer(path: &Path, log_queue_size: usize, log_lossy: bool) -> PyResult<(NonBlocking, WorkerGuard)> {
     if let Some(parent_directory) = path.parent().filter(|parent_directory| !parent_directory.as_os_str().is_empty()) {
         fs::create_dir_all(parent_directory).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
     }
@@ -121,12 +186,21 @@ fn build_log_file_writer(path: &Path) -> PyResult<(NonBlocking, WorkerGuard)> {
         .append(true)
         .open(path)
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-    Ok(build_non_blocking_writer(log_file, "g-tracing-file"))
+    Ok(build_non_blocking_writer(log_file, "g-tracing-file", log_queue_size, log_lossy))
 }
 
-fn build_non_blocking_writer<Writer>(writer: Writer, thread_name: &str) -> (NonBlocking, WorkerGuard)
+fn build_non_blocking_writer<Writer>(
+    writer: Writer,
+    thread_name: &str,
+    log_queue_size: usize,
+    log_lossy: bool,
+) -> (NonBlocking, WorkerGuard)
 where
     Writer: std::io::Write + Send + 'static,
 {
-    NonBlockingBuilder::default().lossy(true).thread_name(thread_name).finish(writer)
+    NonBlockingBuilder::default()
+        .lossy(log_lossy)
+        .buffered_lines_limit(log_queue_size)
+        .thread_name(thread_name)
+        .finish(writer)
 }

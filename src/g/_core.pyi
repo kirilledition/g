@@ -191,6 +191,12 @@ def initialize_logging(
     log_filter: str | None = None,
     log_file: str | None = None,
     log_stderr: bool = True,
+    log_queue_size: int = 65536,
+    log_lossy: bool = True,
+    include_source_location: bool = False,
+    include_span_events: bool = False,
+    trace_file: str | None = None,
+    trace_filter: str | None = None,
 ) -> bool: ...
 def shutdown_logging() -> None: ...
 def scan_committed_chunk_identifiers(chunks_directory: str) -> list[int]: ...

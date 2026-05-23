@@ -16,6 +16,8 @@ from g.io import output
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
+    from g.engine import telemetry
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,7 +65,36 @@ class JaxRuntimePolicy:
     transfer_guard: bool
 
 
+@dataclass(frozen=True)
+class LoggingRuntimePolicy:
+    """Process-global logging sink configuration.
+
+    Attributes:
+        log_filter: Rust/Python tracing filter.
+        log_file: Optional JSON tracing file.
+        log_stderr: Whether compact stderr logs are enabled.
+        log_queue_size: Non-blocking writer queue size.
+        log_lossy: Whether full queues drop log lines instead of blocking.
+        include_source_location: Whether JSON tracing events include source locations.
+        include_span_events: Whether tracing span lifecycle events are emitted.
+        trace_file: Optional high-volume trace file.
+        trace_filter: Trace file filter.
+
+    """
+
+    log_filter: str
+    log_file: Path | None
+    log_stderr: bool
+    log_queue_size: int
+    log_lossy: bool
+    include_source_location: bool
+    include_span_events: bool
+    trace_file: Path | None
+    trace_filter: str
+
+
 CONFIGURED_JAX_RUNTIME_POLICY: JaxRuntimePolicy | None = None
+CONFIGURED_LOGGING_RUNTIME_POLICY: LoggingRuntimePolicy | None = None
 
 
 def load_regenie2_pipeline_module() -> typing.Any:
@@ -74,6 +105,11 @@ def load_regenie2_pipeline_module() -> typing.Any:
 def load_timing_module() -> typing.Any:
     """Load stage-timing helpers lazily."""
     return importlib.import_module("g.engine.timing")
+
+
+def load_telemetry_module() -> typing.Any:
+    """Load telemetry helpers lazily."""
+    return importlib.import_module("g.engine.telemetry")
 
 
 def load_jax_setup_module() -> typing.Any:
@@ -172,9 +208,12 @@ def configure_jax_device(device: types.Device) -> None:
     load_jax_setup_module().configure_jax_device(device)
 
 
-def build_stage_timing_recorder(stage_timing_path: Path | None) -> typing.Any:
+def build_stage_timing_recorder(stage_timing_path: Path | None, *, force: bool = False) -> typing.Any:
     """Build a stage timing recorder lazily."""
-    return load_timing_module().build_stage_timing_recorder(stage_timing_path)
+    timing_module = load_timing_module()
+    if force:
+        return timing_module.build_stage_timing_recorder(stage_timing_path, force=True)
+    return timing_module.build_stage_timing_recorder(stage_timing_path)
 
 
 def record_stage_duration(stage_timing_recorder: typing.Any, stage_name: str, start_time: float) -> None:
@@ -185,6 +224,15 @@ def record_stage_duration(stage_timing_recorder: typing.Any, stage_name: str, st
 def write_stage_timing_snapshot(stage_timing_recorder: typing.Any, stage_timing_path: Path | None) -> None:
     """Write a stage timing snapshot lazily."""
     load_timing_module().write_stage_timing_snapshot(stage_timing_recorder, stage_timing_path)
+
+
+def write_profile_summary(
+    stage_timing_recorder: typing.Any,
+    profile_summary_path: Path | None,
+    run_id: str | None,
+) -> None:
+    """Write an aggregate profile summary lazily."""
+    load_timing_module().write_profile_summary(stage_timing_recorder, profile_summary_path, run_id=run_id)
 
 
 def run_regenie2_linear_bgen_pipeline(**kwargs: typing.Any) -> Path | None:
@@ -223,53 +271,124 @@ def configure_runtime(compute_config: config.GComputeConfig, trait_config: confi
             core_module.configure_rayon_global_thread_pool(trait_config.threads)
 
 
-def initialize_logging(diagnostics_config: config.GDiagnosticsConfig) -> None:
+def initialize_logging(
+    diagnostics_config: config.GDiagnosticsConfig,
+    telemetry_paths: telemetry.TelemetryPaths | None = None,
+) -> None:
     """Initialize unified Rust/Python logging before runtime setup."""
+    global CONFIGURED_LOGGING_RUNTIME_POLICY
     core_module = importlib.import_module("g._core")
-    core_module.initialize_logging(
+    log_file = diagnostics_config.log_file
+    trace_file = diagnostics_config.trace_file if telemetry_paths is None else telemetry_paths.trace_file
+    runtime_policy = LoggingRuntimePolicy(
         log_filter=diagnostics_config.log_filter,
-        log_file=None if diagnostics_config.log_file is None else str(diagnostics_config.log_file),
+        log_file=log_file,
         log_stderr=diagnostics_config.log_stderr,
+        log_queue_size=diagnostics_config.log_queue_size,
+        log_lossy=diagnostics_config.log_lossy,
+        include_source_location=diagnostics_config.include_source_location,
+        include_span_events=diagnostics_config.include_span_events,
+        trace_file=trace_file,
+        trace_filter=diagnostics_config.trace_filter,
     )
+    initialized_logging = core_module.initialize_logging(
+        log_filter=diagnostics_config.log_filter,
+        log_file=None if log_file is None else str(log_file),
+        log_stderr=diagnostics_config.log_stderr,
+        log_queue_size=diagnostics_config.log_queue_size,
+        log_lossy=diagnostics_config.log_lossy,
+        include_source_location=diagnostics_config.include_source_location,
+        include_span_events=diagnostics_config.include_span_events,
+        trace_file=None if trace_file is None else str(trace_file),
+        trace_filter=diagnostics_config.trace_filter,
+    )
+    if initialized_logging is False:
+        if CONFIGURED_LOGGING_RUNTIME_POLICY is not None and runtime_policy != CONFIGURED_LOGGING_RUNTIME_POLICY:
+            message = "Logging is process-global; start a new process or reuse the first run's logging configuration."
+            raise RuntimeError(message)
+        CONFIGURED_LOGGING_RUNTIME_POLICY = runtime_policy
+        return
+    if initialized_logging is True:
+        CONFIGURED_LOGGING_RUNTIME_POLICY = runtime_policy
 
 
 def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
     """Run the shared REGENIE-compatible config path."""
     config.validate_config(regenie_config)
-    initialize_logging(regenie_config.g_diagnostics)
+    telemetry_module = load_telemetry_module()
+    telemetry_session = telemetry_module.build_telemetry_session(regenie_config)
+    initialize_logging(regenie_config.g_diagnostics, telemetry_session.paths)
+    telemetry_session.log_event(
+        "run_started",
+        association_mode=execution_plan.resolve_association_mode(regenie_config.trait.trait_type).value,
+        trait_type=regenie_config.trait.trait_type.value,
+        phenotype_count=len(regenie_config.input.pheno_columns),
+        output_run_root=str(telemetry_module.resolve_output_run_root(regenie_config)),
+    )
     logger.info("Starting REGENIE run.")
     configure_runtime(regenie_config.g_compute, regenie_config.trait)
     try:
-        artifacts = run_validated_regenie_config(regenie_config)
+        artifacts = run_validated_regenie_config(regenie_config, telemetry_session=telemetry_session)
     except Exception:
+        telemetry_session.log_event("run_failed", level="error")
         logger.exception("REGENIE run failed.")
         raise
     else:
+        telemetry_session.log_event("run_completed")
         logger.info("Finished REGENIE run.")
         return artifacts
+    finally:
+        telemetry_module.close_telemetry_session(telemetry_session)
 
 
-def run_validated_regenie_config(regenie_config: config.RegenieConfig) -> RunArtifacts:
+def run_validated_regenie_config(
+    regenie_config: config.RegenieConfig,
+    telemetry_session: telemetry.TelemetrySession | None = None,
+) -> RunArtifacts:
     """Plan, execute, and finalize a validated REGENIE-compatible config."""
     api_entry_start_time = time.perf_counter()
     stage_timing_recorder = None
+    stage_timing_path = (
+        regenie_config.g_diagnostics.stage_timings_json
+        if telemetry_session is None
+        else telemetry_session.paths.stage_timings_json
+    )
+    profile_summary_path = None if telemetry_session is None else telemetry_session.paths.profile_summary_json
     try:
         device_start_time = time.perf_counter()
         logger.debug("Configuring JAX runtime before backend initialization.")
         configure_runtime_before_jax_import(regenie_config.g_compute)
-        stage_timing_recorder = build_stage_timing_recorder(regenie_config.g_diagnostics.stage_timings_json)
+        stage_timing_recorder = build_stage_timing_recorder(
+            stage_timing_path,
+            force=telemetry_session is not None and telemetry_session.profile_enabled,
+        )
         record_stage_duration(stage_timing_recorder, "jax_device_configuration_backend_init", device_start_time)
         output_start_time = time.perf_counter()
         logger.debug("Building REGENIE execution plan.")
         plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        if telemetry_session is not None:
+            telemetry_session.log_event(
+                "execution_plan_prepared",
+                association_mode=plan.association_mode.value,
+                trait_type=regenie_config.trait.trait_type.value,
+                phenotype_count=len(plan.phenotype_run_plans),
+                chunk_size=plan.kernel_config.chunk_size,
+                variant_limit=plan.kernel_config.variant_limit,
+                device=plan.kernel_config.device.value,
+            )
         logger.info("Prepared REGENIE execution plan for %s phenotype(s).", len(plan.phenotype_run_plans))
         logger.debug("Writing execution plan start metadata.")
-        write_execution_plan_start_metadata(regenie_config=regenie_config, plan=plan)
+        write_execution_plan_start_metadata(
+            regenie_config=regenie_config,
+            plan=plan,
+            telemetry_session=telemetry_session,
+        )
         record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)
         logger.debug("Dispatching REGENIE execution plan.")
         final_parquet_paths = dispatch_execution_plan(
             plan=plan,
             stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
         )
         logger.debug("Finalizing REGENIE execution plan.")
         return finalize_execution_plan(
@@ -281,13 +400,19 @@ def run_validated_regenie_config(regenie_config: config.RegenieConfig) -> RunArt
         if stage_timing_recorder is not None:
             record_stage_duration(stage_timing_recorder, "python_api_entry", api_entry_start_time)
             logger.debug("Writing final stage timing snapshot.")
-            write_stage_timing_snapshot(stage_timing_recorder, regenie_config.g_diagnostics.stage_timings_json)
+            write_stage_timing_snapshot(stage_timing_recorder, stage_timing_path)
+            write_profile_summary(
+                stage_timing_recorder,
+                profile_summary_path,
+                run_id=None if telemetry_session is None else telemetry_session.run_id,
+            )
 
 
 def dispatch_execution_plan(
     *,
     plan: execution_plan.RegenieExecutionPlan,
     stage_timing_recorder: typing.Any,
+    telemetry_session: telemetry.TelemetrySession | None = None,
 ) -> tuple[Path | None, ...]:
     """Dispatch an execution plan to the native engine layer."""
     if len(plan.phenotype_run_plans) > 1:
@@ -298,6 +423,7 @@ def dispatch_execution_plan(
                     plan=plan,
                     phenotype_run_plan=phenotype_run_plan,
                     stage_timing_recorder=stage_timing_recorder,
+                    telemetry_session=telemetry_session,
                 )
                 for phenotype_run_plan in plan.phenotype_run_plans
             )
@@ -305,6 +431,7 @@ def dispatch_execution_plan(
         return dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
         )
     logger.debug("Dispatching single-phenotype native engine pipeline.")
     return (
@@ -312,6 +439,7 @@ def dispatch_execution_plan(
             plan=plan,
             phenotype_run_plan=plan.phenotype_run_plans[0],
             stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
         ),
     )
 
@@ -320,6 +448,7 @@ def build_common_engine_arguments(
     *,
     plan: execution_plan.RegenieExecutionPlan,
     stage_timing_recorder: typing.Any,
+    telemetry_session: telemetry.TelemetrySession | None,
 ) -> dict[str, typing.Any]:
     """Build arguments shared by single- and multi-phenotype native wrappers."""
     return {
@@ -345,6 +474,7 @@ def build_common_engine_arguments(
         "jax_matmul_precision": plan.kernel_config.alignment_config.jax_matmul_precision,
         "output_format": plan.output_plan.output_format,
         "stage_timing_recorder": stage_timing_recorder,
+        "telemetry_session": telemetry_session,
         "alignment_config": plan.kernel_config.alignment_config,
     }
 
@@ -354,11 +484,13 @@ def dispatch_one_phenotype_engine_pipeline(
     plan: execution_plan.RegenieExecutionPlan,
     phenotype_run_plan: execution_plan.PhenotypeRunPlan,
     stage_timing_recorder: typing.Any,
+    telemetry_session: telemetry.TelemetrySession | None = None,
 ) -> Path | None:
     """Dispatch one phenotype to the native linear or binary pipeline."""
     common_arguments = build_common_engine_arguments(
         plan=plan,
         stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
     )
     common_arguments.update(
         {
@@ -369,24 +501,40 @@ def dispatch_one_phenotype_engine_pipeline(
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
         logger.debug("Dispatching binary native engine pipeline.")
-        return run_regenie2_binary_bgen_pipeline(
+        final_parquet_path = run_regenie2_binary_bgen_pipeline(
             **common_arguments,
             correction_plan=plan.binary_correction_plan,
             kernel_config=plan.kernel_config.binary_kernel_config,
         )
+        log_writer_finished(
+            telemetry_session=telemetry_session,
+            association_mode=plan.association_mode,
+            phenotype=phenotype_run_plan.phenotype_name,
+            final_parquet_path=final_parquet_path,
+        )
+        return final_parquet_path
     logger.debug("Dispatching linear native engine pipeline.")
-    return run_regenie2_linear_bgen_pipeline(**common_arguments)
+    final_parquet_path = run_regenie2_linear_bgen_pipeline(**common_arguments)
+    log_writer_finished(
+        telemetry_session=telemetry_session,
+        association_mode=plan.association_mode,
+        phenotype=phenotype_run_plan.phenotype_name,
+        final_parquet_path=final_parquet_path,
+    )
+    return final_parquet_path
 
 
 def dispatch_multi_phenotype_engine_pipeline(
     *,
     plan: execution_plan.RegenieExecutionPlan,
     stage_timing_recorder: typing.Any,
+    telemetry_session: telemetry.TelemetrySession | None = None,
 ) -> tuple[Path | None, ...]:
     """Dispatch multiple phenotypes to the shared native pipeline."""
     common_arguments = build_common_engine_arguments(
         plan=plan,
         stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
     )
     common_arguments.update(
         {
@@ -404,19 +552,47 @@ def dispatch_multi_phenotype_engine_pipeline(
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
         logger.debug("Dispatching multi-phenotype binary native engine pipeline.")
-        return run_regenie2_multi_phenotype_binary_bgen_pipeline(
+        final_parquet_paths = run_regenie2_multi_phenotype_binary_bgen_pipeline(
             **common_arguments,
             correction_plan=plan.binary_correction_plan,
             kernel_config=plan.kernel_config.binary_kernel_config,
         )
-    logger.debug("Dispatching multi-phenotype linear native engine pipeline.")
-    return run_regenie2_multi_phenotype_linear_bgen_pipeline(**common_arguments)
+    else:
+        logger.debug("Dispatching multi-phenotype linear native engine pipeline.")
+        final_parquet_paths = run_regenie2_multi_phenotype_linear_bgen_pipeline(**common_arguments)
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "writer_finished",
+            association_mode=plan.association_mode.value,
+            phenotype_count=len(plan.phenotype_run_plans),
+            final_parquet_paths=tuple(None if path is None else str(path) for path in final_parquet_paths),
+        )
+    return final_parquet_paths
+
+
+def log_writer_finished(
+    *,
+    telemetry_session: telemetry.TelemetrySession | None,
+    association_mode: types.AssociationMode,
+    phenotype: str,
+    final_parquet_path: Path | None,
+) -> None:
+    """Record output writer completion."""
+    if telemetry_session is None:
+        return
+    telemetry_session.log_event(
+        "writer_finished",
+        association_mode=association_mode.value,
+        phenotype=phenotype,
+        final_parquet_path=None if final_parquet_path is None else str(final_parquet_path),
+    )
 
 
 def write_execution_plan_start_metadata(
     *,
     regenie_config: config.RegenieConfig,
     plan: execution_plan.RegenieExecutionPlan,
+    telemetry_session: telemetry.TelemetrySession | None = None,
 ) -> None:
     """Write per-phenotype metadata before native engine execution starts."""
     for phenotype_run_plan in plan.phenotype_run_plans:
@@ -424,6 +600,7 @@ def write_execution_plan_start_metadata(
             regenie_config=regenie_config,
             plan=plan,
             phenotype_run_plan=phenotype_run_plan,
+            telemetry_session=telemetry_session,
         )
 
 
@@ -432,6 +609,7 @@ def write_run_start_metadata(
     regenie_config: config.RegenieConfig,
     plan: execution_plan.RegenieExecutionPlan,
     phenotype_run_plan: execution_plan.PhenotypeRunPlan,
+    telemetry_session: telemetry.TelemetrySession | None = None,
 ) -> None:
     """Write run metadata before native engine execution starts."""
     config.write_toml(regenie_config, phenotype_run_plan.effective_config_path)
@@ -439,6 +617,14 @@ def write_run_start_metadata(
         plan=plan,
         phenotype_run_plan=phenotype_run_plan,
     )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "effective_config_written",
+            association_mode=plan.association_mode.value,
+            phenotype=phenotype_run_plan.phenotype_name,
+            effective_config=str(phenotype_run_plan.effective_config_path),
+            output_run_directory=str(phenotype_run_plan.output_run_paths.run_directory),
+        )
 
 
 def finalize_execution_plan(

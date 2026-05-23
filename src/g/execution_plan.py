@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import importlib
 import re
 import typing
 from dataclasses import dataclass
 
 from g import types
-from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.interface import config
 from g.io import output, source
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
+
+    from g.compute.regenie2_binary import types as regenie2_binary_types
 
 
 PHENOTYPE_DIRECTORY_SAFE_CHARACTER_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
@@ -160,7 +162,8 @@ def normalize_binary_correction_config(binary_config: config.BinaryConfig) -> ty
 
 def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie2_binary_types.BinaryKernelConfig:
     """Build immutable binary JAX kernel settings from public compute config."""
-    return regenie2_binary_types.BinaryKernelConfig(
+    binary_types_module = importlib.import_module("g.compute.regenie2_binary.types")
+    return binary_types_module.BinaryKernelConfig(
         maximum_null_iterations=compute_config.binary_null_maximum_iterations,
         null_logistic_coefficient_tolerance=compute_config.binary_null_coefficient_tolerance,
         firth_batch_size=compute_config.firth_batch_size,
