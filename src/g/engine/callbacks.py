@@ -20,7 +20,6 @@ from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import types as regenie2_binary_types
-from g.compute.regenie2_binary import variant_major as regenie2_binary_variant_major
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import state as regenie2_linear_state
 from g.compute.regenie2_linear import types as regenie2_linear_types
@@ -1182,8 +1181,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             )
             compute_start_time = time.perf_counter()
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
-                variant_major_module = regenie2_binary_variant_major
-                result = variant_major_module.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+                result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
                     chromosome_state=self.current_chromosome_state,
                     genotype_matrix_by_variant=genotype_device_array,
                     correction_plan=self.correction_plan,

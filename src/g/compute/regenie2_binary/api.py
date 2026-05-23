@@ -15,7 +15,7 @@ from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import types as regenie2_binary_types
-from g.compute.regenie2_binary import variant_major as regenie2_binary_variant_major
+from g.compute.regenie2_binary import variant_major_correction as regenie2_binary_variant_major_correction
 
 BinaryScoreTestChunkComputeFunction = typing.Callable[
     [regenie2_binary_types.Regenie2BinaryChromosomeState, jax.Array, g_types.BinaryCorrectionPlan],
@@ -111,10 +111,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
             chromosome_state,
             trait_index,
         )
-        compute_variant_major_chunk = (
-            regenie2_binary_variant_major.compute_regenie2_binary_chunk_from_chromosome_state_variant_major
-        )
-        return compute_variant_major_chunk(
+        return compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
             chromosome_state=single_chromosome_state,
             genotype_matrix_by_variant=genotype_matrix_by_variant,
             correction_plan=correction_plan,
@@ -125,6 +122,29 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
     trait_count = chromosome_state.phenotype_matrix.shape[0]
     return regenie2_binary_result.stack_binary_chunk_results(
         [compute_one_trait(trait_index) for trait_index in range(trait_count)]
+    )
+
+
+def compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+    chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
+    genotype_matrix_by_variant: jax.Array,
+    correction_plan: g_types.BinaryCorrectionPlan = g_types.BinaryCorrectionPlan(),
+    sparse_candidate_mask: jax.Array | None = None,
+    kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+    """Compute binary association from a variant-major chunk."""
+    score_test_result = regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        correction_plan=correction_plan,
+    )
+    return regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        result=score_test_result,
+        correction_plan=correction_plan,
+        sparse_candidate_mask=sparse_candidate_mask,
+        kernel_config=kernel_config,
     )
 
 

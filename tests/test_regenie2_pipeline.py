@@ -680,7 +680,7 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
             return_value="chromosome-state",
         ),
         patch(
-            "g.compute.regenie2_binary.variant_major.compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
+            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
             return_value=result,
         ) as mock_variant_major_compute,
         patch(

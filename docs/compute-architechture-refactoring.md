@@ -855,6 +855,7 @@ Completed cleanup so far:
 * Moved the multi-to-single binary chromosome-state view helper out of the binary facade into `regenie2_binary/state.py`.
 * Moved linear public chunk-compute entry points out of the package facade into `regenie2_linear/api.py`, and updated engine/tests/scripts to import that API module explicitly.
 * Moved binary public chunk-compute entry points out of the package facade into `regenie2_binary/api.py`, matching the intended engine-facing API boundary.
+* Folded the public binary variant-major chunk entry point into `regenie2_binary/api.py` and removed the now-empty `variant_major.py` boundary, so engine code no longer imports that implementation module directly.
 
 Intentional remaining adapters:
 

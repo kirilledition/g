@@ -17,7 +17,6 @@ from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logi
 from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import types as regenie2_binary_types
-from g.compute.regenie2_binary import variant_major as regenie2_binary_variant_major
 from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import line_search as regenie2_binary_firth_line_search
@@ -48,7 +47,7 @@ compute_score_test_chunk_variant_major = typing.cast(
 )
 compute_binary_chunk_variant_major = typing.cast(
     "BinaryChunkComputeFunction",
-    regenie2_binary_variant_major.compute_regenie2_binary_chunk_from_chromosome_state_variant_major,
+    regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major,
 )
 
 
@@ -1317,7 +1316,7 @@ def test_variant_major_score_only_bt_matches_sample_major_with_covariates_loco_a
         sparse_candidate_mask=fixture.sparse_candidate_mask,
     )
     variant_major_result = (
-        regenie2_binary_variant_major.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+        regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
             chromosome_state=chromosome_state,
             genotype_matrix_by_variant=jnp.transpose(fixture.genotype_matrix),
             correction_plan=correction_plan,
@@ -1373,7 +1372,7 @@ def test_variant_major_approximate_firth_matches_sample_major_with_covariates_lo
         sparse_candidate_mask=fixture.sparse_candidate_mask,
     )
     variant_major_result = (
-        regenie2_binary_variant_major.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+        regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
             chromosome_state=chromosome_state,
             genotype_matrix_by_variant=jnp.transpose(fixture.genotype_matrix),
             correction_plan=correction_plan,
