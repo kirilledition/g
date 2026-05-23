@@ -71,10 +71,10 @@ plans, genotype source configuration, binary correction settings, and optional
 stage-timing paths.
 
 The current import boundary is in much better shape than earlier review notes.
-`g.execution_plan` imports `g.compute.regenie2_binary.types` only under
-`typing.TYPE_CHECKING` for annotations and uses `importlib.import_module()` only
-when a binary kernel config must actually be built. The focused API tests confirm
-that importing `g.api` no longer imports JAX-heavy modules.
+`g.execution_plan` imports binary kernel config only under `typing.TYPE_CHECKING`
+for annotations and uses `importlib.import_module()` only when a binary kernel
+config must actually be built. The focused API tests confirm that importing
+`g.api` no longer imports JAX-heavy modules.
 
 ### Runtime Orchestration
 

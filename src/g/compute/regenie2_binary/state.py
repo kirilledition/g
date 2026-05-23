@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
@@ -10,19 +11,126 @@ import jax.numpy as jnp
 from g import types
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logistic
-from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2BinaryState:
+    """Reusable state for REGENIE step 2 binary association.
+
+    Attributes:
+        covariate_matrix: Covariate design matrix including intercept.
+        phenotype_vector: Binary phenotype vector in 0/1 encoding.
+        sample_count: Number of samples.
+
+    """
+
+    covariate_matrix: jax.Array
+    phenotype_vector: jax.Array
+    sample_count: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2BinaryChromosomeState:
+    """Chromosome-specific binary null model state.
+
+    Attributes:
+        covariate_matrix: Covariate design matrix including intercept.
+        phenotype_vector: Binary phenotype vector in 0/1 encoding.
+        null_logistic_coefficients: Covariate-only null logistic coefficients.
+        null_firth_offset: Covariate-only null Firth linear predictor plus LOCO offset.
+        score_residual: Raw score residual, ``phenotype - fitted_probability``.
+        loco_offset: LOCO offset in the logistic linear predictor.
+        square_root_weight: Square root of Bernoulli variance.
+        weighted_genotype_projection_matrix: Cholesky-whitened weighted covariate transpose.
+        null_firth_penalized_log_likelihood: Covariate-only Firth null penalized log-likelihood.
+        null_firth_iteration_count: Number of covariate-only Firth iterations.
+        null_firth_convergence_reason_code: Internal covariate-only Firth termination-reason code.
+        null_logistic_iteration_count: Number of IRLS updates used for the null logistic fit.
+        null_logistic_converged: Whether the null logistic IRLS fit converged.
+
+    """
+
+    covariate_matrix: jax.Array
+    phenotype_vector: jax.Array
+    null_logistic_coefficients: jax.Array
+    null_firth_offset: jax.Array
+    score_residual: jax.Array
+    loco_offset: jax.Array
+    square_root_weight: jax.Array
+    weighted_genotype_projection_matrix: jax.Array
+    null_firth_penalized_log_likelihood: jax.Array
+    null_firth_iteration_count: jax.Array
+    null_firth_convergence_reason_code: jax.Array
+    null_logistic_iteration_count: jax.Array
+    null_logistic_converged: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2MultiBinaryState:
+    """Reusable state for multi-trait binary REGENIE step 2 association.
+
+    Attributes:
+        covariate_matrix: Covariate design matrix including intercept.
+        phenotype_matrix: Binary phenotype matrix with shape ``traits x samples``.
+        sample_count: Number of samples.
+
+    """
+
+    covariate_matrix: jax.Array
+    phenotype_matrix: jax.Array
+    sample_count: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2MultiBinaryChromosomeState:
+    """Trait-major chromosome-specific binary null model state.
+
+    Attributes:
+        covariate_matrix: Shared covariate design matrix including intercept.
+        phenotype_matrix: Binary phenotype matrix with shape ``traits x samples``.
+        null_logistic_coefficients: Per-trait null logistic coefficients.
+        null_firth_offset_matrix: Per-trait null Firth linear predictors plus LOCO offsets.
+        score_residual: Per-trait raw score residuals.
+        loco_offset_matrix: Per-trait LOCO offsets.
+        square_root_weight: Per-trait square root Bernoulli variance.
+        weighted_genotype_projection_matrix: Per-trait weighted covariate projection matrix.
+        null_firth_penalized_log_likelihood: Per-trait Firth null penalized log-likelihood.
+        null_firth_iteration_count: Per-trait covariate-only Firth iteration counts.
+        null_firth_convergence_reason_code: Per-trait covariate-only Firth termination-reason codes.
+        null_logistic_iteration_count: Per-trait null IRLS iteration counts.
+        null_logistic_converged: Per-trait null IRLS convergence flags.
+
+    """
+
+    covariate_matrix: jax.Array
+    phenotype_matrix: jax.Array
+    null_logistic_coefficients: jax.Array
+    null_firth_offset_matrix: jax.Array
+    score_residual: jax.Array
+    loco_offset_matrix: jax.Array
+    square_root_weight: jax.Array
+    weighted_genotype_projection_matrix: jax.Array
+    null_firth_penalized_log_likelihood: jax.Array
+    null_firth_iteration_count: jax.Array
+    null_firth_convergence_reason_code: jax.Array
+    null_logistic_iteration_count: jax.Array
+    null_logistic_converged: jax.Array
 
 
 def prepare_regenie2_binary_state(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
-) -> regenie2_binary_types.Regenie2BinaryState:
+) -> Regenie2BinaryState:
     """Prepare reusable binary step 2 state."""
     covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=jnp.float32)
     phenotype_vector_float32 = jnp.asarray(phenotype_vector, dtype=jnp.float32)
-    return regenie2_binary_types.Regenie2BinaryState(
+    return Regenie2BinaryState(
         covariate_matrix=covariate_matrix_float32,
         phenotype_vector=phenotype_vector_float32,
         sample_count=jnp.asarray(covariate_matrix_float32.shape[0], dtype=jnp.int32),
@@ -32,11 +140,11 @@ def prepare_regenie2_binary_state(
 def prepare_regenie2_multi_binary_state(
     covariate_matrix: jax.Array,
     phenotype_matrix: jax.Array,
-) -> regenie2_binary_types.Regenie2MultiBinaryState:
+) -> Regenie2MultiBinaryState:
     """Prepare reusable multi-trait binary step 2 state."""
     covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=jnp.float32)
     phenotype_matrix_float32 = jnp.asarray(phenotype_matrix, dtype=jnp.float32)
-    return regenie2_binary_types.Regenie2MultiBinaryState(
+    return Regenie2MultiBinaryState(
         covariate_matrix=covariate_matrix_float32,
         phenotype_matrix=phenotype_matrix_float32,
         sample_count=jnp.asarray(covariate_matrix_float32.shape[0], dtype=jnp.int32),
@@ -44,11 +152,11 @@ def prepare_regenie2_multi_binary_state(
 
 
 def build_single_binary_chromosome_state_from_multi(
-    chromosome_state: regenie2_binary_types.Regenie2MultiBinaryChromosomeState,
+    chromosome_state: Regenie2MultiBinaryChromosomeState,
     trait_index: int | jax.Array,
-) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
+) -> Regenie2BinaryChromosomeState:
     """Build a single-trait chromosome state view from a multi-trait state."""
-    return regenie2_binary_types.Regenie2BinaryChromosomeState(
+    return Regenie2BinaryChromosomeState(
         covariate_matrix=chromosome_state.covariate_matrix,
         phenotype_vector=chromosome_state.phenotype_matrix[trait_index],
         null_logistic_coefficients=chromosome_state.null_logistic_coefficients[trait_index],
@@ -66,10 +174,10 @@ def build_single_binary_chromosome_state_from_multi(
 
 
 def build_multi_binary_chromosome_state_from_single(
-    chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
-) -> regenie2_binary_types.Regenie2MultiBinaryChromosomeState:
+    chromosome_state: Regenie2BinaryChromosomeState,
+) -> Regenie2MultiBinaryChromosomeState:
     """Build a one-trait binary chromosome state view from a single-trait state."""
-    return regenie2_binary_types.Regenie2MultiBinaryChromosomeState(
+    return Regenie2MultiBinaryChromosomeState(
         covariate_matrix=chromosome_state.covariate_matrix,
         phenotype_matrix=chromosome_state.phenotype_vector[None, :],
         null_logistic_coefficients=chromosome_state.null_logistic_coefficients[None, :],
@@ -88,11 +196,11 @@ def build_multi_binary_chromosome_state_from_single(
 
 @functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config"))
 def prepare_regenie2_binary_chromosome_state(
-    state: regenie2_binary_types.Regenie2BinaryState,
+    state: Regenie2BinaryState,
     loco_offset: jax.Array,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
+) -> Regenie2BinaryChromosomeState:
     """Prepare chromosome-specific null logistic state reused across chunks."""
     loco_offset_float32 = jnp.asarray(loco_offset, dtype=jnp.float32)
     null_logistic_fit_state = regenie2_binary_null_logistic.fit_null_logistic_coefficients(
@@ -151,7 +259,7 @@ def prepare_regenie2_binary_chromosome_state(
         null_firth_offset = state.covariate_matrix.astype(jnp.float64) @ null_firth_result.coefficients + jnp.asarray(
             loco_offset_float32, dtype=jnp.float64
         )
-    return regenie2_binary_types.Regenie2BinaryChromosomeState(
+    return Regenie2BinaryChromosomeState(
         covariate_matrix=state.covariate_matrix,
         phenotype_vector=state.phenotype_vector,
         null_logistic_coefficients=null_logistic_coefficients,
@@ -170,19 +278,19 @@ def prepare_regenie2_binary_chromosome_state(
 
 @functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config"))
 def prepare_regenie2_multi_binary_chromosome_state(
-    state: regenie2_binary_types.Regenie2MultiBinaryState,
+    state: Regenie2MultiBinaryState,
     loco_offset_matrix: jax.Array,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-) -> regenie2_binary_types.Regenie2MultiBinaryChromosomeState:
+) -> Regenie2MultiBinaryChromosomeState:
     """Prepare chromosome-specific null logistic state for all requested binary traits."""
     loco_offset_matrix_float32 = jnp.asarray(loco_offset_matrix, dtype=jnp.float32)
 
     def prepare_one_trait(
         phenotype_vector: jax.Array,
         loco_offset: jax.Array,
-    ) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
-        trait_state = regenie2_binary_types.Regenie2BinaryState(
+    ) -> Regenie2BinaryChromosomeState:
+        trait_state = Regenie2BinaryState(
             covariate_matrix=state.covariate_matrix,
             phenotype_vector=phenotype_vector,
             sample_count=state.sample_count,
@@ -190,7 +298,7 @@ def prepare_regenie2_multi_binary_chromosome_state(
         return prepare_regenie2_binary_chromosome_state(trait_state, loco_offset, correction_plan, kernel_config)
 
     chromosome_states = jax.vmap(prepare_one_trait)(state.phenotype_matrix, loco_offset_matrix_float32)
-    return regenie2_binary_types.Regenie2MultiBinaryChromosomeState(
+    return Regenie2MultiBinaryChromosomeState(
         covariate_matrix=state.covariate_matrix,
         phenotype_matrix=state.phenotype_matrix,
         null_logistic_coefficients=chromosome_states.null_logistic_coefficients,

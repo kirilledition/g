@@ -12,7 +12,7 @@ import numpy as np
 from g import types
 
 if typing.TYPE_CHECKING:
-    from g.compute.regenie2_binary import types as regenie2_binary_types
+    from g.compute.regenie2_binary import result as regenie2_binary_result
 
 
 @jax.tree_util.register_dataclass
@@ -65,7 +65,7 @@ class BinaryChunkDiagnostics:
 
 
 def count_binary_chunk_diagnostics(
-    result: regenie2_binary_types.Regenie2BinaryScoreChunkResult | regenie2_binary_types.Regenie2BinaryChunkResult,
+    result: regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult,
 ) -> BinaryChunkDiagnostics:
     """Count diagnostic categories for one binary result chunk."""
     empty_integer_array = jnp.zeros_like(result.extra_code, dtype=jnp.int32)

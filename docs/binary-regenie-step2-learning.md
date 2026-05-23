@@ -92,8 +92,10 @@ The main implementation is split by responsibility:
     prepare one chromosome state, compute chunks, record diagnostics, and
     enqueue output.
   - Passes `chunk_stats.is_rare_sparse_firth_candidate` into the Firth kernel.
-- `src/g/compute/regenie2_binary_types.py`
-  - JAX pytree dataclasses for reusable state and chunk results.
+- `src/g/compute/regenie2_binary/state.py`
+  - JAX pytree dataclasses for reusable binary state.
+- `src/g/compute/regenie2_binary/result.py`
+  - JAX pytree dataclasses and builders for score and corrected chunk results.
 - `src/g/compute/regenie2_binary_candidate_planning.py`
   - Fixed-shape candidate selection and batching for device-resident Firth.
 - `src/g/compute/regenie2_binary.py`

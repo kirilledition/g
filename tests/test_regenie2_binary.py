@@ -13,9 +13,9 @@ from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logistic
+from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
-from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary import variant_major_correction as regenie2_binary_variant_major_correction
 from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
@@ -30,8 +30,8 @@ APPROXIMATE_FIRTH_PLAN = types.BinaryCorrectionPlan(
 )
 
 BinaryChunkComputeFunction = typing.Callable[
-    [regenie2_binary_types.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan],
-    regenie2_binary_types.Regenie2BinaryChunkResult,
+    [regenie2_binary_state.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan],
+    regenie2_binary_result.Regenie2BinaryChunkResult,
 ]
 compute_score_test_chunk = typing.cast(
     "BinaryChunkComputeFunction",
@@ -116,7 +116,7 @@ def build_binary_inputs() -> tuple[jax.Array, jax.Array, jax.Array]:
 
 def build_chromosome_state() -> tuple[
     jax.Array,
-    regenie2_binary_types.Regenie2BinaryChromosomeState,
+    regenie2_binary_state.Regenie2BinaryChromosomeState,
 ]:
     covariate_matrix, phenotype_vector, genotype_matrix = build_binary_inputs()
     state = regenie2_binary_state.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
@@ -135,10 +135,10 @@ def build_chunk_result_with_empty_firth_diagnostics(
     log10_p_value: jax.Array,
     extra_code: jax.Array,
     valid_mask: jax.Array,
-) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+) -> regenie2_binary_result.Regenie2BinaryChunkResult:
     """Build a chunk result with zeroed Firth diagnostics."""
     variant_count = extra_code.shape[0]
-    return regenie2_binary_types.Regenie2BinaryChunkResult(
+    return regenie2_binary_result.Regenie2BinaryChunkResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
@@ -213,7 +213,7 @@ def build_variant_major_parity_fixture() -> BinaryVariantMajorParityFixture:
 def build_variant_major_parity_chromosome_state(
     fixture: BinaryVariantMajorParityFixture,
     correction_plan: types.BinaryCorrectionPlan,
-) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
+) -> regenie2_binary_state.Regenie2BinaryChromosomeState:
     """Prepare a chromosome state for the variant-major parity fixture."""
     state = regenie2_binary_state.prepare_regenie2_binary_state(fixture.covariate_matrix, fixture.phenotype_vector)
     return regenie2_binary_state.prepare_regenie2_binary_chromosome_state(
@@ -224,10 +224,10 @@ def build_variant_major_parity_chromosome_state(
 
 
 def assert_binary_chunk_results_match(
-    sample_major_result: regenie2_binary_types.Regenie2BinaryScoreChunkResult
-    | regenie2_binary_types.Regenie2BinaryChunkResult,
-    variant_major_result: regenie2_binary_types.Regenie2BinaryScoreChunkResult
-    | regenie2_binary_types.Regenie2BinaryChunkResult,
+    sample_major_result: regenie2_binary_result.Regenie2BinaryScoreChunkResult
+    | regenie2_binary_result.Regenie2BinaryChunkResult,
+    variant_major_result: regenie2_binary_result.Regenie2BinaryScoreChunkResult
+    | regenie2_binary_result.Regenie2BinaryChunkResult,
 ) -> None:
     """Assert that sample-major and variant-major binary chunk outputs match."""
     np.testing.assert_allclose(
@@ -284,7 +284,7 @@ def assert_binary_chunk_results_match(
     )
 
 
-def assert_all_result_statistics_nan(result: regenie2_binary_types.Regenie2BinaryChunkResult) -> None:
+def assert_all_result_statistics_nan(result: regenie2_binary_result.Regenie2BinaryChunkResult) -> None:
     """Assert all association-statistic columns are NaN."""
     assert np.isnan(np.asarray(result.beta)).all()
     assert np.isnan(np.asarray(result.standard_error)).all()

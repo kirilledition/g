@@ -8,12 +8,11 @@ from g import types
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary import state as regenie2_binary_state
-from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 
 
-def build_scalar_fixture() -> tuple[regenie2_binary_types.Regenie2BinaryChromosomeState, jax.Array, jax.Array]:
+def build_scalar_fixture() -> tuple[regenie2_binary_state.Regenie2BinaryChromosomeState, jax.Array, jax.Array]:
     """Build a deterministic separation fixture for scalar Firth tests."""
     covariate_matrix = jnp.asarray(
         [

@@ -140,17 +140,14 @@ The engine should not know about Firth internals, candidate batching internals, 
 
 ## 2. There is a circular import smell between binary and binary variant-major code
 
-Current import shape:
+Earlier import shape:
 
 ```text
-src/g/compute/regenie2_binary.py:14
-    imports regenie2_binary_candidate_planning, regenie2_binary_types, regenie2_linear
+legacy flat binary module
+    imported candidate planning, binary state/result types, and linear helpers
 
-src/g/compute/regenie2_binary.py:3042
-    imports regenie2_binary_variant_major at bottom
-
-src/g/compute/regenie2_binary_variant_major.py:12
-    imports regenie2_binary, regenie2_binary_candidate_planning, regenie2_binary_types, regenie2_linear
+legacy variant-major module
+    imported the flat binary module, candidate planning, binary state/result types, and linear helpers
 ```
 
 That bottom import at `regenie2_binary.py:3042` is a red flag. It exists to break a dependency cycle.
@@ -878,6 +875,7 @@ Completed cleanup so far:
 * Routed native binary variant-major callbacks directly through variant-major compute APIs for both score-only and approximate-Firth paths, removing variant-major to sample-major to variant-major transpose churn on the hot callback path.
 * Moved `BinaryKernelConfig` from binary result/state types into `regenie2_binary/config.py`, so binary kernel policy lives next to default policy constants instead of the pytree container module.
 * Split linear pytree containers out of the old catch-all `regenie2_linear/types.py`: state containers now live in `regenie2_linear/state.py`, result containers live in `regenie2_linear/result.py`, and the obsolete types module was removed.
+* Split binary pytree containers out of the old catch-all `regenie2_binary/types.py`: state containers now live in `regenie2_binary/state.py`, result containers live in `regenie2_binary/result.py`, and the obsolete types module was removed.
 
 Intentional remaining adapters:
 

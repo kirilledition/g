@@ -12,32 +12,32 @@ from g.compute.common import genotype
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import result as regenie2_binary_result
-from g.compute.regenie2_binary import types as regenie2_binary_types
+from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 
 @functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config", "candidate_capacity"))
 def apply_device_candidate_corrections_firth_variant_major_with_capacity(
-    chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-    result: regenie2_binary_types.Regenie2BinaryChunkResult,
+    result: regenie2_binary_result.Regenie2BinaryChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
     candidate_capacity: int = regenie2_binary_candidate_planning.DEFAULT_FIRTH_CANDIDATE_CAPACITY,
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+) -> regenie2_binary_result.Regenie2BinaryChunkResult:
     """Apply device-resident Firth corrections with a fixed candidate capacity."""
     candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
     fallback_count = jnp.sum(candidate_mask, dtype=jnp.int32)
 
-    def apply_candidate_corrections() -> regenie2_binary_types.Regenie2BinaryChunkResult:
+    def apply_candidate_corrections() -> regenie2_binary_result.Regenie2BinaryChunkResult:
         firth_batch_size = kernel_config.firth_batch_size
         genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
 
         def apply_candidate_corrections_with_capacity(
             candidate_capacity: int,
-        ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+        ) -> regenie2_binary_result.Regenie2BinaryChunkResult:
             batch_plan = regenie2_binary_candidate_planning.build_device_firth_batch_plan(
                 candidate_mask,
                 candidate_capacity,
@@ -242,7 +242,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
                 types.BinaryExtraCode.FIRTH.value,
                 types.BinaryExtraCode.TEST_FAIL.value,
             ).astype(jnp.int32)
-            return regenie2_binary_types.Regenie2BinaryChunkResult(
+            return regenie2_binary_result.Regenie2BinaryChunkResult(
                 beta=result.beta.at[active_fallback_indices].set(jnp.asarray(merged_beta, dtype=result.beta.dtype)),
                 standard_error=result.standard_error.at[active_fallback_indices].set(
                     jnp.asarray(merged_standard_error, dtype=result.standard_error.dtype)
@@ -287,13 +287,13 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
 
 
 def apply_device_candidate_corrections_firth_variant_major(
-    chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-    result: regenie2_binary_types.Regenie2BinaryScoreChunkResult,
+    result: regenie2_binary_result.Regenie2BinaryScoreChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+) -> regenie2_binary_result.Regenie2BinaryChunkResult:
     """Select bounded or overflow Firth capacity on the host before correction."""
     candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
     fallback_count = regenie2_binary_candidate_planning.count_firth_candidates_on_host(candidate_mask)
@@ -321,13 +321,13 @@ def apply_device_candidate_corrections_firth_variant_major(
 
 
 def apply_device_candidate_corrections_variant_major(
-    chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-    result: regenie2_binary_types.Regenie2BinaryScoreChunkResult,
+    result: regenie2_binary_result.Regenie2BinaryScoreChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
-) -> regenie2_binary_types.Regenie2BinaryScoreChunkResult | regenie2_binary_types.Regenie2BinaryChunkResult:
+) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult:
     """Apply binary candidate corrections for variant-major genotype chunks."""
     if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
         return result

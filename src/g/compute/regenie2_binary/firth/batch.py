@@ -15,7 +15,7 @@ from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_fir
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 if typing.TYPE_CHECKING:
-    from g.compute.regenie2_binary import types as regenie2_binary_types
+    from g.compute.regenie2_binary import state as regenie2_binary_state
 
 INITIAL_RESPONSE_SCALE = 4.863891244002886
 SPARSE_CARRIER_DOSAGE_THRESHOLD = 1.0e-4
@@ -81,7 +81,7 @@ def initialize_full_model_coefficients_without_mask(
 
 
 def residualize_and_scale_genotypes_for_approximate_firth(
-    chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
 ) -> jax.Array:
     """Build REGENIE's approximate-Firth residualized genotype vector."""

@@ -14,9 +14,9 @@ import numpy as np
 
 from g import types
 from g.compute.regenie2_binary import api as regenie2_binary
+from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
-from g.compute.regenie2_binary import types as regenie2_binary_types
 
 
 @dataclass(frozen=True)
@@ -165,7 +165,7 @@ def load_npz_inputs(input_npz_path: Path) -> BinaryParityInputs:
     )
 
 
-def prepare_chromosome_state(inputs: BinaryParityInputs) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
+def prepare_chromosome_state(inputs: BinaryParityInputs) -> regenie2_binary_state.Regenie2BinaryChromosomeState:
     """Prepare the binary chromosome state shared by both paths."""
     regenie_state = regenie2_binary_state.prepare_regenie2_binary_state(
         covariate_matrix=inputs.covariate_matrix,
@@ -176,8 +176,8 @@ def prepare_chromosome_state(inputs: BinaryParityInputs) -> regenie2_binary_type
 
 def compute_path_metrics(
     *,
-    score_test_result: regenie2_binary_types.Regenie2BinaryChunkResult,
-    corrected_result: regenie2_binary_types.Regenie2BinaryChunkResult,
+    score_test_result: regenie2_binary_result.Regenie2BinaryChunkResult,
+    corrected_result: regenie2_binary_result.Regenie2BinaryChunkResult,
 ) -> BinaryPathMetrics:
     """Compute parity metrics for one path."""
     score_extra_code = np.asarray(score_test_result.extra_code)
@@ -254,12 +254,10 @@ def compare_binary_paths(
         genotype_matrix_by_variant,
         correction_plan,
     )
-    variant_major_corrected_result = (
-        regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
-            chromosome_state,
-            genotype_matrix_by_variant,
-            correction_plan,
-        )
+    variant_major_corrected_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+        chromosome_state,
+        genotype_matrix_by_variant,
+        correction_plan,
     )
     production_metrics = compute_path_metrics(
         score_test_result=production_score_test_result,

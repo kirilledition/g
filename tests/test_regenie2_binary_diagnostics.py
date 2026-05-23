@@ -6,7 +6,7 @@ import numpy as np
 
 from g import types
 from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
-from g.compute.regenie2_binary import types as regenie2_binary_types
+from g.compute.regenie2_binary import result as regenie2_binary_result
 
 
 def build_binary_chunk_result(
@@ -19,11 +19,11 @@ def build_binary_chunk_result(
     pseudo_firth_iteration_count: jax.Array | None = None,
     nr_zero_start_iteration_count: jax.Array | None = None,
     nr_warm_start_iteration_count: jax.Array | None = None,
-) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+) -> regenie2_binary_result.Regenie2BinaryChunkResult:
     variant_count = extra_code.shape[0]
     zeros = jnp.zeros(variant_count, dtype=jnp.float32)
     zero_integers = jnp.zeros(variant_count, dtype=jnp.int32)
-    return regenie2_binary_types.Regenie2BinaryChunkResult(
+    return regenie2_binary_result.Regenie2BinaryChunkResult(
         beta=zeros,
         standard_error=zeros,
         chi_squared=zeros,
@@ -73,7 +73,7 @@ def test_binary_chunk_diagnostics_report_zeroes_without_firth_candidates() -> No
 
 
 def test_binary_chunk_diagnostics_accept_score_result_without_firth_arrays() -> None:
-    result = regenie2_binary_types.Regenie2BinaryScoreChunkResult(
+    result = regenie2_binary_result.Regenie2BinaryScoreChunkResult(
         beta=jnp.zeros(3, dtype=jnp.float32),
         standard_error=jnp.ones(3, dtype=jnp.float32),
         chi_squared=jnp.zeros(3, dtype=jnp.float32),

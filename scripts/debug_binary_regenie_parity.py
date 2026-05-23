@@ -21,7 +21,6 @@ from g.compute.common import genotype
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import state as regenie2_binary_state
-from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 from g.engine import native_dispatch
@@ -263,7 +262,7 @@ def build_selector(arguments: argparse.Namespace) -> VariantSelector:
 
 
 def compute_score_debug_arrays(
-    chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
 ) -> ScoreDebugArrays:
     """Compute score-test internal arrays for selected variants."""
@@ -312,7 +311,7 @@ def compute_score_debug_arrays(
 
 def build_debug_records_for_chunk(
     *,
-    chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     metadata: _core.VariantMetadata,
     chunk_stats: _core.ChunkStats,
     genotype_matrix_by_variant: npt.NDArray[np.float32],
@@ -413,7 +412,7 @@ class BinaryVariantDebugCaptureCallback:
         self.selector = selector
         self.correction_plan = correction_plan
         self.kernel_config = kernel_config
-        self.chromosome_states: dict[str, regenie2_binary_types.Regenie2BinaryChromosomeState] = {}
+        self.chromosome_states: dict[str, regenie2_binary_state.Regenie2BinaryChromosomeState] = {}
         self.records: list[VariantDebugRecord] = []
         self.free_buffers: list[npt.NDArray[np.float32]] = []
 
@@ -454,7 +453,7 @@ class BinaryVariantDebugCaptureCallback:
             )
         self.free_buffers.append(genotype_matrix_by_variant)
 
-    def prepare_chromosome_state(self, chromosome: str) -> regenie2_binary_types.Regenie2BinaryChromosomeState:
+    def prepare_chromosome_state(self, chromosome: str) -> regenie2_binary_state.Regenie2BinaryChromosomeState:
         """Build or reuse the binary chromosome state for one chromosome."""
         if chromosome not in self.chromosome_states:
             state = regenie2_binary_state.prepare_regenie2_binary_state(

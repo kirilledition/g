@@ -14,7 +14,8 @@ import pytest
 
 from g import types
 from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.compute.regenie2_binary import types as regenie2_binary_types
+from g.compute.regenie2_binary import result as regenie2_binary_result
+from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import state as regenie2_linear_state
@@ -462,7 +463,7 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
 def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats() -> None:
     writer_session = FakeWriterSession()
     kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
-    result = regenie2_binary_types.Regenie2BinaryChunkResult(
+    result = regenie2_binary_result.Regenie2BinaryChunkResult(
         beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
         chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
@@ -527,7 +528,7 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
 def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute() -> None:
     writer_session = FakeWriterSession()
     kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
-    result = regenie2_binary_types.Regenie2BinaryChunkResult(
+    result = regenie2_binary_result.Regenie2BinaryChunkResult(
         beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4, 0.5], dtype=jnp.float32),
         chi_squared=jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float32),
@@ -615,7 +616,7 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
 def test_binary_score_only_variant_major_callback_uses_direct_variant_major_compute() -> None:
     writer_session = FakeWriterSession()
     kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
-    result = regenie2_binary_types.Regenie2BinaryChunkResult(
+    result = regenie2_binary_result.Regenie2BinaryChunkResult(
         beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4, 0.5], dtype=jnp.float32),
         chi_squared=jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float32),
@@ -718,7 +719,7 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         null_firth_line_search_maximum_attempts=2,
         use_block_firth_math=True,
     )
-    result = regenie2_binary_types.Regenie2MultiBinaryChunkResult(
+    result = regenie2_binary_result.Regenie2MultiBinaryChunkResult(
         beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
         standard_error=jnp.asarray([[0.5, 0.6], [0.7, 0.8]], dtype=jnp.float32),
         chi_squared=jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32),
@@ -1065,7 +1066,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
         ) as mock_preflight,
         patch(
             "g.compute.regenie2_binary.state.prepare_regenie2_binary_state",
-            return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
+            return_value=typing.cast("regenie2_binary_state.Regenie2BinaryState", "state"),
         ),
     ):
         final_path = regenie2_pipeline.run_regenie2_binary_bgen_pipeline(
@@ -1119,7 +1120,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> No
         ),
         patch(
             "g.compute.regenie2_binary.state.prepare_regenie2_binary_state",
-            return_value=typing.cast("regenie2_binary_types.Regenie2BinaryState", "state"),
+            return_value=typing.cast("regenie2_binary_state.Regenie2BinaryState", "state"),
         ),
     ):
         final_path = regenie2_pipeline.run_regenie2_binary_bgen_pipeline(
