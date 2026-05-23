@@ -373,12 +373,16 @@ def build_test_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConf
         firth_newton_raphson_zero_start_iterations=29,
         firth_line_search_maximum_attempts=31,
         firth_step_halving_maximum_attempts=37,
+        firth_initial_response_scale=4.5,
+        firth_sparse_carrier_dosage_threshold=1.0e-3,
+        firth_step_halving_scale=0.25,
         null_firth_maximum_iterations=41,
         null_firth_gradient_tolerance=5.0e-5,
         null_firth_maximum_step_size=7.0,
         null_firth_fallback_iteration_multiplier=43,
         null_firth_fallback_step_divisor=11.0,
         null_firth_line_search_maximum_attempts=47,
+        null_firth_step_halving_scale=0.125,
         use_block_firth_math=True,
     )
 

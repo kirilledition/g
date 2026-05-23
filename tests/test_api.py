@@ -161,12 +161,16 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
             firth_newton_raphson_zero_start_iterations=29,
             firth_line_search_maximum_attempts=31,
             firth_step_halving_maximum_attempts=37,
+            firth_initial_response_scale=4.5,
+            firth_sparse_carrier_dosage_threshold=1.0e-3,
+            firth_step_halving_scale=0.25,
             null_firth_maximum_iterations=41,
             null_firth_gradient_tolerance=5.0e-5,
             null_firth_maximum_step_size=7.0,
             null_firth_fallback_iteration_multiplier=43,
             null_firth_fallback_step_divisor=11.0,
             null_firth_line_search_maximum_attempts=47,
+            null_firth_step_halving_scale=0.125,
             use_block_firth_math=True,
         )
     )
@@ -179,12 +183,16 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
     assert kernel_config.firth_newton_raphson_zero_start_iterations == 29
     assert kernel_config.firth_line_search_maximum_attempts == 31
     assert kernel_config.firth_step_halving_maximum_attempts == 37
+    assert kernel_config.firth_initial_response_scale == 4.5
+    assert kernel_config.firth_sparse_carrier_dosage_threshold == 1.0e-3
+    assert kernel_config.firth_step_halving_scale == 0.25
     assert kernel_config.null_firth_maximum_iterations == 41
     assert kernel_config.null_firth_gradient_tolerance == 5.0e-5
     assert kernel_config.null_firth_maximum_step_size == 7.0
     assert kernel_config.null_firth_fallback_iteration_multiplier == 43
     assert kernel_config.null_firth_fallback_step_divisor == 11.0
     assert kernel_config.null_firth_line_search_maximum_attempts == 47
+    assert kernel_config.null_firth_step_halving_scale == 0.125
     assert kernel_config.use_block_firth_math is True
 
 
@@ -563,12 +571,16 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
             "g-firth-newton-raphson-zero-start-iterations": 29,
             "g-firth-line-search-maximum-attempts": 31,
             "g-firth-step-halving-maximum-attempts": 37,
+            "g-firth-initial-response-scale": 4.5,
+            "g-firth-sparse-carrier-dosage-threshold": 1.0e-3,
+            "g-firth-step-halving-scale": 0.25,
             "g-null-firth-maximum-iterations": 41,
             "g-null-firth-gradient-tolerance": 5.0e-5,
             "g-null-firth-maximum-step-size": 7.0,
             "g-null-firth-fallback-iteration-multiplier": 43,
             "g-null-firth-fallback-step-divisor": 11.0,
             "g-null-firth-line-search-maximum-attempts": 47,
+            "g-null-firth-step-halving-scale": 0.125,
             "g-use-block-firth-math": True,
         }
     )
@@ -601,12 +613,16 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
     assert kernel_config.firth_newton_raphson_zero_start_iterations == 29
     assert kernel_config.firth_line_search_maximum_attempts == 31
     assert kernel_config.firth_step_halving_maximum_attempts == 37
+    assert kernel_config.firth_initial_response_scale == 4.5
+    assert kernel_config.firth_sparse_carrier_dosage_threshold == 1.0e-3
+    assert kernel_config.firth_step_halving_scale == 0.25
     assert kernel_config.null_firth_maximum_iterations == 41
     assert kernel_config.null_firth_gradient_tolerance == 5.0e-5
     assert kernel_config.null_firth_maximum_step_size == 7.0
     assert kernel_config.null_firth_fallback_iteration_multiplier == 43
     assert kernel_config.null_firth_fallback_step_divisor == 11.0
     assert kernel_config.null_firth_line_search_maximum_attempts == 47
+    assert kernel_config.null_firth_step_halving_scale == 0.125
     assert kernel_config.use_block_firth_math is True
     assert (
         mock_binary_pipeline.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE

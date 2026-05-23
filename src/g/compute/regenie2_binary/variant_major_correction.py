@@ -132,6 +132,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
                         covariate_matrix=chromosome_state.covariate_matrix,
                         genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
                         phenotype_vector=chromosome_state.phenotype_vector,
+                        kernel_config=kernel_config,
                     )
                 )
                 initial_coefficients = jnp.where(

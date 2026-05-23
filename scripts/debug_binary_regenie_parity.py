@@ -21,7 +21,6 @@ from g.compute.common import genotype
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import state as regenie2_binary_state
-from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 from g.engine import native_dispatch
 
@@ -286,7 +285,8 @@ def compute_score_debug_arrays(
     allele_count = jnp.sum(raw_genotype_matrix_by_variant, axis=1)
     flipped_allele_count = jnp.sum(genotype_matrix_by_variant_float32, axis=1)
     carrier_count = jnp.sum(
-        genotype_matrix_by_variant_float32 > regenie2_binary_firth_batch.SPARSE_CARRIER_DOSAGE_THRESHOLD,
+        genotype_matrix_by_variant_float32
+        > regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.firth_sparse_carrier_dosage_threshold,
         axis=1,
     )
     host_values = jax.device_get(

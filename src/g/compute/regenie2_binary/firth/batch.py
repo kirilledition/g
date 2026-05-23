@@ -17,9 +17,6 @@ from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import state as regenie2_binary_state
 
-INITIAL_RESPONSE_SCALE = 4.863891244002886
-SPARSE_CARRIER_DOSAGE_THRESHOLD = 1.0e-4
-
 
 def compute_firth_pre_dispatch_mask_without_mask(
     genotype_matrix_by_variant: jax.Array,
@@ -50,9 +47,12 @@ def initialize_full_model_coefficients_without_mask(
     covariate_matrix: jax.Array,
     genotype_matrix_by_variant: jax.Array,
     phenotype_vector: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> jax.Array:
     """Initialize full-model coefficients with a pseudo-response regression."""
-    pseudo_response_vector = INITIAL_RESPONSE_SCALE * (phenotype_vector - regenie2_binary_config.BINARY_CASE_THRESHOLD)
+    pseudo_response_vector = kernel_config.firth_initial_response_scale * (
+        phenotype_vector - regenie2_binary_config.BINARY_CASE_THRESHOLD
+    )
     covariate_information_matrix = covariate_matrix.T @ covariate_matrix
     covariate_information_matrix = jnp.broadcast_to(
         covariate_information_matrix[None, :, :],
@@ -127,7 +127,7 @@ def compute_firth_variantwise(
                 phenotype_vector=scalar_phenotype_vector,
                 genotype_vector=jnp.asarray(genotype_vector, dtype=jnp.float64),
                 offset_vector=scalar_offset_vector,
-                carrier_sample_mask=raw_genotype_vector > SPARSE_CARRIER_DOSAGE_THRESHOLD,
+                carrier_sample_mask=raw_genotype_vector > kernel_config.firth_sparse_carrier_dosage_threshold,
                 sparse_correction=sparse_correction,
                 warm_start_beta=jnp.asarray(0.0, dtype=jnp.float64),
                 skip_firth=skip_firth,

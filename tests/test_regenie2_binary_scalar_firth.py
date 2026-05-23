@@ -96,17 +96,18 @@ def test_scalar_pseudo_firth_components_match_formula() -> None:
 def test_scalar_approximate_firth_uses_nr_fallback_after_pseudo_attempt() -> None:
     chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
     offset_vector = chromosome_state.null_firth_offset
+    kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
 
     result = regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
         phenotype_vector=chromosome_state.phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=offset_vector,
-        carrier_sample_mask=raw_genotype_vector > regenie2_binary_firth_batch.SPARSE_CARRIER_DOSAGE_THRESHOLD,
+        carrier_sample_mask=raw_genotype_vector > kernel_config.firth_sparse_carrier_dosage_threshold,
         sparse_correction=jnp.asarray(1, dtype=jnp.bool_),
         warm_start_beta=jnp.asarray(0.0, dtype=jnp.float32),
         skip_firth=jnp.asarray(0, dtype=jnp.bool_),
         null_failed=jnp.asarray(0, dtype=jnp.bool_),
-        kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        kernel_config=kernel_config,
     )
 
     assert bool(np.asarray(result.valid_mask))
@@ -118,17 +119,18 @@ def test_scalar_approximate_firth_uses_nr_fallback_after_pseudo_attempt() -> Non
 def test_sparse_carrier_only_flag_is_recorded_for_sparse_candidate() -> None:
     chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
     offset_vector = chromosome_state.null_firth_offset
+    kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
 
     result = regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
         phenotype_vector=chromosome_state.phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=offset_vector,
-        carrier_sample_mask=raw_genotype_vector > regenie2_binary_firth_batch.SPARSE_CARRIER_DOSAGE_THRESHOLD,
+        carrier_sample_mask=raw_genotype_vector > kernel_config.firth_sparse_carrier_dosage_threshold,
         sparse_correction=jnp.asarray(1, dtype=jnp.bool_),
         warm_start_beta=jnp.asarray(0.0, dtype=jnp.float32),
         skip_firth=jnp.asarray(0, dtype=jnp.bool_),
         null_failed=jnp.asarray(0, dtype=jnp.bool_),
-        kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        kernel_config=kernel_config,
     )
 
     assert bool(np.asarray(result.sparse_correction_mask))
@@ -147,6 +149,7 @@ def test_collinear_scalar_candidate_gets_numerical_failure_label() -> None:
         state, jnp.zeros_like(phenotype_vector)
     )
     raw_genotype_vector = covariate_matrix[:, 1]
+    kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
     genotype_vector = regenie2_binary_firth_batch.residualize_and_scale_genotypes_for_approximate_firth(
         chromosome_state,
         raw_genotype_vector[None, :],
@@ -156,12 +159,12 @@ def test_collinear_scalar_candidate_gets_numerical_failure_label() -> None:
         phenotype_vector=phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=chromosome_state.null_firth_offset,
-        carrier_sample_mask=raw_genotype_vector > regenie2_binary_firth_batch.SPARSE_CARRIER_DOSAGE_THRESHOLD,
+        carrier_sample_mask=raw_genotype_vector > kernel_config.firth_sparse_carrier_dosage_threshold,
         sparse_correction=jnp.asarray(0, dtype=jnp.bool_),
         warm_start_beta=jnp.asarray(0.0, dtype=jnp.float32),
         skip_firth=jnp.asarray(0, dtype=jnp.bool_),
         null_failed=jnp.asarray(0, dtype=jnp.bool_),
-        kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        kernel_config=kernel_config,
     )
 
     assert not bool(np.asarray(result.valid_mask))

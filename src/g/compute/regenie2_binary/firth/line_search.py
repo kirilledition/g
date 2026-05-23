@@ -12,8 +12,6 @@ from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import config as regenie2_binary_config
 
-FIRTH_STEP_HALVING_SCALE = 0.5
-
 
 def compute_firth_convergence_mask(
     *,
@@ -68,7 +66,7 @@ def run_firth_step_halving(
         )
         return regenie2_binary_firth_types.FirthBacktrackingState(
             attempt_count=state.attempt_count + jnp.asarray(1, dtype=jnp.int32),
-            next_coefficient_step=state.next_coefficient_step * FIRTH_STEP_HALVING_SCALE,
+            next_coefficient_step=state.next_coefficient_step * kernel_config.firth_step_halving_scale,
             accepted_coefficient_step=jnp.where(
                 accepted,
                 state.next_coefficient_step,

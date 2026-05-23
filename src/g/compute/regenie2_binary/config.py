@@ -22,12 +22,16 @@ FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS = 25
 FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS = 100
 FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
 FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS = 12
+FIRTH_INITIAL_RESPONSE_SCALE = 4.863891244002886
+FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD = 1.0e-4
+FIRTH_STEP_HALVING_SCALE = 0.5
 NULL_FIRTH_MAXIMUM_ITERATIONS = 1000
 NULL_FIRTH_GRADIENT_TOLERANCE = 50.0e-6
 NULL_FIRTH_MAXIMUM_STEP_SIZE = 25.0
 NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER = 5
 NULL_FIRTH_FALLBACK_STEP_DIVISOR = 5.0
 NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
+NULL_FIRTH_STEP_HALVING_SCALE = 0.5
 REGENIE_LOGISTIC_MINIMUM_ETA = -30.0
 REGENIE_LOGISTIC_MAXIMUM_ETA = 30.0
 REGENIE_NUMERICAL_EPSILON = 10.0 * 2.220446049250313e-16
@@ -52,12 +56,16 @@ class BinaryKernelConfig:
         firth_newton_raphson_zero_start_iterations: Maximum zero-start scalar Newton-Raphson iterations.
         firth_line_search_maximum_attempts: Maximum scalar/full-model Firth line-search attempts.
         firth_step_halving_maximum_attempts: Maximum full-model Firth step-halving attempts.
+        firth_initial_response_scale: Pseudo-response scale for block full-model Firth initialization.
+        firth_sparse_carrier_dosage_threshold: Raw dosage threshold for sparse carrier-only Firth samples.
+        firth_step_halving_scale: Full-model Firth step multiplier after each rejected backtracking attempt.
         null_firth_maximum_iterations: Maximum covariate-only null Firth iterations.
         null_firth_gradient_tolerance: Covariate-only null Firth adjusted-score tolerance.
         null_firth_maximum_step_size: Covariate-only null Firth maximum coefficient step size.
         null_firth_fallback_iteration_multiplier: Multiplier for null Firth fallback retry iterations.
         null_firth_fallback_step_divisor: Divisor for null Firth fallback retry step size.
         null_firth_line_search_maximum_attempts: Maximum covariate-only null Firth line-search attempts.
+        null_firth_step_halving_scale: Null Firth step multiplier after each rejected line-search attempt.
         use_block_firth_math: Whether to use the experimental block-matrix Firth path.
 
     """
@@ -71,17 +79,21 @@ class BinaryKernelConfig:
     firth_coefficient_tolerance: float
     firth_likelihood_tolerance: float
     firth_maximum_step_size: float
-    firth_pseudo_maximum_iterations: int = 50
-    firth_pseudo_inner_maximum_iterations: int = 25
-    firth_newton_raphson_zero_start_iterations: int = 100
-    firth_line_search_maximum_attempts: int = 25
-    firth_step_halving_maximum_attempts: int = 12
-    null_firth_maximum_iterations: int = 1000
-    null_firth_gradient_tolerance: float = 50.0e-6
-    null_firth_maximum_step_size: float = 25.0
-    null_firth_fallback_iteration_multiplier: int = 5
-    null_firth_fallback_step_divisor: float = 5.0
-    null_firth_line_search_maximum_attempts: int = 25
+    firth_pseudo_maximum_iterations: int = FIRTH_PSEUDO_MAXIMUM_ITERATIONS
+    firth_pseudo_inner_maximum_iterations: int = FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS
+    firth_newton_raphson_zero_start_iterations: int = FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS
+    firth_line_search_maximum_attempts: int = FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS
+    firth_step_halving_maximum_attempts: int = FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS
+    firth_initial_response_scale: float = FIRTH_INITIAL_RESPONSE_SCALE
+    firth_sparse_carrier_dosage_threshold: float = FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD
+    firth_step_halving_scale: float = FIRTH_STEP_HALVING_SCALE
+    null_firth_maximum_iterations: int = NULL_FIRTH_MAXIMUM_ITERATIONS
+    null_firth_gradient_tolerance: float = NULL_FIRTH_GRADIENT_TOLERANCE
+    null_firth_maximum_step_size: float = NULL_FIRTH_MAXIMUM_STEP_SIZE
+    null_firth_fallback_iteration_multiplier: int = NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER
+    null_firth_fallback_step_divisor: float = NULL_FIRTH_FALLBACK_STEP_DIVISOR
+    null_firth_line_search_maximum_attempts: int = NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS
+    null_firth_step_halving_scale: float = NULL_FIRTH_STEP_HALVING_SCALE
     use_block_firth_math: bool = False
 
     def __post_init__(self) -> None:
@@ -128,6 +140,15 @@ class BinaryKernelConfig:
         if self.firth_step_halving_maximum_attempts <= 0:
             message = "Firth step-halving maximum attempts must be positive."
             raise ValueError(message)
+        if self.firth_initial_response_scale <= 0.0:
+            message = "Firth initial response scale must be positive."
+            raise ValueError(message)
+        if self.firth_sparse_carrier_dosage_threshold <= 0.0:
+            message = "Firth sparse carrier dosage threshold must be positive."
+            raise ValueError(message)
+        if self.firth_step_halving_scale <= 0.0:
+            message = "Firth step-halving scale must be positive."
+            raise ValueError(message)
         if self.null_firth_maximum_iterations <= 0:
             message = "Null Firth maximum iterations must be positive."
             raise ValueError(message)
@@ -146,6 +167,9 @@ class BinaryKernelConfig:
         if self.null_firth_line_search_maximum_attempts <= 0:
             message = "Null Firth line-search maximum attempts must be positive."
             raise ValueError(message)
+        if self.null_firth_step_halving_scale <= 0.0:
+            message = "Null Firth step-halving scale must be positive."
+            raise ValueError(message)
 
 
 DEFAULT_BINARY_KERNEL_CONFIG = BinaryKernelConfig(
@@ -163,11 +187,15 @@ DEFAULT_BINARY_KERNEL_CONFIG = BinaryKernelConfig(
     firth_newton_raphson_zero_start_iterations=FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS,
     firth_line_search_maximum_attempts=FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS,
     firth_step_halving_maximum_attempts=FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS,
+    firth_initial_response_scale=FIRTH_INITIAL_RESPONSE_SCALE,
+    firth_sparse_carrier_dosage_threshold=FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD,
+    firth_step_halving_scale=FIRTH_STEP_HALVING_SCALE,
     null_firth_maximum_iterations=NULL_FIRTH_MAXIMUM_ITERATIONS,
     null_firth_gradient_tolerance=NULL_FIRTH_GRADIENT_TOLERANCE,
     null_firth_maximum_step_size=NULL_FIRTH_MAXIMUM_STEP_SIZE,
     null_firth_fallback_iteration_multiplier=NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER,
     null_firth_fallback_step_divisor=NULL_FIRTH_FALLBACK_STEP_DIVISOR,
     null_firth_line_search_maximum_attempts=NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS,
+    null_firth_step_halving_scale=NULL_FIRTH_STEP_HALVING_SCALE,
     use_block_firth_math=False,
 )

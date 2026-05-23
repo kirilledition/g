@@ -11,7 +11,6 @@ from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 FIRTH_DEVIANCE_LOG_DETERMINANT_MULTIPLIER = 0.5
-NULL_FIRTH_STEP_HALVING_SCALE = 0.5
 
 
 def compute_null_firth_components(
@@ -76,6 +75,7 @@ def run_null_firth_line_search(
     current_deviance: jax.Array,
     coefficient_step: jax.Array,
     maximum_attempts: int,
+    step_halving_scale: float,
 ) -> regenie2_binary_firth_types.NullFirthLineSearchResult:
     """Accept the first null Firth step that decreases penalized deviance."""
 
@@ -95,7 +95,7 @@ def run_null_firth_line_search(
         accepted = candidate_components.valid & (candidate_components.deviance < current_deviance)
         return regenie2_binary_firth_types.NullFirthLineSearchState(
             attempt_count=state.attempt_count + jnp.asarray(1, dtype=jnp.int32),
-            next_coefficient_step=state.next_coefficient_step * NULL_FIRTH_STEP_HALVING_SCALE,
+            next_coefficient_step=state.next_coefficient_step * step_halving_scale,
             accepted_coefficients=jnp.where(accepted, candidate_coefficients, state.accepted_coefficients),
             accepted_deviance=jnp.where(accepted, candidate_components.deviance, state.accepted_deviance),
             accepted=accepted,
@@ -132,6 +132,7 @@ def fit_covariate_only_firth_null_model_once(
     maximum_step_size: float,
     tolerance: float,
     line_search_maximum_attempts: int,
+    line_search_step_halving_scale: float,
     check_score_increase: bool,
 ) -> regenie2_binary_firth_types.NullFirthFitResult:
     """Run one REGENIE-style covariate-only null Firth attempt."""
@@ -176,6 +177,7 @@ def fit_covariate_only_firth_null_model_once(
             current_deviance=components.deviance,
             coefficient_step=scaled_coefficient_step,
             maximum_attempts=line_search_maximum_attempts,
+            step_halving_scale=line_search_step_halving_scale,
         )
         step_halving_failed = (~converged) & (~line_search_result.accepted)
         numerical_failed = (
@@ -280,6 +282,7 @@ def fit_covariate_only_firth_null_model(
         maximum_step_size=kernel_config.null_firth_maximum_step_size,
         tolerance=kernel_config.null_firth_gradient_tolerance,
         line_search_maximum_attempts=kernel_config.null_firth_line_search_maximum_attempts,
+        line_search_step_halving_scale=kernel_config.null_firth_step_halving_scale,
         check_score_increase=True,
     )
     second_result = fit_covariate_only_firth_null_model_once(
@@ -291,6 +294,7 @@ def fit_covariate_only_firth_null_model(
         maximum_step_size=kernel_config.null_firth_maximum_step_size,
         tolerance=kernel_config.null_firth_gradient_tolerance,
         line_search_maximum_attempts=kernel_config.null_firth_line_search_maximum_attempts,
+        line_search_step_halving_scale=kernel_config.null_firth_step_halving_scale,
         check_score_increase=True,
     )
     fallback_maximum_iterations = (
@@ -308,6 +312,7 @@ def fit_covariate_only_firth_null_model(
         maximum_step_size=fallback_maximum_step_size,
         tolerance=kernel_config.null_firth_gradient_tolerance,
         line_search_maximum_attempts=kernel_config.null_firth_line_search_maximum_attempts,
+        line_search_step_halving_scale=kernel_config.null_firth_step_halving_scale,
         check_score_increase=True,
     )
     fourth_result = fit_covariate_only_firth_null_model_once(
@@ -319,6 +324,7 @@ def fit_covariate_only_firth_null_model(
         maximum_step_size=fallback_maximum_step_size,
         tolerance=kernel_config.null_firth_gradient_tolerance,
         line_search_maximum_attempts=kernel_config.null_firth_line_search_maximum_attempts,
+        line_search_step_halving_scale=kernel_config.null_firth_step_halving_scale,
         check_score_increase=False,
     )
     use_first_result = first_result.converged

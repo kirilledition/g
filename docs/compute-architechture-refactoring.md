@@ -39,7 +39,8 @@ The JAX pytree dataclasses in:
 ```text
 src/g/compute/regenie2_linear/state.py
 src/g/compute/regenie2_linear/result.py
-src/g/compute/regenie2_binary/types.py
+src/g/compute/regenie2_binary/state.py
+src/g/compute/regenie2_binary/result.py
 src/g/compute/regenie2_binary/firth/types.py
 ```
 
@@ -102,14 +103,15 @@ src/g/compute/
     policy.py
 
   regenie2_linear/
-    types.py
     state.py
+    result.py
     score.py
     api.py
 
   regenie2_binary/
-    types.py
     config.py
+    state.py
+    result.py
     null_logistic.py
     score.py
     candidates.py
@@ -752,16 +754,16 @@ src/g/compute/
 
   regenie2_linear/
     __init__.py
-    types.py
     state.py
+    result.py
     score.py
     api.py
 
   regenie2_binary/
     __init__.py
-    types.py
     config.py
     state.py
+    result.py
     null_logistic.py
     score.py
     candidates.py
@@ -876,6 +878,7 @@ Completed cleanup so far:
 * Moved `BinaryKernelConfig` from binary result/state types into `regenie2_binary/config.py`, so binary kernel policy lives next to default policy constants instead of the pytree container module.
 * Split linear pytree containers out of the old catch-all `regenie2_linear/types.py`: state containers now live in `regenie2_linear/state.py`, result containers live in `regenie2_linear/result.py`, and the obsolete types module was removed.
 * Split binary pytree containers out of the old catch-all `regenie2_binary/types.py`: state containers now live in `regenie2_binary/state.py`, result containers live in `regenie2_binary/result.py`, and the obsolete types module was removed.
+* Promoted the remaining Firth scalar policy values into `BinaryKernelConfig` and `GComputeConfig`: pseudo-response scale, sparse-carrier dosage threshold, full-model step-halving scale, and null-Firth step-halving scale. The binary Firth code now reads these through the execution plan instead of hidden module constants.
 
 Intentional remaining adapters:
 

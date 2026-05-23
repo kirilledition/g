@@ -178,12 +178,16 @@ def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie
         firth_newton_raphson_zero_start_iterations=compute_config.firth_newton_raphson_zero_start_iterations,
         firth_line_search_maximum_attempts=compute_config.firth_line_search_maximum_attempts,
         firth_step_halving_maximum_attempts=compute_config.firth_step_halving_maximum_attempts,
+        firth_initial_response_scale=compute_config.firth_initial_response_scale,
+        firth_sparse_carrier_dosage_threshold=compute_config.firth_sparse_carrier_dosage_threshold,
+        firth_step_halving_scale=compute_config.firth_step_halving_scale,
         null_firth_maximum_iterations=compute_config.null_firth_maximum_iterations,
         null_firth_gradient_tolerance=compute_config.null_firth_gradient_tolerance,
         null_firth_maximum_step_size=compute_config.null_firth_maximum_step_size,
         null_firth_fallback_iteration_multiplier=compute_config.null_firth_fallback_iteration_multiplier,
         null_firth_fallback_step_divisor=compute_config.null_firth_fallback_step_divisor,
         null_firth_line_search_maximum_attempts=compute_config.null_firth_line_search_maximum_attempts,
+        null_firth_step_halving_scale=compute_config.null_firth_step_halving_scale,
         use_block_firth_math=compute_config.use_block_firth_math,
     )
 

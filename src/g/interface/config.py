@@ -29,12 +29,16 @@ DEFAULT_FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS = 25
 DEFAULT_FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS = 100
 DEFAULT_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
 DEFAULT_FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS = 12
+DEFAULT_FIRTH_INITIAL_RESPONSE_SCALE = 4.863891244002886
+DEFAULT_FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD = 1.0e-4
+DEFAULT_FIRTH_STEP_HALVING_SCALE = 0.5
 DEFAULT_NULL_FIRTH_MAXIMUM_ITERATIONS = 1000
 DEFAULT_NULL_FIRTH_GRADIENT_TOLERANCE = 50.0e-6
 DEFAULT_NULL_FIRTH_MAXIMUM_STEP_SIZE = 25.0
 DEFAULT_NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER = 5
 DEFAULT_NULL_FIRTH_FALLBACK_STEP_DIVISOR = 5.0
 DEFAULT_NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
+DEFAULT_NULL_FIRTH_STEP_HALVING_SCALE = 0.5
 DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT = 64
 DEFAULT_JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = -1
 DEFAULT_JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
@@ -119,12 +123,16 @@ class GComputeConfig:
     firth_newton_raphson_zero_start_iterations: int = DEFAULT_FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS
     firth_line_search_maximum_attempts: int = DEFAULT_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS
     firth_step_halving_maximum_attempts: int = DEFAULT_FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS
+    firth_initial_response_scale: float = DEFAULT_FIRTH_INITIAL_RESPONSE_SCALE
+    firth_sparse_carrier_dosage_threshold: float = DEFAULT_FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD
+    firth_step_halving_scale: float = DEFAULT_FIRTH_STEP_HALVING_SCALE
     null_firth_maximum_iterations: int = DEFAULT_NULL_FIRTH_MAXIMUM_ITERATIONS
     null_firth_gradient_tolerance: float = DEFAULT_NULL_FIRTH_GRADIENT_TOLERANCE
     null_firth_maximum_step_size: float = DEFAULT_NULL_FIRTH_MAXIMUM_STEP_SIZE
     null_firth_fallback_iteration_multiplier: int = DEFAULT_NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER
     null_firth_fallback_step_divisor: float = DEFAULT_NULL_FIRTH_FALLBACK_STEP_DIVISOR
     null_firth_line_search_maximum_attempts: int = DEFAULT_NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS
+    null_firth_step_halving_scale: float = DEFAULT_NULL_FIRTH_STEP_HALVING_SCALE
     use_block_firth_math: bool = False
     bgen_decode_tile_variant_count: int = DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT
     jax_cache_dir: Path | None = None
@@ -425,6 +433,21 @@ def from_normalized_options(
                     DEFAULT_FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS,
                 )
             ),
+            firth_initial_response_scale=float(
+                normalized_options.get(
+                    "g-firth-initial-response-scale",
+                    DEFAULT_FIRTH_INITIAL_RESPONSE_SCALE,
+                )
+            ),
+            firth_sparse_carrier_dosage_threshold=float(
+                normalized_options.get(
+                    "g-firth-sparse-carrier-dosage-threshold",
+                    DEFAULT_FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD,
+                )
+            ),
+            firth_step_halving_scale=float(
+                normalized_options.get("g-firth-step-halving-scale", DEFAULT_FIRTH_STEP_HALVING_SCALE)
+            ),
             null_firth_maximum_iterations=int(
                 normalized_options.get("g-null-firth-maximum-iterations", DEFAULT_NULL_FIRTH_MAXIMUM_ITERATIONS)
             ),
@@ -450,6 +473,12 @@ def from_normalized_options(
                 normalized_options.get(
                     "g-null-firth-line-search-maximum-attempts",
                     DEFAULT_NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS,
+                )
+            ),
+            null_firth_step_halving_scale=float(
+                normalized_options.get(
+                    "g-null-firth-step-halving-scale",
+                    DEFAULT_NULL_FIRTH_STEP_HALVING_SCALE,
                 )
             ),
             use_block_firth_math=bool_or_false(normalized_options.get("g-use-block-firth-math")),
@@ -694,12 +723,16 @@ def normalize_option_name(option_name: str) -> str:
         "g_firth_newton_raphson_zero_start_iterations": "g-firth-newton-raphson-zero-start-iterations",
         "g_firth_line_search_maximum_attempts": "g-firth-line-search-maximum-attempts",
         "g_firth_step_halving_maximum_attempts": "g-firth-step-halving-maximum-attempts",
+        "g_firth_initial_response_scale": "g-firth-initial-response-scale",
+        "g_firth_sparse_carrier_dosage_threshold": "g-firth-sparse-carrier-dosage-threshold",
+        "g_firth_step_halving_scale": "g-firth-step-halving-scale",
         "g_null_firth_maximum_iterations": "g-null-firth-maximum-iterations",
         "g_null_firth_gradient_tolerance": "g-null-firth-gradient-tolerance",
         "g_null_firth_maximum_step_size": "g-null-firth-maximum-step-size",
         "g_null_firth_fallback_iteration_multiplier": "g-null-firth-fallback-iteration-multiplier",
         "g_null_firth_fallback_step_divisor": "g-null-firth-fallback-step-divisor",
         "g_null_firth_line_search_maximum_attempts": "g-null-firth-line-search-maximum-attempts",
+        "g_null_firth_step_halving_scale": "g-null-firth-step-halving-scale",
         "g_use_block_firth_math": "g-use-block-firth-math",
         "g_bgen_decode_tile_variant_count": "g-bgen-decode-tile-variant-count",
         "g_jax_cache_dir": "g-jax-cache-dir",
@@ -881,6 +914,12 @@ def validate_config(config: RegenieConfig) -> None:
         "--g-firth-step-halving-maximum-attempts",
         config.g_compute.firth_step_halving_maximum_attempts,
     )
+    validate_positive_float("--g-firth-initial-response-scale", config.g_compute.firth_initial_response_scale)
+    validate_positive_float(
+        "--g-firth-sparse-carrier-dosage-threshold",
+        config.g_compute.firth_sparse_carrier_dosage_threshold,
+    )
+    validate_positive_float("--g-firth-step-halving-scale", config.g_compute.firth_step_halving_scale)
     validate_positive_integer("--g-null-firth-maximum-iterations", config.g_compute.null_firth_maximum_iterations)
     validate_positive_float("--g-null-firth-gradient-tolerance", config.g_compute.null_firth_gradient_tolerance)
     validate_positive_float("--g-null-firth-maximum-step-size", config.g_compute.null_firth_maximum_step_size)
@@ -896,6 +935,7 @@ def validate_config(config: RegenieConfig) -> None:
         "--g-null-firth-line-search-maximum-attempts",
         config.g_compute.null_firth_line_search_maximum_attempts,
     )
+    validate_positive_float("--g-null-firth-step-halving-scale", config.g_compute.null_firth_step_halving_scale)
     validate_positive_integer(
         "--g-bgen-decode-tile-variant-count",
         config.g_compute.bgen_decode_tile_variant_count,
@@ -1087,6 +1127,9 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             ),
             "firth-line-search-maximum-attempts": config.g_compute.firth_line_search_maximum_attempts,
             "firth-step-halving-maximum-attempts": config.g_compute.firth_step_halving_maximum_attempts,
+            "firth-initial-response-scale": config.g_compute.firth_initial_response_scale,
+            "firth-sparse-carrier-dosage-threshold": config.g_compute.firth_sparse_carrier_dosage_threshold,
+            "firth-step-halving-scale": config.g_compute.firth_step_halving_scale,
             "null-firth-maximum-iterations": config.g_compute.null_firth_maximum_iterations,
             "null-firth-gradient-tolerance": config.g_compute.null_firth_gradient_tolerance,
             "null-firth-maximum-step-size": config.g_compute.null_firth_maximum_step_size,
@@ -1095,6 +1138,7 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             ),
             "null-firth-fallback-step-divisor": config.g_compute.null_firth_fallback_step_divisor,
             "null-firth-line-search-maximum-attempts": config.g_compute.null_firth_line_search_maximum_attempts,
+            "null-firth-step-halving-scale": config.g_compute.null_firth_step_halving_scale,
             "use-block-firth-math": config.g_compute.use_block_firth_math,
             "bgen-decode-tile-variant-count": config.g_compute.bgen_decode_tile_variant_count,
             **optional_mapping("jax-cache-dir", config.g_compute.jax_cache_dir),
