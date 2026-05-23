@@ -96,6 +96,28 @@ def build_multi_binary_chunk_result(
     )
 
 
+def squeeze_single_binary_chunk_result(
+    result: regenie2_binary_types.Regenie2MultiBinaryChunkResult,
+) -> regenie2_binary_types.Regenie2BinaryChunkResult:
+    """Remove the trait axis from a single-trait binary result."""
+    return regenie2_binary_types.Regenie2BinaryChunkResult(
+        beta=result.beta[0],
+        standard_error=result.standard_error[0],
+        chi_squared=result.chi_squared[0],
+        log10_p_value=result.log10_p_value[0],
+        extra_code=result.extra_code[0],
+        valid_mask=result.valid_mask[0],
+        firth_iteration_count=result.firth_iteration_count[0],
+        firth_failure_code=result.firth_failure_code[0],
+        firth_convergence_reason_code=result.firth_convergence_reason_code[0],
+        firth_correction_code=result.firth_correction_code[0],
+        firth_sparse_correction_mask=result.firth_sparse_correction_mask[0],
+        pseudo_firth_iteration_count=result.pseudo_firth_iteration_count[0],
+        nr_zero_start_iteration_count=result.nr_zero_start_iteration_count[0],
+        nr_warm_start_iteration_count=result.nr_warm_start_iteration_count[0],
+    )
+
+
 def stack_binary_chunk_results(
     results: list[regenie2_binary_types.Regenie2BinaryChunkResult],
 ) -> regenie2_binary_types.Regenie2MultiBinaryChunkResult:
