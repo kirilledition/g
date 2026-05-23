@@ -904,6 +904,7 @@ Completed cleanup so far:
 * Moved Firth candidate lane preparation into `firth/batch.py`, so the variant-major correction kernel no longer owns genotype flipping, sparse lane masks, heuristic lane ordering, or approximate-Firth genotype residualization.
 * Centralized the binary clipped-sigmoid helper in `regenie2_binary/logistic.py` and removed duplicate implementations from null logistic and full-model Firth code.
 * Moved linear reusable-state construction into `regenie2_linear/state.py`, so the public linear API no longer owns covariate projection and phenotype residualization math.
+* Moved binary reusable-state and chromosome-state construction into `regenie2_binary/state.py`, so the public binary API no longer owns null logistic, score projection, and null-Firth state assembly.
 
 Intentional remaining adapters:
 
