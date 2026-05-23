@@ -877,7 +877,7 @@ Intentional remaining adapters:
 
 * Keep public chunk adapters that transpose sample-major input, unpack chromosome-state fields, or preserve the current JIT boundary.
 * Keep dataclass builder functions where they construct result/state containers rather than only forwarding a call.
-* Defer binary trait-major score batching and candidate-overflow redesign until after the package move is validated; this step is deliberately structural and should not alter math.
+* Keep multi-trait approximate-Firth correction as per-trait fixed-capacity calls until a true trait-major Firth kernel is designed and parity-tested; score-only multi-trait is already vectorized.
 
 ## Phase 1: Extract common helpers
 
@@ -986,7 +986,7 @@ High priority:
 
 Medium priority:
   9. Use Rust-provided genotype stats or remove unused parameters
-  10. Reduce score-only binary result memory by not carrying Firth diagnostic arrays unnecessarily
+  10. Reduce score-only binary result memory by not carrying Firth diagnostic arrays unnecessarily (done)
   11. Clean up unused fields in state dataclasses
 ```
 

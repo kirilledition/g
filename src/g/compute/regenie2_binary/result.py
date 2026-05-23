@@ -60,28 +60,6 @@ def expand_score_result_with_empty_firth_diagnostics(
     )
 
 
-def expand_multi_score_result_with_empty_firth_diagnostics(
-    result: regenie2_binary_types.Regenie2MultiBinaryScoreChunkResult,
-) -> regenie2_binary_types.Regenie2MultiBinaryChunkResult:
-    """Add empty Firth diagnostic arrays to a multi-trait score result."""
-    return regenie2_binary_types.Regenie2MultiBinaryChunkResult(
-        beta=result.beta,
-        standard_error=result.standard_error,
-        chi_squared=result.chi_squared,
-        log10_p_value=result.log10_p_value,
-        extra_code=result.extra_code,
-        valid_mask=result.valid_mask,
-        firth_iteration_count=build_empty_firth_integer_array(result.extra_code),
-        firth_failure_code=build_empty_firth_integer_array(result.extra_code),
-        firth_convergence_reason_code=build_empty_firth_integer_array(result.extra_code),
-        firth_correction_code=build_empty_firth_integer_array(result.extra_code),
-        firth_sparse_correction_mask=build_empty_firth_boolean_array(result.extra_code),
-        pseudo_firth_iteration_count=build_empty_firth_integer_array(result.extra_code),
-        nr_zero_start_iteration_count=build_empty_firth_integer_array(result.extra_code),
-        nr_warm_start_iteration_count=build_empty_firth_integer_array(result.extra_code),
-    )
-
-
 def squeeze_single_binary_score_result(
     result: regenie2_binary_types.Regenie2MultiBinaryScoreChunkResult,
 ) -> regenie2_binary_types.Regenie2BinaryScoreChunkResult:
