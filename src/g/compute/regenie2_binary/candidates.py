@@ -111,16 +111,6 @@ def build_firth_candidate_capacity_plan(
     )
 
 
-def compute_firth_candidate_overflow_mask(
-    *,
-    fallback_count: jax.Array,
-    capacity_plan: FirthCandidateCapacityPlan,
-) -> jax.Array:
-    """Return whether Firth candidates exceed the preferred bounded capacity."""
-    bounded_candidate_capacity = jnp.asarray(capacity_plan.bounded_candidate_capacity, dtype=fallback_count.dtype)
-    return fallback_count > bounded_candidate_capacity
-
-
 def count_firth_candidates_on_host(fallback_mask: jax.Array) -> int:
     """Return the Firth candidate count as a host integer for dispatch."""
     fallback_count = jnp.sum(fallback_mask, dtype=jnp.int32)

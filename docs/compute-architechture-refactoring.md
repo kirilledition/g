@@ -872,6 +872,7 @@ Completed cleanup so far:
 * Trimmed unused binary chromosome-state fields for null Firth coefficients, fitted probabilities, and standardized residuals; kernels keep the consumed null offset, score residual, weights, and diagnostic counters.
 * Removed stale binary result constructors left behind by trait-major score-test routing; score-only binary results are now built only through the multi-trait constructor and squeezed for single-trait callers.
 * Split binary score-test result containers from Firth-corrected result containers, so score-only kernels no longer allocate empty Firth diagnostic arrays; the Firth correction boundary expands score results only when correction is requested.
+* Removed the stale device-side Firth candidate overflow-mask helper; candidate overflow selection is now host-dispatched through explicit capacity plans.
 
 Intentional remaining adapters:
 

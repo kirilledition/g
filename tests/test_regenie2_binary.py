@@ -330,22 +330,6 @@ def test_firth_candidate_capacity_plan_uses_bounded_capacity_until_overflow() ->
 
     assert capacity_plan.bounded_candidate_capacity == 4
     assert capacity_plan.overflow_candidate_capacity == 7
-    assert not bool(
-        np.asarray(
-            regenie2_binary_candidate_planning.compute_firth_candidate_overflow_mask(
-                fallback_count=jnp.asarray(4, dtype=jnp.int32),
-                capacity_plan=capacity_plan,
-            )
-        )
-    )
-    assert bool(
-        np.asarray(
-            regenie2_binary_candidate_planning.compute_firth_candidate_overflow_mask(
-                fallback_count=jnp.asarray(5, dtype=jnp.int32),
-                capacity_plan=capacity_plan,
-            )
-        )
-    )
 
 
 def test_firth_candidate_capacity_plan_caps_capacity_at_variant_count() -> None:
