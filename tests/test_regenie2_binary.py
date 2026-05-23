@@ -20,6 +20,7 @@ from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary import variant_major as regenie2_binary_variant_major
 from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
 from g.compute.regenie2_binary.firth import full as regenie2_binary_firth_full
+from g.compute.regenie2_binary.firth import line_search as regenie2_binary_firth_line_search
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
@@ -784,7 +785,7 @@ def test_full_model_adjusted_weight_components_match_design_matrix_path() -> Non
 
 
 def test_firth_convergence_rejects_large_negative_likelihood_delta() -> None:
-    converged = regenie2_binary_firth_common.compute_firth_convergence_mask(
+    converged = regenie2_binary_firth_line_search.compute_firth_convergence_mask(
         current_penalized_log_likelihood=jnp.asarray(10.0, dtype=jnp.float32),
         candidate_penalized_log_likelihood=jnp.asarray(-100.0, dtype=jnp.float32),
         coefficient_step=jnp.asarray([1.0e-6, -1.0e-6], dtype=jnp.float32),
@@ -799,7 +800,7 @@ def test_firth_step_halving_rejects_full_step_and_accepts_halved_step() -> None:
     def evaluate_penalized_log_likelihood(coefficients: jax.Array) -> jax.Array:
         return -jnp.square(coefficients[0] - 1.0)
 
-    result = regenie2_binary_firth_common.run_firth_step_halving(
+    result = regenie2_binary_firth_line_search.run_firth_step_halving(
         current_coefficients=jnp.asarray([0.0], dtype=jnp.float32),
         current_penalized_log_likelihood=jnp.asarray(-1.0, dtype=jnp.float32),
         coefficient_step=jnp.asarray([4.0], dtype=jnp.float32),
@@ -817,7 +818,7 @@ def test_firth_step_halving_exhaustion_returns_failure_result() -> None:
     def evaluate_penalized_log_likelihood(coefficients: jax.Array) -> jax.Array:
         return jnp.asarray(-2.0, dtype=coefficients.dtype)
 
-    result = regenie2_binary_firth_common.run_firth_step_halving(
+    result = regenie2_binary_firth_line_search.run_firth_step_halving(
         current_coefficients=jnp.asarray([0.0], dtype=jnp.float32),
         current_penalized_log_likelihood=jnp.asarray(-1.0, dtype=jnp.float32),
         coefficient_step=jnp.asarray([1.0], dtype=jnp.float32),

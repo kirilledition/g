@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from g import types
 from g.compute.common import linalg, pvalue
 from g.compute.regenie2_binary.firth import common as regenie2_binary_firth_common
+from g.compute.regenie2_binary.firth import line_search as regenie2_binary_firth_line_search
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 if typing.TYPE_CHECKING:
@@ -312,7 +313,7 @@ def fit_single_variant_firth_logistic_regression(
             1.0, kernel_config.firth_maximum_step_size / jnp.maximum(maximum_coefficient_step, MINIMUM_VARIANCE)
         )
         scaled_coefficient_step = coefficient_step * step_scale
-        backtracking_result = regenie2_binary_firth_common.run_firth_step_halving(
+        backtracking_result = regenie2_binary_firth_line_search.run_firth_step_halving(
             current_coefficients=state.coefficients,
             current_penalized_log_likelihood=state.penalized_log_likelihood,
             coefficient_step=scaled_coefficient_step,
@@ -321,7 +322,7 @@ def fit_single_variant_firth_logistic_regression(
         )
         step_halving_failed = (~current_failed) & backtracking_result.exhausted
         updated_failed = current_failed | step_halving_failed
-        updated_converged = regenie2_binary_firth_common.compute_firth_convergence_mask(
+        updated_converged = regenie2_binary_firth_line_search.compute_firth_convergence_mask(
             current_penalized_log_likelihood=state.penalized_log_likelihood,
             candidate_penalized_log_likelihood=backtracking_result.penalized_log_likelihood,
             coefficient_step=backtracking_result.coefficient_step,
