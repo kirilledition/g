@@ -64,29 +64,12 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2MultiBinaryChunkResult:
     """Compute multi-trait binary REGENIE step 2 association using one genotype chunk."""
-    if correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
-        return regenie2_binary_score.compute_multi_binary_score_test_chunk_variant_major(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=jnp.asarray(genotype_matrix, dtype=jnp.float32).T,
-            correction_plan=correction_plan,
-        )
-
-    def compute_one_trait(trait_index: jax.Array) -> regenie2_binary_types.Regenie2BinaryChunkResult:
-        single_chromosome_state = regenie2_binary_state.build_single_binary_chromosome_state_from_multi(
-            chromosome_state,
-            trait_index,
-        )
-        return compute_regenie2_binary_chunk_from_chromosome_state(
-            chromosome_state=single_chromosome_state,
-            genotype_matrix=genotype_matrix,
-            correction_plan=correction_plan,
-            sparse_candidate_mask=sparse_candidate_mask,
-            kernel_config=kernel_config,
-        )
-
-    trait_count = chromosome_state.phenotype_matrix.shape[0]
-    return regenie2_binary_result.stack_binary_chunk_results(
-        [compute_one_trait(trait_index) for trait_index in range(trait_count)]
+    return compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.asarray(genotype_matrix, dtype=jnp.float32).T,
+        correction_plan=correction_plan,
+        sparse_candidate_mask=sparse_candidate_mask,
+        kernel_config=kernel_config,
     )
 
 
@@ -155,14 +138,15 @@ def compute_regenie2_binary_chunk_from_chromosome_state(
     kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
     """Compute REGENIE step 2 binary association using cached null state."""
-    score_test_result = compute_regenie2_binary_score_test_chunk_from_chromosome_state(
-        chromosome_state,
-        genotype_matrix,
-        correction_plan,
+    genotype_matrix_by_variant = jnp.asarray(genotype_matrix, dtype=jnp.float32).T
+    score_test_result = regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        correction_plan=correction_plan,
     )
     return regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=jnp.asarray(genotype_matrix, dtype=jnp.float32).T,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
         result=score_test_result,
         correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,

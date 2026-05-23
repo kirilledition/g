@@ -861,6 +861,7 @@ Completed cleanup so far:
 * Centralized the binary variance floor and relative variance tolerance in `regenie2_binary/config.py` so score, null logistic, state preparation, and Firth solvers share one numerical policy.
 * Promoted Firth retry, line-search, pseudo-Firth, and null-Firth iteration limits into `BinaryKernelConfig`, so these compute-affecting policies are part of the execution plan instead of hidden module constants.
 * Removed the sample-major binary correction adapter module; sample-major public calls now transpose once at the API boundary and call the canonical variant-major correction path directly.
+* Routed sample-major multi-binary chunk execution through the variant-major API after one boundary transpose, avoiding repeated per-trait layout conversion in approximate-Firth paths.
 
 Intentional remaining adapters:
 
