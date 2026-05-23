@@ -11,6 +11,7 @@ from g.compute.common import genotype, pvalue
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import result as regenie2_binary_result
+from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import types as regenie2_binary_types
 
 if typing.TYPE_CHECKING:
@@ -50,37 +51,13 @@ def compute_binary_score_test_chunk_variant_major(
         Uncorrected score-test result for the chunk.
 
     """
-    multi_chromosome_state = build_multi_binary_chromosome_state_from_single(chromosome_state)
+    multi_chromosome_state = regenie2_binary_state.build_multi_binary_chromosome_state_from_single(chromosome_state)
     multi_result = compute_multi_binary_score_test_chunk_variant_major(
         chromosome_state=multi_chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         correction_plan=correction_plan,
     )
     return regenie2_binary_result.squeeze_single_binary_chunk_result(multi_result)
-
-
-def build_multi_binary_chromosome_state_from_single(
-    chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
-) -> regenie2_binary_types.Regenie2MultiBinaryChromosomeState:
-    """Build a one-trait binary chromosome state for trait-major score computation."""
-    return regenie2_binary_types.Regenie2MultiBinaryChromosomeState(
-        covariate_matrix=chromosome_state.covariate_matrix,
-        phenotype_matrix=chromosome_state.phenotype_vector[None, :],
-        null_logistic_coefficients=chromosome_state.null_logistic_coefficients[None, :],
-        null_firth_coefficients=chromosome_state.null_firth_coefficients[None, :],
-        null_firth_offset_matrix=chromosome_state.null_firth_offset[None, :],
-        fitted_probability=chromosome_state.fitted_probability[None, :],
-        score_residual=chromosome_state.score_residual[None, :],
-        loco_offset_matrix=chromosome_state.loco_offset[None, :],
-        standardized_residual=chromosome_state.standardized_residual[None, :],
-        square_root_weight=chromosome_state.square_root_weight[None, :],
-        weighted_genotype_projection_matrix=chromosome_state.weighted_genotype_projection_matrix[None, :, :],
-        null_firth_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood[None],
-        null_firth_iteration_count=chromosome_state.null_firth_iteration_count[None],
-        null_firth_convergence_reason_code=chromosome_state.null_firth_convergence_reason_code[None],
-        null_logistic_iteration_count=chromosome_state.null_logistic_iteration_count[None],
-        null_logistic_converged=chromosome_state.null_logistic_converged[None],
-    )
 
 
 def compute_multi_binary_score_test_chunk_variant_major(

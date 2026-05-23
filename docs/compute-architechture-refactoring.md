@@ -863,6 +863,7 @@ Completed cleanup so far:
 * Removed the sample-major binary correction adapter module; sample-major public calls now transpose once at the API boundary and call the canonical variant-major correction path directly.
 * Routed sample-major multi-binary chunk execution through the variant-major API after one boundary transpose, avoiding repeated per-trait layout conversion in approximate-Firth paths.
 * Centralized sample-major to variant-major dosage conversion in `compute/common/genotype.py` and routed linear and binary public chunk adapters through it.
+* Moved the single-to-multi binary chromosome-state view helper from score math into `regenie2_binary/state.py`, keeping state container adapters together.
 
 Intentional remaining adapters:
 
