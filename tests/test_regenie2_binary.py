@@ -353,6 +353,30 @@ def test_firth_candidate_capacity_plan_caps_capacity_at_variant_count() -> None:
     assert capacity_plan.overflow_candidate_capacity == 3
 
 
+def test_firth_candidate_host_dispatch_selects_bounded_or_overflow_capacity() -> None:
+    fallback_mask = jnp.asarray([True, False, True, True, False], dtype=jnp.bool_)
+    capacity_plan = regenie2_binary_candidate_planning.build_firth_candidate_capacity_plan(
+        variant_count=5,
+        preferred_candidate_capacity=2,
+    )
+
+    fallback_count = regenie2_binary_candidate_planning.count_firth_candidates_on_host(fallback_mask)
+    candidate_capacity = regenie2_binary_candidate_planning.select_firth_candidate_capacity(
+        fallback_count=fallback_count,
+        capacity_plan=capacity_plan,
+    )
+
+    assert fallback_count == 3
+    assert candidate_capacity == 5
+    assert (
+        regenie2_binary_candidate_planning.select_firth_candidate_capacity(
+            fallback_count=2,
+            capacity_plan=capacity_plan,
+        )
+        == 2
+    )
+
+
 def test_null_logistic_kernel_config_retraces_same_shape_without_cache_clear() -> None:
     covariate_matrix, phenotype_vector, _ = build_binary_inputs()
     state = regenie2_binary_state.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)

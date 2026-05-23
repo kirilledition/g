@@ -288,7 +288,6 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
     return jax.lax.cond(fallback_count > 0, apply_candidate_corrections, no_candidate_corrections)
 
 
-@functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config"))
 def apply_device_candidate_corrections_firth_variant_major(
     chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
@@ -297,38 +296,28 @@ def apply_device_candidate_corrections_firth_variant_major(
     sparse_candidate_mask: jax.Array | None = None,
     kernel_config: regenie2_binary_types.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_types.Regenie2BinaryChunkResult:
-    """Select bounded or overflow Firth capacity before applying correction."""
+    """Select bounded or overflow Firth capacity on the host before correction."""
     candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
-    fallback_count = jnp.sum(candidate_mask, dtype=jnp.int32)
+    fallback_count = regenie2_binary_candidate_planning.count_firth_candidates_on_host(candidate_mask)
+    if fallback_count == 0:
+        return result
     variant_count = genotype_matrix_by_variant.shape[0]
     capacity_plan = regenie2_binary_candidate_planning.build_firth_candidate_capacity_plan(
         variant_count=variant_count,
         preferred_candidate_capacity=kernel_config.firth_candidate_capacity,
     )
-    return jax.lax.cond(
-        regenie2_binary_candidate_planning.compute_firth_candidate_overflow_mask(
-            fallback_count=fallback_count,
-            capacity_plan=capacity_plan,
-        ),
-        lambda _: apply_device_candidate_corrections_firth_variant_major_with_capacity(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=genotype_matrix_by_variant,
-            result=result,
-            correction_plan=correction_plan,
-            sparse_candidate_mask=sparse_candidate_mask,
-            candidate_capacity=capacity_plan.overflow_candidate_capacity,
-            kernel_config=kernel_config,
-        ),
-        lambda _: apply_device_candidate_corrections_firth_variant_major_with_capacity(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=genotype_matrix_by_variant,
-            result=result,
-            correction_plan=correction_plan,
-            sparse_candidate_mask=sparse_candidate_mask,
-            candidate_capacity=capacity_plan.bounded_candidate_capacity,
-            kernel_config=kernel_config,
-        ),
-        operand=None,
+    candidate_capacity = regenie2_binary_candidate_planning.select_firth_candidate_capacity(
+        fallback_count=fallback_count,
+        capacity_plan=capacity_plan,
+    )
+    return apply_device_candidate_corrections_firth_variant_major_with_capacity(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        result=result,
+        correction_plan=correction_plan,
+        sparse_candidate_mask=sparse_candidate_mask,
+        candidate_capacity=candidate_capacity,
+        kernel_config=kernel_config,
     )
 
 

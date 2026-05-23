@@ -121,6 +121,23 @@ def compute_firth_candidate_overflow_mask(
     return fallback_count > bounded_candidate_capacity
 
 
+def count_firth_candidates_on_host(fallback_mask: jax.Array) -> int:
+    """Return the Firth candidate count as a host integer for dispatch."""
+    fallback_count = jnp.sum(fallback_mask, dtype=jnp.int32)
+    return int(jax.device_get(fallback_count))
+
+
+def select_firth_candidate_capacity(
+    *,
+    fallback_count: int,
+    capacity_plan: FirthCandidateCapacityPlan,
+) -> int:
+    """Select the fixed Firth correction capacity for a candidate count."""
+    if fallback_count > capacity_plan.bounded_candidate_capacity:
+        return capacity_plan.overflow_candidate_capacity
+    return capacity_plan.bounded_candidate_capacity
+
+
 def build_device_firth_batch_plan(
     fallback_mask: jax.Array,
     candidate_capacity: int,

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import functools
-
-import jax
+import typing
 
 from g import types
 from g.compute.regenie2_binary import config as regenie2_binary_config
@@ -12,8 +10,10 @@ from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import types as regenie2_binary_types
 from g.compute.regenie2_binary import variant_major_correction as regenie2_binary_variant_major_correction
 
+if typing.TYPE_CHECKING:
+    import jax
 
-@functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config"))
+
 def compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
     chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
