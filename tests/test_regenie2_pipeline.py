@@ -328,7 +328,7 @@ def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -
 
     with (
         patch(
-            "g.compute.regenie2_linear.state.prepare_regenie2_linear_chromosome_state",
+            "g.compute.regenie2_linear.api.prepare_regenie2_linear_chromosome_state",
             return_value="chromosome-state",
         ),
         patch(
@@ -501,7 +501,7 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
 
     with (
         patch(
-            "g.compute.regenie2_binary.state.prepare_regenie2_binary_chromosome_state",
+            "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
             return_value="chromosome-state",
         ) as mock_prepare,
         patch(
@@ -589,7 +589,7 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
 
     with (
         patch(
-            "g.compute.regenie2_binary.state.prepare_regenie2_binary_chromosome_state",
+            "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
             return_value="chromosome-state",
         ),
         patch(
@@ -668,7 +668,7 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
 
     with (
         patch(
-            "g.compute.regenie2_binary.state.prepare_regenie2_binary_chromosome_state",
+            "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
             return_value="chromosome-state",
         ),
         patch(
@@ -783,7 +783,7 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
 
     with (
         patch(
-            "g.compute.regenie2_binary.state.prepare_regenie2_multi_binary_chromosome_state",
+            "g.compute.regenie2_binary.api.prepare_regenie2_multi_binary_chromosome_state",
             return_value=chromosome_state,
         ) as mock_prepare,
         patch(
@@ -840,9 +840,8 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             "g.engine.regenie2_pipeline.preflight.run_regenie2_preflight",
             return_value=SimpleNamespace(sample_count=2, covariate_count=1, chromosome_count=1),
         ) as mock_preflight,
-        patch.object(
-            regenie2_linear_state,
-            "prepare_regenie2_linear_state",
+        patch(
+            "g.compute.regenie2_linear.api.prepare_regenie2_linear_state",
             return_value=typing.cast("regenie2_linear_state.Regenie2LinearState", "state"),
         ),
     ):
@@ -1065,7 +1064,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             return_value=SimpleNamespace(sample_count=2, covariate_count=1, chromosome_count=1),
         ) as mock_preflight,
         patch(
-            "g.compute.regenie2_binary.state.prepare_regenie2_binary_state",
+            "g.compute.regenie2_binary.api.prepare_regenie2_binary_state",
             return_value=typing.cast("regenie2_binary_state.Regenie2BinaryState", "state"),
         ),
     ):
@@ -1119,7 +1118,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> No
             return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
         ),
         patch(
-            "g.compute.regenie2_binary.state.prepare_regenie2_binary_state",
+            "g.compute.regenie2_binary.api.prepare_regenie2_binary_state",
             return_value=typing.cast("regenie2_binary_state.Regenie2BinaryState", "state"),
         ),
     ):
@@ -1176,9 +1175,8 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
                 or output.InitializedOutputRun(committed_chunk_identifiers=initialized_chunk_sets.pop(0))
             ),
         ),
-        patch.object(
-            regenie2_linear_state,
-            "prepare_regenie2_multi_linear_state",
+        patch(
+            "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
             return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
         ),
     ):

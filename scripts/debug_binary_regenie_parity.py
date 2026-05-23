@@ -456,12 +456,12 @@ class BinaryVariantDebugCaptureCallback:
     def prepare_chromosome_state(self, chromosome: str) -> regenie2_binary_state.Regenie2BinaryChromosomeState:
         """Build or reuse the binary chromosome state for one chromosome."""
         if chromosome not in self.chromosome_states:
-            state = regenie2_binary_state.prepare_regenie2_binary_state(
+            state = regenie2_binary.prepare_regenie2_binary_state(
                 self.run_input.covariate_matrix,
                 self.run_input.phenotype_vector,
             )
             loco_offset = jnp.asarray(self.prediction_source.get_chromosome_predictions(chromosome), dtype=jnp.float32)
-            self.chromosome_states[chromosome] = regenie2_binary_state.prepare_regenie2_binary_chromosome_state(
+            self.chromosome_states[chromosome] = regenie2_binary.prepare_regenie2_binary_chromosome_state(
                 state,
                 loco_offset,
                 self.correction_plan,

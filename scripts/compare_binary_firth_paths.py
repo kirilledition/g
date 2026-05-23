@@ -167,16 +167,16 @@ def load_npz_inputs(input_npz_path: Path) -> BinaryParityInputs:
 
 def prepare_chromosome_state(inputs: BinaryParityInputs) -> regenie2_binary_state.Regenie2BinaryChromosomeState:
     """Prepare the binary chromosome state shared by both paths."""
-    regenie_state = regenie2_binary_state.prepare_regenie2_binary_state(
+    regenie_state = regenie2_binary.prepare_regenie2_binary_state(
         covariate_matrix=inputs.covariate_matrix,
         phenotype_vector=inputs.phenotype_vector,
     )
-    return regenie2_binary_state.prepare_regenie2_binary_chromosome_state(regenie_state, inputs.loco_offset)
+    return regenie2_binary.prepare_regenie2_binary_chromosome_state(regenie_state, inputs.loco_offset)
 
 
 def compute_path_metrics(
     *,
-    score_test_result: regenie2_binary_result.Regenie2BinaryChunkResult,
+    score_test_result: regenie2_binary_result.Regenie2BinaryScoreChunkResult,
     corrected_result: regenie2_binary_result.Regenie2BinaryChunkResult,
 ) -> BinaryPathMetrics:
     """Compute parity metrics for one path."""
@@ -243,10 +243,13 @@ def compare_binary_paths(
         inputs.genotype_matrix,
         correction_plan,
     )
-    production_corrected_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
-        chromosome_state,
-        inputs.genotype_matrix,
-        correction_plan,
+    production_corrected_result = typing.cast(
+        "regenie2_binary_result.Regenie2BinaryChunkResult",
+        regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
+            chromosome_state,
+            inputs.genotype_matrix,
+            correction_plan,
+        ),
     )
     genotype_matrix_by_variant = jnp.transpose(inputs.genotype_matrix)
     variant_major_score_test_result = regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
@@ -254,10 +257,13 @@ def compare_binary_paths(
         genotype_matrix_by_variant,
         correction_plan,
     )
-    variant_major_corrected_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
-        chromosome_state,
-        genotype_matrix_by_variant,
-        correction_plan,
+    variant_major_corrected_result = typing.cast(
+        "regenie2_binary_result.Regenie2BinaryChunkResult",
+        regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+            chromosome_state,
+            genotype_matrix_by_variant,
+            correction_plan,
+        ),
     )
     production_metrics = compute_path_metrics(
         score_test_result=production_score_test_result,

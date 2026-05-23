@@ -11,9 +11,7 @@ import jax.numpy as jnp
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_linear import api as regenie2_linear
-from g.compute.regenie2_linear import state as regenie2_linear_state
 from g.engine import callbacks, native_dispatch
 
 if typing.TYPE_CHECKING:
@@ -118,11 +116,11 @@ def warm_regenie2_linear_bgen_cache(
         alignment_config=alignment_config,
     )
     chromosome = first_engine_chromosome(engine)
-    regenie_state = regenie2_linear_state.prepare_regenie2_linear_state(
+    regenie_state = regenie2_linear.prepare_regenie2_linear_state(
         covariate_matrix=run_input.covariate_matrix,
         phenotype_vector=run_input.phenotype_vector,
     )
-    chromosome_state = regenie2_linear_state.prepare_regenie2_linear_chromosome_state(
+    chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
         regenie_state,
         jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
     )
@@ -188,11 +186,11 @@ def warm_regenie2_binary_bgen_cache(
         alignment_config=alignment_config,
     )
     chromosome = first_engine_chromosome(engine)
-    regenie_state = regenie2_binary_state.prepare_regenie2_binary_state(
+    regenie_state = regenie2_binary.prepare_regenie2_binary_state(
         covariate_matrix=run_input.covariate_matrix,
         phenotype_vector=run_input.phenotype_vector,
     )
-    chromosome_state = regenie2_binary_state.prepare_regenie2_binary_chromosome_state(
+    chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state=regenie_state,
         loco_offset=jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
         correction_plan=correction_plan,

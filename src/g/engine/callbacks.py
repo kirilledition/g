@@ -663,7 +663,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.run_input = run_input
         self.prediction_source = prediction_source
         self.writer_session = writer_session
-        self.regenie_state = regenie2_linear_state.prepare_regenie2_linear_state(
+        self.regenie_state = regenie2_linear.prepare_regenie2_linear_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_vector=run_input.phenotype_vector,
         )
@@ -795,7 +795,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             return
         chromosome_start_time = time.perf_counter()
         loco_predictions = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
-        self.current_chromosome_state = regenie2_linear_state.prepare_regenie2_linear_chromosome_state(
+        self.current_chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
             self.regenie_state,
             loco_predictions,
         )
@@ -850,7 +850,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.prediction_source = prediction_source
         self.writer_sessions = writer_sessions
         self.committed_chunk_identifier_sets = committed_chunk_identifier_sets
-        self.regenie_state = regenie2_linear_state.prepare_regenie2_multi_linear_state(
+        self.regenie_state = regenie2_linear.prepare_regenie2_multi_linear_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_matrix=run_input.phenotype_matrix,
         )
@@ -973,7 +973,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             return
         chromosome_start_time = time.perf_counter()
         loco_predictions = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
-        self.current_chromosome_state = regenie2_linear_state.prepare_regenie2_multi_linear_chromosome_state(
+        self.current_chromosome_state = regenie2_linear.prepare_regenie2_multi_linear_chromosome_state(
             self.regenie_state,
             loco_predictions,
         )
@@ -1029,7 +1029,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.writer_session = writer_session
         self.correction_plan = correction_plan
         self.kernel_config = kernel_config
-        self.regenie_state = regenie2_binary_state.prepare_regenie2_binary_state(
+        self.regenie_state = regenie2_binary.prepare_regenie2_binary_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_vector=run_input.phenotype_vector,
         )
@@ -1104,7 +1104,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             return
         chromosome_start_time = time.perf_counter()
         loco_offset = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
-        self.current_chromosome_state = regenie2_binary_state.prepare_regenie2_binary_chromosome_state(
+        self.current_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
             state=self.regenie_state,
             loco_offset=loco_offset,
             correction_plan=self.correction_plan,
@@ -1235,7 +1235,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.committed_chunk_identifier_sets = committed_chunk_identifier_sets
         self.correction_plan = correction_plan
         self.kernel_config = kernel_config
-        self.regenie_state = regenie2_binary_state.prepare_regenie2_multi_binary_state(
+        self.regenie_state = regenie2_binary.prepare_regenie2_multi_binary_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_matrix=run_input.phenotype_matrix,
         )
@@ -1369,7 +1369,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             return
         chromosome_start_time = time.perf_counter()
         loco_offset = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
-        self.current_chromosome_state = regenie2_binary_state.prepare_regenie2_multi_binary_chromosome_state(
+        self.current_chromosome_state = regenie2_binary.prepare_regenie2_multi_binary_chromosome_state(
             self.regenie_state,
             loco_offset,
             self.correction_plan,

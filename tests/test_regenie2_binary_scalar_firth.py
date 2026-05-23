@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from g import types
+from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary import state as regenie2_binary_state
@@ -29,8 +30,8 @@ def build_scalar_fixture() -> tuple[regenie2_binary_state.Regenie2BinaryChromoso
     )
     phenotype_vector = jnp.asarray([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
     genotype_vector = jnp.asarray([0.0, 2.0, 0.0, 0.0, 2.0, 0.0, 2.0, 0.0], dtype=jnp.float32)
-    state = regenie2_binary_state.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
-    chromosome_state = regenie2_binary_state.prepare_regenie2_binary_chromosome_state(
+    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
+    chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state,
         jnp.zeros_like(phenotype_vector),
     )
@@ -144,8 +145,8 @@ def test_collinear_scalar_candidate_gets_numerical_failure_label() -> None:
         dtype=jnp.float32,
     )
     phenotype_vector = jnp.asarray([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
-    state = regenie2_binary_state.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
-    chromosome_state = regenie2_binary_state.prepare_regenie2_binary_chromosome_state(
+    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
+    chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state, jnp.zeros_like(phenotype_vector)
     )
     raw_genotype_vector = covariate_matrix[:, 1]

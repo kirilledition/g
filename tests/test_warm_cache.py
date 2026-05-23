@@ -178,9 +178,9 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
     observed_shapes: list[tuple[int, int]] = []
     ready_values: list[FakeReadyValue] = []
 
-    monkeypatch.setattr(warm_cache.regenie2_linear_state, "prepare_regenie2_linear_state", lambda **_: object())
+    monkeypatch.setattr(warm_cache.regenie2_linear, "prepare_regenie2_linear_state", lambda **_: object())
     monkeypatch.setattr(
-        warm_cache.regenie2_linear_state,
+        warm_cache.regenie2_linear,
         "prepare_regenie2_linear_chromosome_state",
         lambda *_, **__: object(),
     )
@@ -236,9 +236,9 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
     observed_shapes: list[tuple[int, int]] = []
     observed_kernel_configs: list[regenie2_binary_config.BinaryKernelConfig] = []
 
-    monkeypatch.setattr(warm_cache.regenie2_binary_state, "prepare_regenie2_binary_state", lambda **_: object())
+    monkeypatch.setattr(warm_cache.regenie2_binary, "prepare_regenie2_binary_state", lambda **_: object())
     monkeypatch.setattr(
-        warm_cache.regenie2_binary_state,
+        warm_cache.regenie2_binary,
         "prepare_regenie2_binary_chromosome_state",
         lambda **keyword_arguments: keyword_arguments,
     )

@@ -3,11 +3,85 @@
 from __future__ import annotations
 
 import jax
+import jax.numpy as jnp
 
-from g.compute.common import genotype
+from g.compute.common import genotype, linalg
 from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
+
+
+def prepare_regenie2_linear_state(
+    covariate_matrix: jax.Array,
+    phenotype_vector: jax.Array,
+) -> regenie2_linear_state.Regenie2LinearState:
+    """Prepare covariate projection and phenotype residual for REGENIE step 2."""
+    multi_state = prepare_regenie2_multi_linear_state(
+        covariate_matrix=covariate_matrix,
+        phenotype_matrix=jnp.asarray(phenotype_vector, dtype=jnp.float32)[None, :],
+    )
+    return regenie2_linear_state.build_single_linear_state_from_multi(multi_state)
+
+
+def prepare_regenie2_multi_linear_state(
+    covariate_matrix: jax.Array,
+    phenotype_matrix: jax.Array,
+) -> regenie2_linear_state.Regenie2MultiLinearState:
+    """Prepare shared covariate projection and trait-major phenotype residuals."""
+    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jnp.float32)
+    phenotype_matrix_compute = jnp.asarray(phenotype_matrix, dtype=jnp.float32)
+    sample_count = covariate_matrix_compute.shape[0]
+    covariate_parameter_count = covariate_matrix_compute.shape[1]
+    degrees_of_freedom = sample_count - covariate_parameter_count
+
+    covariate_matrix_transpose = covariate_matrix_compute.T
+    covariate_crossproduct = covariate_matrix_transpose @ covariate_matrix_compute
+    covariate_crossproduct_cholesky_factor = jnp.linalg.cholesky(covariate_crossproduct)
+    whitened_covariate_transpose = jax.lax.linalg.triangular_solve(
+        covariate_crossproduct_cholesky_factor,
+        covariate_matrix_transpose,
+        left_side=True,
+        lower=True,
+    )
+
+    phenotype_projection_matrix = linalg.solve_positive_definite_system(
+        covariate_crossproduct_cholesky_factor,
+        covariate_matrix_transpose @ phenotype_matrix_compute.T,
+    )
+    phenotype_residual_matrix = phenotype_matrix_compute - (covariate_matrix_compute @ phenotype_projection_matrix).T
+
+    return regenie2_linear_state.Regenie2MultiLinearState(
+        covariate_matrix=covariate_matrix_compute,
+        covariate_matrix_transpose=covariate_matrix_transpose,
+        covariate_crossproduct_cholesky_factor=covariate_crossproduct_cholesky_factor,
+        whitened_covariate_transpose=whitened_covariate_transpose,
+        phenotype_residual_matrix=phenotype_residual_matrix,
+        sample_count=jnp.asarray(sample_count, dtype=jnp.int32),
+        degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=jnp.float32),
+    )
+
+
+@jax.jit
+def prepare_regenie2_linear_chromosome_state(
+    state: regenie2_linear_state.Regenie2LinearState,
+    loco_predictions: jax.Array,
+) -> regenie2_linear_state.Regenie2LinearChromosomeState:
+    """Prepare chromosome-specific residual state reused across chunks."""
+    multi_state = regenie2_linear_state.build_multi_linear_state_from_single(state)
+    multi_chromosome_state = regenie2_linear_state.build_multi_linear_chromosome_state(
+        multi_state,
+        jnp.asarray(loco_predictions, dtype=jnp.float32)[None, :],
+    )
+    return regenie2_linear_state.build_single_linear_chromosome_state_from_multi(multi_chromosome_state)
+
+
+@jax.jit
+def prepare_regenie2_multi_linear_chromosome_state(
+    state: regenie2_linear_state.Regenie2MultiLinearState,
+    loco_prediction_matrix: jax.Array,
+) -> regenie2_linear_state.Regenie2MultiLinearChromosomeState:
+    """Prepare chromosome-specific multi-trait residual state reused across chunks."""
+    return regenie2_linear_state.build_multi_linear_chromosome_state(state, loco_prediction_matrix)
 
 
 @jax.jit
@@ -112,7 +186,7 @@ def compute_regenie2_linear_chunk(
             log10_p_value = -log10(chi2_to_p(chi_squared, df=1))
 
     """
-    chromosome_state = regenie2_linear_state.prepare_regenie2_linear_chromosome_state(state, loco_predictions)
+    chromosome_state = prepare_regenie2_linear_chromosome_state(state, loco_predictions)
     return compute_regenie2_linear_chunk_from_chromosome_state(
         chromosome_state=chromosome_state,
         genotype_matrix=genotype_matrix,
