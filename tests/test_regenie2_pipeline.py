@@ -266,6 +266,16 @@ class ExplodingSparseCandidateChunkStats(ExplodingChunkStats):
         raise AssertionError(message)
 
 
+class LinearNativeSumChunkStats(ExplodingChunkStats):
+    @property
+    def dosage_sum(self) -> np.ndarray:
+        return np.asarray([3.0, 7.0], dtype=np.float32)
+
+    @property
+    def imputed_dosage_square_sum(self) -> np.ndarray:
+        return np.asarray([5.0, 13.0], dtype=np.float32)
+
+
 def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> None:
     result_queue: queue.Queue[
         callbacks.Regenie2ResultWriteWorkItem | callbacks.Regenie2MultiResultWriteWorkItem | None
@@ -369,6 +379,46 @@ def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -
         callback.finish()
 
     assert len(writer_session.native_chunks) == 1
+    assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
+
+
+def test_linear_variant_major_callback_passes_native_sums_to_jitted_compute() -> None:
+    writer_session = FakeWriterSession()
+    result = regenie2_linear_result.Regenie2LinearChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    callback = callbacks.LinearRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+    )
+    callback.current_chromosome = "22"
+    callback.current_chromosome_state = typing.cast(
+        "regenie2_linear_state.Regenie2LinearChromosomeState",
+        "chromosome-state",
+    )
+    chunk_stats = typing.cast("typing.Any", LinearNativeSumChunkStats())
+
+    with patch(
+        "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state_variant_major",
+        return_value=result,
+    ) as mock_compute:
+        callback.compute_preprocessed_variant_major_dosage_chunk(
+            metadata=build_native_metadata(),
+            genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=chunk_stats,
+        )
+        callback.finish()
+
+    np.testing.assert_array_equal(np.asarray(mock_compute.call_args.kwargs["genotype_dosage_sum"]), [3.0, 7.0])
+    np.testing.assert_array_equal(
+        np.asarray(mock_compute.call_args.kwargs["genotype_imputed_dosage_square_sum"]),
+        [5.0, 13.0],
+    )
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 

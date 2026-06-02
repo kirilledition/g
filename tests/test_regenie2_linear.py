@@ -12,6 +12,7 @@ import numpy.typing as npt
 
 from g.compute.common import genotype, linalg, pvalue
 from g.compute.regenie2_linear import api as regenie2_linear
+from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
 
 
@@ -290,6 +291,78 @@ class TestChiSquaredToLog10PValue:
 
 class TestComputeRegenie2LinearChunk:
     """Tests for compute_regenie2_linear_chunk."""
+
+    def test_variant_major_kernel_matches_native_sum_square_stats_path(self) -> None:
+        """Ensure native genotype statistics reproduce normalized genotype sum squares."""
+        sample_count = 5
+        variant_count = 3
+        genotype_matrix_by_variant = jnp.asarray(
+            [
+                [0.0, 0.0, 1.0, 2.0, 0.0],
+                [2.0, 2.0, 1.0, 2.0, 2.0],
+                [0.0, 1.0, 1.0, 2.0, 2.0],
+            ],
+            dtype=jnp.float32,
+        )
+        normalized_genotype_matrix_by_variant = genotype.normalize_high_frequency_diploid_genotypes_variant_major(
+            genotype_matrix_by_variant
+        )
+        expected_sum_squares = jnp.einsum(
+            "ij,ij->i",
+            normalized_genotype_matrix_by_variant,
+            normalized_genotype_matrix_by_variant,
+        )
+        observed_sum_squares = regenie2_linear_score.compute_normalized_genotype_sum_squares_from_stats(
+            genotype_dosage_sum=jnp.sum(genotype_matrix_by_variant, axis=1),
+            genotype_imputed_dosage_square_sum=jnp.einsum(
+                "ij,ij->i",
+                genotype_matrix_by_variant,
+                genotype_matrix_by_variant,
+            ),
+            sample_count=genotype_matrix_by_variant.shape[1],
+        )
+
+        numpy.testing.assert_allclose(observed_sum_squares, expected_sum_squares, rtol=1e-6, atol=1e-6)
+
+        whitened_covariate_transpose = jnp.asarray([[0.0] * sample_count], dtype=jnp.float32)
+        adjusted_residual_matrix = jnp.asarray([[0.2, -0.1, 0.4, -0.3, 0.5]], dtype=jnp.float32)
+        adjusted_residual_projection_coordinate_matrix = jnp.asarray([[0.0]], dtype=jnp.float32)
+        adjusted_residual_sum_squares = jnp.asarray([0.55], dtype=jnp.float32)
+        degrees_of_freedom = jnp.asarray(sample_count - 1, dtype=jnp.float32)
+        fallback_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
+            whitened_covariate_transpose=whitened_covariate_transpose,
+            adjusted_residual_matrix=adjusted_residual_matrix,
+            adjusted_residual_projection_coordinate_matrix=adjusted_residual_projection_coordinate_matrix,
+            adjusted_residual_sum_squares=adjusted_residual_sum_squares,
+            degrees_of_freedom=degrees_of_freedom,
+            genotype_matrix_by_variant=genotype_matrix_by_variant,
+        )
+        stats_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
+            whitened_covariate_transpose=whitened_covariate_transpose,
+            adjusted_residual_matrix=adjusted_residual_matrix,
+            adjusted_residual_projection_coordinate_matrix=adjusted_residual_projection_coordinate_matrix,
+            adjusted_residual_sum_squares=adjusted_residual_sum_squares,
+            degrees_of_freedom=degrees_of_freedom,
+            genotype_matrix_by_variant=genotype_matrix_by_variant,
+            genotype_dosage_sum=jnp.sum(genotype_matrix_by_variant, axis=1),
+            genotype_imputed_dosage_square_sum=jnp.einsum(
+                "ij,ij->i",
+                genotype_matrix_by_variant,
+                genotype_matrix_by_variant,
+            ),
+        )
+
+        assert fallback_result.beta.shape == (1, variant_count)
+        numpy.testing.assert_allclose(stats_result.beta, fallback_result.beta, rtol=1e-6, atol=1e-6)
+        numpy.testing.assert_allclose(
+            stats_result.standard_error,
+            fallback_result.standard_error,
+            rtol=1e-6,
+            atol=1e-6,
+        )
+        numpy.testing.assert_allclose(stats_result.chi_squared, fallback_result.chi_squared, rtol=1e-6, atol=1e-6)
+        numpy.testing.assert_allclose(stats_result.log10_p_value, fallback_result.log10_p_value, rtol=1e-6, atol=1e-6)
+        numpy.testing.assert_array_equal(stats_result.valid_mask, fallback_result.valid_mask)
 
     def test_matches_manual_calculation(self) -> None:
         """Validate chunk computation against manual numpy calculation."""
