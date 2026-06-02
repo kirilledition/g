@@ -840,11 +840,19 @@ def selected_tasks(manifest: JsonObject, identifiers: list[object]) -> list[Json
     return [task for task in typed_tasks if task_selector_values(task) & selected_identifiers]
 
 
+def subprocess_environment(cwd: Path) -> dict[str, str]:
+    """Return a subprocess environment consistent with an explicit cwd."""
+    environment = dict(os.environ)
+    environment["PWD"] = str(cwd)
+    return environment
+
+
 def run_command(command_arguments: list[str], *, cwd: Path) -> CommandResult:
     """Run a command and capture output."""
     completed_process = subprocess.run(
         command_arguments,
         cwd=cwd,
+        env=subprocess_environment(cwd),
         check=False,
         capture_output=True,
         text=True,
@@ -1309,7 +1317,8 @@ def lease_is_expired(lease: object, *, now: datetime.datetime | None = None) -> 
     """Return whether a lease object is expired."""
     if not isinstance(lease, dict):
         return True
-    expires_at = lease.get("expires_at")
+    typed_lease = typing.cast("JsonObject", lease)
+    expires_at = typed_lease.get("expires_at")
     if not isinstance(expires_at, str):
         return True
     try:
@@ -1706,6 +1715,7 @@ def launch_worker(
         process = subprocess.Popen(
             ["bash", str(wrapper_path)],
             cwd=repository_directory,
+            env=subprocess_environment(repository_directory),
             stdout=stdout_log,
             stderr=stderr_log,
             text=True,
@@ -2047,6 +2057,7 @@ def command_review(arguments: argparse.Namespace) -> int:
         completed_process = subprocess.run(
             command_arguments,
             cwd=repository_directory,
+            env=subprocess_environment(repository_directory),
             input=build_review_prompt(task),
             check=False,
             capture_output=True,
@@ -2153,6 +2164,7 @@ def command_integrate(arguments: argparse.Namespace) -> int:
             completed_process = subprocess.run(
                 command_arguments,
                 cwd=integration_worktree_path,
+                env=subprocess_environment(integration_worktree_path),
                 input=build_integration_prompt(task, review_report_path, integration_branch),
                 check=False,
                 capture_output=True,
