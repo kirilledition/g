@@ -25,13 +25,10 @@ pub fn scan_committed_chunk_identifiers(chunks_directory: &Path) -> Result<Vec<i
         .collect::<Vec<_>>();
     chunk_file_paths.sort();
     for chunk_file_path in chunk_file_paths {
-        if let Some((first_chunk_identifier, None)) = parse_chunk_file_name(&chunk_file_path) {
-            committed_identifiers.insert(first_chunk_identifier);
-            continue;
-        }
         let input_file = File::open(&chunk_file_path).map_err(OutputWriterError::runtime)?;
         let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
         if let Some(chunk_commits) = read_schema_chunk_commits(file_reader.schema().as_ref())? {
+            validate_schema_chunk_commit_batches(file_reader, &chunk_commits)?;
             committed_identifiers.extend(chunk_commits.into_iter().map(|chunk_commit| chunk_commit.chunk_identifier));
             continue;
         }
@@ -151,6 +148,31 @@ fn read_schema_chunk_commits(chunk_schema: &Schema) -> Result<Option<Vec<ChunkCo
     Ok(Some(chunk_commits))
 }
 
+fn validate_schema_chunk_commit_batches(
+    file_reader: ArrowFileReader<File>,
+    chunk_commits: &[ChunkCommitObservation],
+) -> Result<(), OutputWriterError> {
+    let mut batch_row_counts = Vec::with_capacity(chunk_commits.len());
+    for maybe_batch in file_reader {
+        let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
+        batch_row_counts.push(i64::try_from(batch.num_rows()).map_err(OutputWriterError::runtime)?);
+    }
+    if batch_row_counts.len() != chunk_commits.len() {
+        return Err(OutputWriterError::InvalidInput(
+            "Arrow chunk commit metadata batch count does not match the file batches.".to_string(),
+        ));
+    }
+    for (observed_row_count, observed_chunk_commit) in batch_row_counts.iter().zip(chunk_commits.iter()) {
+        if *observed_row_count != observed_chunk_commit.row_count {
+            return Err(OutputWriterError::InvalidInput(format!(
+                "Arrow chunk commit metadata row count mismatch for chunk {}.",
+                observed_chunk_commit.chunk_identifier
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn inspect_manifest_chunk_file(
     chunk_file_path: &Path,
     chunk_identifier: i64,
@@ -208,24 +230,7 @@ fn inspect_metadata_manifest_chunk_file(
             variant_stop_index: None,
         });
     };
-    let mut batch_row_counts = Vec::with_capacity(chunk_commits.len());
-    for maybe_batch in file_reader {
-        let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
-        batch_row_counts.push(i64::try_from(batch.num_rows()).map_err(OutputWriterError::runtime)?);
-    }
-    if batch_row_counts.len() != chunk_commits.len() {
-        return Err(OutputWriterError::InvalidInput(format!(
-            "Strict resume batch count mismatch for chunk file containing chunk {chunk_identifier}."
-        )));
-    }
-    for (observed_row_count, observed_chunk_commit) in batch_row_counts.iter().zip(chunk_commits.iter()) {
-        if *observed_row_count != observed_chunk_commit.row_count {
-            return Err(OutputWriterError::InvalidInput(format!(
-                "Strict resume row count mismatch for chunk {}.",
-                observed_chunk_commit.chunk_identifier
-            )));
-        }
-    }
+    validate_schema_chunk_commit_batches(file_reader, chunk_commits)?;
     Ok(ManifestChunkObservation {
         schema,
         row_count: chunk_commit.row_count,
@@ -241,19 +246,6 @@ fn read_int64_column<'a>(
     batch.column_by_name(column_name).and_then(|column| column.as_any().downcast_ref::<Int64Array>()).ok_or_else(|| {
         OutputWriterError::Runtime(format!("Rust output writer could not read {column_name} from Arrow chunk."))
     })
-}
-
-fn parse_chunk_file_name(chunk_file_path: &Path) -> Option<(i64, Option<i64>)> {
-    let file_name = chunk_file_path.file_name()?.to_str()?;
-    let chunk_name = file_name.strip_prefix("chunk_")?.strip_suffix(".arrow")?;
-    let chunk_parts = chunk_name.split('_').collect::<Vec<_>>();
-    match chunk_parts.as_slice() {
-        [first_chunk_identifier] => first_chunk_identifier.parse::<i64>().ok().map(|identifier| (identifier, None)),
-        [first_chunk_identifier, last_chunk_identifier] => {
-            first_chunk_identifier.parse::<i64>().ok().zip(last_chunk_identifier.parse::<i64>().ok().map(Some))
-        }
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -319,16 +311,68 @@ mod tests {
             .into_iter()
             .collect(),
         ));
-        write_arrow_file(
-            &directory_path.join("chunk_0_2.arrow"),
-            &schema,
-            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
-        );
+        let first_batch =
+            RecordBatch::try_new(Arc::clone(&schema), vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef])
+                .expect("first batch should build");
+        let second_batch =
+            RecordBatch::try_new(Arc::clone(&schema), vec![Arc::new(Int64Array::from(vec![2])) as ArrayRef])
+                .expect("second batch should build");
+        write_arrow_batches(&directory_path.join("chunk_0_2.arrow"), &schema, &[first_batch, second_batch]);
 
         let committed_identifiers =
             scan_committed_chunk_identifiers(&directory_path).expect("metadata-backed chunks should scan");
 
         assert_eq!(committed_identifiers, vec![0, 2]);
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
+    fn scan_reads_single_chunk_identifier_from_arrow_contents() {
+        let directory_path = create_test_directory();
+        let schema = required_resume_schema(None);
+        write_arrow_file(
+            &directory_path.join("chunk_000000007.arrow"),
+            &schema,
+            vec![
+                Arc::new(Int64Array::from(vec![3])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![3])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![4])) as ArrayRef,
+            ],
+        );
+
+        let committed_identifiers = scan_committed_chunk_identifiers(&directory_path).expect("Arrow chunk should scan");
+
+        assert_eq!(committed_identifiers, vec![3]);
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
+    fn scan_rejects_schema_metadata_row_count_mismatch() {
+        let directory_path = create_test_directory();
+        let schema = Arc::new(
+            Schema::new(vec![Field::new("value", DataType::Int64, false)]).with_metadata(
+                [(
+                    output_schema::CHUNK_COMMITS_METADATA_KEY.to_string(),
+                    r#"[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":1,"row_count":2}]"#
+                        .to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+        );
+        write_arrow_file(
+            &directory_path.join("chunk_0.arrow"),
+            &schema,
+            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
+        );
+
+        let error = scan_committed_chunk_identifiers(&directory_path)
+            .expect_err("metadata row count mismatch should fail")
+            .to_string();
+
+        assert!(error.contains("row count mismatch"));
 
         std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
     }
