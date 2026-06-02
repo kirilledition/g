@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import queue
 import threading
 import time
@@ -20,6 +21,10 @@ from g.compute.regenie2_linear import api as regenie2_linear
 from g.engine import telemetry, timing
 
 RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 60.0
+logger = logging.getLogger(__name__)
+
+if typing.TYPE_CHECKING:
+    import collections.abc
 
 
 class NativeBgenWorkerShutdownError(RuntimeError):
@@ -118,6 +123,33 @@ def block_until_ready(value: typing.Any) -> None:
     block_until_ready_method = getattr(value, "block_until_ready", None)
     if callable(block_until_ready_method):
         block_until_ready_method()
+
+
+def enforce_null_logistic_nonconvergence_policy(
+    *,
+    chromosome: str,
+    null_logistic_converged: typing.Any,
+    policy: types.NullLogisticNonconvergencePolicy,
+    phenotype_names: tuple[str, ...] | None = None,
+) -> None:
+    """Raise or warn when a binary null-logistic chromosome fit did not converge."""
+    convergence_flags = np.asarray(jax.device_get(null_logistic_converged), dtype=np.bool_)
+    if convergence_flags.ndim == 0:
+        if bool(convergence_flags):
+            return
+        message = f"Binary null logistic model did not converge for chromosome {chromosome}."
+    else:
+        failed_trait_indices = tuple(int(index) for index in np.flatnonzero(~convergence_flags))
+        if not failed_trait_indices:
+            return
+        if phenotype_names is None:
+            failed_traits = ", ".join(str(index) for index in failed_trait_indices)
+        else:
+            failed_traits = ", ".join(phenotype_names[index] for index in failed_trait_indices)
+        message = f"Binary null logistic model did not converge for chromosome {chromosome}: {failed_traits}."
+    if policy == types.NullLogisticNonconvergencePolicy.FAIL:
+        raise RuntimeError(message)
+    logger.warning("%s Continuing because --g-null-logistic-nonconvergence=warn.", message)
 
 
 def record_binary_chunk_diagnostics(
@@ -337,6 +369,16 @@ class NativeBgenCallbackRunner:
         )
         self.result_worker_thread.start()
         self.worker_thread.start()
+
+    def record_stage_duration(self, stage_name: str, start_time: float) -> None:
+        """Record a nested callback stage using this runner's timing recorder."""
+        timing.record_stage_duration(self.stage_timing_recorder, stage_name, start_time)
+
+    def get_stage_duration_recorder(self) -> collections.abc.Callable[[str, float], None] | None:
+        """Return an optional nested stage recorder for lower-level compute helpers."""
+        if self.stage_timing_recorder is None:
+            return None
+        return self.record_stage_duration
 
     def compute_preprocessed_chunk(
         self,
@@ -1014,6 +1056,9 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         writer_session: typing.Any,
         correction_plan: types.BinaryCorrectionPlan,
         kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
+            types.NullLogisticNonconvergencePolicy.FAIL
+        ),
         staging_depth: int = 1,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
@@ -1024,6 +1069,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.writer_session = writer_session
         self.correction_plan = correction_plan
         self.kernel_config = kernel_config
+        self.null_logistic_nonconvergence_policy = null_logistic_nonconvergence_policy
         self.regenie_state = regenie2_binary.prepare_regenie2_binary_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_vector=run_input.phenotype_vector,
@@ -1048,10 +1094,15 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         host_dosage_buffer = self.get_releasable_dosage_buffer(genotype_matrix)
         self.acquire_result_in_flight_slot()
         try:
+            sparse_candidate_mask = (
+                None
+                if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
+                else jax.device_put(chunk_stats.is_rare_sparse_firth_candidate)
+            )
             result = self.compute_binary_result(
                 variant_metadata=variant_metadata,
                 genotype_matrix=genotype_matrix,
-                sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
+                sparse_candidate_mask=sparse_candidate_mask,
             )
             self.enqueue_binary_result_for_write(
                 variant_metadata=variant_metadata,
@@ -1109,6 +1160,11 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.current_chromosome_state,
         )
         block_until_ready(chromosome_ready_value)
+        enforce_null_logistic_nonconvergence_policy(
+            chromosome=chromosome,
+            null_logistic_converged=self.current_chromosome_state.null_logistic_converged,
+            policy=self.null_logistic_nonconvergence_policy,
+        )
         if self.stage_timing_recorder is not None:
             self.stage_timing_recorder.add_null_logistic_diagnostics(
                 {
@@ -1146,6 +1202,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             correction_plan=self.correction_plan,
             sparse_candidate_mask=sparse_candidate_mask,
             kernel_config=self.kernel_config,
+            stage_duration_recorder=self.get_stage_duration_recorder(),
         )
         block_compute_result_for_timing(
             result_ready_value=result.log10_p_value,
@@ -1174,18 +1231,22 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 self.stage_timing_recorder,
             )
             compute_start_time = time.perf_counter()
-            sparse_candidate_mask = (
-                None
-                if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else jax.device_put(chunk_stats.is_rare_sparse_firth_candidate)
-            )
-            result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
-                chromosome_state=self.current_chromosome_state,
-                genotype_matrix_by_variant=genotype_device_array,
-                correction_plan=self.correction_plan,
-                sparse_candidate_mask=sparse_candidate_mask,
-                kernel_config=self.kernel_config,
-            )
+            if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
+                result = regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
+                    chromosome_state=self.current_chromosome_state,
+                    genotype_matrix_by_variant=genotype_device_array,
+                    correction_plan=self.correction_plan,
+                    kernel_config=self.kernel_config,
+                )
+            else:
+                result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+                    chromosome_state=self.current_chromosome_state,
+                    genotype_matrix_by_variant=genotype_device_array,
+                    correction_plan=self.correction_plan,
+                    sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
+                    kernel_config=self.kernel_config,
+                    stage_duration_recorder=self.get_stage_duration_recorder(),
+                )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
@@ -1217,6 +1278,9 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         committed_chunk_identifier_sets: tuple[set[int], ...],
         correction_plan: types.BinaryCorrectionPlan,
         kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
+            types.NullLogisticNonconvergencePolicy.FAIL
+        ),
         staging_depth: int = 1,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
@@ -1228,6 +1292,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.committed_chunk_identifier_sets = committed_chunk_identifier_sets
         self.correction_plan = correction_plan
         self.kernel_config = kernel_config
+        self.null_logistic_nonconvergence_policy = null_logistic_nonconvergence_policy
         self.regenie_state = regenie2_binary.prepare_regenie2_multi_binary_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_matrix=run_input.phenotype_matrix,
@@ -1282,12 +1347,18 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             assert self.current_chromosome_state is not None
             genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
             compute_start_time = time.perf_counter()
+            sparse_candidate_mask = (
+                None
+                if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
+                else jax.device_put(chunk_stats.is_rare_sparse_firth_candidate)
+            )
             result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
                 chromosome_state=self.current_chromosome_state,
                 genotype_matrix=genotype_device_array,
                 correction_plan=self.correction_plan,
-                sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
+                sparse_candidate_mask=sparse_candidate_mask,
                 kernel_config=self.kernel_config,
+                stage_duration_recorder=self.get_stage_duration_recorder(),
             )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
@@ -1336,6 +1407,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 correction_plan=self.correction_plan,
                 sparse_candidate_mask=sparse_candidate_mask,
                 kernel_config=self.kernel_config,
+                stage_duration_recorder=self.get_stage_duration_recorder(),
             )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
@@ -1369,6 +1441,12 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.kernel_config,
         )
         block_until_ready(self.current_chromosome_state.score_residual)
+        enforce_null_logistic_nonconvergence_policy(
+            chromosome=chromosome,
+            null_logistic_converged=self.current_chromosome_state.null_logistic_converged,
+            policy=self.null_logistic_nonconvergence_policy,
+            phenotype_names=self.run_input.phenotype_names,
+        )
         if self.stage_timing_recorder is not None:
             iteration_counts = jax.device_get(self.current_chromosome_state.null_logistic_iteration_count)
             convergence_flags = jax.device_get(self.current_chromosome_state.null_logistic_converged)

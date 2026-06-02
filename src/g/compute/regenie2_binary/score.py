@@ -89,18 +89,20 @@ def compute_multi_binary_score_test_chunk_variant_major(
     raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
     genotype_flip_result = genotype.build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
     genotype_matrix_by_variant_float32 = genotype_flip_result.genotype_matrix_by_variant
-    weighted_genotype_matrix_by_trait_variant_sample = (
-        genotype_matrix_by_variant_float32[None, :, :] * chromosome_state.square_root_weight[:, None, :]
+    genotype_matrix_by_variant_squared = genotype_matrix_by_variant_float32 * genotype_matrix_by_variant_float32
+    bernoulli_weight = chromosome_state.square_root_weight * chromosome_state.square_root_weight
+    weighted_projection_matrix = (
+        chromosome_state.weighted_genotype_projection_matrix * chromosome_state.square_root_weight[:, None, :]
     )
     projection_coordinates = jnp.einsum(
-        "tvs,tcs->tvc",
-        weighted_genotype_matrix_by_trait_variant_sample,
-        chromosome_state.weighted_genotype_projection_matrix,
+        "vs,tcs->tvc",
+        genotype_matrix_by_variant_float32,
+        weighted_projection_matrix,
     )
     weighted_genotype_sum_squares = jnp.einsum(
-        "tvs,tvs->tv",
-        weighted_genotype_matrix_by_trait_variant_sample,
-        weighted_genotype_matrix_by_trait_variant_sample,
+        "vs,ts->tv",
+        genotype_matrix_by_variant_squared,
+        bernoulli_weight,
     )
     projection_sum_squares = jnp.einsum("tvc,tvc->tv", projection_coordinates, projection_coordinates)
     variance = jnp.maximum(weighted_genotype_sum_squares - projection_sum_squares, 0.0)
@@ -116,12 +118,12 @@ def compute_multi_binary_score_test_chunk_variant_major(
     )
     standard_error = jnp.where(statistic_mask, jnp.sqrt(inverse_variance), jnp.nan)
     chi_squared = jnp.where(
-        null_logistic_converged,
-        jnp.where(positive_variance_mask, score * score * inverse_variance, 0.0),
+        statistic_mask,
+        score * score * inverse_variance,
         jnp.nan,
     )
     log10_p_value = jnp.where(
-        null_logistic_converged,
+        statistic_mask,
         pvalue.chi_squared_to_log10_p_value(chi_squared),
         jnp.nan,
     )

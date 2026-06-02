@@ -22,6 +22,7 @@ firth-batch-size = 64
 firth-candidate-capacity = 1024
 binary-null-maximum-iterations = 50
 binary-null-coefficient-tolerance = 1.0e-6
+null-logistic-nonconvergence = "fail"
 binary-minimum-probability = 1.0e-6
 binary-minimum-variance = 1.0e-8
 binary-relative-variance-tolerance = 1.0e-6

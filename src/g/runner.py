@@ -511,6 +511,9 @@ def dispatch_one_phenotype_engine_pipeline(
             **common_arguments,
             correction_plan=plan.binary_correction_plan,
             kernel_config=plan.kernel_config.binary_kernel_config,
+            null_logistic_nonconvergence_policy=(
+                plan.kernel_config.alignment_config.null_logistic_nonconvergence_policy
+            ),
         )
         log_writer_finished(
             telemetry_session=telemetry_session,
@@ -562,6 +565,9 @@ def dispatch_multi_phenotype_engine_pipeline(
             **common_arguments,
             correction_plan=plan.binary_correction_plan,
             kernel_config=plan.kernel_config.binary_kernel_config,
+            null_logistic_nonconvergence_policy=(
+                plan.kernel_config.alignment_config.null_logistic_nonconvergence_policy
+            ),
         )
     else:
         logger.debug("Dispatching multi-phenotype linear native engine pipeline.")

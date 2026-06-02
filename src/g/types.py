@@ -147,6 +147,13 @@ class MultiPhenotypeSampleMode(enum.StrEnum):
     COMPLETE_CASE = "complete-case"
 
 
+class NullLogisticNonconvergencePolicy(enum.StrEnum):
+    """Host policy for binary null-logistic non-convergence."""
+
+    FAIL = "fail"
+    WARN = "warn"
+
+
 class ArrayMemoryOrder(enum.StrEnum):
     """NumPy array memory layout selector."""
 

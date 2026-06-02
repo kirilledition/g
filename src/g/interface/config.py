@@ -19,6 +19,7 @@ DEFAULT_FIRTH_BATCH_SIZE = 64
 DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
 DEFAULT_BINARY_NULL_MAXIMUM_ITERATIONS = 50
 DEFAULT_BINARY_NULL_COEFFICIENT_TOLERANCE = 1.0e-6
+DEFAULT_NULL_LOGISTIC_NONCONVERGENCE_POLICY = types.NullLogisticNonconvergencePolicy.FAIL
 DEFAULT_BINARY_MINIMUM_PROBABILITY = 1.0e-6
 DEFAULT_BINARY_MINIMUM_VARIANCE = 1.0e-8
 DEFAULT_BINARY_RELATIVE_VARIANCE_TOLERANCE = 1.0e-6
@@ -117,6 +118,9 @@ class GComputeConfig:
     firth_candidate_capacity: int = DEFAULT_FIRTH_CANDIDATE_CAPACITY
     binary_null_maximum_iterations: int = DEFAULT_BINARY_NULL_MAXIMUM_ITERATIONS
     binary_null_coefficient_tolerance: float = DEFAULT_BINARY_NULL_COEFFICIENT_TOLERANCE
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
+        DEFAULT_NULL_LOGISTIC_NONCONVERGENCE_POLICY
+    )
     binary_minimum_probability: float = DEFAULT_BINARY_MINIMUM_PROBABILITY
     binary_minimum_variance: float = DEFAULT_BINARY_MINIMUM_VARIANCE
     binary_relative_variance_tolerance: float = DEFAULT_BINARY_RELATIVE_VARIANCE_TOLERANCE
@@ -394,6 +398,14 @@ def from_normalized_options(
                 normalized_options.get(
                     "g-binary-null-coefficient-tolerance",
                     DEFAULT_BINARY_NULL_COEFFICIENT_TOLERANCE,
+                )
+            ),
+            null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy(
+                str(
+                    normalized_options.get(
+                        "g-null-logistic-nonconvergence",
+                        DEFAULT_NULL_LOGISTIC_NONCONVERGENCE_POLICY.value,
+                    )
                 )
             ),
             binary_minimum_probability=float(
@@ -737,6 +749,8 @@ def normalize_option_name(option_name: str) -> str:
         "g_firth_candidate_capacity": "g-firth-candidate-capacity",
         "g_binary_null_maximum_iterations": "g-binary-null-maximum-iterations",
         "g_binary_null_coefficient_tolerance": "g-binary-null-coefficient-tolerance",
+        "g_null_logistic_nonconvergence": "g-null-logistic-nonconvergence",
+        "g_null_logistic_nonconvergence_policy": "g-null-logistic-nonconvergence",
         "g_binary_minimum_probability": "g-binary-minimum-probability",
         "g_binary_minimum_variance": "g-binary-minimum-variance",
         "g_binary_relative_variance_tolerance": "g-binary-relative-variance-tolerance",
@@ -1157,6 +1171,7 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             "firth-candidate-capacity": config.g_compute.firth_candidate_capacity,
             "binary-null-maximum-iterations": config.g_compute.binary_null_maximum_iterations,
             "binary-null-coefficient-tolerance": config.g_compute.binary_null_coefficient_tolerance,
+            "null-logistic-nonconvergence": config.g_compute.null_logistic_nonconvergence_policy.value,
             "binary-minimum-probability": config.g_compute.binary_minimum_probability,
             "binary-minimum-variance": config.g_compute.binary_minimum_variance,
             "binary-relative-variance-tolerance": config.g_compute.binary_relative_variance_tolerance,

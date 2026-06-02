@@ -64,6 +64,7 @@ DEVICE_VALUES = tuple(item.value for item in types.Device)
 TRUSTED_BGEN_VALIDATION_MODE_VALUES = tuple(item.value for item in types.TrustedBgenValidationMode)
 SAMPLE_KEY_MODE_VALUES = tuple(item.value for item in types.SampleKeyMode)
 MULTI_PHENOTYPE_SAMPLE_MODE_VALUES = tuple(item.value for item in types.MultiPhenotypeSampleMode)
+NULL_LOGISTIC_NONCONVERGENCE_POLICY_VALUES = tuple(item.value for item in types.NullLogisticNonconvergencePolicy)
 OUTPUT_FORMAT_VALUES = tuple(item.value for item in types.OutputFormat)
 RESUME_MODE_VALUES = tuple(item.value for item in types.ResumeMode)
 JAX_MATMUL_PRECISION_VALUES = tuple(item.value for item in types.JaxMatmulPrecision)
@@ -472,6 +473,15 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         "Null-logistic coefficient tolerance.",
         cli_flags=("--g-binary-null-coefficient-tolerance", "g_binary_null_coefficient_tolerance"),
         type=OptionValueType.FLOAT,
+    ),
+    OptionSpec(
+        "g-null-logistic-nonconvergence",
+        "g_null_logistic_nonconvergence",
+        SupportLevel.G_EXTENSION,
+        "g.compute",
+        "Policy when a binary null-logistic chromosome fit does not converge.",
+        cli_flags=("--g-null-logistic-nonconvergence", "g_null_logistic_nonconvergence"),
+        accepted_values=NULL_LOGISTIC_NONCONVERGENCE_POLICY_VALUES,
     ),
     OptionSpec(
         "g-binary-minimum-probability",

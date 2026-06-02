@@ -51,6 +51,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-firth-candidate-capacity": 16,
         "g-binary-null-maximum-iterations": 25,
         "g-binary-null-coefficient-tolerance": 1.0e-5,
+        "g-null-logistic-nonconvergence": "warn",
         "g-binary-minimum-probability": 1.0e-7,
         "g-binary-minimum-variance": 1.0e-9,
         "g-binary-relative-variance-tolerance": 2.0e-6,
@@ -94,6 +95,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_compute.firth_candidate_capacity == 16
     assert regenie_config.g_compute.binary_null_maximum_iterations == 25
     assert regenie_config.g_compute.binary_null_coefficient_tolerance == 1.0e-5
+    assert regenie_config.g_compute.null_logistic_nonconvergence_policy == (types.NullLogisticNonconvergencePolicy.WARN)
     assert regenie_config.g_compute.binary_minimum_probability == 1.0e-7
     assert regenie_config.g_compute.binary_minimum_variance == 1.0e-9
     assert regenie_config.g_compute.binary_relative_variance_tolerance == 2.0e-6
@@ -151,6 +153,7 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
 
     assert regenie_config.trait.bsize == config.DEFAULT_BSIZE
     assert regenie_config.g_compute.device == types.Device.CPU
+    assert regenie_config.g_compute.null_logistic_nonconvergence_policy == types.NullLogisticNonconvergencePolicy.FAIL
     assert regenie_config.g_compute.jax_enable_x64 is True
     assert regenie_config.g_compute.jax_persistent_cache is True
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
@@ -231,6 +234,7 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
             "g-output-format": "arrow",
             "g-output-arrow-compression": "none",
             "g-firth-batch-size": 8,
+            "g-null-logistic-nonconvergence": "warn",
             "g-jax-enable-x64": False,
             "g-jax-persistent-cache": False,
             "g-stage-timings-json": "timings.json",

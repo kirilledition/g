@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manage Codex task worktrees generated from docs/code-review.md."""
+"""Manage Codex task worktrees generated from review task manifests."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import contextlib
 import dataclasses
 import datetime
 import enum
+import fcntl
 import json
 import os
 import re
@@ -27,22 +28,49 @@ REPO_RELATIVE_STATE_DIRECTORY = Path(".codex-task-worktrees")
 DEFAULT_WORKTREE_ROOT = "../g-worktrees"
 DEFAULT_INTEGRATION_WORKTREE = "../g-worktrees/integration-code-review"
 DEFAULT_INTEGRATION_BRANCH = "integration/code-review"
-MANIFEST_VERSION = 1
+DEFAULT_BRANCH_PREFIX = "codex/review-"
+DEFAULT_WORKTREE_PREFIX = "../g-worktrees/review-"
+REVIEW2_SOURCE_PATH = Path("docs/02.code-review-2-06-26.md")
+REVIEW2_MANIFEST_PATH = Path("docs/code-review-2.tasks.json")
+REVIEW2_PLAN_PATH = Path("docs/code-review-2-plan.md")
+REVIEW2_STATE_DIRECTORY = Path(".codex-task-worktrees/code-review-2")
+REVIEW2_BRANCH_PREFIX = "codex/review2-"
+REVIEW2_WORKTREE_PREFIX = "../g-worktrees/review2-"
+REVIEW2_INTEGRATION_WORKTREE = "../g-worktrees/integration-code-review-2"
+REVIEW2_INTEGRATION_BRANCH = "integration/code-review-2"
+MANIFEST_VERSION = 2
+DEFAULT_LEASE_SECONDS = 4 * 60 * 60
 
-PRESERVED_MANUAL_KEYS = {"dependencies", "status", "enabled", "assignee", "notes", "manual_expected_paths"}
+PRESERVED_MANUAL_KEYS = {
+    "assignee",
+    "dependencies",
+    "enabled",
+    "logs",
+    "manual",
+    "manual_expected_paths",
+    "notes",
+    "runtime",
+    "status",
+}
 PATH_WITH_LINE_SUFFIX_PATTERN = re.compile(r"^(?P<path>.+?):[0-9]+(?:-[0-9]+)?$")
+STRING_TASK_IDENTIFIER_PATTERN = re.compile(r"^T(?P<number>[0-9]+)$")
 
 
 class TaskStatus(enum.StrEnum):
     """Known lifecycle states for task farm records."""
 
     READY = "ready"
+    CLAIMED = "claimed"
     RUNNING = "running"
     IMPLEMENTED = "implemented"
+    REVIEWING = "reviewing"
+    NEEDS_CHANGES = "needs_changes"
     REVIEWED = "reviewed"
     INTEGRATING = "integrating"
+    INTEGRATED = "integrated"
     MERGED = "merged"
     BLOCKED = "blocked"
+    ABANDONED = "abandoned"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -272,46 +300,210 @@ def parse_review_tasks(markdown_text: str) -> list[ParsedTask]:
     return tasks
 
 
-def default_manifest() -> JsonObject:
-    """Create the default manifest shell."""
+def default_manifest(
+    *,
+    source_path: Path = REPO_RELATIVE_SOURCE_PATH,
+    plan_path: Path | None = None,
+    state_directory_path: Path = REPO_RELATIVE_STATE_DIRECTORY,
+    branch_prefix: str = DEFAULT_BRANCH_PREFIX,
+    worktree_prefix: str = DEFAULT_WORKTREE_PREFIX,
+    integration_branch: str = DEFAULT_INTEGRATION_BRANCH,
+    integration_worktree: str = DEFAULT_INTEGRATION_WORKTREE,
+    id_style: str = "legacy",
+) -> JsonObject:
+    """Create a manifest shell.
+
+    Args:
+        source_path: Markdown source path relative to the repository.
+        plan_path: Optional shared plan path relative to the repository.
+        state_directory_path: Runtime state directory relative to the repository.
+        branch_prefix: Prefix for generated task branches.
+        worktree_prefix: Prefix for generated task worktrees.
+        integration_branch: Branch used for serial integration.
+        integration_worktree: Worktree used for serial integration.
+        id_style: ``legacy`` keeps numeric ids for the original workflow;
+            ``string`` generates Review 2 style ids such as ``T001``.
+
+    Returns:
+        A manifest JSON object.
+    """
+    defaults: JsonObject = {
+        "base_branch": "main",
+        "branch_prefix": branch_prefix,
+        "worktree_prefix": worktree_prefix,
+        "worktree_root": DEFAULT_WORKTREE_ROOT,
+        "state_directory": state_directory_path.as_posix(),
+        "worker_model": "gpt-5.5",
+        "worker_reasoning_effort": "high",
+        "reviewer_model": "gpt-5.5",
+        "reviewer_reasoning_effort": "xhigh",
+        "integrator_model": "gpt-5.5",
+        "integrator_reasoning_effort": "xhigh",
+        "worker_dangerously_bypass_approvals": False,
+        "integrator_dangerously_bypass_approvals": False,
+        "integration_worktree": integration_worktree,
+        "integration_branch": integration_branch,
+        "jobs": 5,
+        "lease_seconds": DEFAULT_LEASE_SECONDS,
+        "id_style": id_style,
+        "push_integration_branch": False,
+    }
+    if plan_path is not None:
+        defaults["plan_path"] = plan_path.as_posix()
     return {
         "version": MANIFEST_VERSION,
-        "source_path": REPO_RELATIVE_SOURCE_PATH.as_posix(),
-        "defaults": {
-            "base_branch": "main",
-            "worktree_root": DEFAULT_WORKTREE_ROOT,
-            "state_directory": REPO_RELATIVE_STATE_DIRECTORY.as_posix(),
-            "worker_model": "gpt-5.5",
-            "worker_reasoning_effort": "high",
-            "reviewer_model": "gpt-5.5",
-            "reviewer_reasoning_effort": "xhigh",
-            "integrator_model": "gpt-5.5",
-            "integrator_reasoning_effort": "xhigh",
-            "worker_dangerously_bypass_approvals": False,
-            "integrator_dangerously_bypass_approvals": False,
-            "integration_worktree": DEFAULT_INTEGRATION_WORKTREE,
-            "integration_branch": DEFAULT_INTEGRATION_BRANCH,
-            "jobs": 5,
-        },
+        "source_path": source_path.as_posix(),
+        "defaults": defaults,
         "tasks": [],
     }
 
 
-def task_branch(parsed_task: ParsedTask) -> str:
+def task_identifier_from_number(identifier: int, defaults: JsonObject) -> int | str:
+    """Return the manifest task id for a parsed numeric source id."""
+    if str(defaults.get("id_style", "legacy")) == "string":
+        return f"T{identifier:03d}"
+    return identifier
+
+
+def task_identifier_sort_key(task_identifier: object) -> tuple[int, str]:
+    """Return a stable sort key for mixed legacy and string task ids."""
+    if isinstance(task_identifier, int):
+        return (task_identifier, str(task_identifier))
+    task_identifier_text = str(task_identifier)
+    task_identifier_match = STRING_TASK_IDENTIFIER_PATTERN.match(task_identifier_text)
+    if task_identifier_match is not None:
+        return (int(task_identifier_match.group("number")), task_identifier_text)
+    if task_identifier_text.isdigit():
+        return (int(task_identifier_text), task_identifier_text)
+    return (sys.maxsize, task_identifier_text)
+
+
+def task_identifier_number(task_identifier: object) -> int:
+    """Return the numeric component of a task id."""
+    return task_identifier_sort_key(task_identifier)[0]
+
+
+def task_identifier_key(task_identifier: object) -> str:
+    """Return the state-map key for a task id."""
+    return str(task_identifier)
+
+
+def task_key(task: JsonObject) -> str:
+    """Return the state-map key for a task."""
+    return task_identifier_key(task["id"])
+
+
+def task_display_id(task: JsonObject) -> str:
+    """Return a human-readable task id."""
+    task_identifier = task["id"]
+    if isinstance(task_identifier, int):
+        return f"{task_identifier:02d}"
+    return str(task_identifier)
+
+
+def task_run_directory_name(task: JsonObject) -> str:
+    """Return the runtime run directory name for a task."""
+    return task_display_id(task)
+
+
+def task_generated_suffix(parsed_task: ParsedTask, defaults: JsonObject) -> str:
+    """Return the generated branch/worktree suffix for a parsed task."""
+    task_identifier = task_identifier_from_number(parsed_task.identifier, defaults)
+    if isinstance(task_identifier, int):
+        return f"{task_identifier:02d}-{parsed_task.slug}"
+    return f"{task_identifier}-{parsed_task.slug}"
+
+
+def task_branch(parsed_task: ParsedTask, defaults: JsonObject | None = None) -> str:
     """Return the branch name for a task."""
-    return f"codex/review-{parsed_task.identifier:02d}-{parsed_task.slug}"
+    effective_defaults = defaults or typing.cast("JsonObject", default_manifest()["defaults"])
+    branch_prefix = str(effective_defaults.get("branch_prefix", DEFAULT_BRANCH_PREFIX))
+    return f"{branch_prefix}{task_generated_suffix(parsed_task, effective_defaults)}"
 
 
 def task_worktree(defaults: JsonObject, parsed_task: ParsedTask) -> str:
     """Return the manifest worktree path for a task."""
-    worktree_root = str(defaults.get("worktree_root", DEFAULT_WORKTREE_ROOT))
-    return f"{worktree_root}/review-{parsed_task.identifier:02d}-{parsed_task.slug}"
+    worktree_prefix = str(defaults.get("worktree_prefix", DEFAULT_WORKTREE_PREFIX))
+    return f"{worktree_prefix}{task_generated_suffix(parsed_task, defaults)}"
+
+
+def infer_conflict_group(expected_paths: list[str]) -> str:
+    """Infer a conflict group from expected task paths."""
+    groups: set[str] = set()
+    for expected_path in expected_paths:
+        if "regenie2_binary" in expected_path or "binary" in expected_path:
+            groups.add("binary-jax")
+        elif "regenie2_linear" in expected_path or "linear" in expected_path:
+            groups.add("linear-jax")
+        elif expected_path.startswith("src/genotype/bgen") or "bgen" in expected_path:
+            groups.add("rust-bgen")
+        elif expected_path.startswith("src/sample") or "io/sample" in expected_path:
+            groups.add("rust-sample")
+        elif expected_path.startswith("src/output") or "io/output" in expected_path:
+            groups.add("rust-output")
+        elif "interface" in expected_path or expected_path.endswith("cli.py"):
+            groups.add("interface")
+        elif "codex_task_farm" in expected_path:
+            groups.add("task-farm")
+        elif expected_path.startswith("docs/"):
+            groups.add("docs")
+    if not groups:
+        return "broad" if not expected_paths else "misc"
+    if len(groups) > 1:
+        return "broad"
+    return next(iter(groups))
+
+
+def build_log_paths(defaults: JsonObject, task_identifier: object) -> JsonObject:
+    """Build default runtime log paths for a task."""
+    state_directory_text = str(defaults.get("state_directory", REPO_RELATIVE_STATE_DIRECTORY.as_posix()))
+    run_directory_name = f"{task_identifier:02d}" if isinstance(task_identifier, int) else str(task_identifier)
+    run_directory = Path(state_directory_text) / "runs" / run_directory_name
+    return {
+        "run_directory": run_directory.as_posix(),
+        "worker_final": (run_directory / "worker-final.md").as_posix(),
+        "worker_jsonl": (run_directory / "worker.jsonl").as_posix(),
+        "worker_stderr": (run_directory / "worker.stderr.log").as_posix(),
+        "worker_prompt": (run_directory / "worker-prompt.md").as_posix(),
+        "review_final": (run_directory / "review.md").as_posix(),
+        "review_jsonl": (run_directory / "review.jsonl").as_posix(),
+        "review_stderr": (run_directory / "review.stderr.log").as_posix(),
+        "integration_final": (run_directory / "integration-final.md").as_posix(),
+        "integration_jsonl": (run_directory / "integration.jsonl").as_posix(),
+        "integration_stderr": (run_directory / "integration.stderr.log").as_posix(),
+    }
+
+
+def normalized_manual_metadata(existing_task: JsonObject | None) -> JsonObject:
+    """Return manual metadata preserved across manifest syncs."""
+    if existing_task is None:
+        return {}
+    manual_metadata = existing_task.get("manual", {})
+    if not isinstance(manual_metadata, dict):
+        manual_metadata = {}
+    normalized_manual = dict(typing.cast("JsonObject", manual_metadata))
+    if "notes" in existing_task and "notes" not in normalized_manual:
+        normalized_manual["notes"] = existing_task["notes"]
+    if "manual_expected_paths" in existing_task and "expected_paths" not in normalized_manual:
+        normalized_manual["expected_paths"] = existing_task["manual_expected_paths"]
+    if "conflict_group" in existing_task and str(existing_task.get("conflict_group_source", "manual")) == "manual":
+        normalized_manual["conflict_group"] = existing_task["conflict_group"]
+    return normalized_manual
 
 
 def build_task_record(defaults: JsonObject, parsed_task: ParsedTask, existing_task: JsonObject | None) -> JsonObject:
     """Build one task manifest record while preserving manual metadata."""
+    task_identifier = task_identifier_from_number(parsed_task.identifier, defaults)
+    manual_metadata = normalized_manual_metadata(existing_task)
+    generated_branch = task_branch(parsed_task, defaults)
+    generated_worktree = task_worktree(defaults, parsed_task)
+    branch = str(manual_metadata.get("branch", generated_branch))
+    worktree = str(manual_metadata.get("worktree", generated_worktree))
+    conflict_group_source = "manual" if "conflict_group" in manual_metadata else "inferred"
+    conflict_group = str(manual_metadata.get("conflict_group", infer_conflict_group(parsed_task.expected_paths)))
     task_record: JsonObject = {
-        "id": parsed_task.identifier,
+        "id": task_identifier,
+        "source_id": parsed_task.identifier,
         "slug": parsed_task.slug,
         "title": parsed_task.title,
         "category": parsed_task.category,
@@ -321,49 +513,170 @@ def build_task_record(defaults: JsonObject, parsed_task: ParsedTask, existing_ta
         "guidance_markdown": parsed_task.guidance_markdown,
         "kind": "implementation",
         "priority": parsed_task.category,
+        "problem_markdown": parsed_task.body_markdown,
         "expected_paths": parsed_task.expected_paths,
         "dependencies": [],
         "status": TaskStatus.READY.value,
         "enabled": True,
-        "branch": task_branch(parsed_task),
-        "worktree": task_worktree(defaults, parsed_task),
+        "branch": branch,
+        "worktree": worktree,
+        "logs": build_log_paths(defaults, task_identifier),
+        "manual": manual_metadata,
+        "runtime": {},
+        "conflict_group": conflict_group,
+        "conflict_group_source": conflict_group_source,
     }
     if existing_task is None:
         return task_record
     for key in PRESERVED_MANUAL_KEYS:
         if key in existing_task:
             task_record[key] = existing_task[key]
+    task_record["manual"] = manual_metadata
+    if "conflict_group" in manual_metadata:
+        task_record["conflict_group"] = manual_metadata["conflict_group"]
+        task_record["conflict_group_source"] = "manual"
+    elif str(existing_task.get("conflict_group_source", "inferred")) == "manual" and "conflict_group" in existing_task:
+        task_record["conflict_group"] = existing_task["conflict_group"]
+        task_record["conflict_group_source"] = "manual"
+    if "logs" not in task_record:
+        task_record["logs"] = build_log_paths(defaults, task_identifier)
+    if "runtime" not in task_record:
+        task_record["runtime"] = {}
     return task_record
 
 
-def sync_manifest(repository_directory: Path) -> JsonObject:
+def existing_tasks_by_source_identifier(existing_manifest: JsonObject) -> dict[int, JsonObject]:
+    """Return existing manifest tasks keyed by source task number."""
+    existing_tasks: dict[int, JsonObject] = {}
+    for existing_task in existing_manifest.get("tasks", []):
+        if not isinstance(existing_task, dict):
+            continue
+        typed_task = typing.cast("JsonObject", existing_task)
+        source_identifier = typed_task.get("source_id", typed_task.get("id"))
+        if isinstance(source_identifier, str):
+            source_identifier_match = STRING_TASK_IDENTIFIER_PATTERN.match(source_identifier)
+            if source_identifier_match is not None:
+                source_identifier = int(source_identifier_match.group("number"))
+            elif source_identifier.isdigit():
+                source_identifier = int(source_identifier)
+        if isinstance(source_identifier, int):
+            existing_tasks[source_identifier] = typed_task
+    return existing_tasks
+
+
+def default_id_style_for_manifest(manifest_path: Path) -> str:
+    """Return the default id style for a manifest path."""
+    if manifest_path == REPO_RELATIVE_MANIFEST_PATH:
+        return "legacy"
+    return "string"
+
+
+def sync_plan_file(repository_directory: Path, manifest: JsonObject) -> None:
+    """Create a shared plan file when a manifest declares one and it is missing."""
+    defaults = typing.cast("JsonObject", manifest.get("defaults", {}))
+    plan_path_text = defaults.get("plan_path")
+    if not isinstance(plan_path_text, str) or not plan_path_text:
+        return
+    plan_path = repository_directory / plan_path_text
+    if plan_path.exists():
+        return
+    lines = [
+        "# Code Review 2 Task Plan",
+        "",
+        "This plan is updated serially by the task integrator. Workers write runtime logs only.",
+        "",
+    ]
+    for task in selected_tasks(manifest, []):
+        lines.append(f"## {task_display_id(task)}. {task['title']}")
+        lines.append("")
+        lines.append(f"- Status: {task.get('status', TaskStatus.READY.value)}")
+        lines.append(f"- Branch: `{task['branch']}`")
+        lines.append(f"- Runtime log: `{typing.cast('JsonObject', task['logs'])['run_directory']}`")
+        lines.append("")
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text("\n".join(lines).rstrip() + "\n")
+
+
+def sync_manifest(
+    repository_directory: Path,
+    *,
+    manifest_relative_path: Path = REPO_RELATIVE_MANIFEST_PATH,
+    source_relative_path: Path | None = None,
+    plan_relative_path: Path | None = None,
+    state_directory_path: Path | None = None,
+    branch_prefix: str | None = None,
+    worktree_prefix: str | None = None,
+    integration_branch: str | None = None,
+    integration_worktree: str | None = None,
+) -> JsonObject:
     """Synchronize the task manifest from the markdown source."""
-    source_path = repository_directory / REPO_RELATIVE_SOURCE_PATH
-    manifest_path = repository_directory / REPO_RELATIVE_MANIFEST_PATH
-    existing_manifest = read_json_object(manifest_path) if manifest_path.exists() else default_manifest()
-    manifest = default_manifest()
+    source_path_from_arguments = source_relative_path
+    manifest_path = repository_directory / manifest_relative_path
+    existing_manifest = read_json_object(manifest_path) if manifest_path.exists() else {}
+    id_style = str(
+        typing.cast("JsonObject", existing_manifest.get("defaults", {})).get(
+            "id_style",
+            default_id_style_for_manifest(manifest_relative_path),
+        )
+    )
+    existing_source_path = existing_manifest.get("source_path")
+    default_source_path = (
+        Path(str(existing_source_path))
+        if isinstance(existing_source_path, str)
+        else REPO_RELATIVE_SOURCE_PATH
+    )
+    manifest = default_manifest(
+        source_path=source_path_from_arguments or default_source_path,
+        plan_path=plan_relative_path,
+        state_directory_path=state_directory_path or REPO_RELATIVE_STATE_DIRECTORY,
+        branch_prefix=branch_prefix or DEFAULT_BRANCH_PREFIX,
+        worktree_prefix=worktree_prefix or DEFAULT_WORKTREE_PREFIX,
+        integration_branch=integration_branch or DEFAULT_INTEGRATION_BRANCH,
+        integration_worktree=integration_worktree or DEFAULT_INTEGRATION_WORKTREE,
+        id_style=id_style,
+    )
     if isinstance(existing_manifest.get("defaults"), dict):
         manifest["defaults"].update(typing.cast("JsonObject", existing_manifest["defaults"]))
+    existing_defaults = typing.cast("JsonObject", existing_manifest.get("defaults", {}))
+    if "worktree_root" in existing_defaults and "worktree_prefix" not in existing_defaults:
+        typing.cast("JsonObject", manifest["defaults"])["worktree_prefix"] = (
+            f"{str(existing_defaults['worktree_root']).rstrip('/')}/review-"
+        )
+    if source_relative_path is not None:
+        manifest["source_path"] = source_relative_path.as_posix()
+    if plan_relative_path is not None:
+        typing.cast("JsonObject", manifest["defaults"])["plan_path"] = plan_relative_path.as_posix()
+    if state_directory_path is not None:
+        typing.cast("JsonObject", manifest["defaults"])["state_directory"] = state_directory_path.as_posix()
+    if branch_prefix is not None:
+        typing.cast("JsonObject", manifest["defaults"])["branch_prefix"] = branch_prefix
+    if worktree_prefix is not None:
+        typing.cast("JsonObject", manifest["defaults"])["worktree_prefix"] = worktree_prefix
+    if integration_branch is not None:
+        typing.cast("JsonObject", manifest["defaults"])["integration_branch"] = integration_branch
+    if integration_worktree is not None:
+        typing.cast("JsonObject", manifest["defaults"])["integration_worktree"] = integration_worktree
+    if manifest_relative_path != REPO_RELATIVE_MANIFEST_PATH or source_relative_path is not None:
+        typing.cast("JsonObject", manifest["defaults"])["id_style"] = "string"
+        typing.cast("JsonObject", manifest["defaults"])["push_integration_branch"] = True
     defaults = typing.cast("JsonObject", manifest["defaults"])
-    existing_tasks_by_identifier: dict[int, JsonObject] = {}
-    for existing_task in existing_manifest.get("tasks", []):
-        if isinstance(existing_task, dict) and isinstance(existing_task.get("id"), int):
-            existing_task_identifier = typing.cast("int", existing_task["id"])
-            existing_tasks_by_identifier[existing_task_identifier] = typing.cast("JsonObject", existing_task)
+    source_path = repository_directory / str(manifest["source_path"])
+    existing_tasks = existing_tasks_by_source_identifier(existing_manifest)
 
     parsed_tasks = parse_review_tasks(source_path.read_text())
     manifest["tasks"] = [
-        build_task_record(defaults, parsed_task, existing_tasks_by_identifier.get(parsed_task.identifier))
+        build_task_record(defaults, parsed_task, existing_tasks.get(parsed_task.identifier))
         for parsed_task in parsed_tasks
     ]
     write_json_object(manifest_path, manifest)
+    sync_plan_file(repository_directory, manifest)
     return manifest
 
 
 def task_runtime_identity(task: JsonObject) -> JsonObject:
     """Build the runtime identity fields that make a task status reusable."""
     return {
-        "id": int(task["id"]),
+        "id": task["id"],
         "slug": str(task.get("slug", "")),
         "branch": str(task.get("branch", "")),
         "worktree": str(task.get("worktree", "")),
@@ -388,50 +701,95 @@ def task_identity_matches(task: JsonObject, identity: JsonObject | None) -> bool
 
 def manifest_task_identity(parsed_task: ParsedTask, defaults: JsonObject) -> JsonObject:
     """Build the identity a parsed markdown task should have in the manifest."""
+    task_identifier = task_identifier_from_number(parsed_task.identifier, defaults)
     return {
-        "id": parsed_task.identifier,
+        "id": task_identifier,
         "slug": parsed_task.slug,
-        "branch": task_branch(parsed_task),
+        "branch": task_branch(parsed_task, defaults),
         "worktree": task_worktree(defaults, parsed_task),
         "source_start_line": parsed_task.source_start_line,
         "source_end_line": parsed_task.source_end_line,
     }
 
 
-def validate_manifest_is_current(repository_directory: Path, manifest: JsonObject) -> None:
+def validate_manifest_is_current(repository_directory: Path, manifest: JsonObject, manifest_path: Path) -> None:
     """Raise when the manifest does not match the current markdown source."""
-    source_path = repository_directory / REPO_RELATIVE_SOURCE_PATH
+    source_path = repository_directory / str(manifest.get("source_path", REPO_RELATIVE_SOURCE_PATH.as_posix()))
     defaults = typing.cast("JsonObject", manifest.get("defaults", {}))
     parsed_tasks = parse_review_tasks(source_path.read_text())
-    expected_identities = [manifest_task_identity(parsed_task, defaults) for parsed_task in parsed_tasks]
+    existing_tasks = existing_tasks_by_source_identifier(manifest)
+    expected_identities = [
+        task_runtime_identity(build_task_record(defaults, parsed_task, existing_tasks.get(parsed_task.identifier)))
+        for parsed_task in parsed_tasks
+    ]
     task_records = selected_tasks(manifest, [])
     actual_identities = [task_runtime_identity(task) for task in task_records]
     if actual_identities != expected_identities:
-        message = f"{REPO_RELATIVE_MANIFEST_PATH} is missing or stale. Run sync-manifest first."
+        message = f"{manifest_path.as_posix()} is missing or stale. Run sync-manifest first."
         raise ValueError(message)
 
 
-def load_manifest(repository_directory: Path, *, validate_current: bool = True) -> JsonObject:
+def load_manifest(
+    repository_directory: Path,
+    *,
+    manifest_relative_path: Path = REPO_RELATIVE_MANIFEST_PATH,
+    validate_current: bool = True,
+) -> JsonObject:
     """Load the task manifest."""
-    manifest_path = repository_directory / REPO_RELATIVE_MANIFEST_PATH
+    manifest_path = repository_directory / manifest_relative_path
     if not manifest_path.exists():
-        message = f"{REPO_RELATIVE_MANIFEST_PATH} is missing. Run sync-manifest first."
+        message = f"{manifest_relative_path.as_posix()} is missing. Run sync-manifest first."
         raise ValueError(message)
     manifest = read_json_object(manifest_path)
     if validate_current:
-        validate_manifest_is_current(repository_directory, manifest)
+        validate_manifest_is_current(repository_directory, manifest, manifest_relative_path)
     return manifest
 
 
-def save_manifest(repository_directory: Path, manifest: JsonObject) -> None:
+def save_manifest(
+    repository_directory: Path,
+    manifest: JsonObject,
+    *,
+    manifest_relative_path: Path = REPO_RELATIVE_MANIFEST_PATH,
+) -> None:
     """Save the task manifest."""
-    write_json_object(repository_directory / REPO_RELATIVE_MANIFEST_PATH, manifest)
+    write_json_object(repository_directory / manifest_relative_path, manifest)
 
 
 def state_directory(repository_directory: Path, manifest: JsonObject) -> Path:
     """Resolve the state directory for runtime logs."""
     defaults = typing.cast("JsonObject", manifest.get("defaults", {}))
     return repository_directory / str(defaults.get("state_directory", REPO_RELATIVE_STATE_DIRECTORY.as_posix()))
+
+
+def task_logs(task: JsonObject) -> JsonObject:
+    """Return task log path metadata."""
+    logs = task.get("logs", {})
+    if isinstance(logs, dict):
+        return typing.cast("JsonObject", logs)
+    return {}
+
+
+def task_run_directory(repository_directory: Path, manifest: JsonObject, task: JsonObject) -> Path:
+    """Resolve the runtime run directory for a task."""
+    run_directory_text = task_logs(task).get("run_directory")
+    if isinstance(run_directory_text, str):
+        return resolve_manifest_path(repository_directory, run_directory_text)
+    return state_directory(repository_directory, manifest) / "runs" / task_run_directory_name(task)
+
+
+def task_log_path(
+    repository_directory: Path,
+    manifest: JsonObject,
+    task: JsonObject,
+    log_key: str,
+    fallback_filename: str,
+) -> Path:
+    """Resolve one task log path with fallback for legacy manifests."""
+    log_path_text = task_logs(task).get(log_key)
+    if isinstance(log_path_text, str):
+        return resolve_manifest_path(repository_directory, log_path_text)
+    return task_run_directory(repository_directory, manifest, task) / fallback_filename
 
 
 def resolve_manifest_path(repository_directory: Path, manifest_path: str) -> Path:
@@ -442,14 +800,44 @@ def resolve_manifest_path(repository_directory: Path, manifest_path: str) -> Pat
     return (repository_directory / path).resolve()
 
 
-def selected_tasks(manifest: JsonObject, identifiers: list[int]) -> list[JsonObject]:
+def normalized_selector(identifier: object) -> str:
+    """Normalize a command-line task selector."""
+    if isinstance(identifier, int):
+        return str(identifier)
+    identifier_text = str(identifier)
+    if identifier_text.isdigit():
+        return str(int(identifier_text))
+    return identifier_text
+
+
+def task_selector_values(task: JsonObject) -> set[str]:
+    """Return all accepted selector spellings for a task."""
+    task_identifier = task["id"]
+    values = {str(task_identifier)}
+    source_identifier = task.get("source_id")
+    if isinstance(source_identifier, int):
+        values.add(str(source_identifier))
+        values.add(f"{source_identifier:02d}")
+    if isinstance(task_identifier, int):
+        values.add(str(task_identifier))
+        values.add(f"{task_identifier:02d}")
+    task_identifier_match = STRING_TASK_IDENTIFIER_PATTERN.match(str(task_identifier))
+    if task_identifier_match is not None:
+        number_text = task_identifier_match.group("number")
+        values.add(str(int(number_text)))
+        values.add(f"{int(number_text):02d}")
+    return values
+
+
+def selected_tasks(manifest: JsonObject, identifiers: list[object]) -> list[JsonObject]:
     """Return selected manifest task records."""
     tasks = [task for task in manifest.get("tasks", []) if isinstance(task, dict)]
     typed_tasks = [typing.cast("JsonObject", task) for task in tasks]
+    typed_tasks.sort(key=lambda task: task_identifier_sort_key(task.get("id")))
     if not identifiers:
         return typed_tasks
-    selected_identifiers = set(identifiers)
-    return [task for task in typed_tasks if task.get("id") in selected_identifiers]
+    selected_identifiers = {normalized_selector(identifier) for identifier in identifiers}
+    return [task for task in typed_tasks if task_selector_values(task) & selected_identifiers]
 
 
 def run_command(command_arguments: list[str], *, cwd: Path) -> CommandResult:
@@ -555,8 +943,7 @@ def classify_worker_completion(
 ) -> WorkerCompletion:
     """Classify a finished worker from final output, git state, and wrapper exit code."""
     defaults = typing.cast("JsonObject", manifest["defaults"])
-    task_identifier = int(task["id"])
-    run_directory = state_directory(repository_directory, manifest) / "runs" / f"{task_identifier:02d}"
+    run_directory = task_run_directory(repository_directory, manifest, task)
     final_message_exists = (run_directory / "worker-final.md").exists()
     worktree_path = resolve_manifest_path(repository_directory, str(task["worktree"]))
     worktree_clean = git_worktree_is_clean(worktree_path)
@@ -675,6 +1062,14 @@ def task_expected_paths(task: JsonObject) -> list[str]:
 def build_worker_prompt(task: JsonObject) -> str:
     """Build the implementation prompt for a worker agent."""
     expected_paths = task_expected_paths(task)
+    logs = task_logs(task)
+    run_directory = str(logs.get("run_directory", "the task runtime run directory"))
+    plan_instruction = ""
+    if logs:
+        plan_instruction = (
+            "Do not edit shared task plans or manifests such as docs/code-review-2-plan.md or "
+            "docs/code-review-2.tasks.json. Write runtime notes only in the log paths below."
+        )
     return f"""You are a Codex implementation worker in a dedicated git worktree.
 
 Read AGENTS.md, docs/STYLEGUIDE.md, and Justfile before editing code.
@@ -683,28 +1078,37 @@ Implement exactly this task and keep the change narrow.
 Commit logical intermediate steps and leave a clean worktree when done.
 Run relevant tests through `nix develop --command just ...` when feasible.
 Never commit files under data/ or .codex-task-worktrees/.
+{plan_instruction}
 
 Task {task["id"]}: {task["title"]}
 Category: {task["category"]}
 Expected paths: {", ".join(expected_paths) or "not precomputed"}
+Runtime log directory: {run_directory}
 
 {task["body_markdown"]}
 
 Guidance:
 {task.get("guidance_markdown", "")}
 
-Final response must include changed files, commits created, tests run, and any remaining blockers.
+Final response must include changed files, commits created, tests run, benchmarks if relevant, failed hypotheses,
+remaining blockers, and remaining risks.
 """
 
 
 def build_review_prompt(task: JsonObject) -> str:
     """Build the review prompt for a task branch."""
+    logs = task_logs(task)
+    review_path = str(logs.get("review_final", "the task runtime review log"))
     return f"""Review task branch {task["branch"]} against main.
 
 Task {task["id"]}: {task["title"]}
 
 Review for correctness, behavioral regressions, styleguide compliance, missing tests, and whether the implementation
-actually satisfies docs/code-review.md.
+actually satisfies the source review task.
+Run read-only. Do not edit files in the task worktree or shared plan.
+Write the review result to {review_path}.
+Start the final response with exactly one decision line: `Decision: accept`, `Decision: needs_changes`, or
+`Decision: reject`.
 Lead with findings ordered by severity. If there are no findings, say that explicitly and mention remaining risk.
 """
 
@@ -734,6 +1138,18 @@ Requirements:
 
 Do not merge unrelated branches. Do not touch data/. Do not revert user changes unrelated to this task.
 """
+
+
+def classify_review_decision(review_text: str) -> TaskStatus:
+    """Classify a review final message into a lifecycle status."""
+    normalized_text = review_text.lower()
+    decision_match = re.search(r"decision:\s*(accept|needs[_ -]changes|reject)", normalized_text)
+    decision = decision_match.group(1).replace("-", "_").replace(" ", "_") if decision_match is not None else "accept"
+    if decision == "needs_changes":
+        return TaskStatus.NEEDS_CHANGES
+    if decision == "reject":
+        return TaskStatus.BLOCKED
+    return TaskStatus.REVIEWED
 
 
 def build_worker_command(
@@ -850,7 +1266,7 @@ def running_process_exists(process_identifier: int) -> bool:
 def load_state(state_path: Path) -> JsonObject:
     """Load runtime state."""
     if not state_path.exists():
-        return {"runs": {}, "statuses": {}, "task_identities": {}}
+        return {"leases": {}, "runs": {}, "statuses": {}, "task_identities": {}}
     return read_json_object(state_path)
 
 
@@ -859,11 +1275,131 @@ def save_state(state_path: Path, state: JsonObject) -> None:
     write_json_object(state_path, state)
 
 
+@contextlib.contextmanager
+def manifest_lock(repository_directory: Path, manifest: JsonObject, lock_name: str) -> typing.Iterator[None]:
+    """Acquire a manifest-scoped advisory lock."""
+    lock_directory = state_directory(repository_directory, manifest)
+    lock_directory.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_directory / lock_name
+    with lock_path.open("w") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def lease_owner() -> str:
+    """Return a default lease owner string."""
+    username = os.environ.get("USER", "unknown")
+    hostname = os.uname().nodename
+    return f"{username}@{hostname}:{os.getpid()}"
+
+
+def parse_utc_timestamp(timestamp_text: str) -> datetime.datetime:
+    """Parse an ISO-8601 timestamp produced by this module."""
+    normalized_timestamp = timestamp_text.replace("Z", "+00:00")
+    parsed_timestamp = datetime.datetime.fromisoformat(normalized_timestamp)
+    if parsed_timestamp.tzinfo is None:
+        return parsed_timestamp.replace(tzinfo=datetime.UTC)
+    return parsed_timestamp.astimezone(datetime.UTC)
+
+
+def lease_is_expired(lease: object, *, now: datetime.datetime | None = None) -> bool:
+    """Return whether a lease object is expired."""
+    if not isinstance(lease, dict):
+        return True
+    expires_at = lease.get("expires_at")
+    if not isinstance(expires_at, str):
+        return True
+    try:
+        expires_at_timestamp = parse_utc_timestamp(expires_at)
+    except ValueError:
+        return True
+    effective_now = now or datetime.datetime.now(datetime.UTC)
+    return expires_at_timestamp <= effective_now
+
+
+def set_task_lease(
+    state: JsonObject,
+    task: JsonObject,
+    *,
+    owner: str,
+    status: TaskStatus,
+    lease_seconds: int,
+) -> None:
+    """Set a task lease and status."""
+    now = datetime.datetime.now(datetime.UTC)
+    expires_at = now + datetime.timedelta(seconds=lease_seconds)
+    leases = typing.cast("JsonObject", state.setdefault("leases", {}))
+    leases[task_key(task)] = {
+        "owner": owner,
+        "status": status.value,
+        "acquired_at": now.isoformat(timespec="seconds"),
+        "expires_at": expires_at.isoformat(timespec="seconds"),
+    }
+    set_runtime_task_status(state, task, status)
+
+
+def clear_task_lease(state: JsonObject, task: JsonObject) -> None:
+    """Clear a task lease if present."""
+    leases = typing.cast("JsonObject", state.setdefault("leases", {}))
+    leases.pop(task_key(task), None)
+
+
+def reset_stale_task_leases(state: JsonObject, manifest: JsonObject, *, force: bool = False) -> list[str]:
+    """Reset expired claimed/running task leases to ready."""
+    reset_identifiers: list[str] = []
+    leases = typing.cast("JsonObject", state.setdefault("leases", {}))
+    for task in selected_tasks(manifest, []):
+        task_identifier = task_key(task)
+        lease = leases.get(task_identifier)
+        status = runtime_task_status(state, task)
+        if status not in {TaskStatus.CLAIMED.value, TaskStatus.RUNNING.value}:
+            continue
+        if not force and not lease_is_expired(lease):
+            continue
+        leases.pop(task_identifier, None)
+        set_runtime_task_status(state, task, TaskStatus.READY)
+        reset_identifiers.append(task_identifier)
+    return reset_identifiers
+
+
+def active_conflict_groups(state: JsonObject, manifest: JsonObject) -> set[str]:
+    """Return conflict groups currently claimed, running, or integrating."""
+    groups: set[str] = set()
+    for task in selected_tasks(manifest, []):
+        status = runtime_task_status(state, task)
+        if status not in {TaskStatus.CLAIMED.value, TaskStatus.RUNNING.value, TaskStatus.INTEGRATING.value}:
+            continue
+        if "conflict_group" in task:
+            groups.add(str(task["conflict_group"]))
+    return groups
+
+
+def conflict_group_available(
+    task: JsonObject,
+    *,
+    active_groups: set[str],
+    selected_groups: set[str],
+) -> bool:
+    """Return whether a task can be scheduled without conflict-group overlap."""
+    if "conflict_group" not in task:
+        return True
+    conflict_group = str(task["conflict_group"])
+    unavailable_groups = active_groups | selected_groups
+    if conflict_group == "broad":
+        return not unavailable_groups
+    if "broad" in unavailable_groups:
+        return False
+    return conflict_group not in unavailable_groups
+
+
 def runtime_task_status(state: JsonObject, task: JsonObject) -> str:
     """Return the current runtime status for a task."""
     statuses = typing.cast("JsonObject", state.get("statuses", {}))
     identities = typing.cast("JsonObject", state.get("task_identities", {}))
-    task_identifier = str(task["id"])
+    task_identifier = task_key(task)
     stored_identity = identities.get(task_identifier)
     if (
         stored_identity is not None
@@ -878,7 +1414,7 @@ def runtime_task_status(state: JsonObject, task: JsonObject) -> str:
 def set_runtime_task_status(state: JsonObject, task: JsonObject, status: TaskStatus) -> None:
     """Set a task status in ignored runtime state."""
     statuses = typing.cast("JsonObject", state.setdefault("statuses", {}))
-    task_identifier = str(task["id"])
+    task_identifier = task_key(task)
     statuses[task_identifier] = status.value
     identities = typing.cast("JsonObject", state.setdefault("task_identities", {}))
     identities[task_identifier] = task_runtime_identity(task)
@@ -890,7 +1426,7 @@ def record_worker_completion(state: JsonObject, task: JsonObject, completion: Wo
     """Record worker completion details in runtime state."""
     set_runtime_task_status(state, task, completion.status)
     worker_results = typing.cast("JsonObject", state.setdefault("worker_results", {}))
-    worker_results[str(task["id"])] = {
+    worker_results[task_key(task)] = {
         "branch_ahead": completion.branch_ahead,
         "exit_code": completion.exit_code,
         "final_message_exists": completion.final_message_exists,
@@ -922,6 +1458,7 @@ def archive_runtime_state_entry(
     status_updates = typing.cast("JsonObject", state.setdefault("status_updated_at", {}))
     worker_results = typing.cast("JsonObject", state.setdefault("worker_results", {}))
     identities = typing.cast("JsonObject", state.setdefault("task_identities", {}))
+    leases = typing.cast("JsonObject", state.setdefault("leases", {}))
     entry: JsonObject = {
         "archived_at": utc_timestamp(),
         "task_identifier": task_identifier,
@@ -935,6 +1472,7 @@ def archive_runtime_state_entry(
         ("status_updated_at", status_updates),
         ("worker_result", worker_results),
         ("task_identity", identities),
+        ("lease", leases),
     ):
         if task_identifier in mapping:
             entry[key] = mapping.pop(task_identifier)
@@ -943,10 +1481,10 @@ def archive_runtime_state_entry(
 
 def prune_stale_runtime_state(state: JsonObject, manifest: JsonObject) -> bool:
     """Remove runtime state that does not match the current task manifest."""
-    tasks_by_runtime_identifier = {str(task["id"]): task for task in selected_tasks(manifest, [])}
+    tasks_by_runtime_identifier = {task_key(task): task for task in selected_tasks(manifest, [])}
     active_identifiers = set(tasks_by_runtime_identifier)
     candidate_identifiers: set[str] = set()
-    for mapping_name in ("runs", "statuses", "status_updated_at", "worker_results", "task_identities"):
+    for mapping_name in ("leases", "runs", "statuses", "status_updated_at", "worker_results", "task_identities"):
         mapping = state.setdefault(mapping_name, {})
         if isinstance(mapping, dict):
             candidate_identifiers.update(str(identifier) for identifier in mapping)
@@ -991,21 +1529,25 @@ def prune_stale_runtime_state(state: JsonObject, manifest: JsonObject) -> bool:
     return changed
 
 
-def tasks_by_identifier(manifest: JsonObject) -> dict[int, JsonObject]:
+def tasks_by_identifier(manifest: JsonObject) -> dict[str, JsonObject]:
     """Return manifest tasks keyed by task id."""
-    return {int(task["id"]): task for task in selected_tasks(manifest, [])}
+    indexed_tasks: dict[str, JsonObject] = {}
+    for task in selected_tasks(manifest, []):
+        for selector in task_selector_values(task):
+            indexed_tasks[normalized_selector(selector)] = task
+    return indexed_tasks
 
 
-def dependency_identifiers(task: JsonObject) -> list[int]:
+def dependency_identifiers(task: JsonObject) -> list[str]:
     """Return normalized dependency task identifiers."""
     dependencies = task.get("dependencies", [])
     if not isinstance(dependencies, list):
         raise ValueError(f"Task {task['id']} dependencies must be a list.")
-    identifiers: list[int] = []
+    identifiers: list[str] = []
     for dependency in dependencies:
-        if not isinstance(dependency, int):
-            raise ValueError(f"Task {task['id']} has non-integer dependency {dependency!r}.")
-        identifiers.append(dependency)
+        if not isinstance(dependency, (int, str)):
+            raise ValueError(f"Task {task['id']} has invalid dependency {dependency!r}.")
+        identifiers.append(normalized_selector(dependency))
     return identifiers
 
 
@@ -1079,6 +1621,12 @@ def ensure_integration_worktree_ready(worktree_path: Path, integration_branch: s
         raise ValueError(message)
 
 
+def push_integration_branch(integration_worktree_path: Path, integration_branch: str) -> None:
+    """Push the integration branch to origin."""
+    command_result = run_command(["git", "push", "origin", integration_branch], cwd=integration_worktree_path)
+    ensure_success(command_result)
+
+
 def refresh_runtime_statuses(repository_directory: Path, manifest: JsonObject) -> None:
     """Refresh task statuses from detached worker state."""
     state_path = state_directory(repository_directory, manifest) / "state.json"
@@ -1086,14 +1634,14 @@ def refresh_runtime_statuses(repository_directory: Path, manifest: JsonObject) -
     changed = prune_stale_runtime_state(state, manifest)
     runs = typing.cast("JsonObject", state.get("runs", {}))
     for task in selected_tasks(manifest, []):
-        task_identifier = int(task["id"])
-        run = runs.get(str(task_identifier), {})
+        task_identifier = task_key(task)
+        run = runs.get(task_identifier, {})
         if not isinstance(run, dict):
             continue
         pid = run.get("pid")
         if not isinstance(pid, int):
             continue
-        run_directory = state_directory(repository_directory, manifest) / "runs" / f"{task_identifier:02d}"
+        run_directory = task_run_directory(repository_directory, manifest, task)
         if running_process_exists(pid):
             if runtime_task_status(state, task) != TaskStatus.RUNNING.value:
                 set_runtime_task_status(state, task, TaskStatus.RUNNING)
@@ -1130,15 +1678,16 @@ def launch_worker(
     defaults = typing.cast("JsonObject", manifest["defaults"])
     base_branch = str(defaults.get("base_branch", "main"))
     worktree_path = ensure_task_worktree(repository_directory, task, base_branch)
-    task_identifier = int(task["id"])
-    run_directory = state_directory(repository_directory, manifest) / "runs" / f"{task_identifier:02d}"
+    run_directory = task_run_directory(repository_directory, manifest, task)
     run_directory.mkdir(parents=True, exist_ok=True)
-    final_message_path = run_directory / "worker-final.md"
-    jsonl_log_path = run_directory / "worker.jsonl"
-    stderr_log_path = run_directory / "worker.stderr.log"
-    prompt_path = run_directory / "worker-prompt.md"
+    final_message_path = task_log_path(repository_directory, manifest, task, "worker_final", "worker-final.md")
+    jsonl_log_path = task_log_path(repository_directory, manifest, task, "worker_jsonl", "worker.jsonl")
+    stderr_log_path = task_log_path(repository_directory, manifest, task, "worker_stderr", "worker.stderr.log")
+    prompt_path = task_log_path(repository_directory, manifest, task, "worker_prompt", "worker-prompt.md")
     wrapper_path = run_directory / "worker-wrapper.sh"
     exit_code_path = run_directory / "exit-code.txt"
+    for log_path in [final_message_path, jsonl_log_path, stderr_log_path, prompt_path, wrapper_path, exit_code_path]:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
     remove_stale_output_files(
         [final_message_path, jsonl_log_path, stderr_log_path, prompt_path, wrapper_path, exit_code_path]
     )
@@ -1163,7 +1712,7 @@ def launch_worker(
             start_new_session=True,
         )
         return WorkerLaunch(
-            task_identifier=task_identifier,
+            task_identifier=task_identifier_number(task["id"]),
             process_identifier=process.pid,
             process=process,
         )
@@ -1195,6 +1744,7 @@ def collect_doctor_checks(repository_directory: Path, manifest: JsonObject, *, s
     """Collect task-farm environment checks."""
     defaults = typing.cast("JsonObject", manifest["defaults"])
     base_branch = str(defaults.get("base_branch", "main"))
+    source_path = Path(str(manifest.get("source_path", REPO_RELATIVE_SOURCE_PATH.as_posix())))
     checks = [
         doctor_command_check("git"),
         doctor_command_check("codex"),
@@ -1204,7 +1754,7 @@ def collect_doctor_checks(repository_directory: Path, manifest: JsonObject, *, s
             passed=(repository_directory / ".git").exists(),
             message=f"repo root: {repository_directory}",
         ),
-        doctor_file_check(repository_directory, REPO_RELATIVE_SOURCE_PATH),
+        doctor_file_check(repository_directory, source_path),
         doctor_file_check(repository_directory, Path("Justfile")),
         doctor_file_check(repository_directory, Path("AGENTS.md")),
         doctor_file_check(repository_directory, Path("docs/STYLEGUIDE.md")),
@@ -1236,10 +1786,26 @@ def collect_doctor_checks(repository_directory: Path, manifest: JsonObject, *, s
     return checks
 
 
+def argument_manifest_path(arguments: argparse.Namespace) -> Path:
+    """Return the repository-relative manifest path selected by CLI arguments."""
+    manifest_path = getattr(arguments, "manifest", None)
+    if manifest_path is None:
+        return REPO_RELATIVE_MANIFEST_PATH
+    return Path(str(manifest_path))
+
+
+def load_manifest_for_arguments(repository_directory: Path, arguments: argparse.Namespace) -> JsonObject:
+    """Load the manifest selected by CLI arguments."""
+    manifest_relative_path = argument_manifest_path(arguments)
+    if manifest_relative_path == REPO_RELATIVE_MANIFEST_PATH:
+        return load_manifest(repository_directory)
+    return load_manifest(repository_directory, manifest_relative_path=manifest_relative_path)
+
+
 def command_doctor(arguments: argparse.Namespace) -> int:
     """Handle doctor."""
     repository_directory = repository_root()
-    manifest = load_manifest(repository_directory)
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
     checks = collect_doctor_checks(repository_directory, manifest, strict=bool(arguments.strict))
     exit_code = 0
     for check in checks:
@@ -1257,27 +1823,41 @@ def command_doctor(arguments: argparse.Namespace) -> int:
 def command_sync_manifest(arguments: argparse.Namespace) -> int:
     """Handle sync-manifest."""
     repository_directory = repository_root()
-    manifest = sync_manifest(repository_directory)
-    print(f"Synced {len(manifest.get('tasks', []))} tasks into {REPO_RELATIVE_MANIFEST_PATH}.")
+    manifest_relative_path = argument_manifest_path(arguments)
+    source_relative_path = Path(arguments.source) if getattr(arguments, "source", None) else None
+    plan_relative_path = Path(arguments.plan) if getattr(arguments, "plan", None) else None
+    state_directory_path = Path(arguments.state_dir) if getattr(arguments, "state_dir", None) else None
+    manifest = sync_manifest(
+        repository_directory,
+        manifest_relative_path=manifest_relative_path,
+        source_relative_path=source_relative_path,
+        plan_relative_path=plan_relative_path,
+        state_directory_path=state_directory_path,
+        branch_prefix=getattr(arguments, "branch_prefix", None),
+        worktree_prefix=getattr(arguments, "worktree_prefix", None),
+        integration_branch=getattr(arguments, "integration_branch", None),
+        integration_worktree=getattr(arguments, "integration_worktree", None),
+    )
+    print(f"Synced {len(manifest.get('tasks', []))} tasks into {manifest_relative_path.as_posix()}.")
     return 0
 
 
 def command_list(arguments: argparse.Namespace) -> int:
     """Handle list."""
     repository_directory = repository_root()
-    manifest = load_manifest(repository_directory)
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
     refresh_runtime_statuses(repository_directory, manifest)
     state_path = state_directory(repository_directory, manifest) / "state.json"
     state = load_state(state_path)
-    for task in selected_tasks(manifest, typing.cast("list[int]", arguments.task)):
-        print(f"{int(task['id']):02d}  {runtime_task_status(state, task):12}  {task['branch']}  {task['title']}")
+    for task in selected_tasks(manifest, typing.cast("list[object]", arguments.task)):
+        print(f"{task_display_id(task):6}  {runtime_task_status(state, task):14}  {task['branch']}  {task['title']}")
     return 0
 
 
 def command_run(arguments: argparse.Namespace) -> int:
     """Handle run."""
     repository_directory = repository_root()
-    manifest = load_manifest(repository_directory)
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
     refresh_runtime_statuses(repository_directory, manifest)
     defaults = typing.cast("JsonObject", manifest["defaults"])
     state_path = state_directory(repository_directory, manifest) / "state.json"
@@ -1285,63 +1865,100 @@ def command_run(arguments: argparse.Namespace) -> int:
     jobs = int(arguments.jobs if arguments.jobs is not None else defaults.get("jobs", 5))
     wait_for_completion = bool(arguments.wait)
     force = bool(arguments.force)
+    owner = str(getattr(arguments, "owner", None) or lease_owner())
+    lease_seconds = int(
+        getattr(arguments, "lease_seconds", None) or defaults.get("lease_seconds", DEFAULT_LEASE_SECONDS),
+    )
     dangerously_bypass_approvals = bool(
         arguments.dangerous or defaults.get("worker_dangerously_bypass_approvals", False),
     )
-    candidates = selected_tasks(manifest, typing.cast("list[int]", arguments.task))
-    runnable_tasks: list[JsonObject] = []
-    for task in candidates:
-        if len(runnable_tasks) >= jobs:
-            break
-        if not bool(task.get("enabled", True)):
-            continue
-        runnable_statuses = {TaskStatus.READY.value}
-        if force or runtime_task_status(state, task) in runnable_statuses:
+    with manifest_lock(repository_directory, manifest, "claim.lock"):
+        state = load_state(state_path)
+        reset_stale_task_leases(state, manifest)
+        candidates = selected_tasks(manifest, typing.cast("list[object]", arguments.task))
+        runnable_tasks: list[JsonObject] = []
+        active_groups = active_conflict_groups(state, manifest)
+        selected_groups: set[str] = set()
+        for task in candidates:
+            if len(runnable_tasks) >= jobs:
+                break
+            if not bool(task.get("enabled", True)):
+                continue
+            current_status = runtime_task_status(state, task)
+            if not force and current_status != TaskStatus.READY.value:
+                continue
+            if not conflict_group_available(task, active_groups=active_groups, selected_groups=selected_groups):
+                continue
             runnable_tasks.append(task)
-    if not runnable_tasks:
-        print("No runnable tasks selected.")
-        return 0
-    ensure_dependencies_ready(
-        manifest,
-        state,
-        runnable_tasks,
-        {TaskStatus.MERGED.value},
-        "run",
-    )
+            if "conflict_group" in task:
+                selected_groups.add(str(task["conflict_group"]))
+        if not runnable_tasks:
+            print("No runnable tasks selected.")
+            save_state(state_path, state)
+            return 0
+        ensure_dependencies_ready(
+            manifest,
+            state,
+            runnable_tasks,
+            {TaskStatus.INTEGRATED.value, TaskStatus.MERGED.value},
+            "run",
+        )
+        for task in runnable_tasks:
+            set_task_lease(
+                state,
+                task,
+                owner=owner,
+                status=TaskStatus.CLAIMED,
+                lease_seconds=lease_seconds,
+            )
+        save_state(state_path, state)
 
-    runs = typing.cast("JsonObject", state.setdefault("runs", {}))
     exit_code = 0
     launched_workers: list[WorkerLaunch] = []
     for task in runnable_tasks:
-        set_runtime_task_status(state, task, TaskStatus.RUNNING)
-        save_state(state_path, state)
         launched_worker = launch_worker(
             repository_directory=repository_directory,
             manifest=manifest,
             task=task,
             dangerously_bypass_approvals=dangerously_bypass_approvals,
         )
-        task_identifier = int(task["id"])
-        runs[str(task_identifier)] = {
+        state = load_state(state_path)
+        runs = typing.cast("JsonObject", state.setdefault("runs", {}))
+        task_identifier = task_key(task)
+        runs[task_identifier] = {
             "pid": launched_worker.process_identifier,
             "returncode": None,
             "started_at": utc_timestamp(),
             "branch": task["branch"],
             "worktree": task["worktree"],
         }
+        set_task_lease(
+            state,
+            task,
+            owner=owner,
+            status=TaskStatus.RUNNING,
+            lease_seconds=lease_seconds,
+        )
         launched_workers.append(launched_worker)
-        print(f"Launched task {task_identifier:02d}: {task['branch']}")
+        print(f"Launched task {task_display_id(task)}: {task['branch']}")
         save_state(state_path, state)
     if wait_for_completion:
         for launched_worker in launched_workers:
             returncode = launched_worker.process.wait()
-            task = next(task for task in runnable_tasks if int(task["id"]) == launched_worker.task_identifier)
-            run = runs.get(str(launched_worker.task_identifier), {})
+            task = next(
+                task
+                for task in runnable_tasks
+                if task_identifier_number(task["id"]) == launched_worker.task_identifier
+            )
+            state = load_state(state_path)
+            runs = typing.cast("JsonObject", state.setdefault("runs", {}))
+            run = runs.get(task_key(task), {})
             if isinstance(run, dict):
                 run["returncode"] = returncode
                 run["finished_at"] = utc_timestamp()
             completion = classify_worker_completion(repository_directory, manifest, task)
             record_worker_completion(state, task, completion)
+            clear_task_lease(state, task)
             if completion.status == TaskStatus.BLOCKED and exit_code == 0:
                 exit_code = returncode or 1
             save_state(state_path, state)
@@ -1352,26 +1969,29 @@ def command_run(arguments: argparse.Namespace) -> int:
 def command_status(arguments: argparse.Namespace) -> int:
     """Handle status."""
     repository_directory = repository_root()
-    manifest = load_manifest(repository_directory)
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
     refresh_runtime_statuses(repository_directory, manifest)
     state_path = state_directory(repository_directory, manifest) / "state.json"
     state = load_state(state_path)
     runs = typing.cast("JsonObject", state.get("runs", {}))
-    for task in selected_tasks(manifest, typing.cast("list[int]", arguments.task)):
-        task_identifier = int(task["id"])
-        run = runs.get(str(task_identifier), {})
+    leases = typing.cast("JsonObject", state.get("leases", {}))
+    for task in selected_tasks(manifest, typing.cast("list[object]", arguments.task)):
+        task_identifier = task_key(task)
+        run = runs.get(task_identifier, {})
         pid = run.get("pid") if isinstance(run, dict) else None
         alive = isinstance(pid, int) and running_process_exists(pid)
-        run_directory = state_directory(repository_directory, manifest) / "runs" / f"{task_identifier:02d}"
+        run_directory = task_run_directory(repository_directory, manifest, task)
         final_message_exists = (run_directory / "worker-final.md").exists()
         worktree_path = resolve_manifest_path(repository_directory, str(task["worktree"]))
         worktree_state = "missing"
         if worktree_path.exists():
             git_status = run_command(["git", "status", "--short"], cwd=worktree_path)
             worktree_state = "dirty" if git_status.stdout.strip() else "clean"
+        lease = leases.get(task_identifier, {})
+        lease_owner_text = lease.get("owner", "-") if isinstance(lease, dict) else "-"
         print(
-            f"{task_identifier:02d}  status={runtime_task_status(state, task)}  alive={alive}"
-            f"  final={final_message_exists}  worktree={worktree_state}  {task['title']}"
+            f"{task_display_id(task)}  status={runtime_task_status(state, task)}  alive={alive}"
+            f"  final={final_message_exists}  worktree={worktree_state}  lease={lease_owner_text}  {task['title']}"
         )
     return 0
 
@@ -1379,12 +1999,12 @@ def command_status(arguments: argparse.Namespace) -> int:
 def command_review(arguments: argparse.Namespace) -> int:
     """Handle review."""
     repository_directory = repository_root()
-    manifest = load_manifest(repository_directory)
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
     refresh_runtime_statuses(repository_directory, manifest)
     defaults = typing.cast("JsonObject", manifest["defaults"])
     state_path = state_directory(repository_directory, manifest) / "state.json"
     state = load_state(state_path)
-    tasks = selected_tasks(manifest, typing.cast("list[int]", arguments.task))
+    tasks = selected_tasks(manifest, typing.cast("list[object]", arguments.task))
     if not tasks:
         raise ValueError("Select at least one task to review.")
     ensure_tasks_have_status(
@@ -1410,12 +2030,13 @@ def command_review(arguments: argparse.Namespace) -> int:
         worktree_path = resolve_manifest_path(repository_directory, str(task["worktree"]))
         if not worktree_path.exists():
             raise FileNotFoundError(f"Worktree does not exist: {worktree_path}")
-        review_directory = state_directory(repository_directory, manifest) / "reviews"
-        review_directory.mkdir(parents=True, exist_ok=True)
-        task_identifier = int(task["id"])
-        final_message_path = review_directory / f"{task_identifier:02d}.md"
-        jsonl_log_path = review_directory / f"{task_identifier:02d}.jsonl"
-        stderr_log_path = review_directory / f"{task_identifier:02d}.stderr.log"
+        run_directory = task_run_directory(repository_directory, manifest, task)
+        run_directory.mkdir(parents=True, exist_ok=True)
+        final_message_path = task_log_path(repository_directory, manifest, task, "review_final", "review.md")
+        jsonl_log_path = task_log_path(repository_directory, manifest, task, "review_jsonl", "review.jsonl")
+        stderr_log_path = task_log_path(repository_directory, manifest, task, "review_stderr", "review.stderr.log")
+        for log_path in [final_message_path, jsonl_log_path, stderr_log_path]:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
         remove_stale_output_files([final_message_path, jsonl_log_path, stderr_log_path])
         command_arguments = build_review_command(
             worktree_path=worktree_path,
@@ -1435,11 +2056,19 @@ def command_review(arguments: argparse.Namespace) -> int:
         if completed_process.stderr:
             stderr_log_path.write_text(completed_process.stderr)
         if completed_process.returncode == 0:
-            set_runtime_task_status(state, task, TaskStatus.REVIEWED)
-            print(f"Reviewed task {task_identifier:02d}: {final_message_path}")
+            review_text = final_message_path.read_text() if final_message_path.exists() else ""
+            review_status = classify_review_decision(review_text)
+            set_runtime_task_status(state, task, review_status)
+            review_results = typing.cast("JsonObject", state.setdefault("review_results", {}))
+            review_results[task_key(task)] = {
+                "status": review_status.value,
+                "reviewed_at": utc_timestamp(),
+                "final_message_path": str(final_message_path),
+            }
+            print(f"Reviewed task {task_display_id(task)}: {review_status.value}: {final_message_path}")
         else:
             exit_code = completed_process.returncode
-            print(f"Review failed for task {task_identifier:02d}; see {jsonl_log_path}.", file=sys.stderr)
+            print(f"Review failed for task {task_display_id(task)}; see {jsonl_log_path}.", file=sys.stderr)
         save_state(state_path, state)
     return exit_code
 
@@ -1447,12 +2076,13 @@ def command_review(arguments: argparse.Namespace) -> int:
 def command_integrate(arguments: argparse.Namespace) -> int:
     """Handle integrate."""
     repository_directory = repository_root()
-    manifest = load_manifest(repository_directory)
+    manifest_relative_path = argument_manifest_path(arguments)
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
     refresh_runtime_statuses(repository_directory, manifest)
     defaults = typing.cast("JsonObject", manifest["defaults"])
     state_path = state_directory(repository_directory, manifest) / "state.json"
     state = load_state(state_path)
-    tasks = selected_tasks(manifest, typing.cast("list[int]", arguments.task))
+    tasks = selected_tasks(manifest, typing.cast("list[object]", arguments.task))
     if not tasks:
         raise ValueError("Select at least one task to integrate.")
     allowed_statuses = {TaskStatus.REVIEWED.value}
@@ -1463,87 +2093,124 @@ def command_integrate(arguments: argparse.Namespace) -> int:
         manifest,
         state,
         tasks,
-        {TaskStatus.MERGED.value},
+        {TaskStatus.INTEGRATED.value, TaskStatus.MERGED.value},
         "integrate",
     )
     dangerously_bypass_approvals = bool(
         arguments.dangerous or defaults.get("integrator_dangerously_bypass_approvals", False),
     )
-    integration_worktree_path = ensure_integration_worktree(repository_directory, defaults)
-    integration_branch = str(defaults.get("integration_branch", DEFAULT_INTEGRATION_BRANCH))
-    ensure_integration_worktree_ready(integration_worktree_path, integration_branch)
     exit_code = 0
-    for task in tasks:
-        worktree_path = resolve_manifest_path(repository_directory, str(task["worktree"]))
-        if not worktree_path.exists():
-            raise FileNotFoundError(f"Worktree does not exist: {worktree_path}")
+    with manifest_lock(repository_directory, manifest, "integration.lock"):
+        integration_worktree_path = ensure_integration_worktree(repository_directory, defaults)
+        integration_branch = str(defaults.get("integration_branch", DEFAULT_INTEGRATION_BRANCH))
         ensure_integration_worktree_ready(integration_worktree_path, integration_branch)
-        head_before_integration = git_head_commit(integration_worktree_path)
-        integration_directory = state_directory(repository_directory, manifest) / "integrations"
-        integration_directory.mkdir(parents=True, exist_ok=True)
-        task_identifier = int(task["id"])
-        final_message_path = integration_directory / f"{task_identifier:02d}-final.md"
-        jsonl_log_path = integration_directory / f"{task_identifier:02d}.jsonl"
-        review_report_path = state_directory(repository_directory, manifest) / "reviews" / f"{task_identifier:02d}.md"
-        stderr_log_path = integration_directory / f"{task_identifier:02d}.stderr.log"
-        remove_stale_output_files([final_message_path, jsonl_log_path, stderr_log_path])
-        command_arguments = build_integration_command(
-            integration_worktree_path=integration_worktree_path,
-            worktree_path=worktree_path,
-            git_metadata_path=repository_directory / ".git",
-            model=str(defaults.get("integrator_model", "gpt-5.5")),
-            reasoning_effort=str(defaults.get("integrator_reasoning_effort", "xhigh")),
-            final_message_path=final_message_path,
-            dangerously_bypass_approvals=dangerously_bypass_approvals,
-        )
-        set_runtime_task_status(state, task, TaskStatus.INTEGRATING)
-        save_state(state_path, state)
-        completed_process = subprocess.run(
-            command_arguments,
-            cwd=integration_worktree_path,
-            input=build_integration_prompt(task, review_report_path, integration_branch),
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        jsonl_log_path.write_text(completed_process.stdout)
-        if completed_process.stderr:
-            stderr_log_path.write_text(completed_process.stderr)
-        if completed_process.returncode == 0:
-            try:
-                ensure_integration_worktree_ready(integration_worktree_path, integration_branch)
-                head_after_integration = git_head_commit(integration_worktree_path)
-            except (RuntimeError, ValueError) as error:
+        for task in tasks:
+            worktree_path = resolve_manifest_path(repository_directory, str(task["worktree"]))
+            if not worktree_path.exists():
+                raise FileNotFoundError(f"Worktree does not exist: {worktree_path}")
+            ensure_integration_worktree_ready(integration_worktree_path, integration_branch)
+            head_before_integration = git_head_commit(integration_worktree_path)
+            run_directory = task_run_directory(repository_directory, manifest, task)
+            run_directory.mkdir(parents=True, exist_ok=True)
+            final_message_path = task_log_path(
+                repository_directory,
+                manifest,
+                task,
+                "integration_final",
+                "integration-final.md",
+            )
+            jsonl_log_path = task_log_path(
+                repository_directory,
+                manifest,
+                task,
+                "integration_jsonl",
+                "integration.jsonl",
+            )
+            stderr_log_path = task_log_path(
+                repository_directory,
+                manifest,
+                task,
+                "integration_stderr",
+                "integration.stderr.log",
+            )
+            review_report_path = task_log_path(repository_directory, manifest, task, "review_final", "review.md")
+            for log_path in [final_message_path, jsonl_log_path, stderr_log_path]:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+            remove_stale_output_files([final_message_path, jsonl_log_path, stderr_log_path])
+            command_arguments = build_integration_command(
+                integration_worktree_path=integration_worktree_path,
+                worktree_path=worktree_path,
+                git_metadata_path=repository_directory / ".git",
+                model=str(defaults.get("integrator_model", "gpt-5.5")),
+                reasoning_effort=str(defaults.get("integrator_reasoning_effort", "xhigh")),
+                final_message_path=final_message_path,
+                dangerously_bypass_approvals=dangerously_bypass_approvals,
+            )
+            set_runtime_task_status(state, task, TaskStatus.INTEGRATING)
+            task["status"] = TaskStatus.INTEGRATING.value
+            save_state(state_path, state)
+            save_manifest(repository_directory, manifest, manifest_relative_path=manifest_relative_path)
+            completed_process = subprocess.run(
+                command_arguments,
+                cwd=integration_worktree_path,
+                input=build_integration_prompt(task, review_report_path, integration_branch),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            jsonl_log_path.write_text(completed_process.stdout)
+            if completed_process.stderr:
+                stderr_log_path.write_text(completed_process.stderr)
+            if completed_process.returncode == 0:
+                try:
+                    ensure_integration_worktree_ready(integration_worktree_path, integration_branch)
+                    head_after_integration = git_head_commit(integration_worktree_path)
+                    if bool(defaults.get("push_integration_branch", False)):
+                        push_integration_branch(integration_worktree_path, integration_branch)
+                except (RuntimeError, ValueError) as error:
+                    set_runtime_task_status(state, task, TaskStatus.BLOCKED)
+                    task["status"] = TaskStatus.BLOCKED.value
+                    exit_code = 1
+                    print(
+                        f"Integration produced an invalid worktree for task {task_display_id(task)}: {error}",
+                        file=sys.stderr,
+                    )
+                    save_state(state_path, state)
+                    save_manifest(repository_directory, manifest, manifest_relative_path=manifest_relative_path)
+                    break
+                if head_after_integration == head_before_integration:
+                    set_runtime_task_status(state, task, TaskStatus.BLOCKED)
+                    task["status"] = TaskStatus.BLOCKED.value
+                    exit_code = 1
+                    print(
+                        f"Integration for task {task_display_id(task)} returned success but did not advance HEAD.",
+                        file=sys.stderr,
+                    )
+                    save_state(state_path, state)
+                    save_manifest(repository_directory, manifest, manifest_relative_path=manifest_relative_path)
+                    break
+                set_runtime_task_status(state, task, TaskStatus.INTEGRATED)
+                clear_task_lease(state, task)
+                task["status"] = TaskStatus.INTEGRATED.value
+                runtime_metadata = typing.cast("JsonObject", task.setdefault("runtime", {}))
+                runtime_metadata["integrated_at"] = utc_timestamp()
+                runtime_metadata["integration_head"] = head_after_integration
+                print(f"Integrated task {task_display_id(task)}: {final_message_path}")
+            else:
                 set_runtime_task_status(state, task, TaskStatus.BLOCKED)
-                exit_code = 1
-                print(
-                    f"Integration produced an invalid worktree for task {task_identifier:02d}: {error}",
-                    file=sys.stderr,
-                )
+                task["status"] = TaskStatus.BLOCKED.value
+                exit_code = completed_process.returncode
+                print(f"Integration failed for task {task_display_id(task)}; see {jsonl_log_path}.", file=sys.stderr)
                 break
-            if head_after_integration == head_before_integration:
-                set_runtime_task_status(state, task, TaskStatus.BLOCKED)
-                exit_code = 1
-                print(
-                    f"Integration for task {task_identifier:02d} returned success but did not advance HEAD.",
-                    file=sys.stderr,
-                )
-                break
-            set_runtime_task_status(state, task, TaskStatus.MERGED)
-            print(f"Integrated task {task_identifier:02d}: {final_message_path}")
-        else:
-            set_runtime_task_status(state, task, TaskStatus.BLOCKED)
-            exit_code = completed_process.returncode
-            print(f"Integration failed for task {task_identifier:02d}; see {jsonl_log_path}.", file=sys.stderr)
-            break
-        save_state(state_path, state)
+            save_state(state_path, state)
+            save_manifest(repository_directory, manifest, manifest_relative_path=manifest_relative_path)
     return exit_code
 
 
 def command_integrate_ready(arguments: argparse.Namespace) -> int:
     """Handle integrate-ready."""
     repository_directory = repository_root()
-    manifest = load_manifest(repository_directory)
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
     refresh_runtime_statuses(repository_directory, manifest)
     state_path = state_directory(repository_directory, manifest) / "state.json"
     state = load_state(state_path)
@@ -1551,7 +2218,7 @@ def command_integrate_ready(arguments: argparse.Namespace) -> int:
     if bool(arguments.allow_unreviewed):
         allowed_statuses.add(TaskStatus.IMPLEMENTED.value)
     ready_identifiers = [
-        int(task["id"])
+        task["id"]
         for task in selected_tasks(manifest, [])
         if runtime_task_status(state, task) in allowed_statuses
     ]
@@ -1562,12 +2229,271 @@ def command_integrate_ready(arguments: argparse.Namespace) -> int:
     return command_integrate(arguments)
 
 
+def command_claim(arguments: argparse.Namespace) -> int:
+    """Handle claim."""
+    repository_directory = repository_root()
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
+    refresh_runtime_statuses(repository_directory, manifest)
+    defaults = typing.cast("JsonObject", manifest["defaults"])
+    state_path = state_directory(repository_directory, manifest) / "state.json"
+    owner = str(getattr(arguments, "owner", None) or lease_owner())
+    lease_seconds = int(
+        getattr(arguments, "lease_seconds", None) or defaults.get("lease_seconds", DEFAULT_LEASE_SECONDS),
+    )
+    jobs = int(getattr(arguments, "jobs", None) or 1)
+    claimed_tasks: list[JsonObject] = []
+    with manifest_lock(repository_directory, manifest, "claim.lock"):
+        state = load_state(state_path)
+        reset_stale_task_leases(state, manifest)
+        candidates = selected_tasks(manifest, typing.cast("list[object]", arguments.task))
+        active_groups = active_conflict_groups(state, manifest)
+        selected_groups: set[str] = set()
+        for task in candidates:
+            if len(claimed_tasks) >= jobs:
+                break
+            if not bool(task.get("enabled", True)):
+                continue
+            if not bool(arguments.force) and runtime_task_status(state, task) != TaskStatus.READY.value:
+                continue
+            if not conflict_group_available(task, active_groups=active_groups, selected_groups=selected_groups):
+                continue
+            claimed_tasks.append(task)
+            if "conflict_group" in task:
+                selected_groups.add(str(task["conflict_group"]))
+        if claimed_tasks:
+            ensure_dependencies_ready(
+                manifest,
+                state,
+                claimed_tasks,
+                {TaskStatus.INTEGRATED.value, TaskStatus.MERGED.value},
+                "claim",
+            )
+        for task in claimed_tasks:
+            set_task_lease(
+                state,
+                task,
+                owner=owner,
+                status=TaskStatus.CLAIMED,
+                lease_seconds=lease_seconds,
+            )
+            print(f"Claimed task {task_display_id(task)}: {task['branch']}")
+        save_state(state_path, state)
+    if not claimed_tasks:
+        print("No claimable tasks selected.")
+    return 0
+
+
+def set_tasks_status_command(arguments: argparse.Namespace, status: TaskStatus) -> int:
+    """Set selected tasks to a terminal manual status."""
+    repository_directory = repository_root()
+    manifest_relative_path = argument_manifest_path(arguments)
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
+    state_path = state_directory(repository_directory, manifest) / "state.json"
+    tasks = selected_tasks(manifest, typing.cast("list[object]", arguments.task))
+    if not tasks:
+        raise ValueError("Select at least one task.")
+    with manifest_lock(repository_directory, manifest, "claim.lock"):
+        state = load_state(state_path)
+        for task in tasks:
+            set_runtime_task_status(state, task, status)
+            clear_task_lease(state, task)
+            task["status"] = status.value
+            runtime_metadata = typing.cast("JsonObject", task.setdefault("runtime", {}))
+            runtime_metadata[f"{status.value}_at"] = utc_timestamp()
+            reason = getattr(arguments, "reason", None)
+            if reason:
+                manual_metadata = typing.cast("JsonObject", task.setdefault("manual", {}))
+                manual_metadata["notes"] = str(reason)
+            print(f"{status.value}: {task_display_id(task)} {task['title']}")
+        save_state(state_path, state)
+        save_manifest(repository_directory, manifest, manifest_relative_path=manifest_relative_path)
+    return 0
+
+
+def command_block(arguments: argparse.Namespace) -> int:
+    """Handle block."""
+    return set_tasks_status_command(arguments, TaskStatus.BLOCKED)
+
+
+def command_abandon(arguments: argparse.Namespace) -> int:
+    """Handle abandon."""
+    return set_tasks_status_command(arguments, TaskStatus.ABANDONED)
+
+
+def command_reset_claim(arguments: argparse.Namespace) -> int:
+    """Handle reset-claim."""
+    repository_directory = repository_root()
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
+    state_path = state_directory(repository_directory, manifest) / "state.json"
+    with manifest_lock(repository_directory, manifest, "claim.lock"):
+        state = load_state(state_path)
+        tasks = selected_tasks(manifest, typing.cast("list[object]", arguments.task))
+        if tasks:
+            reset_identifiers: list[str] = []
+            for task in tasks:
+                status = runtime_task_status(state, task)
+                lease = typing.cast("JsonObject", state.setdefault("leases", {})).get(task_key(task))
+                if not bool(arguments.force) and status not in {TaskStatus.CLAIMED.value, TaskStatus.RUNNING.value}:
+                    continue
+                if not bool(arguments.force) and not lease_is_expired(lease):
+                    continue
+                clear_task_lease(state, task)
+                set_runtime_task_status(state, task, TaskStatus.READY)
+                reset_identifiers.append(task_key(task))
+        else:
+            reset_identifiers = reset_stale_task_leases(state, manifest, force=bool(arguments.force))
+        save_state(state_path, state)
+    for task_identifier in reset_identifiers:
+        print(f"Reset claim: {task_identifier}")
+    if not reset_identifiers:
+        print("No stale claims reset.")
+    return 0
+
+
+def command_diff(arguments: argparse.Namespace) -> int:
+    """Handle diff."""
+    repository_directory = repository_root()
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
+    defaults = typing.cast("JsonObject", manifest["defaults"])
+    base_branch = str(defaults.get("base_branch", "main"))
+    tasks = selected_tasks(manifest, typing.cast("list[object]", arguments.task))
+    if not tasks:
+        raise ValueError("Select at least one task to diff.")
+    exit_code = 0
+    for task in tasks:
+        branch = str(task["branch"])
+        command_arguments = ["git", "diff", "--stat", f"{base_branch}..{branch}"]
+        if bool(arguments.patch):
+            command_arguments = ["git", "diff", f"{base_branch}..{branch}"]
+        command_result = run_command(command_arguments, cwd=repository_directory)
+        if command_result.returncode != 0:
+            exit_code = command_result.returncode
+            print(command_result.stderr.strip(), file=sys.stderr)
+            continue
+        print(f"# {task_display_id(task)} {branch}")
+        print(command_result.stdout.rstrip())
+    return exit_code
+
+
+def command_log(arguments: argparse.Namespace) -> int:
+    """Handle log."""
+    repository_directory = repository_root()
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
+    tasks = selected_tasks(manifest, typing.cast("list[object]", arguments.task))
+    if not tasks:
+        raise ValueError("Select at least one task to inspect logs.")
+    for task in tasks:
+        print(f"# {task_display_id(task)} {task['title']}")
+        for name, log_path_text in sorted(task_logs(task).items()):
+            log_path = resolve_manifest_path(repository_directory, str(log_path_text))
+            exists = "exists" if log_path.exists() else "missing"
+            print(f"{name}: {log_path} ({exists})")
+            if bool(arguments.cat) and log_path.exists() and log_path.is_file():
+                print(log_path.read_text())
+    return 0
+
+
+def integration_branch_is_pushed(integration_worktree_path: Path, integration_branch: str) -> bool:
+    """Return whether the local integration branch matches origin."""
+    local_result = run_command(["git", "rev-parse", integration_branch], cwd=integration_worktree_path)
+    remote_result = run_command(["git", "rev-parse", f"origin/{integration_branch}"], cwd=integration_worktree_path)
+    return (
+        local_result.returncode == 0
+        and remote_result.returncode == 0
+        and local_result.stdout.strip() == remote_result.stdout.strip()
+    )
+
+
+def command_clean_integrated(arguments: argparse.Namespace) -> int:
+    """Handle clean-integrated."""
+    repository_directory = repository_root()
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
+    defaults = typing.cast("JsonObject", manifest["defaults"])
+    integration_branch = str(defaults.get("integration_branch", DEFAULT_INTEGRATION_BRANCH))
+    integration_worktree_path = ensure_integration_worktree(repository_directory, defaults)
+    if not bool(arguments.skip_push_check) and not integration_branch_is_pushed(
+        integration_worktree_path,
+        integration_branch,
+    ):
+        print(f"Integration branch {integration_branch} is not confirmed pushed; cleanup skipped.")
+        return 1
+    state = load_state(state_directory(repository_directory, manifest) / "state.json")
+    tasks = [
+        task
+        for task in selected_tasks(manifest, typing.cast("list[object]", arguments.task))
+        if runtime_task_status(state, task) == TaskStatus.INTEGRATED.value
+    ]
+    for task in tasks:
+        worktree_path = resolve_manifest_path(repository_directory, str(task["worktree"]))
+        if not worktree_path.exists():
+            continue
+        if bool(arguments.dry_run):
+            print(f"Would remove worktree {worktree_path}")
+            continue
+        ensure_success(run_command(["git", "worktree", "remove", str(worktree_path)], cwd=repository_directory))
+        print(f"Removed worktree {worktree_path}")
+    return 0
+
+
+def command_promote_to_main(arguments: argparse.Namespace) -> int:
+    """Handle promote-to-main."""
+    repository_directory = repository_root()
+    manifest_relative_path = argument_manifest_path(arguments)
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
+    defaults = typing.cast("JsonObject", manifest["defaults"])
+    base_branch = str(defaults.get("base_branch", "main"))
+    integration_branch = str(defaults.get("integration_branch", DEFAULT_INTEGRATION_BRANCH))
+    with manifest_lock(repository_directory, manifest, "integration.lock"):
+        if git_current_branch(repository_directory) != base_branch:
+            raise ValueError(f"Main checkout must be on {base_branch} before promotion.")
+        if not git_worktree_is_clean(repository_directory):
+            raise ValueError("Main checkout has uncommitted changes.")
+        if bool(arguments.dry_run):
+            command_result = run_command(
+                ["git", "merge-base", "--is-ancestor", base_branch, integration_branch],
+                cwd=repository_directory,
+            )
+        else:
+            command_result = run_command(["git", "merge", "--ff-only", integration_branch], cwd=repository_directory)
+        ensure_success(command_result)
+        if bool(arguments.push) and not bool(arguments.dry_run):
+            ensure_success(run_command(["git", "push", "origin", base_branch], cwd=repository_directory))
+        if not bool(arguments.dry_run):
+            state_path = state_directory(repository_directory, manifest) / "state.json"
+            state = load_state(state_path)
+            for task in selected_tasks(manifest, []):
+                if runtime_task_status(state, task) == TaskStatus.INTEGRATED.value:
+                    set_runtime_task_status(state, task, TaskStatus.MERGED)
+                    task["status"] = TaskStatus.MERGED.value
+            save_state(state_path, state)
+            save_manifest(repository_directory, manifest, manifest_relative_path=manifest_relative_path)
+    print(f"Promoted {integration_branch} to {base_branch}.")
+    return 0
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
-    parser = argparse.ArgumentParser(description="Manage Codex task worktrees generated from docs/code-review.md.")
+    parser = argparse.ArgumentParser(description="Manage Codex task worktrees generated from review manifests.")
+    parser.add_argument(
+        "--manifest",
+        default=REPO_RELATIVE_MANIFEST_PATH.as_posix(),
+        help="Repository-relative manifest path.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     sync_parser = subparsers.add_parser("sync-manifest", help="Regenerate docs/code-review.tasks.json.")
+    sync_parser.add_argument(
+        "--manifest",
+        default=argparse.SUPPRESS,
+        help="Repository-relative manifest path to write.",
+    )
+    sync_parser.add_argument("--source", help="Repository-relative markdown source path.")
+    sync_parser.add_argument("--plan", help="Repository-relative shared plan path.")
+    sync_parser.add_argument("--state-dir", help="Repository-relative runtime state directory.")
+    sync_parser.add_argument("--branch-prefix", help="Generated task branch prefix.")
+    sync_parser.add_argument("--worktree-prefix", help="Generated task worktree prefix.")
+    sync_parser.add_argument("--integration-branch", help="Integration branch.")
+    sync_parser.add_argument("--integration-worktree", help="Integration worktree path.")
     sync_parser.set_defaults(handler=command_sync_manifest)
 
     doctor_parser = subparsers.add_parser("doctor", help="Check task-farm prerequisites.")
@@ -1575,27 +2501,37 @@ def build_argument_parser() -> argparse.ArgumentParser:
     doctor_parser.set_defaults(handler=command_doctor)
 
     list_parser = subparsers.add_parser("list", help="List tasks from the manifest.")
-    list_parser.add_argument("--task", action="append", type=int, default=[], help="Task id to list.")
+    list_parser.add_argument("--task", action="append", default=[], help="Task id to list.")
     list_parser.set_defaults(handler=command_list)
 
+    claim_parser = subparsers.add_parser("claim", help="Claim ready tasks without launching workers.")
+    claim_parser.add_argument("--task", action="append", default=[], help="Task id to claim.")
+    claim_parser.add_argument("--jobs", type=int, default=1, help="Maximum number of tasks to claim.")
+    claim_parser.add_argument("--owner", help="Lease owner.")
+    claim_parser.add_argument("--lease-seconds", type=int, help="Lease duration in seconds.")
+    claim_parser.add_argument("--force", action="store_true", help="Claim regardless of recorded status.")
+    claim_parser.set_defaults(handler=command_claim)
+
     run_parser = subparsers.add_parser("run", help="Launch worker agents.")
-    run_parser.add_argument("--task", action="append", type=int, default=[], help="Task id to run.")
+    run_parser.add_argument("--task", action="append", default=[], help="Task id to run.")
     run_parser.add_argument("--jobs", type=int, help="Maximum number of tasks to launch.")
     run_parser.add_argument("--wait", action="store_true", help="Wait for launched workers to finish.")
     run_parser.add_argument("--force", action="store_true", help="Launch tasks regardless of recorded status.")
+    run_parser.add_argument("--owner", help="Lease owner.")
+    run_parser.add_argument("--lease-seconds", type=int, help="Lease duration in seconds.")
     run_parser.add_argument("--dangerous", action="store_true", help="Allow workers to bypass approvals and sandbox.")
     run_parser.set_defaults(handler=command_run)
 
     status_parser = subparsers.add_parser("status", help="Show worker and worktree status.")
-    status_parser.add_argument("--task", action="append", type=int, default=[], help="Task id to inspect.")
+    status_parser.add_argument("--task", action="append", default=[], help="Task id to inspect.")
     status_parser.set_defaults(handler=command_status)
 
     review_parser = subparsers.add_parser("review", help="Run Codex review for task branches.")
-    review_parser.add_argument("task", nargs="+", type=int, help="Task id to review.")
+    review_parser.add_argument("task", nargs="+", help="Task id to review.")
     review_parser.set_defaults(handler=command_review)
 
     integrate_parser = subparsers.add_parser("integrate", help="Run the main integration agent.")
-    integrate_parser.add_argument("task", nargs="+", type=int, help="Task id to integrate.")
+    integrate_parser.add_argument("task", nargs="+", help="Task id to integrate.")
     integrate_parser.add_argument(
         "--dangerous",
         action="store_true",
@@ -1620,6 +2556,42 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Allow integrator to bypass approvals and sandbox.",
     )
     integrate_ready_parser.set_defaults(handler=command_integrate_ready)
+
+    diff_parser = subparsers.add_parser("diff", help="Show task branch diffs.")
+    diff_parser.add_argument("task", nargs="+", help="Task id to diff.")
+    diff_parser.add_argument("--patch", action="store_true", help="Show full patch instead of stat.")
+    diff_parser.set_defaults(handler=command_diff)
+
+    log_parser = subparsers.add_parser("log", help="Show task runtime log paths.")
+    log_parser.add_argument("task", nargs="+", help="Task id to inspect.")
+    log_parser.add_argument("--cat", action="store_true", help="Print existing log file contents.")
+    log_parser.set_defaults(handler=command_log)
+
+    block_parser = subparsers.add_parser("block", help="Mark tasks blocked.")
+    block_parser.add_argument("task", nargs="+", help="Task id to block.")
+    block_parser.add_argument("--reason", help="Manual note explaining the blocker.")
+    block_parser.set_defaults(handler=command_block)
+
+    abandon_parser = subparsers.add_parser("abandon", help="Mark tasks abandoned.")
+    abandon_parser.add_argument("task", nargs="+", help="Task id to abandon.")
+    abandon_parser.add_argument("--reason", help="Manual note explaining abandonment.")
+    abandon_parser.set_defaults(handler=command_abandon)
+
+    reset_claim_parser = subparsers.add_parser("reset-claim", help="Reset stale task claims.")
+    reset_claim_parser.add_argument("task", nargs="*", help="Task id to reset.")
+    reset_claim_parser.add_argument("--force", action="store_true", help="Reset selected claims even if not stale.")
+    reset_claim_parser.set_defaults(handler=command_reset_claim)
+
+    clean_parser = subparsers.add_parser("clean-integrated", help="Remove worktrees for integrated tasks.")
+    clean_parser.add_argument("task", nargs="*", help="Task id to clean.")
+    clean_parser.add_argument("--dry-run", action="store_true", help="Print worktrees without removing them.")
+    clean_parser.add_argument("--skip-push-check", action="store_true", help="Skip origin push verification.")
+    clean_parser.set_defaults(handler=command_clean_integrated)
+
+    promote_parser = subparsers.add_parser("promote-to-main", help="Fast-forward main to the integration branch.")
+    promote_parser.add_argument("--dry-run", action="store_true", help="Verify fast-forward eligibility only.")
+    promote_parser.add_argument("--push", action="store_true", help="Push main after promotion.")
+    promote_parser.set_defaults(handler=command_promote_to_main)
     return parser
 
 

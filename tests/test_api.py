@@ -590,6 +590,7 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
             "g-firth-candidate-capacity": 11,
             "g-binary-null-maximum-iterations": 13,
             "g-binary-null-coefficient-tolerance": 1.0e-5,
+            "g-null-logistic-nonconvergence": "warn",
             "g-binary-minimum-probability": 1.0e-7,
             "g-binary-minimum-variance": 1.0e-9,
             "g-binary-relative-variance-tolerance": 2.0e-6,
@@ -662,6 +663,10 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
     assert (
         mock_binary_pipeline.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
     )
+    assert (
+        mock_binary_pipeline.call_args.kwargs["null_logistic_nonconvergence_policy"]
+        == types.NullLogisticNonconvergencePolicy.WARN
+    )
 
 
 def test_quantitative_kernel_config_does_not_import_binary_runtime() -> None:
@@ -686,6 +691,7 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
             "firth": True,
             "approx": True,
             "g-firth-batch-size": 5,
+            "g-null-logistic-nonconvergence": "warn",
         }
     )
     run_paths = output.OutputRunPaths(Path("run"), Path("run/chunks"))
@@ -706,6 +712,10 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
 
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"] is plan.kernel_config.binary_kernel_config
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"].firth_candidate.batch_size == 5
+    assert (
+        mock_binary_pipeline.call_args.kwargs["null_logistic_nonconvergence_policy"]
+        == types.NullLogisticNonconvergencePolicy.WARN
+    )
 
 
 def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
@@ -721,6 +731,7 @@ def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
             "firth": True,
             "approx": True,
             "g-firth-batch-size": 5,
+            "g-null-logistic-nonconvergence": "warn",
         }
     )
     run_paths = (
@@ -746,6 +757,10 @@ def test_dispatch_multi_engine_pipeline_forwards_binary_kernel_config() -> None:
 
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"] is plan.kernel_config.binary_kernel_config
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"].firth_candidate.batch_size == 5
+    assert (
+        mock_binary_pipeline.call_args.kwargs["null_logistic_nonconvergence_policy"]
+        == types.NullLogisticNonconvergencePolicy.WARN
+    )
 
 
 def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:

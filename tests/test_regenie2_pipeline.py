@@ -223,6 +223,24 @@ def build_native_metadata() -> typing.Any:
     )
 
 
+def build_binary_chromosome_state(*, converged: bool = True) -> SimpleNamespace:
+    return SimpleNamespace(
+        score_residual=jnp.asarray([0.0, 0.0], dtype=jnp.float32),
+        null_logistic_iteration_count=jnp.asarray(3, dtype=jnp.int32),
+        null_logistic_converged=jnp.asarray(converged, dtype=jnp.bool_),
+        null_firth_iteration_count=jnp.asarray(0, dtype=jnp.int32),
+        null_firth_convergence_reason_code=jnp.asarray(0, dtype=jnp.int32),
+    )
+
+
+def build_multi_binary_chromosome_state(*, convergence_flags: tuple[bool, ...] = (True, True)) -> SimpleNamespace:
+    return SimpleNamespace(
+        score_residual=jnp.asarray([[0.5, 0.5], [0.5, 0.5]], dtype=jnp.float32),
+        null_logistic_iteration_count=jnp.asarray([3, 3], dtype=jnp.int32),
+        null_logistic_converged=jnp.asarray(convergence_flags, dtype=jnp.bool_),
+    )
+
+
 class ExplodingChunkStats:
     @property
     def allele_one_frequency(self) -> np.ndarray:
@@ -239,6 +257,13 @@ class SparseOnlyChunkStats(ExplodingChunkStats):
     @property
     def is_rare_sparse_firth_candidate(self) -> np.ndarray:
         return np.asarray([True, False], dtype=np.bool_)
+
+
+class ExplodingSparseCandidateChunkStats(ExplodingChunkStats):
+    @property
+    def is_rare_sparse_firth_candidate(self) -> np.ndarray:
+        message = "Score-only callbacks must not unwrap or transfer sparse Firth candidate masks."
+        raise AssertionError(message)
 
 
 def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> None:
@@ -498,11 +523,12 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
         kernel_config=kernel_config,
     )
     chunk_stats = typing.cast("typing.Any", SparseOnlyChunkStats())
+    chromosome_state = build_binary_chromosome_state()
 
     with (
         patch(
             "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
-            return_value="chromosome-state",
+            return_value=chromosome_state,
         ) as mock_prepare,
         patch(
             "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state",
@@ -521,13 +547,57 @@ def test_binary_callback_passes_native_sparse_mask_without_unwrapping_full_stats
     assert mock_prepare.call_args.kwargs["kernel_config"] is kernel_config
     assert mock_compute.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
     assert mock_compute.call_args.kwargs["kernel_config"] is kernel_config
-    assert mock_compute.call_args.kwargs["chromosome_state"] == "chromosome-state"
+    assert mock_compute.call_args.kwargs["chromosome_state"] is chromosome_state
+    assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
+
+
+def test_binary_score_only_sample_major_callback_skips_sparse_mask_transfer() -> None:
+    writer_session = FakeWriterSession()
+    result = regenie2_binary_result.Regenie2BinaryScoreChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        extra_code=jnp.asarray(
+            [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.SCORE.value],
+            dtype=jnp.int32,
+        ),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    callback = callbacks.BinaryRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+        correction_plan=types.BinaryCorrectionPlan(),
+    )
+    chunk_stats = typing.cast("typing.Any", ExplodingSparseCandidateChunkStats())
+    chromosome_state = build_binary_chromosome_state()
+
+    with (
+        patch(
+            "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
+            return_value=chromosome_state,
+        ),
+        patch(
+            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state",
+            return_value=result,
+        ) as mock_compute,
+    ):
+        callback.compute_preprocessed_dosage_chunk(
+            metadata=build_native_metadata(),
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=chunk_stats,
+        )
+        callback.finish()
+
+    assert mock_compute.call_args.kwargs["sparse_candidate_mask"] is None
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
 def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute() -> None:
     writer_session = FakeWriterSession()
     kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    stage_timing_recorder = timing.StageTimingRecorder()
     result = regenie2_binary_result.Regenie2BinaryChunkResult(
         beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4, 0.5], dtype=jnp.float32),
@@ -567,6 +637,7 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
         writer_session=writer_session,
         correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
         kernel_config=kernel_config,
+        stage_timing_recorder=stage_timing_recorder,
     )
     variant_major_genotype_matrix = np.asarray(
         [
@@ -586,11 +657,12 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
         allele_two=["G", "T", "A"],
     )
     chunk_stats = SimpleNamespace(is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_))
+    chromosome_state = build_binary_chromosome_state()
 
     with (
         patch(
             "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
-            return_value="chromosome-state",
+            return_value=chromosome_state,
         ),
         patch(
             "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
@@ -608,15 +680,22 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
     np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant), variant_major_genotype_matrix)
     sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
     np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False, True])
+    assert mock_compute.call_args.kwargs["chromosome_state"] is chromosome_state
     assert mock_compute.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
     assert mock_compute.call_args.kwargs["kernel_config"] is kernel_config
+    stage_duration_recorder = typing.cast(
+        "typing.Callable[[str, float], None]",
+        mock_compute.call_args.kwargs["stage_duration_recorder"],
+    )
+    stage_duration_recorder("firth_candidate_count_host_sync", 0.0)
+    assert stage_timing_recorder.snapshot().stage_counts["firth_candidate_count_host_sync"] == 1
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
-def test_binary_score_only_variant_major_callback_uses_direct_variant_major_compute() -> None:
+def test_binary_score_only_variant_major_callback_uses_jitted_variant_major_score_compute() -> None:
     writer_session = FakeWriterSession()
     kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
-    result = regenie2_binary_result.Regenie2BinaryChunkResult(
+    result = regenie2_binary_result.Regenie2BinaryScoreChunkResult(
         beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
         standard_error=jnp.asarray([0.3, 0.4, 0.5], dtype=jnp.float32),
         chi_squared=jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float32),
@@ -630,24 +709,6 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
             dtype=jnp.int32,
         ),
         valid_mask=jnp.asarray([True, True, True]),
-        firth_iteration_count=jnp.asarray([0, 0, 0], dtype=jnp.int32),
-        firth_failure_code=jnp.asarray(
-            [types.FirthFailureCode.NONE.value, types.FirthFailureCode.NONE.value, types.FirthFailureCode.NONE.value],
-            dtype=jnp.int32,
-        ),
-        firth_convergence_reason_code=jnp.asarray(
-            [
-                regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-                regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-                regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-            ],
-            dtype=jnp.int32,
-        ),
-        firth_correction_code=jnp.zeros(3, dtype=jnp.int32),
-        firth_sparse_correction_mask=jnp.zeros(3, dtype=jnp.bool_),
-        pseudo_firth_iteration_count=jnp.zeros(3, dtype=jnp.int32),
-        nr_zero_start_iteration_count=jnp.zeros(3, dtype=jnp.int32),
-        nr_warm_start_iteration_count=jnp.zeros(3, dtype=jnp.int32),
     )
     callback = callbacks.BinaryRegenie2PipelineCallback(
         run_input=build_native_run_input(),
@@ -665,15 +726,19 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
         dtype=np.float32,
     )
     chunk_stats = SimpleNamespace(is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_))
+    chromosome_state = build_binary_chromosome_state()
 
     with (
         patch(
             "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
-            return_value="chromosome-state",
+            return_value=chromosome_state,
         ),
         patch(
-            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
+            "g.compute.regenie2_binary.api.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major",
             return_value=result,
+        ) as mock_variant_major_score_compute,
+        patch(
+            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
         ) as mock_variant_major_compute,
         patch(
             "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state",
@@ -686,16 +751,136 @@ def test_binary_score_only_variant_major_callback_uses_direct_variant_major_comp
         )
         callback.finish()
 
-    genotype_matrix_by_variant = mock_variant_major_compute.call_args.kwargs["genotype_matrix_by_variant"]
+    genotype_matrix_by_variant = mock_variant_major_score_compute.call_args.kwargs["genotype_matrix_by_variant"]
     np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant), variant_major_genotype_matrix)
-    assert mock_variant_major_compute.call_args.kwargs["sparse_candidate_mask"] is None
-    assert mock_variant_major_compute.call_args.kwargs["kernel_config"] is kernel_config
+    assert mock_variant_major_score_compute.call_args.kwargs["chromosome_state"] is chromosome_state
+    assert mock_variant_major_score_compute.call_args.kwargs["kernel_config"] is kernel_config
+    assert "stage_duration_recorder" not in mock_variant_major_score_compute.call_args.kwargs
+    mock_variant_major_compute.assert_not_called()
     mock_sample_major_compute.assert_not_called()
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
+def test_binary_callback_fails_when_null_logistic_does_not_converge() -> None:
+    callback = callbacks.BinaryRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        correction_plan=types.BinaryCorrectionPlan(),
+    )
+
+    try:
+        with (
+            patch(
+                "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
+                return_value=build_binary_chromosome_state(converged=False),
+            ),
+            pytest.raises(RuntimeError, match="Binary null logistic model did not converge for chromosome 22"),
+        ):
+            callback.prepare_chromosome_state(build_native_metadata())
+    finally:
+        callback.finish()
+
+
+def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    callback = callbacks.BinaryRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        correction_plan=types.BinaryCorrectionPlan(),
+        null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy.WARN,
+    )
+
+    try:
+        with (
+            caplog.at_level("WARNING", logger="g.engine.callbacks"),
+            patch(
+                "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
+                return_value=build_binary_chromosome_state(converged=False),
+            ),
+        ):
+            callback.prepare_chromosome_state(build_native_metadata())
+    finally:
+        callback.finish()
+
+    assert callback.current_chromosome == "22"
+    assert any("--g-null-logistic-nonconvergence=warn" in record.message for record in caplog.records)
+
+
+def test_multi_binary_callback_fails_when_any_null_logistic_trait_does_not_converge() -> None:
+    callback = callbacks.MultiBinaryRegenie2PipelineCallback(
+        run_input=build_native_multi_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_sessions=(FakeWriterSession(), FakeWriterSession()),
+        committed_chunk_identifier_sets=(set(), set()),
+        correction_plan=types.BinaryCorrectionPlan(),
+    )
+
+    try:
+        with (
+            patch(
+                "g.compute.regenie2_binary.api.prepare_regenie2_multi_binary_chromosome_state",
+                return_value=build_multi_binary_chromosome_state(convergence_flags=(True, False)),
+            ),
+            pytest.raises(RuntimeError, match="chromosome 22: trait_b"),
+        ):
+            callback.prepare_chromosome_state(build_native_metadata())
+    finally:
+        callback.finish()
+
+
+def test_multi_binary_score_only_sample_major_callback_skips_sparse_mask_transfer() -> None:
+    writer_sessions = (FakeWriterSession(), FakeWriterSession())
+    result = regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult(
+        beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
+        standard_error=jnp.asarray([[0.5, 0.6], [0.7, 0.8]], dtype=jnp.float32),
+        chi_squared=jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([[5.0, 6.0], [7.0, 8.0]], dtype=jnp.float32),
+        extra_code=jnp.asarray(
+            [
+                [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.SCORE.value],
+                [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.SCORE.value],
+            ],
+            dtype=jnp.int32,
+        ),
+        valid_mask=jnp.asarray([[True, True], [True, True]]),
+    )
+    callback = callbacks.MultiBinaryRegenie2PipelineCallback(
+        run_input=build_native_multi_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_sessions=writer_sessions,
+        committed_chunk_identifier_sets=(set(), set()),
+        correction_plan=types.BinaryCorrectionPlan(),
+    )
+    chunk_stats = typing.cast("typing.Any", ExplodingSparseCandidateChunkStats())
+    chromosome_state = build_multi_binary_chromosome_state()
+
+    with (
+        patch(
+            "g.compute.regenie2_binary.api.prepare_regenie2_multi_binary_chromosome_state",
+            return_value=chromosome_state,
+        ),
+        patch(
+            "g.compute.regenie2_binary.api.compute_regenie2_multi_binary_chunk_from_chromosome_state",
+            return_value=result,
+        ) as mock_compute,
+    ):
+        callback.compute_preprocessed_dosage_chunk(
+            metadata=build_native_metadata(),
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=chunk_stats,
+        )
+        callback.finish()
+
+    assert mock_compute.call_args.kwargs["sparse_candidate_mask"] is None
+    assert tuple(len(writer_session.native_chunks) for writer_session in writer_sessions) == (1, 1)
+
+
 def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config() -> None:
     writer_sessions = (FakeWriterSession(), FakeWriterSession())
+    stage_timing_recorder = timing.StageTimingRecorder()
     kernel_config = dataclasses.replace(
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
         null_logistic=dataclasses.replace(
@@ -771,11 +956,7 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         nr_zero_start_iteration_count=jnp.zeros((2, 2), dtype=jnp.int32),
         nr_warm_start_iteration_count=jnp.zeros((2, 2), dtype=jnp.int32),
     )
-    chromosome_state = SimpleNamespace(
-        score_residual=jnp.asarray([[0.5, 0.5], [0.5, 0.5]], dtype=jnp.float32),
-        null_logistic_iteration_count=jnp.asarray([3, 3], dtype=jnp.int32),
-        null_logistic_converged=jnp.asarray([True, True], dtype=jnp.bool_),
-    )
+    chromosome_state = build_multi_binary_chromosome_state()
     callback = callbacks.MultiBinaryRegenie2PipelineCallback(
         run_input=build_native_multi_run_input(),
         prediction_source=FakePredictionSource(),
@@ -783,6 +964,7 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         committed_chunk_identifier_sets=(set(), set()),
         correction_plan=types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE),
         kernel_config=kernel_config,
+        stage_timing_recorder=stage_timing_recorder,
     )
     variant_major_genotype_matrix = np.asarray(
         [
@@ -816,6 +998,12 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
     sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
     np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False])
     assert mock_compute.call_args.kwargs["kernel_config"] is kernel_config
+    stage_duration_recorder = typing.cast(
+        "typing.Callable[[str, float], None]",
+        mock_compute.call_args.kwargs["stage_duration_recorder"],
+    )
+    stage_duration_recorder("firth_candidate_count_host_sync", 0.0)
+    assert stage_timing_recorder.snapshot().stage_counts["firth_candidate_count_host_sync"] == 1
     assert tuple(len(writer_session.native_chunks) for writer_session in writer_sessions) == (1, 1)
 
 

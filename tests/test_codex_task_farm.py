@@ -123,6 +123,116 @@ Body with `src/g/current.py`.
     assert task["worktree"] == "../custom-worktrees/review-07-first-task"
 
 
+def test_review2_sync_uses_isolated_v2_manifest_and_prefixes(tmp_path: Path) -> None:
+    docs_directory = tmp_path / "docs"
+    docs_directory.mkdir()
+    (docs_directory / "02.code-review-2-06-26.md").write_text(
+        """# Category
+
+## 1. First task
+
+Body with `src/g/compute/regenie2_binary/api.py`.
+"""
+    )
+
+    manifest = codex_task_farm.sync_manifest(
+        tmp_path,
+        manifest_relative_path=Path("docs/code-review-2.tasks.json"),
+        source_relative_path=Path("docs/02.code-review-2-06-26.md"),
+        plan_relative_path=Path("docs/code-review-2-plan.md"),
+        state_directory_path=Path(".codex-task-worktrees/code-review-2"),
+        branch_prefix="codex/review2-",
+        worktree_prefix="../g-worktrees/review2-",
+        integration_branch="integration/code-review-2",
+        integration_worktree="../g-worktrees/integration-code-review-2",
+    )
+
+    task = manifest["tasks"][0]
+    assert manifest["version"] == 2
+    assert manifest["source_path"] == "docs/02.code-review-2-06-26.md"
+    assert manifest["defaults"]["plan_path"] == "docs/code-review-2-plan.md"
+    assert manifest["defaults"]["state_directory"] == ".codex-task-worktrees/code-review-2"
+    assert manifest["defaults"]["integration_branch"] == "integration/code-review-2"
+    assert manifest["defaults"]["push_integration_branch"] is True
+    assert task["id"] == "T001"
+    assert task["branch"] == "codex/review2-T001-first-task"
+    assert task["worktree"] == "../g-worktrees/review2-T001-first-task"
+    assert task["conflict_group"] == "binary-jax"
+    assert task["logs"]["run_directory"] == ".codex-task-worktrees/code-review-2/runs/T001"
+    assert (docs_directory / "code-review-2.tasks.json").exists()
+    assert (docs_directory / "code-review-2-plan.md").read_text().startswith("# Code Review 2 Task Plan")
+    assert not (docs_directory / "code-review.tasks.json").exists()
+
+
+def test_review2_resync_preserves_manual_and_runtime_metadata(tmp_path: Path) -> None:
+    docs_directory = tmp_path / "docs"
+    docs_directory.mkdir()
+    source_path = docs_directory / "02.code-review-2-06-26.md"
+    source_path.write_text(
+        """# New Category
+
+## 1. New title
+
+Body with `src/g/compute/regenie2_linear/api.py`.
+"""
+    )
+    (docs_directory / "code-review-2.tasks.json").write_text(
+        """{
+  "defaults": {
+    "branch_prefix": "codex/review2-",
+    "id_style": "string",
+    "integration_branch": "integration/code-review-2",
+    "integration_worktree": "../g-worktrees/integration-code-review-2",
+    "state_directory": ".codex-task-worktrees/code-review-2",
+    "worktree_prefix": "../g-worktrees/review2-"
+  },
+  "source_path": "docs/02.code-review-2-06-26.md",
+  "tasks": [
+    {
+      "id": "T001",
+      "source_id": 1,
+      "status": "blocked",
+      "enabled": false,
+      "dependencies": ["T000"],
+      "assignee": "agent",
+      "branch": "stale-branch",
+      "worktree": "stale-worktree",
+      "conflict_group": "manual-group",
+      "conflict_group_source": "manual",
+      "logs": {"run_directory": "custom/logs/T001"},
+      "manual": {"notes": "keep", "conflict_group": "manual-group"},
+      "runtime": {"started_at": "2026-06-02T00:00:00+00:00"}
+    }
+  ],
+  "version": 2
+}
+"""
+    )
+
+    manifest = codex_task_farm.sync_manifest(
+        tmp_path,
+        manifest_relative_path=Path("docs/code-review-2.tasks.json"),
+        source_relative_path=Path("docs/02.code-review-2-06-26.md"),
+        branch_prefix="codex/review2-",
+        worktree_prefix="../g-worktrees/review2-",
+    )
+
+    task = manifest["tasks"][0]
+    assert task["status"] == "blocked"
+    assert task["enabled"] is False
+    assert task["dependencies"] == ["T000"]
+    assert task["assignee"] == "agent"
+    assert task["manual"]["notes"] == "keep"
+    assert task["conflict_group"] == "manual-group"
+    assert task["runtime"] == {"started_at": "2026-06-02T00:00:00+00:00"}
+    assert task["logs"] == {"run_directory": "custom/logs/T001"}
+    assert task["title"] == "New title"
+    assert task["priority"] == "New Category"
+    assert task["expected_paths"] == ["src/g/compute/regenie2_linear/api.py"]
+    assert task["branch"] == "codex/review2-T001-new-title"
+    assert task["worktree"] == "../g-worktrees/review2-T001-new-title"
+
+
 def test_load_manifest_requires_explicit_sync(tmp_path: Path) -> None:
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "code-review.md").write_text("")
@@ -229,11 +339,11 @@ def test_review_clears_stale_outputs_before_running(tmp_path: Path, monkeypatch:
         }
     ]
     (tmp_path / "worktree").mkdir()
-    review_directory = tmp_path / ".state" / "reviews"
+    review_directory = tmp_path / ".state" / "runs" / "01"
     review_directory.mkdir(parents=True)
-    final_message_path = review_directory / "01.md"
-    jsonl_log_path = review_directory / "01.jsonl"
-    stderr_log_path = review_directory / "01.stderr.log"
+    final_message_path = review_directory / "review.md"
+    jsonl_log_path = review_directory / "review.jsonl"
+    stderr_log_path = review_directory / "review.stderr.log"
     final_message_path.write_text("old final")
     jsonl_log_path.write_text("old jsonl")
     stderr_log_path.write_text("old stderr")
@@ -332,6 +442,26 @@ def test_worker_launch_clears_stale_outputs_before_running(
     assert (run_directory / "worker-prompt.md").read_text() != "stale"
     assert (run_directory / "worker-wrapper.sh").read_text() != "stale"
     assert not (run_directory / "exit-code.txt").exists()
+
+
+def test_worker_prompt_uses_runtime_logs_and_forbids_shared_plan_edits() -> None:
+    task = {
+        "id": "T001",
+        "title": "Runtime prompt",
+        "category": "Category",
+        "branch": "codex/review2-T001-runtime-prompt",
+        "body_markdown": "Body",
+        "guidance_markdown": "Guidance",
+        "expected_paths": ["src/g/example.py"],
+        "logs": {"run_directory": ".codex-task-worktrees/code-review-2/runs/T001"},
+    }
+
+    prompt = codex_task_farm.build_worker_prompt(task)
+
+    assert ".codex-task-worktrees/code-review-2/runs/T001" in prompt
+    assert "Do not edit shared task plans or manifests" in prompt
+    assert "docs/code-review-2-plan.md" in prompt
+    assert "Final response must include changed files" in prompt
 
 
 def test_wrapper_exit_code_classification_accepts_verified_and_legacy(
@@ -512,6 +642,73 @@ def test_run_wait_launches_all_workers_before_waiting(tmp_path: Path, monkeypatc
     assert launch_log == [1, 2]
 
 
+def test_claim_skips_conflicting_active_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest = codex_task_farm.default_manifest(state_directory_path=Path(".state"), id_style="string")
+    manifest["tasks"] = [
+        {
+            "id": "T001",
+            "status": "ready",
+            "branch": "codex/review2-T001-one",
+            "worktree": "../one",
+            "dependencies": [],
+            "conflict_group": "binary-jax",
+        },
+        {
+            "id": "T002",
+            "status": "ready",
+            "branch": "codex/review2-T002-two",
+            "worktree": "../two",
+            "dependencies": [],
+            "conflict_group": "binary-jax",
+        },
+    ]
+
+    monkeypatch.setattr(codex_task_farm, "repository_root", lambda: tmp_path)
+    monkeypatch.setattr(codex_task_farm, "load_manifest", lambda repository_directory: manifest)
+    monkeypatch.setattr(codex_task_farm, "refresh_runtime_statuses", lambda repository_directory, manifest: None)
+
+    exit_code = codex_task_farm.command_claim(
+        argparse.Namespace(task=[], jobs=2, owner="agent", lease_seconds=60, force=False),
+    )
+
+    state = codex_task_farm.read_json_object(tmp_path / ".state" / "state.json")
+    assert exit_code == 0
+    assert state["statuses"] == {"T001": "claimed"}
+    assert state["leases"]["T001"]["owner"] == "agent"
+
+
+def test_reset_stale_task_leases_returns_running_tasks_to_ready() -> None:
+    manifest = codex_task_farm.default_manifest(id_style="string")
+    task = {"id": "T001", "status": "ready", "branch": "codex/one", "worktree": "../one"}
+    manifest["tasks"] = [task]
+    state: codex_task_farm.JsonObject = {
+        "statuses": {"T001": "running"},
+        "leases": {
+            "T001": {
+                "owner": "agent",
+                "status": "running",
+                "acquired_at": "2026-06-02T00:00:00+00:00",
+                "expires_at": "2000-01-01T00:00:00+00:00",
+            }
+        },
+    }
+
+    reset_identifiers = codex_task_farm.reset_stale_task_leases(state, manifest)
+
+    assert reset_identifiers == ["T001"]
+    assert state["statuses"] == {"T001": "ready"}
+    assert state["leases"] == {}
+
+
+def test_review_decision_can_request_changes_or_reject() -> None:
+    assert (
+        codex_task_farm.classify_review_decision("Decision: needs_changes\nFinding")
+        == codex_task_farm.TaskStatus.NEEDS_CHANGES
+    )
+    assert codex_task_farm.classify_review_decision("Decision: reject") == codex_task_farm.TaskStatus.BLOCKED
+    assert codex_task_farm.classify_review_decision("No findings") == codex_task_farm.TaskStatus.REVIEWED
+
+
 def test_review_rejects_tasks_that_are_not_implemented(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -546,6 +743,80 @@ def test_integrate_rejects_unreviewed_tasks_without_override(
 
     with pytest.raises(ValueError, match="cannot integrate"):
         codex_task_farm.command_integrate(argparse.Namespace(task=[1], dangerous=False, allow_unreviewed=False))
+
+
+def test_integrate_marks_task_integrated_not_merged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "docs").mkdir()
+    manifest = codex_task_farm.default_manifest(
+        state_directory_path=Path(".state"),
+        integration_branch="integration/code-review-2",
+        integration_worktree="../integration",
+        id_style="string",
+    )
+    manifest["tasks"] = [
+        {
+            "id": "T001",
+            "status": "reviewed",
+            "branch": "codex/review2-T001-one",
+            "worktree": "worktree",
+            "title": "Integrate task",
+            "dependencies": [],
+            "logs": {
+                "run_directory": ".state/runs/T001",
+                "integration_final": ".state/runs/T001/integration-final.md",
+                "integration_jsonl": ".state/runs/T001/integration.jsonl",
+                "integration_stderr": ".state/runs/T001/integration.stderr.log",
+                "review_final": ".state/runs/T001/review.md",
+            },
+        }
+    ]
+    (tmp_path / "worktree").mkdir()
+    integration_worktree = tmp_path / "integration"
+    integration_worktree.mkdir()
+    head_commits = iter(["before", "after"])
+
+    class FakeCompletedProcess:
+        returncode: int = 0
+        stdout: str = '{"type": "ok"}\n'
+        stderr: str = ""
+
+    def fake_subprocess_run(
+        command_arguments: list[str],
+        **subprocess_arguments: object,
+    ) -> FakeCompletedProcess:
+        del subprocess_arguments
+        output_flag_index = command_arguments.index("-o")
+        Path(command_arguments[output_flag_index + 1]).write_text("integrated")
+        return FakeCompletedProcess()
+
+    monkeypatch.setattr(codex_task_farm, "repository_root", lambda: tmp_path)
+    monkeypatch.setattr(codex_task_farm, "load_manifest", lambda repository_directory: manifest)
+    monkeypatch.setattr(codex_task_farm, "refresh_runtime_statuses", lambda repository_directory, manifest: None)
+    monkeypatch.setattr(
+        codex_task_farm,
+        "ensure_integration_worktree",
+        lambda repository_directory, defaults: integration_worktree,
+    )
+    monkeypatch.setattr(
+        codex_task_farm,
+        "ensure_integration_worktree_ready",
+        lambda worktree_path, integration_branch: None,
+    )
+    monkeypatch.setattr(codex_task_farm, "git_head_commit", lambda worktree_path: next(head_commits))
+    monkeypatch.setattr(codex_task_farm.subprocess, "run", fake_subprocess_run)
+
+    exit_code = codex_task_farm.command_integrate(
+        argparse.Namespace(task=["T001"], dangerous=False, allow_unreviewed=False),
+    )
+
+    state = codex_task_farm.read_json_object(tmp_path / ".state" / "state.json")
+    assert exit_code == 0
+    assert state["statuses"] == {"T001": "integrated"}
+    assert manifest["tasks"][0]["status"] == "integrated"
+    assert manifest["tasks"][0]["runtime"]["integration_head"] == "after"
 
 
 def test_dependency_gating_blocks_missing_or_unready_dependencies() -> None:

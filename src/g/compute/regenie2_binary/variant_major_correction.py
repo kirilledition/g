@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import collections.abc
 import functools
+import time
 
 import jax
 import jax.numpy as jnp
@@ -14,6 +16,8 @@ from g.compute.regenie2_binary import correction as regenie2_binary_correction
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
+
+StageDurationRecorder = collections.abc.Callable[[str, float], None]
 
 
 @functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config", "candidate_capacity"))
@@ -85,10 +89,14 @@ def apply_device_candidate_corrections_firth_variant_major(
     correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+    stage_duration_recorder: StageDurationRecorder | None = None,
 ) -> regenie2_binary_result.Regenie2BinaryChunkResult:
     """Select bounded or overflow Firth capacity on the host before correction."""
     candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
+    candidate_count_start_time = time.perf_counter() if stage_duration_recorder is not None else 0.0
     fallback_count = regenie2_binary_candidate_planning.count_firth_candidates_on_host(candidate_mask)
+    if stage_duration_recorder is not None:
+        stage_duration_recorder("firth_candidate_count_host_sync", candidate_count_start_time)
     diagnostic_result = regenie2_binary_result.expand_score_result_with_empty_firth_diagnostics(result)
     if fallback_count == 0:
         return diagnostic_result
@@ -119,6 +127,7 @@ def apply_device_candidate_corrections_variant_major(
     correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+    stage_duration_recorder: StageDurationRecorder | None = None,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult:
     """Apply binary candidate corrections for variant-major genotype chunks."""
     if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
@@ -136,4 +145,5 @@ def apply_device_candidate_corrections_variant_major(
         correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
         kernel_config=kernel_config,
+        stage_duration_recorder=stage_duration_recorder,
     )

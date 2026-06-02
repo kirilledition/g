@@ -374,7 +374,6 @@ fn build_complete_case_positions(
     aligned_sample_data_by_trait: &[AlignedSampleData],
 ) -> Result<Vec<Vec<usize>>, String> {
     let mut positions_by_trait = Vec::with_capacity(aligned_sample_data_by_trait.len());
-    let mut key_sets = Vec::with_capacity(aligned_sample_data_by_trait.len());
     for aligned_sample_data in aligned_sample_data_by_trait {
         let mut positions_by_key = HashMap::with_capacity(aligned_sample_data.sample_indices.len());
         for row_index in 0..aligned_sample_data.sample_indices.len() {
@@ -392,7 +391,6 @@ fn build_complete_case_positions(
                 ));
             }
         }
-        key_sets.push(positions_by_key.keys().cloned().collect::<Vec<_>>());
         positions_by_trait.push(positions_by_key);
     }
 
@@ -404,7 +402,7 @@ fn build_complete_case_positions(
             family_identifier: first_aligned_sample_data.family_identifiers[row_index].clone(),
             individual_identifier: first_aligned_sample_data.individual_identifiers[row_index].clone(),
         };
-        if !key_sets.iter().all(|key_set| key_set.contains(&aligned_sample_key)) {
+        if !positions_by_trait.iter().all(|positions_by_key| positions_by_key.contains_key(&aligned_sample_key)) {
             continue;
         }
         for (trait_index, positions_by_key) in positions_by_trait.iter().enumerate() {
