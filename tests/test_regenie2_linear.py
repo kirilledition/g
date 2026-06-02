@@ -287,6 +287,21 @@ class TestChiSquaredToLog10PValue:
         assert jnp.all(jnp.isfinite(log10_p))
         assert log10_p[1] > log10_p[0]
 
+    def test_float64_chi_squared_preserves_tail_precision(self) -> None:
+        """Ensure float64 chi-squared inputs keep float64 tail precision."""
+        chi_squared_float64 = jnp.asarray([100_000_001.0], dtype=jnp.float64)
+        chi_squared_float32 = chi_squared_float64.astype(jnp.float32)
+
+        log10_p_value_float64 = pvalue.chi_squared_to_log10_p_value(chi_squared_float64)
+        log10_p_value_float32 = pvalue.chi_squared_to_log10_p_value(chi_squared_float32).astype(jnp.float64)
+        expected_log10_p_value = -(
+            jnp.log(jnp.asarray(2.0, dtype=jnp.float64)) + jax.scipy.stats.norm.logsf(jnp.sqrt(chi_squared_float64))
+        ) / jnp.log(jnp.asarray(10.0, dtype=jnp.float64))
+
+        assert log10_p_value_float64.dtype == jnp.dtype(jnp.float64)
+        numpy.testing.assert_allclose(log10_p_value_float64, expected_log10_p_value, rtol=1e-12)
+        assert jnp.max(jnp.abs(log10_p_value_float64 - log10_p_value_float32)) > 0.1
+
 
 class TestComputeRegenie2LinearChunk:
     """Tests for compute_regenie2_linear_chunk."""

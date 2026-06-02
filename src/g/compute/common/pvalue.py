@@ -21,6 +21,8 @@ def chi_squared_to_log10_p_value(chi_squared: jax.Array) -> jax.Array:
         Negative log10 p-values (-log10(p)).
 
     """
-    safe_chi_squared = jnp.maximum(jnp.asarray(chi_squared, dtype=jnp.float32), 0.0)
+    chi_squared_array = jnp.asarray(chi_squared)
+    compute_dtype = jnp.result_type(chi_squared_array, jnp.float32)
+    safe_chi_squared = jnp.maximum(chi_squared_array.astype(compute_dtype), jnp.asarray(0.0, dtype=compute_dtype))
     log_p_value = jnp.log(2.0) + jax.scipy.stats.norm.logsf(jnp.sqrt(safe_chi_squared))
     return -log_p_value / jnp.log(10.0)
