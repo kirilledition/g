@@ -255,11 +255,19 @@ class ExplodingChunkStats:
 
 class SparseOnlyChunkStats(ExplodingChunkStats):
     @property
+    def dosage_sum(self) -> np.ndarray:
+        return np.asarray([3.0, 7.0], dtype=np.float32)
+
+    @property
     def is_rare_sparse_firth_candidate(self) -> np.ndarray:
         return np.asarray([True, False], dtype=np.bool_)
 
 
 class ExplodingSparseCandidateChunkStats(ExplodingChunkStats):
+    @property
+    def dosage_sum(self) -> np.ndarray:
+        return np.asarray([3.0, 7.0], dtype=np.float32)
+
     @property
     def is_rare_sparse_firth_candidate(self) -> np.ndarray:
         message = "Score-only callbacks must not unwrap or transfer sparse Firth candidate masks."
@@ -656,7 +664,10 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
         allele_one=["A", "C", "G"],
         allele_two=["G", "T", "A"],
     )
-    chunk_stats = SimpleNamespace(is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_))
+    chunk_stats = SimpleNamespace(
+        dosage_sum=np.asarray([3.0, 7.0, 11.0], dtype=np.float32),
+        is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_),
+    )
     chromosome_state = build_binary_chromosome_state()
 
     with (
@@ -680,6 +691,8 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
     np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant), variant_major_genotype_matrix)
     sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
     np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False, True])
+    dosage_sum = mock_compute.call_args.kwargs["dosage_sum"]
+    np.testing.assert_array_equal(np.asarray(dosage_sum), [3.0, 7.0, 11.0])
     assert mock_compute.call_args.kwargs["chromosome_state"] is chromosome_state
     assert mock_compute.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
     assert mock_compute.call_args.kwargs["kernel_config"] is kernel_config
@@ -725,7 +738,10 @@ def test_binary_score_only_variant_major_callback_uses_jitted_variant_major_scor
         ],
         dtype=np.float32,
     )
-    chunk_stats = SimpleNamespace(is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_))
+    chunk_stats = SimpleNamespace(
+        dosage_sum=np.asarray([3.0, 7.0, 11.0], dtype=np.float32),
+        is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_),
+    )
     chromosome_state = build_binary_chromosome_state()
 
     with (
@@ -755,6 +771,8 @@ def test_binary_score_only_variant_major_callback_uses_jitted_variant_major_scor
     np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant), variant_major_genotype_matrix)
     assert mock_variant_major_score_compute.call_args.kwargs["chromosome_state"] is chromosome_state
     assert mock_variant_major_score_compute.call_args.kwargs["kernel_config"] is kernel_config
+    dosage_sum = mock_variant_major_score_compute.call_args.kwargs["dosage_sum"]
+    np.testing.assert_array_equal(np.asarray(dosage_sum), [3.0, 7.0, 11.0])
     assert "stage_duration_recorder" not in mock_variant_major_score_compute.call_args.kwargs
     mock_variant_major_compute.assert_not_called()
     mock_sample_major_compute.assert_not_called()
@@ -973,7 +991,10 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         ],
         dtype=np.float32,
     )
-    chunk_stats = SimpleNamespace(is_rare_sparse_firth_candidate=np.asarray([True, False], dtype=np.bool_))
+    chunk_stats = SimpleNamespace(
+        dosage_sum=np.asarray([3.0, 7.0], dtype=np.float32),
+        is_rare_sparse_firth_candidate=np.asarray([True, False], dtype=np.bool_),
+    )
 
     with (
         patch(
@@ -997,6 +1018,8 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
     np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant), variant_major_genotype_matrix)
     sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
     np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False])
+    dosage_sum = mock_compute.call_args.kwargs["dosage_sum"]
+    np.testing.assert_array_equal(np.asarray(dosage_sum), [3.0, 7.0])
     assert mock_compute.call_args.kwargs["kernel_config"] is kernel_config
     stage_duration_recorder = typing.cast(
         "typing.Callable[[str, float], None]",

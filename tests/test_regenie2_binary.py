@@ -82,6 +82,34 @@ def clear_binary_compute_caches() -> None:
     jax.clear_caches()
 
 
+def test_regenie_flip_uses_provided_dosage_sum_for_flip_mask() -> None:
+    genotype_matrix_by_variant = jnp.asarray(
+        [
+            [0.0, 0.0],
+            [2.0, 2.0],
+        ],
+        dtype=jnp.float32,
+    )
+    dosage_sum = jnp.asarray([3.0, 1.0], dtype=jnp.float32)
+
+    result = common_genotype.build_regenie_flipped_genotypes(
+        genotype_matrix_by_variant,
+        dosage_sum=dosage_sum,
+    )
+
+    np.testing.assert_array_equal(np.asarray(result.flip_mask), [True, False])
+    np.testing.assert_array_equal(
+        np.asarray(result.genotype_matrix_by_variant),
+        np.asarray(
+            [
+                [2.0, 2.0],
+                [2.0, 2.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+
+
 def replace_binary_kernel_config(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
     *,
@@ -784,6 +812,7 @@ def test_multi_trait_variant_major_score_kernel_matches_reference_weighted_tenso
         chromosome_state=multi_chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         correction_plan=correction_plan,
+        dosage_sum=jnp.sum(genotype_matrix_by_variant, axis=1),
     )
     reference_result = compute_reference_multi_binary_score_test_chunk_variant_major(
         chromosome_state=multi_chromosome_state,

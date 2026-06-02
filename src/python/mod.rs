@@ -70,6 +70,11 @@ impl ChunkStats {
     }
 
     #[getter]
+    fn dosage_sum<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
+        self.stats.dosage_sum.clone().into_pyarray(py)
+    }
+
+    #[getter]
     fn has_missing_values(&self) -> bool {
         self.stats.has_missing_values
     }

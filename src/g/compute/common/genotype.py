@@ -76,17 +76,23 @@ def normalize_high_frequency_diploid_genotypes_variant_major(genotype_matrix_by_
 
 def build_regenie_flipped_genotypes(
     genotype_matrix_by_variant: jax.Array,
+    dosage_sum: jax.Array | None = None,
 ) -> RegenieGenotypeFlipResult:
     """Code variant-major genotypes the way REGENIE does before testing.
 
     Args:
         genotype_matrix_by_variant: Variant-major dosage matrix.
+        dosage_sum: Optional native per-variant dosage sum.
 
     Returns:
         Flipped genotype matrix and per-variant flip mask.
 
     """
-    allele_count = jnp.sum(genotype_matrix_by_variant, axis=1)
+    allele_count = (
+        jnp.sum(genotype_matrix_by_variant, axis=1)
+        if dosage_sum is None
+        else jnp.asarray(dosage_sum, dtype=genotype_matrix_by_variant.dtype)
+    )
     flip_threshold = jnp.asarray(genotype_matrix_by_variant.shape[1], dtype=genotype_matrix_by_variant.dtype)
     flip_mask = allele_count > flip_threshold
     flipped_genotype_matrix_by_variant = jnp.where(
