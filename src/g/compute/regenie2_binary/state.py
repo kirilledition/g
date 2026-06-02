@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from g import types as g_types
+from g.compute.common import dtype as compute_dtype
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logistic
@@ -122,26 +123,30 @@ class Regenie2MultiBinaryChromosomeState:
 def build_binary_state(
     covariate_matrix: jax.Array,
     phenotype_vector: jax.Array,
+    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
 ) -> Regenie2BinaryState:
     """Build reusable binary step 2 state."""
-    covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=jnp.float32)
-    phenotype_vector_float32 = jnp.asarray(phenotype_vector, dtype=jnp.float32)
+    jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
+    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jax_dtype)
+    phenotype_vector_compute = jnp.asarray(phenotype_vector, dtype=jax_dtype)
     return Regenie2BinaryState(
-        covariate_matrix=covariate_matrix_float32,
-        phenotype_vector=phenotype_vector_float32,
+        covariate_matrix=covariate_matrix_compute,
+        phenotype_vector=phenotype_vector_compute,
     )
 
 
 def build_multi_binary_state(
     covariate_matrix: jax.Array,
     phenotype_matrix: jax.Array,
+    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
 ) -> Regenie2MultiBinaryState:
     """Build reusable multi-trait binary step 2 state."""
-    covariate_matrix_float32 = jnp.asarray(covariate_matrix, dtype=jnp.float32)
-    phenotype_matrix_float32 = jnp.asarray(phenotype_matrix, dtype=jnp.float32)
+    jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
+    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jax_dtype)
+    phenotype_matrix_compute = jnp.asarray(phenotype_matrix, dtype=jax_dtype)
     return Regenie2MultiBinaryState(
-        covariate_matrix=covariate_matrix_float32,
-        phenotype_matrix=phenotype_matrix_float32,
+        covariate_matrix=covariate_matrix_compute,
+        phenotype_matrix=phenotype_matrix_compute,
     )
 
 
@@ -150,19 +155,21 @@ def build_binary_chromosome_state(
     loco_offset: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
 ) -> Regenie2BinaryChromosomeState:
     """Build chromosome-specific binary null model state reused across chunks."""
-    loco_offset_float32 = jnp.asarray(loco_offset, dtype=jnp.float32)
+    jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
+    loco_offset_compute = jnp.asarray(loco_offset, dtype=jax_dtype)
     null_logistic_fit_state = regenie2_binary_null_logistic.fit_null_logistic_coefficients(
         covariate_matrix=state.covariate_matrix,
         phenotype_vector=state.phenotype_vector,
-        loco_offset=loco_offset_float32,
+        loco_offset=loco_offset_compute,
         maximum_iterations=None,
         kernel_config=kernel_config,
     )
     null_logistic_coefficients = null_logistic_fit_state.coefficients
     fitted_probability = regenie2_binary_logistic.compute_clipped_logistic_probability(
-        state.covariate_matrix @ null_logistic_coefficients + loco_offset_float32,
+        state.covariate_matrix @ null_logistic_coefficients + loco_offset_compute,
         kernel_config,
     )
     bernoulli_variance = jnp.maximum(
@@ -176,8 +183,7 @@ def build_binary_chromosome_state(
     weighted_covariate_crossproduct = weighted_covariate_transpose @ weighted_covariate_matrix
     cholesky_factor = jnp.linalg.cholesky(
         weighted_covariate_crossproduct
-        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float32)
-        * kernel_config.numerical.minimum_variance
+        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jax_dtype) * kernel_config.numerical.minimum_variance
     )
     weighted_genotype_projection_matrix = jax.lax.linalg.triangular_solve(
         cholesky_factor,
@@ -188,7 +194,7 @@ def build_binary_chromosome_state(
     if correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
         null_firth_coefficients = jnp.asarray(null_logistic_coefficients, dtype=jnp.float64)
         null_firth_offset = state.covariate_matrix.astype(jnp.float64) @ null_firth_coefficients + jnp.asarray(
-            loco_offset_float32, dtype=jnp.float64
+            loco_offset_compute, dtype=jnp.float64
         )
         null_firth_result = regenie2_binary_firth_types.NullFirthFitResult(
             coefficients=null_firth_coefficients,
@@ -204,12 +210,12 @@ def build_binary_chromosome_state(
         null_firth_result = regenie2_binary_firth_null.fit_covariate_only_firth_null_model(
             covariate_matrix=state.covariate_matrix,
             phenotype_vector=state.phenotype_vector,
-            loco_offset=loco_offset_float32,
+            loco_offset=loco_offset_compute,
             initial_coefficients=null_logistic_coefficients,
             kernel_config=kernel_config,
         )
         null_firth_offset = state.covariate_matrix.astype(jnp.float64) @ null_firth_result.coefficients + jnp.asarray(
-            loco_offset_float32, dtype=jnp.float64
+            loco_offset_compute, dtype=jnp.float64
         )
     return Regenie2BinaryChromosomeState(
         covariate_matrix=state.covariate_matrix,
@@ -217,7 +223,7 @@ def build_binary_chromosome_state(
         null_logistic_coefficients=null_logistic_coefficients,
         null_firth_offset=null_firth_offset,
         score_residual=score_residual,
-        loco_offset=loco_offset_float32,
+        loco_offset=loco_offset_compute,
         square_root_weight=square_root_weight,
         weighted_genotype_projection_matrix=weighted_genotype_projection_matrix,
         null_firth_penalized_log_likelihood=null_firth_result.penalized_log_likelihood,
@@ -233,9 +239,10 @@ def build_multi_binary_chromosome_state(
     loco_offset_matrix: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
 ) -> Regenie2MultiBinaryChromosomeState:
     """Build chromosome-specific null logistic state for all requested binary traits."""
-    loco_offset_matrix_float32 = jnp.asarray(loco_offset_matrix, dtype=jnp.float32)
+    loco_offset_matrix_compute = jnp.asarray(loco_offset_matrix, dtype=compute_dtype.resolve_jax_dtype(score_dtype))
 
     def prepare_one_trait(
         phenotype_vector: jax.Array,
@@ -245,9 +252,9 @@ def build_multi_binary_chromosome_state(
             covariate_matrix=state.covariate_matrix,
             phenotype_vector=phenotype_vector,
         )
-        return build_binary_chromosome_state(trait_state, loco_offset, correction_plan, kernel_config)
+        return build_binary_chromosome_state(trait_state, loco_offset, correction_plan, kernel_config, score_dtype)
 
-    chromosome_states = jax.vmap(prepare_one_trait)(state.phenotype_matrix, loco_offset_matrix_float32)
+    chromosome_states = jax.vmap(prepare_one_trait)(state.phenotype_matrix, loco_offset_matrix_compute)
     return Regenie2MultiBinaryChromosomeState(
         covariate_matrix=state.covariate_matrix,
         phenotype_matrix=state.phenotype_matrix,

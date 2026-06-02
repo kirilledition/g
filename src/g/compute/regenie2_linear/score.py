@@ -5,6 +5,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
+from g import types
 from g.compute.common import genotype, pvalue
 from g.compute.regenie2_linear import result as regenie2_linear_result
 
@@ -17,10 +18,12 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
     adjusted_residual_sum_squares: jax.Array,
     degrees_of_freedom: jax.Array,
     genotype_matrix_by_variant: jax.Array,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
 ) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
     """Compute linear score-test statistics for trait-major residuals and variant-major genotypes."""
     normalized_genotype_matrix_by_variant = genotype.normalize_high_frequency_diploid_genotypes_variant_major(
-        genotype_matrix_by_variant
+        genotype_matrix_by_variant,
+        score_dtype,
     )
     genotype_sum_squares_compute = jnp.einsum(
         "ij,ij->i",

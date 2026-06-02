@@ -41,6 +41,13 @@ class JaxMatmulPrecision(enum.StrEnum):
     HIGHEST = "highest"
 
 
+class FloatingPointDtype(enum.StrEnum):
+    """Floating-point dtype selector for JAX compute kernels."""
+
+    FLOAT32 = "float32"
+    FLOAT64 = "float64"
+
+
 class ArrowCompression(enum.StrEnum):
     """Arrow IPC compression codec for internal chunk files."""
 

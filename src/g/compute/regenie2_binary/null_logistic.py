@@ -45,6 +45,7 @@ def fit_null_logistic_coefficients(
         kernel_config.null_logistic.maximum_iterations if maximum_iterations is None else maximum_iterations
     )
     coefficient_tolerance = kernel_config.null_logistic.coefficient_tolerance
+    jax_dtype = covariate_matrix.dtype
 
     def condition_function(state: NullLogisticFitState) -> jax.Array:
         return (state.iteration_count < resolved_maximum_iterations) & (~state.converged)
@@ -62,7 +63,7 @@ def fit_null_logistic_coefficients(
         score_vector = covariate_matrix.T @ (phenotype_vector - fitted_probability)
         information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
         cholesky_factor = jnp.linalg.cholesky(
-            information_matrix + jnp.eye(covariate_count, dtype=jnp.float32) * kernel_config.numerical.minimum_variance
+            information_matrix + jnp.eye(covariate_count, dtype=jax_dtype) * kernel_config.numerical.minimum_variance
         )
         coefficient_delta = linalg.solve_positive_definite_system(cholesky_factor, score_vector)
         updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)
@@ -73,7 +74,7 @@ def fit_null_logistic_coefficients(
             converged=converged,
         )
 
-    initial_coefficients = jnp.zeros(covariate_count, dtype=jnp.float32)
+    initial_coefficients = jnp.zeros(covariate_count, dtype=jax_dtype)
     return jax.lax.while_loop(
         condition_function,
         body_function,

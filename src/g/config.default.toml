@@ -48,6 +48,12 @@ null-firth-line-search-maximum-attempts = 25
 null-firth-step-halving-scale = 0.5
 use-block-firth-math = false
 bgen-decode-tile-variant-count = 64
+# Score-test kernels default to the float32 fast path. Use float64 only when
+# parity or numerical debugging needs outweigh throughput.
+score-dtype = "float32"
+# Firth internals are parity-sensitive and currently require float64.
+firth-dtype = "float64"
+# Enables JAX to create x64 arrays; it does not make all kernels float64.
 jax-enable-x64 = true
 jax-persistent-cache = true
 jax-persistent-cache-min-entry-size-bytes = -1

@@ -10,6 +10,7 @@ import numpy as np
 import numpy.testing
 import numpy.typing as npt
 
+from g import types
 from g.compute.common import genotype, linalg, pvalue
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import state as regenie2_linear_state
@@ -377,6 +378,45 @@ class TestComputeRegenie2LinearChunk:
             atol=1e-5,
         )
         numpy.testing.assert_array_equal(optimized_result.valid_mask, reference_result.valid_mask)
+
+    def test_score_dtype_float64_controls_linear_score_kernel_dtype(self) -> None:
+        """Ensure the linear score path honors an explicit float64 policy."""
+        covariate_matrix = jnp.asarray(
+            [
+                [1.0, -1.0],
+                [1.0, -0.5],
+                [1.0, 0.5],
+                [1.0, 1.0],
+            ],
+            dtype=jnp.float64,
+        )
+        phenotype_vector = jnp.asarray([0.1, -0.2, 0.3, 0.7], dtype=jnp.float64)
+        genotype_matrix = jnp.asarray(
+            [
+                [0.0, 2.0],
+                [1.0, 2.0],
+                [1.0, 1.0],
+                [2.0, 0.0],
+            ],
+            dtype=jnp.float64,
+        )
+        loco_predictions = jnp.asarray([0.01, -0.02, 0.03, -0.01], dtype=jnp.float64)
+
+        state = regenie2_linear.prepare_regenie2_linear_state(
+            covariate_matrix=covariate_matrix,
+            phenotype_vector=phenotype_vector,
+            score_dtype=types.FloatingPointDtype.FLOAT64,
+        )
+        result = regenie2_linear.compute_regenie2_linear_chunk(
+            state=state,
+            genotype_matrix=genotype_matrix,
+            loco_predictions=loco_predictions,
+            score_dtype=types.FloatingPointDtype.FLOAT64,
+        )
+
+        assert state.phenotype_residual.dtype == jnp.float64
+        assert result.beta.dtype == jnp.float64
+        assert result.chi_squared.dtype == jnp.float64
 
     def test_chromosome_state_matches_direct_chunk_api(self) -> None:
         """Ensure chromosome-cached computation matches the compatibility wrapper."""

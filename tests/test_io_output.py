@@ -107,6 +107,8 @@ def build_test_header(
     association_mode: AssociationMode = AssociationMode.REGENIE2_LINEAR,
     binary_kernel_config: typing.Any | None = None,
     jax_enable_x64: bool = True,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    firth_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT64,
 ) -> dict[str, typing.Any]:
     bgen_path = tmp_path / "study.bgen"
     sample_path = tmp_path / "study.sample"
@@ -133,6 +135,8 @@ def build_test_header(
         sample_key_mode=types.SampleKeyMode.IID,
         binary_kernel_config=binary_kernel_config,
         jax_enable_x64=jax_enable_x64,
+        score_dtype=score_dtype,
+        firth_dtype=firth_dtype,
     )
 
 
@@ -141,6 +145,15 @@ def test_current_run_manifest_records_configured_x64_policy(tmp_path: Path) -> N
 
     assert current_header["jax_policy"]["enable_x64"] is False
     assert current_header["execution_plan"]["jax_policy"]["enable_x64"] is False
+
+
+def test_current_run_manifest_records_dtype_policy(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path, score_dtype=types.FloatingPointDtype.FLOAT64)
+
+    assert current_header["score_dtype"] == "float64"
+    assert current_header["firth_dtype"] == "float64"
+    assert current_header["execution_plan"]["score_dtype"] == "float64"
+    assert current_header["execution_plan"]["firth_dtype"] == "float64"
 
 
 def initialize_test_output_run(
@@ -433,6 +446,8 @@ def build_test_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConf
         ("output_schema_version", 2),
         ("bgen_decode_tile_variant_count", 128),
         ("jax_policy", {"device": "gpu", "enable_x64": True, "matmul_precision": "highest"}),
+        ("score_dtype", "float64"),
+        ("firth_dtype", "float32"),
         ("multi_phenotype_sample_mode", "complete_case_intersection"),
         (
             "output_writer",
@@ -491,6 +506,8 @@ def test_initialize_output_run_rejects_manifest_header_mismatch(
         ("output_schema_version", 2),
         ("trusted_no_missing_diploid", True),
         ("bgen_decode_tile_variant_count", 128),
+        ("score_dtype", "float64"),
+        ("firth_dtype", "float32"),
         ("chunk_size", 4),
     ],
 )
