@@ -1,620 +1,235 @@
-## Overall verdict
+# Active Code Review Task Plan
 
-Do **not** treat this as ready to replace REGENIE Step 2 yet.
+This file is the human-readable source for `docs/code-review.tasks.json`.
+Keep it limited to live work that Codex task-farm workers should be allowed to
+pick up. Dated audits and superseded reviews belong under `docs/archive/`.
 
-The rewrite is moving in the right direction: the API is more config-centric, CLI/TOML/Python are closer to one normalization path, Polars is gone from the runtime path, and unsupported binary corrections are no longer silently pretended to work. But I found several **release blockers** in statistical correctness, multi-phenotype semantics, reproducibility, and safe automation.
+# P0 Release Blockers
 
-The biggest concern is this: the product’s main performance strategy is multi-phenotype batching, but the current multi-phenotype alignment changes the analyzed sample set compared with separate single-phenotype runs. That means the optimization can change scientific results.
+## 1. JIT the binary variant-major score path
 
----
+Binary score-only variant-major chunks should execute as one fused JAX program.
+The current wrapper in `src/g/compute/regenie2_binary/api.py` calls the
+variant-major score and correction helpers without a top-level JIT boundary,
+and `src/g/engine/callbacks.py` reaches that wrapper directly.
 
-## What is directionally good
+Target files: `src/g/compute/regenie2_binary/api.py`,
+`src/g/compute/regenie2_binary/score.py`,
+`src/g/engine/callbacks.py`, and `tests/test_regenie2_binary.py`.
 
-The recent rewrite materially improved the foundation.
+**Guidance**
 
-`src/g/api.py` is now thin and delegates to the runner/config path rather than becoming its own orchestration layer.
-
-CLI options are generated from a central option schema:
-
-* `src/g/cli.py:112-155`
-* `src/g/interface/options.py:72-226`
-* `src/g/interface/options.py:307-624`
-
-That is the right direction. It reduces drift between CLI flags and config normalization.
-
-Unsupported methods are also better handled now. SPA is recognized but unsupported in `src/g/interface/options.py:295-304`, unsupported options are rejected in `src/g/interface/config.py:498-511`, and exact Firth / SPA are not silently executed in `src/g/compute/regenie2_binary.py:1659-1666`.
-
-The effective config and manifest setup are also in a much better place:
-
-* `src/g/runner.py:276-301`
-* `src/g/runner.py:345-370`
-* `src/g/execution_plan.py:173-207`
-* `src/g/execution_plan.py:217-255`
-
-So the architecture is no longer fundamentally wrong. The remaining problems are fixable, but several need to be fixed before this can be called statistically REGENIE-compatible.
+Add an explicitly jitted variant-major score entry point. Keep the Firth path
+as score JIT, host candidate-count decision when correction is enabled, then
+jitted fixed-shape correction. Score-only binary chunks should not pay for a
+host candidate synchronization.
 
 ---
 
-# Release blockers
+## 2. Remove the multi-binary traits-by-variants-by-samples intermediate
 
-## 1. Quantitative-trait SE / CHISQ / LOG10P do not match the REGENIE fixture
+The multi-binary score path in `src/g/compute/regenie2_binary/score.py` risks
+materializing a conceptual `traits x variants x samples` tensor. That is not a
+safe design for biobank-scale runs.
 
-The linear Step 2 kernel appears to produce the right **beta** for the REGENIE v4.1 fixture, but not the right standard error, chi-square, or log10 p-value.
+Target files: `src/g/compute/regenie2_binary/score.py` and
+`tests/test_regenie2_binary.py`.
 
-The current implementation uses a full-model residual variance after fitting the genotype:
+**Guidance**
 
-* `src/g/compute/regenie2_linear.py:238-259`
-
-The test reference, however, documents the REGENIE-compatible default QT score-statistic formula using the null residual variance:
-
-* `tests/test_regenie2_linear.py:183-204`
-
-The current kernel computes degrees of freedom as:
-
-* `src/g/compute/regenie2_linear.py:62`
-
-and then uses the post-genotype residual sum of squares in the association statistic path.
-
-I ran a targeted check against the existing REGENIE v4.1 fixture. Beta matches, but the other fields do not:
-
-```text
-beta
-observed: [ 0.05026095  0.29938010 -0.06271657]
-expected: [ 0.05026090  0.29938000 -0.06271650]
-
-standard_error
-observed: [0.45019916 0.41196188 0.48963654]
-expected: [0.42739200 0.40212500 0.46493300]
-
-chi_squared
-observed: [0.01246385 0.52811890 0.01640653]
-expected: [0.01382960 0.55427400 0.01819630]
-
-log10_p_value
-observed: [0.04043033 0.33031246 0.04668529]
-expected: [0.04268720 0.34048600 0.04929640]
-```
-
-The existing test does not catch this because it only asserts the observed kernel beta:
-
-* `tests/test_regenie2_linear.py:533-599`
-
-Specifically, the reference calculation checks all fields, but the observed kernel assertion only verifies beta.
-
-### Required fix
-
-Decide explicitly whether the QT kernel is supposed to report REGENIE score-test output or full-model OLS output. For a REGENIE replacement, it should match the REGENIE score-test output.
-
-The likely formula should be:
-
-```text
-beta = covariance / genotype_residual_sum_squares
-SE = sqrt(null_mse / genotype_residual_sum_squares)
-CHISQ = beta^2 / SE^2
-null_mse = adjusted_residual_sum_squares / null_degrees_of_freedom
-null_degrees_of_freedom = n - covariate_parameter_count
-```
-
-Then update all equivalent paths:
-
-* scalar/sample-major linear path
-* multi linear path
-* variant-major linear path
-
-Relevant implementation areas:
-
-* `src/g/compute/regenie2_linear.py:238-259`
-* `src/g/compute/regenie2_linear.py:274-338`
-* `src/g/compute/regenie2_linear.py:443-467`
-
-Add tests that assert **beta, SE, CHISQ, and LOG10P** against the REGENIE fixture.
+Rewrite the contractions so weighted sums and scores use `variants x samples`
+and `traits x samples` inputs directly. The projection result may be
+`traits x variants x covariates`, but no computation should require a
+`traits x variants x samples` buffer.
 
 ---
 
-## 2. Multi-phenotype batching currently changes the analyzed samples
+## 3. Fix O(T x N^2) complete-case multi-phenotype alignment
 
-This is the biggest architectural/statistical problem.
+The complete-case intersection in `src/sample.rs` builds vectors of keys and
+checks membership with repeated `Vec::contains`. For T traits and N samples,
+that becomes O(T x N^2).
 
-The current multi-phenotype alignment uses a shared complete-case intersection across all traits. That means:
+Target files: `src/sample.rs` and `tests/test_tabular.py`.
 
-```bash
-g regenie --phenoColList A,B
-```
+**Guidance**
 
-does **not** necessarily produce the same result for phenotype `A` as:
-
-```bash
-g regenie --phenoCol A
-```
-
-If phenotype `B` has missing values in samples where `A` is present, the batched run drops those samples from `A`.
-
-That violates the desired “decode once, compute many phenotypes” strategy because the optimization changes the estimand.
-
-Relevant code:
-
-* `src/sample.rs:251-294`
-* `src/sample.rs:346-393`
-* `src/g/engine/native_dispatch.py:47-60`
-* `src/g/engine/native_dispatch.py:85-98`
-* `src/g/engine/native_dispatch.py:131-151`
-* `src/g/engine/native_dispatch.py:189-216`
-* `src/g/engine/regenie2_pipeline.py:437-470`
-
-The existing test confirms this is intentional current behavior:
-
-* `tests/test_tabular.py:93-124`
-
-### Required fix
-
-Do not expose current multi-phenotype batching as equivalent to separate REGENIE runs.
-
-The cleaner architecture is:
-
-```text
-decode genotype chunk once
-transfer genotype chunk once
-for each phenotype or phenotype-group:
-    apply its own valid-sample mask/gather
-    compute association
-```
-
-You can still batch phenotypes efficiently by grouping them into sample-alignment equivalence classes:
-
-```text
-group 1: phenotypes with same valid sample mask, covariates, LOCO predictions
-group 2: another mask
-...
-```
-
-For now, either:
-
-1. implement per-trait masks/gathers, or
-2. make complete-case batching an explicit non-default mode, for example:
-
-```bash
---g-multi-phenotype-sample-mode complete-case
-```
-
-and document that it is **not** equivalent to separate REGENIE single-phenotype runs.
+Use the existing `HashMap<AlignedSampleKey, usize>` values or explicit
+`HashSet` membership for the complete-case intersection. Preserve the current
+complete-case semantics and add a regression test that would have exercised the
+slow membership path.
 
 ---
 
-## 3. Multi-binary ignores user-specified binary kernel config
+## 4. Fail by default on binary null logistic non-convergence
 
-Single-phenotype binary runs pass the binary kernel config through the pipeline:
+Binary null logistic fitting records convergence in chromosome state, but the
+pipeline can continue and emit masked rows instead of failing the run. For the
+default scientific path, non-convergence should be a clear error.
 
-* `src/g/runner.py:236-241`
-* `src/g/engine/regenie2_pipeline.py:162-169`
-* `src/g/engine/callbacks.py:941-970`
-* `src/g/engine/callbacks.py:1025-1037`
-* `src/g/engine/callbacks.py:1061-1080`
+Target files: `src/g/types.py`, `src/g/interface/options.py`,
+`src/g/interface/config.py`, `src/g/compute/regenie2_binary/state.py`,
+`src/g/engine/callbacks.py`, and `tests/test_regenie2_binary.py`.
 
-But the multi-binary path drops it.
+**Guidance**
 
-Problem locations:
-
-* `src/g/runner.py:268-272`
-* `src/g/engine/regenie2_pipeline.py:341-366`
-* `src/g/engine/regenie2_pipeline.py:396-422`
-* `src/g/engine/regenie2_pipeline.py:518-527`
-* `src/g/engine/callbacks.py:1148-1157`
-* `src/g/engine/callbacks.py:1298-1302`
-
-The compute functions then fall back to `DEFAULT_BINARY_KERNEL_CONFIG`:
-
-* `src/g/compute/regenie2_binary.py:450-456`
-* `src/g/compute/regenie2_binary.py:569-576`
-* `src/g/compute/regenie2_binary.py:593-600`
-
-This affects reproducibility and correctness whenever users set options such as:
-
-```text
---g-binary-null-maximum-iterations
---g-binary-null-tolerance
---g-firth-maximum-iterations
---g-firth-tolerance
---g-firth-maximum-step-size
---g-use-block-firth-math
---g-firth-batch-size
-```
-
-### Required fix
-
-Thread `kernel_config` through the full multi-binary stack:
-
-```text
-runner
-→ run_regenie2_multi_phenotype_binary_bgen_pipeline
-→ run_regenie2_multi_phenotype_bgen_pipeline
-→ dispatch_multi_phenotype_engine_pipeline
-→ MultiBinaryRegenie2PipelineCallback
-→ prepare_regenie2_multi_binary_chromosome_state
-→ compute_regenie2_multi_binary_chunk
-→ compute_regenie2_binary_variant_major_chunk
-```
-
-Then add a test where multi-binary with non-default kernel settings equals stacking the corresponding single-binary runs.
+Add a policy such as `--g-null-logistic-nonconvergence fail|warn`, defaulting
+to fail. Check the scalar or trait-vector convergence state once per binary
+chromosome after state preparation. A host scalar/vector sync per chromosome is
+acceptable here.
 
 ---
 
-## 4. Phenotype names are unsafe path components
+## 5. Emit NaN for invalid binary score statistics
 
-Phenotype names are currently used directly as output subdirectories:
+When score variance is invalid but the null logistic model converged,
+`src/g/compute/regenie2_binary/score.py` can emit `CHISQ = 0` and
+`LOG10P` near zero while `BETA` and `SE` are NaN. Invalid statistic rows should
+have invalid statistics.
 
-* `src/g/execution_plan.py:180-187`
-* `src/g/execution_plan.py:265-275`
+Target files: `src/g/compute/regenie2_binary/score.py` and
+`tests/test_regenie2_binary.py`.
 
-Validation resolves phenotype names but does not reject duplicates or path-unsafe values:
+**Guidance**
 
-* `src/g/interface/config.py:530-545`
-* `src/g/interface/config.py:548-619`
+Use the same statistic-validity mask for `BETA`, `SE`, `CHISQ`, and `LOG10P`.
+The extra-code path can still mark failed rows as `TEST_FAIL`.
 
-This creates two problems.
+# P1 High Priority
 
-First, duplicate phenotype names can produce multiple run plans writing to the same output directory.
+## 6. Add strict hard-crash resume scan and repair
 
-Second, a phenotype name containing path separators or traversal can escape the intended output root:
+Graceful resume uses manifest chunk commits, but a hard crash after Arrow
+rename and before manifest finalization can leave durable chunk files that are
+not listed in the manifest.
 
-```text
-../bad
-a/b
-/tmp/outside
-```
+Target files: `src/g/io/output.py`, `src/output/resume.rs`,
+`src/output/manifest.rs`, `src/output/session.rs`, and
+`tests/test_io_output.py`.
 
-This is a safe automation issue, not just polish.
+**Guidance**
 
-### Required fix
-
-Reject duplicate phenotype names.
-
-Also either reject unsafe names outright or map each phenotype to a safe deterministic directory name, for example:
-
-```text
-trait_0001_height
-trait_0002_bmi
-trait_0003_<hash>
-```
-
-The original phenotype name should remain in the manifest and output metadata, but it should not be trusted as a filesystem path component.
+Implement one deterministic strict repair path: scan Arrow chunk metadata,
+validate schema and execution identity, repair the manifest, then resume. Fast
+resume may keep trusting manifest commits only, but filename-only inference
+must not be used for strict repair.
 
 ---
 
-## 5. QT silently accepts binary-only flags
+## 7. Avoid sparse Firth mask H2D transfer for score-only paths
 
-For quantitative traits, options such as these should not silently succeed:
+The sample-major binary callback still transfers
+`chunk_stats.is_rare_sparse_firth_candidate` to device even when the correction
+plan is score-only. The variant-major path already avoids this transfer.
 
-```bash
---qt --firth --approx --pThresh 0.01
-```
+Target files: `src/g/engine/callbacks.py` and
+`tests/test_regenie2_pipeline.py`.
 
-Currently they are parsed into `BinaryConfig`:
+**Guidance**
 
-* `src/g/interface/config.py:238-244`
-
-but ignored when the execution plan is quantitative:
-
-* `src/g/execution_plan.py:199-203`
-
-Validation rejects some invalid binary combinations, but it does not reject binary-only options under QT:
-
-* `src/g/interface/config.py:548-619`
-
-I confirmed this behavior with a direct config construction: a QT config with `firth=True`, `approx=True`, and `pThresh=0.01` succeeds.
-
-### Required fix
-
-Fail loudly when binary-only options are explicitly supplied for QT.
-
-At minimum reject these under `--qt`:
-
-```text
---firth
---approx
---firth-se
---spa
-```
-
-For `--pThresh`, because it has a default, you need to distinguish “defaulted” from “explicitly supplied.” The clean fix is to preserve option provenance through normalization, for example an `explicit_options` set or source map.
+Apply the score-only conditional to single and multi-binary sample-major paths.
+Preserve Firth behavior by transferring the mask only when approximate Firth
+can use it.
 
 ---
 
-# High-priority issues
+## 8. Use native dosage sums and square sums in kernels
 
-## 6. The Rust tabular reader is not yet the desired streaming parser architecture
+Rust chunk stats already carry dosage sums and square sums. Linear kernels
+currently reread genotype matrices to compute normalized sum of squares, and
+binary genotype flipping recomputes allele counts on device.
 
-The runtime is no longer using Polars, which is good. Phenotype and covariate readers are selected-column and buffered:
+Target files: `src/g/compute/regenie2_linear/score.py`,
+`src/g/compute/regenie2_binary/score.py`,
+`src/g/compute/common/genotype.py`, `src/g/engine/callbacks.py`,
+`src/genotype/preprocess.rs`, and `tests/test_regenie2_binary.py`.
 
-* `src/sample.rs:577-600`
-* `src/sample.rs:684-729`
-* `src/sample.rs:732-785`
-* `src/sample.rs:818-877`
+**Guidance**
 
-However, sample-file loading still reads the whole sample file into memory:
-
-* `src/sample.rs:495-505`
-
-Also, the parser is currently simple tab-splitting:
-
-* `src/sample.rs:598-600`
-* `src/sample.rs:646-668`
-
-That may be acceptable for strict TSV-only input, but it is not yet the cleaner “Rust csv crate streaming TSV/CSV parser” direction you described.
-
-### Recommendation
-
-Use a single streaming tabular parser abstraction for sample, phenotype, and covariate files. The Rust `csv` crate is the right default choice.
-
-This parser should:
-
-```text
-- stream rows
-- select only required columns
-- validate duplicate IDs
-- validate required columns
-- preserve deterministic row order
-- handle CRLF
-- clearly define missing-value tokens
-- either support quoted CSV correctly or reject CSV mode explicitly
-```
-
-This is not as urgent as the statistical blockers, but it should be fixed before scaling this to large UKB-style files.
+Pass native `dosage_sum` and square-sum arrays where available. Keep fallback
+device reductions for non-native tests and direct compute callers.
 
 ---
 
-## 7. Output writing may become a performance bottleneck
+## 9. Group phenotypes by identical sample and covariate alignment
 
-The output path currently performs several materializations/copies.
+Default multi-phenotype mode is semantically honest but performance-limited
+because per-phenotype semantics can force repeated BGEN passes.
 
-Python callback materializes device arrays to host:
+Target files: `src/sample.rs`, `src/g/engine/native_dispatch.py`,
+`src/g/engine/regenie2_pipeline.py`, `src/g/execution_plan.py`, and
+`tests/test_regenie2_pipeline.py`.
 
-* `src/g/engine/callbacks.py:180-215`
-* `src/g/engine/callbacks.py:218-261`
+**Guidance**
 
-Rust then clones/copies chunk data:
-
-* `src/output/session.rs:204-211`
-* `src/output/session.rs:247-254`
-* `src/output/writer.rs:83-148`
-
-Finalization reads Arrow chunk files and writes final Parquet:
-
-* `src/output/finalization.rs:42-62`
-
-This is not necessarily wrong, but it needs measurement. For fast GPU kernels, output finalization and Python-side per-phenotype loops can dominate.
-
-### Recommendation
-
-Add stage timing benchmarks with:
-
-```text
-finalization on/off
-Arrow chunk output only
-Parquet final output
-single phenotype
-many phenotypes
-large bsize
-small bsize
-```
-
-Longer term, consider:
-
-```text
-- direct Parquet row-group writing
-- fewer Python → Rust per-trait calls in multi-phenotype mode
-- batched multi-trait writer API
-- ownership transfer / zero-copy host buffers where safe
-```
-
-Do not optimize this blindly, but do benchmark it now.
+Fingerprint each phenotype alignment from sample indices, covariate matrix,
+and prediction alignment. Run one BGEN pass per identical group. Keep
+complete-case mode explicit and non-default because it changes sample
+inclusion semantics.
 
 ---
 
-## 8. JAX runtime bootstrapping remains fragile
+## 10. Improve telemetry buffering and stream ownership
 
-The runner tries to configure JAX before importing the heavy pipeline:
+Python telemetry currently writes `events.jsonl` and `progress.jsonl`; Rust
+tracing writes `log_file` and `trace_file`. The distinction is useful but easy
+to misread, and Python opens the JSONL file for each event.
 
-* `src/g/runner.py:52-57`
-* `src/g/runner.py:141-148`
+Target files: `src/g/engine/telemetry.py`, `src/g/runner.py`,
+`tests/test_telemetry.py`, and `docs/logging-setup.md`.
 
-That is good, but JAX-heavy modules still import JAX at module import time:
+**Guidance**
 
-* `src/g/engine/native_dispatch.py:10-11`
-* `src/g/engine/callbacks.py:12-24`
-* `src/g/compute/*`
+Keep progress mode low overhead. Add buffered or session-owned file handles for
+profile and trace events, and document which process writes each stream. Do not
+make Python and Rust append to the same file unless there is one shared writer.
 
-The risk is repeated Python use with different configs or early imports before `runner` configures the runtime. JAX backend/platform/cache settings are often process-global or sticky after initialization.
+# P2 Follow-Up
 
-### Recommendation
+## 11. Reduce writer metadata and result-array copies
 
-Make JAX initialization policy explicit:
+The Rust writer path clones chunk metadata and stats and copies result arrays
+before queuing native chunk writes. This is not a correctness bug, but it is
+visible memory traffic at scale.
 
-```text
-- importing g.api should not initialize JAX
-- first run configures JAX
-- later incompatible runtime configs fail loudly
-- compatible repeated runs are allowed
-```
+Target files: `src/output/session.rs`, `src/output/writer.rs`,
+`src/g/engine/callbacks.py`, and `tests/test_io_output.py`.
 
-Add tests for:
+**Guidance**
 
-```text
-import g.api without importing JAX-heavy modules
-run once with one device/cache config
-run again with same config
-run again with incompatible config and expect clear failure
-```
-
-This matters for reproducibility and safe automation.
+Consider passing a Rust-owned native chunk handle through the Python callback
+and accepting ownership of contiguous NumPy buffers where safe. Measure before
+and after; keep the existing path as a correctness baseline until the ownership
+contract is clear.
 
 ---
 
-## 9. Production binary variant-major path uses a module labeled experimental
+## 12. Harden Oxford sample whitespace parsing
 
-The module is explicitly named and documented as experimental:
+Oxford `.sample` files may contain tabs or mixed whitespace. A single-space CSV
+delimiter plus empty-field filtering is less robust than splitting sample-file
+lines by arbitrary whitespace.
 
-* `src/g/compute/regenie2_binary_variant_major_experimental.py:1`
-* `src/g/compute/regenie2_binary_variant_major_experimental.py:21-25`
-* `src/g/compute/regenie2_binary_variant_major_experimental.py:305-309`
+Target files: `src/sample.rs` and `tests/test_tabular.py`.
 
-But production callback code routes binary variant-major score-only computation through it:
+**Guidance**
 
-* `src/g/engine/callbacks.py:1108-1116`
-
-The multi-binary path also reaches variant-major computation through:
-
-* `src/g/compute/regenie2_binary.py:603-614`
-* `src/g/engine/callbacks.py:1259-1265`
-
-### Recommendation
-
-Either promote this to a production module and rename it, or stop using it in production.
-
-Before promotion, add parity tests between sample-major and variant-major binary paths for:
-
-```text
-- score-only BT
-- approximate Firth candidate selection
-- covariates
-- LOCO offsets
-- missing/imputed genotypes
-- monomorphic variants
-- rare variants
-- trusted and non-trusted BGEN paths
-```
+Use `split_whitespace` or an equivalent strict parser for Oxford sample files.
+Keep phenotype and covariate TSV parsing documented separately.
 
 ---
 
-## 10. Manifest/resume does not yet cover enough compute-affecting state
+## 13. Preserve p-value dtype policy
 
-The current manifest header includes useful fields such as input fingerprints, phenotype/covariate/pred info, sample count, variant count, chunk size, correction plan, trusted flag, and sample-key mode:
+`src/g/compute/common/pvalue.py` downcasts chi-square values to float32 before
+tail conversion. That may be acceptable for score-only output, but it discards
+precision from float64 Firth internals.
 
-* `src/g/io/output.py:115-151`
+Target files: `src/g/compute/common/pvalue.py` and
+`tests/test_regenie2_binary.py`.
 
-But it does not appear to include all settings that can change output, including:
+**Guidance**
 
-```text
-binary kernel config / tolerances
-Firth iteration and step-size knobs
-JAX precision/backend policy
-output schema version beyond manifest schema
-decode tile size
-multi-phenotype sample mode
-output writer/finalization settings
-```
-
-Resume behavior also deserves sharper semantics. Commits are recorded on finish:
-
-* `src/output/session.rs:142-159`
-* `src/output/manifest.rs:19-55`
-
-The Python fast resume path relies on manifest-committed chunks:
-
-* `src/g/io/output.py:195-229`
-
-Strict mode validates files, but the fast path does not appear to use the Rust chunk scanner in:
-
-* `src/output/resume.rs:15-51`
-
-### Recommendation
-
-Add an execution-plan hash to the manifest covering all compute/output-affecting fields.
-
-Then add resume-incompatibility tests for changes to:
-
-```text
-bsize
-trait type
-phenotype
-covariates
-predictions
-binary correction plan
-binary kernel config
-sample-key mode
-output schema
-trusted BGEN mode
-decode tile size
-```
-
-Also decide crash semantics explicitly:
-
-```text
-Option A: commit chunks as soon as they are durably written
-Option B: only trust completed manifests and safely overwrite staged chunks
-```
-
-Either is acceptable, but it must be deterministic and tested.
-
----
-
-# Testing gaps to close before calling this REGENIE-compatible
-
-I would add these as release-blocking tests:
-
-1. **QT REGENIE fixture full-field parity**
-   Extend `tests/test_regenie2_linear.py:533-599` to assert observed kernel:
-
-   ```text
-   beta
-   standard_error
-   chi_squared
-   log10_p_value
-   ```
-
-2. **Single vs multi phenotype equivalence**
-   For missing phenotypes/covariates/predictions, each trait in a multi run must match its own single-trait run unless the user explicitly selected complete-case batching.
-
-3. **Multi-binary kernel-config parity**
-   Multi-binary with non-default kernel knobs must equal stacking single-binary runs.
-
-4. **Unsafe phenotype names**
-   Reject duplicates, `../`, path separators, absolute paths, empty names, and names that collide after sanitization.
-
-5. **QT rejects binary-only flags**
-   Especially `--firth`, `--approx`, `--firth-se`, `--spa`, and explicit `--pThresh`.
-
-6. **Sample/covariate/phenotype parser tests**
-   Large streaming files, duplicate IDs, missing values, CRLF, selected columns, and malformed rows.
-
-7. **Resume incompatibility tests**
-   Changed kernel config, changed correction plan, changed `bsize`, changed sample-key mode, corrupt/missing chunks.
-
-8. **Repeated Python run tests**
-   Same config should work. Incompatible JAX/runtime configs should fail loudly.
-
-9. **Sample-major vs variant-major parity**
-   QT and BT, trusted and non-trusted BGEN, missingness, monomorphic variants, rare variants.
-
-10. **End-to-end REGENIE parity fixtures**
-    Small deterministic BGEN fixtures against REGENIE for QT and BT, CPU mandatory, GPU optional/marked.
-
----
-
-# Build/test notes
-
-I could not run the Rust/native end-to-end path in this container because there is no Rust toolchain available, and the installed Python is `3.13.5` while the project declares Python `>=3.14,<3.15` with `pyo3` `abi3-py314`.
-
-That means `_core` was not buildable/importable here, so I did not verify the native BGEN pipeline end to end.
-
-I did run targeted Python/JAX checks where possible. The QT fixture mismatch above is from a direct targeted kernel check, not from speculation.
-
-A broader pytest run that imported native-dependent modules failed collection because `_core` was unavailable. A smaller Python/JAX test run timed out before completion, so I am not claiming the suite passes.
-
----
-
-# Recommended rewrite order
-
-I would fix these in this order:
-
-1. **Fix QT score-test statistics and strengthen the REGENIE fixture assertions.**
-2. **Fix multi-phenotype sample semantics before investing further in batching.**
-3. **Thread binary `kernel_config` through the multi-binary path.**
-4. **Reject/sanitize unsafe and duplicate phenotype names.**
-5. **Reject binary-only flags under QT.**
-6. **Add an execution-plan hash to manifests and strengthen resume compatibility checks.**
-7. **Replace the remaining ad hoc tabular parsing with a streaming Rust parser abstraction.**
-8. **Benchmark output finalization and multi-phenotype writer overhead.**
-9. **Promote or remove the “experimental” binary variant-major production path.**
-10. **Add repeated-run JAX/runtime reproducibility tests.**
-
-The core architectural direction is now much better than the old design, but the current code still has enough statistical and reproducibility issues that I would keep it firmly in pre-release until the blockers above are closed.
+Make dtype behavior explicit. Preserve float64 inputs where they occur, or add
+separate float32 and float64 conversion helpers with parity tests for extreme
+GWAS tails.

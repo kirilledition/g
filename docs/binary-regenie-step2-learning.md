@@ -80,8 +80,14 @@ The main implementation is split by responsibility:
     `NotImplementedError`.
 - `src/g/interface/config.py`
   - Public defaults and compute settings.
-  - `GComputeConfig.use_block_firth_math` keeps the older full-model JAX Firth
-    path behind an explicit internal switch.
+- `src/g/compute/regenie2_binary/config.py`
+  - Owns `BinaryKernelConfig`, the nested binary kernel policy used by the
+    execution plan:
+    `numerical`, `null_logistic`, `firth_candidate`, `approximate_firth`, and
+    `null_firth`.
+  - `GComputeConfig.use_block_firth_math` is normalized into
+    `BinaryKernelConfig.approximate_firth.use_block_math`, which keeps the
+    older full-model JAX Firth path behind an explicit internal switch.
 - `src/g/types.py`
   - Public internal enums:
     `BinaryFallbackMethod`, `BinaryExtraCode`, `FirthFailureCode`, and
@@ -96,15 +102,38 @@ The main implementation is split by responsibility:
   - JAX pytree dataclasses for reusable binary state.
 - `src/g/compute/regenie2_binary/result.py`
   - JAX pytree dataclasses and builders for score and corrected chunk results.
-- `src/g/compute/regenie2_binary_candidate_planning.py`
+- `src/g/compute/regenie2_binary/api.py`
+  - Public compute entry points for sample-major, multi-trait, and
+    variant-major binary chunks.
+- `src/g/compute/regenie2_binary/score.py`
+  - Ordinary binary score-test kernels, genotype flipping, score variance, and
+    candidate marking.
+- `src/g/compute/regenie2_binary/candidates.py`
   - Fixed-shape candidate selection and batching for device-resident Firth.
-- `src/g/compute/regenie2_binary.py`
-  - Main sample-major score test, null models, scalar approximate Firth, and
-    legacy full-model Firth path.
-- `src/g/compute/regenie2_binary_variant_major.py`
+- `src/g/compute/regenie2_binary/correction.py`
+  - Applies device candidate corrections and merges corrected statistics back
+    into score-test result arrays.
+- `src/g/compute/regenie2_binary/variant_major_correction.py`
   - Direct variant-major score path and variant-major Firth helper.
-- `src/g/compute/regenie2_binary_diagnostics.py`
+- `src/g/compute/regenie2_binary/diagnostics.py`
   - Aggregates Firth candidate, convergence, failure, branch, and sparse counts.
+- `src/g/compute/regenie2_binary/logistic.py`
+  - Shared logistic probability helpers.
+- `src/g/compute/regenie2_binary/null_logistic.py`
+  - Ordinary covariate-only null logistic IRLS.
+- `src/g/compute/regenie2_binary/firth/null.py`
+  - Covariate-only null Firth model used by approximate Firth.
+- `src/g/compute/regenie2_binary/firth/scalar_approx.py`
+  - REGENIE-compatible scalar approximate Firth correction.
+- `src/g/compute/regenie2_binary/firth/full_model.py`
+  - Legacy full covariate-plus-genotype Firth implementation used only behind
+    the internal block-math switch.
+- `src/g/compute/regenie2_binary/firth/batch.py`
+  - Fixed-lane batching for Firth candidates.
+- `src/g/compute/regenie2_binary/firth/line_search.py`
+  - Shared Firth line-search and step-halving helpers.
+- `src/g/compute/regenie2_binary/firth/types.py`
+  - Firth solver state and result containers.
 - `src/genotype/preprocess.rs`
   - Native chunk summaries, including allele frequency, minor allele count,
     sparse flags, and rare-sparse Firth eligibility.
@@ -490,8 +519,10 @@ Important differences:
 - Original REGENIE text output has null `EXTRA` for successful corrected rows.
   `g` retains internal success codes until rendering, then maps them to null.
 - `g` still contains a full-model JAX Firth implementation for experiments
-  behind `use_block_firth_math=True`. The public REGENIE-equivalent
-  `--bt --firth --approx` path uses scalar approximate Firth.
+  behind `BinaryKernelConfig.approximate_firth.use_block_math=True`, currently
+  sourced from `GComputeConfig.use_block_firth_math`. The public
+  REGENIE-equivalent `--bt --firth --approx` path uses scalar approximate
+  Firth.
 
 ## Mistakes And Lessons From The Parity Work
 
