@@ -95,12 +95,15 @@
       "manual": {},
       "priority": "P1 performance issues",
       "problem_markdown": "## 9. Binary genotype flipping also duplicates native work\n\nIn `src/g/compute/common/genotype.py:89-95`:\n\n```python\nallele_count = jnp.sum(genotype_matrix_by_variant, axis=1)\nflip_mask = allele_count > sample_count\nflipped_genotype_matrix_by_variant = jnp.where(...)\n```\n\nRust already computes dosage sums. You can pass native `dosage_sum` to the binary score kernel and compute the flip mask without reducing `G` on GPU.\n\nYou still need the flipped genotype values for score/correction, so this does not remove all work. But it removes one full reduction over the chunk.\n\n### Recommendation\n\nAdd an optional `dosage_sum` argument to binary score kernels:\n\n```python\ndef compute_binary_score_test_chunk_variant_major(..., dosage_sum: jax.Array | None = None):\n    ...\n```\n\nUse native sum when available. Fall back to `jnp.sum` for tests or non-native callers.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T06:04:38+00:00",
+        "integration_head": "33622b713a94d98b6a98205cf74261a88fe571f4"
+      },
       "slug": "binary-genotype-flipping-also-duplicates-native-work",
       "source_end_line": 106,
       "source_id": 9,
       "source_start_line": 80,
-      "status": "integrating",
+      "status": "integrated",
       "title": "Binary genotype flipping also duplicates native work",
       "worktree": "../g-worktrees/review2-T009-binary-genotype-flipping-also-duplicates-native-work"
     },
@@ -139,7 +142,7 @@
       "source_end_line": 135,
       "source_id": 10,
       "source_start_line": 107,
-      "status": "ready",
+      "status": "integrating",
       "title": "Multi-binary Firth loops over traits in Python",
       "worktree": "../g-worktrees/review2-T010-multi-binary-firth-loops-over-traits-in-python"
     },
