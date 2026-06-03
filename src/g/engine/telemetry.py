@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import queue
 import threading
 import time
 import typing
@@ -43,6 +44,101 @@ class TelemetryPaths:
     stage_timings_json: Path | None
 
 
+@dataclass(frozen=True)
+class JsonLineWriteRequest:
+    """Buffered JSONL write request.
+
+    Attributes:
+        path: Destination JSONL file path.
+        line: Serialized JSON line with trailing newline.
+
+    """
+
+    path: Path
+    line: str
+
+
+class BufferedJsonLineWriter:
+    """Session-scoped buffered JSONL writer."""
+
+    def __init__(self, *, queue_capacity: int = 8192) -> None:
+        """Initialize and start the background writer."""
+        self.write_queue: queue.Queue[JsonLineWriteRequest | None] = queue.Queue(maxsize=queue_capacity)
+        self.lock = threading.Lock()
+        self.closed = False
+        self.error: Exception | None = None
+        self.created_directories: set[Path] = set()
+        self.output_files: dict[Path, typing.TextIO] = {}
+        self.thread = threading.Thread(target=self.run, name="g-telemetry-jsonl-writer", daemon=True)
+        self.thread.start()
+
+    def write(self, path: Path, line: str) -> None:
+        """Queue one JSONL write."""
+        self.raise_background_error()
+        with self.lock:
+            if self.closed:
+                return
+            self.write_queue.put(JsonLineWriteRequest(path=path, line=line))
+
+    def close(self) -> None:
+        """Flush queued writes and close all open files."""
+        with self.lock:
+            if self.closed:
+                self.raise_background_error()
+                return
+            self.closed = True
+            self.write_queue.put(None)
+        self.thread.join()
+        self.raise_background_error()
+
+    def run(self) -> None:
+        """Drain the write queue until close is requested."""
+        try:
+            while True:
+                write_request = self.write_queue.get()
+                try:
+                    if write_request is None:
+                        return
+                    output_file = self.get_output_file(write_request.path)
+                    output_file.write(write_request.line)
+                finally:
+                    self.write_queue.task_done()
+        except OSError as exception:
+            self.error = exception
+        finally:
+            self.close_output_files()
+
+    def get_output_file(self, path: Path) -> typing.TextIO:
+        """Return an open output file for the destination path."""
+        output_file = self.output_files.get(path)
+        if output_file is not None:
+            return output_file
+        if path.parent not in self.created_directories:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.created_directories.add(path.parent)
+        output_file = path.open("a", encoding="utf-8")
+        self.output_files[path] = output_file
+        return output_file
+
+    def close_output_files(self) -> None:
+        """Flush and close all open output files."""
+        for output_file in self.output_files.values():
+            try:
+                output_file.flush()
+                output_file.close()
+            except OSError as exception:
+                if self.error is None:
+                    self.error = exception
+        self.output_files.clear()
+
+    def raise_background_error(self) -> None:
+        """Raise any exception captured by the background writer."""
+        if self.error is None:
+            return
+        message = "Buffered telemetry writer failed."
+        raise RuntimeError(message) from self.error
+
+
 class TelemetrySession:
     """Run-scoped structured telemetry writer."""
 
@@ -64,6 +160,15 @@ class TelemetrySession:
         self.lock = threading.Lock()
         self.last_progress_time = 0.0
         self.last_progress_chunk_count = 0
+        self.buffered_json_line_writer = (
+            BufferedJsonLineWriter()
+            if self.mode
+            in {
+                types.TelemetryMode.PROFILE,
+                types.TelemetryMode.TRACE,
+            }
+            else None
+        )
 
     @property
     def enabled(self) -> bool:
@@ -132,10 +237,20 @@ class TelemetrySession:
         """Append one JSON line when the destination path is configured."""
         if path is None:
             return
+        line = f"{json.dumps(payload, sort_keys=True, default=str)}\n"
+        if self.buffered_json_line_writer is not None:
+            self.buffered_json_line_writer.write(path, line)
+            return
         with self.lock:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as output_file:
-                output_file.write(f"{json.dumps(payload, sort_keys=True, default=str)}\n")
+                output_file.write(line)
+
+    def close(self) -> None:
+        """Flush buffered telemetry resources."""
+        if self.buffered_json_line_writer is None:
+            return
+        self.buffered_json_line_writer.close()
 
 
 def format_timestamp(timestamp_seconds: float) -> str:
@@ -215,3 +330,5 @@ def close_telemetry_session(telemetry_session: TelemetrySession | None) -> None:
         return
     with contextlib.suppress(Exception):
         telemetry_session.log_event("telemetry_session_closed", level="debug")
+    with contextlib.suppress(Exception):
+        telemetry_session.close()

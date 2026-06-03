@@ -94,3 +94,33 @@ def test_telemetry_session_writes_schema_events_and_throttled_progress(tmp_path:
     assert progress_payloads[0]["event"] == "progress_tick"
     assert progress_payloads[0]["processed_chunk_count"] == 1
     assert progress_payloads[0]["chromosome"] == "22"
+
+
+def test_profile_telemetry_flushes_buffered_events_on_close(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        event_file=tmp_path / "events.jsonl",
+        progress_file=tmp_path / "progress.jsonl",
+        trace_file=None,
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        run_id="run-1",
+    )
+
+    for chunk_index in range(20):
+        telemetry_session.log_event("chunk_profile", chunk_index=chunk_index)
+    telemetry.close_telemetry_session(telemetry_session)
+    telemetry_session.close()
+
+    assert telemetry_paths.event_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.event_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads[:-1]] == ["chunk_profile"] * 20
+    assert event_payloads[-1]["event"] == "telemetry_session_closed"
+    assert event_payloads[0]["chunk_index"] == 0
+    assert event_payloads[19]["chunk_index"] == 19
