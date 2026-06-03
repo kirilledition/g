@@ -320,6 +320,54 @@ def test_prepare_output_run_strict_resume_validates_manifest_chunks(tmp_path: Pa
     assert initialized_output_run.committed_chunk_identifiers == frozenset({0, 2})
 
 
+def test_strict_resume_repairs_manifest_commits_from_arrow_metadata(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path)
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    initialize_test_output_run(prepared_output_run, current_header)
+    write_native_chunks(prepared_output_run.output_run_paths, AssociationMode.REGENIE2_LINEAR)
+    manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    assert manifest is not None
+    manifest["committed_chunks"] = []
+    output.write_run_manifest(prepared_output_run.output_run_paths, manifest)
+
+    resumed_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=True,
+        resume_mode=output.types.ResumeMode.STRICT,
+    )
+    initialized_output_run = initialize_test_output_run(
+        resumed_output_run,
+        current_header,
+        resume=True,
+        resume_mode=output.types.ResumeMode.STRICT,
+    )
+
+    assert initialized_output_run.committed_chunk_identifiers == frozenset({0, 2})
+    repaired_manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    assert repaired_manifest is not None
+    assert repaired_manifest["committed_chunks"] == [
+        {
+            "chunk_file_name": "chunk_000000000_000000002.arrow",
+            "chunk_identifier": 0,
+            "row_count": 2,
+            "variant_start_index": 0,
+            "variant_stop_index": 2,
+        },
+        {
+            "chunk_file_name": "chunk_000000000_000000002.arrow",
+            "chunk_identifier": 2,
+            "row_count": 2,
+            "variant_start_index": 2,
+            "variant_stop_index": 4,
+        },
+    ]
+
+
 def test_fast_resume_trusts_only_manifest_committed_chunks(tmp_path: Path) -> None:
     current_header = build_test_header(tmp_path)
     prepared_output_run = output.prepare_output_run(

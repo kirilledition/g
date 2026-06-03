@@ -371,6 +371,23 @@ def validate_strict_manifest_chunks(
     return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
 
 
+def repair_strict_manifest_chunk_commits(
+    output_run_paths: OutputRunPaths,
+    manifest: dict[str, typing.Any],
+) -> list[typing.Any]:
+    """Recover committed chunk manifest records from Arrow metadata."""
+    repaired_commits = json.loads(
+        _core.repair_strict_manifest_chunk_commits(
+            str(output_run_paths.chunks_directory),
+            json.dumps(manifest),
+        )
+    )
+    if not isinstance(repaired_commits, list):
+        message = "Strict resume repaired committed chunks must be a list."
+        raise ValueError(message)
+    return repaired_commits
+
+
 def initialize_output_run(
     *,
     output_run_paths: OutputRunPaths,
@@ -394,7 +411,10 @@ def initialize_output_run(
         committed_chunks = committed_chunks_value
         if resume:
             if resume_mode == types.ResumeMode.STRICT:
-                committed_chunk_identifiers = validate_strict_manifest_chunks(output_run_paths, existing_manifest)
+                committed_chunks = repair_strict_manifest_chunk_commits(output_run_paths, existing_manifest)
+                committed_chunk_identifiers = read_manifest_committed_chunk_identifiers(
+                    {"committed_chunks": committed_chunks}
+                )
             else:
                 committed_chunk_identifiers = read_manifest_committed_chunk_identifiers(existing_manifest)
             logger.info("Resuming run with %d previously committed chunks.", len(committed_chunk_identifiers))
