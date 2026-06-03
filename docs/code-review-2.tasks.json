@@ -53,12 +53,15 @@
       "manual": {},
       "priority": "P1 performance issues",
       "problem_markdown": "## 8. Linear kernels reread genotype data for sum of squares that Rust already knows\n\nIn `src/g/compute/regenie2_linear/score.py:22-41`, the kernel normalizes genotypes and computes:\n\n```python\ngenotype_sum_squares_compute = jnp.einsum(\n    \"ij,ij->i\",\n    normalized_genotype_matrix_by_variant,\n    normalized_genotype_matrix_by_variant,\n)\n```\n\nBut Rust chunk stats already include genotype sums and square sums. The output writer tests show `ChunkStats` has:\n\n```rust\ndosage_sum\ndosage_square_sum\nimputed_dosage_square_sum\n```\n\nThe linear kernel needs the normalized sum of squares. Since normalization subtracts either `0` or `2` per variant:\n\n```text\nsum((g - c)^2) = sum(g\u00b2) - 2c\u00b7sum(g) + n\u00b7c\u00b2\n```\n\nwhere `c \u2208 {0, 2}`.\n\n### Fix\n\nPass native per-variant `dosage_sum` and `imputed_dosage_square_sum` to the linear JAX kernel.\n\nThen compute:\n\n```python\ngenotype_mean = dosage_sum / sample_count\noffset = jnp.where(genotype_mean > 1.0, 2.0, 0.0)\nnormalized_sum_squares = sum_g2 - 2.0 * offset * sum_g + sample_count * offset * offset\n```\n\nThis avoids a full GPU pass over the genotype matrix.\n\nFor single-trait quantitative REGENIE, that matters because the kernel is memory-bandwidth-bound.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T05:36:14+00:00",
+        "integration_head": "18d7883dc637714267a3a54dd33b1d6b9e3c3e6d"
+      },
       "slug": "linear-kernels-reread-genotype-data-for-sum-of-squares-that-rust-already-knows",
       "source_end_line": 79,
       "source_id": 8,
       "source_start_line": 34,
-      "status": "ready",
+      "status": "integrated",
       "title": "Linear kernels reread genotype data for sum of squares that Rust already knows",
       "worktree": "../g-worktrees/review2-T008-linear-kernels-reread-genotype-data-for-sum-of-squares-that-rust-already-knows"
     },
@@ -92,12 +95,15 @@
       "manual": {},
       "priority": "P1 performance issues",
       "problem_markdown": "## 9. Binary genotype flipping also duplicates native work\n\nIn `src/g/compute/common/genotype.py:89-95`:\n\n```python\nallele_count = jnp.sum(genotype_matrix_by_variant, axis=1)\nflip_mask = allele_count > sample_count\nflipped_genotype_matrix_by_variant = jnp.where(...)\n```\n\nRust already computes dosage sums. You can pass native `dosage_sum` to the binary score kernel and compute the flip mask without reducing `G` on GPU.\n\nYou still need the flipped genotype values for score/correction, so this does not remove all work. But it removes one full reduction over the chunk.\n\n### Recommendation\n\nAdd an optional `dosage_sum` argument to binary score kernels:\n\n```python\ndef compute_binary_score_test_chunk_variant_major(..., dosage_sum: jax.Array | None = None):\n    ...\n```\n\nUse native sum when available. Fall back to `jnp.sum` for tests or non-native callers.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T06:04:38+00:00",
+        "integration_head": "33622b713a94d98b6a98205cf74261a88fe571f4"
+      },
       "slug": "binary-genotype-flipping-also-duplicates-native-work",
       "source_end_line": 106,
       "source_id": 9,
       "source_start_line": 80,
-      "status": "ready",
+      "status": "integrated",
       "title": "Binary genotype flipping also duplicates native work",
       "worktree": "../g-worktrees/review2-T009-binary-genotype-flipping-also-duplicates-native-work"
     },
@@ -131,12 +137,15 @@
       "manual": {},
       "priority": "P1 performance issues",
       "problem_markdown": "## 10. Multi-binary Firth loops over traits in Python\n\nIn `src/g/compute/regenie2_binary/api.py:112-145`, multi-binary Firth does:\n\n```python\nfor trait_index in range(trait_count):\n    compute_one_trait(...)\n```\n\nand then stacks results.\n\nThis is probably acceptable for early Firth support because exact multi-trait Firth batching is hard. But it means multi-binary `--firth --approx` is not really a fully batched GPU workload. It is closer to sequential trait processing sharing a genotype transfer.\n\n### Recommendation\n\nDocument this internally and benchmark separately:\n\n```text\nmulti-binary score-only:\n  should be true batched GPU compute\n\nmulti-binary approximate Firth:\n  currently per-trait correction loop after shared transfer\n```\n\nDo not claim full multi-trait binary Firth acceleration until this is improved.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T06:18:45+00:00",
+        "integration_head": "9973c256813faf01e6157e40027d02d80e3e0d09"
+      },
       "slug": "multi-binary-firth-loops-over-traits-in-python",
       "source_end_line": 135,
       "source_id": 10,
       "source_start_line": 107,
-      "status": "ready",
+      "status": "integrated",
       "title": "Multi-binary Firth loops over traits in Python",
       "worktree": "../g-worktrees/review2-T010-multi-binary-firth-loops-over-traits-in-python"
     },
@@ -170,12 +179,15 @@
       "manual": {},
       "priority": "P1 performance issues",
       "problem_markdown": "## 11. The current AVX2 path still scalarizes statistics inside the vector loop\n\n`src/genotype/bgen/simd.rs:293-337` vectorizes raw dosage decoding and f32 storage, but then it stores the vector back to a stack array and loops over lanes:\n\n```rust\nlet mut raw_dosage_chunk = [0_i32; AVX2_SAMPLE_COUNT];\n_mm256_storeu_si256(raw_dosage_chunk.as_mut_ptr().cast::<__m256i>(), raw_dosage_integers);\n\nfor raw_dosage_integer in raw_dosage_chunk {\n    raw_integer_summary.record_raw_dosage_integer(raw_dosage_integer);\n}\n```\n\nThat is correct, but it leaves performance on the table.\n\n### Fix\n\nKeep the current version as a correctness baseline, then implement vector accumulation:\n\n```text\nraw_sum: i32/i64 vector accumulators\nraw_square_sum: i32/i64 with periodic horizontal reduction\nzero/nonzero counts: comparison masks + popcount\nhom_ref/het/hom_alt counts: comparison masks + popcount\n```\n\nPeriodically reduce to scalar `u64/i64` to avoid overflow.\n\nAlso add a runtime override:\n\n```text\nG_BGEN_SIMD=auto|scalar|avx2\n```\n\nRight now dispatch is automatic AVX2 if available (`simd.rs:110-125`), which makes benchmarking scalar vs AVX2 annoying.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T06:32:25+00:00",
+        "integration_head": "165c097974f520a556bae290922b3511de261f75"
+      },
       "slug": "the-current-avx2-path-still-scalarizes-statistics-inside-the-vector-loop",
       "source_end_line": 173,
       "source_id": 11,
       "source_start_line": 136,
-      "status": "ready",
+      "status": "integrated",
       "title": "The current AVX2 path still scalarizes statistics inside the vector loop",
       "worktree": "../g-worktrees/review2-T011-the-current-avx2-path-still-scalarizes-statistics-inside-the-vector-loop"
     },
@@ -209,12 +221,15 @@
       "manual": {},
       "priority": "P1 performance issues",
       "problem_markdown": "## 12. SIMD test allows impossible negative dosages\n\nIn `src/genotype/bgen/simd.rs:537-538`:\n\n```rust\nassert!(output.iter().all(|dosage_value| (-1.0..=2.0).contains(dosage_value)));\n```\n\nFor valid unphased 8-bit BGEN probabilities where `p0 + p1 <= 255`, dosage should be:\n\n```text\n0 <= dosage <= 2\n```\n\nThe test should not allow `-1.0`.\n\n### Fix\n\nTighten this to:\n\n```rust\nassert!(output.iter().all(|dosage_value| (0.0..=2.0).contains(dosage_value)));\n```\n\nIf the test generator can create invalid probability pairs, fix the generator, not the assertion.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T06:49:14+00:00",
+        "integration_head": "62beabf2fbb41f8ac517b839901f961817973846"
+      },
       "slug": "simd-test-allows-impossible-negative-dosages",
       "source_end_line": 201,
       "source_id": 12,
       "source_start_line": 174,
-      "status": "ready",
+      "status": "integrated",
       "title": "SIMD test allows impossible negative dosages",
       "worktree": "../g-worktrees/review2-T012-simd-test-allows-impossible-negative-dosages"
     },
@@ -246,12 +261,15 @@
       "manual": {},
       "priority": "P1 correctness / numerical concerns",
       "problem_markdown": "## 13. `jax-enable-x64` is misleading\n\nThe config default has:\n\n```toml\njax-enable-x64 = true\n```\n\nand `GComputeConfig` exposes `jax_enable_x64`.\n\nBut much of the compute code explicitly casts to float32:\n\n```python\n# linear state\ncovariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jnp.float32)\nphenotype_matrix_compute = jnp.asarray(phenotype_matrix, dtype=jnp.float32)\n\n# binary score\nraw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)\n\n# p-values\nsafe_chi_squared = jnp.maximum(jnp.asarray(chi_squared, dtype=jnp.float32), 0.0)\n```\n\nRelevant files:\n\n```text\nsrc/g/compute/regenie2_linear/state.py\nsrc/g/compute/regenie2_binary/score.py\nsrc/g/compute/common/pvalue.py\n```\n\nThis is not necessarily wrong. Float32 may be the desired fast path. But the config suggests broader x64 behavior than the kernels actually provide.\n\n### Fix\n\nMake the policy explicit:\n\n```text\njax-enable-x64:\n  enables JAX's ability to create x64 arrays, mainly for Firth internals\n\nscore-dtype:\n  float32 | float64\n\nfirth-dtype:\n  float64\n```\n\nOr remove `jax-enable-x64` from the user-facing tuning surface and keep it internal.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:05:04+00:00",
+        "integration_head": "0ec620de50b0ae2acba740a49911b286bc3b3e75"
+      },
       "slug": "jax-enable-x64-is-misleading",
       "source_end_line": 256,
       "source_id": 13,
       "source_start_line": 204,
-      "status": "ready",
+      "status": "integrated",
       "title": "`jax-enable-x64` is misleading",
       "worktree": "../g-worktrees/review2-T013-jax-enable-x64-is-misleading"
     },
@@ -285,12 +303,15 @@
       "manual": {},
       "priority": "P1 correctness / numerical concerns",
       "problem_markdown": "## 14. P-value conversion always downgrades to float32\n\nIn `src/g/compute/common/pvalue.py:24`:\n\n```python\nsafe_chi_squared = jnp.maximum(jnp.asarray(chi_squared, dtype=jnp.float32), 0.0)\n```\n\nIf a Firth path produces float64 chi-square values, this discards precision before tail conversion.\n\n### Fix\n\nPreserve float64 when present:\n\n```python\nchi_squared_array = jnp.asarray(chi_squared)\ndtype = jnp.result_type(chi_squared_array, jnp.float32)\nsafe_chi_squared = jnp.maximum(chi_squared_array.astype(dtype), jnp.asarray(0.0, dtype=dtype))\n```\n\nOr explicitly provide:\n\n```python\nchi_squared_to_log10_p_value_float32\nchi_squared_to_log10_p_value_float64\n```\n\nFor extreme GWAS tails, this deserves parity testing.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:13:39+00:00",
+        "integration_head": "835ec9b09b40a1533fcff988228e1cad653cd511"
+      },
       "slug": "p-value-conversion-always-downgrades-to-float32",
       "source_end_line": 287,
       "source_id": 14,
       "source_start_line": 257,
-      "status": "ready",
+      "status": "integrated",
       "title": "P-value conversion always downgrades to float32",
       "worktree": "../g-worktrees/review2-T014-p-value-conversion-always-downgrades-to-float32"
     },
@@ -322,12 +343,15 @@
       "manual": {},
       "priority": "P1 correctness / numerical concerns",
       "problem_markdown": "## 15. Linear LOCO/covariate formula still needs parity tests\n\nThe linear state residualizes phenotype against covariates first and subtracts LOCO predictions later. The API doc says:\n\n```text\nadjusted_residual = phenotype_residual - loco_predictions\n```\n\nThat may match how REGENIE\u2019s Step 1 predictions are intended to be used, but the subtle alternative is:\n\n```text\nresidualize(y - pred)\n```\n\nThese differ if LOCO predictions are not covariate-orthogonal.\n\n### Fix\n\nAdd a tiny parity fixture where covariates and LOCO predictions are correlated. Compare against REGENIE. Lock the formula down before optimizing linear further.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:19:29+00:00",
+        "integration_head": "256732b2d7fc3b3bbf0a30cd9b1b5fe1b421f4a1"
+      },
       "slug": "linear-loco-covariate-formula-still-needs-parity-tests",
       "source_end_line": 309,
       "source_id": 15,
       "source_start_line": 288,
-      "status": "ready",
+      "status": "integrated",
       "title": "Linear LOCO/covariate formula still needs parity tests",
       "worktree": "../g-worktrees/review2-T015-linear-loco-covariate-formula-still-needs-parity-tests"
     },
@@ -361,12 +385,15 @@
       "manual": {},
       "priority": "P2 memory allocation / host-device transfer issues",
       "problem_markdown": "## 16. Python telemetry opens and closes the JSONL file for every event\n\nIn `src/g/engine/telemetry.py:131-138`:\n\n```python\nwith self.lock:\n    path.parent.mkdir(parents=True, exist_ok=True)\n    with path.open(\"a\", encoding=\"utf-8\") as output_file:\n        output_file.write(...)\n```\n\nThis is fine for progress events and low-volume lifecycle logging. It is not fine if you start logging per-chunk debug or trace events through this path.\n\n### Fix\n\nKeep this for `progress` mode, but add a buffered queue writer for `profile` and `trace` modes.\n\nAt minimum:\n\n```text\n- create directories once\n- open files once per telemetry session\n- flush on close\n- optionally use a bounded queue\n```",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:23:40+00:00",
+        "integration_head": "ff276f35ad3348b49d9ee4a056b0cefc25e1f3fb"
+      },
       "slug": "python-telemetry-opens-and-closes-the-jsonl-file-for-every-event",
       "source_end_line": 339,
       "source_id": 16,
       "source_start_line": 312,
-      "status": "ready",
+      "status": "integrated",
       "title": "Python telemetry opens and closes the JSONL file for every event",
       "worktree": "../g-worktrees/review2-T016-python-telemetry-opens-and-closes-the-jsonl-file-for-every-event"
     },
@@ -437,12 +464,15 @@
       "manual": {},
       "priority": "P2 memory allocation / host-device transfer issues",
       "problem_markdown": "## 18. Output writer still copies result arrays and clones metadata\n\nIn `src/output/session.rs:340-379`, `write_regenie2_native_chunk(...)` creates:\n\n```rust\nNativeChunkHandle::new(Arc::new(metadata.clone()), Arc::new(chunk_stats.clone()), ...)\n```\n\nand then copies result arrays:\n\n```rust\nbeta: beta.to_vec(),\nse: standard_error.to_vec(),\nchisq: chi_squared.to_vec(),\nlog10p: log10_p_value.to_vec(),\nextra_code: extra_code.map(<[i32]>::to_vec),\n```\n\nThis is not a correctness bug. But at scale it is visible CPU memory traffic.\n\n### Better architecture\n\nThe Rust BGEN engine already owns metadata and stats before Python/JAX compute. Long-term, pass a Rust-owned `NativeChunkHandle` through the Python callback:\n\n```text\nRust BGEN decode\n    \u2192 Python receives genotype buffer + NativeChunkHandle\n    \u2192 JAX computes numeric arrays\n    \u2192 Python passes NativeChunkHandle + numeric arrays to writer\n```\n\nThat avoids metadata/stats cloning through Python.\n\nFor result arrays, consider accepting ownership of contiguous NumPy buffers where possible.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:29:55+00:00",
+        "integration_head": "3ba3db177961d67a886e3292ab44a6162c26984a"
+      },
       "slug": "output-writer-still-copies-result-arrays-and-clones-metadata",
       "source_end_line": 408,
       "source_id": 18,
       "source_start_line": 372,
-      "status": "ready",
+      "status": "integrated",
       "title": "Output writer still copies result arrays and clones metadata",
       "worktree": "../g-worktrees/review2-T018-output-writer-still-copies-result-arrays-and-clones-metadata"
     },
@@ -624,12 +654,15 @@
       "manual": {},
       "priority": "P2 architecture issues",
       "problem_markdown": "## 23. `scan_committed_chunk_identifiers` trusts single-chunk filenames\n\nIn `src/output/resume.rs:27-31`, if a file name looks like a single-chunk file, the scan inserts the identifier without opening the Arrow file:\n\n```rust\nif let Some((first_chunk_identifier, None)) = parse_chunk_file_name(&chunk_file_path) {\n    committed_identifiers.insert(first_chunk_identifier);\n    continue;\n}\n```\n\nThis helper may not be used for strict resume, but it is risky as a general committed-chunk scanner.\n\n### Fix\n\nFor any \u201cstrict\u201d or \u201crepair\u201d mode, always open Arrow files and validate schema metadata. Fast mode can trust manifest only. Filename-only inference should be clearly named as fast/unsafe.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:37:53+00:00",
+        "integration_head": "cc779900d08d548696f411cb48c3a57fc000a97a"
+      },
       "slug": "scan-committed-chunk-identifiers-trusts-single-chunk-filenames",
       "source_end_line": 512,
       "source_id": 23,
       "source_start_line": 494,
-      "status": "ready",
+      "status": "integrated",
       "title": "`scan_committed_chunk_identifiers` trusts single-chunk filenames",
       "worktree": "../g-worktrees/review2-T023-scan-committed-chunk-identifiers-trusts-single-chunk-filenames"
     },
@@ -663,12 +696,15 @@
       "manual": {},
       "priority": "P2 architecture issues",
       "problem_markdown": "## 24. Hard-crash resume still seems weaker than graceful resume\n\nThe writer records chunk commits in memory and writes them to the manifest in `finish()` / `finish_interrupted()`:\n\n```rust\n# src/output/session.rs\nlet chunk_commits = self.take_worker_commits()?;\nmanifest::record_run_manifest_chunk_commits(...)\n```\n\nArrow files are written earlier using temp-file-then-rename in `src/output/writer.rs`.\n\nIf the process is killed after Arrow rename but before `finish()` records manifest commits, the chunk file exists but the manifest may not list it. Current `initialize_output_run()` resumes from manifest commits. I did not see a scan-and-repair step in Python output initialization.\n\n### Fix\n\nAdd one of:\n\n```text\nA. append-only commits.jsonl written after every Arrow rename\nB. strict resume repair: scan Arrow metadata, update manifest, then resume\nC. fast resume = manifest only; strict resume = manifest + Arrow scan\n```\n\nGiven Arrow chunk metadata already contains commit records, option B is very natural.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:46:44+00:00",
+        "integration_head": "ddab01836a4b045fbdbc45781f0df69934f54126"
+      },
       "slug": "hard-crash-resume-still-seems-weaker-than-graceful-resume",
       "source_end_line": 540,
       "source_id": 24,
       "source_start_line": 513,
-      "status": "ready",
+      "status": "integrated",
       "title": "Hard-crash resume still seems weaker than graceful resume",
       "worktree": "../g-worktrees/review2-T024-hard-crash-resume-still-seems-weaker-than-graceful-resume"
     }

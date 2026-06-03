@@ -379,6 +379,48 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
     ]
 
 
+def test_initialize_logging_rejects_rust_log_file_matching_python_event_stream(tmp_path: Path) -> None:
+    python_event_file = tmp_path / "logs" / "python.events.jsonl"
+    diagnostics_config = config.GDiagnosticsConfig(log_file=python_event_file)
+    telemetry_paths = telemetry_module.TelemetryPaths(
+        log_dir=tmp_path / "logs",
+        event_file=python_event_file,
+        progress_file=tmp_path / "logs" / "progress.jsonl",
+        trace_file=None,
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+
+    with (
+        patch("g.runner.importlib.import_module") as mock_import_module,
+        pytest.raises(ValueError, match="g-log-file points at the Python telemetry event stream"),
+    ):
+        runner.initialize_logging(diagnostics_config, telemetry_paths)
+
+    mock_import_module.assert_not_called()
+
+
+def test_initialize_logging_rejects_rust_trace_file_matching_python_event_stream(tmp_path: Path) -> None:
+    python_event_file = tmp_path / "logs" / "python.events.jsonl"
+    diagnostics_config = config.GDiagnosticsConfig(trace_file=python_event_file)
+    telemetry_paths = telemetry_module.TelemetryPaths(
+        log_dir=tmp_path / "logs",
+        event_file=python_event_file,
+        progress_file=tmp_path / "logs" / "progress.jsonl",
+        trace_file=python_event_file,
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+
+    with (
+        patch("g.runner.importlib.import_module") as mock_import_module,
+        pytest.raises(ValueError, match="g-trace-file points at the Python telemetry event stream"),
+    ):
+        runner.initialize_logging(diagnostics_config, telemetry_paths)
+
+    mock_import_module.assert_not_called()
+
+
 def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path: Path) -> None:
     class FakeCoreModule:
         def initialize_logging(self, **kwargs: object) -> bool:

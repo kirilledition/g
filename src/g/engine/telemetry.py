@@ -28,9 +28,9 @@ class TelemetryPaths:
 
     Attributes:
         log_dir: Directory containing telemetry streams.
-        event_file: Stable lifecycle and profiling event stream.
+        event_file: Stable Python lifecycle and profiling event stream.
         progress_file: Low-volume progress event stream.
-        trace_file: Optional high-volume native trace stream.
+        trace_file: Optional high-volume Rust trace stream.
         profile_summary_json: Optional aggregate profile summary path.
         stage_timings_json: Optional detailed synchronized stage timings path.
 
@@ -272,15 +272,15 @@ def resolve_telemetry_paths(regenie_config: config.RegenieConfig) -> TelemetryPa
     log_dir = diagnostics_config.log_dir
     if log_dir is None and diagnostics_config.telemetry != types.TelemetryMode.OFF:
         log_dir = resolve_output_run_root(regenie_config) / "logs"
-    event_file = diagnostics_config.log_file
-    if event_file is None and log_dir is not None and diagnostics_config.telemetry != types.TelemetryMode.OFF:
-        event_file = log_dir / "events.jsonl"
+    event_file = None
+    if log_dir is not None and diagnostics_config.telemetry != types.TelemetryMode.OFF:
+        event_file = log_dir / "python.events.jsonl"
     progress_file = None
     if log_dir is not None and diagnostics_config.telemetry != types.TelemetryMode.OFF:
         progress_file = log_dir / "progress.jsonl"
     trace_file = diagnostics_config.trace_file
     if trace_file is None and log_dir is not None and diagnostics_config.telemetry == types.TelemetryMode.TRACE:
-        trace_file = log_dir / "trace.jsonl"
+        trace_file = log_dir / "rust.events.jsonl"
     profile_summary_json = diagnostics_config.profile_summary_json
     if (
         profile_summary_json is None
