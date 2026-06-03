@@ -654,12 +654,15 @@
       "manual": {},
       "priority": "P2 architecture issues",
       "problem_markdown": "## 23. `scan_committed_chunk_identifiers` trusts single-chunk filenames\n\nIn `src/output/resume.rs:27-31`, if a file name looks like a single-chunk file, the scan inserts the identifier without opening the Arrow file:\n\n```rust\nif let Some((first_chunk_identifier, None)) = parse_chunk_file_name(&chunk_file_path) {\n    committed_identifiers.insert(first_chunk_identifier);\n    continue;\n}\n```\n\nThis helper may not be used for strict resume, but it is risky as a general committed-chunk scanner.\n\n### Fix\n\nFor any \u201cstrict\u201d or \u201crepair\u201d mode, always open Arrow files and validate schema metadata. Fast mode can trust manifest only. Filename-only inference should be clearly named as fast/unsafe.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:37:53+00:00",
+        "integration_head": "cc779900d08d548696f411cb48c3a57fc000a97a"
+      },
       "slug": "scan-committed-chunk-identifiers-trusts-single-chunk-filenames",
       "source_end_line": 512,
       "source_id": 23,
       "source_start_line": 494,
-      "status": "ready",
+      "status": "integrated",
       "title": "`scan_committed_chunk_identifiers` trusts single-chunk filenames",
       "worktree": "../g-worktrees/review2-T023-scan-committed-chunk-identifiers-trusts-single-chunk-filenames"
     },
