@@ -282,9 +282,10 @@ def initialize_logging(
 ) -> None:
     """Initialize unified Rust/Python logging before runtime setup."""
     global CONFIGURED_LOGGING_RUNTIME_POLICY
-    core_module = importlib.import_module("g._core")
     log_file = diagnostics_config.log_file
     trace_file = diagnostics_config.trace_file if telemetry_paths is None else telemetry_paths.trace_file
+    validate_logging_stream_ownership(log_file=log_file, trace_file=trace_file, telemetry_paths=telemetry_paths)
+    core_module = importlib.import_module("g._core")
     runtime_policy = LoggingRuntimePolicy(
         log_filter=diagnostics_config.log_filter,
         log_file=log_file,
@@ -315,6 +316,37 @@ def initialize_logging(
         return
     if initialized_logging is True:
         CONFIGURED_LOGGING_RUNTIME_POLICY = runtime_policy
+
+
+def validate_logging_stream_ownership(
+    *,
+    log_file: Path | None,
+    trace_file: Path | None,
+    telemetry_paths: telemetry.TelemetryPaths | None,
+) -> None:
+    """Reject configurations that make Rust and Python append to one file."""
+    if telemetry_paths is None or telemetry_paths.event_file is None:
+        return
+    python_event_file = telemetry_paths.event_file
+    if paths_refer_to_same_file(log_file, python_event_file):
+        message = (
+            "g-log-file points at the Python telemetry event stream. "
+            "Use a separate Rust tracing path such as rust.events.jsonl."
+        )
+        raise ValueError(message)
+    if paths_refer_to_same_file(trace_file, python_event_file):
+        message = (
+            "g-trace-file points at the Python telemetry event stream. "
+            "Use a separate Rust tracing path such as rust.events.jsonl."
+        )
+        raise ValueError(message)
+
+
+def paths_refer_to_same_file(first_path: Path | None, second_path: Path | None) -> bool:
+    """Return whether two configured paths resolve to the same file."""
+    if first_path is None or second_path is None:
+        return False
+    return first_path.expanduser().resolve() == second_path.expanduser().resolve()
 
 
 def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
