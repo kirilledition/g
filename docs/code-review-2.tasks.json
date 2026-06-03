@@ -53,12 +53,15 @@
       "manual": {},
       "priority": "P1 performance issues",
       "problem_markdown": "## 8. Linear kernels reread genotype data for sum of squares that Rust already knows\n\nIn `src/g/compute/regenie2_linear/score.py:22-41`, the kernel normalizes genotypes and computes:\n\n```python\ngenotype_sum_squares_compute = jnp.einsum(\n    \"ij,ij->i\",\n    normalized_genotype_matrix_by_variant,\n    normalized_genotype_matrix_by_variant,\n)\n```\n\nBut Rust chunk stats already include genotype sums and square sums. The output writer tests show `ChunkStats` has:\n\n```rust\ndosage_sum\ndosage_square_sum\nimputed_dosage_square_sum\n```\n\nThe linear kernel needs the normalized sum of squares. Since normalization subtracts either `0` or `2` per variant:\n\n```text\nsum((g - c)^2) = sum(g\u00b2) - 2c\u00b7sum(g) + n\u00b7c\u00b2\n```\n\nwhere `c \u2208 {0, 2}`.\n\n### Fix\n\nPass native per-variant `dosage_sum` and `imputed_dosage_square_sum` to the linear JAX kernel.\n\nThen compute:\n\n```python\ngenotype_mean = dosage_sum / sample_count\noffset = jnp.where(genotype_mean > 1.0, 2.0, 0.0)\nnormalized_sum_squares = sum_g2 - 2.0 * offset * sum_g + sample_count * offset * offset\n```\n\nThis avoids a full GPU pass over the genotype matrix.\n\nFor single-trait quantitative REGENIE, that matters because the kernel is memory-bandwidth-bound.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T05:36:14+00:00",
+        "integration_head": "18d7883dc637714267a3a54dd33b1d6b9e3c3e6d"
+      },
       "slug": "linear-kernels-reread-genotype-data-for-sum-of-squares-that-rust-already-knows",
       "source_end_line": 79,
       "source_id": 8,
       "source_start_line": 34,
-      "status": "ready",
+      "status": "integrated",
       "title": "Linear kernels reread genotype data for sum of squares that Rust already knows",
       "worktree": "../g-worktrees/review2-T008-linear-kernels-reread-genotype-data-for-sum-of-squares-that-rust-already-knows"
     },
@@ -97,7 +100,7 @@
       "source_end_line": 106,
       "source_id": 9,
       "source_start_line": 80,
-      "status": "ready",
+      "status": "integrating",
       "title": "Binary genotype flipping also duplicates native work",
       "worktree": "../g-worktrees/review2-T009-binary-genotype-flipping-also-duplicates-native-work"
     },
