@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
 const TABULAR_MISSING_VALUE_TOKENS: &[&str] = &["", "NA", "NaN", "nan", "-9"];
@@ -99,19 +99,10 @@ struct TabularColumnSelection {
     selected_columns: Vec<SelectedTabularColumn>,
 }
 
-#[derive(Clone, Copy)]
-enum TabularDelimiter {
-    Tab,
-    Space,
-}
-
-impl TabularDelimiter {
-    fn byte(self) -> u8 {
-        match self {
-            Self::Tab => b'\t',
-            Self::Space => b' ',
-        }
-    }
+struct SampleFileReader<R: BufRead> {
+    path_text: String,
+    reader: R,
+    line_buffer: String,
 }
 
 struct StreamingTabularReader<R: Read> {
@@ -522,14 +513,14 @@ fn load_sample_identifier_data_from_sample_file(
     expected_sample_count: usize,
 ) -> Result<SampleIdentifierData, String> {
     let mut reader = open_sample_file_reader(sample_path)?;
-    let column_names = space_delimited_record_to_strings(&reader.read_required_record(format!(
+    let column_names = reader.read_required_fields(format!(
         "Sample file '{}' must contain at least two header lines.",
         sample_path.display()
-    ))?);
-    let column_types = space_delimited_record_to_strings(&reader.read_required_record(format!(
+    ))?;
+    let column_types = reader.read_required_fields(format!(
         "Sample file '{}' must contain at least two header lines.",
         sample_path.display()
-    ))?);
+    ))?;
     validate_sample_file_header(sample_path, &column_names, &column_types)?;
     let family_identifier_column_index = 0;
     let individual_identifier_column_index =
@@ -539,9 +530,8 @@ fn load_sample_identifier_data_from_sample_file(
     let mut family_identifiers = Vec::with_capacity(expected_sample_count);
     let mut individual_identifiers = Vec::with_capacity(expected_sample_count);
     let mut sample_count = 0usize;
-    while let Some(record) = reader.read_next_record()? {
+    while let Some(row_values) = reader.read_next_fields()? {
         sample_count += 1;
-        let row_values = space_delimited_record_to_strings(&record);
         if row_values.len() != column_names.len() {
             return Err(format!(
                 "Sample file '{}' line {} has {} values, but the header declares {} columns.",
@@ -592,18 +582,21 @@ fn validate_sample_file_header(
     Ok(())
 }
 
-fn open_sample_file_reader(sample_path: &Path) -> Result<StreamingTabularReader<File>, String> {
-    open_tabular_reader(sample_path, "sample file", TabularDelimiter::Space)
+fn open_sample_file_reader(sample_path: &Path) -> Result<SampleFileReader<BufReader<File>>, String> {
+    let sample_file = File::open(sample_path)
+        .map_err(|error| format!("Failed to read sample file '{}': {error}.", sample_path.display()))?;
+    Ok(SampleFileReader::new(sample_path.display().to_string(), BufReader::new(sample_file)))
 }
 
+// Phenotype and covariate tables intentionally use tab-only parsing.
 fn open_tsv_table_reader(table_path: &Path) -> Result<StreamingTabularReader<File>, String> {
-    open_tabular_reader(table_path, "table", TabularDelimiter::Tab)
+    open_tabular_reader(table_path, "table", b'\t')
 }
 
 fn open_tabular_reader(
     table_path: &Path,
     source_label: &'static str,
-    delimiter: TabularDelimiter,
+    delimiter: u8,
 ) -> Result<StreamingTabularReader<File>, String> {
     let table_file = File::open(table_path)
         .map_err(|error| format!("Failed to read {source_label} '{}': {error}.", table_path.display()))?;
@@ -622,10 +615,37 @@ fn read_tabular_header<R: Read>(
     Ok(headers)
 }
 
+impl<R: BufRead> SampleFileReader<R> {
+    fn new(path_text: String, reader: R) -> Self {
+        Self { path_text, reader, line_buffer: String::new() }
+    }
+
+    fn read_required_fields(&mut self, empty_error_message: String) -> Result<Vec<String>, String> {
+        self.read_next_fields()?.ok_or(empty_error_message)
+    }
+
+    fn read_next_fields(&mut self) -> Result<Option<Vec<String>>, String> {
+        loop {
+            self.line_buffer.clear();
+            let read_byte_count = self
+                .reader
+                .read_line(&mut self.line_buffer)
+                .map_err(|error| format!("Failed to read sample file '{}': {error}.", self.path_text))?;
+            if read_byte_count == 0 {
+                return Ok(None);
+            }
+            let field_values = self.line_buffer.split_whitespace().map(ToString::to_string).collect::<Vec<_>>();
+            if !field_values.is_empty() {
+                return Ok(Some(field_values));
+            }
+        }
+    }
+}
+
 impl<R: Read> StreamingTabularReader<R> {
-    fn new(path_text: String, source_label: &'static str, source: R, delimiter: TabularDelimiter) -> Self {
+    fn new(path_text: String, source_label: &'static str, source: R, delimiter: u8) -> Self {
         let reader = csv::ReaderBuilder::new()
-            .delimiter(delimiter.byte())
+            .delimiter(delimiter)
             .flexible(true)
             .has_headers(false)
             .trim(csv::Trim::All)
@@ -661,10 +681,6 @@ fn is_empty_tabular_record(record: &csv::StringRecord) -> bool {
 
 fn record_to_strings(record: &csv::StringRecord) -> Vec<String> {
     record.iter().map(ToString::to_string).collect()
-}
-
-fn space_delimited_record_to_strings(record: &csv::StringRecord) -> Vec<String> {
-    record.iter().filter(|field_value| !field_value.is_empty()).map(ToString::to_string).collect()
 }
 
 fn required_column_index(headers: &[String], column_name: &str, table_path: &str) -> Result<usize, String> {
