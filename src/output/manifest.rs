@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 const RUN_MANIFEST_FILE_NAME: &str = "run_manifest.json";
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RunManifestChunkCommit {
     pub(crate) chunk_identifier: i64,
     pub(crate) variant_start_index: i64,

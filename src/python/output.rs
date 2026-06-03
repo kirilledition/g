@@ -14,6 +14,7 @@ use pyo3::prelude::*;
 use crate::output::{
     NativeChunkHandle, OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
+    repair_strict_manifest_chunk_commits as repair_native_strict_manifest_chunk_commits,
     scan_committed_chunk_identifiers as scan_native_committed_chunk_identifiers,
     validate_strict_manifest_chunks as validate_native_strict_manifest_chunks,
 };
@@ -239,6 +240,31 @@ pub(crate) fn scan_committed_chunk_identifiers(chunks_directory: String) -> PyRe
 pub(crate) fn validate_strict_manifest_chunks(chunks_directory: String, manifest_json: String) -> PyResult<Vec<i64>> {
     validate_native_strict_manifest_chunks(Path::new(&chunks_directory), &manifest_json)
         .map_err(output_writer_error_to_py)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn repair_strict_manifest_chunk_commits(
+    chunks_directory: String,
+    manifest_json: String,
+) -> PyResult<String> {
+    let chunk_commits = repair_native_strict_manifest_chunk_commits(Path::new(&chunks_directory), &manifest_json)
+        .map_err(output_writer_error_to_py)?;
+    serde_json::to_string(
+        &chunk_commits
+            .into_iter()
+            .map(|chunk_commit| {
+                serde_json::json!({
+                    "chunk_identifier": chunk_commit.chunk_identifier,
+                    "variant_start_index": chunk_commit.variant_start_index,
+                    "variant_stop_index": chunk_commit.variant_stop_index,
+                    "row_count": chunk_commit.row_count,
+                    "chunk_file_name": chunk_commit.chunk_file_name,
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
 fn output_writer_error_to_py(error: OutputWriterError) -> PyErr {

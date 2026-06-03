@@ -21,8 +21,8 @@ mod output;
 
 use logging::{initialize_logging, shutdown_logging};
 use output::{
-    OutputWriterSession, finalize_output_run_chunks, scan_committed_chunk_identifiers, validate_strict_manifest_chunks,
-    write_regenie2_multi_native_chunk,
+    OutputWriterSession, finalize_output_run_chunks, repair_strict_manifest_chunk_commits,
+    scan_committed_chunk_identifiers, validate_strict_manifest_chunks, write_regenie2_multi_native_chunk,
 };
 
 type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
@@ -1133,6 +1133,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<MultiRegeniePredictionSource>()?;
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
+    module.add_function(wrap_pyfunction!(repair_strict_manifest_chunk_commits, module)?)?;
     module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
     module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;
