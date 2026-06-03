@@ -261,12 +261,15 @@
       "manual": {},
       "priority": "P1 correctness / numerical concerns",
       "problem_markdown": "## 13. `jax-enable-x64` is misleading\n\nThe config default has:\n\n```toml\njax-enable-x64 = true\n```\n\nand `GComputeConfig` exposes `jax_enable_x64`.\n\nBut much of the compute code explicitly casts to float32:\n\n```python\n# linear state\ncovariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jnp.float32)\nphenotype_matrix_compute = jnp.asarray(phenotype_matrix, dtype=jnp.float32)\n\n# binary score\nraw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)\n\n# p-values\nsafe_chi_squared = jnp.maximum(jnp.asarray(chi_squared, dtype=jnp.float32), 0.0)\n```\n\nRelevant files:\n\n```text\nsrc/g/compute/regenie2_linear/state.py\nsrc/g/compute/regenie2_binary/score.py\nsrc/g/compute/common/pvalue.py\n```\n\nThis is not necessarily wrong. Float32 may be the desired fast path. But the config suggests broader x64 behavior than the kernels actually provide.\n\n### Fix\n\nMake the policy explicit:\n\n```text\njax-enable-x64:\n  enables JAX's ability to create x64 arrays, mainly for Firth internals\n\nscore-dtype:\n  float32 | float64\n\nfirth-dtype:\n  float64\n```\n\nOr remove `jax-enable-x64` from the user-facing tuning surface and keep it internal.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:05:04+00:00",
+        "integration_head": "0ec620de50b0ae2acba740a49911b286bc3b3e75"
+      },
       "slug": "jax-enable-x64-is-misleading",
       "source_end_line": 256,
       "source_id": 13,
       "source_start_line": 204,
-      "status": "ready",
+      "status": "integrated",
       "title": "`jax-enable-x64` is misleading",
       "worktree": "../g-worktrees/review2-T013-jax-enable-x64-is-misleading"
     },
