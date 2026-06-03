@@ -142,7 +142,12 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
     dosage_sum: jax.Array | None = None,
     observation_count: jax.Array | None = None,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult | regenie2_binary_result.Regenie2MultiBinaryChunkResult:
-    """Compute multi-trait binary association from variant-major genotypes."""
+    """Compute multi-trait binary association from variant-major genotypes.
+
+    Multi-binary score-only execution is true batched GPU compute. Multi-binary approximate Firth currently shares
+    the genotype transfer, then applies correction one trait at a time in Python and should be benchmarked separately.
+
+    """
     if correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
         return regenie2_binary_score.compute_multi_binary_score_test_chunk_variant_major(
             chromosome_state=chromosome_state,
@@ -171,6 +176,9 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
         return typing.cast("regenie2_binary_result.Regenie2BinaryChunkResult", result)
 
     trait_count = chromosome_state.phenotype_matrix.shape[0]
+    # Approximate Firth is not yet a fully batched multi-trait correction workload:
+    # it reuses the variant-major genotype chunk, then dispatches each trait through
+    # the single-trait correction path before stacking the results.
     return regenie2_binary_result.stack_binary_chunk_results(
         [compute_one_trait(trait_index) for trait_index in range(trait_count)]
     )
