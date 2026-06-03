@@ -303,12 +303,15 @@
       "manual": {},
       "priority": "P1 correctness / numerical concerns",
       "problem_markdown": "## 14. P-value conversion always downgrades to float32\n\nIn `src/g/compute/common/pvalue.py:24`:\n\n```python\nsafe_chi_squared = jnp.maximum(jnp.asarray(chi_squared, dtype=jnp.float32), 0.0)\n```\n\nIf a Firth path produces float64 chi-square values, this discards precision before tail conversion.\n\n### Fix\n\nPreserve float64 when present:\n\n```python\nchi_squared_array = jnp.asarray(chi_squared)\ndtype = jnp.result_type(chi_squared_array, jnp.float32)\nsafe_chi_squared = jnp.maximum(chi_squared_array.astype(dtype), jnp.asarray(0.0, dtype=dtype))\n```\n\nOr explicitly provide:\n\n```python\nchi_squared_to_log10_p_value_float32\nchi_squared_to_log10_p_value_float64\n```\n\nFor extreme GWAS tails, this deserves parity testing.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:13:39+00:00",
+        "integration_head": "835ec9b09b40a1533fcff988228e1cad653cd511"
+      },
       "slug": "p-value-conversion-always-downgrades-to-float32",
       "source_end_line": 287,
       "source_id": 14,
       "source_start_line": 257,
-      "status": "ready",
+      "status": "integrated",
       "title": "P-value conversion always downgrades to float32",
       "worktree": "../g-worktrees/review2-T014-p-value-conversion-always-downgrades-to-float32"
     },
