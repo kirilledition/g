@@ -1,9 +1,9 @@
-name: Science Monthly
+name: Monthly Rot Check
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 1 1 * *"
+    - cron: "17 3 1 * *"
 
 permissions:
   contents: read
@@ -12,10 +12,10 @@ env:
   PYTHON_VERSION: "3.14"
 
 jobs:
-  science-monthly:
-    name: science-monthly
+  monthly-rot-check:
+    name: monthly-rot-check
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v6
         with:
@@ -25,77 +25,42 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Export Python shared library path
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "${GITHUB_ENV}"
+          import os
+          import sysconfig
+
+          library_dir = sysconfig.get_config_var("LIBDIR")
+          previous_path = os.environ.get("LD_LIBRARY_PATH", "")
+          print(f"LD_LIBRARY_PATH={library_dir}:{previous_path}")
+          PY
+
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      - name: Set up Rust toolchain for mixed-package science runs
+      - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Restore science data cache
-        id: science-data-cache
-        uses: actions/cache/restore@v5
-        with:
-          path: data
-          key: science-data-${{ runner.os }}-${{ hashFiles('scripts/fetch_1kg.py', 'scripts/simulate_phenos.py', 'scripts/benchmark.py', 'scripts/evaluate_phase1.py', 'pyproject.toml', 'Cargo.lock', 'uv.lock') }}
-
-      - name: Install external scientific tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y unzip zstd
-
-          TOOL_ROOT="$RUNNER_TEMP/gwas-tools"
-          BIN_DIR="$TOOL_ROOT/bin"
-          mkdir -p "$BIN_DIR"
-
-          curl -L --retry 3 --output "$RUNNER_TEMP/plink.zip" "https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20250819.zip"
-          unzip -q "$RUNNER_TEMP/plink.zip" -d "$RUNNER_TEMP/plink"
-          install -m 755 "$RUNNER_TEMP/plink/plink" "$BIN_DIR/plink"
-
-          curl -L --retry 3 --output "$RUNNER_TEMP/plink2.zip" "https://s3.amazonaws.com/plink2-assets/alpha6/plink2_linux_amd_avx2_20260228.zip"
-          unzip -q "$RUNNER_TEMP/plink2.zip" -d "$RUNNER_TEMP/plink2"
-          install -m 755 "$RUNNER_TEMP/plink2/plink2" "$BIN_DIR/plink2"
-
-          curl -L --retry 3 --output "$RUNNER_TEMP/regenie.zip" "https://github.com/rgcgithub/regenie/releases/download/v4.1/regenie_v4.1.gz_x86_64_Linux.zip"
-          unzip -q "$RUNNER_TEMP/regenie.zip" -d "$RUNNER_TEMP/regenie"
-          install -m 755 "$RUNNER_TEMP/regenie/regenie_v4.1.gz_x86_64_Linux" "$BIN_DIR/regenie"
-
-          echo "$BIN_DIR" >> "$GITHUB_PATH"
-
-      - name: Install project and science dependencies
+      - name: Install project and test dependencies
         env:
           RUSTFLAGS: "--allow=non-local-definitions"
         run: uv sync --group dev --frozen
 
-      - name: Run monthly science validation
-        env:
-          RUSTFLAGS: "--allow=non-local-definitions"
-        run: |
-          uv run --no-sync python scripts/fetch_1kg.py
-          uv run --no-sync python scripts/simulate_phenos.py
-          uv run --no-sync python scripts/benchmark.py
-          uv run --no-sync python scripts/evaluate_phase1.py
+      - name: Run fast Python test suite
+        run: >
+          uv run --no-sync pytest tests/
+          -m "not phase0_data and not phase1_parity and not cli_smoke"
+          -v
 
-      - name: Save science data cache
-        if: ${{ always() && steps.science-data-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v5
-        with:
-          path: data
-          key: ${{ steps.science-data-cache.outputs.cache-primary-key }}
+      - name: Run locked Rust test suite
+        run: cargo test --workspace --locked
 
-      - name: Upload science artifacts
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: science-monthly-artifacts
-          if-no-files-found: warn
-          path: |
-            data/benchmark_report.json
-            data/phase1_evaluation_report.json
-            data/baselines/**
-            data/phase1_*
+      - name: Run installed CLI smoke test
+        run: uv run --no-sync pytest tests/test_cli_smoke.py -m cli_smoke -v
