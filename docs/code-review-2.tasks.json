@@ -696,12 +696,15 @@
       "manual": {},
       "priority": "P2 architecture issues",
       "problem_markdown": "## 24. Hard-crash resume still seems weaker than graceful resume\n\nThe writer records chunk commits in memory and writes them to the manifest in `finish()` / `finish_interrupted()`:\n\n```rust\n# src/output/session.rs\nlet chunk_commits = self.take_worker_commits()?;\nmanifest::record_run_manifest_chunk_commits(...)\n```\n\nArrow files are written earlier using temp-file-then-rename in `src/output/writer.rs`.\n\nIf the process is killed after Arrow rename but before `finish()` records manifest commits, the chunk file exists but the manifest may not list it. Current `initialize_output_run()` resumes from manifest commits. I did not see a scan-and-repair step in Python output initialization.\n\n### Fix\n\nAdd one of:\n\n```text\nA. append-only commits.jsonl written after every Arrow rename\nB. strict resume repair: scan Arrow metadata, update manifest, then resume\nC. fast resume = manifest only; strict resume = manifest + Arrow scan\n```\n\nGiven Arrow chunk metadata already contains commit records, option B is very natural.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:46:44+00:00",
+        "integration_head": "ddab01836a4b045fbdbc45781f0df69934f54126"
+      },
       "slug": "hard-crash-resume-still-seems-weaker-than-graceful-resume",
       "source_end_line": 540,
       "source_id": 24,
       "source_start_line": 513,
-      "status": "ready",
+      "status": "integrated",
       "title": "Hard-crash resume still seems weaker than graceful resume",
       "worktree": "../g-worktrees/review2-T024-hard-crash-resume-still-seems-weaker-than-graceful-resume"
     }
