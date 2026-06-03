@@ -179,12 +179,15 @@
       "manual": {},
       "priority": "P1 performance issues",
       "problem_markdown": "## 11. The current AVX2 path still scalarizes statistics inside the vector loop\n\n`src/genotype/bgen/simd.rs:293-337` vectorizes raw dosage decoding and f32 storage, but then it stores the vector back to a stack array and loops over lanes:\n\n```rust\nlet mut raw_dosage_chunk = [0_i32; AVX2_SAMPLE_COUNT];\n_mm256_storeu_si256(raw_dosage_chunk.as_mut_ptr().cast::<__m256i>(), raw_dosage_integers);\n\nfor raw_dosage_integer in raw_dosage_chunk {\n    raw_integer_summary.record_raw_dosage_integer(raw_dosage_integer);\n}\n```\n\nThat is correct, but it leaves performance on the table.\n\n### Fix\n\nKeep the current version as a correctness baseline, then implement vector accumulation:\n\n```text\nraw_sum: i32/i64 vector accumulators\nraw_square_sum: i32/i64 with periodic horizontal reduction\nzero/nonzero counts: comparison masks + popcount\nhom_ref/het/hom_alt counts: comparison masks + popcount\n```\n\nPeriodically reduce to scalar `u64/i64` to avoid overflow.\n\nAlso add a runtime override:\n\n```text\nG_BGEN_SIMD=auto|scalar|avx2\n```\n\nRight now dispatch is automatic AVX2 if available (`simd.rs:110-125`), which makes benchmarking scalar vs AVX2 annoying.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T06:32:25+00:00",
+        "integration_head": "165c097974f520a556bae290922b3511de261f75"
+      },
       "slug": "the-current-avx2-path-still-scalarizes-statistics-inside-the-vector-loop",
       "source_end_line": 173,
       "source_id": 11,
       "source_start_line": 136,
-      "status": "integrating",
+      "status": "integrated",
       "title": "The current AVX2 path still scalarizes statistics inside the vector loop",
       "worktree": "../g-worktrees/review2-T011-the-current-avx2-path-still-scalarizes-statistics-inside-the-vector-loop"
     },
@@ -223,7 +226,7 @@
       "source_end_line": 201,
       "source_id": 12,
       "source_start_line": 174,
-      "status": "ready",
+      "status": "integrating",
       "title": "SIMD test allows impossible negative dosages",
       "worktree": "../g-worktrees/review2-T012-simd-test-allows-impossible-negative-dosages"
     },
