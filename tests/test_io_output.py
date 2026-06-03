@@ -239,9 +239,13 @@ def test_native_writer_records_output_stage_timings_when_requested(tmp_path: Pat
     timing_payload = json.loads((tmp_path / "output_stage_timings.json").read_text(encoding="utf-8"))
     assert timing_payload["stage_counts"]["rust_output_metadata_clone"] == 0
     assert timing_payload["stage_counts"]["rust_output_result_buffer_copy"] == 0
+    assert timing_payload["stage_counts"]["rust_output_writer_record_batch_try_new"] == 2
     assert timing_payload["stage_counts"]["rust_output_writer_arrow_file_write"] == 1
+    assert "rust_output_writer_metadata_arrays" in timing_payload["stage_totals_seconds"]
+    assert "rust_output_writer_arrow_batch_write" in timing_payload["stage_totals_seconds"]
     assert timing_payload["output_metrics"]["writer_chunk_count"] == 2
     assert timing_payload["output_metrics"]["writer_row_count"] == 4
+    assert timing_payload["output_metrics"]["writer_arrow_file_bytes"] > 0
 
 
 def test_native_binary_writer_maps_successful_correction_extra_code_to_null(tmp_path: Path) -> None:

@@ -26,12 +26,20 @@ pub(crate) struct RegenieStep2FinalizationTiming {
     pub(crate) batch_count: u64,
     pub(crate) row_count: u64,
     pub(crate) list_chunk_files_seconds: f64,
+    pub(crate) parquet_writer_properties_seconds: f64,
+    pub(crate) parquet_file_create_seconds: f64,
+    pub(crate) parquet_writer_init_seconds: f64,
+    pub(crate) arrow_file_open_seconds: f64,
+    pub(crate) arrow_reader_init_seconds: f64,
+    pub(crate) arrow_batch_read_seconds: f64,
     pub(crate) read_arrow_seconds: f64,
     pub(crate) project_batch_seconds: f64,
     pub(crate) write_parquet_seconds: f64,
     pub(crate) footer_metadata_seconds: f64,
     pub(crate) close_writer_seconds: f64,
     pub(crate) manifest_update_seconds: f64,
+    pub(crate) arrow_file_bytes: u64,
+    pub(crate) parquet_file_bytes: u64,
     pub(crate) total_seconds: f64,
 }
 
@@ -69,26 +77,51 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
     let chunk_file_paths = sorted_arrow_chunk_file_paths(chunks_directory)?;
     let list_chunk_files_seconds = list_chunk_files_start_time.elapsed().as_secs_f64();
 
+    let parquet_writer_properties_start_time = Instant::now();
     let writer_properties = get_regenie_step2_parquet_writer_properties().clone();
+    let parquet_writer_properties_seconds = parquet_writer_properties_start_time.elapsed().as_secs_f64();
+
+    let parquet_file_create_start_time = Instant::now();
     let output_file = File::create(final_parquet_path).map_err(OutputWriterError::runtime)?;
+    let parquet_file_create_seconds = parquet_file_create_start_time.elapsed().as_secs_f64();
+
     let final_schema = Arc::clone(schema::get_regenie_step2_final_schema());
+    let parquet_writer_init_start_time = Instant::now();
     let mut parquet_writer =
         ArrowWriter::try_new(output_file, final_schema, Some(writer_properties)).map_err(OutputWriterError::runtime)?;
+    let parquet_writer_init_seconds = parquet_writer_init_start_time.elapsed().as_secs_f64();
+
     let chunk_file_count = chunk_file_paths.len();
     let mut output_row_count = 0usize;
     let mut batch_count = 0u64;
+    let mut arrow_file_open_seconds = 0.0;
+    let mut arrow_reader_init_seconds = 0.0;
+    let mut arrow_batch_read_seconds = 0.0;
     let mut read_arrow_seconds = 0.0;
     let mut project_batch_seconds = 0.0;
     let mut write_parquet_seconds = 0.0;
+    let mut arrow_file_bytes = 0u64;
     for chunk_file_path in chunk_file_paths {
-        let open_file_start_time = Instant::now();
+        arrow_file_bytes = arrow_file_bytes
+            .saturating_add(std::fs::metadata(&chunk_file_path).map_err(OutputWriterError::runtime)?.len());
+        let arrow_file_open_start_time = Instant::now();
         let input_file = File::open(&chunk_file_path).map_err(OutputWriterError::runtime)?;
+        let current_arrow_file_open_seconds = arrow_file_open_start_time.elapsed().as_secs_f64();
+        arrow_file_open_seconds += current_arrow_file_open_seconds;
+        read_arrow_seconds += current_arrow_file_open_seconds;
+
+        let arrow_reader_init_start_time = Instant::now();
         let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
-        read_arrow_seconds += open_file_start_time.elapsed().as_secs_f64();
+        let current_arrow_reader_init_seconds = arrow_reader_init_start_time.elapsed().as_secs_f64();
+        arrow_reader_init_seconds += current_arrow_reader_init_seconds;
+        read_arrow_seconds += current_arrow_reader_init_seconds;
+
         for maybe_batch in file_reader {
             let read_batch_start_time = Instant::now();
             let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
-            read_arrow_seconds += read_batch_start_time.elapsed().as_secs_f64();
+            let current_arrow_batch_read_seconds = read_batch_start_time.elapsed().as_secs_f64();
+            arrow_batch_read_seconds += current_arrow_batch_read_seconds;
+            read_arrow_seconds += current_arrow_batch_read_seconds;
 
             let project_batch_start_time = Instant::now();
             let projected_batch = project_chunk_batch_to_final_batch(batch)?;
@@ -109,6 +142,7 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
     let close_writer_start_time = Instant::now();
     parquet_writer.close().map_err(OutputWriterError::runtime)?;
     let close_writer_seconds = close_writer_start_time.elapsed().as_secs_f64();
+    let parquet_file_bytes = std::fs::metadata(final_parquet_path).map_err(OutputWriterError::runtime)?.len();
 
     let manifest_update_start_time = Instant::now();
     manifest::mark_run_manifest_finalized(final_parquet_path, output_row_count, chunk_file_count)
@@ -120,12 +154,20 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
         batch_count,
         row_count: u64::try_from(output_row_count).map_err(OutputWriterError::runtime)?,
         list_chunk_files_seconds,
+        parquet_writer_properties_seconds,
+        parquet_file_create_seconds,
+        parquet_writer_init_seconds,
+        arrow_file_open_seconds,
+        arrow_reader_init_seconds,
+        arrow_batch_read_seconds,
         read_arrow_seconds,
         project_batch_seconds,
         write_parquet_seconds,
         footer_metadata_seconds,
         close_writer_seconds,
         manifest_update_seconds,
+        arrow_file_bytes,
+        parquet_file_bytes,
         total_seconds: total_start_time.elapsed().as_secs_f64(),
     })
 }
