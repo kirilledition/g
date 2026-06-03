@@ -372,6 +372,7 @@ class RecordingCallback:
     def compute_preprocessed_variant_major_dosage_chunk(self, metadata, genotype_matrix, chunk_stats):
         self.variant_major_shapes.append((metadata.variant_start_index, genotype_matrix.shape))
         assert chunk_stats.allele_one_frequency.shape == (genotype_matrix.shape[0],)
+        assert chunk_stats.dosage_sum.shape == (genotype_matrix.shape[0],)
         self.free_variant_major_buffers.append(genotype_matrix)
 
 callback = RecordingCallback()

@@ -45,6 +45,8 @@ def compute_binary_score_test_chunk_variant_major(
     genotype_matrix_by_variant: jax.Array,
     correction_plan: types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+    dosage_sum: jax.Array | None = None,
+    observation_count: jax.Array | None = None,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
     """Compute the binary score test from canonical variant-major genotypes.
 
@@ -53,6 +55,8 @@ def compute_binary_score_test_chunk_variant_major(
         genotype_matrix_by_variant: Variant-major dosage matrix.
         correction_plan: Binary fallback/correction policy.
         kernel_config: Binary-kernel numerical policy.
+        dosage_sum: Optional native per-variant dosage sum.
+        observation_count: Optional native per-variant observed genotype count.
 
     Returns:
         Uncorrected score-test result for the chunk.
@@ -64,6 +68,8 @@ def compute_binary_score_test_chunk_variant_major(
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         correction_plan=correction_plan,
         kernel_config=kernel_config,
+        dosage_sum=dosage_sum,
+        observation_count=observation_count,
     )
     return regenie2_binary_result.squeeze_single_binary_score_result(multi_result)
 
@@ -73,6 +79,8 @@ def compute_multi_binary_score_test_chunk_variant_major(
     genotype_matrix_by_variant: jax.Array,
     correction_plan: types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+    dosage_sum: jax.Array | None = None,
+    observation_count: jax.Array | None = None,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Compute batched binary score tests for trait-major states and variant-major genotypes.
 
@@ -81,13 +89,19 @@ def compute_multi_binary_score_test_chunk_variant_major(
         genotype_matrix_by_variant: Variant-major dosage matrix.
         correction_plan: Binary fallback/correction policy.
         kernel_config: Binary-kernel numerical policy.
+        dosage_sum: Optional native per-variant dosage sum.
+        observation_count: Optional native per-variant observed genotype count.
 
     Returns:
         Trait-major score-test result for the chunk.
 
     """
     raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
-    genotype_flip_result = genotype.build_regenie_flipped_genotypes(raw_genotype_matrix_by_variant)
+    genotype_flip_result = genotype.build_regenie_flipped_genotypes(
+        raw_genotype_matrix_by_variant,
+        dosage_sum=dosage_sum,
+        observation_count=observation_count,
+    )
     genotype_matrix_by_variant_float32 = genotype_flip_result.genotype_matrix_by_variant
     genotype_matrix_by_variant_squared = genotype_matrix_by_variant_float32 * genotype_matrix_by_variant_float32
     bernoulli_weight = chromosome_state.square_root_weight * chromosome_state.square_root_weight

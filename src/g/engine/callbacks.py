@@ -1241,6 +1241,8 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
             )
+            dosage_sum = jax.device_put(chunk_stats.dosage_sum)
+            observation_count = jax.device_put(chunk_stats.observation_count)
             compute_start_time = time.perf_counter()
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
                 result = regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
@@ -1248,6 +1250,8 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     genotype_matrix_by_variant=genotype_device_array,
                     correction_plan=self.correction_plan,
                     kernel_config=self.kernel_config,
+                    dosage_sum=dosage_sum,
+                    observation_count=observation_count,
                 )
             else:
                 result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
@@ -1257,6 +1261,8 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
                     kernel_config=self.kernel_config,
                     stage_duration_recorder=self.get_stage_duration_recorder(),
+                    dosage_sum=dosage_sum,
+                    observation_count=observation_count,
                 )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
@@ -1406,6 +1412,8 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
             )
+            dosage_sum = jax.device_put(chunk_stats.dosage_sum)
+            observation_count = jax.device_put(chunk_stats.observation_count)
             compute_start_time = time.perf_counter()
             sparse_candidate_mask = (
                 None
@@ -1419,6 +1427,8 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 sparse_candidate_mask=sparse_candidate_mask,
                 kernel_config=self.kernel_config,
                 stage_duration_recorder=self.get_stage_duration_recorder(),
+                dosage_sum=dosage_sum,
+                observation_count=observation_count,
             )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
