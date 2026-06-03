@@ -29,6 +29,7 @@ RESUME_POLICY = "manifest_committed_chunks"
 DEFAULT_WRITER_QUEUE_DEPTH = config.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
 DEFAULT_WRITER_THREAD_COUNT = config.DEFAULT_OUTPUT_WRITER_THREADS
 DEFAULT_CHUNKS_PER_ARROW_FILE = config.DEFAULT_OUTPUT_CHUNKS_PER_ARROW_FILE
+RESULT_STATISTIC_OUTPUT_DTYPE = "float32"
 
 
 class MultiPhenotypeSampleMode(enum.StrEnum):
@@ -187,6 +188,7 @@ def build_output_writer_manifest(
         "writer_queue_depth": writer_queue_depth,
         "chunks_per_arrow_file": chunks_per_arrow_file,
         "arrow_compression": arrow_compression.value,
+        "result_statistic_dtype": RESULT_STATISTIC_OUTPUT_DTYPE,
     }
 
 

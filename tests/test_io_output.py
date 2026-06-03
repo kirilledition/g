@@ -143,6 +143,13 @@ def test_current_run_manifest_records_configured_x64_policy(tmp_path: Path) -> N
     assert current_header["execution_plan"]["jax_policy"]["enable_x64"] is False
 
 
+def test_current_run_manifest_records_result_statistic_output_dtype(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path, jax_enable_x64=True)
+
+    assert current_header["output_writer"]["result_statistic_dtype"] == "float32"
+    assert current_header["execution_plan"]["output_writer"]["result_statistic_dtype"] == "float32"
+
+
 def initialize_test_output_run(
     prepared_output_run: output.PreparedOutputRun,
     current_header: dict[str, typing.Any],
