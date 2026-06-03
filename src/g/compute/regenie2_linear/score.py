@@ -5,6 +5,8 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
+from g import types
+from g.compute.common import dtype as compute_dtype
 from g.compute.common import genotype, pvalue
 from g.compute.regenie2_linear import result as regenie2_linear_result
 
@@ -15,12 +17,14 @@ def compute_normalized_genotype_sum_squares_from_stats(
     genotype_observation_count: jax.Array,
     genotype_imputed_dosage_square_sum: jax.Array,
     sample_count: int,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
 ) -> jax.Array:
     """Compute shifted genotype sum of squares from native chunk statistics."""
-    dosage_sum_compute = jnp.asarray(genotype_dosage_sum, dtype=jnp.float32)
-    observation_count_compute = jnp.asarray(genotype_observation_count, dtype=jnp.float32)
-    imputed_dosage_square_sum_compute = jnp.asarray(genotype_imputed_dosage_square_sum, dtype=jnp.float32)
-    sample_count_compute = jnp.asarray(sample_count, dtype=jnp.float32)
+    jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
+    dosage_sum_compute = jnp.asarray(genotype_dosage_sum, dtype=jax_dtype)
+    observation_count_compute = jnp.asarray(genotype_observation_count, dtype=jax_dtype)
+    imputed_dosage_square_sum_compute = jnp.asarray(genotype_imputed_dosage_square_sum, dtype=jax_dtype)
+    sample_count_compute = jnp.asarray(sample_count, dtype=jax_dtype)
     genotype_mean = dosage_sum_compute / jnp.maximum(observation_count_compute, 1.0)
     imputed_dosage_sum_compute = genotype_mean * sample_count_compute
     genotype_offset = jnp.where(genotype_mean > 1.0, genotype.ALLELE_COUNT_MULTIPLIER, 0.0)
@@ -42,10 +46,12 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
     genotype_dosage_sum: jax.Array | None = None,
     genotype_observation_count: jax.Array | None = None,
     genotype_imputed_dosage_square_sum: jax.Array | None = None,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
 ) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
     """Compute linear score-test statistics for trait-major residuals and variant-major genotypes."""
     normalized_genotype_matrix_by_variant = genotype.normalize_high_frequency_diploid_genotypes_variant_major(
-        genotype_matrix_by_variant
+        genotype_matrix_by_variant,
+        score_dtype,
     )
     if genotype_dosage_sum is None or genotype_observation_count is None or genotype_imputed_dosage_square_sum is None:
         genotype_sum_squares_compute = jnp.einsum(
@@ -59,6 +65,7 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
             genotype_observation_count=genotype_observation_count,
             genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
             sample_count=genotype_matrix_by_variant.shape[1],
+            score_dtype=score_dtype,
         )
     covariate_projection_coordinates = whitened_covariate_transpose @ normalized_genotype_matrix_by_variant.T
     raw_covariance_with_phenotype = adjusted_residual_matrix @ normalized_genotype_matrix_by_variant.T

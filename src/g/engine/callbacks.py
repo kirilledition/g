@@ -693,6 +693,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         prediction_source: RegeniePredictionSourceProtocol,
         writer_session: typing.Any,
         staging_depth: int = 1,
+        score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
     ) -> None:
@@ -700,9 +701,11 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.run_input = run_input
         self.prediction_source = prediction_source
         self.writer_session = writer_session
+        self.score_dtype = score_dtype
         self.regenie_state = regenie2_linear.prepare_regenie2_linear_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_vector=run_input.phenotype_vector,
+            score_dtype=score_dtype,
         )
         self.current_chromosome: str | None = None
         self.current_chromosome_state: regenie2_linear.Regenie2LinearChromosomeState | None = None
@@ -825,6 +828,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             genotype_dosage_sum=genotype_dosage_sum,
             genotype_observation_count=genotype_observation_count,
             genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
+            score_dtype=self.score_dtype,
         )
         block_compute_result_for_timing(
             result_ready_value=result.log10_p_value,
@@ -843,6 +847,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.current_chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
             self.regenie_state,
             loco_predictions,
+            self.score_dtype,
         )
         chromosome_ready_value = getattr(
             self.current_chromosome_state,
@@ -868,6 +873,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
             chromosome_state=self.current_chromosome_state,
             genotype_matrix=genotype_device_array,
+            score_dtype=self.score_dtype,
         )
         block_compute_result_for_timing(
             result_ready_value=result.log10_p_value,
@@ -887,6 +893,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         writer_sessions: tuple[typing.Any, ...],
         committed_chunk_identifier_sets: tuple[set[int], ...],
         staging_depth: int = 1,
+        score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
     ) -> None:
@@ -895,9 +902,11 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.prediction_source = prediction_source
         self.writer_sessions = writer_sessions
         self.committed_chunk_identifier_sets = committed_chunk_identifier_sets
+        self.score_dtype = score_dtype
         self.regenie_state = regenie2_linear.prepare_regenie2_multi_linear_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_matrix=run_input.phenotype_matrix,
+            score_dtype=score_dtype,
         )
         self.current_chromosome: str | None = None
         self.current_chromosome_state: regenie2_linear.Regenie2MultiLinearChromosomeState | None = None
@@ -952,6 +961,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state(
                 chromosome_state=self.current_chromosome_state,
                 genotype_matrix=genotype_device_array,
+                score_dtype=self.score_dtype,
             )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
@@ -995,6 +1005,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_dosage_sum=jax.device_put(chunk_stats.dosage_sum),
                 genotype_observation_count=jax.device_put(chunk_stats.observation_count),
                 genotype_imputed_dosage_square_sum=jax.device_put(chunk_stats.imputed_dosage_square_sum),
+                score_dtype=self.score_dtype,
             )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
@@ -1024,6 +1035,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.current_chromosome_state = regenie2_linear.prepare_regenie2_multi_linear_chromosome_state(
             self.regenie_state,
             loco_predictions,
+            self.score_dtype,
         )
         block_until_ready(self.current_chromosome_state.adjusted_residual_matrix)
         timing.record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
@@ -1071,6 +1083,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             types.NullLogisticNonconvergencePolicy.FAIL
         ),
         staging_depth: int = 1,
+        score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
     ) -> None:
@@ -1081,9 +1094,11 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.correction_plan = correction_plan
         self.kernel_config = kernel_config
         self.null_logistic_nonconvergence_policy = null_logistic_nonconvergence_policy
+        self.score_dtype = score_dtype
         self.regenie_state = regenie2_binary.prepare_regenie2_binary_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_vector=run_input.phenotype_vector,
+            score_dtype=score_dtype,
         )
         self.current_chromosome: str | None = None
         self.current_chromosome_state: regenie2_binary.Regenie2BinaryChromosomeState | None = None
@@ -1164,6 +1179,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             loco_offset=loco_offset,
             correction_plan=self.correction_plan,
             kernel_config=self.kernel_config,
+            score_dtype=self.score_dtype,
         )
         chromosome_ready_value = getattr(
             self.current_chromosome_state,
@@ -1213,6 +1229,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             correction_plan=self.correction_plan,
             sparse_candidate_mask=sparse_candidate_mask,
             kernel_config=self.kernel_config,
+            score_dtype=self.score_dtype,
             stage_duration_recorder=self.get_stage_duration_recorder(),
         )
         block_compute_result_for_timing(
@@ -1252,6 +1269,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     kernel_config=self.kernel_config,
                     dosage_sum=dosage_sum,
                     observation_count=observation_count,
+                    score_dtype=self.score_dtype,
                 )
             else:
                 result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
@@ -1260,6 +1278,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     correction_plan=self.correction_plan,
                     sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
                     kernel_config=self.kernel_config,
+                    score_dtype=self.score_dtype,
                     stage_duration_recorder=self.get_stage_duration_recorder(),
                     dosage_sum=dosage_sum,
                     observation_count=observation_count,
@@ -1299,6 +1318,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             types.NullLogisticNonconvergencePolicy.FAIL
         ),
         staging_depth: int = 1,
+        score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
     ) -> None:
@@ -1310,9 +1330,11 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.correction_plan = correction_plan
         self.kernel_config = kernel_config
         self.null_logistic_nonconvergence_policy = null_logistic_nonconvergence_policy
+        self.score_dtype = score_dtype
         self.regenie_state = regenie2_binary.prepare_regenie2_multi_binary_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_matrix=run_input.phenotype_matrix,
+            score_dtype=score_dtype,
         )
         self.current_chromosome: str | None = None
         self.current_chromosome_state: regenie2_binary.Regenie2MultiBinaryChromosomeState | None = None
@@ -1375,6 +1397,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 correction_plan=self.correction_plan,
                 sparse_candidate_mask=sparse_candidate_mask,
                 kernel_config=self.kernel_config,
+                score_dtype=self.score_dtype,
                 stage_duration_recorder=self.get_stage_duration_recorder(),
             )
             block_compute_result_for_timing(
@@ -1426,6 +1449,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 correction_plan=self.correction_plan,
                 sparse_candidate_mask=sparse_candidate_mask,
                 kernel_config=self.kernel_config,
+                score_dtype=self.score_dtype,
                 stage_duration_recorder=self.get_stage_duration_recorder(),
                 dosage_sum=dosage_sum,
                 observation_count=observation_count,
@@ -1460,6 +1484,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             loco_offset,
             self.correction_plan,
             self.kernel_config,
+            self.score_dtype,
         )
         block_until_ready(self.current_chromosome_state.score_residual)
         enforce_null_logistic_nonconvergence_policy(

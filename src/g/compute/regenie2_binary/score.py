@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-import typing
-
 import jax
 import jax.numpy as jnp
 
+from g import types
+from g.compute.common import dtype as compute_dtype
 from g.compute.common import genotype, pvalue
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import correction as regenie2_binary_correction
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import state as regenie2_binary_state
-
-if typing.TYPE_CHECKING:
-    from g import types
 
 
 def compute_positive_variance_mask(
@@ -47,6 +44,7 @@ def compute_binary_score_test_chunk_variant_major(
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
     dosage_sum: jax.Array | None = None,
     observation_count: jax.Array | None = None,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
     """Compute the binary score test from canonical variant-major genotypes.
 
@@ -57,6 +55,7 @@ def compute_binary_score_test_chunk_variant_major(
         kernel_config: Binary-kernel numerical policy.
         dosage_sum: Optional native per-variant dosage sum.
         observation_count: Optional native per-variant observed genotype count.
+        score_dtype: Floating-point dtype for score-test computation.
 
     Returns:
         Uncorrected score-test result for the chunk.
@@ -70,6 +69,7 @@ def compute_binary_score_test_chunk_variant_major(
         kernel_config=kernel_config,
         dosage_sum=dosage_sum,
         observation_count=observation_count,
+        score_dtype=score_dtype,
     )
     return regenie2_binary_result.squeeze_single_binary_score_result(multi_result)
 
@@ -81,6 +81,7 @@ def compute_multi_binary_score_test_chunk_variant_major(
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
     dosage_sum: jax.Array | None = None,
     observation_count: jax.Array | None = None,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Compute batched binary score tests for trait-major states and variant-major genotypes.
 
@@ -91,12 +92,16 @@ def compute_multi_binary_score_test_chunk_variant_major(
         kernel_config: Binary-kernel numerical policy.
         dosage_sum: Optional native per-variant dosage sum.
         observation_count: Optional native per-variant observed genotype count.
+        score_dtype: Floating-point dtype for score-test computation.
 
     Returns:
         Trait-major score-test result for the chunk.
 
     """
-    raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
+    raw_genotype_matrix_by_variant = jnp.asarray(
+        genotype_matrix_by_variant,
+        dtype=compute_dtype.resolve_jax_dtype(score_dtype),
+    )
     genotype_flip_result = genotype.build_regenie_flipped_genotypes(
         raw_genotype_matrix_by_variant,
         dosage_sum=dosage_sum,

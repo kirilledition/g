@@ -44,6 +44,8 @@ DEFAULT_NULL_FIRTH_FALLBACK_STEP_DIVISOR = 5.0
 DEFAULT_NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
 DEFAULT_NULL_FIRTH_STEP_HALVING_SCALE = 0.5
 DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT = 64
+DEFAULT_SCORE_DTYPE = types.FloatingPointDtype.FLOAT32
+DEFAULT_FIRTH_DTYPE = types.FloatingPointDtype.FLOAT64
 DEFAULT_JAX_ENABLE_X64 = True
 DEFAULT_JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = -1
 DEFAULT_JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
@@ -146,6 +148,8 @@ class GComputeConfig:
     null_firth_step_halving_scale: float = DEFAULT_NULL_FIRTH_STEP_HALVING_SCALE
     use_block_firth_math: bool = False
     bgen_decode_tile_variant_count: int = DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT
+    score_dtype: types.FloatingPointDtype = DEFAULT_SCORE_DTYPE
+    firth_dtype: types.FloatingPointDtype = DEFAULT_FIRTH_DTYPE
     jax_cache_dir: Path | None = None
     jax_matmul_precision: types.JaxMatmulPrecision | None = None
     jax_enable_x64: bool = DEFAULT_JAX_ENABLE_X64
@@ -520,6 +524,14 @@ def from_normalized_options(
                     DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
                 )
             ),
+            score_dtype=floating_point_dtype_or_default(
+                normalized_options.get("g-score-dtype"),
+                default=DEFAULT_SCORE_DTYPE,
+            ),
+            firth_dtype=floating_point_dtype_or_default(
+                normalized_options.get("g-firth-dtype"),
+                default=DEFAULT_FIRTH_DTYPE,
+            ),
             jax_cache_dir=path_or_none(normalized_options.get("g-jax-cache-dir")),
             jax_matmul_precision=optional_jax_matmul_precision(normalized_options.get("g-jax-matmul-precision")),
             jax_enable_x64=bool_or_default(
@@ -599,6 +611,17 @@ def optional_jax_matmul_precision(raw_value: typing.Any) -> types.JaxMatmulPreci
     if raw_value is None:
         return None
     return types.JaxMatmulPrecision(str(raw_value))
+
+
+def floating_point_dtype_or_default(
+    raw_value: typing.Any,
+    *,
+    default: types.FloatingPointDtype,
+) -> types.FloatingPointDtype:
+    """Convert a floating-point dtype value or return the default."""
+    if raw_value is None:
+        return default
+    return types.FloatingPointDtype(str(raw_value))
 
 
 def resolve_configured_trait_type(normalized_options: typing.Mapping[str, typing.Any]) -> types.RegenieTraitType:
@@ -776,6 +799,8 @@ def normalize_option_name(option_name: str) -> str:
         "g_null_firth_step_halving_scale": "g-null-firth-step-halving-scale",
         "g_use_block_firth_math": "g-use-block-firth-math",
         "g_bgen_decode_tile_variant_count": "g-bgen-decode-tile-variant-count",
+        "g_score_dtype": "g-score-dtype",
+        "g_firth_dtype": "g-firth-dtype",
         "g_jax_cache_dir": "g-jax-cache-dir",
         "g_jax_matmul_precision": "g-jax-matmul-precision",
         "g_jax_enable_x64": "g-jax-enable-x64",
@@ -988,6 +1013,15 @@ def validate_config(config: RegenieConfig) -> None:
         "--g-bgen-decode-tile-variant-count",
         config.g_compute.bgen_decode_tile_variant_count,
     )
+    if config.g_compute.firth_dtype != types.FloatingPointDtype.FLOAT64:
+        message = "--g-firth-dtype currently supports float64 only."
+        raise ValueError(message)
+    if config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT64 and not config.g_compute.jax_enable_x64:
+        message = "--g-score-dtype=float64 requires --g-jax-enable-x64."
+        raise ValueError(message)
+    if config.binary.firth and not config.g_compute.jax_enable_x64:
+        message = "--firth uses float64 internals and requires --g-jax-enable-x64."
+        raise ValueError(message)
     validate_quantitative_binary_config(config)
     if config.g_output.writer_threads <= 0:
         message = "--g-writer-threads must be positive."
@@ -1197,6 +1231,8 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             "null-firth-step-halving-scale": config.g_compute.null_firth_step_halving_scale,
             "use-block-firth-math": config.g_compute.use_block_firth_math,
             "bgen-decode-tile-variant-count": config.g_compute.bgen_decode_tile_variant_count,
+            "score-dtype": config.g_compute.score_dtype.value,
+            "firth-dtype": config.g_compute.firth_dtype.value,
             **optional_mapping("jax-cache-dir", config.g_compute.jax_cache_dir),
             **optional_mapping(
                 "jax-matmul-precision",

@@ -201,6 +201,30 @@ def build_chromosome_state() -> tuple[
     return genotype_matrix, chromosome_state
 
 
+def test_score_dtype_float64_controls_binary_score_kernel_dtype() -> None:
+    covariate_matrix, phenotype_vector, genotype_matrix = build_binary_inputs()
+    state = regenie2_binary.prepare_regenie2_binary_state(
+        covariate_matrix,
+        phenotype_vector,
+        score_dtype=types.FloatingPointDtype.FLOAT64,
+    )
+    chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
+        state,
+        jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float64),
+        score_dtype=types.FloatingPointDtype.FLOAT64,
+    )
+
+    result = regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state(
+        chromosome_state,
+        genotype_matrix,
+        score_dtype=types.FloatingPointDtype.FLOAT64,
+    )
+
+    assert state.covariate_matrix.dtype == jnp.float64
+    assert chromosome_state.score_residual.dtype == jnp.float64
+    assert result.beta.dtype == jnp.float64
+
+
 def build_forced_score_result(
     *,
     beta: jax.Array,

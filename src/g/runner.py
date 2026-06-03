@@ -478,6 +478,8 @@ def build_common_engine_arguments(
         "jax_device": plan.kernel_config.device,
         "jax_matmul_precision": plan.kernel_config.alignment_config.jax_matmul_precision,
         "jax_enable_x64": plan.kernel_config.alignment_config.jax_enable_x64,
+        "score_dtype": plan.kernel_config.alignment_config.score_dtype,
+        "firth_dtype": plan.kernel_config.alignment_config.firth_dtype,
         "output_format": plan.output_plan.output_format,
         "stage_timing_recorder": stage_timing_recorder,
         "telemetry_session": telemetry_session,
