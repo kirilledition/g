@@ -145,10 +145,127 @@ jobs:
         run: uv sync --group dev --frozen
 
       - name: Run fast test suite
-        run: >
-          uv run --no-sync pytest tests/
-          -m "not phase0_data and not phase1_parity"
-          -v
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/python-tests
+          uv run --no-sync pytest tests/ \
+            -m "not phase0_data and not phase1_parity and not cli_smoke" \
+            -v \
+            --junitxml=artifacts/python-tests/junit.xml
+
+      - name: Upload Python test artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-tests
+          path: artifacts/python-tests/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  package-install:
+    name: package-install
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Rust toolchain for source-built wheel
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build wheel and source distribution
+        env:
+          RUSTFLAGS: "--allow=non-local-definitions"
+        run: uv build --sdist --wheel --out-dir dist --clear
+
+      - name: Install built wheel into a clean environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv "${RUNNER_TEMP}/g-package-install" --python "${{ env.PYTHON_VERSION }}"
+          uv pip install --python "${RUNNER_TEMP}/g-package-install/bin/python" dist/*.whl
+
+      - name: Run installed console script help
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package-install-artifacts
+          "${RUNNER_TEMP}/g-package-install/bin/g" --help | tee package-install-artifacts/g-help.txt
+          "${RUNNER_TEMP}/g-package-install/bin/g" regenie --help | tee package-install-artifacts/g-regenie-help.txt
+          "${RUNNER_TEMP}/g-package-install/bin/g-regenie" --help | tee package-install-artifacts/g-regenie-script-help.txt
+
+      - name: Upload package-install artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-install
+          path: |
+            dist/**
+            package-install-artifacts/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  cli-smoke:
+    name: cli-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Rust toolchain for mixed-package test installs
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install project and test dependencies
+        env:
+          RUSTFLAGS: "--allow=non-local-definitions"
+        run: uv sync --group dev --frozen
+
+      - name: Run installed CLI smoke test
+        shell: bash
+        env:
+          G_CLI_SMOKE_ARTIFACT_DIR: artifacts/cli-smoke
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/cli-smoke
+          uv run --no-sync pytest tests/test_cli_smoke.py \
+            -m cli_smoke \
+            -v \
+            --junitxml=artifacts/cli-smoke/junit.xml
+
+      - name: Upload CLI smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-smoke
+          path: artifacts/cli-smoke/**
+          if-no-files-found: ignore
+          retention-days: 14
 
   rust-clippy:
     name: rust-clippy
@@ -411,7 +528,7 @@ jobs:
         continue-on-error: true
         run: >
           uv run --no-sync pytest tests/
-          -m "not phase0_data and not phase1_parity"
+          -m "not phase0_data and not phase1_parity and not cli_smoke"
           --cov=src/g
           --cov-report=xml:coverage-python.xml
           --cov-report=term-missing
@@ -437,6 +554,8 @@ jobs:
     if: ${{ always() }}
     needs:
       - format
+      - package-install
+      - cli-smoke
       - python-lint
       - typecheck
       - python-tests
@@ -452,6 +571,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "format: ${{ needs.format.result }}"
+          echo "package-install: ${{ needs['package-install'].result }}"
+          echo "cli-smoke: ${{ needs['cli-smoke'].result }}"
           echo "python-lint: ${{ needs['python-lint'].result }}"
           echo "typecheck: ${{ needs.typecheck.result }}"
           echo "python-tests: ${{ needs['python-tests'].result }}"
@@ -460,6 +581,8 @@ jobs:
           echo "rust-features: ${{ needs['rust-features'].result }}"
           echo "rust-tests: ${{ needs['rust-tests'].result }}"
           test "${{ needs.format.result }}" = "success"
+          test "${{ needs['package-install'].result }}" = "success"
+          test "${{ needs['cli-smoke'].result }}" = "success"
           test "${{ needs['python-lint'].result }}" = "success"
           test "${{ needs.typecheck.result }}" = "success"
           test "${{ needs['python-tests'].result }}" = "success"

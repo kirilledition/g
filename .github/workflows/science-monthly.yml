@@ -54,13 +54,35 @@ jobs:
         run: uv sync --group dev --frozen
 
       - name: Run fast Python test suite
-        run: >
-          uv run --no-sync pytest tests/
-          -m "not phase0_data and not phase1_parity and not cli_smoke"
-          -v
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/monthly-python-tests
+          uv run --no-sync pytest tests/ \
+            -m "not phase0_data and not phase1_parity and not cli_smoke" \
+            -v \
+            --junitxml=artifacts/monthly-python-tests/junit.xml
 
       - name: Run locked Rust test suite
         run: cargo test --workspace --locked
 
       - name: Run installed CLI smoke test
-        run: uv run --no-sync pytest tests/test_cli_smoke.py -m cli_smoke -v
+        shell: bash
+        env:
+          G_CLI_SMOKE_ARTIFACT_DIR: artifacts/monthly-cli-smoke
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/monthly-cli-smoke
+          uv run --no-sync pytest tests/test_cli_smoke.py \
+            -m cli_smoke \
+            -v \
+            --junitxml=artifacts/monthly-cli-smoke/junit.xml
+
+      - name: Upload monthly rot check artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: monthly-rot-check
+          path: artifacts/**
+          if-no-files-found: ignore
+          retention-days: 14
