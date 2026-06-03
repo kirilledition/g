@@ -112,6 +112,7 @@ class FakeRunEngine:
         self.sample_count = 2
         self.variant_count = 10
         self.run_arguments: tuple[np.ndarray, object, list[int] | None] | None = None
+        self.run_call_arguments: list[tuple[np.ndarray, object, list[int] | None]] = []
         self.run_method: str | None = None
         self.reset_profile_count = 0
         self.validation_count = 0
@@ -152,6 +153,7 @@ class FakeRunEngine:
     ) -> int:
         self.run_method = "buffered"
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
+        self.run_call_arguments.append(self.run_arguments)
         return 0
 
     def run_bgen_variant_major_dosage_buffered_chunks(
@@ -162,6 +164,7 @@ class FakeRunEngine:
     ) -> int:
         self.run_method = "variant_major_buffered"
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
+        self.run_call_arguments.append(self.run_arguments)
         return 0
 
 
@@ -184,6 +187,32 @@ def build_native_run_input() -> native_dispatch.NativeBgenRunInput:
         sample_indices=np.asarray([1, 0], dtype=np.int64),
         phenotype_vector=jnp.asarray([0.0, 1.0], dtype=jnp.float32),
         covariate_matrix=jnp.asarray([[1.0], [1.0]], dtype=jnp.float32),
+        is_binary_trait=False,
+    )
+
+
+def build_native_run_input_with_alignment(
+    *,
+    phenotype_name: str,
+    sample_indices: tuple[int, ...],
+    phenotype_values: tuple[float, ...],
+    covariate_values: tuple[tuple[float, ...], ...],
+) -> native_dispatch.NativeBgenRunInput:
+    native_aligned_sample_data = SimpleNamespace(
+        sample_indices=np.asarray(sample_indices, dtype=np.int64),
+        family_identifiers=[f"family{sample_index}" for sample_index in sample_indices],
+        individual_identifiers=[f"sample{sample_index}" for sample_index in sample_indices],
+        phenotype_name=phenotype_name,
+        phenotype_vector=np.asarray(phenotype_values, dtype=np.float32),
+        covariate_names=["intercept", "age"],
+        covariate_matrix=np.asarray(covariate_values, dtype=np.float32),
+        is_binary_trait=False,
+    )
+    return native_dispatch.NativeBgenRunInput(
+        native_aligned_sample_data=typing.cast("typing.Any", native_aligned_sample_data),
+        sample_indices=np.asarray(sample_indices, dtype=np.int64),
+        phenotype_vector=jnp.asarray(phenotype_values, dtype=jnp.float32),
+        covariate_matrix=jnp.asarray(covariate_values, dtype=jnp.float32),
         is_binary_trait=False,
     )
 
@@ -1418,8 +1447,145 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
 
 
-def test_multi_linear_pipeline_requires_explicit_complete_case_sample_mode() -> None:
-    with pytest.raises(ValueError, match="complete-case"):
+def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
+    FakeRunEngine.instances.clear()
+    writer_sessions = [FakeWriterSession(), FakeWriterSession()]
+    run_inputs = (
+        build_native_run_input_with_alignment(
+            phenotype_name="trait_a",
+            sample_indices=(1, 0),
+            phenotype_values=(0.0, 1.0),
+            covariate_values=((1.0, 40.0), (1.0, 50.0)),
+        ),
+        build_native_run_input_with_alignment(
+            phenotype_name="trait_b",
+            sample_indices=(1, 0),
+            phenotype_values=(2.0, 3.0),
+            covariate_values=((1.0, 40.0), (1.0, 50.0)),
+        ),
+    )
+
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.load_native_bgen_run_input", side_effect=run_inputs),
+        patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
+        patch(
+            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
+        ) as mock_build_header,
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+        ),
+        patch(
+            "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
+            return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
+        ),
+    ):
+        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_names=("trait_a", "trait_b"),
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths_by_phenotype=(
+                output.OutputRunPaths(Path("run/a"), Path("run/a/chunks")),
+                output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
+            ),
+            trusted_no_missing_diploid=False,
+            sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        )
+
+    assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+    assert len(FakeRunEngine.instances) == 1
+    engine = FakeRunEngine.instances[0]
+    assert len(engine.run_call_arguments) == 1
+    sample_indices, callback, committed_chunk_identifiers = engine.run_call_arguments[0]
+    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    assert isinstance(callback, callbacks.MultiLinearRegenie2PipelineCallback)
+    assert callback.run_input.phenotype_names == ("trait_a", "trait_b")
+    assert committed_chunk_identifiers == []
+    assert mock_run_multi_preflight.call_args.kwargs["run_input"].phenotype_names == ("trait_a", "trait_b")
+    assert tuple(call.kwargs["multi_phenotype_sample_mode"] for call in mock_build_header.call_args_list) == (
+        output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+        output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+    )
+
+
+def test_grouped_per_phenotype_pipeline_splits_different_alignments() -> None:
+    FakeRunEngine.instances.clear()
+    writer_sessions = [FakeWriterSession(), FakeWriterSession()]
+    run_inputs = (
+        build_native_run_input_with_alignment(
+            phenotype_name="trait_a",
+            sample_indices=(1, 0),
+            phenotype_values=(0.0, 1.0),
+            covariate_values=((1.0, 40.0), (1.0, 50.0)),
+        ),
+        build_native_run_input_with_alignment(
+            phenotype_name="trait_b",
+            sample_indices=(0, 1),
+            phenotype_values=(3.0, 2.0),
+            covariate_values=((1.0, 50.0), (1.0, 40.0)),
+        ),
+    )
+
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.load_native_bgen_run_input", side_effect=run_inputs),
+        patch("g.engine.regenie2_pipeline.run_multi_preflight"),
+        patch(
+            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+        ),
+        patch(
+            "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
+            return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
+        ),
+    ):
+        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_names=("trait_a", "trait_b"),
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths_by_phenotype=(
+                output.OutputRunPaths(Path("run/a"), Path("run/a/chunks")),
+                output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
+            ),
+            trusted_no_missing_diploid=False,
+            sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        )
+
+    assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+    engine = FakeRunEngine.instances[0]
+    assert len(engine.run_call_arguments) == 2
+    np.testing.assert_array_equal(engine.run_call_arguments[0][0], np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(engine.run_call_arguments[1][0], np.asarray([0, 1], dtype=np.int64))
+
+
+def test_multi_linear_pipeline_rejects_missing_sample_mode() -> None:
+    with pytest.raises(ValueError, match="per-phenotype or complete-case"):
         regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),

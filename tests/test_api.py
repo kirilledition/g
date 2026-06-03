@@ -788,7 +788,7 @@ def test_regenie_from_options_dispatches_multiple_phenotypes() -> None:
     assert mock_runner_regenie.call_args.args[0].input.pheno_columns == ("one", "two")
 
 
-def test_default_multi_phenotype_plan_dispatches_single_phenotype_runs() -> None:
+def test_default_multi_phenotype_plan_dispatches_grouped_multi_phenotype_run() -> None:
     regenie_config = config.RegenieConfig.from_options(
         {
             "step": 2,
@@ -807,14 +807,13 @@ def test_default_multi_phenotype_plan_dispatches_single_phenotype_runs() -> None
             "g.execution_plan.output.prepare_output_run",
             return_value=output.PreparedOutputRun(run_paths, None),
         ),
-        patch("g.runner.run_regenie2_linear_bgen_pipeline") as mock_single_pipeline,
         patch("g.runner.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_multi_pipeline,
     ):
         plan = execution_plan.build_regenie_execution_plan(regenie_config)
         runner.dispatch_execution_plan(plan=plan, stage_timing_recorder=None)
 
-    assert mock_single_pipeline.call_count == 2
-    mock_multi_pipeline.assert_not_called()
+    mock_multi_pipeline.assert_called_once()
+    assert mock_multi_pipeline.call_args.kwargs["sample_mode"] == types.MultiPhenotypeSampleMode.PER_PHENOTYPE
 
 
 def test_multi_run_plan_forwards_existing_manifests() -> None:
