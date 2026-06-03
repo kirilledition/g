@@ -65,6 +65,9 @@ def prepare_regenie2_multi_linear_chromosome_state(
 def compute_regenie2_linear_chunk_from_chromosome_state(
     chromosome_state: regenie2_linear_state.Regenie2LinearChromosomeState,
     genotype_matrix: jax.Array,
+    genotype_dosage_sum: jax.Array | None = None,
+    genotype_observation_count: jax.Array | None = None,
+    genotype_imputed_dosage_square_sum: jax.Array | None = None,
 ) -> regenie2_linear_result.Regenie2LinearChunkResult:
     """Compute REGENIE step 2 linear association using chromosome-cached state."""
     multi_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
@@ -76,6 +79,9 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
         adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares[None],
         degrees_of_freedom=chromosome_state.degrees_of_freedom,
         genotype_matrix_by_variant=genotype.convert_sample_major_to_variant_major(genotype_matrix),
+        genotype_dosage_sum=genotype_dosage_sum,
+        genotype_observation_count=genotype_observation_count,
+        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
     )
     return regenie2_linear_result.squeeze_single_trait_linear_result(multi_result)
 
@@ -84,6 +90,9 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
 def compute_regenie2_multi_linear_chunk_from_chromosome_state(
     chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
     genotype_matrix: jax.Array,
+    genotype_dosage_sum: jax.Array | None = None,
+    genotype_observation_count: jax.Array | None = None,
+    genotype_imputed_dosage_square_sum: jax.Array | None = None,
 ) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 association."""
     return regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
@@ -93,6 +102,9 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
         adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares,
         degrees_of_freedom=chromosome_state.degrees_of_freedom,
         genotype_matrix_by_variant=genotype.convert_sample_major_to_variant_major(genotype_matrix),
+        genotype_dosage_sum=genotype_dosage_sum,
+        genotype_observation_count=genotype_observation_count,
+        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
     )
 
 
@@ -100,6 +112,9 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
 def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
     chromosome_state: regenie2_linear_state.Regenie2LinearChromosomeState,
     genotype_matrix_by_variant: jax.Array,
+    genotype_dosage_sum: jax.Array | None = None,
+    genotype_observation_count: jax.Array | None = None,
+    genotype_imputed_dosage_square_sum: jax.Array | None = None,
 ) -> regenie2_linear_result.Regenie2LinearChunkResult:
     """Compute quantitative REGENIE step 2 association from variant-major genotypes."""
     multi_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
@@ -111,6 +126,9 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
         adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares[None],
         degrees_of_freedom=chromosome_state.degrees_of_freedom,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
+        genotype_dosage_sum=genotype_dosage_sum,
+        genotype_observation_count=genotype_observation_count,
+        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
     )
     return regenie2_linear_result.squeeze_single_trait_linear_result(multi_result)
 
@@ -119,6 +137,9 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
 def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
     chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
     genotype_matrix_by_variant: jax.Array,
+    genotype_dosage_sum: jax.Array | None = None,
+    genotype_observation_count: jax.Array | None = None,
+    genotype_imputed_dosage_square_sum: jax.Array | None = None,
 ) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 from variant-major genotypes."""
     return regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
@@ -128,6 +149,9 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
         adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares,
         degrees_of_freedom=chromosome_state.degrees_of_freedom,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
+        genotype_dosage_sum=genotype_dosage_sum,
+        genotype_observation_count=genotype_observation_count,
+        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
     )
 
 

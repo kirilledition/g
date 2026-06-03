@@ -75,6 +75,11 @@ impl ChunkStats {
     }
 
     #[getter]
+    fn dosage_sum<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
+        self.stats.dosage_sum.clone().into_pyarray(py)
+    }
+
+    #[getter]
     fn dosage_square_sum<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
         self.stats.dosage_square_sum.clone().into_pyarray(py)
     }

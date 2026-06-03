@@ -758,6 +758,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             result = self.compute_linear_variant_major_result(
                 variant_metadata=variant_metadata,
                 genotype_matrix_by_variant=genotype_matrix_by_variant,
+                chunk_stats=chunk_stats,
             )
             self.put_result_write_item(
                 Regenie2ResultWriteWorkItem(
@@ -807,16 +808,23 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         *,
         variant_metadata: typing.Any,
         genotype_matrix_by_variant: jax.Array | npt.NDArray[np.float32],
+        chunk_stats: _core.ChunkStats,
     ) -> regenie2_linear.Regenie2LinearChunkResult:
         """Compute quantitative REGENIE step 2 statistics for a variant-major chunk."""
         self.prepare_chromosome_state(variant_metadata)
         assert self.current_chromosome_state is not None
 
         genotype_device_array = put_genotype_matrix_on_device(genotype_matrix_by_variant, self.stage_timing_recorder)
+        genotype_dosage_sum = jax.device_put(chunk_stats.dosage_sum)
+        genotype_observation_count = jax.device_put(chunk_stats.observation_count)
+        genotype_imputed_dosage_square_sum = jax.device_put(chunk_stats.imputed_dosage_square_sum)
         compute_start_time = time.perf_counter()
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
             chromosome_state=self.current_chromosome_state,
             genotype_matrix_by_variant=genotype_device_array,
+            genotype_dosage_sum=genotype_dosage_sum,
+            genotype_observation_count=genotype_observation_count,
+            genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
         )
         block_compute_result_for_timing(
             result_ready_value=result.log10_p_value,
@@ -984,6 +992,9 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
                 chromosome_state=self.current_chromosome_state,
                 genotype_matrix_by_variant=genotype_device_array,
+                genotype_dosage_sum=jax.device_put(chunk_stats.dosage_sum),
+                genotype_observation_count=jax.device_put(chunk_stats.observation_count),
+                genotype_imputed_dosage_square_sum=jax.device_put(chunk_stats.imputed_dosage_square_sum),
             )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
