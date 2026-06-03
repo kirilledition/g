@@ -511,6 +511,7 @@ fn format_missing_samples(missing_samples: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
     use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
@@ -617,7 +618,7 @@ mod tests {
             SampleKeyMode::Iid,
         )
         .expect_err("duplicate target IIDs should fail in IID mode");
-        assert!(matches!(duplicate_target_error, PredictionError::DuplicateTargetIid { .. }));
+        assert_matches!(duplicate_target_error, PredictionError::DuplicateTargetIid { .. });
 
         let duplicate_loco_error = MultiPredictionSource::load(
             &prediction_list_path,
@@ -627,7 +628,7 @@ mod tests {
             SampleKeyMode::Iid,
         )
         .expect_err("duplicate LOCO IIDs should fail in IID mode");
-        assert!(matches!(duplicate_loco_error, PredictionError::DuplicateLocoIid { .. }));
+        assert_matches!(duplicate_loco_error, PredictionError::DuplicateLocoIid { .. });
 
         let source = MultiPredictionSource {
             phenotype_names: strings(&["first", "second"]),
@@ -638,10 +639,10 @@ mod tests {
         };
         let matrix_error =
             source.chromosome_prediction_matrix("chr22").expect_err("inconsistent trait sample counts should fail");
-        assert!(matches!(
+        assert_matches!(
             matrix_error,
             PredictionError::LocoPredictionCountMismatch { expected_count: 2, observed_count: 1, .. }
-        ));
+        );
     }
 
     #[test]
@@ -658,7 +659,7 @@ mod tests {
             SampleKeyMode::FidIid,
         )
         .expect_err("missing phenotype should be rejected");
-        assert!(matches!(missing_phenotype_error, PredictionError::MissingPhenotype { .. }));
+        assert_matches!(missing_phenotype_error, PredictionError::MissingPhenotype { .. });
 
         let source = PredictionSource::load(
             &prediction_list_path,
@@ -670,7 +671,7 @@ mod tests {
         .expect("prediction source should load");
         let missing_chromosome_error =
             source.chromosome_predictions("chr1").expect_err("missing chromosome should be rejected");
-        assert!(matches!(missing_chromosome_error, PredictionError::MissingChromosome { .. }));
+        assert_matches!(missing_chromosome_error, PredictionError::MissingChromosome { .. });
     }
 
     #[test]
@@ -685,10 +686,10 @@ mod tests {
             SampleKeyMode::FidIid,
         )
         .expect_err("malformed prediction list should be rejected");
-        assert!(matches!(
+        assert_matches!(
             malformed_list_error,
             PredictionError::InvalidPredictionListLine { line_number: 1, field_count: 3 }
-        ));
+        );
 
         let duplicate_chromosome_loco_path = fixture.write_file("duplicate.loco", "FID_IID F1_I1\n22 1.0\nchr22 2.0\n");
         let duplicate_list_path =
@@ -701,7 +702,7 @@ mod tests {
             SampleKeyMode::FidIid,
         )
         .expect_err("duplicate chromosome should be rejected");
-        assert!(matches!(duplicate_error, PredictionError::DuplicateChromosome { .. }));
+        assert_matches!(duplicate_error, PredictionError::DuplicateChromosome { .. });
 
         let invalid_value_loco_path = fixture.write_file("invalid.loco", "FID_IID F1_I1\n22 nope\n");
         let invalid_value_list_path =
@@ -714,7 +715,7 @@ mod tests {
             SampleKeyMode::FidIid,
         )
         .expect_err("invalid prediction value should be rejected");
-        assert!(matches!(invalid_value_error, PredictionError::InvalidPredictionValue { .. }));
+        assert_matches!(invalid_value_error, PredictionError::InvalidPredictionValue { .. });
     }
 
     #[test]
@@ -731,7 +732,7 @@ mod tests {
             SampleKeyMode::FidIid,
         )
         .expect_err("duplicate target sample key should be rejected");
-        assert!(matches!(duplicate_target_error, PredictionError::DuplicateTargetSampleKey { .. }));
+        assert_matches!(duplicate_target_error, PredictionError::DuplicateTargetSampleKey { .. });
 
         let duplicate_loco_error = PredictionSource::load(
             &prediction_list_path,
@@ -741,7 +742,7 @@ mod tests {
             SampleKeyMode::FidIid,
         )
         .expect_err("duplicate LOCO sample key should be rejected");
-        assert!(matches!(duplicate_loco_error, PredictionError::DuplicateLocoSampleKey { .. }));
+        assert_matches!(duplicate_loco_error, PredictionError::DuplicateLocoSampleKey { .. });
     }
 
     #[test]
@@ -759,6 +760,6 @@ mod tests {
         )
         .expect_err("missing target sample should be rejected");
 
-        assert!(matches!(error, PredictionError::MissingTargetSamples(_)));
+        assert_matches!(error, PredictionError::MissingTargetSamples(_));
     }
 }

@@ -1,3 +1,4 @@
+use std::assert_matches;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -943,7 +944,7 @@ fn sample_and_prediction_public_apis_cover_error_contracts_without_python() {
         SampleKeyMode::FidIid,
     )
     .expect_err("missing trait should fail");
-    assert!(matches!(multi_prediction_source, PredictionError::MissingPhenotype { .. }));
+    assert_matches!(multi_prediction_source, PredictionError::MissingPhenotype { .. });
 }
 
 #[test]
@@ -1177,7 +1178,7 @@ fn prediction_sources_cover_file_header_alignment_and_matrix_errors() {
     let fixture = FixtureDirectory::new("prediction-errors");
     let target_families = strings(&["F1", "F2"]);
     let target_individuals = strings(&["I1", "I2"]);
-    assert!(matches!(
+    assert_matches!(
         PredictionSource::load(
             &fixture.path.join("missing.list"),
             "trait",
@@ -1186,14 +1187,14 @@ fn prediction_sources_cover_file_header_alignment_and_matrix_errors() {
             SampleKeyMode::FidIid,
         ),
         Err(PredictionError::PredictionListNotFound(_))
-    ));
+    );
     let empty_list_path = fixture.write_file("empty.list", "\n\n");
-    assert!(matches!(
+    assert_matches!(
         PredictionSource::load(&empty_list_path, "trait", &target_families, &target_individuals, SampleKeyMode::FidIid),
         Err(PredictionError::EmptyPredictionList(_))
-    ));
+    );
     let malformed_list_path = fixture.write_file("malformed.list", "trait a b\n");
-    assert!(matches!(
+    assert_matches!(
         PredictionSource::load(
             &malformed_list_path,
             "trait",
@@ -1202,9 +1203,9 @@ fn prediction_sources_cover_file_header_alignment_and_matrix_errors() {
             SampleKeyMode::FidIid
         ),
         Err(PredictionError::InvalidPredictionListLine { .. })
-    ));
+    );
     let missing_loco_list_path = fixture.write_file("missing-loco.list", "trait missing.loco\n");
-    assert!(matches!(
+    assert_matches!(
         PredictionSource::load(
             &missing_loco_list_path,
             "trait",
@@ -1213,7 +1214,7 @@ fn prediction_sources_cover_file_header_alignment_and_matrix_errors() {
             SampleKeyMode::FidIid
         ),
         Err(PredictionError::LocoFileNotFound(_))
-    ));
+    );
 
     for (file_name, contents, expected_fragment) in [
         ("empty-header.loco", "FID_IID\n22 0.1\n", "at least"),
@@ -1249,7 +1250,7 @@ fn prediction_sources_cover_file_header_alignment_and_matrix_errors() {
         "good.list",
         &format!("trait {}\nother {}\n", good_loco_path.display(), second_loco_path.display()),
     );
-    assert!(matches!(
+    assert_matches!(
         PredictionSource::load(
             &prediction_list_path,
             "trait",
@@ -1258,8 +1259,8 @@ fn prediction_sources_cover_file_header_alignment_and_matrix_errors() {
             SampleKeyMode::FidIid,
         ),
         Err(PredictionError::TargetSampleLengthMismatch)
-    ));
-    assert!(matches!(
+    );
+    assert_matches!(
         PredictionSource::load(
             &prediction_list_path,
             "trait",
@@ -1268,8 +1269,8 @@ fn prediction_sources_cover_file_header_alignment_and_matrix_errors() {
             SampleKeyMode::FidIid,
         ),
         Err(PredictionError::DuplicateTargetSampleKey { .. })
-    ));
-    assert!(matches!(
+    );
+    assert_matches!(
         PredictionSource::load(
             &prediction_list_path,
             "trait",
@@ -1278,11 +1279,11 @@ fn prediction_sources_cover_file_header_alignment_and_matrix_errors() {
             SampleKeyMode::Iid,
         ),
         Err(PredictionError::DuplicateTargetIid { .. })
-    ));
+    );
     let duplicate_iid_loco_path = fixture.write_file("duplicate-iid.loco", "FID_IID F1_I1 F2_I1\n22 0.1 0.2\n");
     let duplicate_iid_list_path =
         fixture.write_file("duplicate-iid.list", &format!("trait {}\n", duplicate_iid_loco_path.display()));
-    assert!(matches!(
+    assert_matches!(
         PredictionSource::load(
             &duplicate_iid_list_path,
             "trait",
@@ -1291,7 +1292,7 @@ fn prediction_sources_cover_file_header_alignment_and_matrix_errors() {
             SampleKeyMode::Iid,
         ),
         Err(PredictionError::DuplicateLocoIid { .. })
-    ));
+    );
     let many_missing_error = PredictionSource::load(
         &prediction_list_path,
         "trait",
@@ -1310,5 +1311,5 @@ fn prediction_sources_cover_file_header_alignment_and_matrix_errors() {
         SampleKeyMode::FidIid,
     )
     .expect("multi prediction source should load");
-    assert!(matches!(multi_source.chromosome_prediction_matrix("X"), Err(PredictionError::MissingChromosome { .. })));
+    assert_matches!(multi_source.chromosome_prediction_matrix("X"), Err(PredictionError::MissingChromosome { .. }));
 }

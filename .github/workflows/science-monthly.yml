@@ -10,6 +10,7 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.14"
+  RUST_VERSION: "1.96.0"
 
 jobs:
   science-monthly:
@@ -32,6 +33,8 @@ jobs:
 
       - name: Set up Rust toolchain for mixed-package science runs
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
 
       - uses: Swatinem/rust-cache@v2
 

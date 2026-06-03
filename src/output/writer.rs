@@ -211,6 +211,7 @@ fn build_regenie_step2_ipc_write_options(arrow_compression: &str) -> Result<IpcW
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -298,7 +299,7 @@ mod tests {
     fn runtime_error_helper_preserves_message() {
         let error = OutputWriterError::runtime("worker failed");
 
-        assert!(matches!(error, OutputWriterError::Runtime(message) if message == "worker failed"));
+        assert_matches!(error, OutputWriterError::Runtime(message) if message == "worker failed");
     }
 
     #[test]
