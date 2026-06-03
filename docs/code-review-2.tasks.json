@@ -385,12 +385,15 @@
       "manual": {},
       "priority": "P2 memory allocation / host-device transfer issues",
       "problem_markdown": "## 16. Python telemetry opens and closes the JSONL file for every event\n\nIn `src/g/engine/telemetry.py:131-138`:\n\n```python\nwith self.lock:\n    path.parent.mkdir(parents=True, exist_ok=True)\n    with path.open(\"a\", encoding=\"utf-8\") as output_file:\n        output_file.write(...)\n```\n\nThis is fine for progress events and low-volume lifecycle logging. It is not fine if you start logging per-chunk debug or trace events through this path.\n\n### Fix\n\nKeep this for `progress` mode, but add a buffered queue writer for `profile` and `trace` modes.\n\nAt minimum:\n\n```text\n- create directories once\n- open files once per telemetry session\n- flush on close\n- optionally use a bounded queue\n```",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:23:40+00:00",
+        "integration_head": "ff276f35ad3348b49d9ee4a056b0cefc25e1f3fb"
+      },
       "slug": "python-telemetry-opens-and-closes-the-jsonl-file-for-every-event",
       "source_end_line": 339,
       "source_id": 16,
       "source_start_line": 312,
-      "status": "ready",
+      "status": "integrated",
       "title": "Python telemetry opens and closes the JSONL file for every event",
       "worktree": "../g-worktrees/review2-T016-python-telemetry-opens-and-closes-the-jsonl-file-for-every-event"
     },
