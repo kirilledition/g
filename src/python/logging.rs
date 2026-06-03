@@ -141,13 +141,24 @@ fn lock_logging_guards() -> PyResult<std::sync::MutexGuard<'static, Option<Vec<W
 }
 
 fn setup_python_logging(py: Python<'_>) -> PyResult<()> {
-    if PYTHON_LOGGING_INSTALLED.load(Ordering::Acquire) {
+    if PYTHON_LOGGING_INSTALLED
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |installed| (!installed).then_some(true))
+        .is_err()
+    {
         return Ok(());
     }
+
+    if let Err(error) = install_python_logging(py) {
+        PYTHON_LOGGING_INSTALLED.store(false, Ordering::Release);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn install_python_logging(py: Python<'_>) -> PyResult<()> {
     pyo3_pylogger::setup_logging(py, PYTHON_LOGGING_TARGET)?;
     install_python_host_handler(py)?;
     register_shutdown_logging(py)?;
-    PYTHON_LOGGING_INSTALLED.store(true, Ordering::Release);
     Ok(())
 }
 
