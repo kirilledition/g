@@ -343,12 +343,15 @@
       "manual": {},
       "priority": "P1 correctness / numerical concerns",
       "problem_markdown": "## 15. Linear LOCO/covariate formula still needs parity tests\n\nThe linear state residualizes phenotype against covariates first and subtracts LOCO predictions later. The API doc says:\n\n```text\nadjusted_residual = phenotype_residual - loco_predictions\n```\n\nThat may match how REGENIE\u2019s Step 1 predictions are intended to be used, but the subtle alternative is:\n\n```text\nresidualize(y - pred)\n```\n\nThese differ if LOCO predictions are not covariate-orthogonal.\n\n### Fix\n\nAdd a tiny parity fixture where covariates and LOCO predictions are correlated. Compare against REGENIE. Lock the formula down before optimizing linear further.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:19:29+00:00",
+        "integration_head": "256732b2d7fc3b3bbf0a30cd9b1b5fe1b421f4a1"
+      },
       "slug": "linear-loco-covariate-formula-still-needs-parity-tests",
       "source_end_line": 309,
       "source_id": 15,
       "source_start_line": 288,
-      "status": "ready",
+      "status": "integrated",
       "title": "Linear LOCO/covariate formula still needs parity tests",
       "worktree": "../g-worktrees/review2-T015-linear-loco-covariate-formula-still-needs-parity-tests"
     },
