@@ -673,7 +673,7 @@ def test_multi_trait_approximate_firth_matches_stacked_single_trait_results(firt
         sparse_candidate_mask=jnp.asarray([False, True, False], dtype=jnp.bool_),
     )
 
-    single_results = []
+    single_results: list[regenie2_binary_result.Regenie2BinaryChunkResult] = []
     for trait_index in range(phenotype_matrix.shape[0]):
         single_state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_matrix[trait_index])
         single_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
@@ -682,11 +682,13 @@ def test_multi_trait_approximate_firth_matches_stacked_single_trait_results(firt
             correction_plan,
         )
         single_results.append(
-            regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
-                chromosome_state=single_chromosome_state,
-                genotype_matrix=genotype_matrix,
-                correction_plan=correction_plan,
-                sparse_candidate_mask=jnp.asarray([False, True, False], dtype=jnp.bool_),
+            require_binary_chunk_result(
+                regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
+                    chromosome_state=single_chromosome_state,
+                    genotype_matrix=genotype_matrix,
+                    correction_plan=correction_plan,
+                    sparse_candidate_mask=jnp.asarray([False, True, False], dtype=jnp.bool_),
+                )
             )
         )
 
