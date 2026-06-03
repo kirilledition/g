@@ -61,7 +61,7 @@
       "source_end_line": 79,
       "source_id": 8,
       "source_start_line": 34,
-      "status": "integrated",
+      "status": "merged",
       "title": "Linear kernels reread genotype data for sum of squares that Rust already knows",
       "worktree": "../g-worktrees/review2-T008-linear-kernels-reread-genotype-data-for-sum-of-squares-that-rust-already-knows"
     },
@@ -103,7 +103,7 @@
       "source_end_line": 106,
       "source_id": 9,
       "source_start_line": 80,
-      "status": "integrated",
+      "status": "merged",
       "title": "Binary genotype flipping also duplicates native work",
       "worktree": "../g-worktrees/review2-T009-binary-genotype-flipping-also-duplicates-native-work"
     },
@@ -145,7 +145,7 @@
       "source_end_line": 135,
       "source_id": 10,
       "source_start_line": 107,
-      "status": "integrated",
+      "status": "merged",
       "title": "Multi-binary Firth loops over traits in Python",
       "worktree": "../g-worktrees/review2-T010-multi-binary-firth-loops-over-traits-in-python"
     },
@@ -187,7 +187,7 @@
       "source_end_line": 173,
       "source_id": 11,
       "source_start_line": 136,
-      "status": "integrated",
+      "status": "merged",
       "title": "The current AVX2 path still scalarizes statistics inside the vector loop",
       "worktree": "../g-worktrees/review2-T011-the-current-avx2-path-still-scalarizes-statistics-inside-the-vector-loop"
     },
@@ -229,7 +229,7 @@
       "source_end_line": 201,
       "source_id": 12,
       "source_start_line": 174,
-      "status": "integrated",
+      "status": "merged",
       "title": "SIMD test allows impossible negative dosages",
       "worktree": "../g-worktrees/review2-T012-simd-test-allows-impossible-negative-dosages"
     },
@@ -269,7 +269,7 @@
       "source_end_line": 256,
       "source_id": 13,
       "source_start_line": 204,
-      "status": "integrated",
+      "status": "merged",
       "title": "`jax-enable-x64` is misleading",
       "worktree": "../g-worktrees/review2-T013-jax-enable-x64-is-misleading"
     },
@@ -311,7 +311,7 @@
       "source_end_line": 287,
       "source_id": 14,
       "source_start_line": 257,
-      "status": "integrated",
+      "status": "merged",
       "title": "P-value conversion always downgrades to float32",
       "worktree": "../g-worktrees/review2-T014-p-value-conversion-always-downgrades-to-float32"
     },
@@ -351,7 +351,7 @@
       "source_end_line": 309,
       "source_id": 15,
       "source_start_line": 288,
-      "status": "integrated",
+      "status": "merged",
       "title": "Linear LOCO/covariate formula still needs parity tests",
       "worktree": "../g-worktrees/review2-T015-linear-loco-covariate-formula-still-needs-parity-tests"
     },
@@ -393,7 +393,7 @@
       "source_end_line": 339,
       "source_id": 16,
       "source_start_line": 312,
-      "status": "integrated",
+      "status": "merged",
       "title": "Python telemetry opens and closes the JSONL file for every event",
       "worktree": "../g-worktrees/review2-T016-python-telemetry-opens-and-closes-the-jsonl-file-for-every-event"
     },
@@ -425,12 +425,15 @@
       "manual": {},
       "priority": "P2 memory allocation / host-device transfer issues",
       "problem_markdown": "## 17. Logging/telemetry is still split in a confusing way\n\nPython telemetry writes `events.jsonl` and `progress.jsonl`. Rust tracing writes to `log_file` or `trace_file` depending on config.\n\nBy default, `diagnostics.log_file` is `None`, while telemetry resolves `events.jsonl` to `<out>.g/logs/events.jsonl`. That means:\n\n```text\nevents.jsonl = Python telemetry only\nRust JSON tracing = absent unless log_file/trace_file is configured\n```\n\nThis may be intentional, but the naming suggests a unified event stream.\n\n### Recommendation\n\nPick one of these designs:\n\n```text\nOption A:\n  python.events.jsonl\n  rust.events.jsonl\n  progress.jsonl\n\nOption B:\n  events.jsonl is Python lifecycle only\n  trace.jsonl is Rust trace only\n```\n\nDo not have Python and Rust independently append to the same file unless there is one shared writer.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T09:28:24+00:00",
+        "integration_head": "599f13c68f9e16535ed912b14ed824339f5a1ee4"
+      },
       "slug": "logging-telemetry-is-still-split-in-a-confusing-way",
       "source_end_line": 371,
       "source_id": 17,
       "source_start_line": 340,
-      "status": "ready",
+      "status": "merged",
       "title": "Logging/telemetry is still split in a confusing way",
       "worktree": "../g-worktrees/review2-T017-logging-telemetry-is-still-split-in-a-confusing-way"
     },
@@ -472,7 +475,7 @@
       "source_end_line": 408,
       "source_id": 18,
       "source_start_line": 372,
-      "status": "integrated",
+      "status": "merged",
       "title": "Output writer still copies result arrays and clones metadata",
       "worktree": "../g-worktrees/review2-T018-output-writer-still-copies-result-arrays-and-clones-metadata"
     },
@@ -504,12 +507,15 @@
       "manual": {},
       "priority": "P2 memory allocation / host-device transfer issues",
       "problem_markdown": "## 19. Result arrays are downcast to float32 before writing\n\n`write_regenie2_native_chunk_with_optional_timing(...)` materializes results with `jax.device_get`, then calls:\n\n```python\nnp.asarray(array, dtype=np.float32)\n```\n\nThis is consistent with the Arrow schema, but it means any float64 Firth internal results are downcast before output.\n\nIf you want REGENIE-compatible text-style output, float32 may be acceptable. If you want high-precision scientific output, this should be configurable or at least documented.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T09:30:45+00:00",
+        "integration_head": "611d1bb04d472a51e4b3486e12b826f2c4bbac85"
+      },
       "slug": "result-arrays-are-downcast-to-float32-before-writing",
       "source_end_line": 422,
       "source_id": 19,
       "source_start_line": 409,
-      "status": "ready",
+      "status": "merged",
       "title": "Result arrays are downcast to float32 before writing",
       "worktree": "../g-worktrees/review2-T019-result-arrays-are-downcast-to-float32-before-writing"
     },
@@ -541,12 +547,15 @@
       "manual": {},
       "priority": "P2 architecture issues",
       "problem_markdown": "## 20. Multi-phenotype batching is semantically honest but performance-limited\n\nThe current modes are:\n\n```text\nper-phenotype\ncomplete-case\n```\n\nDefault is per-phenotype. Complete-case is explicitly opt-in because it changes sample inclusion semantics. That is correct.\n\nBut from a performance perspective, this means common multi-phenotype runs may still decode BGEN repeatedly.\n\n### Better next architecture\n\nAdd grouping by identical sample/covariate alignment:\n\n```text\n1. Align each phenotype independently.\n2. Compute fingerprint of sample_indices + covariate matrix.\n3. Group phenotypes with identical fingerprints.\n4. Run one BGEN pass per group.\n5. Use complete-case only when the user explicitly requests that semantic change.\n```\n\nThis preserves per-phenotype semantics while still batching many real-world traits.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T09:37:15+00:00",
+        "integration_head": "66f4d3ee07df68449877b45b93eb500f8a5a3aff"
+      },
       "slug": "multi-phenotype-batching-is-semantically-honest-but-performance-limited",
       "source_end_line": 453,
       "source_id": 20,
       "source_start_line": 425,
-      "status": "ready",
+      "status": "merged",
       "title": "Multi-phenotype batching is semantically honest but performance-limited",
       "worktree": "../g-worktrees/review2-T020-multi-phenotype-batching-is-semantically-honest-but-performance-limited"
     },
@@ -578,12 +587,15 @@
       "manual": {},
       "priority": "P2 architecture issues",
       "problem_markdown": "## 21. Rust sample parser is streaming, but still allocates more than necessary\n\nThe current Rust sample parser is much better than before, but it still builds maps of owned `SampleKey -> RawPhenotypeRecord` and `SampleKey -> RawCovariateRecord`, then loops BGEN samples later.\n\nFor huge phenotype/covariate tables and many phenotypes, the fastest design is:\n\n```text\nbuild sample_key \u2192 row_index map once\npreallocate phenotype/covariate arrays and masks\nstream phenotype table directly into arrays\nstream covariate table directly into arrays\ncompact complete cases\n```\n\nFor multi-phenotype, this avoids building per-trait `AlignedSampleData` and then intersecting them.\n\nThis is not urgent compared with the O(N\u00b2) bug, but it is the next cleanup.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T09:40:43+00:00",
+        "integration_head": "213195a57f77ad4dddb375709a8a435037e0a880"
+      },
       "slug": "rust-sample-parser-is-streaming-but-still-allocates-more-than-necessary",
       "source_end_line": 473,
       "source_id": 21,
       "source_start_line": 454,
-      "status": "ready",
+      "status": "merged",
       "title": "Rust sample parser is streaming, but still allocates more than necessary",
       "worktree": "../g-worktrees/review2-T021-rust-sample-parser-is-streaming-but-still-allocates-more-than-necessary"
     },
@@ -615,12 +627,15 @@
       "manual": {},
       "priority": "P2 architecture issues",
       "problem_markdown": "## 22. Oxford `.sample` parsing may mishandle tabs/mixed whitespace\n\n`open_sample_file_reader(...)` uses the CSV reader with a single space delimiter. Then `space_delimited_record_to_strings(...)` filters empty fields.\n\nIf `.sample` files contain tabs or arbitrary mixed whitespace, this may not split correctly.\n\n### Fix\n\nFor Oxford `.sample`, a simple line reader with:\n\n```rust\nline.split_whitespace()\n```\n\nmay be more robust than using CSV with `delimiter(b' ')`.\n\nFor phenotype/covariate TSV, tab-only is fine if documented.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T09:41:11+00:00",
+        "integration_head": "7110449920d4e00b361208da5fcec1e5ad693429"
+      },
       "slug": "oxford-sample-parsing-may-mishandle-tabs-mixed-whitespace",
       "source_end_line": 493,
       "source_id": 22,
       "source_start_line": 474,
-      "status": "ready",
+      "status": "merged",
       "title": "Oxford `.sample` parsing may mishandle tabs/mixed whitespace",
       "worktree": "../g-worktrees/review2-T022-oxford-sample-parsing-may-mishandle-tabs-mixed-whitespace"
     },
@@ -662,7 +677,7 @@
       "source_end_line": 512,
       "source_id": 23,
       "source_start_line": 494,
-      "status": "integrated",
+      "status": "merged",
       "title": "`scan_committed_chunk_identifiers` trusts single-chunk filenames",
       "worktree": "../g-worktrees/review2-T023-scan-committed-chunk-identifiers-trusts-single-chunk-filenames"
     },
@@ -704,7 +719,7 @@
       "source_end_line": 540,
       "source_id": 24,
       "source_start_line": 513,
-      "status": "integrated",
+      "status": "merged",
       "title": "Hard-crash resume still seems weaker than graceful resume",
       "worktree": "../g-worktrees/review2-T024-hard-crash-resume-still-seems-weaker-than-graceful-resume"
     }
