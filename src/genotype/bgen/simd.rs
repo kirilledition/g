@@ -4,10 +4,68 @@ use crate::genotype::preprocess;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const AVX2_SAMPLE_COUNT: usize = 8;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+const AVX2_ACCUMULATION_VECTOR_LIMIT: usize = 4096;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const AVX2_PLOIDY_BYTE_COUNT: usize = 32;
 const EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL: f32 = 1.0_f32 / 255.0_f32;
 const EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL: f32 = 1.0_f32 / (255.0_f32 * 255.0_f32);
 const PRESENT_DIPLOID_BYTE_GROUP: [u8; 16] = [2_u8; 16];
+const BGEN_SIMD_ENVIRONMENT_VARIABLE: &str = "G_BGEN_SIMD";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BgenSimdMode {
+    Auto,
+    Scalar,
+    Avx2,
+}
+
+impl BgenSimdMode {
+    fn from_environment_value(environment_value: &str) -> Self {
+        let trimmed_environment_value = environment_value.trim();
+        if trimmed_environment_value.eq_ignore_ascii_case("auto") {
+            Self::Auto
+        } else if trimmed_environment_value.eq_ignore_ascii_case("scalar") {
+            Self::Scalar
+        } else if trimmed_environment_value.eq_ignore_ascii_case("avx2") {
+            Self::Avx2
+        } else {
+            panic!("{BGEN_SIMD_ENVIRONMENT_VARIABLE} must be one of auto, scalar, or avx2");
+        }
+    }
+}
+
+fn configured_bgen_simd_mode() -> BgenSimdMode {
+    static CONFIGURED_BGEN_SIMD_MODE: std::sync::OnceLock<BgenSimdMode> = std::sync::OnceLock::new();
+    *CONFIGURED_BGEN_SIMD_MODE.get_or_init(|| {
+        std::env::var(BGEN_SIMD_ENVIRONMENT_VARIABLE)
+            .map_or(BgenSimdMode::Auto, |environment_value| BgenSimdMode::from_environment_value(&environment_value))
+    })
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+fn bgen_avx2_enabled() -> bool {
+    match configured_bgen_simd_mode() {
+        BgenSimdMode::Auto => std::arch::is_x86_feature_detected!("avx2"),
+        BgenSimdMode::Scalar => false,
+        BgenSimdMode::Avx2 => {
+            if std::arch::is_x86_feature_detected!("avx2") {
+                true
+            } else {
+                panic!("{BGEN_SIMD_ENVIRONMENT_VARIABLE}=avx2 requires an x86 CPU with AVX2 support");
+            }
+        }
+    }
+}
+
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+fn bgen_avx2_enabled() -> bool {
+    match configured_bgen_simd_mode() {
+        BgenSimdMode::Auto | BgenSimdMode::Scalar => false,
+        BgenSimdMode::Avx2 => {
+            panic!("{BGEN_SIMD_ENVIRONMENT_VARIABLE}=avx2 requires an x86 CPU with AVX2 support");
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct EightBitIdentityDecodeSummary {
@@ -115,7 +173,7 @@ pub(super) fn decode_unphased_eight_bit_identity_simd_or_scalar(
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
-        if std::arch::is_x86_feature_detected!("avx2") {
+        if bgen_avx2_enabled() {
             // Benchmarks on the trusted full-sample path selected raw-integer AVX2 over lookup-gather AVX2.
             return unsafe { decode_unphased_eight_bit_identity_raw_avx2(packed_probability_bytes, output_values) };
         }
@@ -127,7 +185,7 @@ pub(super) fn decode_unphased_eight_bit_identity_simd_or_scalar(
 pub(super) fn all_samples_present_diploid_simd_or_scalar(sample_ploidy_and_missingness: &[u8]) -> bool {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
-        if std::arch::is_x86_feature_detected!("avx2") {
+        if bgen_avx2_enabled() {
             return unsafe { all_samples_present_diploid_avx2(sample_ploidy_and_missingness) };
         }
     }
@@ -256,16 +314,20 @@ fn raw_dosage_value(raw_dosage_integer: i32) -> f32 {
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
-    __m128i, __m256i, _mm_loadu_si128, _mm256_and_si256, _mm256_cmpeq_epi8, _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32,
-    _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_mul_ps, _mm256_set1_epi8, _mm256_set1_epi32, _mm256_set1_ps,
-    _mm256_slli_epi32, _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_epi32,
+    __m128i, __m256i, _mm_loadu_si128, _mm256_add_epi32, _mm256_and_si256, _mm256_castsi256_ps, _mm256_cmpeq_epi8,
+    _mm256_cmpgt_epi32, _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_loadu_si256, _mm256_movemask_epi8,
+    _mm256_movemask_ps, _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi8, _mm256_set1_epi32, _mm256_set1_ps,
+    _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256,
+    _mm256_sub_epi32,
 };
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m128i, __m256i, _mm_loadu_si128, _mm256_and_si256, _mm256_cmpeq_epi8, _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32,
-    _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_mul_ps, _mm256_set1_epi8, _mm256_set1_epi32, _mm256_set1_ps,
-    _mm256_slli_epi32, _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_epi32,
+    __m128i, __m256i, _mm_loadu_si128, _mm256_add_epi32, _mm256_and_si256, _mm256_castsi256_ps, _mm256_cmpeq_epi8,
+    _mm256_cmpgt_epi32, _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_loadu_si256, _mm256_movemask_epi8,
+    _mm256_movemask_ps, _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi8, _mm256_set1_epi32, _mm256_set1_ps,
+    _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256,
+    _mm256_sub_epi32,
 };
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -288,9 +350,135 @@ unsafe fn all_samples_present_diploid_avx2(sample_ploidy_and_missingness: &[u8])
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+fn avx2_mask_count(comparison_mask: i32) -> i32 {
+    i32::try_from(comparison_mask.count_ones()).expect("AVX2 comparison mask count should fit i32")
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[allow(clippy::cast_ptr_alignment)]
+unsafe fn record_raw_dosage_accumulators_avx2(
+    raw_integer_summary: &mut EightBitRawIntegerSummary,
+    raw_sum_accumulator: __m256i,
+    raw_square_sum_accumulator: __m256i,
+) {
+    let mut raw_sum_lanes = [0_i32; AVX2_SAMPLE_COUNT];
+    let mut raw_square_sum_lanes = [0_i32; AVX2_SAMPLE_COUNT];
+    unsafe {
+        _mm256_storeu_si256(raw_sum_lanes.as_mut_ptr().cast::<__m256i>(), raw_sum_accumulator);
+        _mm256_storeu_si256(raw_square_sum_lanes.as_mut_ptr().cast::<__m256i>(), raw_square_sum_accumulator);
+    }
+    for lane_index in 0..AVX2_SAMPLE_COUNT {
+        raw_integer_summary.raw_dosage_total += i64::from(raw_sum_lanes[lane_index]);
+        raw_integer_summary.raw_dosage_square_total +=
+            u64::try_from(raw_square_sum_lanes[lane_index]).expect("raw dosage square sum should fit u64");
+    }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[allow(clippy::cast_ptr_alignment)]
 unsafe fn decode_unphased_eight_bit_identity_raw_avx2(
+    packed_probability_bytes: &[u8],
+    output_values: &mut [f32],
+) -> EightBitIdentityDecodeSummary {
+    let mut raw_integer_summary = EightBitRawIntegerSummary::default();
+    let probability_byte_mask = _mm256_set1_epi32(0xFF);
+    let raw_dosage_base = _mm256_set1_epi32(510);
+    let zero = _mm256_setzero_si256();
+    let homozygous_reference_upper_bound = _mm256_set1_epi32(128);
+    let heterozygous_lower_bound = _mm256_set1_epi32(127);
+    let heterozygous_upper_bound = _mm256_set1_epi32(383);
+    let homozygous_alternate_lower_bound = _mm256_set1_epi32(382);
+    let probability_scale_reciprocal = _mm256_set1_ps(EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL);
+    let mut raw_sum_accumulator = _mm256_setzero_si256();
+    let mut raw_square_sum_accumulator = _mm256_setzero_si256();
+    let mut accumulated_vector_count = 0_usize;
+    let mut sample_index = 0_usize;
+    while sample_index + AVX2_SAMPLE_COUNT <= output_values.len() {
+        let probability_pointer = unsafe { packed_probability_bytes.as_ptr().add(sample_index * 2).cast::<__m128i>() };
+        let probability_words = unsafe { _mm_loadu_si128(probability_pointer) };
+        let probability_indices = _mm256_cvtepu16_epi32(probability_words);
+        let homozygous_reference_probability_bytes = _mm256_and_si256(probability_indices, probability_byte_mask);
+        let heterozygous_probability_bytes = _mm256_srli_epi32(probability_indices, 8);
+        let doubled_homozygous_reference_probability_bytes =
+            _mm256_slli_epi32(homozygous_reference_probability_bytes, 1);
+        let raw_dosage_integers = _mm256_sub_epi32(
+            _mm256_sub_epi32(raw_dosage_base, doubled_homozygous_reference_probability_bytes),
+            heterozygous_probability_bytes,
+        );
+        let dosage_values = _mm256_mul_ps(_mm256_cvtepi32_ps(raw_dosage_integers), probability_scale_reciprocal);
+        unsafe {
+            _mm256_storeu_ps(output_values.as_mut_ptr().add(sample_index), dosage_values);
+        }
+
+        raw_sum_accumulator = _mm256_add_epi32(raw_sum_accumulator, raw_dosage_integers);
+        raw_square_sum_accumulator =
+            _mm256_add_epi32(raw_square_sum_accumulator, _mm256_mullo_epi32(raw_dosage_integers, raw_dosage_integers));
+        accumulated_vector_count += 1;
+
+        let nonzero_count =
+            avx2_mask_count(_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(raw_dosage_integers, zero))));
+        let homozygous_reference_count = avx2_mask_count(_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
+            homozygous_reference_upper_bound,
+            raw_dosage_integers,
+        ))));
+        let heterozygous_count = avx2_mask_count(_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_and_si256(
+            _mm256_cmpgt_epi32(raw_dosage_integers, heterozygous_lower_bound),
+            _mm256_cmpgt_epi32(heterozygous_upper_bound, raw_dosage_integers),
+        ))));
+        let homozygous_alternate_count = avx2_mask_count(_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
+            raw_dosage_integers,
+            homozygous_alternate_lower_bound,
+        ))));
+
+        raw_integer_summary.nonzero_count += nonzero_count;
+        raw_integer_summary.zero_count +=
+            i32::try_from(AVX2_SAMPLE_COUNT).expect("AVX2 sample count should fit i32") - nonzero_count;
+        raw_integer_summary.homozygous_reference_count += homozygous_reference_count;
+        raw_integer_summary.heterozygous_count += heterozygous_count;
+        raw_integer_summary.homozygous_alternate_count += homozygous_alternate_count;
+
+        if accumulated_vector_count == AVX2_ACCUMULATION_VECTOR_LIMIT {
+            unsafe {
+                record_raw_dosage_accumulators_avx2(
+                    &mut raw_integer_summary,
+                    raw_sum_accumulator,
+                    raw_square_sum_accumulator,
+                );
+            }
+            raw_sum_accumulator = _mm256_setzero_si256();
+            raw_square_sum_accumulator = _mm256_setzero_si256();
+            accumulated_vector_count = 0;
+        }
+
+        sample_index += AVX2_SAMPLE_COUNT;
+    }
+
+    if accumulated_vector_count > 0 {
+        unsafe {
+            record_raw_dosage_accumulators_avx2(
+                &mut raw_integer_summary,
+                raw_sum_accumulator,
+                raw_square_sum_accumulator,
+            );
+        }
+    }
+    raw_integer_summary.selected_observation_count +=
+        i32::try_from(sample_index).expect("selected sample count should fit i32");
+    decode_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
+        packed_probability_bytes,
+        output_values,
+        sample_index,
+        &mut raw_integer_summary,
+    );
+    raw_integer_summary.into_decode_summary()
+}
+
+#[cfg(all(test, any(target_arch = "x86", target_arch = "x86_64")))]
+#[target_feature(enable = "avx2")]
+#[allow(clippy::cast_ptr_alignment)]
+unsafe fn decode_unphased_eight_bit_identity_raw_avx2_scalar_stats(
     packed_probability_bytes: &[u8],
     output_values: &mut [f32],
 ) -> EightBitIdentityDecodeSummary {
@@ -455,6 +643,19 @@ mod tests {
     }
 
     #[test]
+    fn bgen_simd_mode_parses_supported_environment_values() {
+        assert_eq!(BgenSimdMode::from_environment_value("auto"), BgenSimdMode::Auto);
+        assert_eq!(BgenSimdMode::from_environment_value(" scalar "), BgenSimdMode::Scalar);
+        assert_eq!(BgenSimdMode::from_environment_value("AVX2"), BgenSimdMode::Avx2);
+    }
+
+    #[test]
+    #[should_panic(expected = "G_BGEN_SIMD must be one of auto, scalar, or avx2")]
+    fn bgen_simd_mode_rejects_unsupported_environment_values() {
+        BgenSimdMode::from_environment_value("sse2");
+    }
+
+    #[test]
     fn all_samples_present_diploid_wrapper_matches_scalar() {
         for sample_count in TRUSTED_IDENTITY_SAMPLE_COUNTS {
             let present_ploidy = vec![2_u8; sample_count];
@@ -542,7 +743,7 @@ mod tests {
                 let expected_summary = expected_raw_integer_summary(&probabilities);
 
                 assert_eq!(integer_summary, expected_summary);
-                assert!(output.iter().all(|dosage_value| (-1.0..=2.0).contains(dosage_value)));
+                assert!(output.iter().all(|dosage_value| (0.0..=2.0).contains(dosage_value)));
             }
         }
     }
@@ -597,5 +798,25 @@ mod tests {
                 assert_eq!(avx2_summary, scalar_summary);
             }
         }
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[test]
+    fn trusted_identity_raw_avx2_vector_stats_match_scalar_stats_baseline_after_periodic_reduction() {
+        if !std::arch::is_x86_feature_detected!("avx2") {
+            return;
+        }
+
+        let sample_count = (AVX2_ACCUMULATION_VECTOR_LIMIT + 2) * AVX2_SAMPLE_COUNT + 3;
+        let probabilities = deterministic_random_valid_probability_bytes(sample_count);
+        let mut baseline_output = vec![0.0_f32; sample_count];
+        let mut avx2_output = vec![0.0_f32; sample_count];
+
+        let baseline_summary =
+            unsafe { decode_unphased_eight_bit_identity_raw_avx2_scalar_stats(&probabilities, &mut baseline_output) };
+        let avx2_summary = unsafe { decode_unphased_eight_bit_identity_raw_avx2(&probabilities, &mut avx2_output) };
+
+        assert_eq!(avx2_output, baseline_output);
+        assert_eq!(avx2_summary, baseline_summary);
     }
 }

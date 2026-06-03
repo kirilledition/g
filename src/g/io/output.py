@@ -29,6 +29,7 @@ RESUME_POLICY = "manifest_committed_chunks"
 DEFAULT_WRITER_QUEUE_DEPTH = config.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
 DEFAULT_WRITER_THREAD_COUNT = config.DEFAULT_OUTPUT_WRITER_THREADS
 DEFAULT_CHUNKS_PER_ARROW_FILE = config.DEFAULT_OUTPUT_CHUNKS_PER_ARROW_FILE
+RESULT_STATISTIC_OUTPUT_DTYPE = "float32"
 
 
 class MultiPhenotypeSampleMode(enum.StrEnum):
@@ -187,6 +188,7 @@ def build_output_writer_manifest(
         "writer_queue_depth": writer_queue_depth,
         "chunks_per_arrow_file": chunks_per_arrow_file,
         "arrow_compression": arrow_compression.value,
+        "result_statistic_dtype": RESULT_STATISTIC_OUTPUT_DTYPE,
     }
 
 
@@ -213,6 +215,8 @@ def build_current_run_manifest_header(
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
     jax_enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
+    score_dtype: types.FloatingPointDtype = config.DEFAULT_SCORE_DTYPE,
+    firth_dtype: types.FloatingPointDtype = config.DEFAULT_FIRTH_DTYPE,
     multi_phenotype_sample_mode: MultiPhenotypeSampleMode = MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     finalize_parquet: bool = False,
@@ -264,6 +268,8 @@ def build_current_run_manifest_header(
             "sample_key_mode": sample_key_mode,
             "bgen_decode_tile_variant_count": bgen_decode_tile_variant_count,
             "jax_policy": jax_policy_manifest,
+            "score_dtype": score_dtype,
+            "firth_dtype": firth_dtype,
             "multi_phenotype_sample_mode": multi_phenotype_sample_mode,
             "output_writer": output_writer_manifest,
             "resume_policy": RESUME_POLICY,
@@ -291,6 +297,8 @@ def build_current_run_manifest_header(
         "sample_key_mode": str(sample_key_mode),
         "bgen_decode_tile_variant_count": bgen_decode_tile_variant_count,
         "jax_policy": jax_policy_manifest,
+        "score_dtype": score_dtype.value,
+        "firth_dtype": firth_dtype.value,
         "multi_phenotype_sample_mode": multi_phenotype_sample_mode.value,
         "output_writer": output_writer_manifest,
         "resume_policy": RESUME_POLICY,
@@ -371,6 +379,23 @@ def validate_strict_manifest_chunks(
     return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
 
 
+def repair_strict_manifest_chunk_commits(
+    output_run_paths: OutputRunPaths,
+    manifest: dict[str, typing.Any],
+) -> list[typing.Any]:
+    """Recover committed chunk manifest records from Arrow metadata."""
+    repaired_commits = json.loads(
+        _core.repair_strict_manifest_chunk_commits(
+            str(output_run_paths.chunks_directory),
+            json.dumps(manifest),
+        )
+    )
+    if not isinstance(repaired_commits, list):
+        message = "Strict resume repaired committed chunks must be a list."
+        raise ValueError(message)
+    return repaired_commits
+
+
 def initialize_output_run(
     *,
     output_run_paths: OutputRunPaths,
@@ -394,7 +419,10 @@ def initialize_output_run(
         committed_chunks = committed_chunks_value
         if resume:
             if resume_mode == types.ResumeMode.STRICT:
-                committed_chunk_identifiers = validate_strict_manifest_chunks(output_run_paths, existing_manifest)
+                committed_chunks = repair_strict_manifest_chunk_commits(output_run_paths, existing_manifest)
+                committed_chunk_identifiers = read_manifest_committed_chunk_identifiers(
+                    {"committed_chunks": committed_chunks}
+                )
             else:
                 committed_chunk_identifiers = read_manifest_committed_chunk_identifiers(existing_manifest)
             logger.info("Resuming run with %d previously committed chunks.", len(committed_chunk_identifiers))

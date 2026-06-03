@@ -114,6 +114,14 @@ pub(super) fn packed_eight_bit_probability_index(
     usize::from(homozygous_reference_probability_byte) | (usize::from(heterozygous_probability_byte) << 8)
 }
 
+pub(super) fn read_eight_bit_probability_pair(buffer: &[u8], offset: usize) -> Result<[u8; 2], BgenError> {
+    let probability_bytes = read_exact_bytes(buffer, offset, 2)?;
+    let ([probability_pair], []) = probability_bytes.as_chunks::<2>() else {
+        unreachable!("selected 8-bit BGEN probability reads request exactly two bytes");
+    };
+    Ok(*probability_pair)
+}
+
 pub(super) struct ThreadScratch {
     zlib_decompressor: Decompress,
     decompressed_probability_block: Vec<u8>,
@@ -1073,10 +1081,11 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
             let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
                 BgenError::InvalidFormat("Integer overflow while indexing 8-bit BGEN probabilities.".to_string())
             })?;
-            let probability_pair =
-                read_exact_bytes(&packed_probability_bytes[..expected_probability_byte_count], probability_offset, 2)?;
-            let packed_probability_index =
-                packed_eight_bit_probability_index([probability_pair[0], probability_pair[1]]);
+            let probability_pair = read_eight_bit_probability_pair(
+                &packed_probability_bytes[..expected_probability_byte_count],
+                probability_offset,
+            )?;
+            let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
             let dosage_value = dosage_lookup[packed_probability_index];
             unsafe {
                 // Selected sample order maps directly to the caller's output row order.

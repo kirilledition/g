@@ -1,20 +1,31 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use std::path::Path;
+use std::ptr::NonNull;
 use std::sync::Arc;
 
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+use arrow::array::{ArrayRef, PrimitiveArray};
+use arrow::buffer::{Buffer, ScalarBuffer};
+use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Int32Type};
+use numpy::{Element, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use crate::output::{
     NativeChunkHandle, OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
+    repair_strict_manifest_chunk_commits as repair_native_strict_manifest_chunk_commits,
     scan_committed_chunk_identifiers as scan_native_committed_chunk_identifiers,
     validate_strict_manifest_chunks as validate_native_strict_manifest_chunks,
 };
 
 use super::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata};
+
+struct PythonArrayAllocation {
+    _owner: Py<PyAny>,
+}
+
+impl std::panic::RefUnwindSafe for PythonArrayAllocation {}
 
 #[pyclass]
 pub(crate) struct OutputWriterSession {
@@ -64,15 +75,32 @@ impl OutputWriterSession {
         extra_code: Option<PyReadonlyArray1<'_, i32>>,
     ) -> PyResult<()> {
         let chunk_handle = build_native_chunk_handle_from_python(&metadata, &chunk_stats)?;
+        let beta_slice = beta.as_slice()?;
+        let standard_error_slice = standard_error.as_slice()?;
+        let chi_squared_slice = chi_squared.as_slice()?;
+        let log10_p_value_slice = log10_p_value.as_slice()?;
         let extra_code_slice = extra_code.as_ref().map(|array| array.as_slice()).transpose()?;
+        let beta_array = build_python_owned_arrow_array1::<f32, Float32Type>(&beta, beta_slice)?;
+        let standard_error_array =
+            build_python_owned_arrow_array1::<f32, Float32Type>(&standard_error, standard_error_slice)?;
+        let chi_squared_array = build_python_owned_arrow_array1::<f32, Float32Type>(&chi_squared, chi_squared_slice)?;
+        let log10_p_value_array =
+            build_python_owned_arrow_array1::<f32, Float32Type>(&log10_p_value, log10_p_value_slice)?;
+        let extra_code_array = match (extra_code.as_ref(), extra_code_slice) {
+            (None, None) => None,
+            (Some(extra_code_values), Some(extra_code_slice_values)) => {
+                Some(build_python_owned_arrow_array1::<i32, Int32Type>(extra_code_values, extra_code_slice_values)?)
+            }
+            _ => return Err(PyRuntimeError::new_err("Extra code array state was inconsistent.")),
+        };
         self.inner
-            .write_regenie2_native_chunk_handle(
+            .write_regenie2_native_chunk_handle_arrays(
                 chunk_handle,
-                beta.as_slice()?,
-                standard_error.as_slice()?,
-                chi_squared.as_slice()?,
-                log10_p_value.as_slice()?,
-                extra_code_slice,
+                beta_array,
+                standard_error_array,
+                chi_squared_array,
+                log10_p_value_array,
+                extra_code_array,
             )
             .map_err(output_writer_error_to_py)
     }
@@ -161,15 +189,28 @@ pub(crate) fn write_regenie2_multi_native_chunk(
                     .ok_or_else(|| PyValueError::new_err("extra_code row is not contiguous."))?,
             ),
         };
+        let beta_array = build_python_owned_arrow_array2::<f32, Float32Type>(&beta, beta_slice)?;
+        let standard_error_array =
+            build_python_owned_arrow_array2::<f32, Float32Type>(&standard_error, standard_error_slice)?;
+        let chi_squared_array = build_python_owned_arrow_array2::<f32, Float32Type>(&chi_squared, chi_squared_slice)?;
+        let log10_p_value_array =
+            build_python_owned_arrow_array2::<f32, Float32Type>(&log10_p_value, log10_p_value_slice)?;
+        let extra_code_array = match extra_code_slice {
+            None => None,
+            Some(extra_code_slice_values) => Some(build_python_owned_arrow_array2::<i32, Int32Type>(
+                extra_code.as_ref().expect("extra code array should exist"),
+                extra_code_slice_values,
+            )?),
+        };
         writer_sessions[trait_index]
             .inner
-            .write_regenie2_native_chunk_handle(
+            .write_regenie2_native_chunk_handle_arrays(
                 chunk_handle.clone(),
-                beta_slice,
-                standard_error_slice,
-                chi_squared_slice,
-                log10_p_value_slice,
-                extra_code_slice,
+                beta_array,
+                standard_error_array,
+                chi_squared_array,
+                log10_p_value_array,
+                extra_code_array,
             )
             .map_err(output_writer_error_to_py)?;
     }
@@ -199,6 +240,31 @@ pub(crate) fn scan_committed_chunk_identifiers(chunks_directory: String) -> PyRe
 pub(crate) fn validate_strict_manifest_chunks(chunks_directory: String, manifest_json: String) -> PyResult<Vec<i64>> {
     validate_native_strict_manifest_chunks(Path::new(&chunks_directory), &manifest_json)
         .map_err(output_writer_error_to_py)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn repair_strict_manifest_chunk_commits(
+    chunks_directory: String,
+    manifest_json: String,
+) -> PyResult<String> {
+    let chunk_commits = repair_native_strict_manifest_chunk_commits(Path::new(&chunks_directory), &manifest_json)
+        .map_err(output_writer_error_to_py)?;
+    serde_json::to_string(
+        &chunk_commits
+            .into_iter()
+            .map(|chunk_commit| {
+                serde_json::json!({
+                    "chunk_identifier": chunk_commit.chunk_identifier,
+                    "variant_start_index": chunk_commit.variant_start_index,
+                    "variant_stop_index": chunk_commit.variant_stop_index,
+                    "row_count": chunk_commit.row_count,
+                    "chunk_file_name": chunk_commit.chunk_file_name,
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
 fn output_writer_error_to_py(error: OutputWriterError) -> PyErr {
@@ -240,4 +306,34 @@ fn validate_trait_major_shape(
     Err(PyValueError::new_err(format!(
         "{array_name} must have shape ({trait_count}, {row_count}) for multi-trait output."
     )))
+}
+
+fn build_python_owned_arrow_array1<T, ArrowType>(array: &PyReadonlyArray1<'_, T>, values: &[T]) -> PyResult<ArrayRef>
+where
+    T: ArrowNativeType + Element,
+    ArrowType: ArrowPrimitiveType<Native = T>,
+{
+    build_python_owned_arrow_array_from_owner::<T, ArrowType>((**array).clone().into_any().unbind(), values)
+}
+
+fn build_python_owned_arrow_array2<T, ArrowType>(array: &PyReadonlyArray2<'_, T>, values: &[T]) -> PyResult<ArrayRef>
+where
+    T: ArrowNativeType + Element,
+    ArrowType: ArrowPrimitiveType<Native = T>,
+{
+    build_python_owned_arrow_array_from_owner::<T, ArrowType>((**array).clone().into_any().unbind(), values)
+}
+
+fn build_python_owned_arrow_array_from_owner<T, ArrowType>(array_owner: Py<PyAny>, values: &[T]) -> PyResult<ArrayRef>
+where
+    T: ArrowNativeType + Element,
+    ArrowType: ArrowPrimitiveType<Native = T>,
+{
+    let byte_length = std::mem::size_of_val(values);
+    let pointer = NonNull::new(values.as_ptr().cast_mut().cast::<u8>())
+        .ok_or_else(|| PyRuntimeError::new_err("NumPy result array has a null data pointer."))?;
+    let buffer = unsafe {
+        Buffer::from_custom_allocation(pointer, byte_length, Arc::new(PythonArrayAllocation { _owner: array_owner }))
+    };
+    Ok(Arc::new(PrimitiveArray::<ArrowType>::new(ScalarBuffer::new(buffer, 0, values.len()), None)))
 }

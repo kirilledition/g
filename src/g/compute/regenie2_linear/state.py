@@ -7,6 +7,8 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+from g import types
+from g.compute.common import dtype as compute_dtype
 from g.compute.common import linalg
 
 
@@ -89,10 +91,12 @@ class Regenie2MultiLinearChromosomeState:
 def build_multi_linear_state(
     covariate_matrix: jax.Array,
     phenotype_matrix: jax.Array,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
 ) -> Regenie2MultiLinearState:
     """Build shared covariate projection and trait-major phenotype residuals."""
-    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jnp.float32)
-    phenotype_matrix_compute = jnp.asarray(phenotype_matrix, dtype=jnp.float32)
+    jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
+    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jax_dtype)
+    phenotype_matrix_compute = jnp.asarray(phenotype_matrix, dtype=jax_dtype)
     sample_count = covariate_matrix_compute.shape[0]
     covariate_parameter_count = covariate_matrix_compute.shape[1]
     degrees_of_freedom = sample_count - covariate_parameter_count
@@ -116,7 +120,7 @@ def build_multi_linear_state(
     return Regenie2MultiLinearState(
         whitened_covariate_transpose=whitened_covariate_transpose,
         phenotype_residual_matrix=phenotype_residual_matrix,
-        degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=jnp.float32),
+        degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=jax_dtype),
     )
 
 
@@ -160,9 +164,13 @@ def build_single_linear_chromosome_state_from_multi(
 def build_multi_linear_chromosome_state(
     state: Regenie2MultiLinearState,
     loco_prediction_matrix: jax.Array,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
 ) -> Regenie2MultiLinearChromosomeState:
     """Build chromosome-specific trait-major residual state reused across chunks."""
-    loco_prediction_matrix_compute = jnp.asarray(loco_prediction_matrix, dtype=jnp.float32)
+    loco_prediction_matrix_compute = jnp.asarray(
+        loco_prediction_matrix,
+        dtype=compute_dtype.resolve_jax_dtype(score_dtype),
+    )
     adjusted_residual_matrix = state.phenotype_residual_matrix - loco_prediction_matrix_compute
     adjusted_residual_projection_coordinate_matrix = adjusted_residual_matrix @ state.whitened_covariate_transpose.T
     raw_adjusted_residual_sum_squares = jnp.einsum("ij,ij->i", adjusted_residual_matrix, adjusted_residual_matrix)

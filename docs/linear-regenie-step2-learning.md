@@ -52,7 +52,8 @@ Original REGENIE uses Eigen `double` for this path, but current full-chromosome
 CPU and GPU parity checks show that linear float32 compute is not the limiting
 factor for replacement-grade agreement. `g` therefore keeps quantitative step 2
 linear compute and output fixed to float32. There is no runtime dtype switch for
-this path.
+this path. The output writer persists `BETA`, `SE`, `CHISQ`, and `LOG10P` as
+float32 and records that dtype in the run manifest.
 
 ## Debug Workflow
 

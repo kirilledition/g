@@ -1,6 +1,6 @@
 #![allow(clippy::missing_errors_doc)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -10,6 +10,7 @@ use arrow::datatypes::Schema;
 use arrow::ipc::reader::FileReader as ArrowFileReader;
 use serde_json::Value;
 
+use crate::output::manifest;
 use crate::output::schema;
 use crate::output::writer::OutputWriterError;
 
@@ -25,13 +26,10 @@ pub fn scan_committed_chunk_identifiers(chunks_directory: &Path) -> Result<Vec<i
         .collect::<Vec<_>>();
     chunk_file_paths.sort();
     for chunk_file_path in chunk_file_paths {
-        if let Some((first_chunk_identifier, None)) = parse_chunk_file_name(&chunk_file_path) {
-            committed_identifiers.insert(first_chunk_identifier);
-            continue;
-        }
         let input_file = File::open(&chunk_file_path).map_err(OutputWriterError::runtime)?;
         let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
         if let Some(chunk_commits) = read_schema_chunk_commits(file_reader.schema().as_ref())? {
+            validate_schema_chunk_commit_batches(file_reader, &chunk_commits)?;
             committed_identifiers.extend(chunk_commits.into_iter().map(|chunk_commit| chunk_commit.chunk_identifier));
             continue;
         }
@@ -59,30 +57,18 @@ pub fn validate_strict_manifest_chunks(
     chunks_directory: &Path,
     manifest_json: &str,
 ) -> Result<Vec<i64>, OutputWriterError> {
-    let manifest = serde_json::from_str::<Value>(manifest_json).map_err(OutputWriterError::runtime)?;
-    let committed_chunks = manifest.get("committed_chunks").and_then(Value::as_array).ok_or_else(|| {
-        OutputWriterError::InvalidInput("Run manifest committed_chunks field must be a list.".to_string())
-    })?;
+    let manifest_commits = read_manifest_chunk_commits(manifest_json)?;
     let mut committed_identifiers = BTreeSet::new();
     let mut expected_schema: Option<Arc<Schema>> = None;
-    for committed_chunk in committed_chunks {
-        let chunk_identifier = read_manifest_integer(committed_chunk, "chunk_identifier")?;
-        let variant_start_index = read_manifest_integer(committed_chunk, "variant_start_index")?;
-        let variant_stop_index = read_manifest_integer(committed_chunk, "variant_stop_index")?;
-        let row_count = read_manifest_integer(committed_chunk, "row_count")?;
-        let chunk_file_name = committed_chunk.get("chunk_file_name").and_then(Value::as_str).ok_or_else(|| {
-            OutputWriterError::InvalidInput(
-                "Run manifest committed chunk entry is missing chunk_file_name.".to_string(),
-            )
-        })?;
-        let chunk_file_path = chunks_directory.join(chunk_file_name);
+    for committed_chunk in manifest_commits {
+        let chunk_file_path = chunks_directory.join(&committed_chunk.chunk_file_name);
         if !chunk_file_path.exists() {
             return Err(OutputWriterError::InvalidInput(format!(
                 "Strict resume manifest references missing chunk file: {}",
                 chunk_file_path.display()
             )));
         }
-        let chunk_observation = inspect_manifest_chunk_file(&chunk_file_path, chunk_identifier)?;
+        let chunk_observation = inspect_manifest_chunk_file(&chunk_file_path, committed_chunk.chunk_identifier)?;
         match expected_schema.as_ref() {
             Some(expected_schema) if expected_schema.fields() != chunk_observation.schema.fields() => {
                 return Err(OutputWriterError::InvalidInput(format!(
@@ -93,21 +79,50 @@ pub fn validate_strict_manifest_chunks(
             None => expected_schema = Some(Arc::clone(&chunk_observation.schema)),
             Some(_) => {}
         }
+        let row_count = i64::try_from(committed_chunk.row_count).map_err(OutputWriterError::runtime)?;
         if chunk_observation.row_count != row_count {
             return Err(OutputWriterError::InvalidInput(format!(
-                "Strict resume row count mismatch for chunk {chunk_identifier}."
+                "Strict resume row count mismatch for chunk {}.",
+                committed_chunk.chunk_identifier
             )));
         }
-        if chunk_observation.variant_start_index != Some(variant_start_index)
-            || chunk_observation.variant_stop_index != Some(variant_stop_index)
+        if chunk_observation.variant_start_index != Some(committed_chunk.variant_start_index)
+            || chunk_observation.variant_stop_index != Some(committed_chunk.variant_stop_index)
         {
             return Err(OutputWriterError::InvalidInput(format!(
-                "Strict resume variant range mismatch for chunk {chunk_identifier}."
+                "Strict resume variant range mismatch for chunk {}.",
+                committed_chunk.chunk_identifier
             )));
         }
-        committed_identifiers.insert(chunk_identifier);
+        committed_identifiers.insert(committed_chunk.chunk_identifier);
     }
     Ok(committed_identifiers.into_iter().collect())
+}
+
+pub(crate) fn repair_strict_manifest_chunk_commits(
+    chunks_directory: &Path,
+    manifest_json: &str,
+) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
+    validate_strict_manifest_chunks(chunks_directory, manifest_json)?;
+    let mut repaired_commits = read_manifest_chunk_commits(manifest_json)?
+        .into_iter()
+        .map(|chunk_commit| (chunk_commit.chunk_identifier, chunk_commit))
+        .collect::<BTreeMap<_, _>>();
+    for chunk_commit in scan_committed_chunk_commits(chunks_directory)? {
+        match repaired_commits.get(&chunk_commit.chunk_identifier) {
+            Some(existing_commit) if existing_commit != &chunk_commit => {
+                return Err(OutputWriterError::InvalidInput(format!(
+                    "Strict resume found conflicting commit metadata for chunk {}.",
+                    chunk_commit.chunk_identifier
+                )));
+            }
+            Some(_) => {}
+            None => {
+                repaired_commits.insert(chunk_commit.chunk_identifier, chunk_commit);
+            }
+        }
+    }
+    Ok(repaired_commits.into_values().collect())
 }
 
 struct ManifestChunkObservation {
@@ -125,10 +140,195 @@ struct ChunkCommitObservation {
     row_count: i64,
 }
 
+struct ChunkFileCommitObservation {
+    schema: Arc<Schema>,
+    chunk_commits: Vec<manifest::RunManifestChunkCommit>,
+}
+
+fn read_manifest_chunk_commits(
+    manifest_json: &str,
+) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
+    let manifest = serde_json::from_str::<Value>(manifest_json).map_err(OutputWriterError::runtime)?;
+    let committed_chunks = manifest.get("committed_chunks").and_then(Value::as_array).ok_or_else(|| {
+        OutputWriterError::InvalidInput("Run manifest committed_chunks field must be a list.".to_string())
+    })?;
+    committed_chunks
+        .iter()
+        .map(|committed_chunk| {
+            let chunk_file_name = committed_chunk.get("chunk_file_name").and_then(Value::as_str).ok_or_else(|| {
+                OutputWriterError::InvalidInput(
+                    "Run manifest committed chunk entry is missing chunk_file_name.".to_string(),
+                )
+            })?;
+            Ok(manifest::RunManifestChunkCommit {
+                chunk_identifier: read_manifest_integer(committed_chunk, "chunk_identifier")?,
+                variant_start_index: read_manifest_integer(committed_chunk, "variant_start_index")?,
+                variant_stop_index: read_manifest_integer(committed_chunk, "variant_stop_index")?,
+                row_count: read_manifest_usize(committed_chunk, "row_count")?,
+                chunk_file_name: chunk_file_name.to_string(),
+            })
+        })
+        .collect()
+}
+
 fn read_manifest_integer(committed_chunk: &Value, field_name: &str) -> Result<i64, OutputWriterError> {
     committed_chunk.get(field_name).and_then(Value::as_i64).ok_or_else(|| {
         OutputWriterError::InvalidInput(format!("Run manifest committed chunk entry is missing {field_name}."))
     })
+}
+
+fn read_manifest_usize(committed_chunk: &Value, field_name: &str) -> Result<usize, OutputWriterError> {
+    let value = read_manifest_integer(committed_chunk, field_name)?;
+    usize::try_from(value).map_err(|_| {
+        OutputWriterError::InvalidInput(format!(
+            "Run manifest committed chunk entry {field_name} must be non-negative."
+        ))
+    })
+}
+
+fn scan_committed_chunk_commits(
+    chunks_directory: &Path,
+) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
+    if !chunks_directory.exists() {
+        return Ok(Vec::new());
+    }
+    let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
+        .map_err(OutputWriterError::runtime)?
+        .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
+        .filter(|chunk_file_path| chunk_file_path.extension().is_some_and(|extension| extension == "arrow"))
+        .collect::<Vec<_>>();
+    chunk_file_paths.sort();
+    let mut chunk_commits = BTreeMap::new();
+    let mut expected_schema: Option<Arc<Schema>> = None;
+    for chunk_file_path in chunk_file_paths {
+        let chunk_file_observation = inspect_chunk_file_commits(&chunk_file_path)?;
+        match expected_schema.as_ref() {
+            Some(expected_schema) if expected_schema.fields() != chunk_file_observation.schema.fields() => {
+                return Err(OutputWriterError::InvalidInput(format!(
+                    "Strict resume found incompatible Arrow schema in {}.",
+                    chunk_file_path.display()
+                )));
+            }
+            None => expected_schema = Some(Arc::clone(&chunk_file_observation.schema)),
+            Some(_) => {}
+        }
+        for chunk_commit in chunk_file_observation.chunk_commits {
+            if chunk_commits.insert(chunk_commit.chunk_identifier, chunk_commit).is_some() {
+                return Err(OutputWriterError::InvalidInput(
+                    "Strict resume found duplicate Arrow commit metadata for a chunk.".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(chunk_commits.into_values().collect())
+}
+
+fn inspect_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFileCommitObservation, OutputWriterError> {
+    let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
+    let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
+    let schema = file_reader.schema();
+    let chunk_file_name = chunk_file_path
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .ok_or_else(|| OutputWriterError::Runtime("Rust output writer chunk file name is not UTF-8.".to_string()))?
+        .to_string();
+    let chunk_commits = if let Some(chunk_commits) = read_schema_chunk_commits(schema.as_ref())? {
+        inspect_metadata_chunk_file_commits(file_reader, chunk_commits, &chunk_file_name)?
+    } else {
+        inspect_legacy_chunk_file_commits(file_reader, &chunk_file_name)?
+    };
+    Ok(ChunkFileCommitObservation { schema, chunk_commits })
+}
+
+fn inspect_metadata_chunk_file_commits(
+    file_reader: ArrowFileReader<File>,
+    chunk_commits: Vec<ChunkCommitObservation>,
+    chunk_file_name: &str,
+) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
+    let mut batch_row_counts = Vec::with_capacity(chunk_commits.len());
+    for maybe_batch in file_reader {
+        let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
+        batch_row_counts.push(i64::try_from(batch.num_rows()).map_err(OutputWriterError::runtime)?);
+    }
+    if batch_row_counts.len() != chunk_commits.len() {
+        return Err(OutputWriterError::InvalidInput(format!(
+            "Strict resume batch count mismatch for chunk file {chunk_file_name}."
+        )));
+    }
+    let mut manifest_commits = Vec::with_capacity(chunk_commits.len());
+    for (observed_row_count, chunk_commit) in batch_row_counts.iter().zip(chunk_commits) {
+        if *observed_row_count != chunk_commit.row_count {
+            return Err(OutputWriterError::InvalidInput(format!(
+                "Strict resume row count mismatch for chunk {}.",
+                chunk_commit.chunk_identifier
+            )));
+        }
+        manifest_commits.push(manifest::RunManifestChunkCommit {
+            chunk_identifier: chunk_commit.chunk_identifier,
+            variant_start_index: chunk_commit.variant_start_index,
+            variant_stop_index: chunk_commit.variant_stop_index,
+            row_count: usize::try_from(chunk_commit.row_count).map_err(OutputWriterError::runtime)?,
+            chunk_file_name: chunk_file_name.to_string(),
+        });
+    }
+    Ok(manifest_commits)
+}
+
+fn inspect_legacy_chunk_file_commits(
+    file_reader: ArrowFileReader<File>,
+    chunk_file_name: &str,
+) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
+    let mut observations = BTreeMap::<i64, ChunkCommitObservation>::new();
+    for maybe_batch in file_reader {
+        let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
+        let chunk_identifier_array = read_int64_column(&batch, "chunk_identifier")?;
+        let variant_start_array = read_int64_column(&batch, "variant_start_index")?;
+        let variant_stop_array = read_int64_column(&batch, "variant_stop_index")?;
+        for row_index in 0..chunk_identifier_array.len() {
+            if chunk_identifier_array.is_null(row_index) {
+                continue;
+            }
+            let chunk_identifier = chunk_identifier_array.value(row_index);
+            let variant_start_index = read_required_int64_value(variant_start_array, row_index, "variant_start_index")?;
+            let variant_stop_index = read_required_int64_value(variant_stop_array, row_index, "variant_stop_index")?;
+            observations
+                .entry(chunk_identifier)
+                .and_modify(|observation| {
+                    observation.variant_start_index = observation.variant_start_index.min(variant_start_index);
+                    observation.variant_stop_index = observation.variant_stop_index.max(variant_stop_index);
+                    observation.row_count += 1;
+                })
+                .or_insert(ChunkCommitObservation {
+                    chunk_identifier,
+                    variant_start_index,
+                    variant_stop_index,
+                    row_count: 1,
+                });
+        }
+    }
+    observations
+        .into_values()
+        .map(|chunk_commit| {
+            Ok(manifest::RunManifestChunkCommit {
+                chunk_identifier: chunk_commit.chunk_identifier,
+                variant_start_index: chunk_commit.variant_start_index,
+                variant_stop_index: chunk_commit.variant_stop_index,
+                row_count: usize::try_from(chunk_commit.row_count).map_err(OutputWriterError::runtime)?,
+                chunk_file_name: chunk_file_name.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn read_required_int64_value(
+    column: &Int64Array,
+    row_index: usize,
+    column_name: &str,
+) -> Result<i64, OutputWriterError> {
+    if column.is_null(row_index) {
+        return Err(OutputWriterError::Runtime(format!("Rust output writer found null {column_name} in Arrow chunk.")));
+    }
+    Ok(column.value(row_index))
 }
 
 fn read_schema_chunk_commits(chunk_schema: &Schema) -> Result<Option<Vec<ChunkCommitObservation>>, OutputWriterError> {
@@ -149,6 +349,31 @@ fn read_schema_chunk_commits(chunk_schema: &Schema) -> Result<Option<Vec<ChunkCo
         });
     }
     Ok(Some(chunk_commits))
+}
+
+fn validate_schema_chunk_commit_batches(
+    file_reader: ArrowFileReader<File>,
+    chunk_commits: &[ChunkCommitObservation],
+) -> Result<(), OutputWriterError> {
+    let mut batch_row_counts = Vec::with_capacity(chunk_commits.len());
+    for maybe_batch in file_reader {
+        let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
+        batch_row_counts.push(i64::try_from(batch.num_rows()).map_err(OutputWriterError::runtime)?);
+    }
+    if batch_row_counts.len() != chunk_commits.len() {
+        return Err(OutputWriterError::InvalidInput(
+            "Arrow chunk commit metadata batch count does not match the file batches.".to_string(),
+        ));
+    }
+    for (observed_row_count, observed_chunk_commit) in batch_row_counts.iter().zip(chunk_commits.iter()) {
+        if *observed_row_count != observed_chunk_commit.row_count {
+            return Err(OutputWriterError::InvalidInput(format!(
+                "Arrow chunk commit metadata row count mismatch for chunk {}.",
+                observed_chunk_commit.chunk_identifier
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn inspect_manifest_chunk_file(
@@ -208,24 +433,7 @@ fn inspect_metadata_manifest_chunk_file(
             variant_stop_index: None,
         });
     };
-    let mut batch_row_counts = Vec::with_capacity(chunk_commits.len());
-    for maybe_batch in file_reader {
-        let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
-        batch_row_counts.push(i64::try_from(batch.num_rows()).map_err(OutputWriterError::runtime)?);
-    }
-    if batch_row_counts.len() != chunk_commits.len() {
-        return Err(OutputWriterError::InvalidInput(format!(
-            "Strict resume batch count mismatch for chunk file containing chunk {chunk_identifier}."
-        )));
-    }
-    for (observed_row_count, observed_chunk_commit) in batch_row_counts.iter().zip(chunk_commits.iter()) {
-        if *observed_row_count != observed_chunk_commit.row_count {
-            return Err(OutputWriterError::InvalidInput(format!(
-                "Strict resume row count mismatch for chunk {}.",
-                observed_chunk_commit.chunk_identifier
-            )));
-        }
-    }
+    validate_schema_chunk_commit_batches(file_reader, chunk_commits)?;
     Ok(ManifestChunkObservation {
         schema,
         row_count: chunk_commit.row_count,
@@ -241,19 +449,6 @@ fn read_int64_column<'a>(
     batch.column_by_name(column_name).and_then(|column| column.as_any().downcast_ref::<Int64Array>()).ok_or_else(|| {
         OutputWriterError::Runtime(format!("Rust output writer could not read {column_name} from Arrow chunk."))
     })
-}
-
-fn parse_chunk_file_name(chunk_file_path: &Path) -> Option<(i64, Option<i64>)> {
-    let file_name = chunk_file_path.file_name()?.to_str()?;
-    let chunk_name = file_name.strip_prefix("chunk_")?.strip_suffix(".arrow")?;
-    let chunk_parts = chunk_name.split('_').collect::<Vec<_>>();
-    match chunk_parts.as_slice() {
-        [first_chunk_identifier] => first_chunk_identifier.parse::<i64>().ok().map(|identifier| (identifier, None)),
-        [first_chunk_identifier, last_chunk_identifier] => {
-            first_chunk_identifier.parse::<i64>().ok().zip(last_chunk_identifier.parse::<i64>().ok().map(Some))
-        }
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -319,16 +514,68 @@ mod tests {
             .into_iter()
             .collect(),
         ));
-        write_arrow_file(
-            &directory_path.join("chunk_0_2.arrow"),
-            &schema,
-            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
-        );
+        let first_batch =
+            RecordBatch::try_new(Arc::clone(&schema), vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef])
+                .expect("first batch should build");
+        let second_batch =
+            RecordBatch::try_new(Arc::clone(&schema), vec![Arc::new(Int64Array::from(vec![2])) as ArrayRef])
+                .expect("second batch should build");
+        write_arrow_batches(&directory_path.join("chunk_0_2.arrow"), &schema, &[first_batch, second_batch]);
 
         let committed_identifiers =
             scan_committed_chunk_identifiers(&directory_path).expect("metadata-backed chunks should scan");
 
         assert_eq!(committed_identifiers, vec![0, 2]);
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
+    fn scan_reads_single_chunk_identifier_from_arrow_contents() {
+        let directory_path = create_test_directory();
+        let schema = required_resume_schema(None);
+        write_arrow_file(
+            &directory_path.join("chunk_000000007.arrow"),
+            &schema,
+            vec![
+                Arc::new(Int64Array::from(vec![3])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![3])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![4])) as ArrayRef,
+            ],
+        );
+
+        let committed_identifiers = scan_committed_chunk_identifiers(&directory_path).expect("Arrow chunk should scan");
+
+        assert_eq!(committed_identifiers, vec![3]);
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
+    fn scan_rejects_schema_metadata_row_count_mismatch() {
+        let directory_path = create_test_directory();
+        let schema = Arc::new(
+            Schema::new(vec![Field::new("value", DataType::Int64, false)]).with_metadata(
+                [(
+                    output_schema::CHUNK_COMMITS_METADATA_KEY.to_string(),
+                    r#"[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":1,"row_count":2}]"#
+                        .to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+        );
+        write_arrow_file(
+            &directory_path.join("chunk_0.arrow"),
+            &schema,
+            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
+        );
+
+        let error = scan_committed_chunk_identifiers(&directory_path)
+            .expect_err("metadata row count mismatch should fail")
+            .to_string();
+
+        assert!(error.contains("row count mismatch"));
 
         std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
     }

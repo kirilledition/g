@@ -2,8 +2,9 @@ use std::time::Instant;
 
 use super::decode::{
     ThreadScratch, VariantDecodeResult, VariantMajorTileDecodeResult, VariantMajorTileStatsMut,
-    packed_eight_bit_probability_index, read_exact_bytes, read_probability_block, read_u8_at, read_u16_at, read_u32_at,
-    u32_to_usize, unphased_eight_bit_dosage_lookup, validate_variant_major_tile_stats_lengths,
+    packed_eight_bit_probability_index, read_eight_bit_probability_pair, read_exact_bytes, read_probability_block,
+    read_u8_at, read_u16_at, read_u32_at, u32_to_usize, unphased_eight_bit_dosage_lookup,
+    validate_variant_major_tile_stats_lengths,
 };
 use super::metadata::VariantRecord;
 use super::profile::{ThreadLocalProfileSnapshot, elapsed_nanoseconds};
@@ -279,9 +280,8 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
             let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
                 BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
             })?;
-            let probability_pair = read_exact_bytes(packed_probability_bytes, probability_offset, 2)?;
-            let packed_probability_index =
-                packed_eight_bit_probability_index([probability_pair[0], probability_pair[1]]);
+            let probability_pair = read_eight_bit_probability_pair(packed_probability_bytes, probability_offset)?;
+            let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
             let dosage_value = dosage_lookup[packed_probability_index];
             selected_dosage_total += dosage_value;
             selected_dosage_square_total += dosage_value * dosage_value;

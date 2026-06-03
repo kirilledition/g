@@ -49,19 +49,21 @@ The default stream layout is:
 
 ```text
 <out>.g/logs/
-  events.jsonl
-  progress.jsonl
-  trace.jsonl             # trace mode only, unless explicitly configured
-  profile.summary.json    # profile or trace mode, unless explicitly configured
-  stage-timings.json      # profile or trace mode, unless explicitly configured
+  python.events.jsonl     # Python lifecycle and profile events
+  progress.jsonl          # Python progress ticks
+  rust.events.jsonl       # Rust trace mode only, unless explicitly configured
+  profile.summary.json    # Python profile or trace mode, unless explicitly configured
+  stage-timings.json      # Python profile or trace mode, unless explicitly configured
 ```
 
-`events.jsonl` and `progress.jsonl` are Python telemetry streams. Rust tracing
-uses `g-log-file` and `g-trace-file`; by default, Rust JSON tracing is absent
-unless those paths are configured or trace mode resolves `trace.jsonl`.
+`python.events.jsonl` and `progress.jsonl` are Python telemetry streams. Rust
+tracing uses `g-log-file` and `g-trace-file`; by default, Rust JSON tracing is
+absent unless those paths are configured or trace mode resolves
+`rust.events.jsonl`.
 
-Do not configure Python telemetry and Rust tracing to append to the same file
-unless a shared writer is introduced. Today they are separate writers.
+Do not configure Python telemetry and Rust tracing to append to the same file.
+Today they are separate writers, and the runtime rejects a Rust file path that
+matches the Python event stream.
 
 ## Supported Modes
 
@@ -136,7 +138,7 @@ Use both when evaluating performance changes.
 telemetry = "trace"
 log-filter = "g=debug"
 trace-filter = "g.native.bgen=trace,g.output=debug"
-trace-file = "results/run/logs/trace.jsonl"
+trace-file = "results/run/logs/rust.events.jsonl"
 log-stderr = false
 log-lossy = true
 ```
@@ -207,8 +209,6 @@ Do not emit one event per candidate iteration in production mode.
 
 - Keep file handles or queue-backed writers open for profile and trace streams
   instead of opening JSONL files for every event.
-- Clarify stream ownership in filenames, or introduce a shared writer if
-  Python and Rust events should ever land in one `events.jsonl`.
 - Add explicit timing for Firth candidate-count host synchronization.
 - Add bounded event caps for trace mode so accidental high-volume tracing
   fails clearly instead of filling disks.

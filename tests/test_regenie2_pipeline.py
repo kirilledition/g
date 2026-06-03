@@ -95,6 +95,48 @@ class NoFinalWriterSession:
         self.aborted = True
 
 
+def test_cast_statistic_array_for_native_writer_uses_public_float32_schema() -> None:
+    precise_values = np.asarray([1.0, 1.0 + 2.0**-30], dtype=np.float64)
+
+    writer_values = callbacks.cast_statistic_array_for_native_writer(precise_values)
+
+    assert writer_values.dtype == np.float32
+    np.testing.assert_array_equal(writer_values, precise_values.astype(np.float32))
+
+
+def test_write_regenie2_native_chunk_downcasts_float64_statistics_before_writing() -> None:
+    writer_session = FakeWriterSession()
+    precise_values = np.asarray([1.0, 1.0 + 2.0**-30], dtype=np.float64)
+    extra_code = np.asarray([0, 3], dtype=np.int32)
+
+    callbacks.write_regenie2_native_chunk_with_optional_timing(
+        writer_session=writer_session,
+        metadata=typing.cast("typing.Any", SimpleNamespace()),
+        chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        beta=typing.cast("typing.Any", precise_values),
+        standard_error=typing.cast("typing.Any", precise_values + 1.0),
+        chi_squared=typing.cast("typing.Any", precise_values + 2.0),
+        log10_p_value=typing.cast("typing.Any", precise_values + 3.0),
+        extra_code=typing.cast("typing.Any", extra_code),
+        stage_timing_recorder=None,
+    )
+
+    written_chunk = writer_session.native_chunks[0]
+    beta = written_chunk["beta"]
+    standard_error = written_chunk["standard_error"]
+    chi_squared = written_chunk["chi_squared"]
+    log10_p_value = written_chunk["log10_p_value"]
+    assert isinstance(beta, np.ndarray)
+    assert isinstance(standard_error, np.ndarray)
+    assert isinstance(chi_squared, np.ndarray)
+    assert isinstance(log10_p_value, np.ndarray)
+    assert beta.dtype == np.float32
+    assert standard_error.dtype == np.float32
+    assert chi_squared.dtype == np.float32
+    assert log10_p_value.dtype == np.float32
+    np.testing.assert_array_equal(written_chunk["extra_code"], extra_code)
+
+
 class FakeRunEngine:
     instances: typing.ClassVar[list[FakeRunEngine]] = []
 
@@ -112,6 +154,7 @@ class FakeRunEngine:
         self.sample_count = 2
         self.variant_count = 10
         self.run_arguments: tuple[np.ndarray, object, list[int] | None] | None = None
+        self.run_call_arguments: list[tuple[np.ndarray, object, list[int] | None]] = []
         self.run_method: str | None = None
         self.reset_profile_count = 0
         self.validation_count = 0
@@ -152,6 +195,7 @@ class FakeRunEngine:
     ) -> int:
         self.run_method = "buffered"
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
+        self.run_call_arguments.append(self.run_arguments)
         return 0
 
     def run_bgen_variant_major_dosage_buffered_chunks(
@@ -162,6 +206,7 @@ class FakeRunEngine:
     ) -> int:
         self.run_method = "variant_major_buffered"
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
+        self.run_call_arguments.append(self.run_arguments)
         return 0
 
 
@@ -184,6 +229,32 @@ def build_native_run_input() -> native_dispatch.NativeBgenRunInput:
         sample_indices=np.asarray([1, 0], dtype=np.int64),
         phenotype_vector=jnp.asarray([0.0, 1.0], dtype=jnp.float32),
         covariate_matrix=jnp.asarray([[1.0], [1.0]], dtype=jnp.float32),
+        is_binary_trait=False,
+    )
+
+
+def build_native_run_input_with_alignment(
+    *,
+    phenotype_name: str,
+    sample_indices: tuple[int, ...],
+    phenotype_values: tuple[float, ...],
+    covariate_values: tuple[tuple[float, ...], ...],
+) -> native_dispatch.NativeBgenRunInput:
+    native_aligned_sample_data = SimpleNamespace(
+        sample_indices=np.asarray(sample_indices, dtype=np.int64),
+        family_identifiers=[f"family{sample_index}" for sample_index in sample_indices],
+        individual_identifiers=[f"sample{sample_index}" for sample_index in sample_indices],
+        phenotype_name=phenotype_name,
+        phenotype_vector=np.asarray(phenotype_values, dtype=np.float32),
+        covariate_names=["intercept", "age"],
+        covariate_matrix=np.asarray(covariate_values, dtype=np.float32),
+        is_binary_trait=False,
+    )
+    return native_dispatch.NativeBgenRunInput(
+        native_aligned_sample_data=typing.cast("typing.Any", native_aligned_sample_data),
+        sample_indices=np.asarray(sample_indices, dtype=np.int64),
+        phenotype_vector=jnp.asarray(phenotype_values, dtype=jnp.float32),
+        covariate_matrix=jnp.asarray(covariate_values, dtype=jnp.float32),
         is_binary_trait=False,
     )
 
@@ -255,15 +326,45 @@ class ExplodingChunkStats:
 
 class SparseOnlyChunkStats(ExplodingChunkStats):
     @property
+    def dosage_sum(self) -> np.ndarray:
+        return np.asarray([3.0, 7.0], dtype=np.float32)
+
+    @property
+    def observation_count(self) -> np.ndarray:
+        return np.asarray([2, 2], dtype=np.int32)
+
+    @property
     def is_rare_sparse_firth_candidate(self) -> np.ndarray:
         return np.asarray([True, False], dtype=np.bool_)
 
 
 class ExplodingSparseCandidateChunkStats(ExplodingChunkStats):
     @property
+    def dosage_sum(self) -> np.ndarray:
+        return np.asarray([3.0, 7.0], dtype=np.float32)
+
+    @property
+    def observation_count(self) -> np.ndarray:
+        return np.asarray([2, 2], dtype=np.int32)
+
+    @property
     def is_rare_sparse_firth_candidate(self) -> np.ndarray:
         message = "Score-only callbacks must not unwrap or transfer sparse Firth candidate masks."
         raise AssertionError(message)
+
+
+class LinearNativeSumChunkStats(ExplodingChunkStats):
+    @property
+    def dosage_sum(self) -> np.ndarray:
+        return np.asarray([3.0, 7.0], dtype=np.float32)
+
+    @property
+    def observation_count(self) -> np.ndarray:
+        return np.asarray([2, 2], dtype=np.int32)
+
+    @property
+    def imputed_dosage_square_sum(self) -> np.ndarray:
+        return np.asarray([5.0, 13.0], dtype=np.float32)
 
 
 def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> None:
@@ -369,6 +470,47 @@ def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -
         callback.finish()
 
     assert len(writer_session.native_chunks) == 1
+    assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
+
+
+def test_linear_variant_major_callback_passes_native_sums_to_jitted_compute() -> None:
+    writer_session = FakeWriterSession()
+    result = regenie2_linear_result.Regenie2LinearChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    callback = callbacks.LinearRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+    )
+    callback.current_chromosome = "22"
+    callback.current_chromosome_state = typing.cast(
+        "regenie2_linear_state.Regenie2LinearChromosomeState",
+        "chromosome-state",
+    )
+    chunk_stats = typing.cast("typing.Any", LinearNativeSumChunkStats())
+
+    with patch(
+        "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state_variant_major",
+        return_value=result,
+    ) as mock_compute:
+        callback.compute_preprocessed_variant_major_dosage_chunk(
+            metadata=build_native_metadata(),
+            genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=chunk_stats,
+        )
+        callback.finish()
+
+    np.testing.assert_array_equal(np.asarray(mock_compute.call_args.kwargs["genotype_dosage_sum"]), [3.0, 7.0])
+    np.testing.assert_array_equal(np.asarray(mock_compute.call_args.kwargs["genotype_observation_count"]), [2, 2])
+    np.testing.assert_array_equal(
+        np.asarray(mock_compute.call_args.kwargs["genotype_imputed_dosage_square_sum"]),
+        [5.0, 13.0],
+    )
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
@@ -656,7 +798,11 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
         allele_one=["A", "C", "G"],
         allele_two=["G", "T", "A"],
     )
-    chunk_stats = SimpleNamespace(is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_))
+    chunk_stats = SimpleNamespace(
+        dosage_sum=np.asarray([3.0, 7.0, 11.0], dtype=np.float32),
+        observation_count=np.asarray([2, 2, 2], dtype=np.int32),
+        is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_),
+    )
     chromosome_state = build_binary_chromosome_state()
 
     with (
@@ -680,6 +826,10 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
     np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant), variant_major_genotype_matrix)
     sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
     np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False, True])
+    dosage_sum = mock_compute.call_args.kwargs["dosage_sum"]
+    np.testing.assert_array_equal(np.asarray(dosage_sum), [3.0, 7.0, 11.0])
+    observation_count = mock_compute.call_args.kwargs["observation_count"]
+    np.testing.assert_array_equal(np.asarray(observation_count), [2, 2, 2])
     assert mock_compute.call_args.kwargs["chromosome_state"] is chromosome_state
     assert mock_compute.call_args.kwargs["correction_plan"].method == types.BinaryFallbackMethod.FIRTH_APPROXIMATE
     assert mock_compute.call_args.kwargs["kernel_config"] is kernel_config
@@ -725,7 +875,11 @@ def test_binary_score_only_variant_major_callback_uses_jitted_variant_major_scor
         ],
         dtype=np.float32,
     )
-    chunk_stats = SimpleNamespace(is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_))
+    chunk_stats = SimpleNamespace(
+        dosage_sum=np.asarray([3.0, 7.0, 11.0], dtype=np.float32),
+        observation_count=np.asarray([2, 2, 2], dtype=np.int32),
+        is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_),
+    )
     chromosome_state = build_binary_chromosome_state()
 
     with (
@@ -755,6 +909,10 @@ def test_binary_score_only_variant_major_callback_uses_jitted_variant_major_scor
     np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant), variant_major_genotype_matrix)
     assert mock_variant_major_score_compute.call_args.kwargs["chromosome_state"] is chromosome_state
     assert mock_variant_major_score_compute.call_args.kwargs["kernel_config"] is kernel_config
+    dosage_sum = mock_variant_major_score_compute.call_args.kwargs["dosage_sum"]
+    np.testing.assert_array_equal(np.asarray(dosage_sum), [3.0, 7.0, 11.0])
+    observation_count = mock_variant_major_score_compute.call_args.kwargs["observation_count"]
+    np.testing.assert_array_equal(np.asarray(observation_count), [2, 2, 2])
     assert "stage_duration_recorder" not in mock_variant_major_score_compute.call_args.kwargs
     mock_variant_major_compute.assert_not_called()
     mock_sample_major_compute.assert_not_called()
@@ -973,7 +1131,11 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         ],
         dtype=np.float32,
     )
-    chunk_stats = SimpleNamespace(is_rare_sparse_firth_candidate=np.asarray([True, False], dtype=np.bool_))
+    chunk_stats = SimpleNamespace(
+        dosage_sum=np.asarray([3.0, 7.0], dtype=np.float32),
+        observation_count=np.asarray([2, 2], dtype=np.int32),
+        is_rare_sparse_firth_candidate=np.asarray([True, False], dtype=np.bool_),
+    )
 
     with (
         patch(
@@ -997,6 +1159,10 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
     np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant), variant_major_genotype_matrix)
     sparse_candidate_mask = mock_compute.call_args.kwargs["sparse_candidate_mask"]
     np.testing.assert_array_equal(np.asarray(sparse_candidate_mask), [True, False])
+    dosage_sum = mock_compute.call_args.kwargs["dosage_sum"]
+    np.testing.assert_array_equal(np.asarray(dosage_sum), [3.0, 7.0])
+    observation_count = mock_compute.call_args.kwargs["observation_count"]
+    np.testing.assert_array_equal(np.asarray(observation_count), [2, 2])
     assert mock_compute.call_args.kwargs["kernel_config"] is kernel_config
     stage_duration_recorder = typing.cast(
         "typing.Callable[[str, float], None]",
@@ -1418,8 +1584,145 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
 
 
-def test_multi_linear_pipeline_requires_explicit_complete_case_sample_mode() -> None:
-    with pytest.raises(ValueError, match="complete-case"):
+def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
+    FakeRunEngine.instances.clear()
+    writer_sessions = [FakeWriterSession(), FakeWriterSession()]
+    run_inputs = (
+        build_native_run_input_with_alignment(
+            phenotype_name="trait_a",
+            sample_indices=(1, 0),
+            phenotype_values=(0.0, 1.0),
+            covariate_values=((1.0, 40.0), (1.0, 50.0)),
+        ),
+        build_native_run_input_with_alignment(
+            phenotype_name="trait_b",
+            sample_indices=(1, 0),
+            phenotype_values=(2.0, 3.0),
+            covariate_values=((1.0, 40.0), (1.0, 50.0)),
+        ),
+    )
+
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.load_native_bgen_run_input", side_effect=run_inputs),
+        patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
+        patch(
+            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
+        ) as mock_build_header,
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+        ),
+        patch(
+            "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
+            return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
+        ),
+    ):
+        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_names=("trait_a", "trait_b"),
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths_by_phenotype=(
+                output.OutputRunPaths(Path("run/a"), Path("run/a/chunks")),
+                output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
+            ),
+            trusted_no_missing_diploid=False,
+            sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        )
+
+    assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+    assert len(FakeRunEngine.instances) == 1
+    engine = FakeRunEngine.instances[0]
+    assert len(engine.run_call_arguments) == 1
+    sample_indices, callback, committed_chunk_identifiers = engine.run_call_arguments[0]
+    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    assert isinstance(callback, callbacks.MultiLinearRegenie2PipelineCallback)
+    assert callback.run_input.phenotype_names == ("trait_a", "trait_b")
+    assert committed_chunk_identifiers == []
+    assert mock_run_multi_preflight.call_args.kwargs["run_input"].phenotype_names == ("trait_a", "trait_b")
+    assert tuple(call.kwargs["multi_phenotype_sample_mode"] for call in mock_build_header.call_args_list) == (
+        output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+        output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+    )
+
+
+def test_grouped_per_phenotype_pipeline_splits_different_alignments() -> None:
+    FakeRunEngine.instances.clear()
+    writer_sessions = [FakeWriterSession(), FakeWriterSession()]
+    run_inputs = (
+        build_native_run_input_with_alignment(
+            phenotype_name="trait_a",
+            sample_indices=(1, 0),
+            phenotype_values=(0.0, 1.0),
+            covariate_values=((1.0, 40.0), (1.0, 50.0)),
+        ),
+        build_native_run_input_with_alignment(
+            phenotype_name="trait_b",
+            sample_indices=(0, 1),
+            phenotype_values=(3.0, 2.0),
+            covariate_values=((1.0, 50.0), (1.0, 40.0)),
+        ),
+    )
+
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.load_native_bgen_run_input", side_effect=run_inputs),
+        patch("g.engine.regenie2_pipeline.run_multi_preflight"),
+        patch(
+            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+        ),
+        patch(
+            "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
+            return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
+        ),
+    ):
+        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_names=("trait_a", "trait_b"),
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths_by_phenotype=(
+                output.OutputRunPaths(Path("run/a"), Path("run/a/chunks")),
+                output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
+            ),
+            trusted_no_missing_diploid=False,
+            sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        )
+
+    assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+    engine = FakeRunEngine.instances[0]
+    assert len(engine.run_call_arguments) == 2
+    np.testing.assert_array_equal(engine.run_call_arguments[0][0], np.asarray([1, 0], dtype=np.int64))
+    np.testing.assert_array_equal(engine.run_call_arguments[1][0], np.asarray([0, 1], dtype=np.int64))
+
+
+def test_multi_linear_pipeline_rejects_missing_sample_mode() -> None:
+    with pytest.raises(ValueError, match="per-phenotype or complete-case"):
         regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
             genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
             phenotype_path=Path("phenotype.tsv"),
