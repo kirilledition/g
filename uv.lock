@@ -107,7 +107,7 @@ dev = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.15.14" },
-    { name = "ty", specifier = ">=0.0.38" },
+    { name = "ty", specifier = ">=0.0.42" },
 ]
 gpu = [{ name = "jax", extras = ["cuda12"], specifier = ">=0.10.1" }]
 
