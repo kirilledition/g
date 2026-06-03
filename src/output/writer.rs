@@ -33,11 +33,11 @@ impl OutputWriterError {
 
 pub(crate) struct RegenieStep2ChunkJob {
     pub(crate) chunk_handle: NativeChunkHandle,
-    pub(crate) beta: Vec<f32>,
-    pub(crate) se: Vec<f32>,
-    pub(crate) chisq: Vec<f32>,
-    pub(crate) log10p: Vec<f32>,
-    pub(crate) extra_code: Option<Vec<i32>>,
+    pub(crate) beta: ArrayRef,
+    pub(crate) se: ArrayRef,
+    pub(crate) chisq: ArrayRef,
+    pub(crate) log10p: ArrayRef,
+    pub(crate) extra_code: Option<ArrayRef>,
 }
 
 pub(crate) struct RegenieStep2ChunkWriteBatch {
@@ -172,10 +172,10 @@ fn build_regenie_step2_record_batch(
         Arc::new(Float32Array::from(chunk_job.chunk_handle.stats.info_score.clone())),
         Arc::new(Int32Array::from(chunk_job.chunk_handle.stats.observation_count.clone())),
         Arc::new(StringArray::from(vec!["ADD"; row_count])),
-        Arc::new(Float32Array::from(chunk_job.beta)),
-        Arc::new(Float32Array::from(chunk_job.se)),
-        Arc::new(Float32Array::from(chunk_job.chisq)),
-        Arc::new(Float32Array::from(chunk_job.log10p)),
+        chunk_job.beta,
+        chunk_job.se,
+        chunk_job.chisq,
+        chunk_job.log10p,
         schema::build_extra_string_array(chunk_job.extra_code, row_count)?,
     ];
     RecordBatch::try_new(chunk_schema, columns).map_err(|error| error.to_string())
@@ -258,11 +258,11 @@ mod tests {
     fn build_test_chunk(chunk_identifier: i64, extra_code: Option<Vec<i32>>) -> RegenieStep2ChunkJob {
         RegenieStep2ChunkJob {
             chunk_handle: build_test_chunk_handle(chunk_identifier),
-            beta: vec![0.1],
-            se: vec![0.01],
-            chisq: vec![10.0],
-            log10p: vec![5.0],
-            extra_code,
+            beta: Arc::new(Float32Array::from(vec![0.1])),
+            se: Arc::new(Float32Array::from(vec![0.01])),
+            chisq: Arc::new(Float32Array::from(vec![10.0])),
+            log10p: Arc::new(Float32Array::from(vec![5.0])),
+            extra_code: extra_code.map(|values| Arc::new(Int32Array::from(values)) as ArrayRef),
         }
     }
 

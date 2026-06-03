@@ -229,7 +229,8 @@ def test_native_writer_records_output_stage_timings_when_requested(tmp_path: Pat
         raise
 
     timing_payload = json.loads((tmp_path / "output_stage_timings.json").read_text(encoding="utf-8"))
-    assert timing_payload["stage_counts"]["rust_output_result_buffer_copy"] == 2
+    assert timing_payload["stage_counts"]["rust_output_metadata_clone"] == 0
+    assert timing_payload["stage_counts"]["rust_output_result_buffer_copy"] == 0
     assert timing_payload["stage_counts"]["rust_output_writer_arrow_file_write"] == 1
     assert timing_payload["output_metrics"]["writer_chunk_count"] == 2
     assert timing_payload["output_metrics"]["writer_row_count"] == 4

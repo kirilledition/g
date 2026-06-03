@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
+use arrow::array::{ArrayRef, Float32Array, Int32Array};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use serde_json::json;
 
@@ -371,20 +372,68 @@ impl OutputWriterSession {
             validate_column_lengths(row_count, &[extra_code_values.len()])?;
         }
         let result_buffer_copy_start_time = start_optional_timing(self.config.collect_stage_timings);
-        let job = RegenieStep2ChunkJob {
-            chunk_handle,
-            beta: beta.to_vec(),
-            se: standard_error.to_vec(),
-            chisq: chi_squared.to_vec(),
-            log10p: log10_p_value.to_vec(),
-            extra_code: extra_code.map(<[i32]>::to_vec),
-        };
+        let beta_array = build_float32_result_array(beta);
+        let standard_error_array = build_float32_result_array(standard_error);
+        let chi_squared_array = build_float32_result_array(chi_squared);
+        let log10_p_value_array = build_float32_result_array(log10_p_value);
+        let extra_code_array = extra_code.map(build_int32_result_array);
         if let Some(start_time) = result_buffer_copy_start_time {
             self.record_stage_timing(|stage_timings| {
                 stage_timings.result_buffer_copy_seconds += start_time.elapsed().as_secs_f64();
                 stage_timings.result_buffer_copy_count += 1;
             })?;
         }
+        self.write_regenie2_native_chunk_handle_arrays(
+            chunk_handle,
+            beta_array,
+            standard_error_array,
+            chi_squared_array,
+            log10_p_value_array,
+            extra_code_array,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn write_regenie2_native_chunk_handle_arrays(
+        &self,
+        chunk_handle: NativeChunkHandle,
+        beta: ArrayRef,
+        standard_error: ArrayRef,
+        chi_squared: ArrayRef,
+        log10_p_value: ArrayRef,
+        extra_code: Option<ArrayRef>,
+    ) -> Result<(), OutputWriterError> {
+        if self.config.association_mode != "regenie2_linear" && self.config.association_mode != "regenie2_binary" {
+            return Err(OutputWriterError::InvalidInput(
+                "Rust output backend only supports REGENIE step 2 quantitative and binary output.".to_string(),
+            ));
+        }
+        let row_count = chunk_handle.row_count();
+        let observed_lengths = [
+            chunk_handle.metadata.chromosome.len(),
+            chunk_handle.metadata.variant_identifier.len(),
+            chunk_handle.metadata.allele_two.len(),
+            chunk_handle.metadata.allele_one.len(),
+            chunk_handle.stats.allele_one_frequency.len(),
+            chunk_handle.stats.info_score.len(),
+            chunk_handle.stats.observation_count.len(),
+            beta.len(),
+            standard_error.len(),
+            chi_squared.len(),
+            log10_p_value.len(),
+        ];
+        validate_column_lengths(row_count, observed_lengths.as_slice())?;
+        if let Some(extra_code_values) = extra_code.as_ref() {
+            validate_column_lengths(row_count, &[extra_code_values.len()])?;
+        }
+        let job = RegenieStep2ChunkJob {
+            chunk_handle,
+            beta,
+            se: standard_error,
+            chisq: chi_squared,
+            log10p: log10_p_value,
+            extra_code,
+        };
         self.raise_if_worker_failed()?;
         let sender_guard = self
             .sender
@@ -536,6 +585,14 @@ impl OutputWriterSession {
         }
         Ok(())
     }
+}
+
+fn build_float32_result_array(values: &[f32]) -> ArrayRef {
+    Arc::new(Float32Array::from(values.to_vec()))
+}
+
+fn build_int32_result_array(values: &[i32]) -> ArrayRef {
+    Arc::new(Int32Array::from(values.to_vec()))
 }
 
 fn validate_column_lengths(expected_row_count: usize, observed_lengths: &[usize]) -> Result<(), OutputWriterError> {
