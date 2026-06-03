@@ -736,7 +736,7 @@ mod tests {
                 let expected_summary = expected_raw_integer_summary(&probabilities);
 
                 assert_eq!(integer_summary, expected_summary);
-                assert!(output.iter().all(|dosage_value| (-1.0..=2.0).contains(dosage_value)));
+                assert!(output.iter().all(|dosage_value| (0.0..=2.0).contains(dosage_value)));
             }
         }
     }
