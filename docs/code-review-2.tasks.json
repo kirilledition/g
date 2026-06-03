@@ -464,12 +464,15 @@
       "manual": {},
       "priority": "P2 memory allocation / host-device transfer issues",
       "problem_markdown": "## 18. Output writer still copies result arrays and clones metadata\n\nIn `src/output/session.rs:340-379`, `write_regenie2_native_chunk(...)` creates:\n\n```rust\nNativeChunkHandle::new(Arc::new(metadata.clone()), Arc::new(chunk_stats.clone()), ...)\n```\n\nand then copies result arrays:\n\n```rust\nbeta: beta.to_vec(),\nse: standard_error.to_vec(),\nchisq: chi_squared.to_vec(),\nlog10p: log10_p_value.to_vec(),\nextra_code: extra_code.map(<[i32]>::to_vec),\n```\n\nThis is not a correctness bug. But at scale it is visible CPU memory traffic.\n\n### Better architecture\n\nThe Rust BGEN engine already owns metadata and stats before Python/JAX compute. Long-term, pass a Rust-owned `NativeChunkHandle` through the Python callback:\n\n```text\nRust BGEN decode\n    \u2192 Python receives genotype buffer + NativeChunkHandle\n    \u2192 JAX computes numeric arrays\n    \u2192 Python passes NativeChunkHandle + numeric arrays to writer\n```\n\nThat avoids metadata/stats cloning through Python.\n\nFor result arrays, consider accepting ownership of contiguous NumPy buffers where possible.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T07:29:55+00:00",
+        "integration_head": "3ba3db177961d67a886e3292ab44a6162c26984a"
+      },
       "slug": "output-writer-still-copies-result-arrays-and-clones-metadata",
       "source_end_line": 408,
       "source_id": 18,
       "source_start_line": 372,
-      "status": "ready",
+      "status": "integrated",
       "title": "Output writer still copies result arrays and clones metadata",
       "worktree": "../g-worktrees/review2-T018-output-writer-still-copies-result-arrays-and-clones-metadata"
     },
