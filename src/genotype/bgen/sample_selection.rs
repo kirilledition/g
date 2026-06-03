@@ -36,10 +36,11 @@ pub(super) fn build_sample_selection(
             is_identity = false;
         }
     }
-    let contiguous_file_index_start = selected_file_indices
-        .first()
-        .copied()
-        .filter(|_| selected_file_indices.windows(2).all(|sample_window| sample_window[1] == sample_window[0] + 1));
+    let contiguous_file_index_start = selected_file_indices.first().copied().filter(|_| {
+        selected_file_indices
+            .array_windows::<2>()
+            .all(|[previous_file_index, next_file_index]| *next_file_index == *previous_file_index + 1)
+    });
     Ok(SampleSelection {
         selected_sample_count: sample_indices.len(),
         file_to_selected_index,

@@ -165,13 +165,13 @@ fn decode_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
     start_sample_index: usize,
     raw_integer_summary: &mut EightBitRawIntegerSummary,
 ) {
-    for (relative_sample_index, probability_pair) in packed_probability_bytes[start_sample_index * 2..]
-        .chunks_exact(2)
-        .take(output_values.len().saturating_sub(start_sample_index))
-        .enumerate()
+    let (probability_pairs, _) = packed_probability_bytes[start_sample_index * 2..].as_chunks::<2>();
+    for (relative_sample_index, [homozygous_reference_probability_byte, heterozygous_probability_byte]) in
+        probability_pairs.iter().copied().take(output_values.len().saturating_sub(start_sample_index)).enumerate()
     {
         let output_index = start_sample_index + relative_sample_index;
-        let raw_dosage_integer = raw_dosage_integer(probability_pair[0], probability_pair[1]);
+        let raw_dosage_integer =
+            raw_dosage_integer(homozygous_reference_probability_byte, heterozygous_probability_byte);
         output_values[output_index] = raw_dosage_value(raw_dosage_integer);
         raw_integer_summary.record_raw_dosage_integer(raw_dosage_integer);
     }
@@ -202,13 +202,13 @@ fn decode_unphased_eight_bit_identity_lookup_scalar_from(
     start_sample_index: usize,
     decode_summary: &mut EightBitIdentityDecodeSummary,
 ) {
-    for (relative_sample_index, probability_pair) in packed_probability_bytes[start_sample_index * 2..]
-        .chunks_exact(2)
-        .take(output_values.len().saturating_sub(start_sample_index))
-        .enumerate()
+    let (probability_pairs, _) = packed_probability_bytes[start_sample_index * 2..].as_chunks::<2>();
+    for (relative_sample_index, [homozygous_reference_probability_byte, heterozygous_probability_byte]) in
+        probability_pairs.iter().copied().take(output_values.len().saturating_sub(start_sample_index)).enumerate()
     {
         let output_index = start_sample_index + relative_sample_index;
-        let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
+        let packed_probability_index =
+            usize::from(homozygous_reference_probability_byte) | (usize::from(heterozygous_probability_byte) << 8);
         let dosage_value = dosage_lookup[packed_probability_index];
         output_values[output_index] = dosage_value;
         decode_summary.record_dosage(dosage_value);
@@ -232,13 +232,13 @@ fn decode_unphased_eight_bit_identity_raw_scalar_from(
     start_sample_index: usize,
     decode_summary: &mut EightBitIdentityDecodeSummary,
 ) {
-    for (relative_sample_index, probability_pair) in packed_probability_bytes[start_sample_index * 2..]
-        .chunks_exact(2)
-        .take(output_values.len().saturating_sub(start_sample_index))
-        .enumerate()
+    let (probability_pairs, _) = packed_probability_bytes[start_sample_index * 2..].as_chunks::<2>();
+    for (relative_sample_index, [homozygous_reference_probability_byte, heterozygous_probability_byte]) in
+        probability_pairs.iter().copied().take(output_values.len().saturating_sub(start_sample_index)).enumerate()
     {
         let output_index = start_sample_index + relative_sample_index;
-        let raw_dosage_integer = raw_dosage_integer(probability_pair[0], probability_pair[1]);
+        let raw_dosage_integer =
+            raw_dosage_integer(homozygous_reference_probability_byte, heterozygous_probability_byte);
         let dosage_value = raw_dosage_value(raw_dosage_integer);
         output_values[output_index] = dosage_value;
         decode_summary.record_raw_dosage_integer_from_f32_accumulation(raw_dosage_integer);
@@ -412,10 +412,12 @@ mod tests {
 
     fn expected_raw_summary(probabilities: &[u8]) -> EightBitIdentityDecodeSummary {
         let mut decode_summary = EightBitIdentityDecodeSummary::default();
-        for probability_pair in probabilities.chunks_exact(2) {
+        let (probability_pairs, _) = probabilities.as_chunks::<2>();
+        for [homozygous_reference_probability_byte, heterozygous_probability_byte] in probability_pairs.iter().copied()
+        {
             decode_summary.record_raw_dosage_integer_from_f32_accumulation(raw_dosage_integer(
-                probability_pair[0],
-                probability_pair[1],
+                homozygous_reference_probability_byte,
+                heterozygous_probability_byte,
             ));
         }
         decode_summary
@@ -423,8 +425,13 @@ mod tests {
 
     fn expected_raw_integer_summary(probabilities: &[u8]) -> EightBitIdentityDecodeSummary {
         let mut raw_integer_summary = EightBitRawIntegerSummary::default();
-        for probability_pair in probabilities.chunks_exact(2) {
-            raw_integer_summary.record_raw_dosage_integer(raw_dosage_integer(probability_pair[0], probability_pair[1]));
+        let (probability_pairs, _) = probabilities.as_chunks::<2>();
+        for [homozygous_reference_probability_byte, heterozygous_probability_byte] in probability_pairs.iter().copied()
+        {
+            raw_integer_summary.record_raw_dosage_integer(raw_dosage_integer(
+                homozygous_reference_probability_byte,
+                heterozygous_probability_byte,
+            ));
         }
         raw_integer_summary.into_decode_summary()
     }

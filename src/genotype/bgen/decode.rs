@@ -101,6 +101,19 @@ pub(super) fn unphased_eight_bit_dosage_lookup() -> &'static [f32] {
     })
 }
 
+fn exact_eight_bit_probability_pairs(packed_probability_bytes: &[u8]) -> &[[u8; 2]] {
+    let (probability_pairs, []) = packed_probability_bytes.as_chunks::<2>() else {
+        unreachable!("8-bit BGEN probability byte slices are built from two bytes per sample");
+    };
+    probability_pairs
+}
+
+pub(super) fn packed_eight_bit_probability_index(
+    [homozygous_reference_probability_byte, heterozygous_probability_byte]: [u8; 2],
+) -> usize {
+    usize::from(homozygous_reference_probability_byte) | (usize::from(heterozygous_probability_byte) << 8)
+}
+
 pub(super) struct ThreadScratch {
     zlib_decompressor: Decompress,
     decompressed_probability_block: Vec<u8>,
@@ -563,15 +576,16 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     let dosage_lookup = unphased_eight_bit_dosage_lookup();
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let output_pointer = output_pointer_address as *mut f32;
-    let probability_pairs = packed_probability_bytes[..expected_probability_byte_count].chunks_exact(2);
+    let probability_pairs =
+        exact_eight_bit_probability_pairs(&packed_probability_bytes[..expected_probability_byte_count]);
     let all_samples_present =
         trusted_no_missing_diploid || trusted::all_samples_present_diploid(sample_ploidy_and_missingness);
     let mut selected_dosage_total = 0.0_f32;
     if sample_selection.is_identity && all_samples_present {
         let output_write_start_time = profiling_enabled.then(Instant::now);
         let mut output_row_pointer = unsafe { output_pointer.add(variant_index) };
-        for probability_pair in probability_pairs {
-            let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
+        for probability_pair in probability_pairs.iter().copied() {
+            let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
             let dosage_value = dosage_lookup[packed_probability_index];
             unsafe {
                 // Identity-aligned full-sample reads map file-order rows directly into output rows.
@@ -603,7 +617,9 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     if sample_selection.is_identity {
         let output_write_start_time = profiling_enabled.then(Instant::now);
         let mut output_row_pointer = unsafe { output_pointer.add(variant_index) };
-        for (ploidy_and_missingness, probability_pair) in sample_ploidy_and_missingness.iter().zip(probability_pairs) {
+        for (ploidy_and_missingness, probability_pair) in
+            sample_ploidy_and_missingness.iter().zip(probability_pairs.iter().copied())
+        {
             let observed_ploidy = ploidy_and_missingness & PLOIDY_MASK;
             if observed_ploidy != 2 {
                 return Err(BgenError::UnsupportedFormat(format!(
@@ -612,7 +628,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
                 )));
             }
 
-            let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
+            let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
 
             let dosage_value = if (ploidy_and_missingness & MISSING_SAMPLE_FLAG_MASK) != 0 {
                 f32::NAN
@@ -649,8 +665,8 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
 
     if all_samples_present {
         let output_write_start_time = profiling_enabled.then(Instant::now);
-        for (file_sample_index, probability_pair) in probability_pairs.enumerate() {
-            let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
+        for (file_sample_index, probability_pair) in probability_pairs.iter().copied().enumerate() {
+            let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
             let dosage_value = dosage_lookup[packed_probability_index];
 
             let selected_index = sample_selection.file_to_selected_index[file_sample_index];
@@ -687,7 +703,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
 
     let output_write_start_time = profiling_enabled.then(Instant::now);
     for (file_sample_index, (ploidy_and_missingness, probability_pair)) in
-        sample_ploidy_and_missingness.iter().zip(probability_pairs).enumerate()
+        sample_ploidy_and_missingness.iter().zip(probability_pairs.iter().copied()).enumerate()
     {
         let observed_ploidy = ploidy_and_missingness & PLOIDY_MASK;
         if observed_ploidy != 2 {
@@ -697,7 +713,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
             )));
         }
 
-        let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
+        let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
 
         let dosage_value = if (ploidy_and_missingness & MISSING_SAMPLE_FLAG_MASK) != 0 {
             f32::NAN
@@ -1008,7 +1024,8 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
     let mut heterozygous_count = 0_i32;
     let mut homozygous_alternate_count = 0_i32;
 
-    let probability_pairs = packed_probability_bytes[..expected_probability_byte_count].chunks_exact(2);
+    let probability_pairs =
+        exact_eight_bit_probability_pairs(&packed_probability_bytes[..expected_probability_byte_count]);
     if !sample_selection.is_identity && all_samples_present {
         if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start {
             let probability_offset = contiguous_file_index_start.checked_mul(2).ok_or_else(|| {
@@ -1058,7 +1075,8 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
             })?;
             let probability_pair =
                 read_exact_bytes(&packed_probability_bytes[..expected_probability_byte_count], probability_offset, 2)?;
-            let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
+            let packed_probability_index =
+                packed_eight_bit_probability_index([probability_pair[0], probability_pair[1]]);
             let dosage_value = dosage_lookup[packed_probability_index];
             unsafe {
                 // Selected sample order maps directly to the caller's output row order.
@@ -1099,7 +1117,7 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
 
     let dosage_lookup = unphased_eight_bit_dosage_lookup();
     for (file_sample_index, (ploidy_and_missingness, probability_pair)) in
-        sample_ploidy_and_missingness.iter().zip(probability_pairs).enumerate()
+        sample_ploidy_and_missingness.iter().zip(probability_pairs.iter().copied()).enumerate()
     {
         let observed_ploidy = ploidy_and_missingness & PLOIDY_MASK;
         if observed_ploidy != 2 {
@@ -1118,7 +1136,7 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
             continue;
         }
 
-        let packed_probability_index = usize::from(probability_pair[0]) | (usize::from(probability_pair[1]) << 8);
+        let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
         let dosage_value = dosage_lookup[packed_probability_index];
         let is_missing = !all_samples_present && (ploidy_and_missingness & MISSING_SAMPLE_FLAG_MASK) != 0;
         let output_value = if is_missing { f32::NAN } else { dosage_value };

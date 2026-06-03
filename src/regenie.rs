@@ -214,15 +214,15 @@ impl MultiPredictionSource {
                     available_chromosomes,
                 });
             };
-            if let Some(expected_sample_count) = sample_count {
-                if prediction_values.len() != expected_sample_count {
-                    return Err(PredictionError::LocoPredictionCountMismatch {
-                        line_number: 0,
-                        expected_count: expected_sample_count,
-                        observed_count: prediction_values.len(),
-                    });
-                }
-            } else {
+            if let Some(expected_sample_count) = sample_count
+                && prediction_values.len() != expected_sample_count
+            {
+                return Err(PredictionError::LocoPredictionCountMismatch {
+                    line_number: 0,
+                    expected_count: expected_sample_count,
+                    observed_count: prediction_values.len(),
+                });
+            } else if sample_count.is_none() {
                 sample_count = Some(prediction_values.len());
             }
             prediction_matrix_values.extend(prediction_values);
