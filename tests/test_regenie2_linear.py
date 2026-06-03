@@ -218,6 +218,34 @@ def compute_regenie_null_mse_formula(
     )
 
 
+def compute_unprojected_null_mse_formula(
+    *,
+    covariate_matrix: npt.NDArray[np.float64],
+    adjusted_residual: npt.NDArray[np.float64],
+    genotype_matrix: npt.NDArray[np.float64],
+) -> LinearFormulaResult:
+    """Compute the incorrect formula that skips adjusted-residual covariate projection."""
+    genotype_residual_matrix = residualize_against_covariates(covariate_matrix, genotype_matrix)
+    genotype_residual_sum_squares = np.einsum("ij,ij->j", genotype_residual_matrix, genotype_residual_matrix)
+    covariance_with_phenotype = genotype_residual_matrix.T @ adjusted_residual
+    adjusted_residual_sum_squares = float(adjusted_residual @ adjusted_residual)
+    null_degrees_of_freedom = covariate_matrix.shape[0] - covariate_matrix.shape[1]
+
+    beta = covariance_with_phenotype / genotype_residual_sum_squares
+    standard_error = np.sqrt(adjusted_residual_sum_squares / null_degrees_of_freedom / genotype_residual_sum_squares)
+    chi_squared = np.square(beta / standard_error)
+    log10_p_value = np.asarray(
+        pvalue.chi_squared_to_log10_p_value(jnp.asarray(chi_squared, dtype=jnp.float32)),
+        dtype=np.float64,
+    )
+    return LinearFormulaResult(
+        beta=beta,
+        standard_error=standard_error,
+        chi_squared=chi_squared,
+        log10_p_value=log10_p_value,
+    )
+
+
 class TestPrepareRegenie2LinearState:
     """Tests for prepare_regenie2_linear_state."""
 
@@ -826,6 +854,8 @@ class TestComputeRegenie2LinearChunk:
             fixture.covariate_matrix,
             fixture.phenotype_vector - fixture.loco_predictions,
         )
+        adjusted_residual_covariate_crossproduct = fixture.covariate_matrix.T @ current_order_residual
+        assert np.linalg.norm(adjusted_residual_covariate_crossproduct) > 1.0
 
         current_order_result = compute_regenie_null_mse_formula(
             covariate_matrix=fixture.covariate_matrix,
@@ -835,6 +865,11 @@ class TestComputeRegenie2LinearChunk:
         alternative_order_result = compute_regenie_null_mse_formula(
             covariate_matrix=fixture.covariate_matrix,
             adjusted_residual=alternative_order_residual,
+            genotype_matrix=fixture.genotype_matrix,
+        )
+        unprojected_result = compute_unprojected_null_mse_formula(
+            covariate_matrix=fixture.covariate_matrix,
+            adjusted_residual=current_order_residual,
             genotype_matrix=fixture.genotype_matrix,
         )
 
@@ -857,6 +892,7 @@ class TestComputeRegenie2LinearChunk:
             rtol=1e-5,
             atol=1e-7,
         )
+        numpy.testing.assert_allclose(alternative_order_result.beta, fixture.expected_beta, rtol=1e-5, atol=1e-7)
         numpy.testing.assert_allclose(
             alternative_order_result.standard_error,
             fixture.expected_standard_error,
@@ -869,6 +905,9 @@ class TestComputeRegenie2LinearChunk:
             rtol=1e-5,
             atol=1e-7,
         )
+        numpy.testing.assert_allclose(unprojected_result.beta, fixture.expected_beta, rtol=1e-5, atol=1e-7)
+        assert not np.allclose(unprojected_result.standard_error, fixture.expected_standard_error, rtol=1e-5, atol=1e-7)
+        assert not np.allclose(unprojected_result.chi_squared, fixture.expected_chi_squared, rtol=1e-5, atol=1e-7)
 
         state = regenie2_linear.prepare_regenie2_linear_state(
             covariate_matrix=jnp.asarray(fixture.covariate_matrix, dtype=jnp.float32),
