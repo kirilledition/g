@@ -468,9 +468,12 @@ That is both closer to REGENIE and much cheaper.
 
 ### Float64 Where It Matters
 
-The public output schema currently stores numeric summary statistics as
-float32, matching the existing writer schema. Internally, scalar Firth and null
-Firth use float64. This matters for:
+The public output schema stores `BETA`, `SE`, `CHISQ`, and `LOG10P` as
+float32, matching the existing writer schema and REGENIE-compatible output
+target. `write_regenie2_native_chunk_with_optional_timing()` narrows any
+higher-precision materialized arrays to float32 immediately before the Rust
+writer call. Internally, scalar Firth and null Firth use float64. This matters
+for:
 
 - REGENIE endpoint probability clipping.
 - Penalized deviance differences.

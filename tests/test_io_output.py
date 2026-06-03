@@ -107,6 +107,8 @@ def build_test_header(
     association_mode: AssociationMode = AssociationMode.REGENIE2_LINEAR,
     binary_kernel_config: typing.Any | None = None,
     jax_enable_x64: bool = True,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    firth_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT64,
 ) -> dict[str, typing.Any]:
     bgen_path = tmp_path / "study.bgen"
     sample_path = tmp_path / "study.sample"
@@ -133,6 +135,8 @@ def build_test_header(
         sample_key_mode=types.SampleKeyMode.IID,
         binary_kernel_config=binary_kernel_config,
         jax_enable_x64=jax_enable_x64,
+        score_dtype=score_dtype,
+        firth_dtype=firth_dtype,
     )
 
 
@@ -141,6 +145,22 @@ def test_current_run_manifest_records_configured_x64_policy(tmp_path: Path) -> N
 
     assert current_header["jax_policy"]["enable_x64"] is False
     assert current_header["execution_plan"]["jax_policy"]["enable_x64"] is False
+
+
+def test_current_run_manifest_records_dtype_policy(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path, score_dtype=types.FloatingPointDtype.FLOAT64)
+
+    assert current_header["score_dtype"] == "float64"
+    assert current_header["firth_dtype"] == "float64"
+    assert current_header["execution_plan"]["score_dtype"] == "float64"
+    assert current_header["execution_plan"]["firth_dtype"] == "float64"
+
+
+def test_current_run_manifest_records_result_statistic_output_dtype(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path, jax_enable_x64=True)
+
+    assert current_header["output_writer"]["result_statistic_dtype"] == "float32"
+    assert current_header["execution_plan"]["output_writer"]["result_statistic_dtype"] == "float32"
 
 
 def initialize_test_output_run(
@@ -165,10 +185,11 @@ def test_resolve_output_run_paths_appends_mode_suffix(tmp_path: Path) -> None:
     assert output_run_paths.chunks_directory == tmp_path / "results/output.regenie2_linear.run/chunks"
 
 
-def test_scan_committed_chunk_identifiers_discovers_single_chunk_files(tmp_path: Path) -> None:
-    (tmp_path / "chunk_000000000.arrow").write_bytes(b"")
-    (tmp_path / "chunk_000000512.arrow").write_bytes(b"")
-    assert output.scan_committed_chunk_identifiers(tmp_path) == frozenset({0, 512})
+def test_scan_committed_chunk_identifiers_reads_arrow_metadata(tmp_path: Path) -> None:
+    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
+    write_native_chunks(output_run_paths, AssociationMode.REGENIE2_LINEAR)
+
+    assert output.scan_committed_chunk_identifiers(tmp_path) == frozenset({0, 2})
 
 
 def test_prepare_output_run_rejects_non_empty_directory_without_resume(tmp_path: Path) -> None:
@@ -216,7 +237,8 @@ def test_native_writer_records_output_stage_timings_when_requested(tmp_path: Pat
         raise
 
     timing_payload = json.loads((tmp_path / "output_stage_timings.json").read_text(encoding="utf-8"))
-    assert timing_payload["stage_counts"]["rust_output_result_buffer_copy"] == 2
+    assert timing_payload["stage_counts"]["rust_output_metadata_clone"] == 0
+    assert timing_payload["stage_counts"]["rust_output_result_buffer_copy"] == 0
     assert timing_payload["stage_counts"]["rust_output_writer_arrow_file_write"] == 1
     assert timing_payload["output_metrics"]["writer_chunk_count"] == 2
     assert timing_payload["output_metrics"]["writer_row_count"] == 4
@@ -318,6 +340,54 @@ def test_prepare_output_run_strict_resume_validates_manifest_chunks(tmp_path: Pa
     )
 
     assert initialized_output_run.committed_chunk_identifiers == frozenset({0, 2})
+
+
+def test_strict_resume_repairs_manifest_commits_from_arrow_metadata(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path)
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    initialize_test_output_run(prepared_output_run, current_header)
+    write_native_chunks(prepared_output_run.output_run_paths, AssociationMode.REGENIE2_LINEAR)
+    manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    assert manifest is not None
+    manifest["committed_chunks"] = []
+    output.write_run_manifest(prepared_output_run.output_run_paths, manifest)
+
+    resumed_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=True,
+        resume_mode=output.types.ResumeMode.STRICT,
+    )
+    initialized_output_run = initialize_test_output_run(
+        resumed_output_run,
+        current_header,
+        resume=True,
+        resume_mode=output.types.ResumeMode.STRICT,
+    )
+
+    assert initialized_output_run.committed_chunk_identifiers == frozenset({0, 2})
+    repaired_manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    assert repaired_manifest is not None
+    assert repaired_manifest["committed_chunks"] == [
+        {
+            "chunk_file_name": "chunk_000000000_000000002.arrow",
+            "chunk_identifier": 0,
+            "row_count": 2,
+            "variant_start_index": 0,
+            "variant_stop_index": 2,
+        },
+        {
+            "chunk_file_name": "chunk_000000000_000000002.arrow",
+            "chunk_identifier": 2,
+            "row_count": 2,
+            "variant_start_index": 2,
+            "variant_stop_index": 4,
+        },
+    ]
 
 
 def test_fast_resume_trusts_only_manifest_committed_chunks(tmp_path: Path) -> None:
@@ -433,6 +503,8 @@ def build_test_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConf
         ("output_schema_version", 2),
         ("bgen_decode_tile_variant_count", 128),
         ("jax_policy", {"device": "gpu", "enable_x64": True, "matmul_precision": "highest"}),
+        ("score_dtype", "float64"),
+        ("firth_dtype", "float32"),
         ("multi_phenotype_sample_mode", "complete_case_intersection"),
         (
             "output_writer",
@@ -491,6 +563,8 @@ def test_initialize_output_run_rejects_manifest_header_mismatch(
         ("output_schema_version", 2),
         ("trusted_no_missing_diploid", True),
         ("bgen_decode_tile_variant_count", 128),
+        ("score_dtype", "float64"),
+        ("firth_dtype", "float32"),
         ("chunk_size", 4),
     ],
 )

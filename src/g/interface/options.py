@@ -68,6 +68,7 @@ NULL_LOGISTIC_NONCONVERGENCE_POLICY_VALUES = tuple(item.value for item in types.
 OUTPUT_FORMAT_VALUES = tuple(item.value for item in types.OutputFormat)
 RESUME_MODE_VALUES = tuple(item.value for item in types.ResumeMode)
 JAX_MATMUL_PRECISION_VALUES = tuple(item.value for item in types.JaxMatmulPrecision)
+FLOATING_POINT_DTYPE_VALUES = tuple(item.value for item in types.FloatingPointDtype)
 ARROW_COMPRESSION_VALUES = tuple(item.value for item in types.ArrowCompression)
 TELEMETRY_MODE_VALUES = tuple(item.value for item in types.TelemetryMode)
 
@@ -716,6 +717,24 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         type=OptionValueType.INTEGER,
     ),
     OptionSpec(
+        "g-score-dtype",
+        "g_score_dtype",
+        SupportLevel.G_EXTENSION,
+        "g.compute",
+        "Floating-point dtype for score-test kernels.",
+        cli_flags=("--g-score-dtype", "g_score_dtype"),
+        accepted_values=FLOATING_POINT_DTYPE_VALUES,
+    ),
+    OptionSpec(
+        "g-firth-dtype",
+        "g_firth_dtype",
+        SupportLevel.G_EXTENSION,
+        "g.compute",
+        "Floating-point dtype for Firth internals. Only float64 is currently supported.",
+        cli_flags=("--g-firth-dtype", "g_firth_dtype"),
+        accepted_values=FLOATING_POINT_DTYPE_VALUES,
+    ),
+    OptionSpec(
         "g-jax-cache-dir",
         "g_jax_cache_dir",
         SupportLevel.G_EXTENSION,
@@ -738,7 +757,7 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         "g_jax_enable_x64",
         SupportLevel.G_EXTENSION,
         "g.compute",
-        "Enable JAX 64-bit arrays for parity-sensitive kernels.",
+        "Enable JAX to create x64 arrays; score-test dtype is controlled by g-score-dtype.",
         cli_flags=("--g-jax-enable-x64/--no-g-jax-enable-x64", "g_jax_enable_x64"),
         type=OptionValueType.BOOLEAN,
         is_flag=True,
@@ -852,7 +871,7 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         "g_log_file",
         SupportLevel.G_EXTENSION,
         "g.diagnostics",
-        "Write JSONL tracing logs to this file.",
+        "Write Rust JSONL tracing logs to this file.",
         cli_flags=("--g-log-file", "g_log_file"),
         type=OptionValueType.PATH,
     ),
@@ -898,7 +917,7 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         "g_trace_file",
         SupportLevel.G_EXTENSION,
         "g.diagnostics",
-        "Write high-volume trace JSONL events to this file.",
+        "Write high-volume Rust trace JSONL events to this file.",
         cli_flags=("--g-trace-file", "g_trace_file"),
         type=OptionValueType.PATH,
     ),

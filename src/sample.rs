@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
 const TABULAR_MISSING_VALUE_TOKENS: &[&str] = &["", "NA", "NaN", "nan", "-9"];
@@ -74,18 +74,6 @@ pub struct MultiAlignmentInputs {
     pub sample_key_mode: SampleKeyMode,
 }
 
-struct RawPhenotypeRecord {
-    phenotype_value: String,
-}
-
-struct RawMultiPhenotypeRecord {
-    phenotype_values: Vec<Option<String>>,
-}
-
-struct RawCovariateRecord {
-    covariate_values: Vec<String>,
-}
-
 #[derive(Clone, Debug)]
 struct SelectedTabularColumn {
     column_index: usize,
@@ -99,19 +87,10 @@ struct TabularColumnSelection {
     selected_columns: Vec<SelectedTabularColumn>,
 }
 
-#[derive(Clone, Copy)]
-enum TabularDelimiter {
-    Tab,
-    Space,
-}
-
-impl TabularDelimiter {
-    fn byte(self) -> u8 {
-        match self {
-            Self::Tab => b'\t',
-            Self::Space => b' ',
-        }
-    }
+struct SampleFileReader<R: BufRead> {
+    path_text: String,
+    reader: R,
+    line_buffer: String,
 }
 
 struct StreamingTabularReader<R: Read> {
@@ -126,149 +105,67 @@ enum SampleKey {
     FidIid { family_identifier: String, individual_identifier: String },
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct AlignedSampleKey {
-    sample_index: i64,
-    family_identifier: String,
-    individual_identifier: String,
-}
-
 struct SampleIdentifierData {
     sample_indices: Vec<i64>,
     family_identifiers: Vec<String>,
     individual_identifiers: Vec<String>,
 }
 
-struct AlignedSampleRow {
-    sample_index: i64,
-    family_identifier: String,
-    individual_identifier: String,
-    phenotype_value: f32,
+struct SinglePhenotypeTable {
+    phenotype_values: Vec<f32>,
+    phenotype_mask: Vec<bool>,
+}
+
+struct MultiPhenotypeTable {
+    phenotype_values: Vec<f32>,
+    phenotype_masks: Vec<bool>,
+    phenotype_count: usize,
+    sample_count: usize,
+}
+
+struct CovariateTable {
+    selected_covariate_names: Vec<String>,
     covariate_values: Vec<f32>,
-}
-
-impl AlignedSampleData {
-    fn new(
-        phenotype_name: String,
-        covariate_names: Vec<String>,
-        rows: Vec<AlignedSampleRow>,
-        is_binary_trait: bool,
-    ) -> Self {
-        let covariate_column_count = covariate_names.len();
-        let covariate_row_count = rows.len();
-        let mut sample_indices = Vec::with_capacity(covariate_row_count);
-        let mut family_identifiers = Vec::with_capacity(covariate_row_count);
-        let mut individual_identifiers = Vec::with_capacity(covariate_row_count);
-        let mut phenotype_vector = Vec::with_capacity(covariate_row_count);
-        let mut covariate_matrix_values = Vec::with_capacity(covariate_row_count * covariate_column_count);
-
-        for row in rows {
-            sample_indices.push(row.sample_index);
-            family_identifiers.push(row.family_identifier);
-            individual_identifiers.push(row.individual_identifier);
-            phenotype_vector.push(row.phenotype_value);
-            covariate_matrix_values.push(1.0);
-            covariate_matrix_values.extend(row.covariate_values);
-        }
-
-        Self {
-            sample_indices,
-            family_identifiers,
-            individual_identifiers,
-            phenotype_name,
-            phenotype_vector,
-            covariate_names,
-            covariate_matrix_values,
-            covariate_row_count,
-            covariate_column_count,
-            is_binary_trait,
-        }
-    }
-}
-
-impl MultiAlignedSampleData {
-    fn new(
-        phenotype_names: Vec<String>,
-        aligned_sample_data_by_trait: &[AlignedSampleData],
-        common_positions_by_trait: &[Vec<usize>],
-        is_binary_trait: bool,
-    ) -> Self {
-        let first_aligned_sample_data = &aligned_sample_data_by_trait[0];
-        let first_common_positions = &common_positions_by_trait[0];
-        let sample_count = first_common_positions.len();
-        let trait_count = aligned_sample_data_by_trait.len();
-        let covariate_column_count = first_aligned_sample_data.covariate_column_count;
-        let mut sample_indices = Vec::with_capacity(sample_count);
-        let mut family_identifiers = Vec::with_capacity(sample_count);
-        let mut individual_identifiers = Vec::with_capacity(sample_count);
-        let mut phenotype_matrix_values = Vec::with_capacity(trait_count * sample_count);
-        let mut covariate_matrix_values = Vec::with_capacity(sample_count * covariate_column_count);
-
-        for position in first_common_positions {
-            sample_indices.push(first_aligned_sample_data.sample_indices[*position]);
-            family_identifiers.push(first_aligned_sample_data.family_identifiers[*position].clone());
-            individual_identifiers.push(first_aligned_sample_data.individual_identifiers[*position].clone());
-            let covariate_row_start = position * covariate_column_count;
-            covariate_matrix_values.extend(
-                &first_aligned_sample_data.covariate_matrix_values
-                    [covariate_row_start..covariate_row_start + covariate_column_count],
-            );
-        }
-        for (aligned_sample_data, common_positions) in
-            aligned_sample_data_by_trait.iter().zip(common_positions_by_trait.iter())
-        {
-            for position in common_positions {
-                phenotype_matrix_values.push(aligned_sample_data.phenotype_vector[*position]);
-            }
-        }
-
-        Self {
-            sample_indices,
-            family_identifiers,
-            individual_identifiers,
-            phenotype_names,
-            phenotype_matrix_values,
-            phenotype_row_count: trait_count,
-            phenotype_column_count: sample_count,
-            covariate_names: first_aligned_sample_data.covariate_names.clone(),
-            covariate_matrix_values,
-            covariate_row_count: sample_count,
-            covariate_column_count,
-            is_binary_trait,
-        }
-    }
+    covariate_mask: Vec<bool>,
+    selected_covariate_count: usize,
 }
 
 pub fn align_sample_data(inputs: AlignmentInputs) -> Result<AlignedSampleData, String> {
     validate_alignment_input_lengths(&inputs)?;
     validate_sample_identifier_keys(&inputs)?;
 
-    let phenotype_records_by_identifier = read_phenotype_records_by_key(
+    let sample_row_indices_by_key = build_sample_row_indices_by_key(
+        inputs.sample_key_mode,
+        &inputs.family_identifiers,
+        &inputs.individual_identifiers,
+    );
+    let phenotype_table = read_single_phenotype_table(
         Path::new(&inputs.phenotype_path),
         &inputs.phenotype_name,
+        inputs.is_binary_trait,
         inputs.sample_key_mode,
+        &sample_row_indices_by_key,
+        inputs.sample_indices.len(),
     )?;
 
-    let (selected_covariate_names, covariate_records_by_identifier) = match inputs.covariate_path.as_ref() {
-        Some(covariate_path) => read_covariate_records_by_key(
+    let covariate_table = match inputs.covariate_path.as_ref() {
+        Some(covariate_path) => read_covariate_table(
             Path::new(covariate_path),
             inputs.covariate_names.as_deref(),
             inputs.sample_key_mode,
+            &sample_row_indices_by_key,
+            &phenotype_table.phenotype_mask,
+            inputs.sample_indices.len(),
         )?,
         None => {
             if inputs.covariate_names.is_some() {
                 return Err("Covariate names cannot be provided without a covariate table.".to_string());
             }
-            (Vec::new(), HashMap::new())
+            empty_covariate_table(inputs.sample_indices.len())
         }
     };
 
-    build_single_aligned_sample_data(
-        inputs,
-        &phenotype_records_by_identifier,
-        &selected_covariate_names,
-        &covariate_records_by_identifier,
-    )
+    build_single_aligned_sample_data(inputs, &phenotype_table, &covariate_table)
 }
 
 /// Align several phenotypes to one shared complete-case sample set.
@@ -282,42 +179,38 @@ pub fn align_multi_sample_data(inputs: MultiAlignmentInputs) -> Result<MultiAlig
     validate_multi_alignment_input_lengths(&inputs)?;
     validate_multi_sample_identifier_keys(&inputs)?;
 
-    let phenotype_records_by_identifier = read_multi_phenotype_records_by_key(
+    let sample_row_indices_by_key = build_sample_row_indices_by_key(
+        inputs.sample_key_mode,
+        &inputs.family_identifiers,
+        &inputs.individual_identifiers,
+    );
+    let phenotype_table = read_multi_phenotype_table(
         Path::new(&inputs.phenotype_path),
         &inputs.phenotype_names,
+        inputs.is_binary_trait,
         inputs.sample_key_mode,
+        &sample_row_indices_by_key,
+        inputs.sample_indices.len(),
     )?;
-    let (selected_covariate_names, covariate_records_by_identifier) = match inputs.covariate_path.as_ref() {
-        Some(covariate_path) => read_covariate_records_by_key(
+    let parse_candidate_mask = multi_phenotype_parse_candidate_mask(&phenotype_table);
+    let covariate_table = match inputs.covariate_path.as_ref() {
+        Some(covariate_path) => read_covariate_table(
             Path::new(covariate_path),
             inputs.covariate_names.as_deref(),
             inputs.sample_key_mode,
+            &sample_row_indices_by_key,
+            &parse_candidate_mask,
+            inputs.sample_indices.len(),
         )?,
         None => {
             if inputs.covariate_names.is_some() {
                 return Err("Covariate names cannot be provided without a covariate table.".to_string());
             }
-            (Vec::new(), HashMap::new())
+            empty_covariate_table(inputs.sample_indices.len())
         }
     };
 
-    let mut aligned_sample_data_by_trait = Vec::with_capacity(inputs.phenotype_names.len());
-    for phenotype_index in 0..inputs.phenotype_names.len() {
-        aligned_sample_data_by_trait.push(build_multi_trait_aligned_sample_data(
-            &inputs,
-            phenotype_index,
-            &phenotype_records_by_identifier,
-            &selected_covariate_names,
-            &covariate_records_by_identifier,
-        )?);
-    }
-    let common_positions_by_trait = build_complete_case_positions(&aligned_sample_data_by_trait)?;
-    Ok(MultiAlignedSampleData::new(
-        inputs.phenotype_names,
-        &aligned_sample_data_by_trait,
-        &common_positions_by_trait,
-        inputs.is_binary_trait,
-    ))
+    build_multi_aligned_sample_data(inputs, &phenotype_table, &covariate_table)
 }
 
 pub fn align_sample_data_from_sample_file(
@@ -368,54 +261,6 @@ pub fn align_multi_sample_data_from_sample_file(
         sample_key_mode,
     };
     align_multi_sample_data(inputs)
-}
-
-fn build_complete_case_positions(
-    aligned_sample_data_by_trait: &[AlignedSampleData],
-) -> Result<Vec<Vec<usize>>, String> {
-    let mut positions_by_trait = Vec::with_capacity(aligned_sample_data_by_trait.len());
-    for aligned_sample_data in aligned_sample_data_by_trait {
-        let mut positions_by_key = HashMap::with_capacity(aligned_sample_data.sample_indices.len());
-        for row_index in 0..aligned_sample_data.sample_indices.len() {
-            let aligned_sample_key = AlignedSampleKey {
-                sample_index: aligned_sample_data.sample_indices[row_index],
-                family_identifier: aligned_sample_data.family_identifiers[row_index].clone(),
-                individual_identifier: aligned_sample_data.individual_identifiers[row_index].clone(),
-            };
-            if positions_by_key.insert(aligned_sample_key.clone(), row_index).is_some() {
-                return Err(format!(
-                    "Duplicate aligned sample key '{}_{}' at BGEN sample index {} prevents unambiguous multi-phenotype complete-case alignment.",
-                    aligned_sample_key.family_identifier,
-                    aligned_sample_key.individual_identifier,
-                    aligned_sample_key.sample_index,
-                ));
-            }
-        }
-        positions_by_trait.push(positions_by_key);
-    }
-
-    let first_aligned_sample_data = &aligned_sample_data_by_trait[0];
-    let mut common_positions_by_trait = vec![Vec::new(); aligned_sample_data_by_trait.len()];
-    for row_index in 0..first_aligned_sample_data.sample_indices.len() {
-        let aligned_sample_key = AlignedSampleKey {
-            sample_index: first_aligned_sample_data.sample_indices[row_index],
-            family_identifier: first_aligned_sample_data.family_identifiers[row_index].clone(),
-            individual_identifier: first_aligned_sample_data.individual_identifiers[row_index].clone(),
-        };
-        if !positions_by_trait.iter().all(|positions_by_key| positions_by_key.contains_key(&aligned_sample_key)) {
-            continue;
-        }
-        for (trait_index, positions_by_key) in positions_by_trait.iter().enumerate() {
-            let position = positions_by_key
-                .get(&aligned_sample_key)
-                .ok_or_else(|| "Internal multi-phenotype alignment key mismatch.".to_string())?;
-            common_positions_by_trait[trait_index].push(*position);
-        }
-    }
-    if common_positions_by_trait[0].is_empty() {
-        return Err("No aligned samples remain after complete-case multi-phenotype intersection.".to_string());
-    }
-    Ok(common_positions_by_trait)
 }
 
 fn validate_alignment_input_lengths(inputs: &AlignmentInputs) -> Result<(), String> {
@@ -522,14 +367,14 @@ fn load_sample_identifier_data_from_sample_file(
     expected_sample_count: usize,
 ) -> Result<SampleIdentifierData, String> {
     let mut reader = open_sample_file_reader(sample_path)?;
-    let column_names = space_delimited_record_to_strings(&reader.read_required_record(format!(
+    let column_names = reader.read_required_fields(format!(
         "Sample file '{}' must contain at least two header lines.",
         sample_path.display()
-    ))?);
-    let column_types = space_delimited_record_to_strings(&reader.read_required_record(format!(
+    ))?;
+    let column_types = reader.read_required_fields(format!(
         "Sample file '{}' must contain at least two header lines.",
         sample_path.display()
-    ))?);
+    ))?;
     validate_sample_file_header(sample_path, &column_names, &column_types)?;
     let family_identifier_column_index = 0;
     let individual_identifier_column_index =
@@ -539,9 +384,8 @@ fn load_sample_identifier_data_from_sample_file(
     let mut family_identifiers = Vec::with_capacity(expected_sample_count);
     let mut individual_identifiers = Vec::with_capacity(expected_sample_count);
     let mut sample_count = 0usize;
-    while let Some(record) = reader.read_next_record()? {
+    while let Some(row_values) = reader.read_next_fields()? {
         sample_count += 1;
-        let row_values = space_delimited_record_to_strings(&record);
         if row_values.len() != column_names.len() {
             return Err(format!(
                 "Sample file '{}' line {} has {} values, but the header declares {} columns.",
@@ -592,18 +436,21 @@ fn validate_sample_file_header(
     Ok(())
 }
 
-fn open_sample_file_reader(sample_path: &Path) -> Result<StreamingTabularReader<File>, String> {
-    open_tabular_reader(sample_path, "sample file", TabularDelimiter::Space)
+fn open_sample_file_reader(sample_path: &Path) -> Result<SampleFileReader<BufReader<File>>, String> {
+    let sample_file = File::open(sample_path)
+        .map_err(|error| format!("Failed to read sample file '{}': {error}.", sample_path.display()))?;
+    Ok(SampleFileReader::new(sample_path.display().to_string(), BufReader::new(sample_file)))
 }
 
+// Phenotype and covariate tables intentionally use tab-only parsing.
 fn open_tsv_table_reader(table_path: &Path) -> Result<StreamingTabularReader<File>, String> {
-    open_tabular_reader(table_path, "table", TabularDelimiter::Tab)
+    open_tabular_reader(table_path, "table", b'\t')
 }
 
 fn open_tabular_reader(
     table_path: &Path,
     source_label: &'static str,
-    delimiter: TabularDelimiter,
+    delimiter: u8,
 ) -> Result<StreamingTabularReader<File>, String> {
     let table_file = File::open(table_path)
         .map_err(|error| format!("Failed to read {source_label} '{}': {error}.", table_path.display()))?;
@@ -622,10 +469,37 @@ fn read_tabular_header<R: Read>(
     Ok(headers)
 }
 
+impl<R: BufRead> SampleFileReader<R> {
+    fn new(path_text: String, reader: R) -> Self {
+        Self { path_text, reader, line_buffer: String::new() }
+    }
+
+    fn read_required_fields(&mut self, empty_error_message: String) -> Result<Vec<String>, String> {
+        self.read_next_fields()?.ok_or(empty_error_message)
+    }
+
+    fn read_next_fields(&mut self) -> Result<Option<Vec<String>>, String> {
+        loop {
+            self.line_buffer.clear();
+            let read_byte_count = self
+                .reader
+                .read_line(&mut self.line_buffer)
+                .map_err(|error| format!("Failed to read sample file '{}': {error}.", self.path_text))?;
+            if read_byte_count == 0 {
+                return Ok(None);
+            }
+            let field_values = self.line_buffer.split_whitespace().map(ToString::to_string).collect::<Vec<_>>();
+            if !field_values.is_empty() {
+                return Ok(Some(field_values));
+            }
+        }
+    }
+}
+
 impl<R: Read> StreamingTabularReader<R> {
-    fn new(path_text: String, source_label: &'static str, source: R, delimiter: TabularDelimiter) -> Self {
+    fn new(path_text: String, source_label: &'static str, source: R, delimiter: u8) -> Self {
         let reader = csv::ReaderBuilder::new()
-            .delimiter(delimiter.byte())
+            .delimiter(delimiter)
             .flexible(true)
             .has_headers(false)
             .trim(csv::Trim::All)
@@ -661,10 +535,6 @@ fn is_empty_tabular_record(record: &csv::StringRecord) -> bool {
 
 fn record_to_strings(record: &csv::StringRecord) -> Vec<String> {
     record.iter().map(ToString::to_string).collect()
-}
-
-fn space_delimited_record_to_strings(record: &csv::StringRecord) -> Vec<String> {
-    record.iter().filter(|field_value| !field_value.is_empty()).map(ToString::to_string).collect()
 }
 
 fn required_column_index(headers: &[String], column_name: &str, table_path: &str) -> Result<usize, String> {
@@ -731,11 +601,48 @@ fn build_sample_key(sample_key_mode: SampleKeyMode, family_identifier: &str, ind
     }
 }
 
-fn read_phenotype_records_by_key(
+fn build_sample_row_indices_by_key(
+    sample_key_mode: SampleKeyMode,
+    family_identifiers: &[String],
+    individual_identifiers: &[String],
+) -> HashMap<SampleKey, usize> {
+    let mut sample_row_indices_by_key = HashMap::with_capacity(individual_identifiers.len());
+    for (sample_array_index, (family_identifier, individual_identifier)) in
+        family_identifiers.iter().zip(individual_identifiers.iter()).enumerate()
+    {
+        if individual_identifier.is_empty() {
+            continue;
+        }
+        let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
+        sample_row_indices_by_key.insert(sample_key, sample_array_index);
+    }
+    sample_row_indices_by_key
+}
+
+fn duplicate_table_sample_key_error(
+    source_name: &str,
+    sample_key_mode: SampleKeyMode,
+    family_identifier: &str,
+    individual_identifier: &str,
+) -> String {
+    if sample_key_mode == SampleKeyMode::FidIid {
+        return format!(
+            "Duplicate sample key '{family_identifier}_{individual_identifier}' found in {source_name}; sample_key_mode='fid_iid' requires unique (FID, IID) values."
+        );
+    }
+    format!(
+        "Duplicate IID '{individual_identifier}' found in {source_name}; sample_key_mode='iid' requires unique non-null IID values."
+    )
+}
+
+fn read_single_phenotype_table(
     phenotype_path: &Path,
     phenotype_name: &str,
+    is_binary_trait: bool,
     sample_key_mode: SampleKeyMode,
-) -> Result<HashMap<SampleKey, RawPhenotypeRecord>, String> {
+    sample_row_indices_by_key: &HashMap<SampleKey, usize>,
+    sample_count: usize,
+) -> Result<SinglePhenotypeTable, String> {
     let mut reader = open_tsv_table_reader(phenotype_path)?;
     let headers = read_tabular_header(&mut reader, phenotype_path)?;
     let phenotype_path_text = phenotype_path.display().to_string();
@@ -748,7 +655,8 @@ fn read_phenotype_records_by_key(
     let selection =
         TabularColumnSelection::new(family_identifier_index, individual_identifier_index, &[phenotype_index]);
     let mut observed_sample_keys: HashSet<SampleKey> = HashSet::new();
-    let mut records_by_key: HashMap<SampleKey, RawPhenotypeRecord> = HashMap::new();
+    let mut phenotype_values = vec![0.0; sample_count];
+    let mut phenotype_mask = vec![false; sample_count];
     while let Some(record) = reader.read_next_record()? {
         let selected_values = select_tabular_record_values(&record, &selection);
         let individual_identifier = selected_values[selection.individual_identifier_value_index];
@@ -759,29 +667,34 @@ fn read_phenotype_records_by_key(
             selection.family_identifier_value_index.map_or("", |value_index| selected_values[value_index]);
         let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
         if !observed_sample_keys.insert(sample_key.clone()) {
-            if sample_key_mode == SampleKeyMode::FidIid {
-                return Err(format!(
-                    "Duplicate sample key '{family_identifier}_{individual_identifier}' found in phenotype table; sample_key_mode='fid_iid' requires unique (FID, IID) values."
-                ));
-            }
-            return Err(format!(
-                "Duplicate IID '{individual_identifier}' found in phenotype table; sample_key_mode='iid' requires unique non-null IID values."
+            return Err(duplicate_table_sample_key_error(
+                "phenotype table",
+                sample_key_mode,
+                family_identifier,
+                individual_identifier,
             ));
         }
         let phenotype_value = selected_values[selection.data_value_indices[0]];
         if is_tabular_null_value(phenotype_value) {
             continue;
         }
-        records_by_key.insert(sample_key, RawPhenotypeRecord { phenotype_value: phenotype_value.to_string() });
+        if let Some(sample_array_index) = sample_row_indices_by_key.get(&sample_key) {
+            phenotype_values[*sample_array_index] =
+                parse_phenotype_value(phenotype_value, phenotype_name, is_binary_trait)?;
+            phenotype_mask[*sample_array_index] = true;
+        }
     }
-    Ok(records_by_key)
+    Ok(SinglePhenotypeTable { phenotype_values, phenotype_mask })
 }
 
-fn read_multi_phenotype_records_by_key(
+fn read_multi_phenotype_table(
     phenotype_path: &Path,
     phenotype_names: &[String],
+    is_binary_trait: bool,
     sample_key_mode: SampleKeyMode,
-) -> Result<HashMap<SampleKey, RawMultiPhenotypeRecord>, String> {
+    sample_row_indices_by_key: &HashMap<SampleKey, usize>,
+    sample_count: usize,
+) -> Result<MultiPhenotypeTable, String> {
     let mut reader = open_tsv_table_reader(phenotype_path)?;
     let headers = read_tabular_header(&mut reader, phenotype_path)?;
     let phenotype_path_text = phenotype_path.display().to_string();
@@ -797,7 +710,9 @@ fn read_multi_phenotype_records_by_key(
     let selection =
         TabularColumnSelection::new(family_identifier_index, individual_identifier_index, &phenotype_indices);
     let mut observed_sample_keys: HashSet<SampleKey> = HashSet::new();
-    let mut records_by_key: HashMap<SampleKey, RawMultiPhenotypeRecord> = HashMap::new();
+    let phenotype_count = phenotype_names.len();
+    let mut phenotype_values = vec![0.0; phenotype_count * sample_count];
+    let mut phenotype_masks = vec![false; phenotype_count * sample_count];
     while let Some(record) = reader.read_next_record()? {
         let selected_values = select_tabular_record_values(&record, &selection);
         let individual_identifier = selected_values[selection.individual_identifier_value_index];
@@ -808,26 +723,27 @@ fn read_multi_phenotype_records_by_key(
             selection.family_identifier_value_index.map_or("", |value_index| selected_values[value_index]);
         let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
         if !observed_sample_keys.insert(sample_key.clone()) {
-            if sample_key_mode == SampleKeyMode::FidIid {
-                return Err(format!(
-                    "Duplicate sample key '{family_identifier}_{individual_identifier}' found in phenotype table; sample_key_mode='fid_iid' requires unique (FID, IID) values."
-                ));
-            }
-            return Err(format!(
-                "Duplicate IID '{individual_identifier}' found in phenotype table; sample_key_mode='iid' requires unique non-null IID values."
+            return Err(duplicate_table_sample_key_error(
+                "phenotype table",
+                sample_key_mode,
+                family_identifier,
+                individual_identifier,
             ));
         }
-        let phenotype_values = selection
-            .data_value_indices
-            .iter()
-            .map(|value_index| {
-                let phenotype_value = selected_values[*value_index];
-                if is_tabular_null_value(phenotype_value) { None } else { Some(phenotype_value.to_string()) }
-            })
-            .collect();
-        records_by_key.insert(sample_key, RawMultiPhenotypeRecord { phenotype_values });
+        let Some(sample_array_index) = sample_row_indices_by_key.get(&sample_key) else {
+            continue;
+        };
+        for (phenotype_index, phenotype_name) in phenotype_names.iter().enumerate() {
+            let phenotype_value = selected_values[selection.data_value_indices[phenotype_index]];
+            if is_tabular_null_value(phenotype_value) {
+                continue;
+            }
+            let value_index = phenotype_index * sample_count + sample_array_index;
+            phenotype_values[value_index] = parse_phenotype_value(phenotype_value, phenotype_name, is_binary_trait)?;
+            phenotype_masks[value_index] = true;
+        }
     }
-    Ok(records_by_key)
+    Ok(MultiPhenotypeTable { phenotype_values, phenotype_masks, phenotype_count, sample_count })
 }
 
 fn select_covariate_names(
@@ -861,11 +777,14 @@ fn select_covariate_names(
     }
 }
 
-fn read_covariate_records_by_key(
+fn read_covariate_table(
     covariate_path: &Path,
     requested_covariate_names: Option<&[String]>,
     sample_key_mode: SampleKeyMode,
-) -> Result<(Vec<String>, HashMap<SampleKey, RawCovariateRecord>), String> {
+    sample_row_indices_by_key: &HashMap<SampleKey, usize>,
+    parse_candidate_mask: &[bool],
+    sample_count: usize,
+) -> Result<CovariateTable, String> {
     let mut reader = open_tsv_table_reader(covariate_path)?;
     let headers = read_tabular_header(&mut reader, covariate_path)?;
     let covariate_path_text = covariate_path.display().to_string();
@@ -885,7 +804,9 @@ fn read_covariate_records_by_key(
     let selection =
         TabularColumnSelection::new(family_identifier_index, individual_identifier_index, &covariate_indices);
     let mut observed_sample_keys: HashSet<SampleKey> = HashSet::new();
-    let mut records_by_key: HashMap<SampleKey, RawCovariateRecord> = HashMap::new();
+    let selected_covariate_count = selected_covariate_names.len();
+    let mut covariate_values = vec![0.0; sample_count * selected_covariate_count];
+    let mut covariate_mask = vec![false; sample_count];
     while let Some(record) = reader.read_next_record()? {
         let selected_values = select_tabular_record_values(&record, &selection);
         let individual_identifier = selected_values[selection.individual_identifier_value_index];
@@ -896,130 +817,191 @@ fn read_covariate_records_by_key(
             selection.family_identifier_value_index.map_or("", |value_index| selected_values[value_index]);
         let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
         if !observed_sample_keys.insert(sample_key.clone()) {
-            if sample_key_mode == SampleKeyMode::FidIid {
-                return Err(format!(
-                    "Duplicate sample key '{family_identifier}_{individual_identifier}' found in covariate table; sample_key_mode='fid_iid' requires unique (FID, IID) values."
-                ));
-            }
-            return Err(format!(
-                "Duplicate IID '{individual_identifier}' found in covariate table; sample_key_mode='iid' requires unique non-null IID values."
+            return Err(duplicate_table_sample_key_error(
+                "covariate table",
+                sample_key_mode,
+                family_identifier,
+                individual_identifier,
             ));
         }
-        let covariate_values: Vec<String> = covariate_indices
-            .iter()
-            .enumerate()
-            .map(|(covariate_index, _column_index)| selected_values[selection.data_value_indices[covariate_index]])
-            .filter(|covariate_value| !is_tabular_null_value(covariate_value))
-            .map(ToString::to_string)
-            .collect();
-        if covariate_values.len() != selected_covariate_names.len() {
+        let Some(sample_array_index) = sample_row_indices_by_key.get(&sample_key) else {
+            continue;
+        };
+        if !parse_candidate_mask[*sample_array_index] {
             continue;
         }
-        records_by_key.insert(sample_key, RawCovariateRecord { covariate_values });
+        let mut row_has_missing_covariates = false;
+        for covariate_index in 0..selected_covariate_count {
+            let covariate_value = selected_values[selection.data_value_indices[covariate_index]];
+            if is_tabular_null_value(covariate_value) {
+                row_has_missing_covariates = true;
+                break;
+            }
+            let value_index = sample_array_index * selected_covariate_count + covariate_index;
+            covariate_values[value_index] = parse_covariate_value(covariate_value)?;
+        }
+        if !row_has_missing_covariates {
+            covariate_mask[*sample_array_index] = true;
+        }
     }
-    Ok((selected_covariate_names, records_by_key))
+    Ok(CovariateTable { selected_covariate_names, covariate_values, covariate_mask, selected_covariate_count })
+}
+
+fn empty_covariate_table(sample_count: usize) -> CovariateTable {
+    CovariateTable {
+        selected_covariate_names: Vec::new(),
+        covariate_values: Vec::new(),
+        covariate_mask: vec![true; sample_count],
+        selected_covariate_count: 0,
+    }
 }
 
 fn build_single_aligned_sample_data(
     inputs: AlignmentInputs,
-    phenotype_records_by_identifier: &HashMap<SampleKey, RawPhenotypeRecord>,
-    selected_covariate_names: &[String],
-    covariate_records_by_identifier: &HashMap<SampleKey, RawCovariateRecord>,
+    phenotype_table: &SinglePhenotypeTable,
+    covariate_table: &CovariateTable,
 ) -> Result<AlignedSampleData, String> {
-    let mut aligned_rows = Vec::new();
-    for sample_array_index in 0..inputs.sample_indices.len() {
-        let sample_key = build_sample_key(
-            inputs.sample_key_mode,
-            &inputs.family_identifiers[sample_array_index],
-            &inputs.individual_identifiers[sample_array_index],
-        );
-        let Some(phenotype_record) = phenotype_records_by_identifier.get(&sample_key) else {
-            continue;
-        };
-        let phenotype_value =
-            parse_phenotype_value(&phenotype_record.phenotype_value, &inputs.phenotype_name, inputs.is_binary_trait)?;
-        let covariate_values = if inputs.covariate_path.is_some() {
-            let Some(covariate_record) = covariate_records_by_identifier.get(&sample_key) else {
-                continue;
-            };
-            parse_covariate_values(&covariate_record.covariate_values)?
-        } else {
-            Vec::new()
-        };
-        aligned_rows.push(AlignedSampleRow {
-            sample_index: inputs.sample_indices[sample_array_index],
-            family_identifier: inputs.family_identifiers[sample_array_index].clone(),
-            individual_identifier: inputs.individual_identifiers[sample_array_index].clone(),
-            phenotype_value,
-            covariate_values,
-        });
-    }
-
-    aligned_rows.sort_by_key(|row| row.sample_index);
-    if aligned_rows.is_empty() {
+    let complete_sample_array_indices = complete_single_sample_array_indices(&inputs, phenotype_table, covariate_table);
+    if complete_sample_array_indices.is_empty() {
         return Err("No aligned samples remain after joining phenotype and covariate tables.".to_string());
     }
 
-    Ok(AlignedSampleData::new(
-        inputs.phenotype_name,
-        returned_covariate_names(selected_covariate_names),
-        aligned_rows,
-        inputs.is_binary_trait,
-    ))
+    let aligned_sample_count = complete_sample_array_indices.len();
+    let covariate_names = returned_covariate_names(&covariate_table.selected_covariate_names);
+    let covariate_column_count = covariate_names.len();
+    let mut sample_indices = Vec::with_capacity(aligned_sample_count);
+    let mut family_identifiers = Vec::with_capacity(aligned_sample_count);
+    let mut individual_identifiers = Vec::with_capacity(aligned_sample_count);
+    let mut phenotype_vector = Vec::with_capacity(aligned_sample_count);
+    let mut covariate_matrix_values = Vec::with_capacity(aligned_sample_count * covariate_column_count);
+
+    for sample_array_index in complete_sample_array_indices {
+        sample_indices.push(inputs.sample_indices[sample_array_index]);
+        family_identifiers.push(inputs.family_identifiers[sample_array_index].clone());
+        individual_identifiers.push(inputs.individual_identifiers[sample_array_index].clone());
+        phenotype_vector.push(phenotype_table.phenotype_values[sample_array_index]);
+        push_covariate_matrix_row(&mut covariate_matrix_values, covariate_table, sample_array_index);
+    }
+
+    Ok(AlignedSampleData {
+        sample_indices,
+        family_identifiers,
+        individual_identifiers,
+        phenotype_name: inputs.phenotype_name,
+        phenotype_vector,
+        covariate_names,
+        covariate_matrix_values,
+        covariate_row_count: aligned_sample_count,
+        covariate_column_count,
+        is_binary_trait: inputs.is_binary_trait,
+    })
 }
 
-fn build_multi_trait_aligned_sample_data(
+fn build_multi_aligned_sample_data(
+    inputs: MultiAlignmentInputs,
+    phenotype_table: &MultiPhenotypeTable,
+    covariate_table: &CovariateTable,
+) -> Result<MultiAlignedSampleData, String> {
+    let complete_sample_array_indices = complete_multi_sample_array_indices(&inputs, phenotype_table, covariate_table);
+    if complete_sample_array_indices.is_empty() {
+        return Err("No aligned samples remain after complete-case multi-phenotype intersection.".to_string());
+    }
+
+    let aligned_sample_count = complete_sample_array_indices.len();
+    let covariate_names = returned_covariate_names(&covariate_table.selected_covariate_names);
+    let covariate_column_count = covariate_names.len();
+    let mut sample_indices = Vec::with_capacity(aligned_sample_count);
+    let mut family_identifiers = Vec::with_capacity(aligned_sample_count);
+    let mut individual_identifiers = Vec::with_capacity(aligned_sample_count);
+    let mut phenotype_matrix_values = Vec::with_capacity(phenotype_table.phenotype_count * aligned_sample_count);
+    let mut covariate_matrix_values = Vec::with_capacity(aligned_sample_count * covariate_column_count);
+
+    for sample_array_index in &complete_sample_array_indices {
+        sample_indices.push(inputs.sample_indices[*sample_array_index]);
+        family_identifiers.push(inputs.family_identifiers[*sample_array_index].clone());
+        individual_identifiers.push(inputs.individual_identifiers[*sample_array_index].clone());
+        push_covariate_matrix_row(&mut covariate_matrix_values, covariate_table, *sample_array_index);
+    }
+    for phenotype_index in 0..phenotype_table.phenotype_count {
+        for sample_array_index in &complete_sample_array_indices {
+            let value_index = phenotype_index * phenotype_table.sample_count + sample_array_index;
+            phenotype_matrix_values.push(phenotype_table.phenotype_values[value_index]);
+        }
+    }
+
+    Ok(MultiAlignedSampleData {
+        sample_indices,
+        family_identifiers,
+        individual_identifiers,
+        phenotype_names: inputs.phenotype_names,
+        phenotype_matrix_values,
+        phenotype_row_count: phenotype_table.phenotype_count,
+        phenotype_column_count: aligned_sample_count,
+        covariate_names,
+        covariate_matrix_values,
+        covariate_row_count: aligned_sample_count,
+        covariate_column_count,
+        is_binary_trait: inputs.is_binary_trait,
+    })
+}
+
+fn complete_single_sample_array_indices(
+    inputs: &AlignmentInputs,
+    phenotype_table: &SinglePhenotypeTable,
+    covariate_table: &CovariateTable,
+) -> Vec<usize> {
+    let mut complete_sample_array_indices: Vec<usize> = (0..inputs.sample_indices.len())
+        .filter(|sample_array_index| {
+            phenotype_table.phenotype_mask[*sample_array_index] && covariate_table.covariate_mask[*sample_array_index]
+        })
+        .collect();
+    complete_sample_array_indices.sort_by_key(|sample_array_index| inputs.sample_indices[*sample_array_index]);
+    complete_sample_array_indices
+}
+
+fn complete_multi_sample_array_indices(
     inputs: &MultiAlignmentInputs,
-    phenotype_index: usize,
-    phenotype_records_by_identifier: &HashMap<SampleKey, RawMultiPhenotypeRecord>,
-    selected_covariate_names: &[String],
-    covariate_records_by_identifier: &HashMap<SampleKey, RawCovariateRecord>,
-) -> Result<AlignedSampleData, String> {
-    let phenotype_name = &inputs.phenotype_names[phenotype_index];
-    let mut aligned_rows = Vec::new();
-    for sample_array_index in 0..inputs.sample_indices.len() {
-        let sample_key = build_sample_key(
-            inputs.sample_key_mode,
-            &inputs.family_identifiers[sample_array_index],
-            &inputs.individual_identifiers[sample_array_index],
-        );
-        let Some(phenotype_record) = phenotype_records_by_identifier.get(&sample_key) else {
-            continue;
-        };
-        let Some(phenotype_value_text) =
-            phenotype_record.phenotype_values.get(phenotype_index).and_then(Option::as_deref)
-        else {
-            continue;
-        };
-        let phenotype_value = parse_phenotype_value(phenotype_value_text, phenotype_name, inputs.is_binary_trait)?;
-        let covariate_values = if inputs.covariate_path.is_some() {
-            let Some(covariate_record) = covariate_records_by_identifier.get(&sample_key) else {
-                continue;
-            };
-            parse_covariate_values(&covariate_record.covariate_values)?
-        } else {
-            Vec::new()
-        };
-        aligned_rows.push(AlignedSampleRow {
-            sample_index: inputs.sample_indices[sample_array_index],
-            family_identifier: inputs.family_identifiers[sample_array_index].clone(),
-            individual_identifier: inputs.individual_identifiers[sample_array_index].clone(),
-            phenotype_value,
-            covariate_values,
-        });
-    }
+    phenotype_table: &MultiPhenotypeTable,
+    covariate_table: &CovariateTable,
+) -> Vec<usize> {
+    let mut complete_sample_array_indices: Vec<usize> = (0..inputs.sample_indices.len())
+        .filter(|sample_array_index| {
+            is_complete_multi_phenotype_sample(phenotype_table, *sample_array_index)
+                && covariate_table.covariate_mask[*sample_array_index]
+        })
+        .collect();
+    complete_sample_array_indices.sort_by_key(|sample_array_index| inputs.sample_indices[*sample_array_index]);
+    complete_sample_array_indices
+}
 
-    aligned_rows.sort_by_key(|row| row.sample_index);
-    if aligned_rows.is_empty() {
-        return Err("No aligned samples remain after joining phenotype and covariate tables.".to_string());
-    }
+fn is_complete_multi_phenotype_sample(phenotype_table: &MultiPhenotypeTable, sample_array_index: usize) -> bool {
+    (0..phenotype_table.phenotype_count).all(|phenotype_index| {
+        phenotype_table.phenotype_masks[phenotype_index * phenotype_table.sample_count + sample_array_index]
+    })
+}
 
-    Ok(AlignedSampleData::new(
-        phenotype_name.clone(),
-        returned_covariate_names(selected_covariate_names),
-        aligned_rows,
-        inputs.is_binary_trait,
-    ))
+fn multi_phenotype_parse_candidate_mask(phenotype_table: &MultiPhenotypeTable) -> Vec<bool> {
+    (0..phenotype_table.sample_count)
+        .map(|sample_array_index| {
+            (0..phenotype_table.phenotype_count).any(|phenotype_index| {
+                phenotype_table.phenotype_masks[phenotype_index * phenotype_table.sample_count + sample_array_index]
+            })
+        })
+        .collect()
+}
+
+fn push_covariate_matrix_row(
+    covariate_matrix_values: &mut Vec<f32>,
+    covariate_table: &CovariateTable,
+    sample_array_index: usize,
+) {
+    covariate_matrix_values.push(1.0);
+    if covariate_table.selected_covariate_count == 0 {
+        return;
+    }
+    let row_start = sample_array_index * covariate_table.selected_covariate_count;
+    covariate_matrix_values
+        .extend(&covariate_table.covariate_values[row_start..row_start + covariate_table.selected_covariate_count]);
 }
 
 fn returned_covariate_names(selected_covariate_names: &[String]) -> Vec<String> {
@@ -1045,15 +1027,10 @@ fn parse_phenotype_value(phenotype_value: &str, phenotype_name: &str, is_binary_
     Err(format!("Binary phenotype must contain only values 1 and 2, found value {parsed_value}."))
 }
 
-fn parse_covariate_values(covariate_values: &[String]) -> Result<Vec<f32>, String> {
-    covariate_values
-        .iter()
-        .map(|covariate_value| {
-            covariate_value
-                .parse::<f32>()
-                .map_err(|error| format!("Failed to parse covariate value '{covariate_value}': {error}."))
-        })
-        .collect()
+fn parse_covariate_value(covariate_value: &str) -> Result<f32, String> {
+    covariate_value
+        .parse::<f32>()
+        .map_err(|error| format!("Failed to parse covariate value '{covariate_value}': {error}."))
 }
 
 #[cfg(test)]
@@ -1131,6 +1108,24 @@ mod tests {
         assert_eq!(aligned.covariate_column_count, 3);
         assert_eq!(aligned.covariate_matrix_values, vec![1.0, 41.0, 0.0, 1.0, 63.0, 1.0]);
         assert!(!aligned.is_binary_trait);
+    }
+
+    #[test]
+    fn ignores_invalid_covariate_values_for_phenotype_missing_samples() {
+        let fixture = FixtureDirectory::new();
+        let phenotype_path = fixture.write_file("phenotypes.tsv", "FID\tIID\ttrait\nF1\tI1\t1.5\nF2\tI2\tNA\n");
+        let covariate_path = fixture.write_file("covariates.tsv", "FID\tIID\tage\nF1\tI1\t41\nF2\tI2\tbad\n");
+        let mut inputs = base_alignment_inputs(phenotype_path, "trait");
+        inputs.sample_indices = vec![0, 1];
+        inputs.family_identifiers = strings(&["F1", "F2"]);
+        inputs.individual_identifiers = strings(&["I1", "I2"]);
+        inputs.covariate_path = Some(covariate_path);
+
+        let aligned = align_sample_data(inputs).expect("unused invalid covariate should not fail alignment");
+
+        assert_eq!(aligned.sample_indices, vec![0]);
+        assert_eq!(aligned.phenotype_vector, vec![1.5]);
+        assert_eq!(aligned.covariate_matrix_values, vec![1.0, 41.0]);
     }
 
     #[test]

@@ -62,9 +62,11 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-firth-maximum-step-size": 4.0,
         "g-use-block-firth-math": True,
         "g-bgen-decode-tile-variant-count": 32,
+        "g-score-dtype": "float64",
+        "g-firth-dtype": "float64",
         "g-jax-cache-dir": "cache/jax",
         "g-jax-matmul-precision": "highest",
-        "g-jax-enable-x64": False,
+        "g-jax-enable-x64": True,
         "g-jax-persistent-cache": False,
         "g-jax-persistent-cache-min-entry-size-bytes": 1024,
         "g-jax-persistent-cache-min-compile-time-seconds": 1,
@@ -101,8 +103,10 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_compute.binary_relative_variance_tolerance == 2.0e-6
     assert regenie_config.g_compute.use_block_firth_math is True
     assert regenie_config.g_compute.bgen_decode_tile_variant_count == 32
+    assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT64
+    assert regenie_config.g_compute.firth_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_compute.jax_matmul_precision == types.JaxMatmulPrecision.HIGHEST
-    assert regenie_config.g_compute.jax_enable_x64 is False
+    assert regenie_config.g_compute.jax_enable_x64 is True
     assert regenie_config.g_compute.jax_persistent_cache is False
     assert regenie_config.g_output.format == types.OutputFormat.ARROW
     assert regenie_config.g_output.chunks_per_arrow_file == 2
@@ -154,6 +158,8 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     assert regenie_config.trait.bsize == config.DEFAULT_BSIZE
     assert regenie_config.g_compute.device == types.Device.CPU
     assert regenie_config.g_compute.null_logistic_nonconvergence_policy == types.NullLogisticNonconvergencePolicy.FAIL
+    assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT32
+    assert regenie_config.g_compute.firth_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_compute.jax_enable_x64 is True
     assert regenie_config.g_compute.jax_persistent_cache is True
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
@@ -235,7 +241,9 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
             "g-output-arrow-compression": "none",
             "g-firth-batch-size": 8,
             "g-null-logistic-nonconvergence": "warn",
-            "g-jax-enable-x64": False,
+            "g-score-dtype": "float64",
+            "g-firth-dtype": "float64",
+            "g-jax-enable-x64": True,
             "g-jax-persistent-cache": False,
             "g-stage-timings-json": "timings.json",
             "g-log-filter": "g=trace",
@@ -355,6 +363,7 @@ def test_config_validation_rejects_required_and_positive_option_errors(
         ({"pThresh": 1.0}, "--pThresh must be in"),
         ({"firth": True, "approx": False}, "Exact --firth is not implemented"),
         ({"firth": False, "approx": True}, "--approx requires --firth"),
+        ({"firth": True, "approx": True, "g-jax-enable-x64": False}, "--firth uses float64 internals"),
     ],
 )
 def test_binary_config_validation_rejects_invalid_fallback_combinations(
@@ -372,6 +381,24 @@ def test_binary_config_validation_rejects_invalid_fallback_combinations(
         "firth": True,
         "approx": True,
     }
+    raw_options.update(mutated_options)
+
+    with pytest.raises(ValueError, match=error_match):
+        config.RegenieConfig.from_options(raw_options)
+
+
+@pytest.mark.parametrize(
+    ("mutated_options", "error_match"),
+    [
+        ({"g-score-dtype": "float64", "g-jax-enable-x64": False}, "--g-score-dtype=float64 requires"),
+        ({"g-firth-dtype": "float32"}, "--g-firth-dtype currently supports float64 only"),
+    ],
+)
+def test_config_validation_rejects_invalid_dtype_policy(
+    mutated_options: dict[str, object],
+    error_match: str,
+) -> None:
+    raw_options = build_valid_quantitative_options()
     raw_options.update(mutated_options)
 
     with pytest.raises(ValueError, match=error_match):

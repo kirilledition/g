@@ -168,6 +168,7 @@ def test_regenie2_run_engine_variant_major_chunks_support_untrusted_bgen() -> No
                 chunk_stats.observation_count,
                 np.full(genotype_matrix_by_variant.shape[0], 4),
             )
+            np.testing.assert_allclose(chunk_stats.dosage_sum, genotype_matrix_by_variant.sum(axis=1))
             self.free_buffers.append(genotype_matrix_by_variant)
 
     callback = RecordingCallback()
