@@ -436,6 +436,11 @@ CHROM, GENPOS, ID, ALLELE0, ALLELE1, A1FREQ, INFO, N,
 TEST, BETA, SE, CHISQ, LOG10P, EXTRA
 ```
 
+`BETA`, `SE`, `CHISQ`, and `LOG10P` are persisted as float32 in Arrow and
+Parquet outputs. This matches the current REGENIE-compatible writer schema; any
+float64 internal arrays are narrowed before writing, and the run manifest records
+`output_writer.result_statistic_dtype = "float32"`.
+
 `EXTRA` is null for ordinary successful rows and `TEST_FAIL` for failed binary correction/statistic rows.
 
 ---

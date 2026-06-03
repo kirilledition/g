@@ -220,7 +220,12 @@ def write_regenie2_native_chunk_with_optional_timing(
     extra_code: jax.Array | None,
     stage_timing_recorder: timing.StageTimingRecorder | None,
 ) -> None:
-    """Write one native-metadata REGENIE chunk while timing JAX result materialization."""
+    """Write one native-metadata REGENIE chunk while timing JAX result materialization.
+
+    The native Arrow/Parquet schema stores public result statistics as float32.
+    Any higher-precision internal arrays are narrowed immediately before the
+    Rust writer call.
+    """
     materialization_start_time = time.perf_counter()
     host_values = jax.device_get(
         {

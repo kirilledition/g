@@ -95,6 +95,48 @@ class NoFinalWriterSession:
         self.aborted = True
 
 
+def test_cast_statistic_array_for_native_writer_uses_public_float32_schema() -> None:
+    precise_values = np.asarray([1.0, 1.0 + 2.0**-30], dtype=np.float64)
+
+    writer_values = callbacks.cast_statistic_array_for_native_writer(precise_values)
+
+    assert writer_values.dtype == np.float32
+    np.testing.assert_array_equal(writer_values, precise_values.astype(np.float32))
+
+
+def test_write_regenie2_native_chunk_downcasts_float64_statistics_before_writing() -> None:
+    writer_session = FakeWriterSession()
+    precise_values = np.asarray([1.0, 1.0 + 2.0**-30], dtype=np.float64)
+    extra_code = np.asarray([0, 3], dtype=np.int32)
+
+    callbacks.write_regenie2_native_chunk_with_optional_timing(
+        writer_session=writer_session,
+        metadata=typing.cast("typing.Any", SimpleNamespace()),
+        chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        beta=typing.cast("typing.Any", precise_values),
+        standard_error=typing.cast("typing.Any", precise_values + 1.0),
+        chi_squared=typing.cast("typing.Any", precise_values + 2.0),
+        log10_p_value=typing.cast("typing.Any", precise_values + 3.0),
+        extra_code=typing.cast("typing.Any", extra_code),
+        stage_timing_recorder=None,
+    )
+
+    written_chunk = writer_session.native_chunks[0]
+    beta = written_chunk["beta"]
+    standard_error = written_chunk["standard_error"]
+    chi_squared = written_chunk["chi_squared"]
+    log10_p_value = written_chunk["log10_p_value"]
+    assert isinstance(beta, np.ndarray)
+    assert isinstance(standard_error, np.ndarray)
+    assert isinstance(chi_squared, np.ndarray)
+    assert isinstance(log10_p_value, np.ndarray)
+    assert beta.dtype == np.float32
+    assert standard_error.dtype == np.float32
+    assert chi_squared.dtype == np.float32
+    assert log10_p_value.dtype == np.float32
+    np.testing.assert_array_equal(written_chunk["extra_code"], extra_code)
+
+
 class FakeRunEngine:
     instances: typing.ClassVar[list[FakeRunEngine]] = []
 
