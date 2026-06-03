@@ -137,12 +137,15 @@
       "manual": {},
       "priority": "P1 performance issues",
       "problem_markdown": "## 10. Multi-binary Firth loops over traits in Python\n\nIn `src/g/compute/regenie2_binary/api.py:112-145`, multi-binary Firth does:\n\n```python\nfor trait_index in range(trait_count):\n    compute_one_trait(...)\n```\n\nand then stacks results.\n\nThis is probably acceptable for early Firth support because exact multi-trait Firth batching is hard. But it means multi-binary `--firth --approx` is not really a fully batched GPU workload. It is closer to sequential trait processing sharing a genotype transfer.\n\n### Recommendation\n\nDocument this internally and benchmark separately:\n\n```text\nmulti-binary score-only:\n  should be true batched GPU compute\n\nmulti-binary approximate Firth:\n  currently per-trait correction loop after shared transfer\n```\n\nDo not claim full multi-trait binary Firth acceleration until this is improved.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T06:18:45+00:00",
+        "integration_head": "9973c256813faf01e6157e40027d02d80e3e0d09"
+      },
       "slug": "multi-binary-firth-loops-over-traits-in-python",
       "source_end_line": 135,
       "source_id": 10,
       "source_start_line": 107,
-      "status": "integrating",
+      "status": "integrated",
       "title": "Multi-binary Firth loops over traits in Python",
       "worktree": "../g-worktrees/review2-T010-multi-binary-firth-loops-over-traits-in-python"
     },
@@ -181,7 +184,7 @@
       "source_end_line": 173,
       "source_id": 11,
       "source_start_line": 136,
-      "status": "ready",
+      "status": "integrating",
       "title": "The current AVX2 path still scalarizes statistics inside the vector loop",
       "worktree": "../g-worktrees/review2-T011-the-current-avx2-path-still-scalarizes-statistics-inside-the-vector-loop"
     },
