@@ -946,6 +946,13 @@ def test_collect_status_rows_marks_finished_and_stale_workers(
                 "worktree": "../two",
                 "title": "Stale task",
             },
+            {
+                "id": "T003",
+                "status": "ready",
+                "branch": "codex/three",
+                "worktree": "../three",
+                "title": "Active task",
+            },
         ],
     }
     state: codex_task_farm.JsonObject = {
@@ -958,10 +965,12 @@ def test_collect_status_rows_marks_finished_and_stale_workers(
         "runs": {
             "T001": {"pid": 11, "returncode": 0},
             "T002": {"pid": 22, "returncode": None},
+            "T003": {"pid": 33, "returncode": None},
         },
         "statuses": {
             "T001": "implemented",
             "T002": "running",
+            "T003": "running",
         },
         "task_identities": {},
     }
@@ -969,6 +978,9 @@ def test_collect_status_rows_marks_finished_and_stale_workers(
     run_directory.mkdir(parents=True)
     (run_directory / "worker-final.md").write_text("done")
     (run_directory / "exit-code.txt").write_text("0\n")
+    active_run_directory = tmp_path / ".state" / "runs" / "T003"
+    active_run_directory.mkdir(parents=True)
+    (active_run_directory / "worker.jsonl").write_text("{}\n")
     monkeypatch.setattr(codex_task_farm, "running_process_exists", lambda process_identifier: False)
 
     rows = codex_task_farm.collect_status_rows(
@@ -979,10 +991,10 @@ def test_collect_status_rows_marks_finished_and_stale_workers(
         check_worktrees=False,
     )
 
-    assert [row.worker for row in rows] == ["finished", "stale"]
-    assert [row.status for row in rows] == ["implemented", "running"]
-    assert [row.worktree for row in rows] == ["skipped", "skipped"]
-    assert [row.lease for row in rows] == ["-", "agent"]
+    assert [row.worker for row in rows] == ["finished", "stale", "active"]
+    assert [row.status for row in rows] == ["implemented", "running", "running"]
+    assert [row.worktree for row in rows] == ["skipped", "skipped", "skipped"]
+    assert [row.lease for row in rows] == ["-", "agent", "-"]
 
 
 def test_format_status_snapshot_includes_summary_counts() -> None:

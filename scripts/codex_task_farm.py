@@ -2024,12 +2024,23 @@ def read_exit_code_text(exit_code_path: Path, run: object) -> str:
     return "-"
 
 
+def worker_log_recent(run_directory: Path, *, recent_seconds: float = 120.0) -> bool:
+    """Return whether a worker log was updated recently."""
+    current_time = time.time()
+    for log_file_name in ("worker.jsonl", "worker.stderr.log"):
+        log_path = run_directory / log_file_name
+        if log_path.exists() and current_time - log_path.stat().st_mtime <= recent_seconds:
+            return True
+    return False
+
+
 def worker_status_label(
     *,
     run: object,
     alive: bool,
     final_message_exists: bool,
     exit_code: str,
+    log_recent: bool,
 ) -> str:
     """Return a concise worker process state label."""
     if alive:
@@ -2038,6 +2049,8 @@ def worker_status_label(
         return "finished"
     if exit_code != "-":
         return "exited"
+    if log_recent:
+        return "active"
     if isinstance(run, dict) and isinstance(typing.cast("JsonObject", run).get("pid"), int):
         return "stale"
     return "-"
@@ -2097,6 +2110,7 @@ def collect_status_rows(
                     alive=alive,
                     final_message_exists=final_message_exists,
                     exit_code=exit_code,
+                    log_recent=worker_log_recent(run_directory),
                 ),
                 final="yes" if final_message_exists else "no",
                 exit_code=exit_code,
