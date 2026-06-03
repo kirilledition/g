@@ -1,0 +1,147 @@
+name: GPU Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_labels_json:
+        description: JSON array of self-hosted runner labels.
+        required: true
+        default: '["self-hosted","linux","x64","gpu"]'
+  schedule:
+    - cron: "49 4 1 * *"
+
+concurrency:
+  group: gpu-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  gpu-smoke:
+    name: gpu-smoke
+    runs-on: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.runner_labels_json || vars.G_GPU_RUNNER_LABELS_JSON || '["self-hosted","linux","x64","gpu"]') }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Export Python shared library path
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "${GITHUB_ENV}"
+          import os
+          import sysconfig
+
+          library_dir = sysconfig.get_config_var("LIBDIR")
+          previous_path = os.environ.get("LD_LIBRARY_PATH", "")
+          print(f"LD_LIBRARY_PATH={library_dir}:{previous_path}")
+          PY
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Rust toolchain for GPU package install
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install project with GPU dependencies
+        env:
+          RUSTFLAGS: "--allow=non-local-definitions"
+        run: uv sync --group dev --group gpu --frozen
+
+      - name: Record JAX GPU runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/gpu-smoke/runtime
+          uv run --no-sync python - <<'PY' | tee artifacts/gpu-smoke/runtime/jax-devices.txt
+          import jax
+
+          devices = jax.devices()
+          print(devices)
+          if not any(device.platform in {"cuda", "gpu"} for device in devices):
+              raise SystemExit("No JAX GPU device is visible.")
+          PY
+
+      - name: Run linear GPU smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/gpu-smoke/linear/logs
+          printf 'trait %s\n' "${PWD}/tests/data/cli_smoke/trait.loco" > artifacts/gpu-smoke/linear/pred.list
+          uv run --no-sync g regenie \
+            --step 2 \
+            --qt \
+            --bgen tests/data/bgen/haplotypes.bgen \
+            --phenoFile tests/data/cli_smoke/phenotypes.tsv \
+            --phenoCol trait \
+            --covarFile tests/data/cli_smoke/covariates.tsv \
+            --covarColList age \
+            --pred artifacts/gpu-smoke/linear/pred.list \
+            --out artifacts/gpu-smoke/linear/smoke \
+            --g-output-run-directory artifacts/gpu-smoke/linear/output-runs \
+            --bsize 2 \
+            --g-device gpu \
+            --g-variant-limit 4 \
+            --g-staging-depth 1 \
+            --g-output-format parquet \
+            --g-output-chunks-per-arrow-file 1 \
+            --g-output-arrow-compression none \
+            --g-telemetry profile \
+            --g-log-dir artifacts/gpu-smoke/linear/logs \
+            --g-log-file artifacts/gpu-smoke/linear/logs/events-and-tracing.jsonl \
+            --g-stage-timings-json artifacts/gpu-smoke/linear/logs/stage-timings.json \
+            --g-profile-summary-json artifacts/gpu-smoke/linear/logs/profile.summary.json \
+            --no-g-log-stderr
+
+      - name: Run binary GPU smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/gpu-smoke/binary/logs
+          printf 'case %s\n' "${PWD}/tests/data/cli_smoke/trait.loco" > artifacts/gpu-smoke/binary/pred.list
+          uv run --no-sync g regenie \
+            --step 2 \
+            --bt \
+            --bgen tests/data/bgen/haplotypes.bgen \
+            --phenoFile tests/data/cli_smoke/binary_phenotypes.tsv \
+            --phenoCol case \
+            --pred artifacts/gpu-smoke/binary/pred.list \
+            --out artifacts/gpu-smoke/binary/smoke \
+            --g-output-run-directory artifacts/gpu-smoke/binary/output-runs \
+            --bsize 2 \
+            --g-device gpu \
+            --g-variant-limit 4 \
+            --g-staging-depth 1 \
+            --g-output-format parquet \
+            --g-output-chunks-per-arrow-file 1 \
+            --g-output-arrow-compression none \
+            --g-null-logistic-nonconvergence warn \
+            --g-telemetry profile \
+            --g-log-dir artifacts/gpu-smoke/binary/logs \
+            --g-log-file artifacts/gpu-smoke/binary/logs/events-and-tracing.jsonl \
+            --g-stage-timings-json artifacts/gpu-smoke/binary/logs/stage-timings.json \
+            --g-profile-summary-json artifacts/gpu-smoke/binary/logs/profile.summary.json \
+            --no-g-log-stderr
+
+      - name: Upload GPU smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gpu-smoke
+          path: artifacts/gpu-smoke/**
+          if-no-files-found: ignore
+          retention-days: 14
