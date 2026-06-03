@@ -178,10 +178,11 @@ def test_resolve_output_run_paths_appends_mode_suffix(tmp_path: Path) -> None:
     assert output_run_paths.chunks_directory == tmp_path / "results/output.regenie2_linear.run/chunks"
 
 
-def test_scan_committed_chunk_identifiers_discovers_single_chunk_files(tmp_path: Path) -> None:
-    (tmp_path / "chunk_000000000.arrow").write_bytes(b"")
-    (tmp_path / "chunk_000000512.arrow").write_bytes(b"")
-    assert output.scan_committed_chunk_identifiers(tmp_path) == frozenset({0, 512})
+def test_scan_committed_chunk_identifiers_reads_arrow_metadata(tmp_path: Path) -> None:
+    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
+    write_native_chunks(output_run_paths, AssociationMode.REGENIE2_LINEAR)
+
+    assert output.scan_committed_chunk_identifiers(tmp_path) == frozenset({0, 2})
 
 
 def test_prepare_output_run_rejects_non_empty_directory_without_resume(tmp_path: Path) -> None:
