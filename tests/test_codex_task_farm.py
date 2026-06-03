@@ -923,3 +923,100 @@ def test_doctor_reports_missing_nix_as_warning_unless_strict(
     assert relaxed_nix.passed is False
     assert strict_nix.warning is False
     assert strict_nix.passed is False
+
+
+def test_collect_status_rows_marks_finished_and_stale_workers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest: codex_task_farm.JsonObject = {
+        "defaults": {"state_directory": ".state"},
+        "tasks": [
+            {
+                "id": "T001",
+                "status": "ready",
+                "branch": "codex/one",
+                "worktree": "../one",
+                "title": "Finished task",
+            },
+            {
+                "id": "T002",
+                "status": "ready",
+                "branch": "codex/two",
+                "worktree": "../two",
+                "title": "Stale task",
+            },
+        ],
+    }
+    state: codex_task_farm.JsonObject = {
+        "leases": {
+            "T002": {
+                "owner": "agent",
+                "expires_at": "2999-01-01T00:00:00+00:00",
+            },
+        },
+        "runs": {
+            "T001": {"pid": 11, "returncode": 0},
+            "T002": {"pid": 22, "returncode": None},
+        },
+        "statuses": {
+            "T001": "implemented",
+            "T002": "running",
+        },
+        "task_identities": {},
+    }
+    run_directory = tmp_path / ".state" / "runs" / "T001"
+    run_directory.mkdir(parents=True)
+    (run_directory / "worker-final.md").write_text("done")
+    (run_directory / "exit-code.txt").write_text("0\n")
+    monkeypatch.setattr(codex_task_farm, "running_process_exists", lambda process_identifier: False)
+
+    rows = codex_task_farm.collect_status_rows(
+        tmp_path,
+        manifest,
+        state,
+        codex_task_farm.selected_tasks(manifest, []),
+        check_worktrees=False,
+    )
+
+    assert [row.worker for row in rows] == ["finished", "stale"]
+    assert [row.status for row in rows] == ["implemented", "running"]
+    assert [row.worktree for row in rows] == ["skipped", "skipped"]
+    assert [row.lease for row in rows] == ["-", "agent"]
+
+
+def test_format_status_snapshot_includes_summary_counts() -> None:
+    rows = [
+        codex_task_farm.StatusRow("T001", "implemented", "finished", "yes", "0", "clean", "-", "Done"),
+        codex_task_farm.StatusRow("T002", "running", "stale", "no", "-", "skipped", "agent", "Stale"),
+    ]
+
+    snapshot = codex_task_farm.format_status_snapshot(rows, updated_at="now")
+
+    assert "updated=now" in snapshot
+    assert "statuses: implemented=1, running=1" in snapshot
+    assert "workers: finished=1, stale=1" in snapshot
+    assert "T001" in snapshot
+    assert "T002" in snapshot
+
+
+def test_status_watch_skips_worktree_checks_by_default() -> None:
+    one_shot_arguments = argparse.Namespace(
+        check_worktrees=False,
+        no_worktree_check=False,
+        watch=False,
+    )
+    watch_arguments = argparse.Namespace(
+        check_worktrees=False,
+        no_worktree_check=False,
+        watch=True,
+    )
+    watch_with_worktrees_arguments = argparse.Namespace(
+        check_worktrees=True,
+        no_worktree_check=False,
+        watch=True,
+    )
+
+    assert codex_task_farm.should_check_status_worktrees(one_shot_arguments) is True
+    assert codex_task_farm.should_check_status_worktrees(watch_arguments) is False
+    assert codex_task_farm.should_check_status_worktrees(watch_with_worktrees_arguments) is True

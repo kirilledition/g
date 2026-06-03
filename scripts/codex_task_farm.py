@@ -17,6 +17,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 import typing
 from pathlib import Path
 
@@ -136,6 +137,20 @@ class DoctorCheck:
     passed: bool
     warning: bool
     message: str
+
+
+@dataclasses.dataclass(frozen=True)
+class StatusRow:
+    """One rendered task status row."""
+
+    task_identifier: str
+    status: str
+    worker: str
+    final: str
+    exit_code: str
+    worktree: str
+    lease: str
+    title: str
 
 
 def repository_root() -> Path:
@@ -1976,33 +1991,184 @@ def command_run(arguments: argparse.Namespace) -> int:
     return exit_code
 
 
-def command_status(arguments: argparse.Namespace) -> int:
-    """Handle status."""
-    repository_directory = repository_root()
-    manifest = load_manifest_for_arguments(repository_directory, arguments)
-    refresh_runtime_statuses(repository_directory, manifest)
-    state_path = state_directory(repository_directory, manifest) / "state.json"
-    state = load_state(state_path)
+def status_count_text(rows: list[StatusRow], attribute_name: str) -> str:
+    """Return compact counts for one StatusRow attribute."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = str(getattr(row, attribute_name))
+        counts[value] = counts.get(value, 0) + 1
+    if not counts:
+        return "-"
+    return ", ".join(f"{key}={counts[key]}" for key in sorted(counts))
+
+
+def truncate_status_cell(value: str, width: int) -> str:
+    """Return a display cell no wider than width."""
+    if len(value) <= width:
+        return value
+    if width <= 3:
+        return value[:width]
+    return f"{value[: width - 3]}..."
+
+
+def read_exit_code_text(exit_code_path: Path, run: object) -> str:
+    """Return an exit-code display value from logs or runtime state."""
+    if exit_code_path.exists():
+        exit_code_text = exit_code_path.read_text().strip()
+        return exit_code_text or "-"
+    if isinstance(run, dict):
+        typed_run = typing.cast("JsonObject", run)
+        returncode = typed_run.get("returncode")
+        if isinstance(returncode, int):
+            return str(returncode)
+    return "-"
+
+
+def worker_status_label(
+    *,
+    run: object,
+    alive: bool,
+    final_message_exists: bool,
+    exit_code: str,
+) -> str:
+    """Return a concise worker process state label."""
+    if alive:
+        return "running"
+    if final_message_exists:
+        return "finished"
+    if exit_code != "-":
+        return "exited"
+    if isinstance(run, dict) and isinstance(typing.cast("JsonObject", run).get("pid"), int):
+        return "stale"
+    return "-"
+
+
+def lease_status_label(lease: object) -> str:
+    """Return a concise lease display value."""
+    if not isinstance(lease, dict) or not lease:
+        return "-"
+    typed_lease = typing.cast("JsonObject", lease)
+    owner = str(typed_lease.get("owner", "-"))
+    if lease_is_expired(lease):
+        return f"expired:{owner}"
+    return owner
+
+
+def worktree_status_label(repository_directory: Path, task: JsonObject, *, check_worktree: bool) -> str:
+    """Return a concise worktree state label."""
+    if not check_worktree:
+        return "skipped"
+    worktree_path = resolve_manifest_path(repository_directory, str(task["worktree"]))
+    if not worktree_path.exists():
+        return "missing"
+    git_status = run_command(["git", "status", "--short"], cwd=worktree_path)
+    if git_status.returncode != 0:
+        return "unknown"
+    return "dirty" if git_status.stdout.strip() else "clean"
+
+
+def collect_status_rows(
+    repository_directory: Path,
+    manifest: JsonObject,
+    state: JsonObject,
+    tasks: list[JsonObject],
+    *,
+    check_worktrees: bool,
+) -> list[StatusRow]:
+    """Collect status rows for selected tasks."""
     runs = typing.cast("JsonObject", state.get("runs", {}))
     leases = typing.cast("JsonObject", state.get("leases", {}))
-    for task in selected_tasks(manifest, typing.cast("list[object]", arguments.task)):
+    rows: list[StatusRow] = []
+    for task in tasks:
         task_identifier = task_key(task)
         run = runs.get(task_identifier, {})
         pid = run.get("pid") if isinstance(run, dict) else None
         alive = isinstance(pid, int) and running_process_exists(pid)
         run_directory = task_run_directory(repository_directory, manifest, task)
         final_message_exists = (run_directory / "worker-final.md").exists()
-        worktree_path = resolve_manifest_path(repository_directory, str(task["worktree"]))
-        worktree_state = "missing"
-        if worktree_path.exists():
-            git_status = run_command(["git", "status", "--short"], cwd=worktree_path)
-            worktree_state = "dirty" if git_status.stdout.strip() else "clean"
+        exit_code = read_exit_code_text(run_directory / "exit-code.txt", run)
         lease = leases.get(task_identifier, {})
-        lease_owner_text = lease.get("owner", "-") if isinstance(lease, dict) else "-"
-        print(
-            f"{task_display_id(task)}  status={runtime_task_status(state, task)}  alive={alive}"
-            f"  final={final_message_exists}  worktree={worktree_state}  lease={lease_owner_text}  {task['title']}"
+        rows.append(
+            StatusRow(
+                task_identifier=task_display_id(task),
+                status=runtime_task_status(state, task),
+                worker=worker_status_label(
+                    run=run,
+                    alive=alive,
+                    final_message_exists=final_message_exists,
+                    exit_code=exit_code,
+                ),
+                final="yes" if final_message_exists else "no",
+                exit_code=exit_code,
+                worktree=worktree_status_label(repository_directory, task, check_worktree=check_worktrees),
+                lease=lease_status_label(lease),
+                title=str(task["title"]),
+            )
         )
+    return rows
+
+
+def format_status_snapshot(rows: list[StatusRow], *, updated_at: str | None = None) -> str:
+    """Return a formatted status snapshot."""
+    lines = [
+        f"updated={updated_at or utc_timestamp()}",
+        f"statuses: {status_count_text(rows, 'status')}",
+        f"workers: {status_count_text(rows, 'worker')}",
+        f"{'task':6}  {'status':14}  {'worker':8}  {'final':5}  {'exit':4}  {'worktree':8}  {'lease':24}  title",
+    ]
+    for row in rows:
+        lines.append(
+            f"{row.task_identifier:6}  "
+            f"{truncate_status_cell(row.status, 14):14}  "
+            f"{truncate_status_cell(row.worker, 8):8}  "
+            f"{row.final:5}  "
+            f"{truncate_status_cell(row.exit_code, 4):4}  "
+            f"{truncate_status_cell(row.worktree, 8):8}  "
+            f"{truncate_status_cell(row.lease, 24):24}  "
+            f"{row.title}"
+        )
+    return "\n".join(lines)
+
+
+def should_check_status_worktrees(arguments: argparse.Namespace) -> bool:
+    """Return whether status should probe worktree dirtiness."""
+    if bool(getattr(arguments, "no_worktree_check", False)):
+        return False
+    return not (bool(getattr(arguments, "watch", False)) and not bool(getattr(arguments, "check_worktrees", False)))
+
+
+def print_status_snapshot(arguments: argparse.Namespace) -> None:
+    """Print one task-farm status snapshot."""
+    repository_directory = repository_root()
+    manifest = load_manifest_for_arguments(repository_directory, arguments)
+    refresh_runtime_statuses(repository_directory, manifest)
+    state_path = state_directory(repository_directory, manifest) / "state.json"
+    state = load_state(state_path)
+    rows = collect_status_rows(
+        repository_directory,
+        manifest,
+        state,
+        selected_tasks(manifest, typing.cast("list[object]", arguments.task)),
+        check_worktrees=should_check_status_worktrees(arguments),
+    )
+    print(format_status_snapshot(rows))
+
+
+def command_status(arguments: argparse.Namespace) -> int:
+    """Handle status."""
+    if not bool(getattr(arguments, "watch", False)):
+        print_status_snapshot(arguments)
+        return 0
+    interval_seconds = float(getattr(arguments, "interval", 10.0))
+    try:
+        while True:
+            if sys.stdout.isatty():
+                print("\x1b[2J\x1b[H", end="")
+            print_status_snapshot(arguments)
+            sys.stdout.flush()
+            time.sleep(interval_seconds)
+    except KeyboardInterrupt:
+        return 130
     return 0
 
 
@@ -2536,6 +2702,18 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
     status_parser = subparsers.add_parser("status", help="Show worker and worktree status.")
     status_parser.add_argument("--task", action="append", default=[], help="Task id to inspect.")
+    status_parser.add_argument("--watch", action="store_true", help="Refresh status until interrupted.")
+    status_parser.add_argument("--interval", type=float, default=10.0, help="Watch refresh interval in seconds.")
+    status_parser.add_argument(
+        "--no-worktree-check",
+        action="store_true",
+        help="Skip git status checks for task worktrees.",
+    )
+    status_parser.add_argument(
+        "--check-worktrees",
+        action="store_true",
+        help="Probe worktree dirtiness while watching.",
+    )
     status_parser.set_defaults(handler=command_status)
 
     review_parser = subparsers.add_parser("review", help="Run Codex review for task branches.")
