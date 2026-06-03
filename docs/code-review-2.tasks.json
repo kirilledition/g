@@ -221,12 +221,15 @@
       "manual": {},
       "priority": "P1 performance issues",
       "problem_markdown": "## 12. SIMD test allows impossible negative dosages\n\nIn `src/genotype/bgen/simd.rs:537-538`:\n\n```rust\nassert!(output.iter().all(|dosage_value| (-1.0..=2.0).contains(dosage_value)));\n```\n\nFor valid unphased 8-bit BGEN probabilities where `p0 + p1 <= 255`, dosage should be:\n\n```text\n0 <= dosage <= 2\n```\n\nThe test should not allow `-1.0`.\n\n### Fix\n\nTighten this to:\n\n```rust\nassert!(output.iter().all(|dosage_value| (0.0..=2.0).contains(dosage_value)));\n```\n\nIf the test generator can create invalid probability pairs, fix the generator, not the assertion.",
-      "runtime": {},
+      "runtime": {
+        "integrated_at": "2026-06-03T06:49:14+00:00",
+        "integration_head": "62beabf2fbb41f8ac517b839901f961817973846"
+      },
       "slug": "simd-test-allows-impossible-negative-dosages",
       "source_end_line": 201,
       "source_id": 12,
       "source_start_line": 174,
-      "status": "integrating",
+      "status": "integrated",
       "title": "SIMD test allows impossible negative dosages",
       "worktree": "../g-worktrees/review2-T012-simd-test-allows-impossible-negative-dosages"
     },
