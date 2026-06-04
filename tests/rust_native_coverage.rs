@@ -190,6 +190,43 @@ fn valid_bgen_variant_payload(sample_count_in_probability_block: u32) -> Vec<u8>
     bgen_variant_payload("var", "rs", "22", sample_count_in_probability_block)
 }
 
+fn trusted_bgen_probability_block(sample_count: u32, probability_bytes: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&sample_count.to_le_bytes());
+    bytes.extend_from_slice(&2_u16.to_le_bytes());
+    bytes.push(2);
+    bytes.push(2);
+    for _sample_index in 0..sample_count {
+        bytes.push(2);
+    }
+    bytes.push(0);
+    bytes.push(8);
+    bytes.extend_from_slice(probability_bytes);
+    bytes
+}
+
+fn trusted_bgen_variant_payload(
+    variant_identifier: &str,
+    rsid: &str,
+    chromosome: &str,
+    probability_block: &[u8],
+) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    append_bgen_string(&mut bytes, variant_identifier);
+    append_bgen_string(&mut bytes, rsid);
+    append_bgen_string(&mut bytes, chromosome);
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&2_u16.to_le_bytes());
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(b"A");
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(b"G");
+    let probability_block_length = u32::try_from(probability_block.len()).expect("probability block fits u32");
+    bytes.extend_from_slice(&probability_block_length.to_le_bytes());
+    bytes.extend_from_slice(probability_block);
+    bytes
+}
+
 #[test]
 fn bgen_reader_exercises_metadata_dosage_preprocessing_and_profile_paths() {
     set_bgen_decode_tile_variant_count(1).expect("tile size should update");
@@ -296,6 +333,68 @@ fn bgen_reader_exercises_metadata_dosage_preprocessing_and_profile_paths() {
             .expect("trusted variant-major preprocessed dosages should decode");
         assert_eq!(trusted_stats.allele_one_frequency.len(), 2);
     }
+}
+
+#[test]
+fn bgen_reader_exercises_trusted_validation_and_variant_major_decode_paths() {
+    let fixture = FixtureDirectory::new("bgen-trusted-reader");
+    let probability_block = trusted_bgen_probability_block(3, &[0, 0, 255, 0, 0, 255]);
+    let variant_payload = trusted_bgen_variant_payload("trusted-var", "rs-trusted", "22", &probability_block);
+    let bgen_path = fixture.path.join("trusted.bgen");
+    write_bgen_with_single_variant(&bgen_path, 3, 2 << 2, &variant_payload);
+
+    let non_trusted_reader = BgenReaderCore::open(&bgen_path, false).expect("non-trusted reader should open");
+    assert!(
+        non_trusted_reader
+            .mark_trusted_no_missing_diploid_validated()
+            .expect_err("non-trusted reader cannot be marked trusted")
+            .to_string()
+            .contains("non-trusted")
+    );
+
+    let trusted_reader = BgenReaderCore::open(&bgen_path, true).expect("trusted reader should open");
+    trusted_reader.validate_trusted_no_missing_diploid().expect("trusted fixture should validate");
+    trusted_reader.mark_trusted_no_missing_diploid_validated().expect("trusted mark should succeed");
+
+    trusted_reader.prepare_sample_selection(&[0, 1, 2]).expect("identity selection should prepare");
+    let mut variant_major_output = vec![f32::NAN; 3];
+    let variant_major_stats = trusted_reader
+        .read_preprocessed_variant_major_dosage_f32_into_address_prepared(
+            0,
+            1,
+            variant_major_output.as_mut_ptr() as usize,
+            variant_major_output.len(),
+        )
+        .expect("trusted variant-major read should use the trusted decoder");
+    assert_eq!(variant_major_stats.observation_count, vec![3]);
+    assert_eq!(variant_major_stats.zero_count, vec![1]);
+    assert_eq!(variant_major_output, vec![2.0, 0.0, 1.0]);
+
+    let empty_variant_stats = trusted_reader
+        .read_preprocessed_variant_major_dosage_f32_into_address_prepared(
+            1,
+            1,
+            variant_major_output.as_mut_ptr() as usize,
+            0,
+        )
+        .expect("empty trusted variant range should return empty stats");
+    assert!(empty_variant_stats.allele_one_frequency.is_empty());
+
+    trusted_reader.prepare_sample_selection(&[2, 0]).expect("non-contiguous selection should prepare");
+    let prepared_values = trusted_reader.read_dosage_f32_prepared(0, 1).expect("prepared row read should decode");
+    assert_eq!(prepared_values, vec![1.0, 2.0]);
+
+    let mut row_major_output = vec![f32::NAN; 2];
+    let row_major_stats = trusted_reader
+        .read_preprocessed_dosage_f32_into_address_prepared(
+            0,
+            1,
+            row_major_output.as_mut_ptr() as usize,
+            row_major_output.len(),
+        )
+        .expect("trusted row-major preprocessed read should decode");
+    assert_eq!(row_major_stats.observation_count, vec![2]);
+    assert_eq!(row_major_output, vec![1.0, 2.0]);
 }
 
 #[test]

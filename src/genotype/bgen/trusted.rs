@@ -430,6 +430,62 @@ mod tests {
     }
 
     #[test]
+    fn trusted_decode_reports_truncated_probability_payloads() {
+        let truncated_block = [0_u8];
+        let truncated_record = variant_record(0, 4, "trusted-truncated");
+        let mut thread_scratch = ThreadScratch::default();
+        let mut profile_snapshot = ThreadLocalProfileSnapshot::default();
+        let validation_error = validate_variant_compatible_with_trusted_no_missing_diploid(
+            &truncated_block,
+            CompressionType::None,
+            &truncated_record,
+            3,
+            &mut thread_scratch,
+            &mut profile_snapshot,
+        )
+        .expect_err("trusted validation should reject a truncated payload")
+        .to_string();
+        assert!(validation_error.contains("Unexpected end"));
+
+        let sample_selection = build_sample_selection(3, &[0, 1]).expect("sample selection should build");
+        let mut output = vec![f32::NAN; 2];
+        let mut dosage_sum = vec![0.0_f32; 1];
+        let mut dosage_square_sum = vec![0.0_f32; 1];
+        let mut observation_count = vec![0_i32; 1];
+        let mut zero_count = vec![0_i32; 1];
+        let mut nonzero_count = vec![0_i32; 1];
+        let mut homozygous_reference_count = vec![0_i32; 1];
+        let mut heterozygous_count = vec![0_i32; 1];
+        let mut homozygous_alternate_count = vec![0_i32; 1];
+        let mut tile_stats = VariantMajorTileStatsMut {
+            dosage_sum: &mut dosage_sum,
+            dosage_square_sum: &mut dosage_square_sum,
+            observation_count: &mut observation_count,
+            zero_count: &mut zero_count,
+            nonzero_count: &mut nonzero_count,
+            homozygous_reference_count: &mut homozygous_reference_count,
+            heterozygous_count: &mut heterozygous_count,
+            homozygous_alternate_count: &mut homozygous_alternate_count,
+        };
+        let decode_error = decode_trusted_variant_major_dosage_tile(
+            &truncated_block,
+            CompressionType::None,
+            3,
+            &sample_selection,
+            &[truncated_record],
+            output.as_mut_ptr() as usize,
+            2,
+            0,
+            false,
+            &mut tile_stats,
+            &mut thread_scratch,
+        )
+        .expect_err("trusted decode should reject a truncated payload")
+        .to_string();
+        assert!(decode_error.contains("Unexpected end"));
+    }
+
+    #[test]
     fn trusted_variant_major_decode_writes_selected_samples_and_counts() {
         let first_block = valid_trusted_probability_block(&[0, 0, 255, 0, 0, 255]);
         let second_block = valid_trusted_probability_block(&[0, 255, 255, 0, 0, 0]);
@@ -487,6 +543,93 @@ mod tests {
         assert!((output[2] - dosage_lookup[usize::from(255_u8)]).abs() < f32::EPSILON);
         assert!((output[3] - dosage_lookup[0]).abs() < f32::EPSILON);
         assert_eq!(nonzero_count.len(), 2);
+    }
+
+    #[test]
+    fn trusted_variant_major_decode_covers_identity_and_noncontiguous_selected_samples() {
+        let block = valid_trusted_probability_block(&[0, 0, 255, 0, 0, 255]);
+        let variant_records = [variant_record(0, block.len(), "trusted-single")];
+        let dosage_lookup = unphased_eight_bit_dosage_lookup();
+
+        let identity_selection = build_sample_selection(3, &[0, 1, 2]).expect("identity sample selection should build");
+        let mut identity_output = vec![f32::NAN; 3];
+        let mut thread_scratch = ThreadScratch::default();
+        let mut dosage_sum = vec![0.0_f32; 1];
+        let mut dosage_square_sum = vec![0.0_f32; 1];
+        let mut observation_count = vec![0_i32; 1];
+        let mut zero_count = vec![0_i32; 1];
+        let mut nonzero_count = vec![0_i32; 1];
+        let mut homozygous_reference_count = vec![0_i32; 1];
+        let mut heterozygous_count = vec![0_i32; 1];
+        let mut homozygous_alternate_count = vec![0_i32; 1];
+        let mut identity_stats = VariantMajorTileStatsMut {
+            dosage_sum: &mut dosage_sum,
+            dosage_square_sum: &mut dosage_square_sum,
+            observation_count: &mut observation_count,
+            zero_count: &mut zero_count,
+            nonzero_count: &mut nonzero_count,
+            homozygous_reference_count: &mut homozygous_reference_count,
+            heterozygous_count: &mut heterozygous_count,
+            homozygous_alternate_count: &mut homozygous_alternate_count,
+        };
+        decode_trusted_variant_major_dosage_tile(
+            &block,
+            CompressionType::None,
+            3,
+            &identity_selection,
+            &variant_records,
+            identity_output.as_mut_ptr() as usize,
+            3,
+            0,
+            true,
+            &mut identity_stats,
+            &mut thread_scratch,
+        )
+        .expect("trusted identity decode should succeed");
+        assert_eq!(observation_count, vec![3]);
+        assert_eq!(identity_output, vec![2.0, 0.0, 1.0]);
+
+        let noncontiguous_selection =
+            build_sample_selection(3, &[2, 0]).expect("non-contiguous sample selection should build");
+        let mut noncontiguous_output = vec![f32::NAN; 2];
+        let mut dosage_sum = vec![0.0_f32; 1];
+        let mut dosage_square_sum = vec![0.0_f32; 1];
+        let mut observation_count = vec![0_i32; 1];
+        let mut zero_count = vec![0_i32; 1];
+        let mut nonzero_count = vec![0_i32; 1];
+        let mut homozygous_reference_count = vec![0_i32; 1];
+        let mut heterozygous_count = vec![0_i32; 1];
+        let mut homozygous_alternate_count = vec![0_i32; 1];
+        let mut noncontiguous_stats = VariantMajorTileStatsMut {
+            dosage_sum: &mut dosage_sum,
+            dosage_square_sum: &mut dosage_square_sum,
+            observation_count: &mut observation_count,
+            zero_count: &mut zero_count,
+            nonzero_count: &mut nonzero_count,
+            homozygous_reference_count: &mut homozygous_reference_count,
+            heterozygous_count: &mut heterozygous_count,
+            homozygous_alternate_count: &mut homozygous_alternate_count,
+        };
+        decode_trusted_variant_major_dosage_tile(
+            &block,
+            CompressionType::None,
+            3,
+            &noncontiguous_selection,
+            &variant_records,
+            noncontiguous_output.as_mut_ptr() as usize,
+            2,
+            0,
+            true,
+            &mut noncontiguous_stats,
+            &mut thread_scratch,
+        )
+        .expect("trusted non-contiguous decode should succeed");
+        assert_eq!(observation_count, vec![2]);
+        assert!(
+            (noncontiguous_output[0] - dosage_lookup[usize::from(0_u8) | (usize::from(255_u8) << 8)]).abs()
+                < f32::EPSILON
+        );
+        assert!((noncontiguous_output[1] - dosage_lookup[0]).abs() < f32::EPSILON);
     }
 
     #[test]

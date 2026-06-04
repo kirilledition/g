@@ -1420,18 +1420,28 @@ pub(super) fn u32_to_usize(value: u32) -> Result<usize, BgenError> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use super::super::CompressionType;
     use super::super::metadata::VariantRecord;
     use super::super::sample_selection::build_sample_selection;
     use super::*;
 
     fn test_variant_record(probability_payload_length: usize) -> VariantRecord {
+        test_variant_record_at(0, probability_payload_length, "variant")
+    }
+
+    fn test_variant_record_at(
+        probability_payload_offset: usize,
+        probability_payload_length: usize,
+        resolved_variant_identifier: &str,
+    ) -> VariantRecord {
         VariantRecord {
-            probability_payload_offset: 0,
+            probability_payload_offset,
             probability_payload_length,
             declared_uncompressed_block_length: probability_payload_length,
             chromosome: "22".to_string(),
-            resolved_variant_identifier: "variant".to_string(),
+            resolved_variant_identifier: resolved_variant_identifier.to_string(),
             position: 1,
             counted_allele: "A".to_string(),
             reference_allele: "G".to_string(),
@@ -1470,6 +1480,16 @@ mod tests {
         block.push(probability_bit_count);
         block.extend(pack_probabilities(probabilities, probability_bit_count));
         block
+    }
+
+    fn probability_bit_count_offset(sample_count: usize) -> usize {
+        4 + 2 + 2 + sample_count + 1
+    }
+
+    fn zlib_compress(payload: &[u8]) -> Vec<u8> {
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(payload).expect("payload should compress");
+        encoder.finish().expect("compressed payload should finish")
     }
 
     #[test]
@@ -1525,6 +1545,43 @@ mod tests {
         .expect("subset 8-bit row-major decode");
         assert!(subset_result.selected_dosage_total >= 0.0);
         assert!(subset_output.iter().all(|value| !value.is_nan()));
+
+        let mut identity_missing_output = vec![0.0_f32; 3];
+        let identity_missing_result = decode_unphased_eight_bit_dosages_into_row_major_matrix(
+            &[2, 0x82, 2],
+            &[255, 0, 0, 255, 0, 0],
+            &sample_selection,
+            &variant_record,
+            identity_missing_output.as_mut_ptr() as usize,
+            0,
+            1,
+            true,
+            false,
+            true,
+            ThreadLocalProfileSnapshot::default(),
+        )
+        .expect("identity missing 8-bit row-major decode");
+        assert!((identity_missing_result.selected_dosage_total - 2.0).abs() < f32::EPSILON);
+        assert!(identity_missing_output[1].is_nan());
+
+        let selected_all_present = build_sample_selection(3, &[2, 0]).expect("non-contiguous subset");
+        let mut selected_all_present_output = vec![0.0_f32; 2];
+        let selected_all_present_result = decode_unphased_eight_bit_dosages_into_row_major_matrix(
+            &[2, 2, 2],
+            &[255, 0, 0, 255, 0, 0],
+            &selected_all_present,
+            &variant_record,
+            selected_all_present_output.as_mut_ptr() as usize,
+            0,
+            1,
+            true,
+            false,
+            true,
+            ThreadLocalProfileSnapshot::default(),
+        )
+        .expect("selected all-present 8-bit row-major decode");
+        assert!((selected_all_present_result.selected_dosage_total - 2.0).abs() < f32::EPSILON);
+        assert_eq!(selected_all_present_output, vec![2.0, 0.0]);
     }
 
     #[test]
@@ -1585,9 +1642,137 @@ mod tests {
         assert!(!contiguous_subset_result.has_missing_values);
         assert_eq!(contiguous_subset_result.selected_observation_count, 2);
         assert_eq!(contiguous_subset_output, vec![1.0, 2.0]);
+
+        let identity_missing_selection = build_sample_selection(3, &[0, 1, 2]).expect("identity selection");
+        let mut identity_missing_output = vec![0.0_f32; 3];
+        let identity_missing_result = decode_unphased_eight_bit_dosages_into_variant_major_matrix(
+            &[2, 0x82, 2],
+            &[255, 0, 0, 255, 0, 0],
+            &identity_missing_selection,
+            &variant_record,
+            identity_missing_output.as_mut_ptr() as usize,
+            0,
+            3,
+            true,
+            false,
+            ThreadLocalProfileSnapshot::default(),
+        )
+        .expect("identity missing 8-bit variant-major decode");
+        assert!(identity_missing_result.has_missing_values);
+        assert_eq!(identity_missing_result.selected_observation_count, 2);
+        assert!(identity_missing_output.iter().all(|value| !value.is_nan()));
+
+        let noncontiguous_selection = build_sample_selection(3, &[2, 0]).expect("non-contiguous subset");
+        let mut noncontiguous_output = vec![0.0_f32; 2];
+        let noncontiguous_result = decode_unphased_eight_bit_dosages_into_variant_major_matrix(
+            &[2, 2, 2],
+            &[255, 0, 0, 255, 0, 0],
+            &noncontiguous_selection,
+            &variant_record,
+            noncontiguous_output.as_mut_ptr() as usize,
+            0,
+            2,
+            true,
+            false,
+            ThreadLocalProfileSnapshot::default(),
+        )
+        .expect("non-contiguous all-present 8-bit variant-major decode");
+        assert!(!noncontiguous_result.has_missing_values);
+        assert_eq!(noncontiguous_result.selected_observation_count, 2);
+        assert_eq!(noncontiguous_output, vec![2.0, 0.0]);
     }
 
     #[test]
+    fn tile_decoders_copy_dosages_and_collect_variant_major_stats() {
+        let first_block = probability_block(2, &[2, 2], 0, 8, &[255, 0, 0, 255]);
+        let second_block = probability_block(2, &[2, 2], 0, 8, &[0, 255, 255, 0]);
+        let mut mmap = first_block.clone();
+        mmap.extend_from_slice(&second_block);
+        let variant_records = vec![
+            test_variant_record_at(0, first_block.len(), "first"),
+            test_variant_record_at(first_block.len(), second_block.len(), "second"),
+        ];
+        let sample_selection = build_sample_selection(2, &[0, 1]).expect("identity selection");
+        let mut thread_scratch = ThreadScratch::default();
+        let mut row_major_output = vec![0.0_f32; 4];
+        let tile_result = decode_variant_dosage_tile_into_row_major_matrix(
+            &mmap,
+            CompressionType::None,
+            2,
+            &sample_selection,
+            &variant_records,
+            row_major_output.as_mut_ptr() as usize,
+            2,
+            0,
+            true,
+            false,
+            true,
+            &mut thread_scratch,
+        )
+        .expect("row-major tile should decode");
+        assert_eq!(tile_result.selected_dosage_totals.len(), 2);
+        assert_eq!(tile_result.profile_snapshot.decode_tile_count, 1);
+        assert!(row_major_output.iter().any(|value| *value > 0.0));
+
+        let mut dosage_sum = vec![0.0_f32; 2];
+        let mut dosage_square_sum = vec![0.0_f32; 2];
+        let mut observation_count = vec![0_i32; 2];
+        let mut zero_count = vec![0_i32; 2];
+        let mut nonzero_count = vec![0_i32; 2];
+        let mut homozygous_reference_count = vec![0_i32; 2];
+        let mut heterozygous_count = vec![0_i32; 2];
+        let mut homozygous_alternate_count = vec![0_i32; 2];
+        let mut variant_major_stats = VariantMajorTileStatsMut {
+            dosage_sum: &mut dosage_sum,
+            dosage_square_sum: &mut dosage_square_sum,
+            observation_count: &mut observation_count,
+            zero_count: &mut zero_count,
+            nonzero_count: &mut nonzero_count,
+            homozygous_reference_count: &mut homozygous_reference_count,
+            heterozygous_count: &mut heterozygous_count,
+            homozygous_alternate_count: &mut homozygous_alternate_count,
+        };
+        let mut variant_major_output = vec![0.0_f32; 4];
+        let variant_major_result = decode_variant_major_dosage_tile(
+            &mmap,
+            CompressionType::None,
+            2,
+            &sample_selection,
+            &variant_records,
+            variant_major_output.as_mut_ptr() as usize,
+            2,
+            0,
+            true,
+            false,
+            &mut variant_major_stats,
+            &mut thread_scratch,
+        )
+        .expect("variant-major tile should decode");
+        assert!(!variant_major_result.has_missing_values);
+        assert_eq!(variant_major_result.profile_snapshot.decode_tile_count, 1);
+        assert_eq!(observation_count, vec![2, 2]);
+
+        let mut short_dosage_sum = vec![0.0_f32; 1];
+        let short_stats = VariantMajorTileStatsMut {
+            dosage_sum: &mut short_dosage_sum,
+            dosage_square_sum: &mut dosage_square_sum,
+            observation_count: &mut observation_count,
+            zero_count: &mut zero_count,
+            nonzero_count: &mut nonzero_count,
+            homozygous_reference_count: &mut homozygous_reference_count,
+            heterozygous_count: &mut heterozygous_count,
+            homozygous_alternate_count: &mut homozygous_alternate_count,
+        };
+        assert!(
+            validate_variant_major_tile_stats_lengths(&short_stats, 2)
+                .expect_err("short stats vector should fail")
+                .to_string()
+                .contains("shape mismatch")
+        );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
     fn generic_row_major_decode_covers_unphased_phased_subset_and_error_paths() {
         let sample_selection = build_sample_selection(2, &[0, 1]).expect("identity selection");
         let mut thread_scratch = ThreadScratch::default();
@@ -1631,6 +1816,48 @@ mod tests {
         )
         .expect("generic phased subset row-major decode");
 
+        let missing_unphased_block = probability_block(2, &[2, 0x82], 0, 2, &[3, 0, 0, 3]);
+        let variant_record = test_variant_record(missing_unphased_block.len());
+        let mut missing_output = vec![0.0_f32; 1];
+        let missing_result = decode_variant_dosages_into_row_major_matrix(
+            &missing_unphased_block,
+            CompressionType::None,
+            2,
+            &build_sample_selection(2, &[1]).expect("missing subset selection"),
+            &variant_record,
+            missing_output.as_mut_ptr() as usize,
+            0,
+            1,
+            true,
+            false,
+            true,
+            &mut thread_scratch,
+        )
+        .expect("generic unphased missing subset row-major decode");
+        assert!(missing_result.selected_dosage_total.abs() < f32::EPSILON);
+        assert!(missing_output[0].is_nan());
+
+        let missing_phased_block = probability_block(2, &[0x82, 2], 1, 2, &[3, 0, 0, 3]);
+        let variant_record = test_variant_record(missing_phased_block.len());
+        let mut identity_missing_output = vec![0.0_f32; 2];
+        let identity_missing_result = decode_variant_dosages_into_row_major_matrix(
+            &missing_phased_block,
+            CompressionType::None,
+            2,
+            &sample_selection,
+            &variant_record,
+            identity_missing_output.as_mut_ptr() as usize,
+            0,
+            1,
+            true,
+            false,
+            true,
+            &mut thread_scratch,
+        )
+        .expect("generic phased missing identity row-major decode");
+        assert!((identity_missing_result.selected_dosage_total - 1.0).abs() < f32::EPSILON);
+        assert!(identity_missing_output[0].is_nan());
+
         let invalid_phased_block = probability_block(1, &[2], 2, 2, &[0, 0]);
         let variant_record = test_variant_record(invalid_phased_block.len());
         assert!(
@@ -1655,6 +1882,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn generic_variant_major_decode_covers_unphased_phased_and_missing_paths() {
         let mut thread_scratch = ThreadScratch::default();
         let sample_selection = build_sample_selection(2, &[1, 0]).expect("subset selection");
@@ -1694,6 +1922,155 @@ mod tests {
             &mut thread_scratch,
         )
         .expect("generic variant-major phased decode");
+
+        let phased_missing_block = probability_block(2, &[0x82, 2], 1, 2, &[3, 0, 0, 3]);
+        let variant_record = test_variant_record(phased_missing_block.len());
+        let mut missing_output = vec![0.0_f32; 2];
+        let phased_missing_result = decode_variant_dosages_into_variant_major_matrix(
+            &phased_missing_block,
+            CompressionType::None,
+            2,
+            &build_sample_selection(2, &[0, 1]).expect("identity selection"),
+            &variant_record,
+            missing_output.as_mut_ptr() as usize,
+            0,
+            2,
+            true,
+            false,
+            &mut thread_scratch,
+        )
+        .expect("generic variant-major phased missing decode");
+        assert!(phased_missing_result.has_missing_values);
+        assert!(missing_output.iter().all(|value| !value.is_nan()));
+
+        let stored_sample_mismatch_block = probability_block(1, &[2], 0, 2, &[3, 0]);
+        let variant_record = test_variant_record(stored_sample_mismatch_block.len());
+        assert!(
+            decode_variant_dosages_into_variant_major_matrix(
+                &stored_sample_mismatch_block,
+                CompressionType::None,
+                2,
+                &build_sample_selection(2, &[0, 1]).expect("identity selection"),
+                &variant_record,
+                output.as_mut_ptr() as usize,
+                0,
+                2,
+                false,
+                false,
+                &mut thread_scratch,
+            )
+            .expect_err("sample count mismatch should fail")
+            .to_string()
+            .contains("file header")
+        );
+
+        let mut non_biallelic_block = probability_block(1, &[2], 0, 2, &[3, 0]);
+        non_biallelic_block[4..6].copy_from_slice(&3_u16.to_le_bytes());
+        let variant_record = test_variant_record(non_biallelic_block.len());
+        assert!(
+            decode_variant_dosages_into_variant_major_matrix(
+                &non_biallelic_block,
+                CompressionType::None,
+                1,
+                &build_sample_selection(1, &[0]).expect("identity selection"),
+                &variant_record,
+                output.as_mut_ptr() as usize,
+                0,
+                1,
+                false,
+                false,
+                &mut thread_scratch,
+            )
+            .expect_err("non-biallelic variant should fail")
+            .to_string()
+            .contains("biallelic")
+        );
+
+        let mut bad_ploidy_bounds_block = probability_block(1, &[2], 0, 2, &[3, 0]);
+        bad_ploidy_bounds_block[6] = 1;
+        let variant_record = test_variant_record(bad_ploidy_bounds_block.len());
+        assert!(
+            decode_variant_dosages_into_variant_major_matrix(
+                &bad_ploidy_bounds_block,
+                CompressionType::None,
+                1,
+                &build_sample_selection(1, &[0]).expect("identity selection"),
+                &variant_record,
+                output.as_mut_ptr() as usize,
+                0,
+                1,
+                false,
+                false,
+                &mut thread_scratch,
+            )
+            .expect_err("bad ploidy bounds should fail")
+            .to_string()
+            .contains("ploidy bounds")
+        );
+
+        let mut bad_bit_count_block = probability_block(1, &[2], 0, 2, &[3, 0]);
+        bad_bit_count_block[probability_bit_count_offset(1)] = 0;
+        let variant_record = test_variant_record(bad_bit_count_block.len());
+        assert!(
+            decode_variant_dosages_into_variant_major_matrix(
+                &bad_bit_count_block,
+                CompressionType::None,
+                1,
+                &build_sample_selection(1, &[0]).expect("identity selection"),
+                &variant_record,
+                output.as_mut_ptr() as usize,
+                0,
+                1,
+                false,
+                false,
+                &mut thread_scratch,
+            )
+            .expect_err("bad bit count should fail")
+            .to_string()
+            .contains("requires a value")
+        );
+
+        let non_diploid_block = probability_block(1, &[1], 0, 2, &[3, 0]);
+        let variant_record = test_variant_record(non_diploid_block.len());
+        assert!(
+            decode_variant_dosages_into_variant_major_matrix(
+                &non_diploid_block,
+                CompressionType::None,
+                1,
+                &build_sample_selection(1, &[0]).expect("identity selection"),
+                &variant_record,
+                output.as_mut_ptr() as usize,
+                0,
+                1,
+                false,
+                false,
+                &mut thread_scratch,
+            )
+            .expect_err("non-diploid sample should fail")
+            .to_string()
+            .contains("non-diploid")
+        );
+
+        let invalid_phased_block = probability_block(1, &[2], 2, 2, &[3, 0]);
+        let variant_record = test_variant_record(invalid_phased_block.len());
+        assert!(
+            decode_variant_dosages_into_variant_major_matrix(
+                &invalid_phased_block,
+                CompressionType::None,
+                1,
+                &build_sample_selection(1, &[0]).expect("identity selection"),
+                &variant_record,
+                output.as_mut_ptr() as usize,
+                0,
+                1,
+                false,
+                false,
+                &mut thread_scratch,
+            )
+            .expect_err("invalid phased flag should fail")
+            .to_string()
+            .contains("phased flag")
+        );
     }
 
     #[test]
@@ -1720,6 +2097,36 @@ mod tests {
             .expect_err("invalid zlib should fail")
             .to_string()
             .contains("I/O error")
+        );
+
+        let compressed_payload = zlib_compress(&[1, 2, 3, 4]);
+        let mut successful_record = test_variant_record(compressed_payload.len());
+        successful_record.declared_uncompressed_block_length = 4;
+        let decompressed_block = read_probability_block(
+            &compressed_payload,
+            CompressionType::Zlib,
+            &successful_record,
+            &mut thread_scratch,
+            &mut profile,
+            true,
+        )
+        .expect("valid zlib block should decompress");
+        assert_eq!(decompressed_block, &[1, 2, 3, 4]);
+
+        let mut wrong_length_record = test_variant_record(compressed_payload.len());
+        wrong_length_record.declared_uncompressed_block_length = 5;
+        assert!(
+            read_probability_block(
+                &compressed_payload,
+                CompressionType::Zlib,
+                &wrong_length_record,
+                &mut thread_scratch,
+                &mut profile,
+                false,
+            )
+            .expect_err("declared zlib length mismatch should fail")
+            .to_string()
+            .contains("declared")
         );
     }
 }

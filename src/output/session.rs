@@ -818,3 +818,70 @@ fn run_output_writer_worker(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::output::finalization::RegenieStep2FinalizationTiming;
+
+    #[test]
+    fn stage_timing_accumulator_records_finalization_timing() {
+        let mut stage_timings = OutputStageTimingAccumulator::default();
+
+        stage_timings.add_finalization_timing(RegenieStep2FinalizationTiming {
+            chunk_file_count: 2,
+            batch_count: 3,
+            row_count: 5,
+            list_chunk_files_seconds: 0.1,
+            parquet_writer_properties_seconds: 0.0,
+            parquet_file_create_seconds: 0.0,
+            parquet_writer_init_seconds: 0.0,
+            arrow_file_open_seconds: 0.0,
+            arrow_reader_init_seconds: 0.0,
+            arrow_batch_read_seconds: 0.0,
+            read_arrow_seconds: 0.2,
+            project_batch_seconds: 0.3,
+            write_parquet_seconds: 0.4,
+            footer_metadata_seconds: 0.5,
+            close_writer_seconds: 0.6,
+            manifest_update_seconds: 0.7,
+            arrow_file_bytes: 0,
+            parquet_file_bytes: 0,
+            total_seconds: 1.8,
+        });
+
+        assert_eq!(stage_timings.finalization_chunk_file_count, 2);
+        assert_eq!(stage_timings.finalization_batch_count, 3);
+        assert_eq!(stage_timings.finalization_row_count, 5);
+        assert_eq!(stage_timings.finalization_count, 1);
+        assert!(stage_timings.finalization_total_seconds > 1.0);
+    }
+
+    #[test]
+    fn result_array_builders_and_stage_timing_skip_path_are_covered() {
+        let float_array = build_float32_result_array(&[1.0, 2.0]);
+        let int_array = build_int32_result_array(&[1, 2]);
+        assert_eq!(float_array.len(), 2);
+        assert_eq!(int_array.len(), 2);
+        assert!(validate_column_lengths(2, &[2, 2]).is_ok());
+
+        let session = OutputWriterSession::new(
+            "unused-run".to_string(),
+            "unused-chunks".to_string(),
+            "regenie2_linear".to_string(),
+            1,
+            1,
+            false,
+            1,
+            "none".to_string(),
+            false,
+        )
+        .expect("session should open");
+        session
+            .record_stage_timing(|stage_timings| {
+                stage_timings.enqueue_count += 1;
+            })
+            .expect("timing skip path should not lock");
+        session.abort().expect("session should abort");
+    }
+}

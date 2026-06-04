@@ -597,3 +597,114 @@ fn validate_variant_bounds(variant_start: usize, variant_stop: usize, variant_co
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    fn temporary_bgen_path(label: &str) -> PathBuf {
+        let timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("system time should be after unix epoch").as_nanos();
+        std::env::temp_dir().join(format!("g-reader-{label}-{}-{timestamp}.bgen", std::process::id()))
+    }
+
+    fn minimal_bgen_header_bytes(variant_count: u32, sample_count: u32, flags: u32) -> Vec<u8> {
+        let mut bytes = vec![0_u8; 24];
+        bytes[0..4].copy_from_slice(&20_u32.to_le_bytes());
+        bytes[4..8].copy_from_slice(&20_u32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&variant_count.to_le_bytes());
+        bytes[12..16].copy_from_slice(&sample_count.to_le_bytes());
+        bytes[16..20].copy_from_slice(b"bgen");
+        bytes[20..24].copy_from_slice(&flags.to_le_bytes());
+        bytes
+    }
+
+    fn append_bgen_string(bytes: &mut Vec<u8>, value: &str) {
+        let value_length = u16::try_from(value.len()).expect("BGEN string length should fit u16");
+        bytes.extend_from_slice(&value_length.to_le_bytes());
+        bytes.extend_from_slice(value.as_bytes());
+    }
+
+    fn trusted_probability_block(probability_bytes: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&3_u32.to_le_bytes());
+        bytes.extend_from_slice(&2_u16.to_le_bytes());
+        bytes.push(2);
+        bytes.push(2);
+        bytes.extend_from_slice(&[2, 2, 2]);
+        bytes.push(0);
+        bytes.push(8);
+        bytes.extend_from_slice(probability_bytes);
+        bytes
+    }
+
+    fn variant_payload(probability_block: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        append_bgen_string(&mut bytes, "var");
+        append_bgen_string(&mut bytes, "rs");
+        append_bgen_string(&mut bytes, "22");
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&2_u16.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(b"A");
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(b"G");
+        let block_length = u32::try_from(probability_block.len()).expect("probability block should fit u32");
+        bytes.extend_from_slice(&block_length.to_le_bytes());
+        bytes.extend_from_slice(probability_block);
+        bytes
+    }
+
+    fn write_single_variant_bgen(path: &Path) {
+        let probability_block = trusted_probability_block(&[0, 0, 255, 0, 0, 255]);
+        let payload = variant_payload(&probability_block);
+        let mut bytes = minimal_bgen_header_bytes(1, 3, 2 << 2);
+        bytes.extend_from_slice(&payload);
+        fs::write(path, bytes).expect("BGEN test fixture should be written");
+    }
+
+    #[test]
+    fn private_reader_optional_stats_collects_row_major_dosage_totals() {
+        let path = temporary_bgen_path("optional-stats");
+        write_single_variant_bgen(&path);
+        let reader = BgenReaderCore::open(&path, false).expect("BGEN reader should open");
+
+        let empty_selection = build_sample_selection(reader.sample_count, &[]).expect("empty selection should build");
+        let mut empty_output = Vec::<f32>::new();
+        let empty_totals = reader
+            .read_dosage_f32_into_address_with_selection_and_optional_stats(
+                &empty_selection,
+                0,
+                1,
+                empty_output.as_mut_ptr() as usize,
+                0,
+                true,
+            )
+            .expect("empty selected samples should return totals")
+            .expect("totals should be collected");
+        assert_eq!(empty_totals, vec![0.0]);
+
+        let sample_selection =
+            build_sample_selection(reader.sample_count, &[0, 2]).expect("non-contiguous selection should build");
+        let mut output = vec![f32::NAN; 2];
+        let totals = reader
+            .read_dosage_f32_into_address_with_selection_and_optional_stats(
+                &sample_selection,
+                0,
+                1,
+                output.as_mut_ptr() as usize,
+                output.len(),
+                true,
+            )
+            .expect("row-major read should collect totals")
+            .expect("totals should be present");
+        assert_eq!(output, vec![2.0, 1.0]);
+        assert_eq!(totals, vec![3.0]);
+
+        let _ = fs::remove_file(path);
+    }
+}

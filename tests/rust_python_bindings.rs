@@ -74,6 +74,8 @@ fn registered_python_module_exercises_core_bindings() -> PyResult<()> {
     let run_directory = fixture.path.join("run");
     let chunks_directory = run_directory.join("chunks");
     let log_path = fixture.path.join("trace.jsonl");
+    let trace_path = fixture.path.join("spans.jsonl");
+    let invalid_trace_path = fixture.path.join("invalid-spans.jsonl");
     fs::create_dir_all(&chunks_directory).expect("chunk directory should be created");
     fs::write(run_directory.join("run_manifest.json"), "{}\n").expect("manifest should be initialized");
 
@@ -93,6 +95,8 @@ fn registered_python_module_exercises_core_bindings() -> PyResult<()> {
         globals.set_item("run_directory", run_directory.to_string_lossy().as_ref())?;
         globals.set_item("chunks_directory", chunks_directory.to_string_lossy().as_ref())?;
         globals.set_item("log_path", log_path.to_string_lossy().as_ref())?;
+        globals.set_item("trace_path", trace_path.to_string_lossy().as_ref())?;
+        globals.set_item("invalid_trace_path", invalid_trace_path.to_string_lossy().as_ref())?;
         globals.set_item("site_packages_path", python_site_packages_path().to_string_lossy().as_ref())?;
 
         py.run(
@@ -115,7 +119,22 @@ try:
     raise AssertionError("invalid tracing filter should fail")
 except ValueError:
     pass
-assert _core.initialize_logging(log_filter="info", log_file=log_path, log_stderr=False) is True
+try:
+    _core.initialize_logging(log_filter="info", log_stderr=False, trace_file=invalid_trace_path, trace_filter="[")
+    raise AssertionError("invalid trace filter should fail")
+except ValueError:
+    pass
+assert _core.initialize_logging(
+    log_filter="info",
+    log_file=log_path,
+    log_stderr=True,
+    log_queue_size=128,
+    log_lossy=False,
+    include_source_location=True,
+    include_span_events=True,
+    trace_file=trace_path,
+    trace_filter="",
+) is True
 assert _core.initialize_logging(log_filter="debug", log_file=log_path, log_stderr=False) is False
 logging.warning("python warning reaches tracing")
 assert _core.hello_from_bin() == "Hello from g!"
@@ -124,6 +143,7 @@ with open(log_path, encoding="utf-8") as log_file:
     log_text = log_file.read()
 assert "python warning reaches tracing" in log_text
 assert "hello_from_bin called" in log_text
+assert os.path.exists(trace_path)
 chunks = _core.plan_genotype_chunks(12, 5, [0, 3, 9, 12], None, [5])
 assert [(chunk.variant_start_index, chunk.variant_stop_index) for chunk in chunks] == [(0, 3), (3, 5), (9, 10), (10, 12)]
 
@@ -326,6 +346,8 @@ class RecordingCallback:
         self.variant_major_shapes = []
         self.free_row_major_buffers = []
         self.free_variant_major_buffers = []
+        self.last_metadata = None
+        self.last_chunk_stats = None
 
     def acquire_dosage_buffer(self, sample_count, variant_count):
         if self.free_row_major_buffers:
@@ -334,6 +356,8 @@ class RecordingCallback:
 
     def compute_preprocessed_dosage_chunk(self, metadata, genotype_matrix, chunk_stats):
         self.row_major_shapes.append((metadata.variant_start_index, genotype_matrix.shape))
+        self.last_metadata = metadata
+        self.last_chunk_stats = chunk_stats
         assert len(metadata.chromosome) == genotype_matrix.shape[1]
         assert len(metadata.variant_identifiers) == genotype_matrix.shape[1]
         assert metadata.position.shape == (genotype_matrix.shape[1],)
@@ -360,7 +384,7 @@ class RecordingCallback:
                 np.full(variant_count, 0.01, dtype=np.float32),
                 np.full(variant_count, 10.0, dtype=np.float32),
                 np.full(variant_count, 5.0, dtype=np.float32),
-                None,
+                np.full(variant_count, 1, dtype=np.int32),
             )
         self.free_row_major_buffers.append(genotype_matrix)
 
@@ -455,7 +479,87 @@ writer_callback = RecordingCallback(writer)
 assert engine.run_bgen_dosage_buffered_chunks(np.arange(4, dtype=np.int64), writer_callback) == 2
 assert writer.finish() is None
 assert _core.scan_committed_chunk_identifiers(chunks_directory) == [0, 2]
+with open(os.path.join(run_directory, "run_manifest.json"), encoding="utf-8") as manifest_file:
+    manifest_json = manifest_file.read()
+assert _core.validate_strict_manifest_chunks(chunks_directory, manifest_json) == [0, 2]
+repaired_commits = _core.repair_strict_manifest_chunk_commits(chunks_directory, manifest_json)
+assert '"chunk_identifier":0' in repaired_commits
 assert _core.finalize_output_run_chunks(run_directory, chunks_directory, "regenie2_linear").endswith("final.parquet")
+
+multi_run_directories = [
+    os.path.join(os.path.dirname(run_directory), "multi-a"),
+    os.path.join(os.path.dirname(run_directory), "multi-b"),
+]
+multi_writers = []
+for multi_run_directory in multi_run_directories:
+    multi_chunks_directory = os.path.join(multi_run_directory, "chunks")
+    os.makedirs(multi_chunks_directory, exist_ok=True)
+    with open(os.path.join(multi_run_directory, "run_manifest.json"), "w", encoding="utf-8") as manifest_file:
+        manifest_file.write("{}\n")
+    multi_writers.append(
+        _core.OutputWriterSession(
+            multi_run_directory,
+            multi_chunks_directory,
+            "regenie2_binary",
+            1,
+            1,
+            False,
+            1,
+            "none",
+            False,
+        )
+    )
+row_count = writer_callback.last_metadata.variant_stop_index - writer_callback.last_metadata.variant_start_index
+beta = np.full((2, row_count), 0.2, dtype=np.float32)
+standard_error = np.full((2, row_count), 0.02, dtype=np.float32)
+chi_squared = np.full((2, row_count), 4.0, dtype=np.float32)
+log10_p_value = np.full((2, row_count), 1.5, dtype=np.float32)
+extra_code = np.full((2, row_count), 2, dtype=np.int32)
+_core.write_regenie2_multi_native_chunk(
+    multi_writers,
+    [0, 1],
+    writer_callback.last_metadata,
+    writer_callback.last_chunk_stats,
+    beta,
+    standard_error,
+    chi_squared,
+    log10_p_value,
+    extra_code,
+)
+for multi_writer, multi_run_directory in zip(multi_writers, multi_run_directories, strict=True):
+    assert multi_writer.finish() is None
+    multi_manifest = open(os.path.join(multi_run_directory, "run_manifest.json"), encoding="utf-8").read()
+    assert _core.validate_strict_manifest_chunks(os.path.join(multi_run_directory, "chunks"), multi_manifest) == [2]
+try:
+    _core.write_regenie2_multi_native_chunk(
+        multi_writers,
+        [2],
+        writer_callback.last_metadata,
+        writer_callback.last_chunk_stats,
+        beta,
+        standard_error,
+        chi_squared,
+        log10_p_value,
+        extra_code,
+    )
+    raise AssertionError("out-of-bounds active trait should fail")
+except ValueError:
+    pass
+try:
+    _core.write_regenie2_multi_native_chunk(
+        multi_writers,
+        [0],
+        writer_callback.last_metadata,
+        writer_callback.last_chunk_stats,
+        beta[:, : max(row_count - 1, 0)],
+        standard_error,
+        chi_squared,
+        log10_p_value,
+        extra_code,
+    )
+    raise AssertionError("multi-trait shape mismatch should fail")
+except ValueError:
+    pass
 
 interrupted_run_directory = os.path.join(os.path.dirname(run_directory), "interrupted")
 interrupted_chunks_directory = os.path.join(interrupted_run_directory, "chunks")

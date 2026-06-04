@@ -464,7 +464,9 @@ mod tests {
 
     use crate::output::schema as output_schema;
 
-    use super::{scan_committed_chunk_identifiers, validate_strict_manifest_chunks};
+    use super::{
+        repair_strict_manifest_chunk_commits, scan_committed_chunk_identifiers, validate_strict_manifest_chunks,
+    };
 
     fn create_test_directory() -> PathBuf {
         let unique_suffix =
@@ -501,6 +503,24 @@ mod tests {
             fields.push(field);
         }
         Arc::new(Schema::new(fields))
+    }
+
+    fn nullable_resume_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new("chunk_identifier", DataType::Int64, true),
+            Field::new("variant_start_index", DataType::Int64, true),
+            Field::new("variant_stop_index", DataType::Int64, true),
+        ]))
+    }
+
+    fn schema_metadata_with_commits(chunk_commits_json: &str) -> Arc<Schema> {
+        Arc::new(
+            Schema::new(vec![Field::new("value", DataType::Int64, false)]).with_metadata(
+                [(output_schema::CHUNK_COMMITS_METADATA_KEY.to_string(), chunk_commits_json.to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+        )
     }
 
     #[test]
@@ -667,6 +687,243 @@ mod tests {
             .expect_err("strict resume should reject incompatible schemas")
             .to_string();
         assert!(schema_mismatch_error.contains("incompatible Arrow schema"));
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
+    fn repair_strict_manifest_commits_discovers_extra_arrow_chunks_and_missing_directories() {
+        let directory_path = create_test_directory();
+        let schema = schema_metadata_with_commits(
+            r#"[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":1,"row_count":1},{"chunk_identifier":2,"variant_start_index":2,"variant_stop_index":4,"row_count":2}]"#,
+        );
+        let first_batch =
+            RecordBatch::try_new(Arc::clone(&schema), vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef])
+                .expect("first batch should build");
+        let second_batch =
+            RecordBatch::try_new(Arc::clone(&schema), vec![Arc::new(Int64Array::from(vec![2, 3])) as ArrayRef])
+                .expect("second batch should build");
+        write_arrow_batches(&directory_path.join("chunk_0_2.arrow"), &schema, &[first_batch, second_batch]);
+        let manifest = r#"{"committed_chunks":[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":1,"row_count":1,"chunk_file_name":"chunk_0_2.arrow"}]}"#;
+
+        let repaired_commits =
+            repair_strict_manifest_chunk_commits(&directory_path, manifest).expect("repair should add missing chunk");
+
+        assert_eq!(
+            repaired_commits.iter().map(|chunk_commit| chunk_commit.chunk_identifier).collect::<Vec<_>>(),
+            vec![0, 2],
+        );
+
+        let missing_directory_path = directory_path.join("missing");
+        let empty_repaired_commits =
+            repair_strict_manifest_chunk_commits(&missing_directory_path, r#"{"committed_chunks":[]}"#)
+                .expect("missing chunks directory should repair as empty");
+        assert!(empty_repaired_commits.is_empty());
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
+    fn repair_strict_manifest_rejects_negative_rows_duplicates_and_schema_metadata_errors() {
+        let directory_path = create_test_directory();
+        let schema = schema_metadata_with_commits(
+            r#"[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":1,"row_count":1}]"#,
+        );
+        write_arrow_file(
+            &directory_path.join("chunk_0.arrow"),
+            &schema,
+            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
+        );
+
+        let negative_rows_manifest = r#"{"committed_chunks":[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":1,"row_count":-1,"chunk_file_name":"chunk_0.arrow"}]}"#;
+        assert!(
+            repair_strict_manifest_chunk_commits(&directory_path, negative_rows_manifest)
+                .expect_err("negative row_count should fail")
+                .to_string()
+                .contains("non-negative")
+        );
+
+        write_arrow_file(
+            &directory_path.join("chunk_0_duplicate.arrow"),
+            &schema,
+            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
+        );
+        assert!(
+            repair_strict_manifest_chunk_commits(&directory_path, r#"{"committed_chunks":[]}"#)
+                .expect_err("duplicate chunk commits should fail")
+                .to_string()
+                .contains("duplicate")
+        );
+
+        let invalid_metadata_directory_path = create_test_directory();
+        let invalid_metadata_schema = schema_metadata_with_commits(r#"{"chunk_identifier":0}"#);
+        write_arrow_file(
+            &invalid_metadata_directory_path.join("chunk_invalid.arrow"),
+            &invalid_metadata_schema,
+            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
+        );
+        assert!(
+            scan_committed_chunk_identifiers(&invalid_metadata_directory_path)
+                .expect_err("non-list metadata should fail")
+                .to_string()
+                .contains("must be a list")
+        );
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+        std::fs::remove_dir_all(invalid_metadata_directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
+    fn repair_strict_manifest_rejects_scanned_schema_mismatches_and_metadata_batch_mismatches() {
+        let schema_mismatch_directory_path = create_test_directory();
+        let schema = required_resume_schema(None);
+        write_arrow_file(
+            &schema_mismatch_directory_path.join("chunk_0.arrow"),
+            &schema,
+            vec![
+                Arc::new(Int64Array::from(vec![0])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![0])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![1])) as ArrayRef,
+            ],
+        );
+        let extra_schema = required_resume_schema(Some(Field::new("extra", DataType::Float32, false)));
+        write_arrow_file(
+            &schema_mismatch_directory_path.join("chunk_1.arrow"),
+            &extra_schema,
+            vec![
+                Arc::new(Int64Array::from(vec![1])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![1])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![2])) as ArrayRef,
+                Arc::new(Float32Array::from(vec![0.5])) as ArrayRef,
+            ],
+        );
+        assert!(
+            repair_strict_manifest_chunk_commits(&schema_mismatch_directory_path, r#"{"committed_chunks":[]}"#)
+                .expect_err("scanned schema mismatch should fail")
+                .to_string()
+                .contains("incompatible Arrow schema")
+        );
+
+        let batch_count_directory_path = create_test_directory();
+        let batch_count_schema = schema_metadata_with_commits(
+            r#"[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":1,"row_count":1},{"chunk_identifier":1,"variant_start_index":1,"variant_stop_index":2,"row_count":1}]"#,
+        );
+        write_arrow_file(
+            &batch_count_directory_path.join("chunk_0_1.arrow"),
+            &batch_count_schema,
+            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
+        );
+        assert!(
+            scan_committed_chunk_identifiers(&batch_count_directory_path)
+                .expect_err("metadata batch count mismatch should fail")
+                .to_string()
+                .contains("batch count")
+        );
+        assert!(
+            repair_strict_manifest_chunk_commits(&batch_count_directory_path, r#"{"committed_chunks":[]}"#)
+                .expect_err("repair metadata batch count mismatch should fail")
+                .to_string()
+                .contains("batch count")
+        );
+
+        let row_count_directory_path = create_test_directory();
+        let row_count_schema = schema_metadata_with_commits(
+            r#"[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":2,"row_count":2}]"#,
+        );
+        write_arrow_file(
+            &row_count_directory_path.join("chunk_0.arrow"),
+            &row_count_schema,
+            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
+        );
+        assert!(
+            repair_strict_manifest_chunk_commits(&row_count_directory_path, r#"{"committed_chunks":[]}"#)
+                .expect_err("repair metadata row count mismatch should fail")
+                .to_string()
+                .contains("row count")
+        );
+
+        std::fs::remove_dir_all(schema_mismatch_directory_path).expect("resume test directory should be removed");
+        std::fs::remove_dir_all(batch_count_directory_path).expect("resume test directory should be removed");
+        std::fs::remove_dir_all(row_count_directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
+    fn repair_strict_manifest_reads_legacy_arrow_commits_and_rejects_null_required_values() {
+        let directory_path = create_test_directory();
+        let schema = nullable_resume_schema();
+        write_arrow_file(
+            &directory_path.join("chunk_legacy.arrow"),
+            &schema,
+            vec![
+                Arc::new(Int64Array::from(vec![Some(0), Some(0), None, Some(2)])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![Some(0), Some(1), Some(9), Some(2)])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![Some(1), Some(2), Some(10), Some(4)])) as ArrayRef,
+            ],
+        );
+
+        let repaired_commits = repair_strict_manifest_chunk_commits(&directory_path, r#"{"committed_chunks":[]}"#)
+            .expect("legacy chunks should repair from contents");
+
+        assert_eq!(
+            repaired_commits
+                .iter()
+                .map(|chunk_commit| {
+                    (
+                        chunk_commit.chunk_identifier,
+                        chunk_commit.variant_start_index,
+                        chunk_commit.variant_stop_index,
+                        chunk_commit.row_count,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![(0, 0, 2, 2), (2, 2, 4, 1)],
+        );
+        let manifest = r#"{"committed_chunks":[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":2,"row_count":2,"chunk_file_name":"chunk_legacy.arrow"}]}"#;
+        assert_eq!(
+            validate_strict_manifest_chunks(&directory_path, manifest)
+                .expect("legacy manifest should validate selected rows"),
+            vec![0],
+        );
+
+        let null_required_directory_path = create_test_directory();
+        write_arrow_file(
+            &null_required_directory_path.join("chunk_null.arrow"),
+            &schema,
+            vec![
+                Arc::new(Int64Array::from(vec![Some(0)])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![None])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![Some(1)])) as ArrayRef,
+            ],
+        );
+        assert!(
+            repair_strict_manifest_chunk_commits(&null_required_directory_path, r#"{"committed_chunks":[]}"#)
+                .expect_err("null variant_start_index should fail")
+                .to_string()
+                .contains("null variant_start_index")
+        );
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+        std::fs::remove_dir_all(null_required_directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
+    fn strict_manifest_reports_missing_metadata_commit_as_row_count_mismatch() {
+        let directory_path = create_test_directory();
+        let schema = schema_metadata_with_commits(
+            r#"[{"chunk_identifier":0,"variant_start_index":0,"variant_stop_index":1,"row_count":1}]"#,
+        );
+        write_arrow_file(
+            &directory_path.join("chunk_0.arrow"),
+            &schema,
+            vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef],
+        );
+        let manifest = r#"{"committed_chunks":[{"chunk_identifier":7,"variant_start_index":7,"variant_stop_index":8,"row_count":1,"chunk_file_name":"chunk_0.arrow"}]}"#;
+
+        let error = validate_strict_manifest_chunks(&directory_path, manifest)
+            .expect_err("missing metadata commit should fail")
+            .to_string();
+
+        assert!(error.contains("row count mismatch"));
 
         std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
     }

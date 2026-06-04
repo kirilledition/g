@@ -11,8 +11,9 @@ from g.engine import preflight
 
 class FakeEngine:
     def __init__(self, chromosome_values: list[str] | None = None) -> None:
-        self.variant_count = len(chromosome_values or ["1"])
-        self.chromosome_values = chromosome_values or ["1"]
+        resolved_chromosome_values = ["1"] if chromosome_values is None else chromosome_values
+        self.variant_count = len(resolved_chromosome_values)
+        self.chromosome_values = resolved_chromosome_values
 
     def variant_metadata_slice(
         self,
@@ -144,3 +145,96 @@ def test_preflight_without_variant_limit_requires_all_chromosomes() -> None:
             is_binary_trait=False,
             trusted_no_missing_diploid=False,
         )
+
+
+def test_preflight_rejects_prediction_sample_count_mismatch() -> None:
+    with pytest.raises(ValueError, match="Prediction sample count for chromosome 1 is 2, expected 3"):
+        preflight.run_regenie2_preflight(
+            run_input=build_run_input(),
+            prediction_source=FakePredictionSource({"1": np.zeros(2, dtype=np.float32)}),
+            engine=FakeEngine(["1"]),
+            variant_limit=None,
+            is_binary_trait=False,
+            trusted_no_missing_diploid=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("covariate_matrix", "message"),
+    [
+        (np.asarray([1.0, 2.0, 3.0], dtype=np.float32), "Covariate matrix must be two-dimensional"),
+        (
+            np.asarray([[1.0], [1.0]], dtype=np.float32),
+            "Covariate matrix sample count does not match phenotype sample count",
+        ),
+        (
+            np.eye(3, dtype=np.float32),
+            "Sample count must exceed the number of covariate degrees of freedom",
+        ),
+    ],
+)
+def test_preflight_rejects_invalid_covariate_shapes(covariate_matrix: np.ndarray, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        preflight.run_regenie2_preflight(
+            run_input=build_run_input(covariate_matrix=covariate_matrix),
+            prediction_source=FakePredictionSource({"1": np.zeros(3, dtype=np.float32)}),
+            engine=FakeEngine(["1"]),
+            variant_limit=None,
+            is_binary_trait=False,
+            trusted_no_missing_diploid=False,
+        )
+
+
+def test_preflight_rejects_non_binary_values_for_binary_trait() -> None:
+    with pytest.raises(ValueError, match="Binary phenotype must be coded as 0/1"):
+        preflight.run_regenie2_preflight(
+            run_input=build_run_input(phenotype_vector=np.asarray([0.0, 0.5, 1.0], dtype=np.float32)),
+            prediction_source=FakePredictionSource({"1": np.zeros(3, dtype=np.float32)}),
+            engine=FakeEngine(["1"]),
+            variant_limit=None,
+            is_binary_trait=True,
+            trusted_no_missing_diploid=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("engine", "variant_limit", "message"),
+    [
+        (FakeEngine([]), None, "BGEN input contains no variants"),
+        (FakeEngine(["1"]), 0, "BGEN scan contains no variants"),
+    ],
+)
+def test_preflight_rejects_empty_variant_scans(
+    engine: FakeEngine,
+    variant_limit: int | None,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        preflight.run_regenie2_preflight(
+            run_input=build_run_input(),
+            prediction_source=FakePredictionSource({"1": np.zeros(3, dtype=np.float32)}),
+            engine=engine,
+            variant_limit=variant_limit,
+            is_binary_trait=False,
+            trusted_no_missing_diploid=False,
+        )
+
+
+def test_preflight_records_low_degrees_of_freedom_and_trusted_path_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING", logger="g.engine.preflight"):
+        report = preflight.run_regenie2_preflight(
+            run_input=build_run_input(),
+            prediction_source=FakePredictionSource({"1": np.zeros(3, dtype=np.float32)}),
+            engine=FakeEngine(["1"]),
+            variant_limit=None,
+            is_binary_trait=False,
+            trusted_no_missing_diploid=True,
+        )
+
+    assert report.warning_messages == (
+        "REGENIE step 2 is running with fewer than 10 residual degrees of freedom.",
+        "Trusted no-missing diploid BGEN path is enabled after compatibility validation.",
+    )
+    assert len(caplog.records) == 2

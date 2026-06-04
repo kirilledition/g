@@ -234,3 +234,49 @@ fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> Result<RecordBatch,
     RecordBatch::try_new(Arc::clone(schema::get_regenie_step2_final_schema()), projected_columns)
         .map_err(OutputWriterError::runtime)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use arrow::array::StringArray;
+    use arrow::datatypes::{DataType, Field, Schema};
+
+    use super::*;
+
+    fn create_test_directory() -> PathBuf {
+        let unique_suffix =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("system time should be after Unix epoch").as_nanos();
+        let directory_path = std::env::temp_dir().join(format!("g-output-finalization-test-{unique_suffix}"));
+        std::fs::create_dir_all(&directory_path).expect("test directory should be created");
+        directory_path
+    }
+
+    #[test]
+    fn finalization_rejects_unsupported_association_mode_before_reading_chunks() {
+        let chunks_directory = create_test_directory();
+        let final_parquet_path = chunks_directory.join("final.parquet");
+
+        let error =
+            write_final_parquet_from_chunk_files_with_timing(&chunks_directory, &final_parquet_path, "unsupported")
+                .err()
+                .expect("unsupported association mode should fail")
+                .to_string();
+        assert!(error.contains("Unsupported association mode"));
+
+        std::fs::remove_dir_all(chunks_directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn finalization_projection_reports_missing_final_columns() {
+        let schema = Arc::new(Schema::new(vec![Field::new("CHROM", DataType::Utf8, false)]));
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(StringArray::from(vec!["22"]))])
+            .expect("record batch should build");
+
+        let error = project_chunk_batch_to_final_batch(batch)
+            .expect_err("missing final columns should fail projection")
+            .to_string();
+        assert!(error.contains("project chunk batch"));
+    }
+}

@@ -83,6 +83,18 @@ class FakeWriterSession:
         self.aborted = True
 
 
+class RecordingTelemetrySession:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, object]]] = []
+        self.progress_events: list[dict[str, object]] = []
+
+    def log_event(self, event_name: str, **fields: object) -> None:
+        self.events.append((event_name, fields))
+
+    def log_progress(self, **fields: object) -> None:
+        self.progress_events.append(fields)
+
+
 class NoFinalWriterSession:
     def __init__(self) -> None:
         self.finished = False
@@ -135,6 +147,38 @@ def test_write_regenie2_native_chunk_downcasts_float64_statistics_before_writing
     assert chi_squared.dtype == np.float32
     assert log10_p_value.dtype == np.float32
     np.testing.assert_array_equal(written_chunk["extra_code"], extra_code)
+
+
+def test_write_regenie2_multi_native_chunk_skips_committed_traits_and_slices_extra_code() -> None:
+    writer_sessions = (FakeWriterSession(), FakeWriterSession())
+    metadata = build_native_metadata()
+    chunk_stats = typing.cast("typing.Any", SimpleNamespace())
+    extra_code = jnp.asarray(
+        [
+            [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.FIRTH.value],
+            [types.BinaryExtraCode.TEST_FAIL.value, types.BinaryExtraCode.SCORE.value],
+        ],
+        dtype=jnp.int32,
+    )
+
+    callbacks.write_regenie2_multi_native_chunk_with_optional_timing(
+        writer_sessions=writer_sessions,
+        committed_chunk_identifier_sets=(set(), {metadata.variant_start_index}),
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
+        standard_error=jnp.asarray([[1.1, 1.2], [1.3, 1.4]], dtype=jnp.float32),
+        chi_squared=jnp.asarray([[2.1, 2.2], [2.3, 2.4]], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([[3.1, 3.2], [3.3, 3.4]], dtype=jnp.float32),
+        extra_code=extra_code,
+        stage_timing_recorder=None,
+    )
+
+    assert len(writer_sessions[0].native_chunks) == 1
+    assert not writer_sessions[1].native_chunks
+    written_chunk = writer_sessions[0].native_chunks[0]
+    np.testing.assert_array_equal(written_chunk["extra_code"], np.asarray(extra_code[0]))
+    np.testing.assert_array_equal(written_chunk["beta"], np.asarray([0.1, 0.2], dtype=np.float32))
 
 
 class FakeRunEngine:
@@ -365,6 +409,192 @@ class LinearNativeSumChunkStats(ExplodingChunkStats):
     @property
     def imputed_dosage_square_sum(self) -> np.ndarray:
         return np.asarray([5.0, 13.0], dtype=np.float32)
+
+
+class ManualCallbackRunner(callbacks.NativeBgenCallbackRunner):
+    def __init__(self) -> None:
+        self.processed_chunk_count = 0
+        self.stage_timing_recorder = None
+        self.telemetry_session = None
+        self.current_progress_chromosome = None
+        self.dosage_queue: queue.Queue[
+            callbacks.PreprocessedDosageChunkWorkItem | callbacks.PreprocessedVariantMajorDosageChunkWorkItem | None
+        ] = queue.Queue()
+        self.result_queue: queue.Queue[
+            callbacks.Regenie2ResultWriteWorkItem | callbacks.Regenie2MultiResultWriteWorkItem | None
+        ] = queue.Queue()
+        self.result_in_flight_slots = threading.BoundedSemaphore(2)
+        self.free_dosage_buffers: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
+        self.dosage_buffer_count = 0
+        self.dosage_buffer_limit = 2
+        self.worker_error = None
+        self.result_worker_error = None
+        self.sample_major_metadata: list[object] = []
+        self.variant_major_metadata: list[object] = []
+
+    def compute_preprocessed_chunk(
+        self,
+        *,
+        variant_metadata: object,
+        genotype_matrix: object,
+        chunk_stats: object,
+    ) -> None:
+        del genotype_matrix, chunk_stats
+        self.sample_major_metadata.append(variant_metadata)
+
+    def compute_preprocessed_variant_major_chunk(
+        self,
+        *,
+        variant_metadata: object,
+        genotype_matrix_by_variant: object,
+        chunk_stats: object,
+    ) -> None:
+        del genotype_matrix_by_variant, chunk_stats
+        self.variant_major_metadata.append(variant_metadata)
+
+
+def test_native_callback_runner_records_chromosome_progress_transitions() -> None:
+    callback = ManualCallbackRunner()
+    telemetry_session = RecordingTelemetrySession()
+    callback.telemetry_session = telemetry_session
+
+    callback.processed_chunk_count = 1
+    callback.record_progress(build_native_metadata())
+    callback.processed_chunk_count = 2
+    callback.record_progress(
+        SimpleNamespace(
+            variant_start_index=7,
+            variant_stop_index=9,
+            chromosome=["23", "23"],
+        )
+    )
+
+    assert telemetry_session.events == [
+        (
+            "chromosome_started",
+            {"chromosome": "22", "processed_chunk_count": 1},
+        ),
+        (
+            "chromosome_completed",
+            {"chromosome": "22", "processed_chunk_count": 1},
+        ),
+        (
+            "chromosome_started",
+            {"chromosome": "23", "processed_chunk_count": 2},
+        ),
+    ]
+    assert telemetry_session.progress_events[0]["variant_count"] == 2
+    assert telemetry_session.progress_events[1]["chunk_identifier"] == 7
+
+
+def test_native_callback_runner_consumes_both_dosage_layouts() -> None:
+    callback = ManualCallbackRunner()
+    metadata = build_native_metadata()
+    chunk_stats = typing.cast("typing.Any", SimpleNamespace())
+
+    callback.dosage_queue.put_nowait(
+        callbacks.PreprocessedVariantMajorDosageChunkWorkItem(
+            metadata=metadata,
+            genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=chunk_stats,
+        )
+    )
+    callback.dosage_queue.put_nowait(
+        callbacks.PreprocessedDosageChunkWorkItem(
+            metadata=metadata,
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=chunk_stats,
+        )
+    )
+    callback.dosage_queue.put_nowait(None)
+
+    callback.consume_dosage_chunks()
+
+    assert callback.variant_major_metadata == [metadata]
+    assert callback.sample_major_metadata == [metadata]
+    assert callback.processed_chunk_count == 2
+    assert callback.worker_error is None
+
+
+def test_native_callback_runner_records_worker_errors_from_consumer() -> None:
+    class FailingCallbackRunner(ManualCallbackRunner):
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
+            message = "compute failed"
+            raise ValueError(message)
+
+    callback = FailingCallbackRunner()
+    callback.dosage_queue.put_nowait(
+        callbacks.PreprocessedDosageChunkWorkItem(
+            metadata=build_native_metadata(),
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        )
+    )
+
+    callback.consume_dosage_chunks()
+
+    assert isinstance(callback.worker_error, ValueError)
+
+
+def test_native_callback_runner_reuses_and_replaces_host_dosage_buffers() -> None:
+    callback = ManualCallbackRunner()
+
+    first_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    assert first_buffer.shape == (2, 3)
+    assert callback.dosage_buffer_count == 1
+
+    callback.release_dosage_buffer(first_buffer)
+    reused_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    assert reused_buffer is first_buffer
+
+    callback.release_dosage_buffer(np.empty((3, 2), dtype=np.float32))
+    replacement_buffer = callback.acquire_variant_major_dosage_buffer(variant_count=2, sample_count=3)
+    assert replacement_buffer.shape == (2, 3)
+
+    callback.dosage_buffer_count = callback.dosage_buffer_limit
+    callback.free_dosage_buffers.put_nowait(np.empty((1, 1), dtype=np.float32))
+    blocked_replacement = callback.acquire_dosage_buffer_with_shape((4, 5))
+    assert blocked_replacement.shape == (4, 5)
+
+
+def test_native_callback_runner_surfaces_worker_and_writer_errors() -> None:
+    callback = ManualCallbackRunner()
+    callback.worker_error = ValueError("dosage failed")
+
+    with pytest.raises(RuntimeError, match="callback worker failed"):
+        callback.raise_worker_error_if_present()
+
+    callback.worker_error = None
+    callback.result_worker_error = ValueError("writer failed")
+
+    with pytest.raises(RuntimeError, match="result writer worker failed"):
+        callback.raise_worker_error_if_present()
+
+
+def test_base_native_callback_runner_compute_methods_are_abstract() -> None:
+    callback = ManualCallbackRunner()
+
+    with pytest.raises(NotImplementedError):
+        callbacks.NativeBgenCallbackRunner.compute_preprocessed_chunk(
+            callback,
+            variant_metadata=typing.cast("typing.Any", SimpleNamespace()),
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        )
+    with pytest.raises(NotImplementedError):
+        callbacks.NativeBgenCallbackRunner.compute_preprocessed_variant_major_chunk(
+            callback,
+            variant_metadata=typing.cast("typing.Any", SimpleNamespace()),
+            genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        )
 
 
 def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> None:
@@ -917,6 +1147,88 @@ def test_binary_score_only_variant_major_callback_uses_jitted_variant_major_scor
     mock_variant_major_compute.assert_not_called()
     mock_sample_major_compute.assert_not_called()
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
+
+
+def build_multi_linear_result() -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
+    return regenie2_linear_result.Regenie2MultiLinearChunkResult(
+        beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
+        standard_error=jnp.asarray([[0.5, 0.6], [0.7, 0.8]], dtype=jnp.float32),
+        chi_squared=jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([[5.0, 6.0], [7.0, 8.0]], dtype=jnp.float32),
+        valid_mask=jnp.asarray([[True, True], [True, True]], dtype=jnp.bool_),
+    )
+
+
+def build_multi_trait_prediction_source() -> typing.Any:
+    return SimpleNamespace(
+        get_chromosome_predictions=lambda chromosome: np.zeros((2, 2), dtype=np.float32),
+    )
+
+
+def test_multi_linear_sample_major_callback_prepares_state_and_writes_traits() -> None:
+    writer_sessions = (FakeWriterSession(), FakeWriterSession())
+    result = build_multi_linear_result()
+    callback = callbacks.MultiLinearRegenie2PipelineCallback(
+        run_input=build_native_multi_run_input(),
+        prediction_source=build_multi_trait_prediction_source(),
+        writer_sessions=writer_sessions,
+        committed_chunk_identifier_sets=(set(), set()),
+    )
+
+    with patch(
+        "g.compute.regenie2_linear.api.compute_regenie2_multi_linear_chunk_from_chromosome_state",
+        return_value=result,
+    ) as mock_compute:
+        callback.compute_preprocessed_chunk(
+            variant_metadata=build_native_metadata(),
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=typing.cast("typing.Any", ExplodingChunkStats()),
+        )
+        callback.finish()
+
+    assert callback.current_chromosome == "22"
+    assert mock_compute.call_args.kwargs["chromosome_state"] is callback.current_chromosome_state
+    assert len(writer_sessions[0].native_chunks) == 1
+    assert len(writer_sessions[1].native_chunks) == 1
+    np.testing.assert_array_equal(writer_sessions[0].native_chunks[0]["beta"], np.asarray([0.1, 0.2], dtype=np.float32))
+    np.testing.assert_array_equal(writer_sessions[1].native_chunks[0]["beta"], np.asarray([0.3, 0.4], dtype=np.float32))
+
+
+def test_multi_linear_variant_major_callback_passes_native_genotype_summaries() -> None:
+    writer_sessions = (FakeWriterSession(), FakeWriterSession())
+    result = build_multi_linear_result()
+    callback = callbacks.MultiLinearRegenie2PipelineCallback(
+        run_input=build_native_multi_run_input(),
+        prediction_source=build_multi_trait_prediction_source(),
+        writer_sessions=writer_sessions,
+        committed_chunk_identifier_sets=(set(), set()),
+    )
+    variant_major_genotype_matrix = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    chunk_stats = typing.cast("typing.Any", LinearNativeSumChunkStats())
+
+    with patch(
+        "g.compute.regenie2_linear.api.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major",
+        return_value=result,
+    ) as mock_compute:
+        callback.compute_preprocessed_variant_major_chunk(
+            variant_metadata=build_native_metadata(),
+            genotype_matrix_by_variant=variant_major_genotype_matrix,
+            chunk_stats=chunk_stats,
+        )
+        callback.finish()
+
+    np.testing.assert_array_equal(
+        np.asarray(mock_compute.call_args.kwargs["genotype_matrix_by_variant"]),
+        variant_major_genotype_matrix,
+    )
+    np.testing.assert_array_equal(np.asarray(mock_compute.call_args.kwargs["genotype_dosage_sum"]), [3.0, 7.0])
+    np.testing.assert_array_equal(np.asarray(mock_compute.call_args.kwargs["genotype_observation_count"]), [2, 2])
+    np.testing.assert_array_equal(
+        np.asarray(mock_compute.call_args.kwargs["genotype_imputed_dosage_square_sum"]),
+        [5.0, 13.0],
+    )
+    assert len(writer_sessions[0].native_chunks) == 1
+    assert len(writer_sessions[1].native_chunks) == 1
 
 
 def test_binary_callback_fails_when_null_logistic_does_not_converge() -> None:

@@ -494,3 +494,84 @@ def test_duplicate_phenotype_names_are_rejected() -> None:
 
     with pytest.raises(ValueError, match="Duplicate phenotype names are not allowed: trait"):
         config.RegenieConfig.from_options(raw_options)
+
+
+def test_config_helper_normalizers_cover_optional_and_trait_alias_paths() -> None:
+    assert config.split_name_list(None) == ()
+    assert config.split_name_list(" age, sex ,,") == ("age", "sex")
+    assert config.optional_string(123) == "123"
+    assert config.optional_string(None) is None
+    assert config.normalize_option_name("trait_type") == "trait_type"
+    assert (
+        config.floating_point_dtype_or_default(
+            None,
+            default=types.FloatingPointDtype.FLOAT32,
+        )
+        == types.FloatingPointDtype.FLOAT32
+    )
+    assert config.resolve_configured_trait_type({"trait_type": "binary"}) == types.RegenieTraitType.BINARY
+
+    merged_options = config.merge_option_dictionaries(
+        {"qt": True, "bt": False},
+        {"trait_type": "binary"},
+    )
+
+    assert merged_options["qt"] is False
+    assert merged_options["bt"] is True
+    with pytest.raises(ValueError, match="--qt and --bt are mutually exclusive"):
+        config.normalize_trait_type(qt=True, bt=True)
+
+
+def test_flatten_option_dictionary_preserves_unknown_sections_and_g_scalars() -> None:
+    flattened_options = config.flatten_option_dictionary(
+        {
+            "unknown": {"nested": "value"},
+            "g": {
+                "compute": {"device": "gpu"},
+                "output": {"format": "arrow"},
+                "diagnostics": {"log-file": "logs/g.jsonl"},
+                "scalar": True,
+            },
+        }
+    )
+
+    assert flattened_options["unknown"] == {"nested": "value"}
+    assert flattened_options["g-device"] == "gpu"
+    assert flattened_options["g-output-format"] == "arrow"
+    assert flattened_options["g-log-file"] == "logs/g.jsonl"
+    assert flattened_options["g-scalar"] is True
+
+
+def test_config_positive_validation_helpers_raise_clear_errors() -> None:
+    with pytest.raises(ValueError, match="--count must be positive"):
+        config.validate_positive_integer("--count", 0)
+    with pytest.raises(ValueError, match="--scale must be positive"):
+        config.validate_positive_float("--scale", 0.0)
+    with pytest.raises(ValueError, match=r"--probability must be less than 0\.5"):
+        config.validate_probability_floor("--probability", 0.5)
+
+
+def test_toml_serialization_emits_multi_column_and_binary_sections() -> None:
+    regenie_config = config.RegenieConfig(
+        input=config.InputConfig(
+            bgen=Path("dataset.bgen"),
+            sample=Path("dataset.sample"),
+            pheno_file=Path("phenotype.tsv"),
+            pheno_columns=("trait_a", "trait_b"),
+            covar_file=Path("covariates.tsv"),
+            covar_columns=("age", "sex"),
+            pred=Path("predictions.list"),
+        ),
+        trait=config.TraitConfig(trait_type=types.RegenieTraitType.BINARY),
+        binary=config.BinaryConfig(firth=True, approx=True, firth_se=True, spa=False, p_threshold=0.01),
+        g_output=config.GOutputConfig(out=Path("results/output")),
+    )
+
+    config_text = regenie_config.to_toml()
+
+    assert 'sample = "dataset.sample"' in config_text
+    assert 'phenoColList = "trait_a,trait_b"' in config_text
+    assert 'covarColList = "age,sex"' in config_text
+    assert 'pred = "predictions.list"' in config_text
+    assert "[binary]" in config_text
+    assert "firth = true" in config_text

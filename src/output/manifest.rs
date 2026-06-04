@@ -197,4 +197,9 @@ mod tests {
 
         std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
     }
+
+    #[test]
+    fn mark_finalized_ignores_path_without_parent() {
+        mark_run_manifest_finalized(Path::new("/"), 0, 0).expect("parentless path should be ignored");
+    }
 }

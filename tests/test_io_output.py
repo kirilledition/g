@@ -185,6 +185,113 @@ def test_resolve_output_run_paths_appends_mode_suffix(tmp_path: Path) -> None:
     assert output_run_paths.chunks_directory == tmp_path / "results/output.regenie2_linear.run/chunks"
 
 
+def test_output_manifest_helpers_cover_empty_paths_and_invalid_json(tmp_path: Path) -> None:
+    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "missing")
+    manifest_path = output.get_run_manifest_path(output_run_paths)
+    manifest_path.write_text("[]", encoding="utf-8")
+
+    assert output.build_chunk_file_name(7) == "chunk_000000007.arrow"
+    assert output.build_file_fingerprint(None) is None
+    assert output.normalize_execution_plan_value(Path("relative/path")) == "relative/path"
+    assert output.iter_sorted_chunk_file_paths(output_run_paths.chunks_directory) == ()
+    with pytest.raises(ValueError, match="must contain a JSON object"):
+        output.load_run_manifest(output_run_paths)
+
+
+def test_manifest_mismatch_path_reports_missing_and_nested_list_differences() -> None:
+    assert output.find_first_manifest_mismatch_path({"a": 1}, {"b": 1}, "root") == "root.a"
+    assert output.find_first_manifest_mismatch_path([{"a": 1}], [{"a": 2}], "root") == "root[0].a"
+    assert output.find_first_manifest_mismatch_path([1, 2], [1], "root") == "root"
+
+
+@pytest.mark.parametrize(
+    ("manifest", "message"),
+    [
+        ({"committed_chunks": "bad"}, "committed_chunks field must be a list"),
+        ({"committed_chunks": ["bad"]}, "committed chunk entries must be objects"),
+    ],
+)
+def test_read_manifest_committed_chunk_identifiers_rejects_invalid_shapes(
+    manifest: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        output.read_manifest_committed_chunk_identifiers(manifest)
+
+
+def test_strict_manifest_core_wrappers_normalize_and_validate_payloads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "chunks")
+    output_run_paths.chunks_directory.mkdir()
+    monkeypatch.setattr(output._core, "validate_strict_manifest_chunks", lambda *_arguments: [0, 2])
+    monkeypatch.setattr(
+        output._core,
+        "repair_strict_manifest_chunk_commits",
+        lambda *_arguments: json.dumps({"bad": "shape"}),
+    )
+
+    assert output.validate_strict_manifest_chunks(output_run_paths, {"committed_chunks": []}) == frozenset({0, 2})
+    with pytest.raises(ValueError, match="repaired committed chunks must be a list"):
+        output.repair_strict_manifest_chunk_commits(output_run_paths, {"committed_chunks": []})
+
+
+def test_initialize_output_run_uses_existing_manifest_when_current_manifest_is_missing(tmp_path: Path) -> None:
+    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "chunks")
+    output_run_paths.chunks_directory.mkdir()
+    existing_manifest = {"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION, "committed_chunks": []}
+    initialized_output_run = output.initialize_output_run(
+        output_run_paths=output_run_paths,
+        existing_manifest=existing_manifest,
+        current_header={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION},
+        resume=False,
+        resume_mode=types.ResumeMode.FAST,
+    )
+
+    written_manifest = json.loads(output.get_run_manifest_path(output_run_paths).read_text(encoding="utf-8"))
+    assert initialized_output_run.committed_chunk_identifiers == frozenset()
+    assert written_manifest["schema_version"] == output.RUN_MANIFEST_SCHEMA_VERSION
+    assert written_manifest["committed_chunks"] == []
+
+
+def test_initialize_output_run_rejects_existing_manifest_with_invalid_commits(tmp_path: Path) -> None:
+    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "chunks")
+    output_run_paths.chunks_directory.mkdir()
+
+    with pytest.raises(ValueError, match="committed_chunks field must be a list"):
+        output.initialize_output_run(
+            output_run_paths=output_run_paths,
+            existing_manifest={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION, "committed_chunks": "bad"},
+            current_header={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION},
+            resume=False,
+            resume_mode=types.ResumeMode.FAST,
+        )
+
+
+def test_initialize_output_run_rejects_resume_without_manifest(tmp_path: Path) -> None:
+    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "chunks")
+    output_run_paths.chunks_directory.mkdir()
+
+    with pytest.raises(ValueError, match=r"Resume requires run_manifest\.json"):
+        output.initialize_output_run(
+            output_run_paths=output_run_paths,
+            existing_manifest=None,
+            current_header={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION},
+            resume=True,
+            resume_mode=types.ResumeMode.FAST,
+        )
+
+
+def test_prepare_output_run_rejects_resume_without_manifest(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match=r"Resume requires run_manifest\.json"):
+        output.prepare_output_run(
+            output_root=tmp_path / "output",
+            association_mode=AssociationMode.REGENIE2_LINEAR,
+            resume=True,
+        )
+
+
 def test_scan_committed_chunk_identifiers_reads_arrow_metadata(tmp_path: Path) -> None:
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
     write_native_chunks(output_run_paths, AssociationMode.REGENIE2_LINEAR)
