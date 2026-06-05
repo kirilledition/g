@@ -14,3 +14,4 @@ pub use error::BgenError;
 pub use format::CompressionType;
 pub use profile::ReaderProfileSnapshot;
 pub use reader::BgenReaderCore;
+pub use simd::set_bgen_simd_mode;

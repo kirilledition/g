@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from g import execution_plan, types
-from g.interface import config, options
+from g.interface import config, defaults, options
 
 
 def build_valid_quantitative_options() -> dict[str, object]:
@@ -62,6 +62,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-firth-maximum-step-size": 4.0,
         "g-use-block-firth-math": True,
         "g-bgen-decode-tile-variant-count": 32,
+        "g-bgen-simd": "scalar",
         "g-gpu-genotype-format": "dosage",
         "g-score-dtype": "float64",
         "g-firth-dtype": "float64",
@@ -104,6 +105,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_compute.binary_relative_variance_tolerance == 2.0e-6
     assert regenie_config.g_compute.use_block_firth_math is True
     assert regenie_config.g_compute.bgen_decode_tile_variant_count == 32
+    assert regenie_config.g_compute.bgen_simd == types.BgenSimdMode.SCALAR
     assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE
     assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_compute.firth_dtype == types.FloatingPointDtype.FLOAT64
@@ -136,6 +138,30 @@ def test_every_supported_option_has_explain_metadata() -> None:
         assert option_name in explanation
 
 
+def test_packaged_default_catalog_matches_option_policies() -> None:
+    default_catalog = defaults.load_default_option_catalog()
+    defaulted_option_names = {
+        option_spec.name
+        for option_spec in options.OPTION_SPECS
+        if option_spec.default_policy == options.DefaultPolicy.VALUE
+    }
+    non_defaultable_option_names = {
+        option_spec.name
+        for option_spec in options.OPTION_SPECS
+        if option_spec.default_policy
+        in {
+            options.DefaultPolicy.ABSENT_IS_NONE,
+            options.DefaultPolicy.REQUIRED_AT_RUNTIME,
+            options.DefaultPolicy.UNSUPPORTED,
+            options.DefaultPolicy.DERIVED,
+        }
+    }
+
+    assert set(default_catalog.normalized_options) == defaulted_option_names
+    assert not set(default_catalog.normalized_options) & non_defaultable_option_names
+    assert len(default_catalog.default_config_hash) == 64
+
+
 def test_logging_diagnostics_default_to_info_stderr() -> None:
     diagnostics_config = config.GDiagnosticsConfig()
 
@@ -157,9 +183,10 @@ def test_logging_diagnostics_default_to_info_stderr() -> None:
 def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
 
-    assert config.load_default_option_dictionary()["trait"]["bsize"] == config.DEFAULT_BSIZE
-    assert regenie_config.trait.bsize == config.DEFAULT_BSIZE
+    assert config.load_default_option_dictionary()["trait"]["bsize"] == config.default_int_option("bsize")
+    assert regenie_config.trait.bsize == config.default_int_option("bsize")
     assert regenie_config.g_compute.device == types.Device.CPU
+    assert regenie_config.g_compute.bgen_simd == types.BgenSimdMode.AUTO
     assert regenie_config.g_compute.null_logistic_nonconvergence_policy == types.NullLogisticNonconvergencePolicy.FAIL
     assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT32
     assert regenie_config.g_compute.firth_dtype == types.FloatingPointDtype.FLOAT64
@@ -167,7 +194,7 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     assert regenie_config.g_compute.jax_enable_x64 is True
     assert regenie_config.g_compute.jax_persistent_cache is True
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
-    assert regenie_config.g_diagnostics.log_filter == config.DEFAULT_LOG_FILTER
+    assert regenie_config.g_diagnostics.log_filter == config.default_string_option("g-log-filter")
     assert "pThresh" not in regenie_config.explicit_options
     assert "firth" not in regenie_config.explicit_options
 
@@ -245,6 +272,7 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
             "g-output-arrow-compression": "none",
             "g-firth-batch-size": 8,
             "g-null-logistic-nonconvergence": "warn",
+            "g-bgen-simd": "avx2",
             "g-score-dtype": "float64",
             "g-firth-dtype": "float64",
             "g-jax-enable-x64": True,
@@ -296,7 +324,7 @@ def test_unknown_and_unsupported_options_raise_clear_errors() -> None:
     with pytest.raises(ValueError, match="Unknown g regenie option: g-allow-duplicate-iid-alignment"):
         config.RegenieConfig.from_options({"g-allow-duplicate-iid-alignment": True})
 
-    with pytest.raises(ValueError, match="Unknown g regenie option: g-allow-duplicate-iid-alignment"):
+    with pytest.raises(ValueError, match=r"Unknown g regenie option: g\.compute\.allow-duplicate-iid-alignment"):
         config.RegenieConfig.from_options({"g": {"compute": {"allow-duplicate-iid-alignment": True}}})
 
     with pytest.raises(ValueError, match="valid REGENIE option"):
@@ -463,7 +491,7 @@ def test_repeated_and_list_columns_are_mutually_exclusive() -> None:
         ("approx", True),
         ("firth-se", True),
         ("spa", True),
-        ("pThresh", config.DEFAULT_P_THRESHOLD),
+        ("pThresh", config.default_float_option("pThresh")),
     ],
 )
 def test_quantitative_trait_rejects_explicit_binary_only_options(option_name: str, option_value: object) -> None:
@@ -477,7 +505,7 @@ def test_quantitative_trait_rejects_explicit_binary_only_options(option_name: st
 def test_quantitative_trait_accepts_defaulted_binary_threshold() -> None:
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
 
-    assert regenie_config.binary.p_threshold == config.DEFAULT_P_THRESHOLD
+    assert regenie_config.binary.p_threshold == config.default_float_option("pThresh")
 
 
 def test_output_tuning_defaults_come_from_packaged_default_config() -> None:
@@ -544,6 +572,7 @@ def test_config_helper_normalizers_cover_optional_and_trait_alias_paths() -> Non
     assert config.optional_string(123) == "123"
     assert config.optional_string(None) is None
     assert config.normalize_option_name("trait_type") == "trait_type"
+    assert config.normalize_option_name("g_null_logistic_nonconvergence_policy") == "g-null-logistic-nonconvergence"
     assert (
         config.floating_point_dtype_or_default(
             None,
@@ -577,11 +606,11 @@ def test_flatten_option_dictionary_preserves_unknown_sections_and_g_scalars() ->
         }
     )
 
-    assert flattened_options["unknown"] == {"nested": "value"}
+    assert flattened_options["unknown.nested"] == "value"
     assert flattened_options["g-device"] == "gpu"
     assert flattened_options["g-output-format"] == "arrow"
     assert flattened_options["g-log-file"] == "logs/g.jsonl"
-    assert flattened_options["g-scalar"] is True
+    assert flattened_options["g.scalar"] is True
 
 
 def test_config_positive_validation_helpers_raise_clear_errors() -> None:

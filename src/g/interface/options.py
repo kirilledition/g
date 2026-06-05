@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import enum
 import typing
 from dataclasses import dataclass
@@ -28,6 +29,16 @@ class OptionValueType(enum.StrEnum):
     PATH = "path"
 
 
+class DefaultPolicy(enum.StrEnum):
+    """Default ownership policy for a user-facing option."""
+
+    VALUE = "value"
+    ABSENT_IS_NONE = "absent_is_none"
+    REQUIRED_AT_RUNTIME = "required_at_runtime"
+    DERIVED = "derived"
+    UNSUPPORTED = "unsupported"
+
+
 @dataclass(frozen=True)
 class OptionSpec:
     """Metadata for one CLI and TOML option.
@@ -40,10 +51,12 @@ class OptionSpec:
         help_text: Concise user-facing description.
         cli_flags: Click-style CLI flags.
         type: Scalar value kind.
-        default: Unspecified CLI default value.
         multiple: Whether the option may be repeated.
         is_flag: Whether the option is a boolean flag.
         accepted_values: Accepted string values for choice options.
+        toml_key: Key within the TOML section.
+        default_policy: Where the option's default comes from.
+        python_aliases: Additional Python option aliases.
 
     """
 
@@ -54,10 +67,12 @@ class OptionSpec:
     help_text: str
     cli_flags: tuple[str, ...] = ()
     type: OptionValueType = OptionValueType.STRING
-    default: object | None = None
     multiple: bool = False
     is_flag: bool = False
     accepted_values: tuple[str, ...] = ()
+    toml_key: str | None = None
+    default_policy: DefaultPolicy = DefaultPolicy.ABSENT_IS_NONE
+    python_aliases: tuple[str, ...] = ()
 
 
 DEVICE_VALUES = tuple(item.value for item in types.Device)
@@ -70,6 +85,7 @@ RESUME_MODE_VALUES = tuple(item.value for item in types.ResumeMode)
 JAX_MATMUL_PRECISION_VALUES = tuple(item.value for item in types.JaxMatmulPrecision)
 FLOATING_POINT_DTYPE_VALUES = tuple(item.value for item in types.FloatingPointDtype)
 GPU_GENOTYPE_FORMAT_VALUES = tuple(item.value for item in types.GpuGenotypeFormat)
+BGEN_SIMD_MODE_VALUES = tuple(item.value for item in types.BgenSimdMode)
 ARROW_COMPRESSION_VALUES = tuple(item.value for item in types.ArrowCompression)
 TELEMETRY_MODE_VALUES = tuple(item.value for item in types.TelemetryMode)
 
@@ -718,6 +734,15 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         type=OptionValueType.INTEGER,
     ),
     OptionSpec(
+        "g-bgen-simd",
+        "g_bgen_simd",
+        SupportLevel.G_EXTENSION,
+        "g.compute",
+        "Native BGEN SIMD implementation selector.",
+        cli_flags=("--g-bgen-simd", "g_bgen_simd"),
+        accepted_values=BGEN_SIMD_MODE_VALUES,
+    ),
+    OptionSpec(
         "g-gpu-genotype-format",
         "g_gpu_genotype_format",
         SupportLevel.G_EXTENSION,
@@ -980,10 +1005,181 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
     ),
 )
 
-OPTION_SPECS: tuple[OptionSpec, ...] = SUPPORTED_REGENIE_OPTIONS + UNSUPPORTED_REGENIE_OPTIONS + G_OPTIONS
+VALUE_OPTION_NAMES = frozenset(
+    {
+        "step",
+        "qt",
+        "bt",
+        "bsize",
+        "firth",
+        "approx",
+        "pThresh",
+        "firth-se",
+        "g-device",
+        "g-staging-depth",
+        "g-trusted-no-missing-diploid",
+        "g-trusted-bgen-validation-mode",
+        "g-sample-key-mode",
+        "g-multi-phenotype-sample-mode",
+        "g-firth-batch-size",
+        "g-firth-candidate-capacity",
+        "g-binary-null-maximum-iterations",
+        "g-binary-null-coefficient-tolerance",
+        "g-null-logistic-nonconvergence",
+        "g-binary-minimum-probability",
+        "g-binary-minimum-variance",
+        "g-binary-relative-variance-tolerance",
+        "g-firth-maximum-iterations",
+        "g-firth-gradient-tolerance",
+        "g-firth-coefficient-tolerance",
+        "g-firth-likelihood-tolerance",
+        "g-firth-maximum-step-size",
+        "g-firth-pseudo-maximum-iterations",
+        "g-firth-pseudo-inner-maximum-iterations",
+        "g-firth-newton-raphson-zero-start-iterations",
+        "g-firth-line-search-maximum-attempts",
+        "g-firth-step-halving-maximum-attempts",
+        "g-firth-initial-response-scale",
+        "g-firth-sparse-carrier-dosage-threshold",
+        "g-firth-step-halving-scale",
+        "g-null-firth-maximum-iterations",
+        "g-null-firth-gradient-tolerance",
+        "g-null-firth-maximum-step-size",
+        "g-null-firth-fallback-iteration-multiplier",
+        "g-null-firth-fallback-step-divisor",
+        "g-null-firth-line-search-maximum-attempts",
+        "g-null-firth-step-halving-scale",
+        "g-use-block-firth-math",
+        "g-bgen-decode-tile-variant-count",
+        "g-bgen-simd",
+        "g-gpu-genotype-format",
+        "g-score-dtype",
+        "g-firth-dtype",
+        "g-jax-enable-x64",
+        "g-jax-persistent-cache",
+        "g-jax-persistent-cache-min-entry-size-bytes",
+        "g-jax-persistent-cache-min-compile-time-seconds",
+        "g-jax-xla-autotune-cache",
+        "g-jax-transfer-guard",
+        "g-output-format",
+        "g-writer-threads",
+        "g-writer-queue-depth",
+        "g-output-chunks-per-arrow-file",
+        "g-output-arrow-compression",
+        "g-resume",
+        "g-resume-mode",
+        "g-finalize-parquet",
+        "g-telemetry",
+        "g-log-filter",
+        "g-log-stderr",
+        "g-progress-interval-seconds",
+        "g-progress-interval-chunks",
+        "g-trace-filter",
+        "g-log-queue-size",
+        "g-log-lossy",
+        "g-include-source-location",
+        "g-include-span-events",
+    }
+)
+
+REQUIRED_RUNTIME_OPTION_NAMES = frozenset({"bgen", "phenoFile", "phenoCol", "phenoColList", "pred", "out"})
+
+TOML_KEY_BY_NAME = {
+    "g-output-format": "format",
+    "g-output-chunks-per-arrow-file": "chunks-per-arrow-file",
+    "g-output-arrow-compression": "arrow-compression",
+    "g-telemetry": "telemetry",
+}
+
+PYTHON_ALIASES_BY_NAME = {
+    "phenoFile": ("pheno",),
+    "phenoCol": ("pheno_name",),
+    "covarFile": ("covar",),
+    "covarColList": ("covar_names",),
+    "pThresh": ("p_thresh",),
+    "bsize": ("chunk_size",),
+    "g-device": ("device",),
+    "g-staging-depth": ("staging_depth",),
+    "g-variant-limit": ("variant_limit",),
+    "g-trusted-no-missing-diploid": ("trusted_no_missing_diploid",),
+    "g-trusted-bgen-validation-mode": ("trusted_bgen_validation_mode",),
+    "g-sample-key-mode": ("sample_key_mode",),
+    "g-multi-phenotype-sample-mode": ("multi_phenotype_sample_mode",),
+    "g-null-logistic-nonconvergence": ("g_null_logistic_nonconvergence_policy",),
+    "g-output-format": ("output_format",),
+    "g-output-run-directory": ("output_run_directory",),
+    "g-writer-threads": ("output_writer_thread_count",),
+    "g-writer-queue-depth": ("output_writer_queue_depth",),
+    "g-resume": ("resume",),
+    "g-resume-mode": ("resume_mode",),
+    "g-finalize-parquet": ("finalize_parquet",),
+    "g-gpu-genotype-format": ("gpu_genotype_format",),
+    "g-telemetry": ("telemetry",),
+    "g-log-dir": ("log_dir",),
+    "g-log-filter": ("log_filter",),
+    "g-log-file": ("log_file",),
+    "g-log-stderr": ("log_stderr",),
+    "g-progress-interval-seconds": ("progress_interval_seconds",),
+    "g-progress-interval-chunks": ("progress_interval_chunks",),
+    "g-profile-summary-json": ("profile_summary_json",),
+    "g-trace-file": ("trace_file",),
+    "g-trace-filter": ("trace_filter",),
+    "g-log-queue-size": ("log_queue_size",),
+    "g-log-lossy": ("log_lossy",),
+    "g-include-source-location": ("include_source_location",),
+    "g-include-span-events": ("include_span_events",),
+}
+
+
+def default_policy_for_option(option_spec: OptionSpec) -> DefaultPolicy:
+    """Return the default policy for an option."""
+    if option_spec.support_level == SupportLevel.RECOGNIZED_UNSUPPORTED:
+        return DefaultPolicy.UNSUPPORTED
+    if option_spec.name in REQUIRED_RUNTIME_OPTION_NAMES:
+        return DefaultPolicy.REQUIRED_AT_RUNTIME
+    if option_spec.name in VALUE_OPTION_NAMES:
+        return DefaultPolicy.VALUE
+    return DefaultPolicy.ABSENT_IS_NONE
+
+
+def toml_key_for_option(option_spec: OptionSpec) -> str:
+    """Return the TOML key for an option."""
+    explicit_toml_key = TOML_KEY_BY_NAME.get(option_spec.name)
+    if explicit_toml_key is not None:
+        return explicit_toml_key
+    if option_spec.section.startswith("g.") and option_spec.name.startswith("g-"):
+        return option_spec.name.removeprefix("g-")
+    return option_spec.name
+
+
+def enrich_option_spec(option_spec: OptionSpec) -> OptionSpec:
+    """Fill derived metadata for an option spec."""
+    python_aliases = tuple(
+        alias
+        for alias in (option_spec.destination, *PYTHON_ALIASES_BY_NAME.get(option_spec.name, ()))
+        if alias != option_spec.name
+    )
+    return dataclasses.replace(
+        option_spec,
+        toml_key=toml_key_for_option(option_spec),
+        default_policy=default_policy_for_option(option_spec),
+        python_aliases=python_aliases,
+    )
+
+
+OPTION_SPECS: tuple[OptionSpec, ...] = tuple(
+    enrich_option_spec(option_spec)
+    for option_spec in SUPPORTED_REGENIE_OPTIONS + UNSUPPORTED_REGENIE_OPTIONS + G_OPTIONS
+)
 OPTION_SPEC_BY_NAME: dict[str, OptionSpec] = {option_spec.name: option_spec for option_spec in OPTION_SPECS}
 OPTION_SPEC_BY_DESTINATION: dict[str, OptionSpec] = {
     option_spec.destination: option_spec for option_spec in OPTION_SPECS
+}
+OPTION_SPEC_BY_TOML_PATH: dict[tuple[str, str], OptionSpec] = {
+    (option_spec.section, typing.cast("str", option_spec.toml_key)): option_spec for option_spec in OPTION_SPECS
+}
+OPTION_SPEC_BY_PYTHON_ALIAS: dict[str, OptionSpec] = {
+    python_alias: option_spec for option_spec in OPTION_SPECS for python_alias in option_spec.python_aliases
 }
 
 

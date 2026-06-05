@@ -107,6 +107,7 @@ def build_test_header(
     association_mode: AssociationMode = AssociationMode.REGENIE2_LINEAR,
     binary_kernel_config: typing.Any | None = None,
     jax_enable_x64: bool = True,
+    bgen_simd: types.BgenSimdMode = types.BgenSimdMode.AUTO,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     firth_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT64,
@@ -135,6 +136,7 @@ def build_test_header(
         trusted_no_missing_diploid=False,
         sample_key_mode=types.SampleKeyMode.IID,
         binary_kernel_config=binary_kernel_config,
+        bgen_simd=bgen_simd,
         jax_enable_x64=jax_enable_x64,
         gpu_genotype_format=gpu_genotype_format,
         score_dtype=score_dtype,
@@ -170,6 +172,13 @@ def test_current_run_manifest_records_gpu_genotype_format(tmp_path: Path) -> Non
 
     assert current_header["gpu_genotype_format"] == "packed8"
     assert current_header["execution_plan"]["gpu_genotype_format"] == "packed8"
+
+
+def test_current_run_manifest_records_bgen_simd_mode(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path, bgen_simd=types.BgenSimdMode.SCALAR)
+
+    assert current_header["bgen_simd"] == "scalar"
+    assert current_header["execution_plan"]["bgen_simd"] == "scalar"
 
 
 def initialize_test_output_run(
@@ -622,6 +631,7 @@ def build_test_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConf
         ("sample_key_mode", "fid_iid"),
         ("output_schema_version", 2),
         ("bgen_decode_tile_variant_count", 128),
+        ("bgen_simd", "scalar"),
         ("jax_policy", {"device": "gpu", "enable_x64": True, "matmul_precision": "highest"}),
         ("gpu_genotype_format", "packed8"),
         ("score_dtype", "float64"),
@@ -684,6 +694,7 @@ def test_initialize_output_run_rejects_manifest_header_mismatch(
         ("output_schema_version", 2),
         ("trusted_no_missing_diploid", True),
         ("bgen_decode_tile_variant_count", 128),
+        ("bgen_simd", "scalar"),
         ("gpu_genotype_format", "packed8"),
         ("score_dtype", "float64"),
         ("firth_dtype", "float32"),

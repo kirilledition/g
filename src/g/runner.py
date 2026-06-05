@@ -271,6 +271,7 @@ def configure_runtime(compute_config: config.GComputeConfig, trait_config: confi
     core_module = importlib.import_module("g._core")
     logger.debug("Configuring native runtime knobs.")
     core_module.configure_bgen_decode_tile_variant_count(compute_config.bgen_decode_tile_variant_count)
+    core_module.configure_bgen_simd_mode(compute_config.bgen_simd.value)
     if trait_config.threads is not None:
         with contextlib.suppress(RuntimeError):
             core_module.configure_rayon_global_thread_pool(trait_config.threads)
@@ -496,6 +497,7 @@ def build_common_engine_arguments(
         "trusted_no_missing_diploid": plan.kernel_config.trusted_no_missing_diploid,
         "trusted_bgen_validation_mode": plan.kernel_config.trusted_bgen_validation_mode,
         "bgen_decode_tile_variant_count": plan.kernel_config.bgen_decode_tile_variant_count,
+        "bgen_simd": plan.kernel_config.bgen_simd,
         "jax_device": plan.kernel_config.device,
         "jax_matmul_precision": plan.kernel_config.alignment_config.jax_matmul_precision,
         "jax_enable_x64": plan.kernel_config.alignment_config.jax_enable_x64,
@@ -727,6 +729,7 @@ def extend_run_manifest(
         "chunks_per_arrow_file": plan.output_plan.chunks_per_arrow_file,
         "arrow_compression": plan.output_plan.arrow_compression.value,
         "bgen_decode_tile_variant_count": plan.kernel_config.bgen_decode_tile_variant_count,
+        "bgen_simd": plan.kernel_config.bgen_simd.value,
         "trusted_no_missing_diploid": plan.kernel_config.trusted_no_missing_diploid,
         "trusted_bgen_validation_mode": plan.kernel_config.trusted_bgen_validation_mode.value,
     }

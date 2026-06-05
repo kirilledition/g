@@ -94,6 +94,8 @@ def test_regenie_command_dispatches_config_api() -> None:
                 "4096",
                 "--g-device",
                 "gpu",
+                "--g-bgen-simd",
+                "scalar",
                 "--g-output-format",
                 "parquet",
                 "--g-log-filter",
@@ -129,6 +131,7 @@ def test_regenie_command_dispatches_config_api() -> None:
     assert regenie_config.input.covar_columns == ("age", "sex")
     assert regenie_config.trait.bsize == 4096
     assert regenie_config.g_compute.device == types.Device.GPU
+    assert regenie_config.g_compute.bgen_simd == types.BgenSimdMode.SCALAR
     assert regenie_config.g_diagnostics.log_filter == "g=info"
     assert regenie_config.g_diagnostics.log_file == Path("logs/g.jsonl")
     assert regenie_config.g_diagnostics.log_stderr is False
@@ -168,7 +171,7 @@ def test_regenie_command_loads_packaged_default_toml() -> None:
     assert result.exit_code == 0
     regenie_config = mock_regenie_api.call_args.args[0]
     assert regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
-    assert regenie_config.trait.bsize == config.DEFAULT_BSIZE
+    assert regenie_config.trait.bsize == config.default_int_option("bsize")
     assert regenie_config.g_compute.device == types.Device.CPU
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
 
@@ -427,8 +430,10 @@ def test_config_subcommands_render_and_validate(tmp_path: Path) -> None:
 
     assert init_result.exit_code == 0
     assert config_path.exists()
+    assert read_raw_toml(config_path)["trait"]["step"] == 2
     validate_result = runner.invoke(app, ["config", "validate", str(config_path)])
-    assert validate_result.exit_code == 0
+    assert validate_result.exit_code != 0
+    assert "Exactly one genotype source" in validate_result.output
     explain_result = runner.invoke(app, ["config", "explain", "bgen"])
     assert explain_result.exit_code == 0
     assert "supported" in explain_result.output

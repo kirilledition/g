@@ -7,7 +7,6 @@ bsize = 16384
 [binary]
 firth = false
 approx = false
-spa = false
 pThresh = 0.05
 firth-se = false
 
@@ -48,6 +47,7 @@ null-firth-line-search-maximum-attempts = 25
 null-firth-step-halving-scale = 0.5
 use-block-firth-math = false
 bgen-decode-tile-variant-count = 64
+bgen-simd = "auto"
 gpu-genotype-format = "dosage"
 # Score-test kernels default to the float32 fast path. Use float64 only when
 # parity or numerical debugging needs outweigh throughput.

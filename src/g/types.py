@@ -55,6 +55,14 @@ class GpuGenotypeFormat(enum.StrEnum):
     PACKED8 = "packed8"
 
 
+class BgenSimdMode(enum.StrEnum):
+    """Native BGEN SIMD implementation selector."""
+
+    AUTO = "auto"
+    SCALAR = "scalar"
+    AVX2 = "avx2"
+
+
 class ArrowCompression(enum.StrEnum):
     """Arrow IPC compression codec for internal chunk files."""
 

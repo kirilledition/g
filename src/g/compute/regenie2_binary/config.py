@@ -4,37 +4,55 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-MINIMUM_PROBABILITY = 1.0e-6
-MINIMUM_VARIANCE = 1.0e-8
-RELATIVE_VARIANCE_TOLERANCE = 1.0e-6
-DEFAULT_MAXIMUM_NULL_ITERATIONS = 50
-NULL_LOGISTIC_COEFFICIENT_TOLERANCE = 1.0e-6
+from g.interface import config as interface_config
+
+PACKAGED_MINIMUM_PROBABILITY = interface_config.default_float_option("g-binary-minimum-probability")
+PACKAGED_MINIMUM_VARIANCE = interface_config.default_float_option("g-binary-minimum-variance")
+PACKAGED_RELATIVE_VARIANCE_TOLERANCE = interface_config.default_float_option("g-binary-relative-variance-tolerance")
+PACKAGED_MAXIMUM_NULL_ITERATIONS = interface_config.default_int_option("g-binary-null-maximum-iterations")
+PACKAGED_NULL_LOGISTIC_COEFFICIENT_TOLERANCE = interface_config.default_float_option(
+    "g-binary-null-coefficient-tolerance"
+)
 BINARY_CASE_THRESHOLD = 0.5
-FIRTH_GRADIENT_TOLERANCE = 2.5e-4
-FIRTH_COEFFICIENT_TOLERANCE = 2.5e-4
-FIRTH_LIKELIHOOD_TOLERANCE = 2.5e-4
-FIRTH_MAXIMUM_STEP_SIZE = 5.0
-FIRTH_MAXIMUM_ITERATIONS = 250
-FIRTH_PSEUDO_MAXIMUM_ITERATIONS = 50
-FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS = 25
-FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS = 100
-FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
-FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS = 12
-FIRTH_INITIAL_RESPONSE_SCALE = 4.863891244002886
-FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD = 1.0e-4
-FIRTH_STEP_HALVING_SCALE = 0.5
-NULL_FIRTH_MAXIMUM_ITERATIONS = 1000
-NULL_FIRTH_GRADIENT_TOLERANCE = 50.0e-6
-NULL_FIRTH_MAXIMUM_STEP_SIZE = 25.0
-NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER = 5
-NULL_FIRTH_FALLBACK_STEP_DIVISOR = 5.0
-NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
-NULL_FIRTH_STEP_HALVING_SCALE = 0.5
+PACKAGED_FIRTH_GRADIENT_TOLERANCE = interface_config.default_float_option("g-firth-gradient-tolerance")
+PACKAGED_FIRTH_COEFFICIENT_TOLERANCE = interface_config.default_float_option("g-firth-coefficient-tolerance")
+PACKAGED_FIRTH_LIKELIHOOD_TOLERANCE = interface_config.default_float_option("g-firth-likelihood-tolerance")
+PACKAGED_FIRTH_MAXIMUM_STEP_SIZE = interface_config.default_float_option("g-firth-maximum-step-size")
+PACKAGED_FIRTH_MAXIMUM_ITERATIONS = interface_config.default_int_option("g-firth-maximum-iterations")
+PACKAGED_FIRTH_PSEUDO_MAXIMUM_ITERATIONS = interface_config.default_int_option("g-firth-pseudo-maximum-iterations")
+PACKAGED_FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS = interface_config.default_int_option(
+    "g-firth-pseudo-inner-maximum-iterations"
+)
+PACKAGED_FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS = interface_config.default_int_option(
+    "g-firth-newton-raphson-zero-start-iterations"
+)
+PACKAGED_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = interface_config.default_int_option(
+    "g-firth-line-search-maximum-attempts"
+)
+PACKAGED_FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS = interface_config.default_int_option(
+    "g-firth-step-halving-maximum-attempts"
+)
+PACKAGED_FIRTH_INITIAL_RESPONSE_SCALE = interface_config.default_float_option("g-firth-initial-response-scale")
+PACKAGED_FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD = interface_config.default_float_option(
+    "g-firth-sparse-carrier-dosage-threshold"
+)
+PACKAGED_FIRTH_STEP_HALVING_SCALE = interface_config.default_float_option("g-firth-step-halving-scale")
+PACKAGED_NULL_FIRTH_MAXIMUM_ITERATIONS = interface_config.default_int_option("g-null-firth-maximum-iterations")
+PACKAGED_NULL_FIRTH_GRADIENT_TOLERANCE = interface_config.default_float_option("g-null-firth-gradient-tolerance")
+PACKAGED_NULL_FIRTH_MAXIMUM_STEP_SIZE = interface_config.default_float_option("g-null-firth-maximum-step-size")
+PACKAGED_NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER = interface_config.default_int_option(
+    "g-null-firth-fallback-iteration-multiplier"
+)
+PACKAGED_NULL_FIRTH_FALLBACK_STEP_DIVISOR = interface_config.default_float_option("g-null-firth-fallback-step-divisor")
+PACKAGED_NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = interface_config.default_int_option(
+    "g-null-firth-line-search-maximum-attempts"
+)
+PACKAGED_NULL_FIRTH_STEP_HALVING_SCALE = interface_config.default_float_option("g-null-firth-step-halving-scale")
 REGENIE_LOGISTIC_MINIMUM_ETA = -30.0
 REGENIE_LOGISTIC_MAXIMUM_ETA = 30.0
 REGENIE_NUMERICAL_EPSILON = 10.0 * 2.220446049250313e-16
-DEFAULT_FIRTH_BATCH_SIZE = 64
-DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
+PACKAGED_FIRTH_BATCH_SIZE = interface_config.default_int_option("g-firth-batch-size")
+PACKAGED_FIRTH_CANDIDATE_CAPACITY = interface_config.default_int_option("g-firth-candidate-capacity")
 
 
 @dataclass(frozen=True)
@@ -141,14 +159,14 @@ class ApproximateFirthConfig:
     coefficient_tolerance: float
     likelihood_tolerance: float
     maximum_step_size: float
-    pseudo_maximum_iterations: int = FIRTH_PSEUDO_MAXIMUM_ITERATIONS
-    pseudo_inner_maximum_iterations: int = FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS
-    newton_raphson_zero_start_iterations: int = FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS
-    line_search_maximum_attempts: int = FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS
-    step_halving_maximum_attempts: int = FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS
-    initial_response_scale: float = FIRTH_INITIAL_RESPONSE_SCALE
-    sparse_carrier_dosage_threshold: float = FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD
-    step_halving_scale: float = FIRTH_STEP_HALVING_SCALE
+    pseudo_maximum_iterations: int = PACKAGED_FIRTH_PSEUDO_MAXIMUM_ITERATIONS
+    pseudo_inner_maximum_iterations: int = PACKAGED_FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS
+    newton_raphson_zero_start_iterations: int = PACKAGED_FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS
+    line_search_maximum_attempts: int = PACKAGED_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS
+    step_halving_maximum_attempts: int = PACKAGED_FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS
+    initial_response_scale: float = PACKAGED_FIRTH_INITIAL_RESPONSE_SCALE
+    sparse_carrier_dosage_threshold: float = PACKAGED_FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD
+    step_halving_scale: float = PACKAGED_FIRTH_STEP_HALVING_SCALE
     use_block_math: bool = False
 
     def __post_init__(self) -> None:
@@ -209,13 +227,13 @@ class NullFirthConfig:
 
     """
 
-    maximum_iterations: int = NULL_FIRTH_MAXIMUM_ITERATIONS
-    gradient_tolerance: float = NULL_FIRTH_GRADIENT_TOLERANCE
-    maximum_step_size: float = NULL_FIRTH_MAXIMUM_STEP_SIZE
-    fallback_iteration_multiplier: int = NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER
-    fallback_step_divisor: float = NULL_FIRTH_FALLBACK_STEP_DIVISOR
-    line_search_maximum_attempts: int = NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS
-    step_halving_scale: float = NULL_FIRTH_STEP_HALVING_SCALE
+    maximum_iterations: int = PACKAGED_NULL_FIRTH_MAXIMUM_ITERATIONS
+    gradient_tolerance: float = PACKAGED_NULL_FIRTH_GRADIENT_TOLERANCE
+    maximum_step_size: float = PACKAGED_NULL_FIRTH_MAXIMUM_STEP_SIZE
+    fallback_iteration_multiplier: int = PACKAGED_NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER
+    fallback_step_divisor: float = PACKAGED_NULL_FIRTH_FALLBACK_STEP_DIVISOR
+    line_search_maximum_attempts: int = PACKAGED_NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS
+    step_halving_scale: float = PACKAGED_NULL_FIRTH_STEP_HALVING_SCALE
 
     def __post_init__(self) -> None:
         """Validate null Firth settings."""
@@ -264,41 +282,41 @@ class BinaryKernelConfig:
 
 DEFAULT_BINARY_KERNEL_CONFIG = BinaryKernelConfig(
     numerical=BinaryNumericalConfig(
-        minimum_probability=MINIMUM_PROBABILITY,
-        minimum_variance=MINIMUM_VARIANCE,
-        relative_variance_tolerance=RELATIVE_VARIANCE_TOLERANCE,
+        minimum_probability=PACKAGED_MINIMUM_PROBABILITY,
+        minimum_variance=PACKAGED_MINIMUM_VARIANCE,
+        relative_variance_tolerance=PACKAGED_RELATIVE_VARIANCE_TOLERANCE,
     ),
     null_logistic=BinaryNullLogisticConfig(
-        maximum_iterations=DEFAULT_MAXIMUM_NULL_ITERATIONS,
-        coefficient_tolerance=NULL_LOGISTIC_COEFFICIENT_TOLERANCE,
+        maximum_iterations=PACKAGED_MAXIMUM_NULL_ITERATIONS,
+        coefficient_tolerance=PACKAGED_NULL_LOGISTIC_COEFFICIENT_TOLERANCE,
     ),
     firth_candidate=FirthCandidateConfig(
-        batch_size=DEFAULT_FIRTH_BATCH_SIZE,
-        candidate_capacity=DEFAULT_FIRTH_CANDIDATE_CAPACITY,
+        batch_size=PACKAGED_FIRTH_BATCH_SIZE,
+        candidate_capacity=PACKAGED_FIRTH_CANDIDATE_CAPACITY,
     ),
     approximate_firth=ApproximateFirthConfig(
-        maximum_iterations=FIRTH_MAXIMUM_ITERATIONS,
-        gradient_tolerance=FIRTH_GRADIENT_TOLERANCE,
-        coefficient_tolerance=FIRTH_COEFFICIENT_TOLERANCE,
-        likelihood_tolerance=FIRTH_LIKELIHOOD_TOLERANCE,
-        maximum_step_size=FIRTH_MAXIMUM_STEP_SIZE,
-        pseudo_maximum_iterations=FIRTH_PSEUDO_MAXIMUM_ITERATIONS,
-        pseudo_inner_maximum_iterations=FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS,
-        newton_raphson_zero_start_iterations=FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS,
-        line_search_maximum_attempts=FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS,
-        step_halving_maximum_attempts=FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS,
-        initial_response_scale=FIRTH_INITIAL_RESPONSE_SCALE,
-        sparse_carrier_dosage_threshold=FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD,
-        step_halving_scale=FIRTH_STEP_HALVING_SCALE,
+        maximum_iterations=PACKAGED_FIRTH_MAXIMUM_ITERATIONS,
+        gradient_tolerance=PACKAGED_FIRTH_GRADIENT_TOLERANCE,
+        coefficient_tolerance=PACKAGED_FIRTH_COEFFICIENT_TOLERANCE,
+        likelihood_tolerance=PACKAGED_FIRTH_LIKELIHOOD_TOLERANCE,
+        maximum_step_size=PACKAGED_FIRTH_MAXIMUM_STEP_SIZE,
+        pseudo_maximum_iterations=PACKAGED_FIRTH_PSEUDO_MAXIMUM_ITERATIONS,
+        pseudo_inner_maximum_iterations=PACKAGED_FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS,
+        newton_raphson_zero_start_iterations=PACKAGED_FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS,
+        line_search_maximum_attempts=PACKAGED_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS,
+        step_halving_maximum_attempts=PACKAGED_FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS,
+        initial_response_scale=PACKAGED_FIRTH_INITIAL_RESPONSE_SCALE,
+        sparse_carrier_dosage_threshold=PACKAGED_FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD,
+        step_halving_scale=PACKAGED_FIRTH_STEP_HALVING_SCALE,
         use_block_math=False,
     ),
     null_firth=NullFirthConfig(
-        maximum_iterations=NULL_FIRTH_MAXIMUM_ITERATIONS,
-        gradient_tolerance=NULL_FIRTH_GRADIENT_TOLERANCE,
-        maximum_step_size=NULL_FIRTH_MAXIMUM_STEP_SIZE,
-        fallback_iteration_multiplier=NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER,
-        fallback_step_divisor=NULL_FIRTH_FALLBACK_STEP_DIVISOR,
-        line_search_maximum_attempts=NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS,
-        step_halving_scale=NULL_FIRTH_STEP_HALVING_SCALE,
+        maximum_iterations=PACKAGED_NULL_FIRTH_MAXIMUM_ITERATIONS,
+        gradient_tolerance=PACKAGED_NULL_FIRTH_GRADIENT_TOLERANCE,
+        maximum_step_size=PACKAGED_NULL_FIRTH_MAXIMUM_STEP_SIZE,
+        fallback_iteration_multiplier=PACKAGED_NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER,
+        fallback_step_divisor=PACKAGED_NULL_FIRTH_FALLBACK_STEP_DIVISOR,
+        line_search_maximum_attempts=PACKAGED_NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS,
+        step_halving_scale=PACKAGED_NULL_FIRTH_STEP_HALVING_SCALE,
     ),
 )

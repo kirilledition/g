@@ -431,12 +431,12 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
         log_filter="info",
         log_file=tmp_path / "logs" / "first.jsonl",
         log_stderr=True,
-        log_queue_size=config.DEFAULT_LOG_QUEUE_SIZE,
+        log_queue_size=config.default_int_option("g-log-queue-size"),
         log_lossy=True,
         include_source_location=False,
         include_span_events=False,
         trace_file=None,
-        trace_filter=config.DEFAULT_TRACE_FILTER,
+        trace_filter=config.default_string_option("g-trace-filter"),
     )
     diagnostics_config = config.GDiagnosticsConfig(log_file=tmp_path / "logs" / "second.jsonl")
 
@@ -449,11 +449,14 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
 
 
 def test_configure_runtime_sets_native_knobs_and_threads() -> None:
-    calls: list[tuple[str, int]] = []
+    calls: list[tuple[str, int | str]] = []
 
     class FakeCoreModule:
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
             calls.append(("tile", tile_variant_count))
+
+        def configure_bgen_simd_mode(self, mode: str) -> None:
+            calls.append(("simd", mode))
 
         def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
             calls.append(("threads", thread_count))
@@ -465,7 +468,7 @@ def test_configure_runtime_sets_native_knobs_and_threads() -> None:
         )
 
     mock_import_module.assert_called_once_with("g._core")
-    assert calls == [("tile", 32), ("threads", 4)]
+    assert calls == [("tile", 32), ("simd", "auto"), ("threads", 4)]
 
 
 def test_runtime_bootstrap_sets_jax_platform_before_setup_import() -> None:
@@ -925,5 +928,6 @@ def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
     assert manifest is not None
     assert manifest["command"]["interface"] == "g regenie"
     assert manifest["command"]["phenotype"] == "trait"
+    assert manifest["runtime"]["bgen_simd"] == "auto"
     assert manifest["bgen"] == {"path": "/inputs/dataset.bgen", "size": 1, "mtime_ns": 2}
     assert "input_fingerprints" not in manifest

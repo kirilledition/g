@@ -11,7 +11,7 @@ import click
 
 from g import api, types
 from g.engine import shutdown
-from g.interface import config, options
+from g.interface import config, defaults, options
 
 
 class NaturalOrderGroup(click.Group):
@@ -109,7 +109,7 @@ def build_regenie_config_from_cli(context: click.Context, parameters: dict[str, 
     raw_cli_options = explicit_cli_options(context, parameters)
     try:
         return config.from_option_layers(
-            base_options=config.load_default_option_dictionary(),
+            base_options=defaults.load_default_option_catalog().normalized_options,
             explicit_option_layers=(raw_toml_options, raw_cli_options),
         )
     except ValueError as error:
@@ -147,8 +147,8 @@ def click_keyword_arguments_for_option(option_spec: options.OptionSpec) -> dict[
     click_type = click_type_for_option(option_spec)
     if click_type is not None:
         keyword_arguments["type"] = click_type
-    if option_spec.default is not None or not option_spec.multiple:
-        keyword_arguments["default"] = option_spec.default
+    if not option_spec.multiple:
+        keyword_arguments["default"] = None
     if option_spec.multiple:
         keyword_arguments["multiple"] = True
     if option_spec.is_flag and not any("/" in flag for flag in option_spec.cli_flags):

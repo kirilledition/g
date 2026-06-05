@@ -540,7 +540,7 @@ def assert_test_fail_statistics_nan(
 def test_firth_candidate_capacity_uses_default() -> None:
     assert (
         regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.firth_candidate.candidate_capacity
-        == regenie2_binary_config.DEFAULT_FIRTH_CANDIDATE_CAPACITY
+        == regenie2_binary_config.PACKAGED_FIRTH_CANDIDATE_CAPACITY
     )
 
 
@@ -773,7 +773,7 @@ def test_score_only_chromosome_prep_skips_firth_null_fit(monkeypatch: pytest.Mon
 
     assert float(np.asarray(chromosome_state.null_firth_penalized_log_likelihood)) == 0.0
     assert int(np.asarray(chromosome_state.null_logistic_iteration_count)) <= (
-        regenie2_binary_config.DEFAULT_MAXIMUM_NULL_ITERATIONS
+        regenie2_binary_config.PACKAGED_MAXIMUM_NULL_ITERATIONS
     )
 
 

@@ -9,7 +9,7 @@ use numpy::{
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::genotype::bgen::{BgenError, ReaderProfileSnapshot, set_bgen_decode_tile_variant_count};
+use crate::genotype::bgen::{BgenError, ReaderProfileSnapshot, set_bgen_decode_tile_variant_count, set_bgen_simd_mode};
 use crate::genotype::common::{
     ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunkStats, GenotypeError, VariantMetadataColumns,
 };
@@ -1209,6 +1209,12 @@ fn configure_bgen_decode_tile_variant_count(tile_variant_count: usize) -> PyResu
 
 #[pyfunction]
 #[allow(clippy::missing_errors_doc)]
+fn configure_bgen_simd_mode(mode: &str) -> PyResult<()> {
+    set_bgen_simd_mode(mode).map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
+#[allow(clippy::missing_errors_doc)]
 fn configure_rayon_global_thread_pool(thread_count: usize) -> PyResult<()> {
     if thread_count == 0 {
         return Err(PyValueError::new_err("Rayon thread count must be positive."));
@@ -1236,6 +1242,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;
     module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;
+    module.add_function(wrap_pyfunction!(configure_bgen_simd_mode, module)?)?;
     module.add_function(wrap_pyfunction!(configure_rayon_global_thread_pool, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;
     module.add_function(wrap_pyfunction!(shutdown_logging, module)?)?;
