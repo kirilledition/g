@@ -6,11 +6,10 @@ import functools
 import hashlib
 import importlib.resources
 import json
-import tomllib
 import typing
 from dataclasses import dataclass
 
-from g.interface import options
+from g.interface import config_layers, options, toml_schema
 
 DEFAULT_CONFIG_RESOURCE = "config.default.toml"
 OPTION_SCHEMA_VERSION = 1
@@ -21,12 +20,14 @@ class DefaultOptionCatalog:
     """Validated packaged defaults.
 
     Attributes:
+        toml_config: Typed packaged TOML config.
         raw_toml: Packaged TOML dictionary.
         normalized_options: Defaults keyed by canonical option name.
         default_config_hash: Stable hash of the packaged defaults.
 
     """
 
+    toml_config: toml_schema.TomlConfig
     raw_toml: typing.Mapping[str, typing.Any]
     normalized_options: typing.Mapping[str, typing.Any]
     default_config_hash: str
@@ -35,27 +36,36 @@ class DefaultOptionCatalog:
 @functools.cache
 def load_default_option_catalog() -> DefaultOptionCatalog:
     """Load, normalize, validate, and hash packaged default options."""
-    raw_toml = load_raw_default_toml()
+    toml_config = load_default_toml_config()
+    raw_toml = config_layers.toml_config_to_builtin_mapping(toml_config)
     normalized_options = normalize_default_toml(raw_toml)
     validate_default_catalog(normalized_options)
     return DefaultOptionCatalog(
+        toml_config=toml_config,
         raw_toml=raw_toml,
         normalized_options=normalized_options,
         default_config_hash=build_default_config_hash(raw_toml),
     )
 
 
+def load_default_toml_config() -> toml_schema.TomlConfig:
+    """Load the packaged default TOML file into the typed schema."""
+    default_config_resource = importlib.resources.files("g").joinpath(DEFAULT_CONFIG_RESOURCE)
+    return config_layers.decode_toml_bytes(
+        default_config_resource.read_bytes(),
+        source=DEFAULT_CONFIG_RESOURCE,
+    )
+
+
 def load_raw_default_toml() -> dict[str, typing.Any]:
     """Load the packaged default TOML file."""
-    default_config_resource = importlib.resources.files("g").joinpath(DEFAULT_CONFIG_RESOURCE)
-    with default_config_resource.open("rb") as config_file:
-        return tomllib.load(config_file)
+    return dict(load_default_option_catalog().raw_toml)
 
 
 def normalize_default_toml(raw_toml: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
     """Normalize default TOML paths to canonical option names."""
     normalized_options: dict[str, typing.Any] = {}
-    for canonical_name, option_value in flatten_toml_options(raw_toml).items():
+    for canonical_name, option_value in config_layers.flatten_toml_mapping(raw_toml).items():
         if canonical_name in normalized_options:
             message = f"Default config contains duplicate default for {canonical_name!r}."
             raise ValueError(message)
@@ -65,39 +75,17 @@ def normalize_default_toml(raw_toml: typing.Mapping[str, typing.Any]) -> dict[st
 
 def flatten_toml_options(raw_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
     """Flatten TOML sections into canonical option names where possible."""
-    flattened_options: dict[str, typing.Any] = {}
-    for section_name, section_value in raw_options.items():
-        if isinstance(section_value, dict):
-            if section_name == "g":
-                flattened_options.update(flatten_g_toml_section(section_value))
-            else:
-                flattened_options.update(flatten_toml_section(section_name, section_value))
-        else:
-            flattened_options[section_name] = section_value
-    return flattened_options
+    return config_layers.flatten_toml_mapping(raw_options)
 
 
 def flatten_g_toml_section(raw_g_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
     """Flatten TOML tables below the reserved [g.*] namespace."""
-    flattened_options: dict[str, typing.Any] = {}
-    for section_name, section_value in raw_g_options.items():
-        if isinstance(section_value, dict):
-            flattened_options.update(flatten_toml_section(f"g.{section_name}", section_value))
-        else:
-            flattened_options[f"g.{section_name}"] = section_value
-    return flattened_options
+    return config_layers.flatten_g_toml_section(raw_g_options)
 
 
 def flatten_toml_section(section_name: str, section_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
     """Flatten one TOML section through the option registry."""
-    flattened_options: dict[str, typing.Any] = {}
-    for toml_key, option_value in section_options.items():
-        option_spec = options.OPTION_SPEC_BY_TOML_PATH.get((section_name, toml_key))
-        if option_spec is None:
-            flattened_options[f"{section_name}.{toml_key}"] = option_value
-        else:
-            flattened_options[option_spec.name] = option_value
-    return flattened_options
+    return config_layers.flatten_toml_section(section_name, section_options)
 
 
 def validate_default_catalog(normalized_options: typing.Mapping[str, typing.Any]) -> None:

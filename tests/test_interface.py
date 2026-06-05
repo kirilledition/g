@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from g import execution_plan, types
-from g.interface import config, defaults, options
+from g.interface import config, config_layers, defaults, options, toml_schema
 
 
 def build_valid_quantitative_options() -> dict[str, object]:
@@ -158,6 +158,49 @@ def test_packaged_default_catalog_matches_option_policies() -> None:
     assert set(default_catalog.normalized_options) == defaulted_option_names
     assert not set(default_catalog.normalized_options) & non_defaultable_option_names
     assert len(default_catalog.default_config_hash) == 64
+
+
+def test_typed_toml_schema_matches_option_registry() -> None:
+    assert toml_schema.schema_toml_paths() == frozenset(options.OPTION_SPEC_BY_TOML_PATH)
+
+
+def test_packaged_default_toml_decodes_to_typed_config() -> None:
+    default_catalog = defaults.load_default_option_catalog()
+
+    assert isinstance(default_catalog.toml_config, toml_schema.TomlConfig)
+    assert default_catalog.raw_toml["trait"]["step"] == 2
+    assert default_catalog.normalized_options["g-device"] == "cpu"
+
+
+def test_msgspec_toml_schema_rejects_unknown_keys_and_wrong_types() -> None:
+    with pytest.raises(ValueError, match="unknown field `not-a-real-key`"):
+        config_layers.decode_toml_bytes(
+            "[g.compute]\nnot-a-real-key = true\n",
+            source="inline",
+        )
+
+    with pytest.raises(ValueError, match="Expected `int`"):
+        config_layers.decode_toml_bytes(
+            '[trait]\nstep = "2"\n',
+            source="inline",
+        )
+
+
+def test_msgspec_toml_schema_rejects_removed_jax_x64_option() -> None:
+    with pytest.raises(ValueError, match="jax-enable-x64"):
+        config_layers.decode_toml_bytes(
+            "[g.compute]\njax-enable-x64 = false\n",
+            source="inline",
+        )
+
+
+def test_toml_metadata_is_accepted_but_not_an_option() -> None:
+    toml_config = config_layers.decode_toml_bytes(
+        '[metadata]\ncustom = "ignored"\n[trait]\nstep = 2\n',
+        source="inline",
+    )
+
+    assert config_layers.toml_config_to_option_dictionary(toml_config) == {"step": 2}
 
 
 def test_no_configurable_default_constants_reappear_in_source() -> None:

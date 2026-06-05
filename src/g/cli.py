@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-import tomllib
 import typing
 from pathlib import Path
 
@@ -11,7 +10,7 @@ import click
 
 from g import api, types
 from g.engine import shutdown
-from g.interface import config, defaults, options
+from g.interface import config, config_layers, defaults, options
 
 
 class NaturalOrderGroup(click.Group):
@@ -83,8 +82,7 @@ def read_raw_toml(path: Path | None) -> dict[str, typing.Any]:
     """Read a TOML file into a raw dictionary."""
     if path is None:
         return {}
-    with path.open("rb") as config_file:
-        return tomllib.load(config_file)
+    return config_layers.toml_config_to_builtin_mapping(config_layers.decode_toml_file(path))
 
 
 def explicit_cli_options(context: click.Context, parameters: dict[str, typing.Any]) -> dict[str, typing.Any]:
@@ -105,12 +103,15 @@ def explicit_cli_options(context: click.Context, parameters: dict[str, typing.An
 
 def build_regenie_config_from_cli(context: click.Context, parameters: dict[str, typing.Any]) -> config.RegenieConfig:
     """Apply built-in defaults, TOML config, and explicit CLI overrides."""
-    raw_toml_options = read_raw_toml(parameters.get("config"))
-    raw_cli_options = explicit_cli_options(context, parameters)
     try:
-        return config.from_option_layers(
-            base_options=defaults.load_default_option_catalog().normalized_options,
-            explicit_option_layers=(raw_toml_options, raw_cli_options),
+        toml_layer = config_layers.decode_toml_file_layer(parameters.get("config"))
+        cli_layer = config_layers.option_dictionary_to_toml_config_layer(
+            explicit_cli_options(context, parameters),
+            source="CLI options",
+        )
+        return config.from_toml_config_layers(
+            base_config=defaults.load_default_option_catalog().toml_config,
+            explicit_layers=(toml_layer, cli_layer),
         )
     except ValueError as error:
         raise click.ClickException(str(error)) from error
