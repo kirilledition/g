@@ -19,6 +19,7 @@ from pathlib import Path
 import polars as pl
 
 from g import api, types
+from g.interface import config as interface_config
 
 DEFAULT_DATA_DIRECTORY = Path("data")
 DEFAULT_OUTPUT_PARENT = Path("data/profiles")
@@ -114,7 +115,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIRECTORY, help="Input data directory.")
     parser.add_argument("--output-dir", type=Path, help="Benchmark output directory.")
     parser.add_argument("--device", default=types.Device.GPU.value, choices=[device.value for device in types.Device])
-    parser.add_argument("--chunk-size", type=int, default=8192, help="Variants per chunk.")
+    parser.add_argument("--chunk-size", type=int, default=interface_config.DEFAULT_BSIZE, help="Variants per chunk.")
     parser.add_argument(
         "--staging-depth",
         "--prefetch-chunks",
@@ -133,7 +134,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--assume-trusted-validated",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="Skip repeated trusted-path validation when the input has already been checked.",
     )
     parser.add_argument("--firth-batch-size", type=int, default=64, help="Binary Firth candidate batch size.")
@@ -370,12 +371,11 @@ def build_trial_environment(configuration: BenchmarkConfiguration, stage_timing_
     existing_python_path = os.environ.get("PYTHONPATH")
     if existing_python_path:
         python_path_entries.append(existing_python_path)
-    environment = {
+    return {
         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
         "XLA_PYTHON_CLIENT_MEM_FRACTION": ".50",
         "PYTHONPATH": os.pathsep.join(python_path_entries),
     }
-    return environment
 
 
 @contextlib.contextmanager

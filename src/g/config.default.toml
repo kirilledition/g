@@ -2,7 +2,7 @@
 step = 2
 qt = true
 bt = false
-bsize = 8192
+bsize = 16384
 
 [binary]
 firth = false

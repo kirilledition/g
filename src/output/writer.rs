@@ -219,11 +219,13 @@ fn build_regenie_step2_record_batches(
     chunk_schema: Arc<Schema>,
 ) -> Result<RegenieStep2RecordBatchBuildResult, String> {
     let mut timing = RegenieStep2RecordBatchBuildTiming::default();
+    let mut array_cache = RegenieStep2RecordBatchArrayCache::default();
     let record_batches = job
         .chunks
         .into_iter()
         .map(|chunk_job| {
-            let record_batch_build_result = build_regenie_step2_record_batch(chunk_job, Arc::clone(&chunk_schema))?;
+            let record_batch_build_result =
+                build_regenie_step2_record_batch(chunk_job, Arc::clone(&chunk_schema), &mut array_cache)?;
             timing.add(record_batch_build_result.timing);
             Ok(record_batch_build_result.record_batch)
         })
@@ -241,9 +243,34 @@ struct RegenieStep2SingleRecordBatchBuildResult {
     timing: RegenieStep2RecordBatchBuildTiming,
 }
 
+#[derive(Default)]
+struct RegenieStep2RecordBatchArrayCache {
+    null_extra_arrays_by_row_count: HashMap<usize, ArrayRef>,
+    test_arrays_by_row_count: HashMap<usize, ArrayRef>,
+}
+
+impl RegenieStep2RecordBatchArrayCache {
+    fn null_extra_array(&mut self, row_count: usize) -> ArrayRef {
+        Arc::clone(
+            self.null_extra_arrays_by_row_count
+                .entry(row_count)
+                .or_insert_with(|| schema::build_null_extra_string_array(row_count)),
+        )
+    }
+
+    fn test_array(&mut self, row_count: usize) -> ArrayRef {
+        Arc::clone(
+            self.test_arrays_by_row_count
+                .entry(row_count)
+                .or_insert_with(|| Arc::new(StringArray::from(vec!["ADD"; row_count]))),
+        )
+    }
+}
+
 fn build_regenie_step2_record_batch(
     chunk_job: RegenieStep2ChunkJob,
     chunk_schema: Arc<Schema>,
+    array_cache: &mut RegenieStep2RecordBatchArrayCache,
 ) -> Result<RegenieStep2SingleRecordBatchBuildResult, String> {
     let row_count = chunk_job.chunk_handle.row_count();
     let metadata_array_build_start_time = Instant::now();
@@ -264,7 +291,7 @@ fn build_regenie_step2_record_batch(
     let statistic_array_build_seconds = statistic_array_build_start_time.elapsed().as_secs_f64();
 
     let test_array_build_start_time = Instant::now();
-    let test_array: ArrayRef = Arc::new(StringArray::from(vec!["ADD"; row_count]));
+    let test_array = array_cache.test_array(row_count);
     let test_array_build_seconds = test_array_build_start_time.elapsed().as_secs_f64();
 
     let result_array_build_start_time = Instant::now();
@@ -275,7 +302,10 @@ fn build_regenie_step2_record_batch(
     let result_array_build_seconds = result_array_build_start_time.elapsed().as_secs_f64();
 
     let extra_array_build_start_time = Instant::now();
-    let extra_array = schema::build_extra_string_array(chunk_job.extra_code, row_count)?;
+    let extra_array = match chunk_job.extra_code {
+        Some(extra_code) => schema::build_extra_string_array(Some(extra_code), row_count)?,
+        None => array_cache.null_extra_array(row_count),
+    };
     let extra_array_build_seconds = extra_array_build_start_time.elapsed().as_secs_f64();
 
     let columns: Vec<ArrayRef> = vec![
@@ -430,15 +460,17 @@ mod tests {
         }
     }
 
-    fn build_test_record_batch(chunk: RegenieStep2ChunkJob) -> RecordBatch {
-        let write_batch = build_test_batch(vec![chunk]);
+    fn build_test_record_batches(chunks: Vec<RegenieStep2ChunkJob>) -> Vec<RecordBatch> {
+        let write_batch = build_test_batch(chunks);
         let chunk_commits = build_run_manifest_chunk_commits(&write_batch).expect("chunk commits should build");
         let chunk_schema = build_regenie_step2_chunk_file_schema(&chunk_commits).expect("chunk schema should build");
         build_regenie_step2_record_batches(write_batch, chunk_schema)
             .expect("record batches should build")
             .record_batches
-            .pop()
-            .expect("one record batch should be present")
+    }
+
+    fn build_test_record_batch(chunk: RegenieStep2ChunkJob) -> RecordBatch {
+        build_test_record_batches(vec![chunk]).pop().expect("one record batch should be present")
     }
 
     fn create_test_directory() -> PathBuf {
@@ -473,6 +505,20 @@ mod tests {
             .expect("INFO column should be a float32 array");
         assert!((info_array.value(0) - 0.9).abs() < f32::EPSILON);
         assert_eq!(record_batch.column_by_name("EXTRA").expect("EXTRA column should exist").null_count(), 1);
+    }
+
+    #[test]
+    fn record_batch_build_reuses_constant_arrays_by_row_count() {
+        let record_batches = build_test_record_batches(vec![build_test_chunk(0, None), build_test_chunk(1, None)]);
+
+        assert_eq!(record_batches.len(), 2);
+        let first_test_array = record_batches[0].column_by_name("TEST").expect("TEST column should exist");
+        let second_test_array = record_batches[1].column_by_name("TEST").expect("TEST column should exist");
+        let first_extra_array = record_batches[0].column_by_name("EXTRA").expect("EXTRA column should exist");
+        let second_extra_array = record_batches[1].column_by_name("EXTRA").expect("EXTRA column should exist");
+
+        assert!(Arc::ptr_eq(first_test_array, second_test_array));
+        assert!(Arc::ptr_eq(first_extra_array, second_extra_array));
     }
 
     #[test]

@@ -13,7 +13,27 @@ from pathlib import Path
 from g import types
 from g.interface import options
 
-DEFAULT_BSIZE = 8192
+DEFAULT_CONFIG_RESOURCE = "config.default.toml"
+
+
+def load_default_option_dictionary() -> dict[str, typing.Any]:
+    """Load packaged default runtime options."""
+    default_config_resource = importlib.resources.files("g").joinpath(DEFAULT_CONFIG_RESOURCE)
+    with default_config_resource.open("rb") as config_file:
+        return tomllib.load(config_file)
+
+
+def load_default_trait_option(option_name: str) -> typing.Any:
+    """Load one packaged default trait option."""
+    return load_default_option_dictionary()["trait"][option_name]
+
+
+def load_default_g_output_option(option_name: str) -> typing.Any:
+    """Load one packaged default output option."""
+    return load_default_option_dictionary()["g"]["output"][option_name]
+
+
+DEFAULT_BSIZE = int(load_default_trait_option("bsize"))
 DEFAULT_P_THRESHOLD = 0.05
 DEFAULT_FIRTH_BATCH_SIZE = 64
 DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
@@ -54,16 +74,7 @@ DEFAULT_TRACE_FILTER = "g.native.bgen=trace,g.output=debug"
 DEFAULT_PROGRESS_INTERVAL_SECONDS = 5.0
 DEFAULT_PROGRESS_INTERVAL_CHUNKS = 10
 DEFAULT_LOG_QUEUE_SIZE = 65536
-DEFAULT_CONFIG_RESOURCE = "config.default.toml"
 QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "spa", "pThresh")
-
-
-def load_default_g_output_option(option_name: str) -> typing.Any:
-    """Load one packaged default output option."""
-    default_config_resource = importlib.resources.files("g").joinpath(DEFAULT_CONFIG_RESOURCE)
-    with default_config_resource.open("rb") as config_file:
-        default_options = tomllib.load(config_file)
-    return default_options["g"]["output"][option_name]
 
 
 DEFAULT_OUTPUT_WRITER_THREADS = int(load_default_g_output_option("writer-threads"))
@@ -1116,13 +1127,6 @@ def load_toml(path: Path) -> RegenieConfig:
     """Load a configuration from a TOML file."""
     raw_config = read_toml_option_dictionary(path)
     return from_options(raw_config)
-
-
-def load_default_option_dictionary() -> dict[str, typing.Any]:
-    """Load packaged default runtime options."""
-    default_config_resource = importlib.resources.files("g").joinpath(DEFAULT_CONFIG_RESOURCE)
-    with default_config_resource.open("rb") as config_file:
-        return tomllib.load(config_file)
 
 
 def read_toml_option_dictionary(path: Path) -> dict[str, typing.Any]:

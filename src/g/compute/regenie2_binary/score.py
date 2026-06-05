@@ -102,37 +102,60 @@ def compute_multi_binary_score_test_chunk_variant_major(
         genotype_matrix_by_variant,
         dtype=compute_dtype.resolve_jax_dtype(score_dtype),
     )
-    genotype_flip_result = genotype.build_regenie_flipped_genotypes(
+    genotype_mean = compute_genotype_mean(
         raw_genotype_matrix_by_variant,
         dosage_sum=dosage_sum,
         observation_count=observation_count,
     )
-    genotype_matrix_by_variant_float32 = genotype_flip_result.genotype_matrix_by_variant
-    genotype_matrix_by_variant_squared = genotype_matrix_by_variant_float32 * genotype_matrix_by_variant_float32
-    bernoulli_weight = chromosome_state.square_root_weight * chromosome_state.square_root_weight
-    weighted_projection_matrix = (
-        chromosome_state.weighted_genotype_projection_matrix * chromosome_state.square_root_weight[:, None, :]
-    )
+    genotype_flip_mask = genotype_mean > 1.0
+    genotype_flip_mask_by_trait_variant = genotype_flip_mask[None, :]
+    genotype_matrix_by_variant_squared = raw_genotype_matrix_by_variant * raw_genotype_matrix_by_variant
     projection_coordinates = jnp.einsum(
         "vs,tcs->tvc",
-        genotype_matrix_by_variant_float32,
-        weighted_projection_matrix,
+        raw_genotype_matrix_by_variant,
+        chromosome_state.score_projection_matrix,
+    )
+    projection_coordinates = jnp.where(
+        genotype_flip_mask_by_trait_variant[:, :, None],
+        genotype.ALLELE_COUNT_MULTIPLIER * chromosome_state.score_projection_sum[:, None, :] - projection_coordinates,
+        projection_coordinates,
     )
     weighted_genotype_sum_squares = jnp.einsum(
         "vs,ts->tv",
         genotype_matrix_by_variant_squared,
-        bernoulli_weight,
+        chromosome_state.bernoulli_weight,
+    )
+    weighted_genotype_sum = jnp.einsum(
+        "vs,ts->tv",
+        raw_genotype_matrix_by_variant,
+        chromosome_state.bernoulli_weight,
+    )
+    weighted_genotype_sum_squares = jnp.where(
+        genotype_flip_mask_by_trait_variant,
+        (
+            genotype.ALLELE_COUNT_MULTIPLIER
+            * genotype.ALLELE_COUNT_MULTIPLIER
+            * chromosome_state.bernoulli_weight_sum[:, None]
+        )
+        - (2.0 * genotype.ALLELE_COUNT_MULTIPLIER * weighted_genotype_sum)
+        + weighted_genotype_sum_squares,
+        weighted_genotype_sum_squares,
     )
     projection_sum_squares = jnp.einsum("tvc,tvc->tv", projection_coordinates, projection_coordinates)
     variance = jnp.maximum(weighted_genotype_sum_squares - projection_sum_squares, 0.0)
-    score = jnp.einsum("vs,ts->tv", genotype_matrix_by_variant_float32, chromosome_state.score_residual)
+    score = jnp.einsum("vs,ts->tv", raw_genotype_matrix_by_variant, chromosome_state.score_residual)
+    score = jnp.where(
+        genotype_flip_mask_by_trait_variant,
+        genotype.ALLELE_COUNT_MULTIPLIER * chromosome_state.score_residual_sum[:, None] - score,
+        score,
+    )
     null_logistic_converged = chromosome_state.null_logistic_converged[:, None]
     positive_variance_mask = compute_positive_variance_mask(variance, weighted_genotype_sum_squares, kernel_config)
     statistic_mask = positive_variance_mask & null_logistic_converged
     inverse_variance = jnp.where(statistic_mask, jnp.reciprocal(variance), 0.0)
     beta = jnp.where(
         statistic_mask,
-        jnp.where(genotype_flip_result.flip_mask[None, :], -score * inverse_variance, score * inverse_variance),
+        jnp.where(genotype_flip_mask_by_trait_variant, -score * inverse_variance, score * inverse_variance),
         jnp.nan,
     )
     standard_error = jnp.where(statistic_mask, jnp.sqrt(inverse_variance), jnp.nan)
@@ -156,3 +179,16 @@ def compute_multi_binary_score_test_chunk_variant_major(
         extra_code=extra_code,
         valid_mask=valid_mask,
     )
+
+
+def compute_genotype_mean(
+    genotype_matrix_by_variant: jax.Array,
+    dosage_sum: jax.Array | None = None,
+    observation_count: jax.Array | None = None,
+) -> jax.Array:
+    """Compute per-variant genotype means from native stats when available."""
+    if dosage_sum is None or observation_count is None:
+        return jnp.mean(genotype_matrix_by_variant, axis=1)
+    dosage_sum_compute = jnp.asarray(dosage_sum, dtype=genotype_matrix_by_variant.dtype)
+    observation_count_compute = jnp.asarray(observation_count, dtype=genotype_matrix_by_variant.dtype)
+    return dosage_sum_compute / jnp.maximum(observation_count_compute, 1.0)

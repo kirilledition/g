@@ -1118,7 +1118,7 @@ def test_binary_score_only_variant_major_callback_uses_jitted_variant_major_scor
             return_value=chromosome_state,
         ),
         patch(
-            "g.compute.regenie2_binary.api.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major",
+            "g.compute.regenie2_binary.api.compute_binary_score_test_variant_major_donating_inputs",
             return_value=result,
         ) as mock_variant_major_score_compute,
         patch(
@@ -1345,6 +1345,67 @@ def test_multi_binary_score_only_sample_major_callback_skips_sparse_mask_transfe
         callback.finish()
 
     assert mock_compute.call_args.kwargs["sparse_candidate_mask"] is None
+    assert tuple(len(writer_session.native_chunks) for writer_session in writer_sessions) == (1, 1)
+
+
+def test_multi_binary_score_only_variant_major_callback_uses_donated_score_compute() -> None:
+    writer_sessions = (FakeWriterSession(), FakeWriterSession())
+    result = regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult(
+        beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
+        standard_error=jnp.asarray([[0.5, 0.6], [0.7, 0.8]], dtype=jnp.float32),
+        chi_squared=jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([[5.0, 6.0], [7.0, 8.0]], dtype=jnp.float32),
+        extra_code=jnp.asarray(
+            [
+                [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.SCORE.value],
+                [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.SCORE.value],
+            ],
+            dtype=jnp.int32,
+        ),
+        valid_mask=jnp.asarray([[True, True], [True, True]]),
+    )
+    callback = callbacks.MultiBinaryRegenie2PipelineCallback(
+        run_input=build_native_multi_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_sessions=writer_sessions,
+        committed_chunk_identifier_sets=(set(), set()),
+        correction_plan=types.BinaryCorrectionPlan(),
+    )
+    variant_major_genotype_matrix = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    chunk_stats = SimpleNamespace(
+        dosage_sum=np.asarray([3.0, 7.0], dtype=np.float32),
+        observation_count=np.asarray([2, 2], dtype=np.int32),
+        is_rare_sparse_firth_candidate=np.asarray([True, False], dtype=np.bool_),
+    )
+    chromosome_state = build_multi_binary_chromosome_state()
+
+    with (
+        patch(
+            "g.compute.regenie2_binary.api.prepare_regenie2_multi_binary_chromosome_state",
+            return_value=chromosome_state,
+        ),
+        patch(
+            "g.compute.regenie2_binary.api.compute_multi_binary_score_test_variant_major_donating_inputs",
+            return_value=result,
+        ) as mock_score_compute,
+        patch(
+            "g.compute.regenie2_binary.api.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major",
+        ) as mock_chunk_compute,
+    ):
+        callback.compute_preprocessed_variant_major_dosage_chunk(
+            metadata=build_native_metadata(),
+            genotype_matrix_by_variant=variant_major_genotype_matrix,
+            chunk_stats=typing.cast("typing.Any", chunk_stats),
+        )
+        callback.finish()
+
+    np.testing.assert_array_equal(
+        np.asarray(mock_score_compute.call_args.kwargs["genotype_matrix_by_variant"]),
+        variant_major_genotype_matrix,
+    )
+    np.testing.assert_array_equal(np.asarray(mock_score_compute.call_args.kwargs["dosage_sum"]), [3.0, 7.0])
+    np.testing.assert_array_equal(np.asarray(mock_score_compute.call_args.kwargs["observation_count"]), [2, 2])
+    mock_chunk_compute.assert_not_called()
     assert tuple(len(writer_session.native_chunks) for writer_session in writer_sessions) == (1, 1)
 
 
