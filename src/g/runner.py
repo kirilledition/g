@@ -510,7 +510,10 @@ def dispatch_one_phenotype_engine_pipeline(
         )
         return final_parquet_path
     logger.debug("Dispatching linear native engine pipeline.")
-    final_parquet_path = run_regenie2_linear_bgen_pipeline(**common_arguments)
+    final_parquet_path = run_regenie2_linear_bgen_pipeline(
+        **common_arguments,
+        gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
+    )
     log_writer_finished(
         telemetry_session=telemetry_session,
         association_mode=plan.association_mode,

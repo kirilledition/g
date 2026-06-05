@@ -180,6 +180,16 @@ def build_loco_covariate_fixture() -> LinearLocoCovariateFixture:
     )
 
 
+def encode_integer_dosage_matrix_to_packed8_probability_pairs(
+    genotype_matrix_by_variant: npt.NDArray[np.float32],
+) -> npt.NDArray[np.uint8]:
+    """Encode exact 0/1/2 dosages as trusted unphased 8-bit probability pairs."""
+    packed_probability_pairs = np.zeros((*genotype_matrix_by_variant.shape, 2), dtype=np.uint8)
+    packed_probability_pairs[:, :, 0] = np.where(genotype_matrix_by_variant == 0.0, 255, 0).astype(np.uint8)
+    packed_probability_pairs[:, :, 1] = np.where(genotype_matrix_by_variant == 1.0, 255, 0).astype(np.uint8)
+    return packed_probability_pairs
+
+
 def residualize_against_covariates(
     covariate_matrix: npt.NDArray[np.float64],
     value_array: npt.NDArray[np.float64],
@@ -628,6 +638,66 @@ class TestComputeRegenie2LinearChunk:
             atol=1e-5,
         )
         numpy.testing.assert_array_equal(variant_major_result.valid_mask, sample_major_result.valid_mask)
+
+    def test_packed8_kernel_matches_variant_major_with_native_square_sums(self) -> None:
+        """Ensure packed8 linear computation matches variant-major dosage results."""
+        sample_count = 96
+        variant_count = 6
+        covariate_count = 3
+
+        rng = np.random.default_rng(37)
+        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
+        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
+        covariate_matrix[:, 2] = rng.standard_normal(sample_count).astype(np.float32)
+        phenotype_vector = jnp.asarray(rng.standard_normal(sample_count), dtype=jnp.float32)
+        genotype_matrix = rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32)
+        genotype_matrix[:90, 0] = 2.0
+        genotype_matrix[90:, 0] = 1.0
+        genotype_matrix_by_variant = genotype_matrix.T
+        loco_predictions = jnp.asarray(rng.standard_normal(sample_count) * 0.1, dtype=jnp.float32)
+        state = regenie2_linear.prepare_regenie2_linear_state(
+            covariate_matrix=jnp.asarray(covariate_matrix),
+            phenotype_vector=phenotype_vector,
+        )
+        chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(state, loco_predictions)
+        dosage_sum = jnp.asarray(np.sum(genotype_matrix_by_variant, axis=1), dtype=jnp.float32)
+        observation_count = jnp.full((variant_count,), sample_count, dtype=jnp.int32)
+        imputed_dosage_square_sum = jnp.asarray(
+            np.sum(np.square(genotype_matrix_by_variant), axis=1), dtype=jnp.float32
+        )
+        variant_major_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
+            chromosome_state=chromosome_state,
+            genotype_matrix_by_variant=jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32),
+            genotype_dosage_sum=dosage_sum,
+            genotype_observation_count=observation_count,
+            genotype_imputed_dosage_square_sum=imputed_dosage_square_sum,
+        )
+        packed_probability_pairs_by_variant = encode_integer_dosage_matrix_to_packed8_probability_pairs(
+            genotype_matrix_by_variant,
+        )
+        packed_result = regenie2_linear.compute_linear_chunk_packed8_donating_inputs(
+            chromosome_state=chromosome_state,
+            packed_probability_pairs_by_variant=jnp.asarray(packed_probability_pairs_by_variant),
+            genotype_dosage_sum=dosage_sum,
+            genotype_observation_count=observation_count,
+            genotype_imputed_dosage_square_sum=imputed_dosage_square_sum,
+        )
+
+        numpy.testing.assert_allclose(packed_result.beta, variant_major_result.beta, rtol=1e-5, atol=1e-5)
+        numpy.testing.assert_allclose(
+            packed_result.standard_error,
+            variant_major_result.standard_error,
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        numpy.testing.assert_allclose(packed_result.chi_squared, variant_major_result.chi_squared, rtol=1e-5, atol=1e-5)
+        numpy.testing.assert_allclose(
+            packed_result.log10_p_value,
+            variant_major_result.log10_p_value,
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        numpy.testing.assert_array_equal(packed_result.valid_mask, variant_major_result.valid_mask)
 
     def test_high_frequency_diploid_dosages_match_float64_reference(self) -> None:
         """Guard REGENIE parity for mostly-homozygous alternate dosage columns."""

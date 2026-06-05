@@ -788,6 +788,69 @@ def test_linear_variant_major_callback_passes_native_sums_to_jitted_compute() ->
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
+def test_linear_packed8_callback_passes_native_sums_to_jitted_compute() -> None:
+    writer_session = FakeWriterSession()
+    result = regenie2_linear_result.Regenie2LinearChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    callback = callbacks.LinearRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+    )
+    callback.current_chromosome = "22"
+    callback.current_chromosome_state = typing.cast(
+        "regenie2_linear_state.Regenie2LinearChromosomeState",
+        "chromosome-state",
+    )
+    chunk_stats = typing.cast("typing.Any", LinearNativeSumChunkStats())
+    packed_probability_pairs_by_variant = np.asarray(
+        [
+            [[255, 0], [0, 0]],
+            [[0, 255], [255, 0]],
+        ],
+        dtype=np.uint8,
+    )
+
+    with (
+        patch(
+            "g.compute.regenie2_linear.api.compute_linear_chunk_packed8_donating_inputs",
+            return_value=result,
+        ) as mock_packed_compute,
+        patch(
+            "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state_variant_major",
+        ) as mock_variant_major_compute,
+        patch(
+            "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state",
+        ) as mock_sample_major_compute,
+    ):
+        callback.compute_preprocessed_variant_major_packed8_probability_pair_chunk(
+            metadata=build_native_metadata(),
+            packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+            chunk_stats=chunk_stats,
+        )
+        callback.finish()
+
+    packed_probability_pairs_argument = mock_packed_compute.call_args.kwargs["packed_probability_pairs_by_variant"]
+    np.testing.assert_array_equal(np.asarray(packed_probability_pairs_argument), packed_probability_pairs_by_variant)
+    np.testing.assert_array_equal(np.asarray(mock_packed_compute.call_args.kwargs["genotype_dosage_sum"]), [3.0, 7.0])
+    np.testing.assert_array_equal(
+        np.asarray(mock_packed_compute.call_args.kwargs["genotype_observation_count"]),
+        [2, 2],
+    )
+    np.testing.assert_array_equal(
+        np.asarray(mock_packed_compute.call_args.kwargs["genotype_imputed_dosage_square_sum"]),
+        [5.0, 13.0],
+    )
+    mock_variant_major_compute.assert_not_called()
+    mock_sample_major_compute.assert_not_called()
+    assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
+
+
 def test_linear_callback_does_not_block_chunk_compute_without_timing() -> None:
     writer_session = FakeWriterSession()
     result = regenie2_linear_result.Regenie2LinearChunkResult(
@@ -1753,6 +1816,63 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert prediction_source.phenotype_name == "trait"
     assert prediction_source.native_aligned_sample_data is run_input.native_aligned_sample_data
     assert prediction_source.sample_key_mode == "iid"
+
+
+def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() -> None:
+    FakeRunEngine.instances.clear()
+    FakePredictionSource.instances.clear()
+    writer_session = FakeWriterSession()
+    run_input = build_native_run_input()
+
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch(
+            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
+        ),
+        patch("g.engine.native_dispatch.load_native_bgen_run_input", return_value=run_input),
+        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
+        patch("g.engine.regenie2_pipeline.output.build_current_run_manifest_header") as mock_manifest_header,
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
+        ),
+        patch(
+            "g.compute.regenie2_linear.api.prepare_regenie2_linear_state",
+            return_value=typing.cast("regenie2_linear_state.Regenie2LinearState", "state"),
+        ),
+    ):
+        mock_manifest_header.return_value = {"header": "current"}
+        final_path = regenie2_pipeline.run_regenie2_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
+            staging_depth=3,
+            existing_manifest={"header": "current", "committed_chunks": []},
+            resume=True,
+            trusted_no_missing_diploid=False,
+            gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
+        )
+
+    assert final_path == Path("results/final.parquet")
+    engine = FakeRunEngine.instances[0]
+    assert engine.trusted_no_missing_diploid is True
+    assert engine.validation_count == 1
+    assert engine.run_method == "variant_major_packed8"
+    assert engine.run_arguments is not None
+    sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
+    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    assert isinstance(callback, callbacks.LinearRegenie2PipelineCallback)
+    assert committed_chunk_identifiers == [0, 64]
+    assert mock_manifest_header.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
+    assert mock_manifest_header.call_args.kwargs["trusted_no_missing_diploid"] is True
 
 
 class FinishTrackingCallback:

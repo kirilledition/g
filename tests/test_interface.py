@@ -516,16 +516,12 @@ def test_config_validation_rejects_invalid_dtype_policy(
     [
         ({"g-gpu-genotype-format": "packed8", "g-device": "cpu"}, "--g-gpu-genotype-format=packed8 requires"),
         (
-            {"g-gpu-genotype-format": "packed8", "g-device": "gpu", "qt": True, "bt": False},
-            "packed8 currently supports binary traits only",
-        ),
-        (
             {
                 "g-gpu-genotype-format": "packed8",
                 "g-device": "gpu",
                 "phenoCol": ("first", "second"),
             },
-            "packed8 currently supports one binary phenotype",
+            "packed8 currently supports one phenotype",
         ),
     ],
 )
@@ -547,6 +543,16 @@ def test_config_validation_rejects_unsupported_packed8_uses(
 
     with pytest.raises(ValueError, match=error_match):
         config.RegenieConfig.from_options(raw_options)
+
+
+def test_config_validation_accepts_quantitative_single_phenotype_packed8_gpu() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options.update({"g-gpu-genotype-format": "packed8", "g-device": "gpu"})
+
+    regenie_config = config.RegenieConfig.from_options(raw_options)
+
+    assert regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
+    assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
 
 
 def test_repeated_and_list_columns_are_mutually_exclusive() -> None:

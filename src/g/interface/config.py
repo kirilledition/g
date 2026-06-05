@@ -999,11 +999,8 @@ def validate_config(config: RegenieConfig) -> None:
         if config.g_compute.device != types.Device.GPU:
             message = "--g-gpu-genotype-format=packed8 requires --g-device=gpu."
             raise ValueError(message)
-        if config.trait.trait_type != types.RegenieTraitType.BINARY:
-            message = "--g-gpu-genotype-format=packed8 currently supports binary traits only."
-            raise ValueError(message)
         if len(config.input.pheno_columns) != 1:
-            message = "--g-gpu-genotype-format=packed8 currently supports one binary phenotype at a time."
+            message = "--g-gpu-genotype-format=packed8 currently supports one phenotype at a time."
             raise ValueError(message)
     if config.g_compute.firth_dtype != types.FloatingPointDtype.FLOAT64:
         message = "--g-firth-dtype currently supports float64 only."
