@@ -12,7 +12,7 @@ pub(crate) fn get_regenie_step2_chunk_schema() -> &'static Arc<Schema> {
 
 pub(crate) fn build_extra_string_array(extra_code: Option<ArrayRef>, row_count: usize) -> Result<ArrayRef, String> {
     let Some(extra_code_array) = extra_code else {
-        return Ok(new_null_array(&DataType::Utf8, row_count));
+        return Ok(build_null_extra_string_array(row_count));
     };
     let extra_code_values = extra_code_array
         .as_any()
@@ -37,6 +37,10 @@ pub(crate) fn build_extra_string_array(extra_code: Option<ArrayRef>, row_count: 
         }
     }
     Ok(Arc::new(StringArray::from(extra_strings)))
+}
+
+pub(crate) fn build_null_extra_string_array(row_count: usize) -> ArrayRef {
+    new_null_array(&DataType::Utf8, row_count)
 }
 
 pub(crate) fn get_regenie_step2_final_schema() -> &'static Arc<Schema> {

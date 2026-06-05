@@ -44,7 +44,12 @@ class Regenie2BinaryChromosomeState:
         score_residual: Raw score residual, ``phenotype - fitted_probability``.
         loco_offset: LOCO offset in the logistic linear predictor.
         square_root_weight: Square root of Bernoulli variance.
+        bernoulli_weight: Bernoulli variance.
         weighted_genotype_projection_matrix: Cholesky-whitened weighted covariate transpose.
+        score_projection_matrix: Cholesky-whitened score projection matrix.
+        score_residual_sum: Sum of score residuals across samples.
+        bernoulli_weight_sum: Sum of Bernoulli weights across samples.
+        score_projection_sum: Sum of score projection columns across samples.
         null_firth_penalized_log_likelihood: Covariate-only Firth null penalized log-likelihood.
         null_firth_iteration_count: Number of covariate-only Firth iterations.
         null_firth_convergence_reason_code: Internal covariate-only Firth termination-reason code.
@@ -60,7 +65,12 @@ class Regenie2BinaryChromosomeState:
     score_residual: jax.Array
     loco_offset: jax.Array
     square_root_weight: jax.Array
+    bernoulli_weight: jax.Array
     weighted_genotype_projection_matrix: jax.Array
+    score_projection_matrix: jax.Array
+    score_residual_sum: jax.Array
+    bernoulli_weight_sum: jax.Array
+    score_projection_sum: jax.Array
     null_firth_penalized_log_likelihood: jax.Array
     null_firth_iteration_count: jax.Array
     null_firth_convergence_reason_code: jax.Array
@@ -96,7 +106,12 @@ class Regenie2MultiBinaryChromosomeState:
         score_residual: Per-trait raw score residuals.
         loco_offset_matrix: Per-trait LOCO offsets.
         square_root_weight: Per-trait square root Bernoulli variance.
+        bernoulli_weight: Per-trait Bernoulli variance.
         weighted_genotype_projection_matrix: Per-trait weighted covariate projection matrix.
+        score_projection_matrix: Per-trait score projection matrix.
+        score_residual_sum: Per-trait residual sums across samples.
+        bernoulli_weight_sum: Per-trait Bernoulli weight sums across samples.
+        score_projection_sum: Per-trait score projection column sums across samples.
         null_firth_penalized_log_likelihood: Per-trait Firth null penalized log-likelihood.
         null_firth_iteration_count: Per-trait covariate-only Firth iteration counts.
         null_firth_convergence_reason_code: Per-trait covariate-only Firth termination-reason codes.
@@ -112,7 +127,12 @@ class Regenie2MultiBinaryChromosomeState:
     score_residual: jax.Array
     loco_offset_matrix: jax.Array
     square_root_weight: jax.Array
+    bernoulli_weight: jax.Array
     weighted_genotype_projection_matrix: jax.Array
+    score_projection_matrix: jax.Array
+    score_residual_sum: jax.Array
+    bernoulli_weight_sum: jax.Array
+    score_projection_sum: jax.Array
     null_firth_penalized_log_likelihood: jax.Array
     null_firth_iteration_count: jax.Array
     null_firth_convergence_reason_code: jax.Array
@@ -191,6 +211,7 @@ def build_binary_chromosome_state(
         left_side=True,
         lower=True,
     )
+    score_projection_matrix = weighted_genotype_projection_matrix * square_root_weight[None, :]
     if correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
         null_firth_coefficients = jnp.asarray(null_logistic_coefficients, dtype=jnp.float64)
         null_firth_offset = state.covariate_matrix.astype(jnp.float64) @ null_firth_coefficients + jnp.asarray(
@@ -225,7 +246,12 @@ def build_binary_chromosome_state(
         score_residual=score_residual,
         loco_offset=loco_offset_compute,
         square_root_weight=square_root_weight,
+        bernoulli_weight=bernoulli_variance,
         weighted_genotype_projection_matrix=weighted_genotype_projection_matrix,
+        score_projection_matrix=score_projection_matrix,
+        score_residual_sum=jnp.sum(score_residual),
+        bernoulli_weight_sum=jnp.sum(bernoulli_variance),
+        score_projection_sum=jnp.sum(score_projection_matrix, axis=1),
         null_firth_penalized_log_likelihood=null_firth_result.penalized_log_likelihood,
         null_firth_iteration_count=null_firth_result.iteration_count,
         null_firth_convergence_reason_code=null_firth_result.convergence_reason_code,
@@ -263,7 +289,12 @@ def build_multi_binary_chromosome_state(
         score_residual=chromosome_states.score_residual,
         loco_offset_matrix=chromosome_states.loco_offset,
         square_root_weight=chromosome_states.square_root_weight,
+        bernoulli_weight=chromosome_states.bernoulli_weight,
         weighted_genotype_projection_matrix=chromosome_states.weighted_genotype_projection_matrix,
+        score_projection_matrix=chromosome_states.score_projection_matrix,
+        score_residual_sum=chromosome_states.score_residual_sum,
+        bernoulli_weight_sum=chromosome_states.bernoulli_weight_sum,
+        score_projection_sum=chromosome_states.score_projection_sum,
         null_firth_penalized_log_likelihood=chromosome_states.null_firth_penalized_log_likelihood,
         null_firth_iteration_count=chromosome_states.null_firth_iteration_count,
         null_firth_convergence_reason_code=chromosome_states.null_firth_convergence_reason_code,
@@ -285,7 +316,12 @@ def build_single_binary_chromosome_state_from_multi(
         score_residual=chromosome_state.score_residual[trait_index],
         loco_offset=chromosome_state.loco_offset_matrix[trait_index],
         square_root_weight=chromosome_state.square_root_weight[trait_index],
+        bernoulli_weight=chromosome_state.bernoulli_weight[trait_index],
         weighted_genotype_projection_matrix=chromosome_state.weighted_genotype_projection_matrix[trait_index],
+        score_projection_matrix=chromosome_state.score_projection_matrix[trait_index],
+        score_residual_sum=chromosome_state.score_residual_sum[trait_index],
+        bernoulli_weight_sum=chromosome_state.bernoulli_weight_sum[trait_index],
+        score_projection_sum=chromosome_state.score_projection_sum[trait_index],
         null_firth_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood[trait_index],
         null_firth_iteration_count=chromosome_state.null_firth_iteration_count[trait_index],
         null_firth_convergence_reason_code=chromosome_state.null_firth_convergence_reason_code[trait_index],
@@ -306,7 +342,12 @@ def build_multi_binary_chromosome_state_from_single(
         score_residual=chromosome_state.score_residual[None, :],
         loco_offset_matrix=chromosome_state.loco_offset[None, :],
         square_root_weight=chromosome_state.square_root_weight[None, :],
+        bernoulli_weight=chromosome_state.bernoulli_weight[None, :],
         weighted_genotype_projection_matrix=chromosome_state.weighted_genotype_projection_matrix[None, :, :],
+        score_projection_matrix=chromosome_state.score_projection_matrix[None, :, :],
+        score_residual_sum=chromosome_state.score_residual_sum[None],
+        bernoulli_weight_sum=chromosome_state.bernoulli_weight_sum[None],
+        score_projection_sum=chromosome_state.score_projection_sum[None, :],
         null_firth_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood[None],
         null_firth_iteration_count=chromosome_state.null_firth_iteration_count[None],
         null_firth_convergence_reason_code=chromosome_state.null_firth_convergence_reason_code[None],

@@ -155,6 +155,7 @@ def test_logging_diagnostics_default_to_info_stderr() -> None:
 def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
 
+    assert config.load_default_option_dictionary()["trait"]["bsize"] == config.DEFAULT_BSIZE
     assert regenie_config.trait.bsize == config.DEFAULT_BSIZE
     assert regenie_config.g_compute.device == types.Device.CPU
     assert regenie_config.g_compute.null_logistic_nonconvergence_policy == types.NullLogisticNonconvergencePolicy.FAIL
