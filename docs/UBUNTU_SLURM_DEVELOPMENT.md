@@ -51,6 +51,7 @@ Run these on the login node:
 ```bash
 just check
 just test
+just coverage
 ```
 
 Prepare benchmark data only after `plink2` is available:

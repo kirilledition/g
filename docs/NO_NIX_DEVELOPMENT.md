@@ -16,7 +16,7 @@ Equivalent commands without `just`:
 uv run ruff format --check .
 uv run ruff check .
 uv run ty check src tests scripts
-uv run pytest tests/test_core.py tests/test_io_bgen.py tests/test_io_output.py
+uv run pytest tests/test_core.py tests/test_io_output.py
 uv run pytest tests/ -m "not phase0_data and not phase1_parity"
 ```
 
@@ -35,4 +35,11 @@ Rust toolchain available:
 ```bash
 cargo fmt
 cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
+```
+
+Rust coverage also requires `cargo-llvm-cov`:
+
+```bash
+cargo install cargo-llvm-cov
+cargo llvm-cov --workspace --all-targets --fail-under-lines 90
 ```

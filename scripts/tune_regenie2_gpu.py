@@ -17,6 +17,7 @@ import typing
 from pathlib import Path
 
 from g import api, types
+from g.io import output
 
 
 def load_script_module(module_name: str, relative_path: str) -> typing.Any:
@@ -42,7 +43,7 @@ benchmark_regenie_comparison = load_script_module(
 
 DEFAULT_OUTPUT_DIRECTORY = Path("data/benchmarks/regenie2_gpu_tuning")
 DEFAULT_BGEN_PRE_SWEEP_CHUNK_SIZE = 8192
-DEFAULT_BGEN_PATH_MODE = benchmark_bgen_reader.BenchmarkPathMode.READ_FLOAT32_INTO_PREPARED
+DEFAULT_BGEN_PATH_MODE = benchmark_bgen_reader.BenchmarkPathMode.VARIANT_MAJOR_BUFFERED
 
 
 class TraitSelection(enum.StrEnum):
@@ -78,7 +79,7 @@ class Step2TuningCandidate:
 
     trait_type: types.RegenieTraitType
     chunk_size: int
-    prefetch_chunks: int
+    staging_depth: int
     output_writer_thread_count: int
     output_writer_queue_depth: int
     bgen_decode_tile_variant_count: int | None
@@ -155,7 +156,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     argument_parser.add_argument("--top-compute-candidates", type=int, default=3)
     argument_parser.add_argument("--top-finalists", type=int, default=3)
     argument_parser.add_argument("--chunk-sizes", default="2048,4096,8192,16384")
-    argument_parser.add_argument("--prefetch-chunks", default="0,1,2")
+    argument_parser.add_argument("--staging-depths", "--prefetch-chunks", default="1,2")
     argument_parser.add_argument("--output-writer-thread-counts", default="1,2,4,8")
     argument_parser.add_argument("--writer-queue-depth-multipliers", default="1,2")
     argument_parser.add_argument("--firth-batch-sizes", default="32,64,128")
@@ -210,7 +211,7 @@ def build_compute_stage_candidates(
     *,
     trait_type: types.RegenieTraitType,
     chunk_sizes: tuple[int, ...],
-    prefetch_chunk_values: tuple[int, ...],
+    staging_depth_values: tuple[int, ...],
     bgen_candidates: tuple[BgenCandidateSummary, ...],
     firth_batch_sizes: tuple[int, ...],
 ) -> tuple[Step2TuningCandidate, ...]:
@@ -218,16 +219,16 @@ def build_compute_stage_candidates(
     candidates: list[Step2TuningCandidate] = []
     for bgen_candidate_summary in bgen_candidates:
         for chunk_size in chunk_sizes:
-            for prefetch_chunks in prefetch_chunk_values:
+            for staging_depth in staging_depth_values:
                 if trait_type == types.RegenieTraitType.BINARY:
                     for firth_batch_size in firth_batch_sizes:
                         candidates.append(
                             Step2TuningCandidate(
                                 trait_type=trait_type,
                                 chunk_size=chunk_size,
-                                prefetch_chunks=prefetch_chunks,
-                                output_writer_thread_count=api.output.DEFAULT_WRITER_THREAD_COUNT,
-                                output_writer_queue_depth=api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH,
+                                staging_depth=staging_depth,
+                                output_writer_thread_count=output.DEFAULT_WRITER_THREAD_COUNT,
+                                output_writer_queue_depth=output.DEFAULT_WRITER_QUEUE_DEPTH,
                                 bgen_decode_tile_variant_count=bgen_candidate_summary.candidate.decode_tile_variant_count,
                                 rayon_thread_count=bgen_candidate_summary.candidate.rayon_thread_count,
                                 firth_batch_size=firth_batch_size,
@@ -238,9 +239,9 @@ def build_compute_stage_candidates(
                     Step2TuningCandidate(
                         trait_type=trait_type,
                         chunk_size=chunk_size,
-                        prefetch_chunks=prefetch_chunks,
-                        output_writer_thread_count=api.output.DEFAULT_WRITER_THREAD_COUNT,
-                        output_writer_queue_depth=api.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH,
+                        staging_depth=staging_depth,
+                        output_writer_thread_count=output.DEFAULT_WRITER_THREAD_COUNT,
+                        output_writer_queue_depth=output.DEFAULT_WRITER_QUEUE_DEPTH,
                         bgen_decode_tile_variant_count=bgen_candidate_summary.candidate.decode_tile_variant_count,
                         rayon_thread_count=bgen_candidate_summary.candidate.rayon_thread_count,
                         firth_batch_size=None,
@@ -280,18 +281,7 @@ def build_step2_trial_environment(
     environment = dict(os.environ)
     environment.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     environment.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", ".50")
-    if candidate.bgen_decode_tile_variant_count is None:
-        environment.pop("G_BGEN_DECODE_TILE_VARIANT_COUNT", None)
-    else:
-        environment["G_BGEN_DECODE_TILE_VARIANT_COUNT"] = str(candidate.bgen_decode_tile_variant_count)
-    if candidate.rayon_thread_count is None:
-        environment.pop("RAYON_NUM_THREADS", None)
-    else:
-        environment["RAYON_NUM_THREADS"] = str(candidate.rayon_thread_count)
-    if candidate.firth_batch_size is None:
-        environment.pop("G_REGENIE2_BINARY_FIRTH_BATCH_SIZE", None)
-    else:
-        environment["G_REGENIE2_BINARY_FIRTH_BATCH_SIZE"] = str(candidate.firth_batch_size)
+    del candidate
     return environment
 
 
@@ -312,11 +302,14 @@ def build_step2_child_command(
         prediction_list_path = baseline_paths.regenie_prediction_list_path
     trait_type_literal = candidate.trait_type.value
     variant_limit_expression = "None" if variant_limit is None else str(variant_limit)
-    binary_config_expression = "None"
+    binary_options_expression = "{}"
     if candidate.trait_type == types.RegenieTraitType.BINARY:
-        binary_config_expression = (
-            "api.Regenie2BinaryConfig(correction=types.RegenieBinaryCorrection.FIRTH_APPROXIMATE)"
-        )
+        binary_options_expression = '{"firth": True, "approx": True}'
+    bgen_tile_expression = (
+        "64" if candidate.bgen_decode_tile_variant_count is None else str(candidate.bgen_decode_tile_variant_count)
+    )
+    firth_batch_expression = "64" if candidate.firth_batch_size is None else str(candidate.firth_batch_size)
+    rayon_thread_expression = "None" if candidate.rayon_thread_count is None else str(candidate.rayon_thread_count)
     child_code = textwrap.dedent(
         """
         import json
@@ -324,30 +317,32 @@ def build_step2_child_command(
 
         import polars as pl
 
-        from g import api, types
+        from g import api
 
         start_time = time.perf_counter()
-        artifacts = api.regenie2(
-            bgen={bgen_path!r},
-            sample={sample_path!r},
-            pheno={phenotype_path!r},
-            pheno_name={phenotype_name!r},
-            out={output_path!r},
-            covar={covariate_path!r},
-            covar_names="age,sex",
-            pred={prediction_path!r},
-            trait_type=types.RegenieTraitType({trait_type!r}),
-            compute=api.ComputeConfig(
-                device=types.Device.GPU,
-                chunk_size={chunk_size},
-                variant_limit={variant_limit_expression},
-                prefetch_chunks={prefetch_chunks},
-                finalize_parquet=True,
-                output_writer_thread_count={output_writer_thread_count},
-                output_writer_queue_depth={output_writer_queue_depth},
-            ),
-            binary={binary_config_expression},
-        )
+        artifacts = api.regenie.from_options({{
+            "step": 2,
+            "bt" if {trait_type!r} == "binary" else "qt": True,
+            "bgen": {bgen_path!r},
+            "sample": {sample_path!r},
+            "phenoFile": {phenotype_path!r},
+            "phenoCol": {phenotype_name!r},
+            "out": {output_path!r},
+            "covarFile": {covariate_path!r},
+            "covarColList": "age,sex",
+            "pred": {prediction_path!r},
+            "g-device": "gpu",
+            "bsize": {chunk_size},
+            "g-variant-limit": {variant_limit_expression},
+            "g-staging-depth": {staging_depth},
+            "g-output-format": "parquet",
+            "g-writer-threads": {output_writer_thread_count},
+            "g-writer-queue-depth": {output_writer_queue_depth},
+            "g-bgen-decode-tile-variant-count": {bgen_tile_expression},
+            "g-firth-batch-size": {firth_batch_expression},
+            "threads": {rayon_thread_expression},
+            **{binary_options_expression},
+        }})
         wall_time_seconds = time.perf_counter() - start_time
         output_row_count = pl.scan_parquet(artifacts.final_parquet).select(pl.len()).collect().item()
         print(
@@ -371,10 +366,13 @@ def build_step2_child_command(
         trait_type=trait_type_literal,
         chunk_size=candidate.chunk_size,
         variant_limit_expression=variant_limit_expression,
-        prefetch_chunks=candidate.prefetch_chunks,
+        staging_depth=candidate.staging_depth,
         output_writer_thread_count=candidate.output_writer_thread_count,
         output_writer_queue_depth=candidate.output_writer_queue_depth,
-        binary_config_expression=binary_config_expression,
+        bgen_tile_expression=bgen_tile_expression,
+        firth_batch_expression=firth_batch_expression,
+        rayon_thread_expression=rayon_thread_expression,
+        binary_options_expression=binary_options_expression,
     )
     return [sys.executable, "-c", child_code]
 
@@ -384,7 +382,7 @@ def build_candidate_slug(candidate: Step2TuningCandidate) -> str:
     candidate_parts = [
         candidate.trait_type.value,
         f"chunk{candidate.chunk_size}",
-        f"prefetch{candidate.prefetch_chunks}",
+        f"staging{candidate.staging_depth}",
         f"writer{candidate.output_writer_thread_count}",
         f"queue{candidate.output_writer_queue_depth}",
         f"tile{resolve_optional_label(candidate.bgen_decode_tile_variant_count)}",
@@ -556,22 +554,20 @@ def run_bgen_pre_sweep(
             DEFAULT_BGEN_PATH_MODE.value,
         ]
         if candidate.decode_tile_variant_count is not None:
-            candidate_argument_list.extend(
-                ["--decode-tile-variant-count", str(candidate.decode_tile_variant_count)]
-            )
+            candidate_argument_list.extend(["--decode-tile-variant-count", str(candidate.decode_tile_variant_count)])
         if candidate.rayon_thread_count is not None:
             candidate_argument_list.extend(["--rayon-thread-count", str(candidate.rayon_thread_count)])
-        benchmark_arguments = parser.parse_args(
-            candidate_argument_list
-        )
+        benchmark_arguments = parser.parse_args(candidate_argument_list)
         candidate_summaries.append(
-            summarize_bgen_candidate(benchmark_bgen_reader.run_case_subprocess(
-                benchmark_arguments,
-                candidate.benchmark_chunk_size,
-                candidate.decode_tile_variant_count,
-                candidate.rayon_thread_count,
-                trusted_no_missing_diploid=False,
-            ))
+            summarize_bgen_candidate(
+                benchmark_bgen_reader.run_case_subprocess(
+                    benchmark_arguments,
+                    candidate.benchmark_chunk_size,
+                    candidate.decode_tile_variant_count,
+                    candidate.rayon_thread_count,
+                    trusted_no_missing_diploid=False,
+                )
+            )
         )
     return tuple(
         sorted(
@@ -624,7 +620,7 @@ def tune_trait_mode(
     compute_stage_candidates = build_compute_stage_candidates(
         trait_type=trait_type,
         chunk_sizes=parse_required_int_list(arguments.chunk_sizes),
-        prefetch_chunk_values=parse_required_int_list(arguments.prefetch_chunks),
+        staging_depth_values=parse_required_int_list(arguments.staging_depths),
         bgen_candidates=bgen_candidate_summaries[: arguments.top_bgen_candidates],
         firth_batch_sizes=parse_required_int_list(arguments.firth_batch_sizes),
     )
@@ -650,8 +646,7 @@ def tune_trait_mode(
         variant_limit=arguments.variant_limit,
     )
     finalist_candidates = tuple(
-        candidate_summary.candidate
-        for candidate_summary in writer_stage_candidate_summaries[: arguments.top_finalists]
+        candidate_summary.candidate for candidate_summary in writer_stage_candidate_summaries[: arguments.top_finalists]
     )
     finalist_candidate_summaries = evaluate_step2_candidates(
         baseline_paths=baseline_paths,

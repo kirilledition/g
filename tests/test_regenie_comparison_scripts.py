@@ -3,9 +3,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import typing
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
+
+if typing.TYPE_CHECKING:
+    import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
@@ -31,6 +35,26 @@ deep_profile = load_script_module("deep_profile_script", "scripts/profile_regeni
 fresh_process_benchmark = load_script_module(
     "fresh_process_benchmark_script",
     "scripts/benchmark_regenie2_linear_fresh_process.py",
+)
+binary_hot_benchmark = load_script_module(
+    "binary_hot_benchmark_script",
+    "scripts/benchmark_regenie2_binary_hot.py",
+)
+output_stage_benchmark = load_script_module(
+    "output_stage_benchmark_script",
+    "scripts/benchmark_output_stages.py",
+)
+binary_firth_parity = load_script_module(
+    "binary_firth_parity_script",
+    "scripts/compare_binary_firth_paths.py",
+)
+binary_regenie_debug = load_script_module(
+    "binary_regenie_debug_script",
+    "scripts/debug_binary_regenie_parity.py",
+)
+linear_regenie_debug = load_script_module(
+    "linear_regenie_debug_script",
+    "scripts/debug_linear_regenie_parity.py",
 )
 tuning_benchmark = load_script_module(
     "tuning_benchmark_script",
@@ -59,11 +83,10 @@ def test_bgen_reader_benchmark_parses_sweep_lists() -> None:
 
 
 def test_bgen_reader_benchmark_parses_path_modes() -> None:
-    path_modes = bgen_reader_benchmark.parse_path_modes("read_float32,read_float32_prepared,read_float32_into_prepared")
+    path_modes = bgen_reader_benchmark.parse_path_modes("sample_major_buffered,variant_major_buffered")
     assert [path_mode.value for path_mode in path_modes] == [
-        "read_float32",
-        "read_float32_prepared",
-        "read_float32_into_prepared",
+        "sample_major_buffered",
+        "variant_major_buffered",
     ]
 
 
@@ -71,15 +94,525 @@ def test_bgen_reader_benchmark_parses_boolean_modes() -> None:
     assert bgen_reader_benchmark.parse_boolean_mode_list("trusted,safe") == [True, False]
 
 
+def test_binary_regenie_debug_selector_matches_ids_and_indices() -> None:
+    selector = binary_regenie_debug.VariantSelector(
+        variant_identifiers=frozenset({"rs1"}),
+        variant_indices=frozenset({3}),
+    )
+
+    assert selector.matches(variant_identifier="rs1", variant_index=99)
+    assert selector.matches(variant_identifier="rs2", variant_index=3)
+    assert not selector.matches(variant_identifier="rs2", variant_index=4)
+
+
+def test_linear_regenie_debug_selector_matches_ids_and_indices() -> None:
+    selector = linear_regenie_debug.VariantSelector(
+        variant_identifiers=frozenset({"rs1"}),
+        variant_indices=frozenset({3}),
+    )
+
+    assert selector.matches(variant_identifier="rs1", variant_index=99)
+    assert selector.matches(variant_identifier="rs2", variant_index=3)
+    assert not selector.matches(variant_identifier="rs2", variant_index=4)
+
+
+def test_linear_regenie_debug_comparison_reports_nested_numeric_differences() -> None:
+    record = linear_regenie_debug.VariantDebugRecord(
+        variant_index=0,
+        chromosome="22",
+        position=100,
+        variant_identifier="rs1",
+        allele_zero="A",
+        allele_one="G",
+        allele_count=2.0,
+        allele_one_frequency=0.1,
+        minor_allele_count=2.0,
+        info_score=0.9,
+        observation_count=10,
+        sparse_candidate=False,
+        normalization_offset=0.0,
+        normalized_genotype_sum_squares=4.0,
+        projection_sum_squares=1.0,
+        genotype_residual_sum_squares=3.0,
+        covariance_with_phenotype=0.5,
+        null_mean_squared_error=1.5,
+        adjusted_residual_sum_squares=15.0,
+        adjusted_residual={"sum": 1.0},
+        adjusted_residual_projection={"sum": 2.0},
+        beta=0.1,
+        standard_error=0.2,
+        chi_squared=0.3,
+        log10_p_value=0.4,
+        valid=True,
+    )
+
+    comparisons = linear_regenie_debug.build_comparisons(
+        records=[record],
+        reference_records={
+            "rs1": {
+                "variant_identifier": "rs1",
+                "beta": 0.2,
+                "adjusted_residual": {"sum": 1.0},
+                "genotype_residual_sum_squares": 3.0,
+            }
+        },
+        tolerance=1.0e-8,
+    )
+
+    assert len(comparisons) == 1
+    assert comparisons[0].variant_identifier == "rs1"
+    assert not comparisons[0].missing_reference
+    assert [difference.path for difference in comparisons[0].differences] == ["beta"]
+
+
+def test_binary_regenie_debug_comparison_reports_nested_numeric_differences() -> None:
+    record = binary_regenie_debug.VariantDebugRecord(
+        variant_index=0,
+        chromosome="22",
+        position=100,
+        variant_identifier="rs1",
+        allele_zero="A",
+        allele_one="G",
+        allele_count=2.0,
+        flipped_allele_count=2.0,
+        flip_mask=False,
+        minor_allele_count=2.0,
+        sparse_candidate=False,
+        rare_sparse_firth_candidate=False,
+        carrier_count=1,
+        score=0.5,
+        score_variance=1.5,
+        score_beta=0.1,
+        score_standard_error=0.2,
+        score_chi_squared=0.3,
+        score_log10_p_value=0.4,
+        score_extra_code="score",
+        null_logistic_offset={"sum": 1.0},
+        null_firth_offset={"sum": 2.0},
+        null_logistic_iteration_count=4,
+        null_logistic_converged=True,
+        null_firth_iteration_count=5,
+        null_firth_convergence_reason="converged",
+        firth_correction_branch="pseudo_firth",
+        firth_iteration_count=6,
+        pseudo_firth_iteration_count=6,
+        nr_zero_start_iteration_count=0,
+        nr_warm_start_iteration_count=0,
+        final_beta=0.11,
+        final_standard_error=0.21,
+        final_chi_squared=0.31,
+        final_log10_p_value=0.41,
+        final_extra_code="firth",
+        final_valid=True,
+        firth_failure_code="none",
+        firth_convergence_reason="converged",
+    )
+
+    comparisons = binary_regenie_debug.build_comparisons(
+        records=[record],
+        reference_records={
+            "rs1": {
+                "variant_identifier": "rs1",
+                "final_beta": 0.2,
+                "null_firth_offset": {"sum": 2.0},
+                "score_variance": 1.5,
+            }
+        },
+        tolerance=1.0e-8,
+    )
+
+    assert len(comparisons) == 1
+    assert comparisons[0].variant_identifier == "rs1"
+    assert not comparisons[0].missing_reference
+    assert [difference.path for difference in comparisons[0].differences] == ["final_beta"]
+
+
+def test_binary_regenie_debug_missing_selection_count_handles_id_and_index_match() -> None:
+    selector = binary_regenie_debug.VariantSelector(
+        variant_identifiers=frozenset({"rs1", "missing_rs"}),
+        variant_indices=frozenset({0, 99}),
+    )
+    record = binary_regenie_debug.VariantDebugRecord(
+        variant_index=0,
+        chromosome="22",
+        position=100,
+        variant_identifier="rs1",
+        allele_zero="A",
+        allele_one="G",
+        allele_count=2.0,
+        flipped_allele_count=2.0,
+        flip_mask=False,
+        minor_allele_count=2.0,
+        sparse_candidate=False,
+        rare_sparse_firth_candidate=False,
+        carrier_count=1,
+        score=0.5,
+        score_variance=1.5,
+        score_beta=0.1,
+        score_standard_error=0.2,
+        score_chi_squared=0.3,
+        score_log10_p_value=0.4,
+        score_extra_code="score",
+        null_logistic_offset={"sum": 1.0},
+        null_firth_offset={"sum": 2.0},
+        null_logistic_iteration_count=4,
+        null_logistic_converged=True,
+        null_firth_iteration_count=5,
+        null_firth_convergence_reason="converged",
+        firth_correction_branch="pseudo_firth",
+        firth_iteration_count=6,
+        pseudo_firth_iteration_count=6,
+        nr_zero_start_iteration_count=0,
+        nr_warm_start_iteration_count=0,
+        final_beta=0.11,
+        final_standard_error=0.21,
+        final_chi_squared=0.31,
+        final_log10_p_value=0.41,
+        final_extra_code="firth",
+        final_valid=True,
+        firth_failure_code="none",
+        firth_convergence_reason="converged",
+    )
+
+    assert binary_regenie_debug.count_missing_selections(records=[record], selector=selector) == 2
+
+
 def test_tuning_benchmark_builds_queue_depth_values() -> None:
     assert tuning_benchmark.build_queue_depth_values(4, (1, 2)) == (4, 8)
+
+
+def test_output_stage_benchmark_builds_handoff_timing_metrics(tmp_path: Path) -> None:
+    python_stage_path = tmp_path / "python_stage_timings.json"
+    first_rust_stage_path = tmp_path / "first_output_stage_timings.json"
+    second_rust_stage_path = tmp_path / "second_output_stage_timings.json"
+    python_stage_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "device_to_host_materialization": 2.0,
+                    "output_write": 5.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    first_rust_stage_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "rust_output_metadata_clone": 0.5,
+                    "rust_output_result_buffer_copy": 1.0,
+                    "rust_output_enqueue": 0.25,
+                    "rust_output_writer_record_batch_build": 2.0,
+                    "rust_output_writer_arrow_file_write": 3.0,
+                    "rust_output_writer_total": 6.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    second_rust_stage_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "rust_output_metadata_clone": 0.25,
+                    "rust_output_result_buffer_copy": 0.5,
+                    "rust_output_enqueue": 0.25,
+                    "rust_output_writer_record_batch_build": 1.0,
+                    "rust_output_writer_arrow_file_write": 1.5,
+                    "rust_output_writer_total": 3.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    metrics = output_stage_benchmark.build_output_handoff_timing_metrics(
+        python_stage_timing_path=python_stage_path,
+        rust_stage_timing_paths=(first_rust_stage_path, second_rust_stage_path),
+        wall_time_seconds=20.0,
+    )
+
+    assert metrics.seconds_by_metric["device_to_host_materialization"] == 2.0
+    assert metrics.seconds_by_metric["python_output_write"] == 5.0
+    assert metrics.seconds_by_metric["rust_output_result_buffer_copy"] == 1.5
+    assert metrics.seconds_by_metric["rust_output_writer_record_batch_build"] == 3.0
+    assert metrics.seconds_by_metric["rust_output_writer_arrow_file_write"] == 4.5
+    assert metrics.seconds_by_metric["bridge_residual"] == 2.25
+    assert metrics.seconds_by_metric["measured_output_path"] == 16.0
+    assert metrics.wall_time_percentage_by_metric["bridge_residual"] == 11.25
+    assert metrics.output_path_percentage_by_metric["rust_output_result_buffer_copy"] == 9.375
+
+
+def test_output_stage_benchmark_summarizes_handoff_metrics() -> None:
+    first_timing = output_stage_benchmark.OutputHandoffTimingMetrics(
+        seconds_by_metric={"bridge_residual": 2.0},
+        wall_time_percentage_by_metric={"bridge_residual": 10.0},
+        output_path_percentage_by_metric={"bridge_residual": 20.0},
+    )
+    second_timing = output_stage_benchmark.OutputHandoffTimingMetrics(
+        seconds_by_metric={"bridge_residual": 4.0},
+        wall_time_percentage_by_metric={"bridge_residual": 20.0},
+        output_path_percentage_by_metric={"bridge_residual": 40.0},
+    )
+    trial_results = (
+        output_stage_benchmark.TrialResult(
+            case_name="case",
+            trial_index=0,
+            finalize_parquet=False,
+            phenotype_count=1,
+            chunk_size=1024,
+            writer_thread_count=1,
+            writer_queue_depth=1,
+            chunks_per_arrow_file=4,
+            arrow_compression="none",
+            wall_time_seconds=20.0,
+            python_stage_timing_path="python0.json",
+            rust_stage_timing_paths=("rust0.json",),
+            output_run_directories=("run0",),
+            final_parquet_paths=(),
+            chunk_file_count=1,
+            chunk_bytes=100,
+            final_parquet_bytes=None,
+            handoff_timing=first_timing,
+        ),
+        output_stage_benchmark.TrialResult(
+            case_name="case",
+            trial_index=1,
+            finalize_parquet=False,
+            phenotype_count=1,
+            chunk_size=1024,
+            writer_thread_count=1,
+            writer_queue_depth=1,
+            chunks_per_arrow_file=4,
+            arrow_compression="none",
+            wall_time_seconds=30.0,
+            python_stage_timing_path="python1.json",
+            rust_stage_timing_paths=("rust1.json",),
+            output_run_directories=("run1",),
+            final_parquet_paths=(),
+            chunk_file_count=1,
+            chunk_bytes=200,
+            final_parquet_bytes=None,
+            handoff_timing=second_timing,
+        ),
+    )
+
+    summary = output_stage_benchmark.summarize_trial_group(trial_results)
+
+    assert summary["mean_handoff_timing_seconds"]["bridge_residual"] == 3.0
+    assert summary["mean_handoff_wall_time_percentages"]["bridge_residual"] == 15.0
+    assert summary["mean_handoff_output_path_percentages"]["bridge_residual"] == 30.0
+
+
+def test_deep_profile_collects_regenie_and_g_stage_totals(tmp_path: Path) -> None:
+    g_stage_path = tmp_path / "g.stage_timings.json"
+    regenie_profile_path = tmp_path / "regenie.profile.json"
+    g_stage_path.write_text(
+        json.dumps({"stage_totals_seconds": {"native_engine_delivery": 2.0}}),
+        encoding="utf-8",
+    )
+    regenie_profile_path.write_text(
+        json.dumps({"stage_totals_seconds": {"bgen_decode_impute_filter": 3.0}}),
+        encoding="utf-8",
+    )
+    g_trial = deep_profile.TrialResult(
+        name="g_trial",
+        implementation="g",
+        trait_type="quantitative",
+        device="gpu",
+        status="success",
+        wall_time_seconds=5.0,
+        output_row_count=10,
+        stdout_log_path="stdout",
+        stderr_log_path="stderr",
+        command_arguments=[],
+        environment_overrides={},
+        stage_timing_path=str(g_stage_path),
+    )
+    regenie_trial = deep_profile.TrialResult(
+        name="regenie_trial",
+        implementation="regenie",
+        trait_type="quantitative",
+        device="external_cpu",
+        status="success",
+        wall_time_seconds=6.0,
+        output_row_count=10,
+        stdout_log_path="stdout",
+        stderr_log_path="stderr",
+        command_arguments=[],
+        environment_overrides={},
+        regenie_profile_path=str(regenie_profile_path),
+    )
+    aggregates = [
+        deep_profile.aggregate_trial_results(
+            name="headline_g_quantitative_gpu",
+            implementation="g",
+            trait_type="quantitative",
+            device="gpu",
+            warmup_count=0,
+            trial_results=[g_trial],
+        ),
+        deep_profile.aggregate_trial_results(
+            name="headline_regenie_quantitative",
+            implementation="regenie",
+            trait_type="quantitative",
+            device="external_cpu",
+            warmup_count=0,
+            trial_results=[regenie_trial],
+        ),
+    ]
+
+    stage_totals = deep_profile.collect_stage_totals(aggregates)
+
+    assert stage_totals["headline_g_quantitative_gpu:native_engine_delivery"] == 2.0
+    assert stage_totals["headline_regenie_quantitative:bgen_decode_impute_filter"] == 3.0
+
+
+def test_deep_profile_builds_stage_comparison_rows(tmp_path: Path) -> None:
+    g_stage_path = tmp_path / "g.stage_timings.json"
+    regenie_profile_path = tmp_path / "regenie.profile.json"
+    g_stage_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "native_engine_delivery": 2.0,
+                    "jax_compute": 4.0,
+                    "output_write": 1.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    regenie_profile_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "block_read": 4.0,
+                    "association_compute": 8.0,
+                    "block_output": 2.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    g_trial = deep_profile.TrialResult(
+        name="g_trial",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        status="success",
+        wall_time_seconds=5.0,
+        output_row_count=10,
+        stdout_log_path="stdout",
+        stderr_log_path="stderr",
+        command_arguments=[],
+        environment_overrides={},
+        stage_timing_path=str(g_stage_path),
+    )
+    regenie_trial = deep_profile.TrialResult(
+        name="regenie_trial",
+        implementation="regenie",
+        trait_type="binary",
+        device="external_cpu",
+        status="success",
+        wall_time_seconds=10.0,
+        output_row_count=10,
+        stdout_log_path="stdout",
+        stderr_log_path="stderr",
+        command_arguments=[],
+        environment_overrides={},
+        regenie_profile_path=str(regenie_profile_path),
+    )
+    aggregates = [
+        deep_profile.aggregate_trial_results(
+            name="headline_regenie_binary",
+            implementation="regenie",
+            trait_type="binary",
+            device="external_cpu",
+            warmup_count=0,
+            trial_results=[regenie_trial],
+        ),
+        deep_profile.aggregate_trial_results(
+            name="headline_g_binary_gpu",
+            implementation="g",
+            trait_type="binary",
+            device="gpu",
+            warmup_count=0,
+            trial_results=[g_trial],
+        ),
+    ]
+
+    rows = deep_profile.build_stage_comparison_rows(aggregates)
+    bgen_row = next(row for row in rows if row["stage_group"] == "bgen_decode")
+    findings = deep_profile.build_algorithmic_findings(rows)
+
+    assert bgen_row["regenie_seconds"] == 4.0
+    assert bgen_row["g_seconds"] == 2.0
+    assert bgen_row["g_speedup_ratio"] == 2.0
+    assert any("BGEN delivery" in finding for finding in findings)
+
+
+def test_deep_profile_algorithmic_findings_respect_speedup_direction() -> None:
+    rows: list[dict[str, float | str]] = [
+        {
+            "trait_type": "quantitative",
+            "g_device": "cpu",
+            "stage_group": "input_setup",
+            "regenie_seconds": 4.0,
+            "g_seconds": 2.0,
+            "g_speedup_ratio": 2.0,
+        },
+        {
+            "trait_type": "binary",
+            "g_device": "cpu",
+            "stage_group": "output",
+            "regenie_seconds": 1.0,
+            "g_seconds": 4.0,
+            "g_speedup_ratio": 0.25,
+        },
+    ]
+
+    findings = deep_profile.build_algorithmic_findings(rows)
+
+    assert any("quantitative/cpu: g is faster in input_setup" in finding for finding in findings)
+    assert any("binary/cpu: REGENIE remains faster in output" in finding for finding in findings)
+
+
+def test_binary_firth_parity_harness_synthetic_fixture_passes() -> None:
+    comparison = binary_firth_parity.compare_binary_paths(
+        inputs=binary_firth_parity.build_synthetic_inputs(),
+        correction_plan=binary_firth_parity.types.BinaryCorrectionPlan(
+            method=binary_firth_parity.types.BinaryFallbackMethod.FIRTH_APPROXIMATE
+        ),
+    )
+
+    assert comparison.passed is True
+    assert comparison.production_metrics == comparison.variant_major_metrics
+    assert comparison.production_metrics.firth_candidate_count >= 0
+
+
+def test_binary_firth_parity_harness_loads_npz_fixture(tmp_path: Path) -> None:
+    inputs = binary_firth_parity.build_synthetic_inputs()
+    fixture_path = tmp_path / "binary_fixture.npz"
+    binary_firth_parity.np.savez(
+        fixture_path,
+        covariate_matrix=binary_firth_parity.np.asarray(inputs.covariate_matrix),
+        phenotype_vector=binary_firth_parity.np.asarray(inputs.phenotype_vector),
+        genotype_matrix=binary_firth_parity.np.asarray(inputs.genotype_matrix),
+        loco_offset=binary_firth_parity.np.asarray(inputs.loco_offset),
+    )
+
+    loaded_inputs = binary_firth_parity.load_npz_inputs(fixture_path)
+
+    assert loaded_inputs.genotype_matrix.shape == inputs.genotype_matrix.shape
 
 
 def test_tuning_benchmark_builds_trial_environment_from_low_level_knobs() -> None:
     candidate = tuning_benchmark.Step2TuningCandidate(
         trait_type=tuning_benchmark.types.RegenieTraitType.BINARY,
         chunk_size=8192,
-        prefetch_chunks=1,
+        staging_depth=1,
         output_writer_thread_count=8,
         output_writer_queue_depth=16,
         bgen_decode_tile_variant_count=128,
@@ -87,9 +620,9 @@ def test_tuning_benchmark_builds_trial_environment_from_low_level_knobs() -> Non
         firth_batch_size=64,
     )
     environment = tuning_benchmark.build_step2_trial_environment(candidate)
-    assert environment["G_BGEN_DECODE_TILE_VARIANT_COUNT"] == "128"
-    assert environment["RAYON_NUM_THREADS"] == "4"
-    assert environment["G_REGENIE2_BINARY_FIRTH_BATCH_SIZE"] == "64"
+    assert "G_BGEN_DECODE_TILE_VARIANT_COUNT" not in environment
+    assert "RAYON_NUM_THREADS" not in environment
+    assert "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE" not in environment
 
 
 def test_tuning_benchmark_builds_shared_compute_candidates() -> None:
@@ -106,7 +639,7 @@ def test_tuning_benchmark_builds_shared_compute_candidates() -> None:
     candidates = tuning_benchmark.build_compute_stage_candidates(
         trait_type=tuning_benchmark.types.RegenieTraitType.QUANTITATIVE,
         chunk_sizes=(4096, 8192),
-        prefetch_chunk_values=(0, 1),
+        staging_depth_values=(1, 2),
         bgen_candidates=(bgen_candidate_summary,),
         firth_batch_sizes=(32, 64),
     )
@@ -128,7 +661,7 @@ def test_tuning_benchmark_builds_binary_compute_candidates_with_firth_sizes() ->
     candidates = tuning_benchmark.build_compute_stage_candidates(
         trait_type=tuning_benchmark.types.RegenieTraitType.BINARY,
         chunk_sizes=(8192,),
-        prefetch_chunk_values=(1,),
+        staging_depth_values=(1,),
         bgen_candidates=(bgen_candidate_summary,),
         firth_batch_sizes=(32, 64),
     )
@@ -176,17 +709,37 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
         variant_limit=None,
         trait_type="binary",
     )
-    assert cpu_command[:4] == ["uv", "run", "g", "regenie2"]
-    assert "--trait-type" in cpu_command
-    assert cpu_command[cpu_command.index("--trait-type") + 1] == "quantitative"
-    assert "--device" in cpu_command
-    assert cpu_command[cpu_command.index("--device") + 1] == "cpu"
-    assert "--finalize-parquet" in cpu_command
-    assert "--variant-limit" in cpu_command
-    assert gpu_command[gpu_command.index("--device") + 1] == "gpu"
-    assert "--variant-limit" not in gpu_command
-    assert binary_command[binary_command.index("--trait-type") + 1] == "binary"
+    assert cpu_command[:4] == ["uv", "run", "g", "regenie"]
+    assert "--step" in cpu_command
+    assert cpu_command[cpu_command.index("--step") + 1] == "2"
+    assert "--qt" in cpu_command
+    assert "--g-device" in cpu_command
+    assert cpu_command[cpu_command.index("--g-device") + 1] == "cpu"
+    assert "--g-output-format" in cpu_command
+    assert cpu_command[cpu_command.index("--g-output-format") + 1] == "parquet"
+    assert "--g-variant-limit" in cpu_command
+    assert "--variant-limit" not in cpu_command
+    assert gpu_command[gpu_command.index("--g-device") + 1] == "gpu"
+    assert "--g-variant-limit" not in gpu_command
+    assert "--bt" in binary_command
+    assert "--firth" in binary_command
+    assert "--approx" in binary_command
     assert "phenotype_binary" in binary_command
+
+
+def test_g_comparison_runner_resolves_current_output_layout(tmp_path: Path) -> None:
+    output_root_directory = tmp_path / "out.g"
+    output_association_directory = output_root_directory / "trait_0001_phenotype_binary.regenie2_binary.run"
+    output_association_directory.mkdir(parents=True)
+    final_parquet_path = output_association_directory / "final.parquet"
+    final_parquet_path.touch()
+
+    resolved_path = comparison_benchmark.resolve_g_step2_final_parquet_path(
+        output_root_directory=output_root_directory,
+        association_suffix=".regenie2_binary.run",
+    )
+
+    assert resolved_path == final_parquet_path
 
 
 def test_unsupported_g_program_result_marked_not_implemented() -> None:
@@ -326,14 +879,19 @@ def test_text_summary_includes_required_sections(tmp_path: Path) -> None:
 def test_quantitative_step2_comparison_wires_parity_logic(tmp_path: Path) -> None:
     regenie_output = tmp_path / "regenie.regenie"
     g_output = tmp_path / "g.parquet"
-    regenie_output.write_text("CHROM GENPOS ID BETA LOG10P\n1 100 rs1 0.1 1.0\n1 200 rs2 0.2 2.0\n")
-    pd.DataFrame(
+    regenie_output.write_text(
+        "CHROM GENPOS ID BETA SE CHISQ LOG10P EXTRA\n1 100 rs1 0.1 0.3 0.11 1.0 NA\n1 200 rs2 0.2 0.4 0.25 2.0 NA\n"
+    )
+    pl.DataFrame(
         {
             "ID": ["rs1", "rs2"],
             "BETA": [0.1, 0.2],
+            "SE": [0.3, 0.4],
+            "CHISQ": [0.11, 0.25],
             "LOG10P": [1.0, 2.0],
+            "EXTRA": [None, None],
         }
-    ).to_parquet(g_output, index=False)
+    ).write_parquet(g_output)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
         regenie_output_path=regenie_output,
         g_output_path=g_output,
@@ -341,17 +899,27 @@ def test_quantitative_step2_comparison_wires_parity_logic(tmp_path: Path) -> Non
     assert agreement.comparable
     assert agreement.merged_variant_count == 2
     assert agreement.beta_allclose_within_tolerance is True
+    assert agreement.standard_error_allclose_within_tolerance is True
+    assert agreement.chi_squared_allclose_within_tolerance is True
     assert agreement.log10p_allclose_within_tolerance is True
+    assert agreement.extra_match_rate == 1.0
+    assert agreement.top_variant_differences is not None
 
 
 def test_fresh_process_benchmark_parser_accepts_output_writer_options() -> None:
     arguments = fresh_process_benchmark.build_argument_parser().parse_args(
         [
+            "--runner",
+            "native-cuda-kernel",
             "--output-writer-thread-count",
             "2",
+            "--cuda-block-size",
+            "128",
         ]
     )
+    assert arguments.runner == "native-cuda-kernel"
     assert arguments.output_writer_thread_count == 2
+    assert arguments.cuda_block_size == 128
 
 
 def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
@@ -376,24 +944,191 @@ def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
         ),
     ]
     summary = fresh_process_benchmark.build_summary(
+        runner=fresh_process_benchmark.RunnerMode.PYTHON_JAX,
         device="gpu",
         chunk_size=8192,
+        cuda_block_size=256,
         finalize_parquet=True,
         output_writer_thread_count=2,
         warmup_count=1,
         trial_results=trial_results,
     )
+    assert summary.runner == "python-jax"
+    assert summary.cuda_block_size is None
     assert summary.mean_rows_per_second == 75.0
     assert summary.mean_chunk_bytes == 1536.0
     assert summary.mean_final_parquet_bytes == 768.0
 
 
-def test_deep_profile_builds_cache_environment(tmp_path: Path) -> None:
+def test_binary_hot_benchmark_defaults_to_comparable_modes() -> None:
+    arguments = binary_hot_benchmark.build_argument_parser().parse_args([])
+    assert arguments.device == "gpu"
+    assert arguments.chunk_size == 8192
+    assert arguments.output_writer_thread_count == 8
+    assert arguments.trusted_no_missing_diploid is True
+    trial_specs = binary_hot_benchmark.build_trial_specs(
+        include_cold_process=arguments.include_cold_process,
+        include_no_final_hot=arguments.include_no_final_hot,
+        include_finalized_hot=arguments.include_finalized_hot,
+    )
+    assert [trial_spec.mode.value for trial_spec in trial_specs] == [
+        "cold_process_finalized",
+        "warm_same_process_no_final",
+        "hot_same_process_no_final",
+        "warm_same_process_finalized",
+        "hot_same_process_finalized",
+    ]
+
+
+def test_binary_hot_child_process_command_contains_binary_controls(tmp_path: Path) -> None:
+    configuration = binary_hot_benchmark.BenchmarkConfiguration(
+        data_directory=Path("data"),
+        output_directory=tmp_path / "profile",
+        device=binary_hot_benchmark.types.Device.CPU,
+        chunk_size=4096,
+        staging_depth=2,
+        output_writer_thread_count=4,
+        output_writer_queue_depth=8,
+        trusted_no_missing_diploid=True,
+        assume_trusted_validated=True,
+        firth_batch_size=64,
+        variant_limit=1000,
+        python_executable=sys.executable,
+        jax_cache_directory=tmp_path / "jax-cache",
+    )
+    trial_spec = binary_hot_benchmark.TrialSpec(
+        name="cold_process_finalized",
+        mode=binary_hot_benchmark.BenchmarkMode.COLD_PROCESS_FINALIZED,
+        finalize_parquet=True,
+        fresh_process=True,
+        same_process_group=None,
+    )
+    child_command = binary_hot_benchmark.build_fresh_process_command(
+        configuration=configuration,
+        trial_spec=trial_spec,
+        stage_timing_path=tmp_path / "stages.json",
+    )
+    command_text = child_command.command_arguments[2]
+    assert child_command.command_arguments[:2] == [sys.executable, "-c"]
+    assert "benchmark_regenie2_binary_hot" in command_text
+    assert "trusted_no_missing_diploid" in command_text
+    assert "variant_limit" in command_text
+    assert "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE" not in child_command.environment_overrides
+    assert "G_REGENIE2_ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED" not in child_command.environment_overrides
+    assert "JAX_PLATFORMS" not in child_command.environment_overrides
+
+
+def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
+    configuration = binary_hot_benchmark.BenchmarkConfiguration(
+        data_directory=Path("data"),
+        output_directory=tmp_path / "profile",
+        device=binary_hot_benchmark.types.Device.GPU,
+        chunk_size=8192,
+        staging_depth=1,
+        output_writer_thread_count=8,
+        output_writer_queue_depth=8,
+        trusted_no_missing_diploid=True,
+        assume_trusted_validated=True,
+        firth_batch_size=64,
+        variant_limit=None,
+        python_executable=sys.executable,
+        jax_cache_directory=tmp_path / "jax-cache",
+    )
+    output_metrics = binary_hot_benchmark.OutputMetrics(
+        output_run_directory="run",
+        final_parquet=None,
+        output_row_count=100,
+        info_non_null_count=100,
+        chunk_file_count=2,
+        chunk_bytes=1024,
+        final_parquet_bytes=None,
+    )
+    trial_results = [
+        binary_hot_benchmark.TrialResult(
+            name="hot_same_process_no_final",
+            mode=binary_hot_benchmark.BenchmarkMode.HOT_SAME_PROCESS_NO_FINAL,
+            fresh_process=False,
+            finalize_parquet=False,
+            same_process_group="no_final",
+            wall_time_seconds=7.25,
+            stage_timing_path="hot_no_final.json",
+            output_metrics=output_metrics,
+        ),
+        binary_hot_benchmark.TrialResult(
+            name="hot_same_process_finalized",
+            mode=binary_hot_benchmark.BenchmarkMode.HOT_SAME_PROCESS_FINALIZED,
+            fresh_process=False,
+            finalize_parquet=True,
+            same_process_group="finalized",
+            wall_time_seconds=7.85,
+            stage_timing_path="hot_finalized.json",
+            output_metrics=output_metrics,
+        ),
+    ]
+    summary = binary_hot_benchmark.build_summary(configuration=configuration, trial_results=trial_results)
+    assert summary["headline"]["hot_same_process_no_final_seconds"] == 7.25
+    assert summary["headline"]["hot_same_process_finalized_seconds"] == 7.85
+    assert summary["metadata"]["configuration"]["trusted_no_missing_diploid"] is True
+
+
+def test_output_stage_benchmark_builds_recommended_matrix() -> None:
+    cases = output_stage_benchmark.build_benchmark_cases(
+        small_chunk_size=1024,
+        large_chunk_size=8192,
+        many_phenotype_count=8,
+        writer_thread_counts=(4,),
+        writer_queue_depth_multipliers=(4,),
+        chunks_per_arrow_file_values=(16,),
+        arrow_compressions=(output_stage_benchmark.types.ArrowCompression.ZSTD,),
+    )
+
+    assert len(cases) == 8
+    assert {benchmark_case.finalize_parquet for benchmark_case in cases} == {False, True}
+    assert {benchmark_case.phenotype_count for benchmark_case in cases} == {1, 8}
+    assert {benchmark_case.chunk_size for benchmark_case in cases} == {1024, 8192}
+    assert "arrow_chunks_single_phenotype_small_bsize_1024_writer4_queue16_chunks16_zstd" in {
+        benchmark_case.name for benchmark_case in cases
+    }
+    assert "parquet_final_8_phenotypes_large_bsize_8192_writer4_queue16_chunks16_zstd" in {
+        benchmark_case.name for benchmark_case in cases
+    }
+
+
+def test_output_stage_benchmark_prepares_multi_phenotype_resources(tmp_path: Path) -> None:
+    data_directory = tmp_path / "data"
+    baseline_directory = data_directory / "baselines"
+    baseline_directory.mkdir(parents=True)
+    phenotype_path = data_directory / "pheno_cont.txt"
+    phenotype_path.write_text(
+        "FID\tIID\tphenotype_continuous\nf1\ti1\t1.0\nf2\ti2\t2.0\n",
+        encoding="utf-8",
+    )
+    loco_path = baseline_directory / "trait.loco"
+    loco_path.write_text("FID_IID 0_i1 0_i2\n22 0.1 0.2\n", encoding="utf-8")
+    (baseline_directory / "regenie_step1_qt_pred.list").write_text(
+        f"phenotype_continuous {loco_path}\n",
+        encoding="utf-8",
+    )
+
+    resources = output_stage_benchmark.prepare_phenotype_resources(
+        data_directory=data_directory,
+        output_directory=tmp_path / "benchmark",
+        phenotype_count=3,
+    )
+
+    assert resources.phenotype_names == ("output_trait_00", "output_trait_01", "output_trait_02")
+    assert resources.phenotype_path.exists()
+    assert resources.prediction_list_path.read_text(encoding="utf-8").count(str(loco_path)) == 3
+
+
+def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("G_PROFILE_GPU_JAX_CACHE_PARENT", str(tmp_path / "gpu_cache"))
+    monkeypatch.setenv("SLURM_JOB_ID", "12345")
     candidate = deep_profile.Step2Candidate(
         trait_type="binary",
         device="gpu",
         chunk_size=8192,
-        prefetch_chunks=1,
+        staging_depth=1,
         output_writer_thread_count=4,
         output_writer_queue_depth=8,
         bgen_decode_tile_variant_count=128,
@@ -405,11 +1140,11 @@ def test_deep_profile_builds_cache_environment(tmp_path: Path) -> None:
         cache_directory=tmp_path / "jax_cache",
         stage_timing_path=tmp_path / "stages.json",
     )
-    assert environment["JAX_COMPILATION_CACHE_DIR"] == str(tmp_path / "jax_cache")
-    assert environment["G_REGENIE2_STAGE_TIMINGS_JSON"] == str(tmp_path / "stages.json")
-    assert environment["G_BGEN_DECODE_TILE_VARIANT_COUNT"] == "128"
-    assert environment["RAYON_NUM_THREADS"] == "2"
-    assert environment["G_REGENIE2_BINARY_FIRTH_BATCH_SIZE"] == "64"
+    assert "JAX_COMPILATION_CACHE_DIR" not in environment
+    assert "G_REGENIE2_STAGE_TIMINGS_JSON" not in environment
+    assert "G_BGEN_DECODE_TILE_VARIANT_COUNT" not in environment
+    assert "RAYON_NUM_THREADS" not in environment
+    assert "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE" not in environment
     assert "JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES" not in environment
 
 
@@ -419,7 +1154,7 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
         trait_type="binary",
         device="cpu",
         chunk_size=4096,
-        prefetch_chunks=2,
+        staging_depth=2,
         output_writer_thread_count=1,
         output_writer_queue_depth=2,
         bgen_decode_tile_variant_count=None,
@@ -435,10 +1170,10 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
     command_text = command[2]
     assert command[:2] == [sys.executable, "-c"]
     assert "phenotype_binary" in command_text
-    assert "types.Device('cpu')" in command_text
-    assert "chunk_size=4096" in command_text
-    assert "variant_limit=1000" in command_text
-    assert "FIRTH_APPROXIMATE" in command_text
+    assert "\"g-device\": 'cpu'" in command_text
+    assert '"bsize": 4096' in command_text
+    assert '"g-variant-limit": 1000' in command_text
+    assert '"firth": True' in command_text
     assert "jax_probe_device_platform" in command_text
 
 
@@ -536,7 +1271,7 @@ def test_quantitative_step2_comparison_uses_full_variant_identity_when_available
         )
         + "\n"
     )
-    pd.DataFrame(
+    pl.DataFrame(
         {
             "CHROM": [1],
             "GENPOS": [100],
@@ -546,7 +1281,7 @@ def test_quantitative_step2_comparison_uses_full_variant_identity_when_available
             "BETA": [0.1],
             "LOG10P": [1.0],
         }
-    ).to_parquet(g_output, index=False)
+    ).write_parquet(g_output)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
         regenie_output_path=regenie_output,
         g_output_path=g_output,
@@ -569,7 +1304,7 @@ def test_quantitative_step2_comparison_coerces_merge_key_types(tmp_path: Path) -
         )
         + "\n"
     )
-    pd.DataFrame(
+    pl.DataFrame(
         {
             "CHROM": ["22"],
             "GENPOS": [100],
@@ -579,7 +1314,7 @@ def test_quantitative_step2_comparison_coerces_merge_key_types(tmp_path: Path) -
             "BETA": [0.1],
             "LOG10P": [1.0],
         }
-    ).to_parquet(g_output, index=False)
+    ).write_parquet(g_output)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
         regenie_output_path=regenie_output,
         g_output_path=g_output,
@@ -592,13 +1327,13 @@ def test_quantitative_step2_comparison_reads_parquet_outputs(tmp_path: Path) -> 
     regenie_output = tmp_path / "regenie.regenie"
     g_output = tmp_path / "g.parquet"
     regenie_output.write_text("CHROM GENPOS ID BETA LOG10P\n1 100 rs1 0.1 1.0\n1 200 rs2 0.2 2.0\n")
-    pd.DataFrame(
+    pl.DataFrame(
         {
             "ID": ["rs1", "rs2"],
             "BETA": [0.1, 0.2],
             "LOG10P": [1.0, 2.0],
         }
-    ).to_parquet(g_output, index=False)
+    ).write_parquet(g_output)
     agreement = comparison_benchmark.summarize_quantitative_step2_agreement(
         regenie_output_path=regenie_output,
         g_output_path=g_output,

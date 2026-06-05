@@ -383,6 +383,7 @@ fn compute_linear_chunk_from_scores(
     Ok(result)
 }
 
+#[cfg(any(feature = "burn-wgpu", feature = "burn-cuda", feature = "cuda-kernel"))]
 pub(crate) fn build_linear_chunk_result(
     beta: Vec<f32>,
     standard_error: Vec<f32>,
@@ -398,8 +399,7 @@ pub(crate) fn build_linear_chunk_result(
         #[cfg(any(feature = "burn-wgpu", feature = "burn-cuda", feature = "cuda-kernel"))]
         timing_seconds: BTreeMap::new(),
     };
-    for ((beta_value, standard_error_value), chi_squared_value) in
-        beta.into_iter().zip(standard_error.into_iter()).zip(chi_squared.into_iter())
+    for ((beta_value, standard_error_value), chi_squared_value) in beta.into_iter().zip(standard_error).zip(chi_squared)
     {
         let log10_p_value = chi_squared_to_log10_p_value(chi_squared_value);
         result.checksum += f64::from(beta_value.to_bits());

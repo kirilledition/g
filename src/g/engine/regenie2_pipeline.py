@@ -2,536 +2,27 @@
 
 from __future__ import annotations
 
-import contextlib
-import json
-import os
-import queue
-import threading
+import hashlib
+import logging
 import time
 import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-import jax
+import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
 from g import _core, types
-from g.compute import regenie2_binary, regenie2_binary_types, regenie2_linear, regenie2_linear_types
-from g.engine import types as engine_types
-from g.io import bgen, genotype_processing, models, output, samples, source
+from g.compute.regenie2_binary import api as regenie2_binary
+from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_linear import api as regenie2_linear
+from g.engine import callbacks, native_dispatch, preflight, shutdown, telemetry, timing
+from g.interface import config
+from g.io import output, source
 
-
-@dataclass(frozen=True)
-class DosageChunkWorkItem:
-    """One raw dosage chunk staged for asynchronous JAX processing."""
-
-    metadata: models.VariantMetadata
-    genotype_matrix: npt.NDArray[np.float32]
-
-
-@dataclass(frozen=True)
-class PreprocessedDosageChunkWorkItem:
-    """One native-preprocessed dosage chunk staged for asynchronous JAX compute."""
-
-    metadata: models.VariantMetadata
-    genotype_matrix: npt.NDArray[np.float32]
-    allele_one_frequency: npt.NDArray[np.float32]
-    observation_count: npt.NDArray[np.int32]
-
-
-class RegeniePredictionSourceProtocol(typing.Protocol):
-    """Native prediction source interface used by the JAX callbacks."""
-
-    def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]:
-        """Return already-aligned LOCO predictions for one chromosome."""
-        ...
-
-
-@dataclass(frozen=True)
-class StageTimingSnapshot:
-    """Diagnostic stage timing snapshot for one native REGENIE step 2 run.
-
-    Attributes:
-        stage_totals_seconds: Total wall time per measured stage.
-        stage_counts: Number of observations per measured stage.
-        native_bgen_profile: Native BGEN profile counters from the run engine.
-
-    """
-
-    stage_totals_seconds: dict[str, float]
-    stage_counts: dict[str, int]
-    native_bgen_profile: dict[str, int]
-
-
-class StageTimingRecorder:
-    """Thread-safe diagnostic wall-time collector for profiling harnesses."""
-
-    def __init__(self) -> None:
-        """Initialize empty stage timing state."""
-        self.stage_totals_seconds: dict[str, float] = {}
-        self.stage_counts: dict[str, int] = {}
-        self.native_bgen_profile: dict[str, int] = {}
-        self.lock = threading.Lock()
-
-    def add_stage_duration(self, stage_name: str, duration_seconds: float) -> None:
-        """Accumulate one measured duration."""
-        with self.lock:
-            self.stage_totals_seconds[stage_name] = self.stage_totals_seconds.get(stage_name, 0.0) + duration_seconds
-            self.stage_counts[stage_name] = self.stage_counts.get(stage_name, 0) + 1
-
-    def set_native_bgen_profile(self, profile_snapshot: dict[str, int]) -> None:
-        """Store native BGEN profiling counters."""
-        with self.lock:
-            self.native_bgen_profile = dict(profile_snapshot)
-
-    def snapshot(self) -> StageTimingSnapshot:
-        """Return an immutable copy of the current timings."""
-        with self.lock:
-            return StageTimingSnapshot(
-                stage_totals_seconds=dict(self.stage_totals_seconds),
-                stage_counts=dict(self.stage_counts),
-                native_bgen_profile=dict(self.native_bgen_profile),
-            )
-
-
-def build_stage_timing_recorder_from_environment() -> StageTimingRecorder | None:
-    """Create a diagnostic stage recorder when requested by the profiling harness."""
-    if not os.environ.get("G_REGENIE2_STAGE_TIMINGS_JSON"):
-        return None
-    return StageTimingRecorder()
-
-
-def write_stage_timing_snapshot_from_environment(stage_timing_recorder: StageTimingRecorder | None) -> None:
-    """Persist diagnostic stage timings when the profiling harness requests them."""
-    if stage_timing_recorder is None:
-        return
-    stage_timing_path = os.environ.get("G_REGENIE2_STAGE_TIMINGS_JSON")
-    if not stage_timing_path:
-        return
-    snapshot = stage_timing_recorder.snapshot()
-    payload = {
-        "stage_totals_seconds": snapshot.stage_totals_seconds,
-        "stage_counts": snapshot.stage_counts,
-        "native_bgen_profile": snapshot.native_bgen_profile,
-    }
-    Path(stage_timing_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(stage_timing_path).write_text(f"{json.dumps(payload, indent=2)}\n", encoding="utf-8")
-
-
-def record_stage_duration(
-    stage_timing_recorder: StageTimingRecorder | None,
-    stage_name: str,
-    start_time: float,
-) -> None:
-    """Record elapsed wall time for a stage when diagnostics are active."""
-    if stage_timing_recorder is None:
-        return
-    stage_timing_recorder.add_stage_duration(stage_name, time.perf_counter() - start_time)
-
-
-def block_until_ready(value: typing.Any) -> None:
-    """Synchronize a JAX value when it supports readiness blocking."""
-    block_until_ready_method = getattr(value, "block_until_ready", None)
-    if callable(block_until_ready_method):
-        block_until_ready_method()
-
-
-def put_genotype_matrix_on_device(
-    genotype_matrix: jax.Array | npt.NDArray[np.float32],
-    stage_timing_recorder: StageTimingRecorder | None,
-) -> jax.Array:
-    """Transfer a genotype chunk to the active JAX device with optional timing."""
-    start_time = time.perf_counter()
-    genotype_device_array = jax.device_put(genotype_matrix)
-    if stage_timing_recorder is not None:
-        block_until_ready(genotype_device_array)
-    record_stage_duration(stage_timing_recorder, "host_to_device_transfer", start_time)
-    return genotype_device_array
-
-
-def write_regenie2_chunk_with_optional_timing(
-    *,
-    writer_session: typing.Any,
-    chunk_accumulator: engine_types.Regenie2ChunkAccumulator,
-    stage_timing_recorder: StageTimingRecorder | None,
-) -> None:
-    """Write one REGENIE chunk while isolating device-get and native writer timings."""
-    if stage_timing_recorder is None:
-        output.write_regenie2_chunk(writer_session, chunk_accumulator)
-        return
-
-    materialization_start_time = time.perf_counter()
-    host_values = jax.device_get(
-        {
-            "allele_one_frequency": chunk_accumulator.allele_one_frequency,
-            "observation_count": chunk_accumulator.observation_count,
-            "beta": chunk_accumulator.beta,
-            "standard_error": chunk_accumulator.standard_error,
-            "chi_squared": chunk_accumulator.chi_squared,
-            "log10_p_value": chunk_accumulator.log10_p_value,
-            "extra_code": chunk_accumulator.extra_code,
-        }
-    )
-    record_stage_duration(stage_timing_recorder, "device_to_host_materialization", materialization_start_time)
-
-    write_start_time = time.perf_counter()
-    writer_session.write_regenie2_chunk(
-        metadata=chunk_accumulator.metadata,
-        allele_one_frequency=host_values["allele_one_frequency"],
-        observation_count=host_values["observation_count"],
-        beta=host_values["beta"],
-        standard_error=host_values["standard_error"],
-        chi_squared=host_values["chi_squared"],
-        log10_p_value=host_values["log10_p_value"],
-        extra_code=host_values["extra_code"],
-    )
-    record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
-
-
-def build_variant_metadata(native_metadata: _core.VariantMetadata) -> models.VariantMetadata:
-    """Convert native Rust metadata into the Python model used by compute/output code."""
-    return models.VariantMetadata(
-        variant_start_index=native_metadata.variant_start_index,
-        variant_stop_index=native_metadata.variant_stop_index,
-        chromosome=np.asarray(native_metadata.chromosome, dtype=np.str_),
-        variant_identifiers=np.asarray(native_metadata.variant_identifiers, dtype=np.str_),
-        position=np.asarray(native_metadata.position, dtype=np.int64),
-        allele_one=np.asarray(native_metadata.allele_one, dtype=np.str_),
-        allele_two=np.asarray(native_metadata.allele_two, dtype=np.str_),
-    )
-
-
-class NativeBgenCallbackRunner:
-    """Reusable callback lifecycle for native BGEN chunk delivery."""
-
-    def __init__(
-        self,
-        *,
-        worker_name: str,
-        staging_depth: int = 1,
-        stage_timing_recorder: StageTimingRecorder | None = None,
-    ) -> None:
-        """Initialize shared native callback state."""
-        self.processed_chunk_count = 0
-        self.stage_timing_recorder = stage_timing_recorder
-        self.dosage_queue_depth = max(1, staging_depth)
-        self.dosage_buffer_limit = self.dosage_queue_depth + 1
-        self.dosage_queue: queue.Queue[DosageChunkWorkItem | PreprocessedDosageChunkWorkItem | None] = queue.Queue(
-            maxsize=self.dosage_queue_depth
-        )
-        self.free_dosage_buffers: queue.Queue[npt.NDArray[np.float32]] = queue.Queue(maxsize=self.dosage_buffer_limit)
-        self.dosage_buffer_count = 0
-        self.worker_error: BaseException | None = None
-        self.worker_thread = threading.Thread(
-            target=self.consume_dosage_chunks,
-            name=worker_name,
-            daemon=True,
-        )
-        self.worker_thread.start()
-
-    def compute_chunk(
-        self,
-        metadata: _core.VariantMetadata,
-        genotype_matrix: npt.NDArray[np.float32],
-        allele_one_frequency: npt.NDArray[np.float32],
-        observation_count: npt.NDArray[np.int32],
-    ) -> None:
-        """Compute one Rust-provided chunk and write it through the native output sink."""
-        variant_metadata = build_variant_metadata(metadata)
-        self.compute_preprocessed_chunk(
-            variant_metadata=variant_metadata,
-            genotype_matrix=genotype_matrix,
-            allele_one_frequency=allele_one_frequency,
-            observation_count=observation_count,
-        )
-        self.processed_chunk_count += 1
-
-    def compute_preprocessed_chunk(
-        self,
-        *,
-        variant_metadata: models.VariantMetadata,
-        genotype_matrix: jax.Array | npt.NDArray[np.float32],
-        allele_one_frequency: jax.Array | npt.NDArray[np.float32],
-        observation_count: jax.Array | npt.NDArray[np.int32],
-    ) -> None:
-        """Compute one already-preprocessed chunk and write it."""
-        raise NotImplementedError
-
-    def compute_dosage_chunk(
-        self,
-        metadata: _core.VariantMetadata,
-        genotype_matrix: npt.NDArray[np.float32],
-    ) -> None:
-        """Enqueue one Rust-provided dosage chunk for JAX processing."""
-        self.put_dosage_work_item(
-            DosageChunkWorkItem(metadata=build_variant_metadata(metadata), genotype_matrix=genotype_matrix)
-        )
-
-    def compute_preprocessed_dosage_chunk(
-        self,
-        metadata: _core.VariantMetadata,
-        genotype_matrix: npt.NDArray[np.float32],
-        chunk_stats: _core.ChunkStats,
-    ) -> None:
-        """Enqueue one Rust-preprocessed dosage chunk for JAX association."""
-        self.put_dosage_work_item(
-            PreprocessedDosageChunkWorkItem(
-                metadata=build_variant_metadata(metadata),
-                genotype_matrix=genotype_matrix,
-                allele_one_frequency=chunk_stats.allele_one_frequency,
-                observation_count=chunk_stats.observation_count,
-            )
-        )
-
-    def consume_dosage_chunks(self) -> None:
-        """Consume queued dosage chunks and run JAX work in order."""
-        try:
-            while True:
-                work_item = self.dosage_queue.get()
-                if work_item is None:
-                    return
-                if isinstance(work_item, PreprocessedDosageChunkWorkItem):
-                    self.compute_preprocessed_chunk(
-                        variant_metadata=work_item.metadata,
-                        genotype_matrix=work_item.genotype_matrix,
-                        allele_one_frequency=work_item.allele_one_frequency,
-                        observation_count=work_item.observation_count,
-                    )
-                    self.processed_chunk_count += 1
-                    self.release_dosage_buffer(work_item.genotype_matrix)
-                    continue
-                preprocessed_genotype_arrays = genotype_processing.preprocess_genotype_matrix_arrays(
-                    jax.device_put(work_item.genotype_matrix)
-                )
-                self.compute_preprocessed_chunk(
-                    variant_metadata=work_item.metadata,
-                    genotype_matrix=preprocessed_genotype_arrays.genotypes,
-                    allele_one_frequency=preprocessed_genotype_arrays.allele_one_frequency,
-                    observation_count=preprocessed_genotype_arrays.observation_count,
-                )
-                self.processed_chunk_count += 1
-                self.release_dosage_buffer(work_item.genotype_matrix)
-        except Exception as error:  # noqa: BLE001
-            self.worker_error = error
-
-    def put_dosage_work_item(self, work_item: DosageChunkWorkItem | PreprocessedDosageChunkWorkItem | None) -> None:
-        """Put work into the bounded worker queue while surfacing worker errors."""
-        while True:
-            self.raise_worker_error_if_present()
-            try:
-                self.dosage_queue.put(work_item, timeout=0.1)
-                return
-            except queue.Full:
-                continue
-
-    def raise_worker_error_if_present(self) -> None:
-        """Raise an asynchronous worker failure on the producer thread."""
-        if self.worker_error is not None:
-            message = f"native pipeline callback worker failed: {self.worker_error}"
-            raise RuntimeError(message) from self.worker_error
-
-    def finish(self) -> None:
-        """Wait until all queued JAX work has been written."""
-        self.put_dosage_work_item(None)
-        self.worker_thread.join()
-        self.raise_worker_error_if_present()
-
-    def abort(self) -> None:
-        """Stop the worker after an upstream failure."""
-        with contextlib.suppress(queue.Full):
-            self.dosage_queue.put_nowait(None)
-
-    def acquire_dosage_buffer(self, sample_count: int, variant_count: int) -> npt.NDArray[np.float32]:
-        """Return a reusable host dosage buffer for Rust to fill."""
-        expected_shape = (sample_count, variant_count)
-        while True:
-            self.raise_worker_error_if_present()
-            with contextlib.suppress(queue.Empty):
-                dosage_buffer = self.free_dosage_buffers.get_nowait()
-                if dosage_buffer.shape == expected_shape:
-                    return dosage_buffer
-                return np.empty(expected_shape, dtype=np.float32, order="C")
-            if self.dosage_buffer_count < self.dosage_buffer_limit:
-                self.dosage_buffer_count += 1
-                return np.empty(expected_shape, dtype=np.float32, order="C")
-            with contextlib.suppress(queue.Empty):
-                dosage_buffer = self.free_dosage_buffers.get(timeout=0.1)
-                if dosage_buffer.shape == expected_shape:
-                    return dosage_buffer
-                return np.empty(expected_shape, dtype=np.float32, order="C")
-
-    def release_dosage_buffer(self, dosage_buffer: npt.NDArray[np.float32]) -> None:
-        """Return a processed host dosage buffer to the reusable pool."""
-        with contextlib.suppress(queue.Full):
-            self.free_dosage_buffers.put_nowait(dosage_buffer)
-
-
-class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
-    """Compute/write callback used by the native BGEN pipeline for quantitative traits."""
-
-    def __init__(
-        self,
-        aligned_sample_data: models.AlignedSampleData,
-        prediction_source: RegeniePredictionSourceProtocol,
-        writer_session: typing.Any,
-        staging_depth: int = 1,
-        stage_timing_recorder: StageTimingRecorder | None = None,
-    ) -> None:
-        """Initialize the callback state."""
-        self.aligned_sample_data = aligned_sample_data
-        self.prediction_source = prediction_source
-        self.writer_session = writer_session
-        self.regenie_state = regenie2_linear.prepare_regenie2_linear_state(
-            covariate_matrix=aligned_sample_data.covariate_matrix,
-            phenotype_vector=aligned_sample_data.phenotype_vector,
-        )
-        self.current_chromosome: str | None = None
-        self.current_chromosome_state: regenie2_linear_types.Regenie2LinearChromosomeState | None = None
-        super().__init__(
-            worker_name="regenie2-linear-callback",
-            staging_depth=staging_depth,
-            stage_timing_recorder=stage_timing_recorder,
-        )
-
-    def compute_preprocessed_chunk(
-        self,
-        *,
-        variant_metadata: models.VariantMetadata,
-        genotype_matrix: jax.Array | npt.NDArray[np.float32],
-        allele_one_frequency: jax.Array | npt.NDArray[np.float32],
-        observation_count: jax.Array | npt.NDArray[np.int32],
-    ) -> None:
-        """Compute one already-preprocessed chunk and write it."""
-        chromosome = str(variant_metadata.chromosome[0])
-        if chromosome != self.current_chromosome:
-            loco_predictions = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
-            self.current_chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
-                self.regenie_state,
-                loco_predictions,
-            )
-            self.current_chromosome = chromosome
-        assert self.current_chromosome_state is not None
-
-        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
-        compute_start_time = time.perf_counter()
-        result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
-            chromosome_state=self.current_chromosome_state,
-            genotype_matrix=genotype_device_array,
-        )
-        block_until_ready(result.log10_p_value)
-        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
-        write_regenie2_chunk_with_optional_timing(
-            writer_session=self.writer_session,
-            chunk_accumulator=build_chunk_accumulator(
-                metadata=variant_metadata,
-                allele_one_frequency=allele_one_frequency,
-                observation_count=observation_count,
-                beta=result.beta,
-                standard_error=result.standard_error,
-                chi_squared=result.chi_squared,
-                log10_p_value=result.log10_p_value,
-                extra_code=None,
-            ),
-            stage_timing_recorder=self.stage_timing_recorder,
-        )
-
-
-class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
-    """Compute/write callback used by the native BGEN pipeline for binary traits."""
-
-    def __init__(
-        self,
-        aligned_sample_data: models.AlignedSampleData,
-        prediction_source: RegeniePredictionSourceProtocol,
-        writer_session: typing.Any,
-        correction: types.RegenieBinaryCorrection,
-        staging_depth: int = 1,
-        stage_timing_recorder: StageTimingRecorder | None = None,
-    ) -> None:
-        """Initialize the callback state."""
-        self.aligned_sample_data = aligned_sample_data
-        self.prediction_source = prediction_source
-        self.writer_session = writer_session
-        self.correction = correction
-        self.regenie_state = regenie2_binary.prepare_regenie2_binary_state(
-            covariate_matrix=aligned_sample_data.covariate_matrix,
-            phenotype_vector=aligned_sample_data.phenotype_vector,
-        )
-        self.current_chromosome: str | None = None
-        self.current_chromosome_state: regenie2_binary_types.Regenie2BinaryChromosomeState | None = None
-        super().__init__(
-            worker_name="regenie2-binary-callback",
-            staging_depth=staging_depth,
-            stage_timing_recorder=stage_timing_recorder,
-        )
-
-    def compute_preprocessed_chunk(
-        self,
-        *,
-        variant_metadata: models.VariantMetadata,
-        genotype_matrix: jax.Array | npt.NDArray[np.float32],
-        allele_one_frequency: jax.Array | npt.NDArray[np.float32],
-        observation_count: jax.Array | npt.NDArray[np.int32],
-    ) -> None:
-        """Compute one already-preprocessed chunk and write it."""
-        chromosome = str(variant_metadata.chromosome[0])
-        if chromosome != self.current_chromosome:
-            loco_offset = jax.device_put(self.prediction_source.get_chromosome_predictions(chromosome))
-            self.current_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
-                self.regenie_state,
-                loco_offset,
-            )
-            self.current_chromosome = chromosome
-        assert self.current_chromosome_state is not None
-
-        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
-        compute_start_time = time.perf_counter()
-        result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
-            chromosome_state=self.current_chromosome_state,
-            genotype_matrix=genotype_device_array,
-            correction=self.correction,
-        )
-        block_until_ready(result.log10_p_value)
-        record_stage_duration(self.stage_timing_recorder, "jax_compute", compute_start_time)
-        write_regenie2_chunk_with_optional_timing(
-            writer_session=self.writer_session,
-            chunk_accumulator=build_chunk_accumulator(
-                metadata=variant_metadata,
-                allele_one_frequency=allele_one_frequency,
-                observation_count=observation_count,
-                beta=result.beta,
-                standard_error=result.standard_error,
-                chi_squared=result.chi_squared,
-                log10_p_value=result.log10_p_value,
-                extra_code=result.extra_code,
-            ),
-            stage_timing_recorder=self.stage_timing_recorder,
-        )
-
-
-def build_chunk_accumulator(
-    *,
-    metadata: models.VariantMetadata,
-    allele_one_frequency: jax.Array | npt.NDArray[np.float32],
-    observation_count: jax.Array | npt.NDArray[np.int32],
-    beta: jax.Array,
-    standard_error: jax.Array,
-    chi_squared: jax.Array,
-    log10_p_value: jax.Array,
-    extra_code: jax.Array | None,
-) -> engine_types.Regenie2ChunkAccumulator:
-    """Build one chunk accumulator from Rust-side metadata and JAX outputs."""
-    return engine_types.Regenie2ChunkAccumulator(
-        metadata=metadata,
-        allele_one_frequency=allele_one_frequency,
-        observation_count=observation_count,
-        beta=beta,
-        standard_error=standard_error,
-        chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
-        extra_code=extra_code,
-    )
+REGENIE_COMPUTE_PATCH_TARGETS = (regenie2_binary, regenie2_linear)
+logger = logging.getLogger(__name__)
 
 
 def run_regenie2_linear_bgen_pipeline(
@@ -545,20 +36,58 @@ def run_regenie2_linear_bgen_pipeline(
     chunk_size: int,
     variant_limit: int | None,
     output_run_paths: output.OutputRunPaths,
-    prefetch_chunks: int = 1,
-    committed_chunk_identifiers: set[int] | None = None,
+    staging_depth: int = 1,
+    existing_manifest: dict[str, typing.Any] | None = None,
+    resume: bool = False,
+    resume_mode: types.ResumeMode = types.ResumeMode.FAST,
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
-    compute_engine: types.ComputeEngine = types.ComputeEngine.JAX,
+    chunks_per_arrow_file: int = output.DEFAULT_CHUNKS_PER_ARROW_FILE,
+    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+    trusted_no_missing_diploid: bool = False,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
+    bgen_decode_tile_variant_count: int = output.DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
+    jax_device: types.Device = types.Device.CPU,
+    jax_matmul_precision: types.JaxMatmulPrecision | None = None,
+    jax_enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
+    score_dtype: types.FloatingPointDtype = config.DEFAULT_SCORE_DTYPE,
+    firth_dtype: types.FloatingPointDtype = config.DEFAULT_FIRTH_DTYPE,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    stage_timing_recorder: timing.StageTimingRecorder | None = None,
+    telemetry_session: telemetry.TelemetrySession | None = None,
+    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
-    engine = build_bgen_run_engine(
+    logger.info("Starting linear REGENIE step 2 BGEN pipeline.")
+    stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
+    use_variant_major = True
+    engine_start_time = time.perf_counter()
+    logger.debug("Opening native BGEN engine for linear pipeline.")
+    engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
-    aligned_sample_data = load_bgen_aligned_sample_data(
+    timing.record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
+    logger.debug(
+        "Native BGEN engine opened for linear pipeline: sample_count=%s variant_count=%s.",
+        engine.sample_count,
+        engine.variant_count,
+    )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "bgen_engine_opened",
+            association_mode=types.AssociationMode.REGENIE2_LINEAR.value,
+            phenotype=phenotype_name,
+            sample_count=int(engine.sample_count),
+            variant_count=int(engine.variant_count),
+        )
+    alignment_start_time = time.perf_counter()
+    logger.debug("Loading aligned native sample, phenotype, and covariate inputs for linear pipeline.")
+    run_input = native_dispatch.load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
         phenotype_path=phenotype_path,
@@ -566,90 +95,134 @@ def run_regenie2_linear_bgen_pipeline(
         covariate_path=covariate_path,
         covariate_names=covariate_names,
         is_binary_trait=False,
+        alignment_config=alignment_config,
     )
+    timing.record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
+    logger.debug(
+        "Aligned linear pipeline inputs: sample_count=%s covariate_count=%s.",
+        int(run_input.sample_indices.shape[0]),
+        len(run_input.native_aligned_sample_data.covariate_names),
+    )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "sample_alignment_completed",
+            association_mode=types.AssociationMode.REGENIE2_LINEAR.value,
+            phenotype=phenotype_name,
+            sample_count=int(run_input.sample_indices.shape[0]),
+            covariate_count=len(run_input.native_aligned_sample_data.covariate_names),
+        )
+    current_header = output.build_current_run_manifest_header(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        bgen_path=genotype_source_config.source_path,
+        sample_path=source.resolve_bgen_sample_path(
+            genotype_source_config.source_path,
+            genotype_source_config.sample_path,
+        ),
+        phenotype_path=phenotype_path,
+        phenotype_name=phenotype_name,
+        covariate_path=covariate_path,
+        covariate_names=tuple(run_input.native_aligned_sample_data.covariate_names),
+        prediction_list_path=prediction_list_path,
+        sample_count=int(run_input.sample_indices.shape[0]),
+        variant_count=int(engine.variant_count),
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        binary_correction_plan=types.BinaryCorrectionPlan(),
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        sample_key_mode=native_dispatch.resolve_sample_key_mode(alignment_config),
+        bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+        jax_device=jax_device,
+        jax_matmul_precision=jax_matmul_precision,
+        jax_enable_x64=jax_enable_x64,
+        score_dtype=score_dtype,
+        firth_dtype=firth_dtype,
+        output_format=output_format,
+        finalize_parquet=finalize_parquet,
+        writer_thread_count=writer_thread_count,
+        writer_queue_depth=writer_queue_depth,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression,
+    )
+    initialized_output_run = output.initialize_output_run(
+        output_run_paths=output_run_paths,
+        existing_manifest=existing_manifest,
+        current_header=current_header,
+        resume=resume,
+        resume_mode=resume_mode,
+    )
+    writer_start_time = time.perf_counter()
+    logger.debug("Creating output writer for linear pipeline.")
     writer_session = output.create_output_writer_session(
         output_run_paths,
         types.AssociationMode.REGENIE2_LINEAR,
         writer_thread_count=writer_thread_count,
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression,
+        collect_stage_timings=stage_timing_recorder is not None,
     )
-    stage_timing_recorder = build_stage_timing_recorder_from_environment()
-    if compute_engine == types.ComputeEngine.BURN_WGPU:
-        return run_bgen_engine_with_burn_wgpu_linear(
-            engine=engine,
-            aligned_sample_data=aligned_sample_data,
-            prediction_source=build_regenie_prediction_source(
-                prediction_list_path=prediction_list_path,
-                phenotype_name=phenotype_name,
-                aligned_sample_data=aligned_sample_data,
-            ),
-            committed_chunk_identifiers=committed_chunk_identifiers,
-            writer_session=writer_session,
-            stage_timing_recorder=stage_timing_recorder,
+    timing.record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
+    prediction_start_time = time.perf_counter()
+    logger.debug("Loading REGENIE prediction source for linear pipeline.")
+    prediction_source = native_dispatch.build_regenie_prediction_source(
+        prediction_list_path=prediction_list_path,
+        phenotype_name=phenotype_name,
+        run_input=run_input,
+        alignment_config=alignment_config,
+    )
+    timing.record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "prediction_source_loaded",
+            association_mode=types.AssociationMode.REGENIE2_LINEAR.value,
+            phenotype=phenotype_name,
         )
-    if compute_engine != types.ComputeEngine.JAX:
-        message = f"Unsupported quantitative REGENIE step 2 compute engine: {compute_engine}."
-        raise ValueError(message)
-    callback = LinearRegenie2PipelineCallback(
-        aligned_sample_data=aligned_sample_data,
-        prediction_source=build_regenie_prediction_source(
-            prediction_list_path=prediction_list_path,
-            phenotype_name=phenotype_name,
-            aligned_sample_data=aligned_sample_data,
-        ),
-        writer_session=writer_session,
-        staging_depth=prefetch_chunks,
-        stage_timing_recorder=stage_timing_recorder,
-    )
-    return run_bgen_engine_with_callback(
+    preflight_start_time = time.perf_counter()
+    logger.debug("Running preflight validation for linear pipeline.")
+    preflight_report = preflight.run_regenie2_preflight(
+        run_input=run_input,
+        prediction_source=prediction_source,
         engine=engine,
-        aligned_sample_data=aligned_sample_data,
-        committed_chunk_identifiers=committed_chunk_identifiers,
+        variant_limit=variant_limit,
+        is_binary_trait=False,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
+    timing.record_stage_duration(stage_timing_recorder, "preflight_validation", preflight_start_time)
+    logger.debug(
+        "Preflight validation passed for linear pipeline: sample_count=%s covariate_count=%s chromosome_count=%s.",
+        preflight_report.sample_count,
+        preflight_report.covariate_count,
+        preflight_report.chromosome_count,
+    )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "preflight_completed",
+            association_mode=types.AssociationMode.REGENIE2_LINEAR.value,
+            phenotype=phenotype_name,
+            sample_count=preflight_report.sample_count,
+            covariate_count=preflight_report.covariate_count,
+            chromosome_count=preflight_report.chromosome_count,
+        )
+    callback = callbacks.LinearRegenie2PipelineCallback(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        writer_session=writer_session,
+        staging_depth=staging_depth,
+        score_dtype=score_dtype,
+        stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
+    )
+    return native_dispatch.run_bgen_engine_with_callback(
+        engine=engine,
+        run_input=run_input,
+        committed_chunk_identifiers=set(initialized_output_run.committed_chunk_identifiers),
         writer_session=writer_session,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
+        variant_major_dosage=use_variant_major,
     )
-
-
-def run_bgen_engine_with_burn_wgpu_linear(
-    *,
-    engine: _core.Regenie2RunEngine,
-    aligned_sample_data: models.AlignedSampleData,
-    prediction_source: _core.RegeniePredictionSource,
-    committed_chunk_identifiers: set[int] | None,
-    writer_session: typing.Any,
-    stage_timing_recorder: StageTimingRecorder | None,
-) -> Path | None:
-    """Run quantitative step 2 through the native Burn WGPU backend."""
-    try:
-        if stage_timing_recorder is not None:
-            engine.reset_profile()
-        engine_delivery_start_time = time.perf_counter()
-        burn_profile = engine.run_regenie2_linear_burn_wgpu_chunks(
-            np.ascontiguousarray(aligned_sample_data.sample_indices, dtype=np.int64),
-            np.ascontiguousarray(aligned_sample_data.covariate_matrix, dtype=np.float32),
-            np.ascontiguousarray(aligned_sample_data.phenotype_vector, dtype=np.float32),
-            prediction_source,
-            writer_session,
-            committed_chunk_identifiers=sorted(committed_chunk_identifiers or set()),
-        )
-        record_stage_duration(stage_timing_recorder, "native_burn_engine_delivery", engine_delivery_start_time)
-        if stage_timing_recorder is not None:
-            native_profile = engine.profile_snapshot()
-            native_profile.update(burn_profile)
-            stage_timing_recorder.set_native_bgen_profile(native_profile)
-        writer_finish_start_time = time.perf_counter()
-        final_parquet_path = writer_session.finish()
-        record_stage_duration(stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time)
-    except Exception:
-        writer_session.abort()
-        write_stage_timing_snapshot_from_environment(stage_timing_recorder)
-        raise
-    write_stage_timing_snapshot_from_environment(stage_timing_recorder)
-    if final_parquet_path is None:
-        return None
-    return Path(final_parquet_path)
 
 
 def run_regenie2_binary_bgen_pipeline(
@@ -663,20 +236,64 @@ def run_regenie2_binary_bgen_pipeline(
     chunk_size: int,
     variant_limit: int | None,
     output_run_paths: output.OutputRunPaths,
-    prefetch_chunks: int = 1,
-    committed_chunk_identifiers: set[int] | None = None,
+    staging_depth: int = 1,
+    existing_manifest: dict[str, typing.Any] | None = None,
+    resume: bool = False,
+    resume_mode: types.ResumeMode = types.ResumeMode.FAST,
     finalize_parquet: bool = False,
     writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
     writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
-    correction: types.RegenieBinaryCorrection = types.RegenieBinaryCorrection.FIRTH_APPROXIMATE,
+    chunks_per_arrow_file: int = output.DEFAULT_CHUNKS_PER_ARROW_FILE,
+    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+    trusted_no_missing_diploid: bool = False,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
+    bgen_decode_tile_variant_count: int = output.DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
+    jax_device: types.Device = types.Device.CPU,
+    jax_matmul_precision: types.JaxMatmulPrecision | None = None,
+    jax_enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
+    score_dtype: types.FloatingPointDtype = config.DEFAULT_SCORE_DTYPE,
+    firth_dtype: types.FloatingPointDtype = config.DEFAULT_FIRTH_DTYPE,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None,
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
+        types.NullLogisticNonconvergencePolicy.FAIL
+    ),
+    stage_timing_recorder: timing.StageTimingRecorder | None = None,
+    telemetry_session: telemetry.TelemetrySession | None = None,
+    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
 ) -> Path | None:
     """Run the native BGEN pipeline for binary REGENIE step 2."""
-    engine = build_bgen_run_engine(
+    logger.info("Starting binary REGENIE step 2 BGEN pipeline.")
+    stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
+    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    use_variant_major = True
+    engine_start_time = time.perf_counter()
+    logger.debug("Opening native BGEN engine for binary pipeline.")
+    engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
-    aligned_sample_data = load_bgen_aligned_sample_data(
+    timing.record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
+    logger.debug(
+        "Native BGEN engine opened for binary pipeline: sample_count=%s variant_count=%s.",
+        engine.sample_count,
+        engine.variant_count,
+    )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "bgen_engine_opened",
+            association_mode=types.AssociationMode.REGENIE2_BINARY.value,
+            phenotype=phenotype_name,
+            sample_count=int(engine.sample_count),
+            variant_count=int(engine.variant_count),
+        )
+    alignment_start_time = time.perf_counter()
+    logger.debug("Loading aligned native sample, phenotype, and covariate inputs for binary pipeline.")
+    run_input = native_dispatch.load_native_bgen_run_input(
         genotype_source_config=genotype_source_config,
         engine=engine,
         phenotype_path=phenotype_path,
@@ -684,144 +301,1047 @@ def run_regenie2_binary_bgen_pipeline(
         covariate_path=covariate_path,
         covariate_names=covariate_names,
         is_binary_trait=True,
+        alignment_config=alignment_config,
     )
+    timing.record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
+    logger.debug(
+        "Aligned binary pipeline inputs: sample_count=%s covariate_count=%s.",
+        int(run_input.sample_indices.shape[0]),
+        len(run_input.native_aligned_sample_data.covariate_names),
+    )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "sample_alignment_completed",
+            association_mode=types.AssociationMode.REGENIE2_BINARY.value,
+            phenotype=phenotype_name,
+            sample_count=int(run_input.sample_indices.shape[0]),
+            covariate_count=len(run_input.native_aligned_sample_data.covariate_names),
+        )
+    current_header = output.build_current_run_manifest_header(
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        bgen_path=genotype_source_config.source_path,
+        sample_path=source.resolve_bgen_sample_path(
+            genotype_source_config.source_path,
+            genotype_source_config.sample_path,
+        ),
+        phenotype_path=phenotype_path,
+        phenotype_name=phenotype_name,
+        covariate_path=covariate_path,
+        covariate_names=tuple(run_input.native_aligned_sample_data.covariate_names),
+        prediction_list_path=prediction_list_path,
+        sample_count=int(run_input.sample_indices.shape[0]),
+        variant_count=int(engine.variant_count),
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        binary_correction_plan=correction_plan,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        sample_key_mode=native_dispatch.resolve_sample_key_mode(alignment_config),
+        binary_kernel_config=resolved_kernel_config,
+        bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+        jax_device=jax_device,
+        jax_matmul_precision=jax_matmul_precision,
+        jax_enable_x64=jax_enable_x64,
+        score_dtype=score_dtype,
+        firth_dtype=firth_dtype,
+        output_format=output_format,
+        finalize_parquet=finalize_parquet,
+        writer_thread_count=writer_thread_count,
+        writer_queue_depth=writer_queue_depth,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression,
+    )
+    initialized_output_run = output.initialize_output_run(
+        output_run_paths=output_run_paths,
+        existing_manifest=existing_manifest,
+        current_header=current_header,
+        resume=resume,
+        resume_mode=resume_mode,
+    )
+    writer_start_time = time.perf_counter()
+    logger.debug("Creating output writer for binary pipeline.")
     writer_session = output.create_output_writer_session(
         output_run_paths,
         types.AssociationMode.REGENIE2_BINARY,
         writer_thread_count=writer_thread_count,
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression,
+        collect_stage_timings=stage_timing_recorder is not None,
     )
-    stage_timing_recorder = build_stage_timing_recorder_from_environment()
-    callback = BinaryRegenie2PipelineCallback(
-        aligned_sample_data=aligned_sample_data,
-        prediction_source=build_regenie_prediction_source(
-            prediction_list_path=prediction_list_path,
-            phenotype_name=phenotype_name,
-            aligned_sample_data=aligned_sample_data,
-        ),
-        writer_session=writer_session,
-        correction=correction,
-        staging_depth=prefetch_chunks,
-        stage_timing_recorder=stage_timing_recorder,
+    timing.record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
+    prediction_start_time = time.perf_counter()
+    logger.debug("Loading REGENIE prediction source for binary pipeline.")
+    prediction_source = native_dispatch.build_regenie_prediction_source(
+        prediction_list_path=prediction_list_path,
+        phenotype_name=phenotype_name,
+        run_input=run_input,
+        alignment_config=alignment_config,
     )
-    return run_bgen_engine_with_callback(
+    timing.record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "prediction_source_loaded",
+            association_mode=types.AssociationMode.REGENIE2_BINARY.value,
+            phenotype=phenotype_name,
+        )
+    preflight_start_time = time.perf_counter()
+    logger.debug("Running preflight validation for binary pipeline.")
+    preflight_report = preflight.run_regenie2_preflight(
+        run_input=run_input,
+        prediction_source=prediction_source,
         engine=engine,
-        aligned_sample_data=aligned_sample_data,
-        committed_chunk_identifiers=committed_chunk_identifiers,
+        variant_limit=variant_limit,
+        is_binary_trait=True,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
+    timing.record_stage_duration(stage_timing_recorder, "preflight_validation", preflight_start_time)
+    logger.debug(
+        "Preflight validation passed for binary pipeline: sample_count=%s covariate_count=%s chromosome_count=%s.",
+        preflight_report.sample_count,
+        preflight_report.covariate_count,
+        preflight_report.chromosome_count,
+    )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "preflight_completed",
+            association_mode=types.AssociationMode.REGENIE2_BINARY.value,
+            phenotype=phenotype_name,
+            sample_count=preflight_report.sample_count,
+            covariate_count=preflight_report.covariate_count,
+            chromosome_count=preflight_report.chromosome_count,
+        )
+    callback = callbacks.BinaryRegenie2PipelineCallback(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        writer_session=writer_session,
+        correction_plan=correction_plan,
+        kernel_config=resolved_kernel_config,
+        null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+        staging_depth=staging_depth,
+        score_dtype=score_dtype,
+        stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
+    )
+    return native_dispatch.run_bgen_engine_with_callback(
+        engine=engine,
+        run_input=run_input,
+        committed_chunk_identifiers=set(initialized_output_run.committed_chunk_identifiers),
         writer_session=writer_session,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
+        variant_major_dosage=use_variant_major,
     )
 
 
-def load_bgen_aligned_sample_data(
+@dataclass(frozen=True)
+class MultiTraitPreflightRunInput:
+    """Single-trait view over a multi-trait run input for preflight validation."""
+
+    phenotype_vector: typing.Any
+    covariate_matrix: typing.Any
+
+
+@dataclass(frozen=True)
+class SingleTraitPredictionView:
+    """Single-trait view over a multi-trait prediction source."""
+
+    prediction_source: typing.Any
+    trait_index: int
+
+    def get_chromosome_predictions(self, chromosome: str) -> typing.Any:
+        """Return one trait's aligned LOCO predictions for preflight validation."""
+        return self.prediction_source.get_chromosome_predictions(chromosome)[self.trait_index]
+
+
+@dataclass(frozen=True)
+class GroupedAlignedSampleData:
+    """Python-owned multi-trait alignment assembled from per-phenotype alignments.
+
+    Attributes:
+        phenotype_names: Phenotype names in trait-major matrix order.
+        sample_indices: BGEN sample indices shared by all grouped phenotypes.
+        family_identifiers: Family identifiers for the shared sample order.
+        individual_identifiers: Individual identifiers for the shared sample order.
+        phenotype_matrix: Trait-major phenotype matrix.
+        covariate_names: Covariate names shared by all grouped phenotypes.
+        covariate_matrix: Shared design matrix.
+        is_binary_trait: Whether phenotypes are binary traits.
+
+    """
+
+    phenotype_names: tuple[str, ...]
+    sample_indices: npt.NDArray[np.int64]
+    family_identifiers: tuple[str, ...]
+    individual_identifiers: tuple[str, ...]
+    phenotype_matrix: npt.NDArray[np.float32]
+    covariate_names: tuple[str, ...]
+    covariate_matrix: npt.NDArray[np.float32]
+    is_binary_trait: bool
+
+
+@dataclass(frozen=True)
+class GroupedSingleTraitPredictionSource:
+    """Trait-major prediction source assembled from single-trait sources."""
+
+    prediction_sources: tuple[typing.Any, ...]
+
+    def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]:
+        """Return trait-major aligned LOCO predictions for one chromosome."""
+        return np.stack(
+            tuple(
+                np.asarray(prediction_source.get_chromosome_predictions(chromosome), dtype=np.float32)
+                for prediction_source in self.prediction_sources
+            ),
+            axis=0,
+        )
+
+
+def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     *,
     genotype_source_config: source.GenotypeSourceConfig,
-    engine: _core.Regenie2RunEngine,
     phenotype_path: Path,
-    phenotype_name: str,
+    phenotype_names: tuple[str, ...],
+    prediction_list_path: Path,
     covariate_path: Path | None,
     covariate_names: tuple[str, ...] | None,
-    is_binary_trait: bool,
-) -> models.AlignedSampleData:
-    """Load aligned samples for the native BGEN pipeline."""
-    source.validate_genotype_source_config(genotype_source_config)
-    resolved_sample_path = bgen.resolve_bgen_sample_path(
-        genotype_source_config.source_path,
-        genotype_source_config.sample_path,
-    )
-    if resolved_sample_path is not None:
-        sample_table = bgen.load_sample_identifier_table(resolved_sample_path)
-        if sample_table.height != engine.sample_count:
-            message = (
-                f"Expect number of samples in file to match BGEN sample count. "
-                f"Sample file '{resolved_sample_path}' contains {sample_table.height} rows, "
-                f"but '{genotype_source_config.source_path}' contains {engine.sample_count} samples."
-            )
-            raise ValueError(message)
-    elif engine.contains_embedded_samples:
-        sample_table = bgen.build_sample_identifier_table(np.asarray(engine.sample_identifiers(), dtype=np.str_))
-    else:
-        message = "BGEN file does not contain samples and no .sample file was found."
-        raise ValueError(message)
-    return samples.load_aligned_sample_data_from_individual_identifier_table(
-        sample_table=sample_table,
-        phenotype_path=phenotype_path,
-        phenotype_name=phenotype_name,
-        covariate_path=covariate_path,
-        covariate_names=covariate_names,
-        is_binary_trait=is_binary_trait,
-    )
-
-
-def build_regenie_prediction_source(
-    *,
-    prediction_list_path: Path,
-    phenotype_name: str,
-    aligned_sample_data: models.AlignedSampleData,
-) -> _core.RegeniePredictionSource:
-    """Load Rust-owned REGENIE step 1 predictions aligned to the run samples."""
-    sample_family_identifiers = typing.cast("list[str]", aligned_sample_data.family_identifiers.tolist())
-    sample_individual_identifiers = typing.cast("list[str]", aligned_sample_data.individual_identifiers.tolist())
-    return _core.RegeniePredictionSource(
-        str(prediction_list_path),
-        phenotype_name,
-        sample_family_identifiers,
-        sample_individual_identifiers,
-    )
-
-
-def build_bgen_run_engine(
-    *,
-    genotype_source_config: source.GenotypeSourceConfig,
     chunk_size: int,
     variant_limit: int | None,
-) -> _core.Regenie2RunEngine:
-    """Open the native BGEN run engine once for alignment and chunk delivery."""
-    return _core.Regenie2RunEngine(
-        str(genotype_source_config.source_path),
+    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    staging_depth: int = 1,
+    existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None = None,
+    resume: bool = False,
+    resume_mode: types.ResumeMode = types.ResumeMode.FAST,
+    finalize_parquet: bool = False,
+    writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
+    writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
+    chunks_per_arrow_file: int = output.DEFAULT_CHUNKS_PER_ARROW_FILE,
+    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+    trusted_no_missing_diploid: bool = False,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
+    bgen_decode_tile_variant_count: int = output.DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
+    jax_device: types.Device = types.Device.CPU,
+    jax_matmul_precision: types.JaxMatmulPrecision | None = None,
+    jax_enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
+    score_dtype: types.FloatingPointDtype = config.DEFAULT_SCORE_DTYPE,
+    firth_dtype: types.FloatingPointDtype = config.DEFAULT_FIRTH_DTYPE,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    stage_timing_recorder: timing.StageTimingRecorder | None = None,
+    telemetry_session: telemetry.TelemetrySession | None = None,
+    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
+    sample_mode: types.MultiPhenotypeSampleMode | None = None,
+) -> tuple[Path | None, ...]:
+    """Run the complete-case native BGEN pipeline once for multiple quantitative phenotypes."""
+    return run_regenie2_multi_phenotype_bgen_pipeline(
+        genotype_source_config=genotype_source_config,
+        phenotype_path=phenotype_path,
+        phenotype_names=phenotype_names,
+        prediction_list_path=prediction_list_path,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
+        output_run_paths_by_phenotype=output_run_paths_by_phenotype,
+        staging_depth=staging_depth,
+        existing_manifests_by_phenotype=existing_manifests_by_phenotype,
+        resume=resume,
+        resume_mode=resume_mode,
+        finalize_parquet=finalize_parquet,
+        writer_thread_count=writer_thread_count,
+        writer_queue_depth=writer_queue_depth,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+        bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
+        jax_device=jax_device,
+        jax_matmul_precision=jax_matmul_precision,
+        jax_enable_x64=jax_enable_x64,
+        score_dtype=score_dtype,
+        firth_dtype=firth_dtype,
+        output_format=output_format,
+        correction_plan=types.BinaryCorrectionPlan(),
+        kernel_config=None,
+        null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy.FAIL,
+        stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
+        alignment_config=alignment_config,
+        sample_mode=sample_mode,
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
     )
 
 
-def run_bgen_engine_with_callback(
+def run_regenie2_multi_phenotype_binary_bgen_pipeline(
+    *,
+    genotype_source_config: source.GenotypeSourceConfig,
+    phenotype_path: Path,
+    phenotype_names: tuple[str, ...],
+    prediction_list_path: Path,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    chunk_size: int,
+    variant_limit: int | None,
+    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    staging_depth: int = 1,
+    existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None = None,
+    resume: bool = False,
+    resume_mode: types.ResumeMode = types.ResumeMode.FAST,
+    finalize_parquet: bool = False,
+    writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT,
+    writer_queue_depth: int = output.DEFAULT_WRITER_QUEUE_DEPTH,
+    chunks_per_arrow_file: int = output.DEFAULT_CHUNKS_PER_ARROW_FILE,
+    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+    trusted_no_missing_diploid: bool = False,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
+    bgen_decode_tile_variant_count: int = output.DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
+    jax_device: types.Device = types.Device.CPU,
+    jax_matmul_precision: types.JaxMatmulPrecision | None = None,
+    jax_enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
+    score_dtype: types.FloatingPointDtype = config.DEFAULT_SCORE_DTYPE,
+    firth_dtype: types.FloatingPointDtype = config.DEFAULT_FIRTH_DTYPE,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None,
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
+        types.NullLogisticNonconvergencePolicy.FAIL
+    ),
+    stage_timing_recorder: timing.StageTimingRecorder | None = None,
+    telemetry_session: telemetry.TelemetrySession | None = None,
+    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
+    sample_mode: types.MultiPhenotypeSampleMode | None = None,
+) -> tuple[Path | None, ...]:
+    """Run the complete-case native BGEN pipeline once for multiple binary phenotypes."""
+    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    return run_regenie2_multi_phenotype_bgen_pipeline(
+        genotype_source_config=genotype_source_config,
+        phenotype_path=phenotype_path,
+        phenotype_names=phenotype_names,
+        prediction_list_path=prediction_list_path,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        output_run_paths_by_phenotype=output_run_paths_by_phenotype,
+        staging_depth=staging_depth,
+        existing_manifests_by_phenotype=existing_manifests_by_phenotype,
+        resume=resume,
+        resume_mode=resume_mode,
+        finalize_parquet=finalize_parquet,
+        writer_thread_count=writer_thread_count,
+        writer_queue_depth=writer_queue_depth,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+        bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
+        jax_device=jax_device,
+        jax_matmul_precision=jax_matmul_precision,
+        jax_enable_x64=jax_enable_x64,
+        score_dtype=score_dtype,
+        firth_dtype=firth_dtype,
+        output_format=output_format,
+        correction_plan=correction_plan,
+        kernel_config=resolved_kernel_config,
+        null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+        stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
+        alignment_config=alignment_config,
+        sample_mode=sample_mode,
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+    )
+
+
+def run_regenie2_multi_phenotype_bgen_pipeline(
+    *,
+    genotype_source_config: source.GenotypeSourceConfig,
+    phenotype_path: Path,
+    phenotype_names: tuple[str, ...],
+    prediction_list_path: Path,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    chunk_size: int,
+    variant_limit: int | None,
+    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    staging_depth: int,
+    existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None,
+    resume: bool,
+    resume_mode: types.ResumeMode,
+    finalize_parquet: bool,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
+    arrow_compression: types.ArrowCompression,
+    trusted_no_missing_diploid: bool,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
+    bgen_decode_tile_variant_count: int,
+    jax_device: types.Device,
+    jax_matmul_precision: types.JaxMatmulPrecision | None,
+    jax_enable_x64: bool,
+    score_dtype: types.FloatingPointDtype,
+    firth_dtype: types.FloatingPointDtype,
+    output_format: types.OutputFormat,
+    correction_plan: types.BinaryCorrectionPlan,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    telemetry_session: telemetry.TelemetrySession | None,
+    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None,
+    sample_mode: types.MultiPhenotypeSampleMode | None,
+    association_mode: types.AssociationMode,
+) -> tuple[Path | None, ...]:
+    """Shared implementation for multi-phenotype BGEN pipelines."""
+    if sample_mode == types.MultiPhenotypeSampleMode.PER_PHENOTYPE:
+        return run_regenie2_grouped_per_phenotype_bgen_pipeline(
+            genotype_source_config=genotype_source_config,
+            phenotype_path=phenotype_path,
+            phenotype_names=phenotype_names,
+            prediction_list_path=prediction_list_path,
+            covariate_path=covariate_path,
+            covariate_names=covariate_names,
+            chunk_size=chunk_size,
+            variant_limit=variant_limit,
+            output_run_paths_by_phenotype=output_run_paths_by_phenotype,
+            staging_depth=staging_depth,
+            existing_manifests_by_phenotype=existing_manifests_by_phenotype,
+            resume=resume,
+            resume_mode=resume_mode,
+            finalize_parquet=finalize_parquet,
+            writer_thread_count=writer_thread_count,
+            writer_queue_depth=writer_queue_depth,
+            chunks_per_arrow_file=chunks_per_arrow_file,
+            arrow_compression=arrow_compression,
+            trusted_no_missing_diploid=trusted_no_missing_diploid,
+            trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+            bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
+            jax_device=jax_device,
+            jax_matmul_precision=jax_matmul_precision,
+            jax_enable_x64=jax_enable_x64,
+            score_dtype=score_dtype,
+            firth_dtype=firth_dtype,
+            output_format=output_format,
+            correction_plan=correction_plan,
+            kernel_config=kernel_config,
+            null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+            stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
+            alignment_config=alignment_config,
+            association_mode=association_mode,
+        )
+    if sample_mode != types.MultiPhenotypeSampleMode.COMPLETE_CASE:
+        message = "Multi-phenotype sample mode must be per-phenotype or complete-case."
+        raise ValueError(message)
+    logger.info("Starting multi-phenotype REGENIE step 2 BGEN pipeline.")
+    stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
+    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
+    engine_start_time = time.perf_counter()
+    logger.debug("Opening native BGEN engine for multi-phenotype pipeline.")
+    engine = native_dispatch.build_bgen_run_engine(
+        genotype_source_config=genotype_source_config,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+    )
+    timing.record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
+    logger.debug(
+        "Native BGEN engine opened for multi-phenotype pipeline: sample_count=%s variant_count=%s.",
+        engine.sample_count,
+        engine.variant_count,
+    )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "bgen_engine_opened",
+            association_mode=association_mode.value,
+            phenotype_count=len(phenotype_names),
+            sample_count=int(engine.sample_count),
+            variant_count=int(engine.variant_count),
+        )
+    alignment_start_time = time.perf_counter()
+    logger.debug("Loading aligned native sample, phenotype, and covariate inputs for multi-phenotype pipeline.")
+    run_input = native_dispatch.load_native_bgen_multi_run_input(
+        genotype_source_config=genotype_source_config,
+        engine=engine,
+        phenotype_path=phenotype_path,
+        phenotype_names=phenotype_names,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
+        is_binary_trait=association_mode == types.AssociationMode.REGENIE2_BINARY,
+        alignment_config=alignment_config,
+    )
+    timing.record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
+    logger.debug(
+        "Aligned multi-phenotype pipeline inputs: sample_count=%s phenotype_count=%s covariate_count=%s.",
+        int(run_input.sample_indices.shape[0]),
+        len(run_input.phenotype_names),
+        len(run_input.native_multi_aligned_sample_data.covariate_names),
+    )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "sample_alignment_completed",
+            association_mode=association_mode.value,
+            phenotype_count=len(run_input.phenotype_names),
+            sample_count=int(run_input.sample_indices.shape[0]),
+            covariate_count=len(run_input.native_multi_aligned_sample_data.covariate_names),
+        )
+    prediction_start_time = time.perf_counter()
+    logger.debug("Loading REGENIE prediction source for multi-phenotype pipeline.")
+    prediction_source = native_dispatch.build_multi_regenie_prediction_source(
+        prediction_list_path=prediction_list_path,
+        run_input=run_input,
+        alignment_config=alignment_config,
+    )
+    timing.record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
+    return run_prepared_multi_phenotype_bgen_group(
+        engine=engine,
+        run_input=run_input,
+        prediction_source=prediction_source,
+        genotype_source_config=genotype_source_config,
+        phenotype_path=phenotype_path,
+        phenotype_names=phenotype_names,
+        prediction_list_path=prediction_list_path,
+        covariate_path=covariate_path,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        output_run_paths_by_phenotype=output_run_paths_by_phenotype,
+        staging_depth=staging_depth,
+        existing_manifests=existing_manifests,
+        resume=resume,
+        resume_mode=resume_mode,
+        finalize_parquet=finalize_parquet,
+        writer_thread_count=writer_thread_count,
+        writer_queue_depth=writer_queue_depth,
+        chunks_per_arrow_file=chunks_per_arrow_file,
+        arrow_compression=arrow_compression,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+        bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
+        jax_device=jax_device,
+        jax_matmul_precision=jax_matmul_precision,
+        jax_enable_x64=jax_enable_x64,
+        score_dtype=score_dtype,
+        firth_dtype=firth_dtype,
+        output_format=output_format,
+        correction_plan=correction_plan,
+        resolved_kernel_config=resolved_kernel_config,
+        null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+        stage_timing_recorder=stage_timing_recorder,
+        telemetry_session=telemetry_session,
+        alignment_config=alignment_config,
+        association_mode=association_mode,
+        output_sample_mode=output.MultiPhenotypeSampleMode.COMPLETE_CASE_INTERSECTION,
+    )
+
+
+def run_regenie2_grouped_per_phenotype_bgen_pipeline(
+    *,
+    genotype_source_config: source.GenotypeSourceConfig,
+    phenotype_path: Path,
+    phenotype_names: tuple[str, ...],
+    prediction_list_path: Path,
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    chunk_size: int,
+    variant_limit: int | None,
+    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    staging_depth: int,
+    existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None,
+    resume: bool,
+    resume_mode: types.ResumeMode,
+    finalize_parquet: bool,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
+    arrow_compression: types.ArrowCompression,
+    trusted_no_missing_diploid: bool,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
+    bgen_decode_tile_variant_count: int,
+    jax_device: types.Device,
+    jax_matmul_precision: types.JaxMatmulPrecision | None,
+    jax_enable_x64: bool,
+    score_dtype: types.FloatingPointDtype,
+    firth_dtype: types.FloatingPointDtype,
+    output_format: types.OutputFormat,
+    correction_plan: types.BinaryCorrectionPlan,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    telemetry_session: telemetry.TelemetrySession | None,
+    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None,
+    association_mode: types.AssociationMode,
+) -> tuple[Path | None, ...]:
+    """Group independently aligned phenotypes and run one BGEN pass per compatible group."""
+    logger.info("Starting grouped per-phenotype REGENIE step 2 BGEN pipeline.")
+    stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
+    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
+    engine_start_time = time.perf_counter()
+    logger.debug("Opening native BGEN engine for grouped per-phenotype pipeline.")
+    engine = native_dispatch.build_bgen_run_engine(
+        genotype_source_config=genotype_source_config,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+    )
+    timing.record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "bgen_engine_opened",
+            association_mode=association_mode.value,
+            phenotype_count=len(phenotype_names),
+            sample_count=int(engine.sample_count),
+            variant_count=int(engine.variant_count),
+        )
+    alignment_start_time = time.perf_counter()
+    indexed_run_inputs = tuple(
+        (
+            phenotype_index,
+            native_dispatch.load_native_bgen_run_input(
+                genotype_source_config=genotype_source_config,
+                engine=engine,
+                phenotype_path=phenotype_path,
+                phenotype_name=phenotype_name,
+                covariate_path=covariate_path,
+                covariate_names=covariate_names,
+                is_binary_trait=association_mode == types.AssociationMode.REGENIE2_BINARY,
+                alignment_config=alignment_config,
+            ),
+        )
+        for phenotype_index, phenotype_name in enumerate(phenotype_names)
+    )
+    timing.record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
+    grouped_run_inputs = group_per_phenotype_run_inputs(indexed_run_inputs)
+    logger.info(
+        "Prepared %s compatible per-phenotype group(s) for %s phenotype(s).",
+        len(grouped_run_inputs),
+        len(phenotype_names),
+    )
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "sample_alignment_completed",
+            association_mode=association_mode.value,
+            phenotype_count=len(phenotype_names),
+            phenotype_group_count=len(grouped_run_inputs),
+        )
+
+    final_parquet_paths_by_index: list[Path | None] = [None] * len(phenotype_names)
+    for grouped_run_input in grouped_run_inputs:
+        group_indices = tuple(phenotype_index for phenotype_index, _run_input in grouped_run_input)
+        group_single_run_inputs = tuple(run_input for _phenotype_index, run_input in grouped_run_input)
+        prediction_start_time = time.perf_counter()
+        group_prediction_source = build_grouped_single_trait_prediction_source(
+            prediction_list_path=prediction_list_path,
+            phenotype_names=tuple(phenotype_names[phenotype_index] for phenotype_index in group_indices),
+            run_inputs=group_single_run_inputs,
+            alignment_config=alignment_config,
+        )
+        timing.record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
+        group_multi_run_input = build_grouped_native_bgen_multi_run_input(
+            phenotype_names=tuple(phenotype_names[phenotype_index] for phenotype_index in group_indices),
+            run_inputs=group_single_run_inputs,
+        )
+        group_final_parquet_paths = run_prepared_multi_phenotype_bgen_group(
+            engine=engine,
+            run_input=group_multi_run_input,
+            prediction_source=group_prediction_source,
+            genotype_source_config=genotype_source_config,
+            phenotype_path=phenotype_path,
+            phenotype_names=group_multi_run_input.phenotype_names,
+            prediction_list_path=prediction_list_path,
+            covariate_path=covariate_path,
+            chunk_size=chunk_size,
+            variant_limit=variant_limit,
+            output_run_paths_by_phenotype=tuple(
+                output_run_paths_by_phenotype[phenotype_index] for phenotype_index in group_indices
+            ),
+            staging_depth=staging_depth,
+            existing_manifests=tuple(existing_manifests[phenotype_index] for phenotype_index in group_indices),
+            resume=resume,
+            resume_mode=resume_mode,
+            finalize_parquet=finalize_parquet,
+            writer_thread_count=writer_thread_count,
+            writer_queue_depth=writer_queue_depth,
+            chunks_per_arrow_file=chunks_per_arrow_file,
+            arrow_compression=arrow_compression,
+            trusted_no_missing_diploid=trusted_no_missing_diploid,
+            trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+            bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
+            jax_device=jax_device,
+            jax_matmul_precision=jax_matmul_precision,
+            jax_enable_x64=jax_enable_x64,
+            score_dtype=score_dtype,
+            firth_dtype=firth_dtype,
+            output_format=output_format,
+            correction_plan=correction_plan,
+            resolved_kernel_config=resolved_kernel_config,
+            null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+            stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
+            alignment_config=alignment_config,
+            association_mode=association_mode,
+            output_sample_mode=output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+        )
+        for phenotype_index, final_parquet_path in zip(group_indices, group_final_parquet_paths, strict=True):
+            final_parquet_paths_by_index[phenotype_index] = final_parquet_path
+    return tuple(final_parquet_paths_by_index)
+
+
+def group_per_phenotype_run_inputs(
+    indexed_run_inputs: tuple[tuple[int, native_dispatch.NativeBgenRunInput], ...],
+) -> tuple[tuple[tuple[int, native_dispatch.NativeBgenRunInput], ...], ...]:
+    """Group independently aligned phenotypes by identical sample and covariate alignment."""
+    groups_by_fingerprint: dict[str, list[tuple[int, native_dispatch.NativeBgenRunInput]]] = {}
+    group_order: list[str] = []
+    for indexed_run_input in indexed_run_inputs:
+        _phenotype_index, run_input = indexed_run_input
+        fingerprint = compute_sample_covariate_alignment_fingerprint(run_input)
+        if fingerprint not in groups_by_fingerprint:
+            groups_by_fingerprint[fingerprint] = []
+            group_order.append(fingerprint)
+        groups_by_fingerprint[fingerprint].append(indexed_run_input)
+    return tuple(tuple(groups_by_fingerprint[fingerprint]) for fingerprint in group_order)
+
+
+def compute_sample_covariate_alignment_fingerprint(run_input: native_dispatch.NativeBgenRunInput) -> str:
+    """Fingerprint sample indices and covariate values for per-phenotype grouping."""
+    sample_indices = np.ascontiguousarray(run_input.sample_indices, dtype=np.int64)
+    covariate_matrix = np.ascontiguousarray(np.asarray(run_input.covariate_matrix, dtype=np.float32))
+    digest = hashlib.sha256()
+    digest.update(str(sample_indices.shape).encode())
+    digest.update(str(sample_indices.dtype).encode())
+    digest.update(sample_indices.tobytes())
+    digest.update(str(covariate_matrix.shape).encode())
+    digest.update(str(covariate_matrix.dtype).encode())
+    digest.update(covariate_matrix.tobytes())
+    return digest.hexdigest()
+
+
+def build_grouped_native_bgen_multi_run_input(
+    *,
+    phenotype_names: tuple[str, ...],
+    run_inputs: tuple[native_dispatch.NativeBgenRunInput, ...],
+) -> native_dispatch.NativeBgenMultiRunInput:
+    """Build a multi-trait run input from independently aligned compatible traits."""
+    first_run_input = run_inputs[0]
+    grouped_aligned_sample_data = GroupedAlignedSampleData(
+        phenotype_names=phenotype_names,
+        sample_indices=first_run_input.sample_indices,
+        family_identifiers=tuple(first_run_input.native_aligned_sample_data.family_identifiers),
+        individual_identifiers=tuple(first_run_input.native_aligned_sample_data.individual_identifiers),
+        phenotype_matrix=np.stack(
+            tuple(np.asarray(run_input.phenotype_vector, dtype=np.float32) for run_input in run_inputs),
+            axis=0,
+        ),
+        covariate_names=tuple(first_run_input.native_aligned_sample_data.covariate_names),
+        covariate_matrix=np.asarray(first_run_input.covariate_matrix, dtype=np.float32),
+        is_binary_trait=first_run_input.is_binary_trait,
+    )
+    return native_dispatch.NativeBgenMultiRunInput(
+        native_multi_aligned_sample_data=typing.cast("typing.Any", grouped_aligned_sample_data),
+        phenotype_names=phenotype_names,
+        sample_indices=np.ascontiguousarray(grouped_aligned_sample_data.sample_indices, dtype=np.int64),
+        family_identifiers=grouped_aligned_sample_data.family_identifiers,
+        individual_identifiers=grouped_aligned_sample_data.individual_identifiers,
+        phenotype_matrix=jnp.asarray(grouped_aligned_sample_data.phenotype_matrix, dtype=jnp.float32),
+        covariate_matrix=jnp.asarray(grouped_aligned_sample_data.covariate_matrix, dtype=jnp.float32),
+        is_binary_trait=grouped_aligned_sample_data.is_binary_trait,
+    )
+
+
+def build_grouped_single_trait_prediction_source(
+    *,
+    prediction_list_path: Path,
+    phenotype_names: tuple[str, ...],
+    run_inputs: tuple[native_dispatch.NativeBgenRunInput, ...],
+    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None,
+) -> GroupedSingleTraitPredictionSource:
+    """Build one trait-major prediction source from independently aligned traits."""
+    prediction_sources = tuple(
+        native_dispatch.build_regenie_prediction_source(
+            prediction_list_path=prediction_list_path,
+            phenotype_name=phenotype_name,
+            run_input=run_input,
+            alignment_config=alignment_config,
+        )
+        for phenotype_name, run_input in zip(phenotype_names, run_inputs, strict=True)
+    )
+    return GroupedSingleTraitPredictionSource(prediction_sources=prediction_sources)
+
+
+def run_prepared_multi_phenotype_bgen_group(
     *,
     engine: _core.Regenie2RunEngine,
-    aligned_sample_data: models.AlignedSampleData,
+    run_input: native_dispatch.NativeBgenMultiRunInput,
+    prediction_source: typing.Any,
+    genotype_source_config: source.GenotypeSourceConfig,
+    phenotype_path: Path,
+    phenotype_names: tuple[str, ...],
+    prediction_list_path: Path,
+    covariate_path: Path | None,
+    chunk_size: int,
+    variant_limit: int | None,
+    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    staging_depth: int,
+    existing_manifests: tuple[dict[str, typing.Any] | None, ...],
+    resume: bool,
+    resume_mode: types.ResumeMode,
+    finalize_parquet: bool,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
+    arrow_compression: types.ArrowCompression,
+    trusted_no_missing_diploid: bool,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
+    bgen_decode_tile_variant_count: int,
+    jax_device: types.Device,
+    jax_matmul_precision: types.JaxMatmulPrecision | None,
+    jax_enable_x64: bool,
+    score_dtype: types.FloatingPointDtype,
+    firth_dtype: types.FloatingPointDtype,
+    output_format: types.OutputFormat,
+    correction_plan: types.BinaryCorrectionPlan,
+    resolved_kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    telemetry_session: telemetry.TelemetrySession | None,
+    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None,
+    association_mode: types.AssociationMode,
+    output_sample_mode: output.MultiPhenotypeSampleMode,
+) -> tuple[Path | None, ...]:
+    """Run one prepared compatible phenotype group through one BGEN pass."""
+    current_headers = tuple(
+        output.build_current_run_manifest_header(
+            association_mode=association_mode,
+            bgen_path=genotype_source_config.source_path,
+            sample_path=source.resolve_bgen_sample_path(
+                genotype_source_config.source_path,
+                genotype_source_config.sample_path,
+            ),
+            phenotype_path=phenotype_path,
+            phenotype_name=phenotype_name,
+            covariate_path=covariate_path,
+            covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
+            prediction_list_path=prediction_list_path,
+            sample_count=int(run_input.sample_indices.shape[0]),
+            variant_count=int(engine.variant_count),
+            chunk_size=chunk_size,
+            variant_limit=variant_limit,
+            binary_correction_plan=correction_plan,
+            trusted_no_missing_diploid=trusted_no_missing_diploid,
+            sample_key_mode=native_dispatch.resolve_sample_key_mode(alignment_config),
+            binary_kernel_config=(
+                resolved_kernel_config if association_mode == types.AssociationMode.REGENIE2_BINARY else None
+            ),
+            bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
+            trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+            jax_device=jax_device,
+            jax_matmul_precision=jax_matmul_precision,
+            jax_enable_x64=jax_enable_x64,
+            score_dtype=score_dtype,
+            firth_dtype=firth_dtype,
+            multi_phenotype_sample_mode=output_sample_mode,
+            output_format=output_format,
+            finalize_parquet=finalize_parquet,
+            writer_thread_count=writer_thread_count,
+            writer_queue_depth=writer_queue_depth,
+            chunks_per_arrow_file=chunks_per_arrow_file,
+            arrow_compression=arrow_compression,
+        )
+        for phenotype_name in phenotype_names
+    )
+    initialized_output_runs = tuple(
+        output.initialize_output_run(
+            output_run_paths=output_run_paths,
+            existing_manifest=existing_manifest,
+            current_header=current_header,
+            resume=resume,
+            resume_mode=resume_mode,
+        )
+        for output_run_paths, existing_manifest, current_header in zip(
+            output_run_paths_by_phenotype,
+            existing_manifests,
+            current_headers,
+            strict=True,
+        )
+    )
+    committed_chunk_identifier_sets = tuple(
+        set(initialized_output_run.committed_chunk_identifiers) for initialized_output_run in initialized_output_runs
+    )
+    writer_start_time = time.perf_counter()
+    logger.debug("Creating output writers for multi-phenotype pipeline.")
+    writer_sessions = tuple(
+        output.create_output_writer_session(
+            output_run_paths,
+            association_mode,
+            writer_thread_count=writer_thread_count,
+            writer_queue_depth=writer_queue_depth,
+            finalize_parquet=finalize_parquet,
+            chunks_per_arrow_file=chunks_per_arrow_file,
+            arrow_compression=arrow_compression,
+            collect_stage_timings=stage_timing_recorder is not None,
+        )
+        for output_run_paths in output_run_paths_by_phenotype
+    )
+    timing.record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "prediction_source_loaded",
+            association_mode=association_mode.value,
+            phenotype_count=len(run_input.phenotype_names),
+        )
+    preflight_start_time = time.perf_counter()
+    logger.debug("Running preflight validation for multi-phenotype pipeline.")
+    run_multi_preflight(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        engine=engine,
+        variant_limit=variant_limit,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
+    timing.record_stage_duration(stage_timing_recorder, "preflight_validation", preflight_start_time)
+    logger.debug("Preflight validation passed for multi-phenotype pipeline.")
+    if telemetry_session is not None:
+        telemetry_session.log_event(
+            "preflight_completed",
+            association_mode=association_mode.value,
+            phenotype_count=len(run_input.phenotype_names),
+            sample_count=int(run_input.sample_indices.shape[0]),
+        )
+    if association_mode == types.AssociationMode.REGENIE2_BINARY:
+        callback = callbacks.MultiBinaryRegenie2PipelineCallback(
+            run_input=run_input,
+            prediction_source=prediction_source,
+            writer_sessions=writer_sessions,
+            committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+            correction_plan=correction_plan,
+            kernel_config=resolved_kernel_config,
+            null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+            staging_depth=staging_depth,
+            score_dtype=score_dtype,
+            stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
+        )
+    else:
+        callback = callbacks.MultiLinearRegenie2PipelineCallback(
+            run_input=run_input,
+            prediction_source=prediction_source,
+            writer_sessions=writer_sessions,
+            committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+            staging_depth=staging_depth,
+            score_dtype=score_dtype,
+            stage_timing_recorder=stage_timing_recorder,
+            telemetry_session=telemetry_session,
+        )
+    committed_by_every_phenotype = set.intersection(*committed_chunk_identifier_sets)
+    return run_bgen_engine_with_multi_callback(
+        engine=engine,
+        run_input=run_input,
+        committed_chunk_identifiers=committed_by_every_phenotype,
+        writer_sessions=writer_sessions,
+        callback=callback,
+        stage_timing_recorder=stage_timing_recorder,
+        variant_major_dosage=True,
+    )
+
+
+def run_multi_preflight(
+    *,
+    run_input: native_dispatch.NativeBgenMultiRunInput,
+    prediction_source: typing.Any,
+    engine: _core.Regenie2RunEngine,
+    variant_limit: int | None,
+    trusted_no_missing_diploid: bool,
+) -> None:
+    """Run existing single-trait preflight checks for every trait in a multi run."""
+    for trait_index in range(len(run_input.phenotype_names)):
+        preflight.run_regenie2_preflight(
+            run_input=MultiTraitPreflightRunInput(
+                phenotype_vector=run_input.phenotype_matrix[trait_index],
+                covariate_matrix=run_input.covariate_matrix,
+            ),
+            prediction_source=SingleTraitPredictionView(prediction_source, trait_index),
+            engine=engine,
+            variant_limit=variant_limit,
+            is_binary_trait=run_input.is_binary_trait,
+            trusted_no_missing_diploid=trusted_no_missing_diploid,
+        )
+
+
+def run_bgen_engine_with_multi_callback(
+    *,
+    engine: _core.Regenie2RunEngine,
+    run_input: native_dispatch.NativeBgenMultiRunInput,
     committed_chunk_identifiers: set[int] | None,
-    writer_session: typing.Any,
+    writer_sessions: tuple[typing.Any, ...],
     callback: object,
-    stage_timing_recorder: StageTimingRecorder | None,
-) -> Path | None:
-    """Run native BGEN chunk delivery and close the output writer."""
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    variant_major_dosage: bool = False,
+) -> tuple[Path | None, ...]:
+    """Run native BGEN chunk delivery once and close all per-phenotype writers."""
+    callback_finished = False
     try:
         if stage_timing_recorder is not None:
             engine.reset_profile()
         engine_delivery_start_time = time.perf_counter()
-        engine.run_bgen_dosage_buffered_chunks(
-            np.ascontiguousarray(aligned_sample_data.sample_indices, dtype=np.int64),
-            callback,
-            committed_chunk_identifiers=sorted(committed_chunk_identifiers or set()),
+        committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
+        logger.debug(
+            "Starting multi-phenotype native BGEN delivery: committed_chunk_count=%s variant_major_dosage=%s.",
+            len(committed_chunk_identifier_list),
+            variant_major_dosage,
         )
-        record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
+        if variant_major_dosage:
+            processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
+                run_input.sample_indices,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
+        else:
+            processed_chunk_count = engine.run_bgen_dosage_buffered_chunks(
+                run_input.sample_indices,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
+        timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
+        logger.debug("Multi-phenotype native BGEN delivery finished: processed_chunk_count=%s.", processed_chunk_count)
         if stage_timing_recorder is not None:
             stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
-        callback_finish_start_time = time.perf_counter()
-        typing.cast("typing.Any", callback).finish()
-        record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
+        native_dispatch.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
+        callback_finished = True
         writer_finish_start_time = time.perf_counter()
-        final_parquet_path = writer_session.finish()
-        record_stage_duration(stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time)
-    except Exception:
-        abort_callback = getattr(callback, "abort", None)
-        if callable(abort_callback):
-            abort_callback()
-        writer_session.abort()
-        write_stage_timing_snapshot_from_environment(stage_timing_recorder)
+        logger.debug("Finishing multi-phenotype output writers and optional Parquet finalization.")
+        final_parquet_paths = tuple(
+            None if (final_path := writer_session.finish()) is None else Path(final_path)
+            for writer_session in writer_sessions
+        )
+        timing.record_stage_duration(
+            stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
+        )
+    except shutdown.GracefulShutdownRequested as shutdown_request:
+        logger.info("Multi-phenotype native BGEN delivery interrupted by %s.", shutdown_request.signal_name)
+        try:
+            if not callback_finished:
+                native_dispatch.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
+            writer_finish_start_time = time.perf_counter()
+            for writer_session in writer_sessions:
+                writer_session.finish_interrupted(shutdown_request.signal_name)
+            timing.record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)
+        except BaseException:
+            native_dispatch.abort_callback(callback)
+            for writer_session in writer_sessions:
+                native_dispatch.abort_writer_session(writer_session)
+            timing.write_stage_timing_snapshot(stage_timing_recorder, None)
+            raise
+        timing.write_stage_timing_snapshot(stage_timing_recorder, None)
         raise
-    write_stage_timing_snapshot_from_environment(stage_timing_recorder)
-    if final_parquet_path is None:
-        return None
-    return Path(final_parquet_path)
+    except BaseException:
+        logger.exception("Multi-phenotype native BGEN delivery failed.")
+        native_dispatch.abort_callback(callback)
+        for writer_session in writer_sessions:
+            native_dispatch.abort_writer_session(writer_session)
+        timing.write_stage_timing_snapshot(stage_timing_recorder, None)
+        raise
+    timing.write_stage_timing_snapshot(stage_timing_recorder, None)
+    logger.info("Multi-phenotype native BGEN pipeline finished.")
+    return final_parquet_paths

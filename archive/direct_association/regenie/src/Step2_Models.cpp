@@ -40,12 +40,96 @@
 #include "Masks.hpp"
 #include "Data.hpp"
 #include "MCC.hpp"
+#include "RegenieProfile.hpp"
+
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
 
 using namespace std;
 using namespace Eigen;
 using namespace boost;
 using boost::math::normal;
 using boost::math::chi_squared;
+
+namespace {
+
+string quote_json_string(string const& input) {
+  string output = "\"";
+  for(char const character : input) {
+    switch(character) {
+      case '\\': output += "\\\\"; break;
+      case '"': output += "\\\""; break;
+      case '\n': output += "\\n"; break;
+      case '\r': output += "\\r"; break;
+      case '\t': output += "\\t"; break;
+      default: output += character; break;
+    }
+  }
+  output += "\"";
+  return output;
+}
+
+void append_qt_debug_record(
+  int const& snp_index,
+  int const& phenotype_index,
+  string const& test_string,
+  string const& model_type,
+  bool const& strict_mode,
+  bool const& sparse_mode,
+  bool const& run_full_test,
+  double const& genotype_scale,
+  double const& denominator,
+  double const& numerator,
+  const Ref<const RowVectorXd>& phenotype_residual_scale,
+  ArrayXd const& phenotype_score_scale,
+  variant_block* block_info,
+  data_thread* thread_data,
+  vector<snp> const& snpinfo
+) {
+  char const* debug_path = std::getenv("REGENIE_QT_DEBUG_JSONL");
+  if((debug_path == nullptr) || (*debug_path == '\0')) return;
+
+  ofstream debug_file(debug_path, ios::out | ios::app);
+  if(!debug_file.good()) return;
+
+  snp const& variant = snpinfo[snp_index];
+  debug_file << setprecision(17)
+             << "{"
+             << "\"variant_index\":" << snp_index
+             << ",\"phenotype_index\":" << phenotype_index
+             << ",\"chromosome\":" << quote_json_string(to_string(variant.chrom))
+             << ",\"position\":" << variant.physpos
+             << ",\"variant_identifier\":" << quote_json_string(variant.ID)
+             << ",\"allele_zero\":" << quote_json_string(variant.allele1)
+             << ",\"allele_one\":" << quote_json_string(variant.allele2)
+             << ",\"test\":" << quote_json_string(test_string)
+             << ",\"model_type\":" << quote_json_string(model_type)
+             << ",\"strict_mode\":" << (strict_mode ? "true" : "false")
+             << ",\"sparse_mode\":" << (sparse_mode ? "true" : "false")
+             << ",\"run_full_test\":" << (run_full_test ? "true" : "false")
+             << ",\"flipped\":" << (block_info->flipped ? "true" : "false")
+             << ",\"ignored\":" << (block_info->ignored ? "true" : "false")
+             << ",\"test_fail\":" << (block_info->test_fail(phenotype_index) ? "true" : "false")
+             << ",\"allele_one_frequency\":" << block_info->af(phenotype_index)
+             << ",\"minor_allele_count\":" << block_info->mac(phenotype_index)
+             << ",\"info_score\":" << block_info->info(phenotype_index)
+             << ",\"observation_count\":" << block_info->ns(phenotype_index)
+             << ",\"scale_fac\":" << block_info->scale_fac
+             << ",\"genotype_scale\":" << genotype_scale
+             << ",\"numerator\":" << numerator
+             << ",\"denominator\":" << denominator
+             << ",\"phenotype_residual_scale\":" << phenotype_residual_scale(phenotype_index)
+             << ",\"phenotype_score_scale\":" << phenotype_score_scale(phenotype_index)
+             << ",\"score_statistic\":" << thread_data->stats(phenotype_index)
+             << ",\"beta\":" << thread_data->bhat(phenotype_index)
+             << ",\"standard_error\":" << thread_data->se_b(phenotype_index)
+             << ",\"chi_squared\":" << thread_data->chisq_val(phenotype_index)
+             << ",\"log10_p_value\":" << thread_data->pval_log(phenotype_index)
+             << "}\n";
+}
+
+}  // namespace
 
 
 void blup_read_chr(bool const& silent, int const& chrom, struct ests& m_ests, struct in_files& files, struct filter const& filters, struct phenodt const& pheno_data, struct param& params, mstream& sout) {
@@ -342,6 +426,8 @@ void compute_score_qt_mcc(int const& isnp, int const& snp_index, int const& thre
 // score test stat for QT
 void compute_score_qt(int const& isnp, int const& snp_index, int const& thread_num, string const& test_string, string const& model_type, const Ref<const MatrixXd>& yres, const Ref<const RowVectorXd>& p_sd_yres, struct param const& params, struct phenodt& pheno_data, struct geno_block& gblock, variant_block* block_info, vector<snp> const& snpinfo, struct in_files& files, mstream& sout){
 
+  regenie_profile::ScopedStage profile_stage("qt_score");
+  regenie_profile::increment_counter("qt_score_variants");
   bool run_full_test = true; // disable this for QTs // !params.skip_cov_res;
   double denum = 0, gsc = block_info->flipped ? (4 * params.n_samples + block_info->scale_fac) : block_info->scale_fac;
   string tmpstr; // for sum stats
@@ -460,6 +546,25 @@ void compute_score_qt(int const& isnp, int const& snp_index, int const& thread_n
     if(params.t_test) get_logp_ttest(dt_thr->pval_log(i), dt_thr->stats(i), params.n_analyzed - params.ncov_analyzed - 1);
     else get_logp(dt_thr->pval_log(i), dt_thr->chisq_val(i));
 
+    double debug_denominator = (run_full_test && !params.strict_mode) ? denum_arr(i) : denum;
+    append_qt_debug_record(
+      snp_index,
+      i,
+      test_string,
+      model_type,
+      params.strict_mode,
+      dt_thr->is_sparse,
+      run_full_test,
+      gsc,
+      debug_denominator,
+      num(i),
+      p_sd_yres,
+      pheno_data.scf_sv,
+      block_info,
+      dt_thr,
+      snpinfo
+    );
+
     if(!params.p_joint_only)
       block_info->sum_stats[i].append( print_sum_stats_line(snp_index, i, tmpstr, test_string, model_type, block_info, dt_thr, snpinfo, files, params) );
 
@@ -469,6 +574,8 @@ void compute_score_qt(int const& isnp, int const& snp_index, int const& thread_n
 
 void compute_score_bt(int const& isnp, int const& snp_index, int const& chrom, int const& thread_num, string const& test_string, string const& model_type, const Ref<const MatrixXd>& yres, struct param const& params, struct phenodt& pheno_data, struct geno_block& gblock, variant_block* block_info, vector<snp> const& snpinfo, struct ests const& m_ests, struct f_ests& fest, struct in_files& files, mstream& sout){
 
+  regenie_profile::ScopedStage profile_stage("bt_score");
+  regenie_profile::increment_counter("bt_score_variants");
   string tmpstr; 
   VectorXd GW, XtWG;
   SpVec GWs;
@@ -1987,6 +2094,7 @@ void get_beta_start_firth(struct f_ests* firth_est, struct ests const* m_ests){
 
 void check_pval_snp(variant_block* block_info, data_thread* dt_thr, int const& chrom, int const& ph, int const& isnp, struct phenodt& pheno_data, struct geno_block& gblock, struct ests const& m_ests, struct f_ests& fest, struct param const& params, mstream& sout){
 
+  regenie_profile::ScopedStage profile_stage("correction_candidate_check");
   // if firth isn't used, or Tstat < threshold, no correction done
   if(!block_info->is_corrected(ph) || (fabs(dt_thr->stats(ph)) <= params.z_thr)){
     get_sumstats(false, ph, dt_thr);
@@ -1997,6 +2105,7 @@ void check_pval_snp(variant_block* block_info, data_thread* dt_thr, int const& c
 
   if(params.firth){ // firth
     
+    regenie_profile::increment_counter("firth_candidate_tests");
     run_firth_correction_snp(chrom, ph, isnp, gblock, block_info, dt_thr, pheno_data, m_ests, fest, params, sout);
     if(block_info->test_fail(ph)) {
       get_sumstats(true, ph, dt_thr);
@@ -2012,6 +2121,7 @@ void check_pval_snp(variant_block* block_info, data_thread* dt_thr, int const& c
 
   } else if(params.use_SPA) { // spa
 
+    regenie_profile::increment_counter("spa_candidate_tests");
     run_SPA_test(block_info->test_fail(ph), ph, dt_thr, pheno_data.masked_indivs.col(ph).array(), m_ests, params);
     if(block_info->test_fail(ph)) {
       get_sumstats(true, ph, dt_thr);
@@ -2042,6 +2152,7 @@ void get_sumstats(bool const& no_pv, int const& ph, data_thread* dt_thr) {
 
 void run_firth_correction_snp(int const& chrom, int const& ph, int const& isnp, struct geno_block& gblock, variant_block* block_info, data_thread* dt_thr, struct phenodt& pheno_data, struct ests const& m_ests, struct f_ests& fest, struct param const& params, mstream& sout){
 
+  regenie_profile::ScopedStage profile_stage("firth_correction");
   if(!params.firth_approx){ // exact firth
     if (params.trait_mode == 1) {
       // obtain null deviance (set SNP effect to 0 and compute max. pen. LL)
@@ -2066,6 +2177,7 @@ void run_firth_correction_snp(int const& chrom, int const& ph, int const& isnp, 
 }
 
 void run_SPA_test(bool& test_fail, int const& ph, data_thread* dt_thr, const Ref<const ArrayXb>& mask, struct ests const& m_ests, struct param const& params){
+  regenie_profile::ScopedStage profile_stage("spa_correction");
   run_SPA_test_snp(dt_thr->chisq_val(ph), dt_thr->pval_log(ph), dt_thr->stats(ph), dt_thr->denum(ph), dt_thr->fastSPA, dt_thr->Gsparse, dt_thr->Gres.array(), m_ests.Y_hat_p.col(ph).array(), m_ests.Gamma_sqrt.col(ph).array(), mask, test_fail, params.tol_spa, params.niter_max_spa, params.missing_value_double, params.nl_dbl_dmin);
 }
 

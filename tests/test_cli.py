@@ -1,29 +1,57 @@
 from __future__ import annotations
 
+import signal
 import typing
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
-from typer.testing import CliRunner
+import click
+import pytest
+from click.testing import CliRunner
 
-from g.api import DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE, RunArtifacts
-from g.cli import app, main, print_success_message, resolve_chunk_size
-from g.types import ComputeEngine, Device, RegenieTraitType
+from g import api, types
+from g.cli import (
+    app,
+    main,
+    print_success_message,
+    print_warm_cache_message,
+    read_raw_toml,
+    regenie_main,
+    resolve_trusted_bgen_validation_mode,
+)
+from g.engine import shutdown
+from g.interface import config, options
 
 runner = CliRunner()
 
 
+@dataclass(frozen=True)
+class WarmShape:
+    sample_count: int
+    variant_count: int
+
+
+@dataclass(frozen=True)
+class WarmReport:
+    warmed_shapes: tuple[WarmShape, ...]
+
+
 def test_root_command_without_arguments_shows_help() -> None:
     result = runner.invoke(app, [])
+
     assert result.exit_code == 2
     assert "Blazing fast REGENIE step 2 GWAS engine." in result.output
-    assert "regenie2-linear" in result.output
+    assert "regenie" in result.output
+    assert "config" in result.output
+    assert "regenie2" not in result.output
     assert "\n  linear" not in result.output
     assert "\n  logistic" not in result.output
 
 
 def test_root_help_renders_without_style_errors() -> None:
     result = runner.invoke(app, ["--help"])
+
     assert result.exit_code == 0
     assert "MissingStyle" not in result.output
     assert "Usage:" in result.output
@@ -31,153 +59,493 @@ def test_root_help_renders_without_style_errors() -> None:
     assert "╰" not in result.output
 
 
-def test_resolve_chunk_size_uses_regenie_default() -> None:
-    assert resolve_chunk_size(None) == DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE
-
-
-def test_resolve_chunk_size_preserves_explicit_override() -> None:
-    assert resolve_chunk_size(1024) == 1024
-
-
-def test_removed_linear_command_is_unknown() -> None:
-    result = runner.invoke(app, ["linear", "--help"])
-    assert result.exit_code != 0
-    assert "No such command" in result.output
-
-
-def test_removed_logistic_command_is_unknown() -> None:
-    result = runner.invoke(app, ["logistic", "--help"])
-    assert result.exit_code != 0
-    assert "No such command" in result.output
-
-
-def test_regenie2_linear_subcommand_without_options_shows_help() -> None:
-    result = runner.invoke(app, ["regenie2-linear"])
-    assert result.exit_code == 2
-    assert "Run a REGENIE step 2 linear association scan" in result.output
-    assert "--pred" in result.output
-    assert "--bgen" in result.output
-
-
-def test_regenie2_linear_command_dispatches_api_call() -> None:
+def test_regenie_command_dispatches_config_api() -> None:
     with patch(
-        "g.cli.run_regenie2_linear_api",
-        return_value=RunArtifacts(
-            output_run_directory=Path("results/output.regenie2_linear.run"),
-            final_parquet=Path("results/output.regenie2_linear.run/final.parquet"),
+        "g.cli.api.regenie",
+        return_value=api.RunArtifacts(
+            output_run_directory=Path("results/output.g/trait.regenie2_linear.run"),
+            final_parquet=Path("results/output.g/trait.regenie2_linear.run/final.parquet"),
         ),
-    ) as mock_run_regenie2_linear_api:
+    ) as mock_regenie_api:
         result = runner.invoke(
             app,
             [
-                "regenie2-linear",
+                "regenie",
+                "--step",
+                "2",
                 "--bgen",
                 "dataset.bgen",
                 "--sample",
                 "dataset.sample",
-                "--pheno",
+                "--phenoFile",
                 "phenotype.tsv",
-                "--pheno-name",
+                "--phenoCol",
                 "trait",
-                "--covar",
+                "--covarFile",
                 "covariates.tsv",
-                "--covar-names",
+                "--covarColList",
                 "age,sex",
                 "--pred",
                 "predictions.list",
                 "--out",
                 "results/output",
-                "--device",
+                "--qt",
+                "--bsize",
+                "4096",
+                "--g-device",
                 "gpu",
-                "--prefetch-chunks",
+                "--g-output-format",
+                "parquet",
+                "--g-log-filter",
+                "g=info",
+                "--g-log-file",
+                "logs/g.jsonl",
+                "--no-g-log-stderr",
+                "--g-telemetry",
+                "profile",
+                "--g-log-dir",
+                "logs",
+                "--g-progress-interval-seconds",
                 "2",
-                "--compute-engine",
-                "burn-wgpu",
-                "--output-writer-thread-count",
+                "--g-progress-interval-chunks",
                 "3",
-                "--output-writer-queue-depth",
-                "5",
+                "--g-profile-summary-json",
+                "logs/profile.summary.json",
+                "--g-trace-file",
+                "logs/trace.jsonl",
+                "--g-trace-filter",
+                "g=trace",
+                "--g-log-queue-size",
+                "1024",
+                "--no-g-log-lossy",
+                "--g-include-source-location",
+                "--g-include-span-events",
             ],
         )
 
     assert result.exit_code == 0
-    assert str(Path("results/output.regenie2_linear.run")) in result.output
-    assert str(Path("results/output.regenie2_linear.run/final.parquet")) in result.output
-    assert mock_run_regenie2_linear_api.call_args.kwargs["covar_names"] == ("age", "sex")
-    compute_config = mock_run_regenie2_linear_api.call_args.kwargs["compute"]
-    assert compute_config.compute_engine == ComputeEngine.BURN_WGPU
-    assert compute_config.device == Device.GPU
-    assert compute_config.chunk_size == DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE
-    assert compute_config.prefetch_chunks == 2
-    assert compute_config.output_writer_thread_count == 3
-    assert compute_config.output_writer_queue_depth == 5
+    regenie_config = mock_regenie_api.call_args.args[0]
+    assert regenie_config.input.pheno_columns == ("trait",)
+    assert regenie_config.input.covar_columns == ("age", "sex")
+    assert regenie_config.trait.bsize == 4096
+    assert regenie_config.g_compute.device == types.Device.GPU
+    assert regenie_config.g_diagnostics.log_filter == "g=info"
+    assert regenie_config.g_diagnostics.log_file == Path("logs/g.jsonl")
+    assert regenie_config.g_diagnostics.log_stderr is False
+    assert regenie_config.g_diagnostics.telemetry == types.TelemetryMode.PROFILE
+    assert regenie_config.g_diagnostics.log_dir == Path("logs")
+    assert regenie_config.g_diagnostics.progress_interval_seconds == 2
+    assert regenie_config.g_diagnostics.progress_interval_chunks == 3
+    assert regenie_config.g_diagnostics.profile_summary_json == Path("logs/profile.summary.json")
+    assert regenie_config.g_diagnostics.trace_file == Path("logs/trace.jsonl")
+    assert regenie_config.g_diagnostics.trace_filter == "g=trace"
+    assert regenie_config.g_diagnostics.log_queue_size == 1024
+    assert regenie_config.g_diagnostics.log_lossy is False
+    assert regenie_config.g_diagnostics.include_source_location is True
+    assert regenie_config.g_diagnostics.include_span_events is True
+    assert "final.parquet" in result.output
 
 
-def test_regenie2_help_shows_binary_trait_and_correction_options() -> None:
-    result = runner.invoke(app, ["regenie2", "--help"])
-    assert result.exit_code == 0
-    assert "--trait-type" in result.output
-    assert "binary" in result.output
-    assert "--binary-correction" in result.output
-
-
-def test_regenie2_binary_command_dispatches_unified_api_call() -> None:
-    with patch(
-        "g.cli.run_regenie2_api",
-        return_value=RunArtifacts(
-            output_run_directory=Path("results/output.regenie2_binary.run"),
-            final_parquet=Path("results/output.regenie2_binary.run/final.parquet"),
-        ),
-    ) as mock_run_regenie2_api:
+def test_regenie_command_loads_packaged_default_toml() -> None:
+    with patch("g.cli.api.regenie", return_value=api.RunArtifacts()) as mock_regenie_api:
         result = runner.invoke(
             app,
             [
-                "regenie2",
+                "regenie",
                 "--bgen",
                 "dataset.bgen",
-                "--sample",
-                "dataset.sample",
-                "--pheno",
+                "--phenoFile",
                 "phenotype.tsv",
-                "--pheno-name",
+                "--phenoCol",
                 "trait",
                 "--pred",
                 "predictions.list",
                 "--out",
                 "results/output",
-                "--trait-type",
-                "binary",
-                "--prefetch-chunks",
-                "4",
-                "--output-writer-thread-count",
-                "2",
-                "--output-writer-queue-depth",
-                "6",
             ],
         )
 
     assert result.exit_code == 0
-    assert mock_run_regenie2_api.call_args.kwargs["trait_type"] == RegenieTraitType.BINARY
-    compute_config = mock_run_regenie2_api.call_args.kwargs["compute"]
-    assert compute_config.prefetch_chunks == 4
-    assert compute_config.output_writer_thread_count == 2
-    assert compute_config.output_writer_queue_depth == 6
-    assert str(Path("results/output.regenie2_binary.run")) in result.output
+    regenie_config = mock_regenie_api.call_args.args[0]
+    assert regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
+    assert regenie_config.trait.bsize == config.DEFAULT_BSIZE
+    assert regenie_config.g_compute.device == types.Device.CPU
+    assert regenie_config.g_output.format == types.OutputFormat.PARQUET
 
 
-def test_print_success_message_reports_run_directory_and_parquet(capsys: typing.Any) -> None:
+def test_regenie_command_returns_signal_exit_code_for_graceful_shutdown() -> None:
+    shutdown_request = shutdown.GracefulShutdownRequested(
+        shutdown.ShutdownSignal(number=int(signal.SIGINT), name="SIGINT", exit_code=130)
+    )
+    with patch("g.cli.api.regenie", side_effect=shutdown_request):
+        result = runner.invoke(
+            app,
+            [
+                "regenie",
+                "--step",
+                "2",
+                "--bgen",
+                "dataset.bgen",
+                "--sample",
+                "dataset.sample",
+                "--phenoFile",
+                "phenotype.tsv",
+                "--phenoCol",
+                "trait",
+                "--pred",
+                "predictions.list",
+                "--out",
+                "results/output",
+                "--qt",
+            ],
+        )
+
+    assert result.exit_code == 130
+    assert "Interrupted by SIGINT" in result.output
+    assert "saved committed output for --resume" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_graceful_shutdown_controller_escalates_second_signal() -> None:
+    previous_sigint_handler = signal.getsignal(signal.SIGINT)
+    controller = shutdown.GracefulShutdownController()
+
+    with controller:
+        with pytest.raises(shutdown.GracefulShutdownRequested):
+            controller.handle_signal(int(signal.SIGINT), None)
+        with pytest.raises(KeyboardInterrupt):
+            controller.handle_signal(int(signal.SIGINT), None)
+
+    assert signal.getsignal(signal.SIGINT) == previous_sigint_handler
+
+
+def test_regenie_command_options_are_generated_from_specs() -> None:
+    regenie_command = app.commands["regenie"]
+    click_options = {
+        click_option.name: click_option
+        for click_option in regenie_command.params
+        if isinstance(click_option, click.Option)
+    }
+
+    for option_spec in options.OPTION_SPECS:
+        click_option = click_options[option_spec.destination]
+        assert click_option.opts[0].split("/")[0] == f"--{option_spec.name}"
+        assert click_option.help == option_spec.help_text
+
+
+def test_regenie_command_rejects_unsupported_regenie_flag() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "regenie",
+            "--step",
+            "2",
+            "--pgen",
+            "dataset",
+            "--phenoFile",
+            "phenotype.tsv",
+            "--phenoCol",
+            "trait",
+            "--pred",
+            "predictions.list",
+            "--out",
+            "results/output",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--pgen is a valid REGENIE option" in result.output
+
+
+def test_regenie_command_rejects_binary_only_flag_under_quantitative_trait() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "regenie",
+            "--step",
+            "2",
+            "--bgen",
+            "dataset.bgen",
+            "--phenoFile",
+            "phenotype.tsv",
+            "--phenoCol",
+            "trait",
+            "--pred",
+            "predictions.list",
+            "--out",
+            "results/output",
+            "--qt",
+            "--firth",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--firth can only be used with --bt" in result.output
+
+
+def test_regenie_command_rejects_explicit_binary_threshold_under_quantitative_trait() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "regenie",
+            "--step",
+            "2",
+            "--bgen",
+            "dataset.bgen",
+            "--phenoFile",
+            "phenotype.tsv",
+            "--phenoCol",
+            "trait",
+            "--pred",
+            "predictions.list",
+            "--out",
+            "results/output",
+            "--qt",
+            "--pThresh",
+            "0.05",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--pThresh can only be used with --bt" in result.output
+
+
+def test_regenie_command_rejects_removed_duplicate_iid_flag() -> None:
+    result = runner.invoke(app, ["regenie", "--g-allow-duplicate-iid-alignment"])
+
+    assert result.exit_code != 0
+    assert "No such option" in result.output
+    assert "--g-allow-duplicate-iid-alignment" in result.output
+
+
+def test_regenie_command_applies_toml_then_explicit_cli_override(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[input]",
+                'bgen = "dataset.bgen"',
+                'phenoFile = "phenotype.tsv"',
+                'phenoCol = "trait"',
+                'pred = "predictions.list"',
+                "[trait]",
+                "step = 2",
+                "bt = true",
+                "bsize = 1024",
+                "[output]",
+                'out = "results/output"',
+                "[g.output]",
+                'format = "arrow"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("g.cli.api.regenie", return_value=api.RunArtifacts()) as mock_regenie_api:
+        result = runner.invoke(app, ["regenie", "--config", str(config_path), "--qt", "--bsize", "4096"])
+
+    assert result.exit_code == 0
+    regenie_config = mock_regenie_api.call_args.args[0]
+    assert regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
+    assert regenie_config.trait.bsize == 4096
+    assert regenie_config.g_output.format == types.OutputFormat.ARROW
+
+
+def test_regenie_command_applies_explicit_cli_override_above_both_toml_layers(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[input]",
+                'bgen = "dataset.bgen"',
+                'phenoFile = "phenotype.tsv"',
+                'phenoCol = "trait"',
+                'pred = "predictions.list"',
+                "[output]",
+                'out = "results/output"',
+                "[g.compute]",
+                'device = "gpu"',
+                "[g.output]",
+                'format = "arrow"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("g.cli.api.regenie", return_value=api.RunArtifacts()) as mock_regenie_api:
+        result = runner.invoke(
+            app,
+            [
+                "regenie",
+                "--config",
+                str(config_path),
+                "--g-device",
+                "cpu",
+                "--g-output-format",
+                "parquet",
+            ],
+        )
+
+    assert result.exit_code == 0
+    regenie_config = mock_regenie_api.call_args.args[0]
+    assert regenie_config.g_compute.device == types.Device.CPU
+    assert regenie_config.g_output.format == types.OutputFormat.PARQUET
+
+
+def test_regenie_command_applies_explicit_binary_override(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[input]",
+                'bgen = "dataset.bgen"',
+                'phenoFile = "phenotype.tsv"',
+                'phenoCol = "trait"',
+                'pred = "predictions.list"',
+                "[trait]",
+                "step = 2",
+                "qt = true",
+                "[output]",
+                'out = "results/output"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("g.cli.api.regenie", return_value=api.RunArtifacts()) as mock_regenie_api:
+        result = runner.invoke(app, ["regenie", "--config", str(config_path), "--bt"])
+
+    assert result.exit_code == 0
+    regenie_config = mock_regenie_api.call_args.args[0]
+    assert regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
+
+
+def test_config_subcommands_render_and_validate(tmp_path: Path) -> None:
+    config_path = tmp_path / "regenie.toml"
+
+    init_result = runner.invoke(app, ["config", "init", "--out", str(config_path)])
+
+    assert init_result.exit_code == 0
+    assert config_path.exists()
+    validate_result = runner.invoke(app, ["config", "validate", str(config_path)])
+    assert validate_result.exit_code == 0
+    explain_result = runner.invoke(app, ["config", "explain", "bgen"])
+    assert explain_result.exit_code == 0
+    assert "supported" in explain_result.output
+
+
+def test_config_init_writes_to_stdout() -> None:
+    result = runner.invoke(app, ["config", "init"])
+
+    assert result.exit_code == 0
+    assert "[input]" in result.output
+    assert "[trait]" in result.output
+
+
+def test_config_validate_reports_invalid_toml_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "invalid.toml"
+    config_path.write_text('[input]\nphenoFile = "phenotype.tsv"\n', encoding="utf-8")
+
+    result = runner.invoke(app, ["config", "validate", str(config_path)])
+
+    assert result.exit_code != 0
+    assert "Exactly one genotype source" in result.output
+
+
+def test_config_explain_lists_all_options() -> None:
+    result = runner.invoke(app, ["config", "explain"])
+
+    assert result.exit_code == 0
+    assert "bgen: supported" in result.output
+    assert "g-output-format: g_extension" in result.output
+
+
+def test_config_explain_reports_unknown_option() -> None:
+    result = runner.invoke(app, ["config", "explain", "not-a-real-option"])
+
+    assert result.exit_code != 0
+    assert "Unknown option: not-a-real-option" in result.output
+
+
+def test_legacy_commands_are_not_registered() -> None:
+    for command_name in ["regenie2", "regenie2-linear", "regenie2-warm-cache", "linear", "logistic"]:
+        result = runner.invoke(app, [command_name, "--help"])
+        assert result.exit_code != 0
+        assert "No such command" in result.output
+
+
+def test_print_success_message_reports_run_directory_outputs(capsys: typing.Any) -> None:
     print_success_message(
-        RunArtifacts(
-            output_run_directory=Path("results.regenie2_linear.run"),
-            final_parquet=Path("results.regenie2_linear.run/final.parquet"),
+        api.RunArtifacts(
+            output_run_directory=Path("results/output.g/trait.regenie2_linear.run"),
+            final_parquet=Path("results/output.g/trait.regenie2_linear.run/final.parquet"),
         )
     )
     captured = capsys.readouterr()
-    assert "results.regenie2_linear.run" in captured.out
+    assert "results/output.g/trait.regenie2_linear.run" in captured.out
     assert "final.parquet" in captured.out
 
 
-def test_main_dispatches_to_typer_app() -> None:
+def test_print_success_message_reports_nested_phenotype_artifacts(capsys: typing.Any) -> None:
+    print_success_message(
+        api.RunArtifacts(
+            phenotype_artifacts=(
+                api.RunArtifacts(output_run_directory=Path("results/trait_a.run")),
+                api.RunArtifacts(
+                    output_run_directory=Path("results/trait_b.run"), final_parquet=Path("trait_b.parquet")
+                ),
+            )
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert "results/trait_a.run" in captured.out
+    assert "results/trait_b.run" in captured.out
+    assert "trait_b.parquet" in captured.out
+
+
+def test_print_warm_cache_message_lists_warmed_shapes(capsys: typing.Any) -> None:
+    print_warm_cache_message(WarmReport(warmed_shapes=(WarmShape(sample_count=12, variant_count=512),)))
+
+    captured = capsys.readouterr()
+    assert "(12, 512)" in captured.out
+
+
+def test_resolve_trusted_bgen_validation_mode_rejects_conflicts() -> None:
+    assert (
+        resolve_trusted_bgen_validation_mode(validate_trusted_bgen=False, assume_trusted_bgen_validated=False)
+        == types.TrustedBgenValidationMode.CACHE_ON_MISS
+    )
+    assert (
+        resolve_trusted_bgen_validation_mode(validate_trusted_bgen=True, assume_trusted_bgen_validated=False)
+        == types.TrustedBgenValidationMode.FORCE_VALIDATE
+    )
+    assert (
+        resolve_trusted_bgen_validation_mode(validate_trusted_bgen=False, assume_trusted_bgen_validated=True)
+        == types.TrustedBgenValidationMode.ASSUME_VALIDATED
+    )
+    with pytest.raises(click.BadParameter, match="mutually exclusive"):
+        resolve_trusted_bgen_validation_mode(validate_trusted_bgen=True, assume_trusted_bgen_validated=True)
+
+
+def test_read_raw_toml_handles_optional_path(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[trait]\nstep = 2\n", encoding="utf-8")
+
+    assert read_raw_toml(None) == {}
+    assert read_raw_toml(config_path) == {"trait": {"step": 2}}
+
+
+def test_main_dispatches_to_click_app() -> None:
     with patch("g.cli.app") as mock_app:
         main()
     mock_app.assert_called_once_with()
+
+
+def test_regenie_main_dispatches_direct_entrypoint() -> None:
+    with patch("g.cli.run_regenie_command.main") as mock_main:
+        regenie_main()
+
+    mock_main.assert_called_once()
+    assert mock_main.call_args.kwargs["prog_name"] == "g-regenie"
+    assert mock_main.call_args.kwargs["standalone_mode"] is True

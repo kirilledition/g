@@ -25,6 +25,14 @@ MKLROOT       =
 HTSLIB_PATH   =
 OPENBLAS_ROOT = 
 STATIC       := 0
+BOOST_INCLUDE_PATH := $(lastword $(sort $(wildcard ${BGEN_PATH}/3rd_party/boost_*)))
+BOOST_LIBRARY_PATH := $(lastword $(sort $(wildcard ${BGEN_PATH}/build/3rd_party/boost_*)))
+ifeq ($(strip $(BOOST_INCLUDE_PATH)),)
+ BOOST_INCLUDE_PATH := ${BGEN_PATH}/3rd_party/boost_1_55_0
+endif
+ifeq ($(strip $(BOOST_LIBRARY_PATH)),)
+ BOOST_LIBRARY_PATH := ${BGEN_PATH}/build/3rd_party/boost_1_55_0
+endif
 
 ############
 
@@ -46,7 +54,7 @@ endif
 # detect OS architecture and add flags
 UNAME_S      := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
- INC          = -I${BGEN_PATH}/3rd_party/boost_1_55_0
+ INC          = -I${BOOST_INCLUDE_PATH}
  CFLAGS      += -fopenmp
  ifeq ($(strip $(STATIC)),1)
 	LPATHS      = -static-libgcc -static-libstdc++
@@ -133,9 +141,9 @@ RGFLAGS      += -DVERSION_NUMBER=\"$(RG_VERSION)\"
 OBJECTS       = $(patsubst %.cpp,%.o,$(wildcard ./src/*.cpp))
 
 PGEN_PATH     = ./external_libs/pgenlib/
-INC          += -I${PGEN_PATH} -I${PGEN_PATH}/simde/ -I${PGEN_PATH}/include/ -I./external_libs/cxxopts/include/ -I./external_libs/LBFGSpp/include/ -I${BGEN_PATH} -I./external_libs/eigen-3.4.0/ -I${BGEN_PATH}/genfile/include/ -I${BGEN_PATH}/3rd_party/boost_1_55_0/ -I${BGEN_PATH}/3rd_party/zstd-1.1.0/lib -I${BGEN_PATH}/db/include/ -I${BGEN_PATH}/3rd_party/sqlite3 -I./external_libs/remeta -I./external_libs/
+INC          += -I${PGEN_PATH} -I${PGEN_PATH}/simde/ -I${PGEN_PATH}/include/ -I./external_libs/cxxopts/include/ -I./external_libs/LBFGSpp/include/ -I${BGEN_PATH} -I./external_libs/eigen-3.4.0/ -I${BGEN_PATH}/genfile/include/ -I${BOOST_INCLUDE_PATH}/ -I${BGEN_PATH}/3rd_party/zstd-1.1.0/lib -I${BGEN_PATH}/db/include/ -I${BGEN_PATH}/3rd_party/sqlite3 -I./external_libs/remeta -I./external_libs/
 
-LPATHS       += ${LIBMKL} -L${BGEN_PATH}/build/ -L${BGEN_PATH}/build/3rd_party/zstd-1.1.0/ -L${BGEN_PATH}/build/db/ -L${BGEN_PATH}/build/3rd_party/sqlite3/ -L${BGEN_PATH}/build/3rd_party/boost_1_55_0 -L/usr/lib/
+LPATHS       += ${LIBMKL} -L${BGEN_PATH}/build/ -L${BGEN_PATH}/build/3rd_party/zstd-1.1.0/ -L${BGEN_PATH}/build/db/ -L${BGEN_PATH}/build/3rd_party/sqlite3/ -L${BOOST_LIBRARY_PATH} -L/usr/lib/
 
 LIBS         += ${SLIBS} -lbgen -lzstd -ldb  -lsqlite3 -lboost
 LIBS         += -lz ${DLIBS} -lm -ldl -lgfortran
@@ -147,6 +155,7 @@ LIBS         += -lz ${DLIBS} -lm -ldl -lgfortran
 all: ${EFILE}
 
 ${EFILE}: libMvtnorm libqf libquad pgenlib remeta ${OBJECTS}
+	mkdir -p $(dir ${EFILE})
 	${CXX} ${CXXFLAGS} ${RGFLAGS} ${CFLAGS} -o ${EFILE} ${OBJECTS} ./external_libs/mvtnorm/libMvtnorm.a ./external_libs/qf/qf.a ./external_libs/quadpack/libquad.a ./external_libs/pgenlib/pgenlib.a ./external_libs/remeta/remeta.a ${LPATHS} ${LIBS}
 
 %.o: %.cpp

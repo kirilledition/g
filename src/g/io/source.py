@@ -1,12 +1,9 @@
-"""BGEN genotype source orchestration."""
+"""BGEN genotype source configuration helpers."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-
-from g import types
-from g.io import bgen, models, reader, samples
 
 
 @dataclass(frozen=True)
@@ -15,14 +12,6 @@ class GenotypeSourceConfig:
 
     source_path: Path
     sample_path: Path | None = None
-
-
-resolve_bgen_sample_path = bgen.resolve_bgen_sample_path
-load_bgen_sample_table = bgen.load_bgen_sample_table
-build_sample_identifier_table = bgen.build_sample_identifier_table
-load_aligned_sample_data_from_individual_identifier_table = (
-    samples.load_aligned_sample_data_from_individual_identifier_table
-)
 
 
 def build_bgen_source_config(bgen_path: Path | str, sample_path: Path | str | None = None) -> GenotypeSourceConfig:
@@ -51,6 +40,14 @@ def validate_genotype_source_config(genotype_source_config: GenotypeSourceConfig
         raise ValueError(message)
 
 
+def resolve_bgen_sample_path(bgen_path: Path, sample_path: Path | None = None) -> Path | None:
+    """Resolve an explicit or adjacent Oxford sample file for one BGEN file."""
+    if sample_path is not None:
+        return sample_path
+    adjacent_sample_path = bgen_path.with_suffix(".sample")
+    return adjacent_sample_path if adjacent_sample_path.exists() else None
+
+
 def build_genotype_source_signature_paths(genotype_source_config: GenotypeSourceConfig) -> tuple[Path, ...]:
     """Return the input files that define reproducibility for one source."""
     validate_genotype_source_config(genotype_source_config)
@@ -61,62 +58,3 @@ def build_genotype_source_signature_paths(genotype_source_config: GenotypeSource
     if resolved_sample_path is None:
         return (genotype_source_config.source_path,)
     return (genotype_source_config.source_path, resolved_sample_path)
-
-
-def open_genotype_reader(genotype_source_config: GenotypeSourceConfig) -> reader.GenotypeReader:
-    """Open a BGEN reader for one genotype source config."""
-    validate_genotype_source_config(genotype_source_config)
-    return bgen.BgenReader(
-        genotype_source_config.source_path,
-        sample_path=genotype_source_config.sample_path,
-    )
-
-
-def load_aligned_sample_data_from_source(
-    genotype_source_config: GenotypeSourceConfig,
-    phenotype_path: Path,
-    phenotype_name: str,
-    covariate_path: Path | None,
-    covariate_names: tuple[str, ...] | None,
-    *,
-    is_binary_trait: bool,
-    genotype_reader: reader.GenotypeReader | None = None,
-) -> models.AlignedSampleData:
-    """Load aligned sample data for a BGEN source."""
-    validate_genotype_source_config(genotype_source_config)
-    if genotype_reader is not None:
-        if genotype_source_config.sample_path is not None:
-            sample_table = load_bgen_sample_table(
-                genotype_source_config.source_path,
-                genotype_source_config.sample_path,
-            )
-            return load_aligned_sample_data_from_individual_identifier_table(
-                sample_table=sample_table,
-                phenotype_path=phenotype_path,
-                phenotype_name=phenotype_name,
-                covariate_path=covariate_path,
-                covariate_names=covariate_names,
-                is_binary_trait=is_binary_trait,
-            )
-        sample_identifier_source = getattr(
-            genotype_reader,
-            "sample_identifier_source",
-            types.SampleIdentifierSource.EMBEDDED,
-        )
-        if sample_identifier_source == types.SampleIdentifierSource.GENERATED:
-            message = "BGEN file does not contain samples and no .sample file was found."
-            raise ValueError(message)
-        sample_table = build_sample_identifier_table(genotype_reader.samples)
-    else:
-        sample_table = load_bgen_sample_table(
-            genotype_source_config.source_path,
-            genotype_source_config.sample_path,
-        )
-    return load_aligned_sample_data_from_individual_identifier_table(
-        sample_table=sample_table,
-        phenotype_path=phenotype_path,
-        phenotype_name=phenotype_name,
-        covariate_path=covariate_path,
-        covariate_names=covariate_names,
-        is_binary_trait=is_binary_trait,
-    )

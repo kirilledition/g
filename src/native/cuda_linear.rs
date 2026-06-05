@@ -85,7 +85,7 @@ extern "C" __global__ void compute_regenie_linear_chunk(
 }
 "#;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct CudaLinearKernelConfig {
     pub block_size: u32,
 }
@@ -123,7 +123,7 @@ impl CudaLinearKernelSession {
         let compile_start_time = Instant::now();
         let context = CudaContext::new(DEFAULT_DEVICE_ORDINAL).map_err(cuda_driver_error)?;
         let stream = context.default_stream();
-        let ptx = nvrtc::compile_ptx(KERNEL_SOURCE).map_err(cuda_compile_error)?;
+        let ptx = nvrtc::compile_ptx(KERNEL_SOURCE).map_err(|error| cuda_compile_error(&error))?;
         let module = context.load_module(ptx).map_err(cuda_driver_error)?;
         let function = module.load_function(KERNEL_FUNCTION_NAME).map_err(cuda_driver_error)?;
         timing_seconds.insert("cuda_kernel_compile_load".to_string(), compile_start_time.elapsed().as_secs_f64());
@@ -164,6 +164,7 @@ impl CudaLinearKernelSession {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn compute_chunk(
         &mut self,
         chromosome_state: &CudaLinearChromosomeState,
@@ -314,7 +315,7 @@ fn cuda_driver_error(error: cudarc::driver::DriverError) -> LinearError {
     LinearError::Backend(format!("CUDA driver error: {error}"))
 }
 
-fn cuda_compile_error(error: nvrtc::CompileError) -> LinearError {
+fn cuda_compile_error(error: &nvrtc::CompileError) -> LinearError {
     LinearError::Backend(format!("CUDA compile error: {error}"))
 }
 

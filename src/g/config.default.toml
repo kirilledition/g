@@ -1,0 +1,84 @@
+[trait]
+step = 2
+qt = true
+bt = false
+bsize = 8192
+
+[binary]
+firth = false
+approx = false
+spa = false
+pThresh = 0.05
+firth-se = false
+
+[g.compute]
+device = "cpu"
+staging-depth = 1
+trusted-no-missing-diploid = false
+trusted-bgen-validation-mode = "cache_on_miss"
+sample-key-mode = "iid"
+multi-phenotype-sample-mode = "per-phenotype"
+firth-batch-size = 64
+firth-candidate-capacity = 1024
+binary-null-maximum-iterations = 50
+binary-null-coefficient-tolerance = 1.0e-6
+null-logistic-nonconvergence = "fail"
+binary-minimum-probability = 1.0e-6
+binary-minimum-variance = 1.0e-8
+binary-relative-variance-tolerance = 1.0e-6
+firth-maximum-iterations = 250
+firth-gradient-tolerance = 2.5e-4
+firth-coefficient-tolerance = 2.5e-4
+firth-likelihood-tolerance = 2.5e-4
+firth-maximum-step-size = 5.0
+firth-pseudo-maximum-iterations = 50
+firth-pseudo-inner-maximum-iterations = 25
+firth-newton-raphson-zero-start-iterations = 100
+firth-line-search-maximum-attempts = 25
+firth-step-halving-maximum-attempts = 12
+firth-initial-response-scale = 4.863891244002886
+firth-sparse-carrier-dosage-threshold = 1.0e-4
+firth-step-halving-scale = 0.5
+null-firth-maximum-iterations = 1000
+null-firth-gradient-tolerance = 50.0e-6
+null-firth-maximum-step-size = 25.0
+null-firth-fallback-iteration-multiplier = 5
+null-firth-fallback-step-divisor = 5.0
+null-firth-line-search-maximum-attempts = 25
+null-firth-step-halving-scale = 0.5
+use-block-firth-math = false
+bgen-decode-tile-variant-count = 64
+# Score-test kernels default to the float32 fast path. Use float64 only when
+# parity or numerical debugging needs outweigh throughput.
+score-dtype = "float32"
+# Firth internals are parity-sensitive and currently require float64.
+firth-dtype = "float64"
+# Enables JAX to create x64 arrays; it does not make all kernels float64.
+jax-enable-x64 = true
+jax-persistent-cache = true
+jax-persistent-cache-min-entry-size-bytes = -1
+jax-persistent-cache-min-compile-time-seconds = 0
+jax-xla-autotune-cache = false
+jax-transfer-guard = false
+
+[g.output]
+format = "parquet"
+writer-threads = 4
+writer-queue-depth = 16
+chunks-per-arrow-file = 16
+arrow-compression = "zstd"
+resume = false
+resume-mode = "fast"
+finalize-parquet = false
+
+[g.diagnostics]
+telemetry = "progress"
+log-filter = "info"
+log-stderr = true
+progress-interval-seconds = 5
+progress-interval-chunks = 10
+trace-filter = "g.native.bgen=trace,g.output=debug"
+log-queue-size = 65536
+log-lossy = true
+include-source-location = false
+include-span-events = false

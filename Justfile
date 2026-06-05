@@ -212,16 +212,16 @@ slurm-gpu-just +just_arguments:
     exec just slurm-gpu-run just {{just_arguments}}
 
 # Run REGENIE step 2 with local baseline predictions
-regenie2-linear:
-    {{server_env}} && uv run g regenie2-linear --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_cont.txt --pheno-name phenotype_continuous --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_qt_pred.list --out {{data_dir}}/regenie2_linear
+regenie-linear:
+    {{server_env}} && uv run g regenie --step 2 --qt --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --phenoFile {{data_dir}}/pheno_cont.txt --phenoCol phenotype_continuous --covarFile {{data_dir}}/covariates.txt --covarColList age,sex --pred {{data_dir}}/baselines/regenie_step1_qt_pred.list --out {{data_dir}}/regenie_linear --g-output-format parquet
 
 # Run binary REGENIE step 2 on chr22 with GPU JAX
 regenie2-binary-gpu:
-    {{server_env}} && uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu --trait-type binary --device gpu --finalize-parquet
+    {{server_env}} && uv run g regenie --step 2 --bt --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --phenoFile {{data_dir}}/pheno_bin.txt --phenoCol phenotype_binary --covarFile {{data_dir}}/covariates.txt --covarColList age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu --g-device gpu --firth --approx --g-output-format parquet
 
 # Smoke test binary REGENIE step 2 on a small chr22 variant slice with GPU JAX
 regenie2-binary-gpu-smoke:
-    {{server_env}} && uv run g regenie2 --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --pheno {{data_dir}}/pheno_bin.txt --pheno-name phenotype_binary --covar {{data_dir}}/covariates.txt --covar-names age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu_smoke --trait-type binary --device gpu --variant-limit 1000 --finalize-parquet
+    {{server_env}} && uv run g regenie --step 2 --bt --bgen {{data_dir}}/1kg_chr22_full.bgen --sample {{data_dir}}/1kg_chr22_full.sample --phenoFile {{data_dir}}/pheno_bin.txt --phenoCol phenotype_binary --covarFile {{data_dir}}/covariates.txt --covarColList age,sex --pred {{data_dir}}/baselines/regenie_step1_pred.list --out {{data_dir}}/regenie2_binary_chr22_gpu_smoke --g-device gpu --firth --approx --g-variant-limit 1000 --g-output-format parquet
 
 # Run binary REGENIE step 2 through SLURM on the configured GPU node
 slurm-regenie2-binary-gpu:
@@ -266,6 +266,22 @@ benchmark-regenie2-linear-fresh-gpu: install-perf-extension
 # Benchmark REGENIE step 2 in fresh Python processes using Arrow chunks + Parquet finalization
 benchmark-regenie2-linear-fresh-gpu-parquet: install-perf-extension
     {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --finalize-parquet
+
+# Benchmark binary REGENIE step 2 with cold, same-process hot, chunk-only, and finalized timings
+benchmark-regenie2-binary-hot-gpu: install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_binary_hot.py --device gpu
+
+# Benchmark output-stage timings across finalization, phenotype count, and bsize
+benchmark-output-stages-gpu: install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/benchmark_output_stages.py --device gpu
+
+# Smoke test binary REGENIE step 2 benchmark harness on a small variant slice
+benchmark-regenie2-binary-hot-gpu-smoke: install-perf-extension
+    {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_binary_hot.py --device gpu --variant-limit 1000 --no-include-cold-process --no-include-finalized-hot
+
+# Submit binary hot benchmark to the configured GPU node
+slurm-benchmark-regenie2-binary-hot-gpu:
+    {{server_env}} && just slurm-gpu-just benchmark-regenie2-binary-hot-gpu
 
 # Sequentially tune GPU REGENIE step 2 and active BGEN reader knobs
 tune-regenie2-gpu: install-perf-extension
@@ -349,7 +365,7 @@ typecheck-local:
 
 # Focused no-Nix smoke tests that also rebuild the native extension through maturin
 test-local-focused:
-    uv run pytest tests/test_core.py tests/test_io_bgen.py tests/test_io_output.py
+    uv run pytest tests/test_core.py tests/test_io_output.py
 
 # Non-heavy no-Nix test suite
 test-local:
@@ -376,6 +392,113 @@ ci-test:
 # Run tests
 test:
     {{server_env}} && uv run pytest tests/
+
+# Run Python coverage gate
+coverage-python:
+    {{server_env}} && uv run pytest tests/ --cov=src/g --cov-report=term-missing --cov-fail-under=90
+
+# Run Rust line coverage gate
+coverage-rust:
+    {{server_env}} && cargo llvm-cov --workspace --all-targets --fail-under-lines 90
+
+# Run all coverage gates
+coverage: coverage-python coverage-rust
+
+# Generate docs/code-review.tasks.json from docs/code-review.md
+codex-tasks-sync:
+    {{server_env}} && uv run python scripts/codex_task_farm.py sync-manifest
+
+# Check Codex task farm prerequisites
+codex-tasks-doctor *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py doctor {{arguments}}
+
+# List Codex task farm tasks
+codex-tasks-list *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py list {{arguments}}
+
+# Launch Codex task farm worker agents
+codex-tasks-run *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py run {{arguments}}
+
+# Show Codex task farm status
+codex-tasks-status *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py status {{arguments}}
+
+# Review one or more Codex task branches
+codex-tasks-review +arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py review {{arguments}}
+
+# Integrate one or more reviewed Codex task branches into main
+codex-tasks-integrate +arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py integrate {{arguments}}
+
+# Integrate all reviewed Codex task branches into the integration worktree in order
+codex-tasks-integrate-ready *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py integrate-ready {{arguments}}
+
+# Generate docs/code-review-2.tasks.json from docs/02.code-review-2-06-26.md
+codex-review2-sync:
+    {{server_env}} && uv run python scripts/codex_task_farm.py sync-manifest --source docs/02.code-review-2-06-26.md --manifest docs/code-review-2.tasks.json --plan docs/code-review-2-plan.md --state-dir .codex-task-worktrees/code-review-2 --branch-prefix codex/review2- --worktree-prefix ../g-worktrees/review2- --integration-branch integration/code-review-2 --integration-worktree ../g-worktrees/integration-code-review-2
+
+# Check Review 2 task farm prerequisites
+codex-review2-doctor *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json doctor {{arguments}}
+
+# List Review 2 tasks
+codex-review2-list *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json list {{arguments}}
+
+# Claim Review 2 tasks without launching workers
+codex-review2-claim *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json claim {{arguments}}
+
+# Launch Review 2 worker agents
+codex-review2-run *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json run {{arguments}}
+
+# Show Review 2 status
+codex-review2-status *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json status {{arguments}}
+
+# Review one or more Review 2 task branches
+codex-review2-review +arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json review {{arguments}}
+
+# Integrate one or more reviewed Review 2 task branches
+codex-review2-integrate +arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json integrate {{arguments}}
+
+# Integrate all reviewed Review 2 task branches in order
+codex-review2-integrate-ready *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json integrate-ready {{arguments}}
+
+# Show Review 2 task branch diffs
+codex-review2-diff +arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json diff {{arguments}}
+
+# Show Review 2 runtime logs
+codex-review2-log +arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json log {{arguments}}
+
+# Mark Review 2 tasks blocked
+codex-review2-block +arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json block {{arguments}}
+
+# Mark Review 2 tasks abandoned
+codex-review2-abandon +arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json abandon {{arguments}}
+
+# Reset stale Review 2 claims
+codex-review2-reset-claim *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json reset-claim {{arguments}}
+
+# Remove worktrees for integrated Review 2 tasks
+codex-review2-clean-integrated *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json clean-integrated {{arguments}}
+
+# Promote Review 2 integration branch to main
+codex-review2-promote-to-main *arguments:
+    {{server_env}} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json promote-to-main {{arguments}}
 
 upgrade-python-deps:
     {{server_env}} && uv sync -U --group dev --group gpu

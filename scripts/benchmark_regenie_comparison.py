@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 
 if typing.TYPE_CHECKING:
     from scripts import benchmark as baseline_benchmark
@@ -25,8 +25,9 @@ else:
 
 
 PARITY_BETA_ATOL = 1.0e-3
+PARITY_STANDARD_ERROR_ATOL = 1.0e-3
+PARITY_CHI_SQUARED_ATOL = 1.5e-2
 PARITY_LOG10P_ATOL = 1.5e-2
-G_FINALIZE_PARQUET = True
 
 
 @dataclass(frozen=True)
@@ -59,9 +60,17 @@ class QuantitativeStep2Agreement:
     beta_max_abs_error: float | None
     beta_mean_abs_error: float | None
     beta_allclose_within_tolerance: bool | None
-    log10p_max_abs_error: float | None
-    log10p_mean_abs_error: float | None
-    log10p_allclose_within_tolerance: bool | None
+    standard_error_max_abs_error: float | None = None
+    standard_error_mean_abs_error: float | None = None
+    standard_error_allclose_within_tolerance: bool | None = None
+    chi_squared_max_abs_error: float | None = None
+    chi_squared_mean_abs_error: float | None = None
+    chi_squared_allclose_within_tolerance: bool | None = None
+    log10p_max_abs_error: float | None = None
+    log10p_mean_abs_error: float | None = None
+    log10p_allclose_within_tolerance: bool | None = None
+    extra_match_rate: float | None = None
+    top_variant_differences: list[dict[str, typing.Any]] | None = None
     notes: str | None = None
 
 
@@ -113,7 +122,12 @@ def run_command_with_logs(
 ) -> tuple[bool, float, str | None]:
     """Run one command and persist logs."""
     start_time = time.perf_counter()
-    completed_process = subprocess.run(command_arguments, check=False, capture_output=True, text=True)
+    completed_process = subprocess.run(
+        command_arguments,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
     duration_seconds = time.perf_counter() - start_time
     stdout_log_path.write_text(completed_process.stdout)
     stderr_log_path.write_text(completed_process.stderr)
@@ -140,8 +154,25 @@ def count_table_rows(table_path: Path) -> int | None:
     if not table_path.exists():
         return None
     if table_path.suffix == ".parquet":
-        return int(pd.read_parquet(table_path).shape[0])
-    return int(pd.read_csv(table_path, sep="\t").shape[0])
+        return pl.read_parquet(table_path).height
+    return pl.read_csv(table_path, separator="\t").height
+
+
+def read_whitespace_table(table_path: Path) -> pl.DataFrame:
+    """Read a whitespace-delimited results table into a Polars frame."""
+    table_lines = [line.strip() for line in table_path.read_text().splitlines() if line.strip()]
+    if not table_lines:
+        raise ValueError(f"Results table is empty: {table_path}")
+    header_columns = table_lines[0].split()
+    rows: list[dict[str, str]] = []
+    for line in table_lines[1:]:
+        values = line.split()
+        if len(values) != len(header_columns):
+            raise ValueError(
+                f"Unexpected column count in {table_path}: expected {len(header_columns)}, got {len(values)}"
+            )
+        rows.append(dict(zip(header_columns, values, strict=True)))
+    return pl.DataFrame(rows)
 
 
 def build_not_implemented_result(
@@ -246,42 +277,48 @@ def build_g_step2_command(
     phenotype_path = baseline_paths.continuous_phenotype_path
     phenotype_name = "phenotype_continuous"
     prediction_list_path = baseline_paths.regenie_qt_prediction_list_path
+    trait_flag = "--qt"
+    binary_correction_arguments: list[str] = []
     if trait_type == "binary":
         phenotype_path = baseline_paths.binary_phenotype_path
         phenotype_name = "phenotype_binary"
         prediction_list_path = baseline_paths.regenie_prediction_list_path
+        trait_flag = "--bt"
+        binary_correction_arguments = ["--firth", "--approx"]
     command_arguments = [
         uv_executable,
         "run",
         "g",
-        "regenie2",
+        "regenie",
+        "--step",
+        "2",
+        trait_flag,
         "--bgen",
         str(baseline_paths.bgen_path),
         "--sample",
         str(baseline_paths.sample_path),
-        "--pheno",
+        "--phenoFile",
         str(phenotype_path),
-        "--pheno-name",
+        "--phenoCol",
         phenotype_name,
-        "--covar",
+        "--covarFile",
         str(baseline_paths.covariate_path),
-        "--covar-names",
+        "--covarColList",
         "age,sex",
         "--pred",
         str(prediction_list_path),
         "--out",
         str(output_prefix),
-        "--trait-type",
-        trait_type,
-        "--chunk-size",
+        "--bsize",
         str(chunk_size),
-        "--device",
+        "--g-device",
         device,
+        "--g-output-format",
+        "parquet",
     ]
-    if G_FINALIZE_PARQUET:
-        command_arguments.append("--finalize-parquet")
+    command_arguments.extend(binary_correction_arguments)
     if variant_limit is not None:
-        command_arguments.extend(["--variant-limit", str(variant_limit)])
+        command_arguments.extend(["--g-variant-limit", str(variant_limit)])
     return command_arguments
 
 
@@ -353,16 +390,19 @@ def run_g_step2(
     stdout_log_path = log_directory / f"{program_name}.stdout.log"
     stderr_log_path = log_directory / f"{program_name}.stderr.log"
     association_suffix = ".regenie2_binary.run" if trait_type == "binary" else ".regenie2_linear.run"
-    output_run_directory = output_prefix.with_suffix(association_suffix)
-    if output_run_directory.exists():
-        shutil.rmtree(output_run_directory)
+    output_root_directory = output_prefix.with_name(f"{output_prefix.name}.g")
+    for output_association_directory in output_root_directory.glob(f"*{association_suffix}"):
+        shutil.rmtree(output_association_directory)
     success, duration_seconds, error_message = run_command_with_logs(
         command_arguments=command_arguments,
         stdout_log_path=stdout_log_path,
         stderr_log_path=stderr_log_path,
     )
-    output_path = output_run_directory / "final.parquet"
-    output_row_count = count_table_rows(output_path)
+    output_path = resolve_g_step2_final_parquet_path(
+        output_root_directory=output_root_directory,
+        association_suffix=association_suffix,
+    )
+    output_row_count = None if output_path is None else count_table_rows(output_path)
     variants_per_second = None
     if output_row_count is not None and duration_seconds > 0:
         variants_per_second = output_row_count / duration_seconds
@@ -379,16 +419,40 @@ def run_g_step2(
         peak_memory_megabytes=None,
         stdout_log_path=str(stdout_log_path),
         stderr_log_path=str(stderr_log_path),
-        output_paths=[str(output_path)] if output_path.exists() else [],
+        output_paths=[str(output_path)] if output_path is not None and output_path.exists() else [],
         output_row_count=output_row_count,
         prediction_list_present=None,
         notes=error_message,
     )
 
 
-def load_g_output_frame(g_output_path: Path) -> pd.DataFrame:
+def resolve_g_step2_final_parquet_path(*, output_root_directory: Path, association_suffix: str) -> Path | None:
+    """Return the finalized g step 2 Parquet path for one benchmark output root."""
+    output_paths = sorted(output_root_directory.glob(f"*{association_suffix}/final.parquet"))
+    if len(output_paths) == 1:
+        return output_paths[0]
+    return None
+
+
+def load_g_output_frame(g_output_path: Path) -> pl.DataFrame:
     """Load one g quantitative step 2 Parquet output table."""
-    return pd.read_parquet(g_output_path)
+    return pl.read_parquet(g_output_path)
+
+
+def scalar_as_float(value: object) -> float:
+    """Convert a numeric Polars scalar to a Python float."""
+    return float(typing.cast("float", value))
+
+
+def cast_variant_key_columns(data_frame: pl.DataFrame, key_columns: list[str]) -> pl.DataFrame:
+    """Cast variant identity columns to stable comparison dtypes."""
+    expressions: list[pl.Expr] = []
+    for column_name in key_columns:
+        if column_name == "GENPOS":
+            expressions.append(pl.col(column_name).cast(pl.Int64))
+        else:
+            expressions.append(pl.col(column_name).cast(pl.Utf8))
+    return data_frame.with_columns(expressions)
 
 
 def summarize_quantitative_step2_agreement(
@@ -396,7 +460,7 @@ def summarize_quantitative_step2_agreement(
     regenie_output_path: Path | None,
     g_output_path: Path | None,
 ) -> QuantitativeStep2Agreement:
-    """Compare beta/log10p agreement for quantitative step2 outputs."""
+    """Compare quantitative step2 agreement across all available statistics."""
     if regenie_output_path is None or g_output_path is None:
         return QuantitativeStep2Agreement(
             comparable=False,
@@ -409,42 +473,54 @@ def summarize_quantitative_step2_agreement(
             log10p_allclose_within_tolerance=None,
             notes="One or both outputs are missing.",
         )
-    baseline_frame = pd.read_csv(regenie_output_path, sep=r"\s+")
+    baseline_frame = read_whitespace_table(regenie_output_path)
     observed_frame = load_g_output_frame(g_output_path)
 
     required_observed_columns = {"CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"}
     required_baseline_columns = {"CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"}
-    if required_observed_columns.issubset(observed_frame.columns) and required_baseline_columns.issubset(
-        baseline_frame.columns
+    if required_observed_columns.issubset(set(observed_frame.columns)) and required_baseline_columns.issubset(
+        set(baseline_frame.columns)
     ):
-        observed_frame = observed_frame.assign(
-            CHROM=observed_frame["CHROM"].astype(str),
-            GENPOS=pd.to_numeric(observed_frame["GENPOS"], downcast="integer"),
-            ID=observed_frame["ID"].astype(str),
-            ALLELE0=observed_frame["ALLELE0"].astype(str),
-            ALLELE1=observed_frame["ALLELE1"].astype(str),
-        )
-        baseline_frame = baseline_frame.assign(
-            CHROM=baseline_frame["CHROM"].astype(str),
-            GENPOS=pd.to_numeric(baseline_frame["GENPOS"], downcast="integer"),
-            ID=baseline_frame["ID"].astype(str),
-            ALLELE0=baseline_frame["ALLELE0"].astype(str),
-            ALLELE1=baseline_frame["ALLELE1"].astype(str),
-        )
-        merged_frame = observed_frame.merge(
-            baseline_frame[["CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1", "BETA", "LOG10P"]],
-            on=["CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"],
+        key_columns = ["CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"]
+        observed_expressions: list[pl.Expr | str] = [*key_columns, pl.col("BETA").alias("BETA_g")]
+        baseline_expressions: list[pl.Expr | str] = [
+            *key_columns,
+            pl.col("BETA").cast(pl.Float64).alias("BETA_regenie"),
+        ]
+        for column_name in ["SE", "CHISQ", "LOG10P", "EXTRA"]:
+            if column_name in observed_frame.columns and column_name in baseline_frame.columns:
+                observed_expression = pl.col(column_name).alias(f"{column_name}_g")
+                baseline_expression = pl.col(column_name).alias(f"{column_name}_regenie")
+                if column_name != "EXTRA":
+                    baseline_expression = pl.col(column_name).cast(pl.Float64).alias(f"{column_name}_regenie")
+                observed_expressions.append(observed_expression)
+                baseline_expressions.append(baseline_expression)
+        observed_for_join = cast_variant_key_columns(observed_frame, key_columns).select(*observed_expressions)
+        baseline_for_join = cast_variant_key_columns(baseline_frame, key_columns).select(*baseline_expressions)
+        merged_frame = observed_for_join.join(
+            baseline_for_join,
+            on=key_columns,
             how="inner",
-            suffixes=("_g", "_regenie"),
         )
     else:
-        merged_frame = observed_frame.merge(
-            baseline_frame[["ID", "BETA", "LOG10P"]],
+        observed_expressions = ["ID", pl.col("BETA").alias("BETA_g")]
+        baseline_expressions = ["ID", pl.col("BETA").cast(pl.Float64).alias("BETA_regenie")]
+        for column_name in ["SE", "CHISQ", "LOG10P", "EXTRA"]:
+            if column_name in observed_frame.columns and column_name in baseline_frame.columns:
+                observed_expression = pl.col(column_name).alias(f"{column_name}_g")
+                baseline_expression = pl.col(column_name).alias(f"{column_name}_regenie")
+                if column_name != "EXTRA":
+                    baseline_expression = pl.col(column_name).cast(pl.Float64).alias(f"{column_name}_regenie")
+                observed_expressions.append(observed_expression)
+                baseline_expressions.append(baseline_expression)
+        observed_for_join = observed_frame.select(*observed_expressions)
+        baseline_for_join = baseline_frame.select(*baseline_expressions)
+        merged_frame = observed_for_join.join(
+            baseline_for_join,
             on="ID",
             how="inner",
-            suffixes=("_g", "_regenie"),
         )
-    if merged_frame.empty:
+    if merged_frame.height == 0:
         return QuantitativeStep2Agreement(
             comparable=False,
             merged_variant_count=0,
@@ -456,23 +532,101 @@ def summarize_quantitative_step2_agreement(
             log10p_allclose_within_tolerance=None,
             notes="No overlapping variants between outputs.",
         )
-    beta_error_series = (merged_frame["BETA_g"] - merged_frame["BETA_regenie"]).abs()
-    log10p_error_series = (merged_frame["LOG10P_g"] - merged_frame["LOG10P_regenie"]).abs()
+    beta_error_series = (merged_frame.get_column("BETA_g") - merged_frame.get_column("BETA_regenie")).abs()
+    standard_error_series = None
+    chi_squared_error_series = None
+    log10p_error_series = None
+    extra_match_rate = None
+    if "SE_g" in merged_frame.columns and "SE_regenie" in merged_frame.columns:
+        standard_error_series = (merged_frame.get_column("SE_g") - merged_frame.get_column("SE_regenie")).abs()
+    if "CHISQ_g" in merged_frame.columns and "CHISQ_regenie" in merged_frame.columns:
+        chi_squared_error_series = (merged_frame.get_column("CHISQ_g") - merged_frame.get_column("CHISQ_regenie")).abs()
+    if "LOG10P_g" in merged_frame.columns and "LOG10P_regenie" in merged_frame.columns:
+        log10p_error_series = (merged_frame.get_column("LOG10P_g") - merged_frame.get_column("LOG10P_regenie")).abs()
+    if "EXTRA_g" in merged_frame.columns and "EXTRA_regenie" in merged_frame.columns:
+        extra_match_series = normalize_quantitative_extra(
+            merged_frame.get_column("EXTRA_g")
+        ) == normalize_quantitative_extra(merged_frame.get_column("EXTRA_regenie"))
+        extra_match_rate = scalar_as_float(extra_match_series.mean())
     return QuantitativeStep2Agreement(
         comparable=True,
-        merged_variant_count=int(merged_frame.shape[0]),
-        beta_max_abs_error=float(beta_error_series.max()),
-        beta_mean_abs_error=float(beta_error_series.mean()),
+        merged_variant_count=merged_frame.height,
+        beta_max_abs_error=scalar_as_float(beta_error_series.max()),
+        beta_mean_abs_error=scalar_as_float(beta_error_series.mean()),
         beta_allclose_within_tolerance=bool((beta_error_series <= PARITY_BETA_ATOL).all()),
-        log10p_max_abs_error=float(log10p_error_series.max()),
-        log10p_mean_abs_error=float(log10p_error_series.mean()),
-        log10p_allclose_within_tolerance=bool((log10p_error_series <= PARITY_LOG10P_ATOL).all()),
+        standard_error_max_abs_error=(
+            None if standard_error_series is None else scalar_as_float(standard_error_series.max())
+        ),
+        standard_error_mean_abs_error=(
+            None if standard_error_series is None else scalar_as_float(standard_error_series.mean())
+        ),
+        standard_error_allclose_within_tolerance=(
+            None if standard_error_series is None else bool((standard_error_series <= PARITY_STANDARD_ERROR_ATOL).all())
+        ),
+        chi_squared_max_abs_error=(
+            None if chi_squared_error_series is None else scalar_as_float(chi_squared_error_series.max())
+        ),
+        chi_squared_mean_abs_error=(
+            None if chi_squared_error_series is None else scalar_as_float(chi_squared_error_series.mean())
+        ),
+        chi_squared_allclose_within_tolerance=(
+            None
+            if chi_squared_error_series is None
+            else bool((chi_squared_error_series <= PARITY_CHI_SQUARED_ATOL).all())
+        ),
+        log10p_max_abs_error=None if log10p_error_series is None else scalar_as_float(log10p_error_series.max()),
+        log10p_mean_abs_error=None if log10p_error_series is None else scalar_as_float(log10p_error_series.mean()),
+        log10p_allclose_within_tolerance=(
+            None if log10p_error_series is None else bool((log10p_error_series <= PARITY_LOG10P_ATOL).all())
+        ),
+        extra_match_rate=extra_match_rate,
+        top_variant_differences=build_top_quantitative_differences(merged_frame),
     )
 
 
-def normalize_binary_extra(extra_series: pd.Series) -> pd.Series:
+def normalize_binary_extra(extra_series: pl.Series) -> pl.Series:
     """Normalize binary correction labels for comparison."""
-    return extra_series.fillna("NA").astype(str)
+    return extra_series.fill_null("NA").cast(pl.Utf8)
+
+
+def normalize_quantitative_extra(extra_series: pl.Series) -> pl.Series:
+    """Normalize quantitative EXTRA labels for comparison."""
+    return extra_series.fill_null("NA").cast(pl.Utf8)
+
+
+def build_top_quantitative_differences(merged_frame: pl.DataFrame) -> list[dict[str, typing.Any]]:
+    """Build a compact top-k list of quantitative statistic differences."""
+    statistic_columns = [
+        ("BETA", "BETA_g", "BETA_regenie"),
+        ("SE", "SE_g", "SE_regenie"),
+        ("CHISQ", "CHISQ_g", "CHISQ_regenie"),
+        ("LOG10P", "LOG10P_g", "LOG10P_regenie"),
+    ]
+    key_columns = [
+        column_name
+        for column_name in ["CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"]
+        if column_name in merged_frame.columns
+    ]
+    difference_rows: list[dict[str, typing.Any]] = []
+    for statistic_name, observed_column, baseline_column in statistic_columns:
+        if observed_column not in merged_frame.columns or baseline_column not in merged_frame.columns:
+            continue
+        top_frame = (
+            merged_frame.with_columns((pl.col(observed_column) - pl.col(baseline_column)).abs().alias("_abs_error"))
+            .sort("_abs_error", descending=True)
+            .head(5)
+        )
+        for row in top_frame.iter_rows(named=True):
+            record: dict[str, typing.Any] = {
+                "statistic": statistic_name,
+                "g_value": float(row[observed_column]),
+                "regenie_value": float(row[baseline_column]),
+                "absolute_error": float(row["_abs_error"]),
+            }
+            for key_column in key_columns:
+                record[key_column] = row[key_column]
+            difference_rows.append(record)
+    return sorted(difference_rows, key=lambda row: float(row["absolute_error"]), reverse=True)[:10]
 
 
 def summarize_binary_step2_agreement(
@@ -492,21 +646,27 @@ def summarize_binary_step2_agreement(
             extra_match_rate=None,
             notes="One or both outputs are missing.",
         )
-    baseline_frame = pd.read_csv(regenie_output_path, sep=r"\s+")
+    baseline_frame = read_whitespace_table(regenie_output_path)
     observed_frame = load_g_output_frame(g_output_path)
     key_columns = ["CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1"]
-    for column_name in key_columns:
-        baseline_frame[column_name] = baseline_frame[column_name].astype(str)
-        observed_frame[column_name] = observed_frame[column_name].astype(str)
-    baseline_frame["GENPOS"] = pd.to_numeric(baseline_frame["GENPOS"], downcast="integer")
-    observed_frame["GENPOS"] = pd.to_numeric(observed_frame["GENPOS"], downcast="integer")
-    merged_frame = observed_frame.merge(
-        baseline_frame[[*key_columns, "BETA", "LOG10P", "EXTRA"]],
+    observed_for_join = cast_variant_key_columns(observed_frame, key_columns).select(
+        *key_columns,
+        pl.col("BETA").alias("BETA_g"),
+        pl.col("LOG10P").alias("LOG10P_g"),
+        pl.col("EXTRA").alias("EXTRA_g"),
+    )
+    baseline_for_join = cast_variant_key_columns(baseline_frame, key_columns).select(
+        *key_columns,
+        pl.col("BETA").cast(pl.Float64).alias("BETA_regenie"),
+        pl.col("LOG10P").cast(pl.Float64).alias("LOG10P_regenie"),
+        pl.col("EXTRA").alias("EXTRA_regenie"),
+    )
+    merged_frame = observed_for_join.join(
+        baseline_for_join,
         on=key_columns,
         how="inner",
-        suffixes=("_g", "_regenie"),
     )
-    if merged_frame.empty:
+    if merged_frame.height == 0:
         return BinaryStep2Agreement(
             comparable=False,
             merged_variant_count=0,
@@ -517,19 +677,19 @@ def summarize_binary_step2_agreement(
             extra_match_rate=None,
             notes="No overlapping variants between outputs.",
         )
-    beta_error_series = (merged_frame["BETA_g"] - merged_frame["BETA_regenie"]).abs()
-    log10p_error_series = (merged_frame["LOG10P_g"] - merged_frame["LOG10P_regenie"]).abs()
-    extra_match_series = normalize_binary_extra(merged_frame["EXTRA_g"]) == normalize_binary_extra(
-        merged_frame["EXTRA_regenie"]
+    beta_error_series = (merged_frame.get_column("BETA_g") - merged_frame.get_column("BETA_regenie")).abs()
+    log10p_error_series = (merged_frame.get_column("LOG10P_g") - merged_frame.get_column("LOG10P_regenie")).abs()
+    extra_match_series = normalize_binary_extra(merged_frame.get_column("EXTRA_g")) == normalize_binary_extra(
+        merged_frame.get_column("EXTRA_regenie")
     )
     return BinaryStep2Agreement(
         comparable=True,
-        merged_variant_count=int(merged_frame.shape[0]),
-        beta_max_abs_error=float(beta_error_series.max()),
-        beta_mean_abs_error=float(beta_error_series.mean()),
-        log10p_max_abs_error=float(log10p_error_series.max()),
-        log10p_mean_abs_error=float(log10p_error_series.mean()),
-        extra_match_rate=float(extra_match_series.mean()),
+        merged_variant_count=merged_frame.height,
+        beta_max_abs_error=scalar_as_float(beta_error_series.max()),
+        beta_mean_abs_error=scalar_as_float(beta_error_series.mean()),
+        log10p_max_abs_error=scalar_as_float(log10p_error_series.max()),
+        log10p_mean_abs_error=scalar_as_float(log10p_error_series.mean()),
+        extra_match_rate=scalar_as_float(extra_match_series.mean()),
     )
 
 
@@ -589,12 +749,16 @@ def write_text_summary(
     lines.append(
         f"g CPU comparable={agreement_cpu.comparable}, merged_variants={agreement_cpu.merged_variant_count}, "
         f"beta_allclose={agreement_cpu.beta_allclose_within_tolerance}, "
+        f"se_allclose={agreement_cpu.standard_error_allclose_within_tolerance}, "
+        f"chisq_allclose={agreement_cpu.chi_squared_allclose_within_tolerance}, "
         f"log10p_allclose={agreement_cpu.log10p_allclose_within_tolerance}",
     )
     if agreement_gpu is not None:
         lines.append(
             f"g GPU comparable={agreement_gpu.comparable}, merged_variants={agreement_gpu.merged_variant_count}, "
             f"beta_allclose={agreement_gpu.beta_allclose_within_tolerance}, "
+            f"se_allclose={agreement_gpu.standard_error_allclose_within_tolerance}, "
+            f"chisq_allclose={agreement_gpu.chi_squared_allclose_within_tolerance}, "
             f"log10p_allclose={agreement_gpu.log10p_allclose_within_tolerance}",
         )
     if binary_agreement_cpu is not None:
@@ -671,9 +835,7 @@ def main() -> None:
     active_trait_type = "binary" if arguments.only_binary_step2 else "quantitative"
     active_trait_label = "binary" if active_trait_type == "binary" else "quantitative"
     g_output_cpu_prefix = arguments.output_dir / (
-        "g_regenie2_binary_step2_cpu"
-        if active_trait_type == "binary"
-        else "g_regenie2_qt_step2_cpu"
+        "g_regenie2_binary_step2_cpu" if active_trait_type == "binary" else "g_regenie2_qt_step2_cpu"
     )
     g_cpu_command_arguments = build_g_step2_command(
         uv_executable=uv_executable,
@@ -698,9 +860,7 @@ def main() -> None:
     run_gpu = arguments.include_gpu and not arguments.cpu_only
     if run_gpu:
         g_output_gpu_prefix = arguments.output_dir / (
-            "g_regenie2_binary_step2_gpu"
-            if active_trait_type == "binary"
-            else "g_regenie2_qt_step2_gpu"
+            "g_regenie2_binary_step2_gpu" if active_trait_type == "binary" else "g_regenie2_qt_step2_gpu"
         )
         g_gpu_command_arguments = build_g_step2_command(
             uv_executable=uv_executable,

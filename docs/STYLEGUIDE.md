@@ -28,17 +28,23 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
   * Bad: `from enum import StrEnum`  
   * Bad: `from collections.abc import Iterator`
 * **Rule:** Use conventional aliases only where they are already standard and improve readability.  
-  * Approved examples: `import numpy as np`, `import numpy.typing as npt`, `import jax.numpy as jnp`, `import polars as pl`, `import pandas as pd`
-* **Rule:** Keep imports out of functions, methods, and classes in production code under `src/g`.
+  * Approved runtime examples: `import numpy as np`, `import numpy.typing as npt`, `import jax.numpy as jnp`
+  * Polars may be used in dev scripts or tests only, not runtime `src/g` code.
+* **Rule:** Keep imports out of functions, methods, and classes in production code under `src/g` unless the local import is an explicit runtime boundary.
   * Module-scope imports are the default.
   * `if typing.TYPE_CHECKING:` blocks are allowed for annotation-only imports.
+  * Allowed local imports:
+    * runtime boundary imports that intentionally delay JAX or native module initialization
+    * optional dependency helpers
+    * `typing.TYPE_CHECKING` annotation-only imports
+  * Not allowed: casual local imports to avoid circular dependencies.
   * Tests may use local imports when there is a concrete reason, such as optional dependencies or fixture isolation.
 * **Rule:** Relative imports are not allowed.
 * **Rule:** In production Python code under `src/g`, import first-party modules rather than first-party members.  
   * Good: `from g import api`; `api.ComputeConfig`  
-  * Good: `from g.io import bgen`; `bgen.split_sample_file_line()`  
+  * Good: `from g.io import source`; `source.split_sample_file_line()`  
   * Bad: `from g.api import ComputeConfig`  
-  * Bad: `from g.io.bgen import split_sample_file_line`
+  * Bad: `from g.io.source import split_sample_file_line`
 
 ### **Naming Conventions**
 
@@ -52,7 +58,7 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 ### **Type Annotations**
 
 * **Rule:** 100% Type Annotation Coverage.  
-* Types must pass the **ty** type checker without implicit Any fallbacks. Use exact types (e.g., jax.Array, pl.DataFrame).
+* Types must pass the **ty** type checker without implicit Any fallbacks. Use exact types (e.g., jax.Array, np.ndarray).
 * **Rule:** Finite sets of string values must use `enum.StrEnum`, not `str` annotations, `Literal[...]`, or ad-hoc validation sets. This applies to configuration values, modes, formats, codecs, CLI choices, and any other closed choice domain.
 * **Rule:** Define an enum in the narrowest valid scope. If it is used in exactly one production file, define it in that file. If it is used in more than one production file, define it in `src/g/types.py`.
 * **Rule:** Test-only enums should not live in production modules. If a test-only enum is used in one test file, define it in that test file. If it is shared across multiple test files, define it in `tests/types.py`.

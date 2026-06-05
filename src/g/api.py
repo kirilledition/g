@@ -2,196 +2,24 @@
 
 from __future__ import annotations
 
-import dataclasses
-from pathlib import Path
+import typing
 
-from g import engine, jax_setup, types
-from g.io import output, source
+from g import runner
+from g.interface import config
 
-configure_jax_device = jax_setup.configure_jax_device
-run_regenie2_linear_bgen_pipeline = engine.run_regenie2_linear_bgen_pipeline
-run_regenie2_binary_bgen_pipeline = engine.run_regenie2_binary_bgen_pipeline
-prepare_output_run = output.prepare_output_run
-finalize_chunks_to_parquet = output.finalize_chunks_to_parquet
-
-DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE = 8192
-DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH = output.DEFAULT_WRITER_QUEUE_DEPTH
+RunArtifacts = runner.RunArtifacts
 
 
-@dataclasses.dataclass(frozen=True)
-class ComputeConfig:
-    """Hardware and batching settings for REGENIE step 2 execution."""
+class RegenieApi:
+    """Callable public REGENIE-compatible API."""
 
-    chunk_size: int = DEFAULT_REGENIE2_LINEAR_CHUNK_SIZE
-    compute_engine: types.ComputeEngine = types.ComputeEngine.JAX
-    device: types.Device = types.Device.CPU
-    variant_limit: int | None = None
-    prefetch_chunks: int = 1
-    output_run_directory: Path | None = None
-    resume: bool = False
-    finalize_parquet: bool = True
-    output_writer_thread_count: int = output.DEFAULT_WRITER_THREAD_COUNT
-    output_writer_queue_depth: int = DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
+    def __call__(self, regenie_config: config.RegenieConfig) -> RunArtifacts:
+        """Run from a normalized config."""
+        return runner.regenie(regenie_config)
+
+    def from_options(self, raw_options: typing.Mapping[str, typing.Any]) -> RunArtifacts:
+        """Build a config from Python options and run it."""
+        return runner.regenie(config.RegenieConfig.from_options(raw_options))
 
 
-@dataclasses.dataclass(frozen=True)
-class Regenie2LinearConfig:
-    """Configuration for REGENIE step 2 linear association."""
-
-
-@dataclasses.dataclass(frozen=True)
-class Regenie2BinaryConfig:
-    """Configuration for REGENIE step 2 binary association."""
-
-    correction: types.RegenieBinaryCorrection = types.RegenieBinaryCorrection.FIRTH_APPROXIMATE
-
-
-@dataclasses.dataclass(frozen=True)
-class RunArtifacts:
-    """Immutable pointers to generated output files."""
-
-    output_run_directory: Path | None = None
-    final_parquet: Path | None = None
-
-
-def parse_covariate_name_list(raw_covariate_names: str | list[str] | tuple[str, ...] | None) -> tuple[str, ...] | None:
-    """Normalize covariate names into a tuple."""
-    if raw_covariate_names is None:
-        return None
-    if isinstance(raw_covariate_names, str):
-        covariate_names = tuple(
-            stripped_name for name in raw_covariate_names.split(",") if (stripped_name := name.strip())
-        )
-        return covariate_names or None
-    covariate_names = tuple(name.strip() for name in raw_covariate_names if name.strip())
-    return covariate_names or None
-
-
-def validate_compute_config(compute_config: ComputeConfig) -> None:
-    """Validate a compute configuration."""
-    if compute_config.chunk_size <= 0:
-        message = "Chunk size must be positive."
-        raise ValueError(message)
-    if compute_config.variant_limit is not None and compute_config.variant_limit <= 0:
-        message = "Variant limit must be positive when provided."
-        raise ValueError(message)
-    if compute_config.prefetch_chunks < 0:
-        message = "Prefetch chunk count must be zero or positive."
-        raise ValueError(message)
-    if compute_config.output_writer_thread_count <= 0:
-        message = "Output writer thread count must be positive."
-        raise ValueError(message)
-    if compute_config.output_writer_queue_depth <= 0:
-        message = "Output writer queue depth must be positive."
-        raise ValueError(message)
-
-
-def regenie2_linear(
-    *,
-    bgen: Path | str,
-    sample: Path | str | None = None,
-    pheno: Path | str,
-    pheno_name: str,
-    out: Path | str,
-    covar: Path | str | None = None,
-    covar_names: str | list[str] | tuple[str, ...] | None = None,
-    pred: Path | str,
-    compute: ComputeConfig | None = None,
-    solver: Regenie2LinearConfig | None = None,
-) -> RunArtifacts:
-    """Run a REGENIE step 2 linear association scan and write results to disk."""
-    del solver
-    return regenie2(
-        bgen=bgen,
-        sample=sample,
-        pheno=pheno,
-        pheno_name=pheno_name,
-        out=out,
-        covar=covar,
-        covar_names=covar_names,
-        pred=pred,
-        trait_type=types.RegenieTraitType.QUANTITATIVE,
-        compute=compute,
-    )
-
-
-def regenie2(
-    *,
-    bgen: Path | str,
-    sample: Path | str | None = None,
-    pheno: Path | str,
-    pheno_name: str,
-    out: Path | str,
-    covar: Path | str | None = None,
-    covar_names: str | list[str] | tuple[str, ...] | None = None,
-    pred: Path | str,
-    trait_type: types.RegenieTraitType = types.RegenieTraitType.QUANTITATIVE,
-    compute: ComputeConfig | None = None,
-    binary: Regenie2BinaryConfig | None = None,
-) -> RunArtifacts:
-    """Run a REGENIE step 2 association scan and write results to disk."""
-    compute_config = compute or ComputeConfig()
-    validate_compute_config(compute_config)
-    if trait_type == types.RegenieTraitType.BINARY and compute_config.compute_engine != types.ComputeEngine.JAX:
-        message = "Only the JAX compute engine supports binary REGENIE step 2."
-        raise ValueError(message)
-    if compute_config.compute_engine == types.ComputeEngine.JAX:
-        configure_jax_device(compute_config.device)
-    covariate_name_list = parse_covariate_name_list(covar_names)
-    genotype_source_config = source.build_bgen_source_config(bgen, sample)
-    output_run_directory = compute_config.output_run_directory or Path(out)
-    association_mode = (
-        types.AssociationMode.REGENIE2_BINARY
-        if trait_type == types.RegenieTraitType.BINARY
-        else types.AssociationMode.REGENIE2_LINEAR
-    )
-    prepared_output_run = prepare_output_run(
-        output_root=output_run_directory,
-        association_mode=association_mode,
-        resume=compute_config.resume,
-    )
-    output_run_paths = prepared_output_run.output_run_paths
-    committed_chunk_identifiers = set(prepared_output_run.committed_chunk_identifiers)
-
-    if trait_type == types.RegenieTraitType.BINARY:
-        binary_config = binary or Regenie2BinaryConfig()
-        final_parquet_path = run_regenie2_binary_bgen_pipeline(
-            genotype_source_config=genotype_source_config,
-            phenotype_path=Path(pheno),
-            phenotype_name=pheno_name,
-            prediction_list_path=Path(pred),
-            covariate_path=Path(covar) if covar is not None else None,
-            covariate_names=covariate_name_list,
-            chunk_size=compute_config.chunk_size,
-            variant_limit=compute_config.variant_limit,
-            prefetch_chunks=compute_config.prefetch_chunks,
-            output_run_paths=output_run_paths,
-            committed_chunk_identifiers=committed_chunk_identifiers,
-            finalize_parquet=compute_config.finalize_parquet,
-            writer_thread_count=compute_config.output_writer_thread_count,
-            writer_queue_depth=compute_config.output_writer_queue_depth,
-            correction=binary_config.correction,
-        )
-    else:
-        final_parquet_path = run_regenie2_linear_bgen_pipeline(
-            genotype_source_config=genotype_source_config,
-            phenotype_path=Path(pheno),
-            phenotype_name=pheno_name,
-            prediction_list_path=Path(pred),
-            covariate_path=Path(covar) if covar is not None else None,
-            covariate_names=covariate_name_list,
-            chunk_size=compute_config.chunk_size,
-            variant_limit=compute_config.variant_limit,
-            prefetch_chunks=compute_config.prefetch_chunks,
-            output_run_paths=output_run_paths,
-            committed_chunk_identifiers=committed_chunk_identifiers,
-            finalize_parquet=compute_config.finalize_parquet,
-            writer_thread_count=compute_config.output_writer_thread_count,
-            writer_queue_depth=compute_config.output_writer_queue_depth,
-            compute_engine=compute_config.compute_engine,
-        )
-
-    return RunArtifacts(
-        output_run_directory=output_run_paths.run_directory,
-        final_parquet=final_parquet_path,
-    )
+regenie = RegenieApi()

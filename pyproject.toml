@@ -7,29 +7,29 @@ authors = [
 ]
 requires-python = ">=3.14,<3.15"
 dependencies = [
-    "jax[cpu]>=0.10.0",
-    "numpy>=2.4.5",
-    "polars>=1.40.1",
-    "typer>=0.25.1",
+    "click>=8.4.1",
+    "jax[cpu]>=0.10.1",
+    "numpy>=2.4.6",
 ]
 
 [dependency-groups]
 dev = [
     "gputil>=1.4.0",
     "maturin>=1.13.3,<2.0",
-    "pandas>=3.0.3",
+    "polars>=1.41.1",
     "psutil>=7.2.2",
     "py-cpuinfo>=9.0.0",
     "pyarrow>=24.0.0",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
-    "ruff>=0.15.13",
-    "ty>=0.0.36",
+    "ruff>=0.15.14",
+    "ty>=0.0.43",
 ]
-gpu = ["jax[cuda12]>=0.10.0"]
+gpu = ["jax[cuda12]>=0.10.1"]
 
 [project.scripts]
 g = "g:main"
+g-regenie = "g.cli:regenie_main"
 
 [build-system]
 requires = ["maturin>=1.13.3,<2.0"]
@@ -114,6 +114,7 @@ ban-relative-imports = "all"
 markers = [
     "phase0_data: requires local Phase 0 data or generated baseline artifacts.",
     "phase1_parity: exercises Phase 1 parity and benchmark evaluation flows against external baselines.",
+    "cli_smoke: runs the installed CLI against a committed tiny end-to-end fixture.",
 ]
 
 [tool.coverage.run]

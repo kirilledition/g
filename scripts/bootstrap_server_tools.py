@@ -48,6 +48,7 @@ class ToolArchive:
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TOOLS_DIRECTORY = REPOSITORY_ROOT / ".tools"
 JUST_VERSION = "1.51.0"
+RUST_TOOLCHAIN_VERSION = "1.96.0"
 RUSTUP_INIT_SHA256 = "4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10"
 RUSTUP_INIT_URL = "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init"
 TOOL_ARCHIVES = (
@@ -198,16 +199,39 @@ def install_rust_toolchain(tools_directory: Path, downloads_directory: Path) -> 
     rustup_home = tools_directory / "rust" / "rustup"
     cargo_path = cargo_home / "bin" / "cargo"
     rustc_path = cargo_home / "bin" / "rustc"
-    if cargo_path.exists() and rustc_path.exists():
-        print(f"Reusing Rust toolchain in {tools_directory / 'rust'}")
+    rustup_path = cargo_home / "bin" / "rustup"
+    environment = os.environ.copy()
+    environment["CARGO_HOME"] = str(cargo_home)
+    environment["RUSTUP_HOME"] = str(rustup_home)
+    if cargo_path.exists() and rustc_path.exists() and rustup_path.exists():
+        current_version_process = subprocess.run(
+            [str(rustc_path), "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if current_version_process.stdout.startswith(f"rustc {RUST_TOOLCHAIN_VERSION} "):
+            print(f"Reusing Rust {RUST_TOOLCHAIN_VERSION} toolchain in {tools_directory / 'rust'}")
+            return
+        subprocess.run(
+            [
+                str(rustup_path),
+                "toolchain",
+                "install",
+                RUST_TOOLCHAIN_VERSION,
+                "--profile",
+                "minimal",
+            ],
+            check=True,
+            env=environment,
+        )
+        subprocess.run([str(rustup_path), "default", RUST_TOOLCHAIN_VERSION], check=True, env=environment)
+        print(f"Updated Rust toolchain to {RUST_TOOLCHAIN_VERSION} in {tools_directory / 'rust'}")
         return
 
     rustup_init_path = downloads_directory / "rustup-init"
     download_file(RUSTUP_INIT_URL, rustup_init_path, RUSTUP_INIT_SHA256)
     make_executable(rustup_init_path)
-    environment = os.environ.copy()
-    environment["CARGO_HOME"] = str(cargo_home)
-    environment["RUSTUP_HOME"] = str(rustup_home)
     subprocess.run(
         [
             str(rustup_init_path),
@@ -215,13 +239,13 @@ def install_rust_toolchain(tools_directory: Path, downloads_directory: Path) -> 
             "--profile",
             "minimal",
             "--default-toolchain",
-            "stable",
+            RUST_TOOLCHAIN_VERSION,
             "-y",
         ],
         check=True,
         env=environment,
     )
-    print(f"Installed Rust toolchain in {tools_directory / 'rust'}")
+    print(f"Installed Rust {RUST_TOOLCHAIN_VERSION} toolchain in {tools_directory / 'rust'}")
 
 
 def install_rust_components(tools_directory: Path) -> None:
