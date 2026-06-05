@@ -900,24 +900,17 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             variant_count=int(engine.variant_count),
         )
     alignment_start_time = time.perf_counter()
-    indexed_run_inputs = tuple(
-        (
-            phenotype_index,
-            native_dispatch.load_native_bgen_run_input(
-                genotype_source_config=genotype_source_config,
-                engine=engine,
-                phenotype_path=phenotype_path,
-                phenotype_name=phenotype_name,
-                covariate_path=covariate_path,
-                covariate_names=covariate_names,
-                is_binary_trait=association_mode == types.AssociationMode.REGENIE2_BINARY,
-                alignment_config=alignment_config,
-            ),
-        )
-        for phenotype_index, phenotype_name in enumerate(phenotype_names)
+    grouped_run_inputs = native_dispatch.load_native_bgen_grouped_run_inputs(
+        genotype_source_config=genotype_source_config,
+        engine=engine,
+        phenotype_path=phenotype_path,
+        phenotype_names=phenotype_names,
+        covariate_path=covariate_path,
+        covariate_names=covariate_names,
+        is_binary_trait=association_mode == types.AssociationMode.REGENIE2_BINARY,
+        alignment_config=alignment_config,
     )
     timing.record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)
-    grouped_run_inputs = group_per_phenotype_run_inputs(indexed_run_inputs)
     logger.info(
         "Prepared %s compatible per-phenotype group(s) for %s phenotype(s).",
         len(grouped_run_inputs),
@@ -933,20 +926,15 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
 
     final_parquet_paths_by_index: list[Path | None] = [None] * len(phenotype_names)
     for grouped_run_input in grouped_run_inputs:
-        group_indices = tuple(phenotype_index for phenotype_index, _run_input in grouped_run_input)
-        group_single_run_inputs = tuple(run_input for _phenotype_index, run_input in grouped_run_input)
+        group_indices = grouped_run_input.phenotype_indices
+        group_multi_run_input = grouped_run_input.run_input
         prediction_start_time = time.perf_counter()
-        group_prediction_source = build_grouped_single_trait_prediction_source(
+        group_prediction_source = native_dispatch.build_multi_regenie_prediction_source(
             prediction_list_path=prediction_list_path,
-            phenotype_names=tuple(phenotype_names[phenotype_index] for phenotype_index in group_indices),
-            run_inputs=group_single_run_inputs,
+            run_input=group_multi_run_input,
             alignment_config=alignment_config,
         )
         timing.record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
-        group_multi_run_input = build_grouped_native_bgen_multi_run_input(
-            phenotype_names=tuple(phenotype_names[phenotype_index] for phenotype_index in group_indices),
-            run_inputs=group_single_run_inputs,
-        )
         group_final_parquet_paths = run_prepared_multi_phenotype_bgen_group(
             engine=engine,
             run_input=group_multi_run_input,

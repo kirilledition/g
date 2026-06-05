@@ -16,7 +16,10 @@ use crate::genotype::common::{
 use crate::genotype::planner;
 use crate::pipeline::Regenie2RunEngineCore;
 use crate::regenie::{MultiPredictionSource as NativeMultiPredictionSource, PredictionError, PredictionSource};
-use crate::sample::{AlignedSampleData, AlignmentInputs, MultiAlignedSampleData, MultiAlignmentInputs, SampleKeyMode};
+use crate::sample::{
+    AlignedPhenotypeGroup, AlignedSampleData, AlignmentInputs, GroupedAlignedSampleData, MultiAlignedSampleData,
+    MultiAlignmentInputs, SampleKeyMode,
+};
 
 mod logging;
 mod output;
@@ -144,6 +147,16 @@ pub(crate) struct NativeMultiAlignedSampleData {
     data: MultiAlignedSampleData,
 }
 
+#[pyclass]
+pub(crate) struct NativeAlignedPhenotypeGroup {
+    data: AlignedPhenotypeGroup,
+}
+
+#[pyclass]
+pub(crate) struct NativeGroupedAlignedSampleData {
+    data: GroupedAlignedSampleData,
+}
+
 impl VariantMetadata {
     fn new(variant_start_index: usize, variant_stop_index: usize, metadata: VariantMetadataColumns) -> Self {
         Self { variant_start_index, variant_stop_index, metadata: Arc::new(metadata) }
@@ -158,6 +171,18 @@ impl NativeAlignedSampleData {
 
 impl NativeMultiAlignedSampleData {
     fn new(data: MultiAlignedSampleData) -> Self {
+        Self { data }
+    }
+}
+
+impl NativeAlignedPhenotypeGroup {
+    fn new(data: AlignedPhenotypeGroup) -> Self {
+        Self { data }
+    }
+}
+
+impl NativeGroupedAlignedSampleData {
+    fn new(data: GroupedAlignedSampleData) -> Self {
         Self { data }
     }
 }
@@ -260,6 +285,27 @@ impl NativeMultiAlignedSampleData {
     #[getter]
     fn is_binary_trait(&self) -> bool {
         self.data.is_binary_trait
+    }
+}
+
+#[pymethods]
+impl NativeAlignedPhenotypeGroup {
+    #[getter]
+    fn phenotype_indices(&self) -> Vec<usize> {
+        self.data.phenotype_indices.clone()
+    }
+
+    #[getter]
+    fn aligned_sample_data(&self) -> NativeMultiAlignedSampleData {
+        NativeMultiAlignedSampleData::new(self.data.aligned_sample_data.clone())
+    }
+}
+
+#[pymethods]
+impl NativeGroupedAlignedSampleData {
+    #[getter]
+    fn groups(&self, py: Python<'_>) -> PyResult<Vec<Py<NativeAlignedPhenotypeGroup>>> {
+        self.data.groups.iter().cloned().map(|group| Py::new(py, NativeAlignedPhenotypeGroup::new(group))).collect()
     }
 }
 
@@ -483,6 +529,71 @@ impl Regenie2RunEngine {
         };
         py.detach(move || crate::sample::align_multi_sample_data(inputs))
             .map(NativeMultiAlignedSampleData::new)
+            .map_err(PyValueError::new_err)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (
+        sample_path,
+        phenotype_path,
+        phenotype_names,
+        covariate_path=None,
+        covariate_names=None,
+        is_binary_trait=false,
+        sample_key_mode="iid".to_string()
+    ))]
+    fn align_grouped_sample_data(
+        &self,
+        py: Python<'_>,
+        sample_path: Option<String>,
+        phenotype_path: String,
+        phenotype_names: Vec<String>,
+        covariate_path: Option<String>,
+        covariate_names: Option<Vec<String>>,
+        is_binary_trait: bool,
+        sample_key_mode: String,
+    ) -> PyResult<NativeGroupedAlignedSampleData> {
+        let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
+        if let Some(sample_path) = sample_path {
+            let expected_sample_count = self.engine.reader().sample_count();
+            return py
+                .detach(move || {
+                    crate::sample::align_grouped_sample_data_from_sample_file(
+                        Path::new(&sample_path),
+                        expected_sample_count,
+                        phenotype_path,
+                        phenotype_names,
+                        covariate_path,
+                        covariate_names,
+                        is_binary_trait,
+                        parsed_sample_key_mode,
+                    )
+                })
+                .map(NativeGroupedAlignedSampleData::new)
+                .map_err(PyValueError::new_err);
+        }
+        if !self.engine.reader().contains_embedded_samples() {
+            return Err(PyValueError::new_err("BGEN file does not contain samples and no .sample file was found."));
+        }
+        let sample_identifiers = self.engine.reader().sample_identifiers();
+        let sample_indices = (0..sample_identifiers.len())
+            .map(|sample_index| i64::try_from(sample_index).map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(PyValueError::new_err)?;
+        let inputs = MultiAlignmentInputs {
+            sample_indices,
+            family_identifiers: sample_identifiers.clone(),
+            individual_identifiers: sample_identifiers,
+            phenotype_path,
+            phenotype_names,
+            covariate_path,
+            covariate_names,
+            is_binary_trait,
+            sample_key_mode: parsed_sample_key_mode,
+        };
+        py.detach(move || crate::sample::align_grouped_sample_data(&inputs))
+            .map(NativeGroupedAlignedSampleData::new)
             .map_err(PyValueError::new_err)
     }
 
@@ -1017,6 +1128,50 @@ fn align_multi_sample_data<'py>(
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
 #[pyo3(signature = (
+    sample_indices,
+    family_identifiers,
+    individual_identifiers,
+    phenotype_path,
+    phenotype_names,
+    covariate_path=None,
+    covariate_names=None,
+    is_binary_trait=false,
+    sample_key_mode="iid".to_string()
+))]
+fn align_grouped_sample_data<'py>(
+    py: Python<'py>,
+    sample_indices: PyReadonlyArray1<'py, i64>,
+    family_identifiers: Vec<String>,
+    individual_identifiers: Vec<String>,
+    phenotype_path: String,
+    phenotype_names: Vec<String>,
+    covariate_path: Option<String>,
+    covariate_names: Option<Vec<String>>,
+    is_binary_trait: bool,
+    sample_key_mode: String,
+) -> PyResult<NativeGroupedAlignedSampleData> {
+    let sample_index_values = sample_indices.as_slice()?.to_vec();
+    let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
+    let inputs = MultiAlignmentInputs {
+        sample_indices: sample_index_values,
+        family_identifiers,
+        individual_identifiers,
+        phenotype_path,
+        phenotype_names,
+        covariate_path,
+        covariate_names,
+        is_binary_trait,
+        sample_key_mode: parsed_sample_key_mode,
+    };
+    py.detach(|| crate::sample::align_grouped_sample_data(&inputs))
+        .map(NativeGroupedAlignedSampleData::new)
+        .map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value)]
+#[pyo3(signature = (
     sample_path,
     expected_sample_count,
     phenotype_path,
@@ -1223,7 +1378,9 @@ fn configure_rayon_global_thread_pool(thread_count: usize) -> PyResult<()> {
 pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<ChunkSpec>()?;
     module.add_class::<ChunkStats>()?;
+    module.add_class::<NativeAlignedPhenotypeGroup>()?;
     module.add_class::<NativeAlignedSampleData>()?;
+    module.add_class::<NativeGroupedAlignedSampleData>()?;
     module.add_class::<NativeMultiAlignedSampleData>()?;
     module.add_class::<OutputWriterSession>()?;
     module.add_class::<Regenie2RunEngine>()?;
@@ -1242,6 +1399,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(hello_from_bin, module)?)?;
     module.add_function(wrap_pyfunction!(plan_genotype_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(align_sample_data, module)?)?;
+    module.add_function(wrap_pyfunction!(align_grouped_sample_data, module)?)?;
     module.add_function(wrap_pyfunction!(align_multi_sample_data, module)?)?;
     module.add_function(wrap_pyfunction!(align_sample_data_from_sample_file, module)?)?;
     module.add_function(wrap_pyfunction!(align_multi_sample_data_from_sample_file, module)?)?;

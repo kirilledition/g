@@ -119,6 +119,35 @@ def normalize_high_frequency_diploid_genotypes_variant_major(
     return genotype_matrix_by_variant_compute - genotype_offset[:, None]
 
 
+def normalize_high_frequency_diploid_genotypes_variant_major_from_stats(
+    genotype_matrix_by_variant: jax.Array,
+    dosage_sum: jax.Array,
+    observation_count: jax.Array,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> jax.Array:
+    """Shift high-frequency diploid dosages using native per-variant statistics.
+
+    Args:
+        genotype_matrix_by_variant: Variant-major dosage matrix.
+        dosage_sum: Native observed per-variant dosage sum.
+        observation_count: Native per-variant observed genotype count.
+        score_dtype: Floating-point dtype for score-test computation.
+
+    Returns:
+        Shifted variant-major dosage matrix.
+
+    """
+    genotype_matrix_by_variant_compute = jnp.asarray(
+        genotype_matrix_by_variant,
+        dtype=compute_dtype.resolve_jax_dtype(score_dtype),
+    )
+    dosage_sum_compute = jnp.asarray(dosage_sum, dtype=genotype_matrix_by_variant_compute.dtype)
+    observation_count_compute = jnp.asarray(observation_count, dtype=genotype_matrix_by_variant_compute.dtype)
+    genotype_mean = dosage_sum_compute / jnp.maximum(observation_count_compute, 1.0)
+    genotype_offset = jnp.where(genotype_mean > 1.0, ALLELE_COUNT_MULTIPLIER, 0.0)
+    return genotype_matrix_by_variant_compute - genotype_offset[:, None]
+
+
 def build_regenie_flipped_genotypes(
     genotype_matrix_by_variant: jax.Array,
     dosage_sum: jax.Array | None = None,

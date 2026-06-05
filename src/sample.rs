@@ -48,6 +48,17 @@ pub struct MultiAlignedSampleData {
     pub is_binary_trait: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct AlignedPhenotypeGroup {
+    pub phenotype_indices: Vec<usize>,
+    pub aligned_sample_data: MultiAlignedSampleData,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupedAlignedSampleData {
+    pub groups: Vec<AlignedPhenotypeGroup>,
+}
+
 #[derive(Clone, Debug)]
 pub struct AlignmentInputs {
     pub sample_indices: Vec<i64>,
@@ -213,6 +224,49 @@ pub fn align_multi_sample_data(inputs: MultiAlignmentInputs) -> Result<MultiAlig
     build_multi_aligned_sample_data(inputs, &phenotype_table, &covariate_table)
 }
 
+/// Align several phenotypes independently, then group traits that share one
+/// sample/covariate layout.
+pub fn align_grouped_sample_data(inputs: &MultiAlignmentInputs) -> Result<GroupedAlignedSampleData, String> {
+    if inputs.phenotype_names.is_empty() {
+        return Err("At least one phenotype is required for grouped phenotype alignment.".to_string());
+    }
+    validate_multi_alignment_input_lengths(inputs)?;
+    validate_multi_sample_identifier_keys(inputs)?;
+
+    let sample_row_indices_by_key = build_sample_row_indices_by_key(
+        inputs.sample_key_mode,
+        &inputs.family_identifiers,
+        &inputs.individual_identifiers,
+    );
+    let phenotype_table = read_multi_phenotype_table(
+        Path::new(&inputs.phenotype_path),
+        &inputs.phenotype_names,
+        inputs.is_binary_trait,
+        inputs.sample_key_mode,
+        &sample_row_indices_by_key,
+        inputs.sample_indices.len(),
+    )?;
+    let parse_candidate_mask = multi_phenotype_parse_candidate_mask(&phenotype_table);
+    let covariate_table = match inputs.covariate_path.as_ref() {
+        Some(covariate_path) => read_covariate_table(
+            Path::new(covariate_path),
+            inputs.covariate_names.as_deref(),
+            inputs.sample_key_mode,
+            &sample_row_indices_by_key,
+            &parse_candidate_mask,
+            inputs.sample_indices.len(),
+        )?,
+        None => {
+            if inputs.covariate_names.is_some() {
+                return Err("Covariate names cannot be provided without a covariate table.".to_string());
+            }
+            empty_covariate_table(inputs.sample_indices.len())
+        }
+    };
+
+    build_grouped_aligned_sample_data(inputs, &phenotype_table, &covariate_table)
+}
+
 pub fn align_sample_data_from_sample_file(
     sample_path: &Path,
     expected_sample_count: usize,
@@ -261,6 +315,31 @@ pub fn align_multi_sample_data_from_sample_file(
         sample_key_mode,
     };
     align_multi_sample_data(inputs)
+}
+
+pub fn align_grouped_sample_data_from_sample_file(
+    sample_path: &Path,
+    expected_sample_count: usize,
+    phenotype_path: String,
+    phenotype_names: Vec<String>,
+    covariate_path: Option<String>,
+    covariate_names: Option<Vec<String>>,
+    is_binary_trait: bool,
+    sample_key_mode: SampleKeyMode,
+) -> Result<GroupedAlignedSampleData, String> {
+    let sample_identifier_data = load_sample_identifier_data_from_sample_file(sample_path, expected_sample_count)?;
+    let inputs = MultiAlignmentInputs {
+        sample_indices: sample_identifier_data.sample_indices,
+        family_identifiers: sample_identifier_data.family_identifiers,
+        individual_identifiers: sample_identifier_data.individual_identifiers,
+        phenotype_path,
+        phenotype_names,
+        covariate_path,
+        covariate_names,
+        is_binary_trait,
+        sample_key_mode,
+    };
+    align_grouped_sample_data(&inputs)
 }
 
 fn validate_alignment_input_lengths(inputs: &AlignmentInputs) -> Result<(), String> {
@@ -945,6 +1024,104 @@ fn build_multi_aligned_sample_data(
     })
 }
 
+fn build_grouped_aligned_sample_data(
+    inputs: &MultiAlignmentInputs,
+    phenotype_table: &MultiPhenotypeTable,
+    covariate_table: &CovariateTable,
+) -> Result<GroupedAlignedSampleData, String> {
+    let mut group_indices_by_sample_indices: HashMap<Vec<usize>, usize> = HashMap::new();
+    let mut group_sample_array_indices: Vec<Vec<usize>> = Vec::new();
+    let mut phenotype_indices_by_group: Vec<Vec<usize>> = Vec::new();
+
+    for phenotype_index in 0..phenotype_table.phenotype_count {
+        let complete_sample_array_indices =
+            complete_grouped_trait_sample_array_indices(inputs, phenotype_table, covariate_table, phenotype_index);
+        if complete_sample_array_indices.is_empty() {
+            return Err(format!(
+                "No aligned samples remain after joining phenotype '{}' and covariate tables.",
+                inputs.phenotype_names[phenotype_index]
+            ));
+        }
+        let group_index = match group_indices_by_sample_indices.get(&complete_sample_array_indices) {
+            Some(existing_group_index) => *existing_group_index,
+            None => {
+                let new_group_index = group_sample_array_indices.len();
+                group_indices_by_sample_indices.insert(complete_sample_array_indices.clone(), new_group_index);
+                group_sample_array_indices.push(complete_sample_array_indices);
+                phenotype_indices_by_group.push(Vec::new());
+                new_group_index
+            }
+        };
+        phenotype_indices_by_group[group_index].push(phenotype_index);
+    }
+
+    let groups = phenotype_indices_by_group
+        .into_iter()
+        .zip(group_sample_array_indices)
+        .map(|(phenotype_indices, complete_sample_array_indices)| {
+            build_aligned_phenotype_group(
+                inputs,
+                phenotype_table,
+                covariate_table,
+                phenotype_indices,
+                &complete_sample_array_indices,
+            )
+        })
+        .collect::<Vec<_>>();
+    Ok(GroupedAlignedSampleData { groups })
+}
+
+fn build_aligned_phenotype_group(
+    inputs: &MultiAlignmentInputs,
+    phenotype_table: &MultiPhenotypeTable,
+    covariate_table: &CovariateTable,
+    phenotype_indices: Vec<usize>,
+    complete_sample_array_indices: &[usize],
+) -> AlignedPhenotypeGroup {
+    let aligned_sample_count = complete_sample_array_indices.len();
+    let covariate_names = returned_covariate_names(&covariate_table.selected_covariate_names);
+    let covariate_column_count = covariate_names.len();
+    let mut sample_indices = Vec::with_capacity(aligned_sample_count);
+    let mut family_identifiers = Vec::with_capacity(aligned_sample_count);
+    let mut individual_identifiers = Vec::with_capacity(aligned_sample_count);
+    let mut phenotype_matrix_values = Vec::with_capacity(phenotype_indices.len() * aligned_sample_count);
+    let mut covariate_matrix_values = Vec::with_capacity(aligned_sample_count * covariate_column_count);
+
+    for sample_array_index in complete_sample_array_indices {
+        sample_indices.push(inputs.sample_indices[*sample_array_index]);
+        family_identifiers.push(inputs.family_identifiers[*sample_array_index].clone());
+        individual_identifiers.push(inputs.individual_identifiers[*sample_array_index].clone());
+        push_covariate_matrix_row(&mut covariate_matrix_values, covariate_table, *sample_array_index);
+    }
+    for phenotype_index in &phenotype_indices {
+        for sample_array_index in complete_sample_array_indices {
+            let value_index = phenotype_index * phenotype_table.sample_count + sample_array_index;
+            phenotype_matrix_values.push(phenotype_table.phenotype_values[value_index]);
+        }
+    }
+
+    let phenotype_names =
+        phenotype_indices.iter().map(|phenotype_index| inputs.phenotype_names[*phenotype_index].clone()).collect();
+    let phenotype_row_count = phenotype_indices.len();
+    AlignedPhenotypeGroup {
+        phenotype_indices,
+        aligned_sample_data: MultiAlignedSampleData {
+            sample_indices,
+            family_identifiers,
+            individual_identifiers,
+            phenotype_names,
+            phenotype_matrix_values,
+            phenotype_row_count,
+            phenotype_column_count: aligned_sample_count,
+            covariate_names,
+            covariate_matrix_values,
+            covariate_row_count: aligned_sample_count,
+            covariate_column_count,
+            is_binary_trait: inputs.is_binary_trait,
+        },
+    }
+}
+
 fn complete_single_sample_array_indices(
     inputs: &AlignmentInputs,
     phenotype_table: &SinglePhenotypeTable,
@@ -968,6 +1145,22 @@ fn complete_multi_sample_array_indices(
         .filter(|sample_array_index| {
             is_complete_multi_phenotype_sample(phenotype_table, *sample_array_index)
                 && covariate_table.covariate_mask[*sample_array_index]
+        })
+        .collect();
+    complete_sample_array_indices.sort_by_key(|sample_array_index| inputs.sample_indices[*sample_array_index]);
+    complete_sample_array_indices
+}
+
+fn complete_grouped_trait_sample_array_indices(
+    inputs: &MultiAlignmentInputs,
+    phenotype_table: &MultiPhenotypeTable,
+    covariate_table: &CovariateTable,
+    phenotype_index: usize,
+) -> Vec<usize> {
+    let mut complete_sample_array_indices: Vec<usize> = (0..inputs.sample_indices.len())
+        .filter(|sample_array_index| {
+            let phenotype_mask_index = phenotype_index * phenotype_table.sample_count + sample_array_index;
+            phenotype_table.phenotype_masks[phenotype_mask_index] && covariate_table.covariate_mask[*sample_array_index]
         })
         .collect();
     complete_sample_array_indices.sort_by_key(|sample_array_index| inputs.sample_indices[*sample_array_index]);
@@ -1040,7 +1233,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{
-        AlignmentInputs, MultiAlignmentInputs, SampleKeyMode, align_multi_sample_data,
+        AlignmentInputs, MultiAlignmentInputs, SampleKeyMode, align_grouped_sample_data, align_multi_sample_data,
         align_multi_sample_data_from_sample_file, align_sample_data, align_sample_data_from_sample_file,
         validate_sample_file_header,
     };
@@ -1203,6 +1396,44 @@ mod tests {
         assert_eq!(aligned.phenotype_column_count, 1);
         assert_eq!(aligned.phenotype_matrix_values, vec![10.0, 20.0]);
         assert_eq!(aligned.covariate_matrix_values, vec![1.0]);
+    }
+
+    #[test]
+    fn groups_per_phenotype_alignments_by_identical_sample_sets() {
+        let fixture = FixtureDirectory::new();
+        let phenotype_path = fixture.write_file(
+            "phenotypes.tsv",
+            "FID\tIID\ttrait_a\ttrait_b\ttrait_c\nF1\tI1\t10\t20\t30\nF2\tI2\t11\t21\tNA\nF3\tI3\tNA\tNA\t32\n",
+        );
+        let covariate_path =
+            fixture.write_file("covariates.tsv", "FID\tIID\tage\nF1\tI1\t40\nF2\tI2\t50\nF3\tI3\t60\n");
+        let inputs = MultiAlignmentInputs {
+            sample_indices: vec![2, 0, 1],
+            family_identifiers: strings(&["F3", "F1", "F2"]),
+            individual_identifiers: strings(&["I3", "I1", "I2"]),
+            phenotype_path,
+            phenotype_names: strings(&["trait_a", "trait_b", "trait_c"]),
+            covariate_path: Some(covariate_path),
+            covariate_names: Some(strings(&["age"])),
+            is_binary_trait: false,
+            sample_key_mode: SampleKeyMode::FidIid,
+        };
+
+        let grouped = align_grouped_sample_data(&inputs).expect("grouped alignment should succeed");
+
+        assert_eq!(grouped.groups.len(), 2);
+        assert_eq!(grouped.groups[0].phenotype_indices, vec![0, 1]);
+        assert_eq!(grouped.groups[0].aligned_sample_data.phenotype_names, strings(&["trait_a", "trait_b"]));
+        assert_eq!(grouped.groups[0].aligned_sample_data.sample_indices, vec![0, 1]);
+        assert_eq!(grouped.groups[0].aligned_sample_data.phenotype_row_count, 2);
+        assert_eq!(grouped.groups[0].aligned_sample_data.phenotype_column_count, 2);
+        assert_eq!(grouped.groups[0].aligned_sample_data.phenotype_matrix_values, vec![10.0, 11.0, 20.0, 21.0]);
+        assert_eq!(grouped.groups[0].aligned_sample_data.covariate_matrix_values, vec![1.0, 40.0, 1.0, 50.0]);
+        assert_eq!(grouped.groups[1].phenotype_indices, vec![2]);
+        assert_eq!(grouped.groups[1].aligned_sample_data.phenotype_names, strings(&["trait_c"]));
+        assert_eq!(grouped.groups[1].aligned_sample_data.sample_indices, vec![0, 2]);
+        assert_eq!(grouped.groups[1].aligned_sample_data.phenotype_matrix_values, vec![30.0, 32.0]);
+        assert_eq!(grouped.groups[1].aligned_sample_data.covariate_matrix_values, vec![1.0, 40.0, 1.0, 60.0]);
     }
 
     #[test]

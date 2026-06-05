@@ -63,6 +63,32 @@ def align_multi_sample_data(
     )
 
 
+def align_grouped_sample_data(
+    sample_indices: np.ndarray,
+    family_identifiers: list[str],
+    individual_identifiers: list[str],
+    phenotype_path: Path,
+    phenotype_names: list[str],
+    covariate_path: Path | None,
+    covariate_names: list[str] | None,
+    *,
+    is_binary_trait: bool,
+    sample_key_mode: str = "iid",
+) -> _core.NativeGroupedAlignedSampleData:
+    """Run the native grouped per-phenotype alignment helper with test-friendly arguments."""
+    return _core.align_grouped_sample_data(
+        np.ascontiguousarray(sample_indices, dtype=np.int64),
+        family_identifiers,
+        individual_identifiers,
+        str(phenotype_path),
+        phenotype_names,
+        str(covariate_path) if covariate_path is not None else None,
+        covariate_names,
+        is_binary_trait,
+        sample_key_mode=sample_key_mode,
+    )
+
+
 def test_native_aligned_sample_data_continuous(tmp_path: Path) -> None:
     phenotype_path = tmp_path / "pheno.txt"
     phenotype_path.write_text("FID\tIID\ttrait\nf1\ts1\t1.5\nf2\ts2\t2.5\nf3\ts3\t3.5\n")
@@ -153,6 +179,49 @@ def test_native_multi_alignment_is_explicit_complete_case_trait_major_matrix(tmp
     np.testing.assert_allclose(
         result.covariate_matrix,
         np.asarray([[1.0, 30.0], [1.0, 35.0]], dtype=np.float32),
+    )
+
+
+def test_native_grouped_alignment_batches_traits_with_identical_sample_sets(tmp_path: Path) -> None:
+    phenotype_path = tmp_path / "pheno.txt"
+    phenotype_path.write_text(
+        "FID\tIID\ttrait_a\ttrait_b\ttrait_c\nf1\ts1\t1.0\t10.0\t100.0\nf2\ts2\t2.0\t20.0\tNA\nf3\ts3\tNA\tNA\t300.0\n"
+    )
+    covariate_path = tmp_path / "covar.txt"
+    covariate_path.write_text("FID\tIID\tage\nf1\ts1\t25\nf2\ts2\t30\nf3\ts3\t35\n")
+
+    result = align_grouped_sample_data(
+        np.asarray([2, 0, 1], dtype=np.int64),
+        ["f3", "f1", "f2"],
+        ["s3", "s1", "s2"],
+        phenotype_path,
+        ["trait_a", "trait_b", "trait_c"],
+        covariate_path,
+        ["age"],
+        is_binary_trait=False,
+        sample_key_mode="fid_iid",
+    )
+
+    assert len(result.groups) == 2
+    first_group = result.groups[0]
+    second_group = result.groups[1]
+    assert first_group.phenotype_indices == [0, 1]
+    assert first_group.aligned_sample_data.phenotype_names == ["trait_a", "trait_b"]
+    np.testing.assert_array_equal(first_group.aligned_sample_data.sample_indices, np.asarray([0, 1], dtype=np.int64))
+    np.testing.assert_allclose(
+        first_group.aligned_sample_data.phenotype_matrix,
+        np.asarray([[1.0, 2.0], [10.0, 20.0]], dtype=np.float32),
+    )
+    np.testing.assert_allclose(
+        first_group.aligned_sample_data.covariate_matrix,
+        np.asarray([[1.0, 25.0], [1.0, 30.0]], dtype=np.float32),
+    )
+    assert second_group.phenotype_indices == [2]
+    assert second_group.aligned_sample_data.phenotype_names == ["trait_c"]
+    np.testing.assert_array_equal(second_group.aligned_sample_data.sample_indices, np.asarray([0, 2], dtype=np.int64))
+    np.testing.assert_allclose(
+        second_group.aligned_sample_data.phenotype_matrix,
+        np.asarray([[100.0, 300.0]], dtype=np.float32),
     )
 
 

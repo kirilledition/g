@@ -73,6 +73,20 @@ class NativeBgenMultiRunInput:
     is_binary_trait: bool
 
 
+@dataclass(frozen=True)
+class NativeBgenGroupedRunInput:
+    """One native-planned group of compatible per-phenotype run inputs.
+
+    Attributes:
+        phenotype_indices: Original phenotype indices included in this group.
+        run_input: Multi-trait run input for the compatible phenotype group.
+
+    """
+
+    phenotype_indices: tuple[int, ...]
+    run_input: NativeBgenMultiRunInput
+
+
 def build_native_bgen_run_input(
     native_aligned_sample_data: _core.NativeAlignedSampleData,
 ) -> NativeBgenRunInput:
@@ -100,6 +114,21 @@ def build_native_bgen_multi_run_input(
         covariate_matrix=jnp.asarray(native_multi_aligned_sample_data.covariate_matrix, dtype=jnp.float32),
         is_binary_trait=native_multi_aligned_sample_data.is_binary_trait,
     )
+
+
+def build_native_bgen_grouped_run_inputs(
+    native_grouped_aligned_sample_data: _core.NativeGroupedAlignedSampleData,
+) -> tuple[NativeBgenGroupedRunInput, ...]:
+    """Build Python/JAX views over native grouped per-phenotype alignment data."""
+    grouped_run_inputs: list[NativeBgenGroupedRunInput] = []
+    for native_group in native_grouped_aligned_sample_data.groups:
+        grouped_run_inputs.append(
+            NativeBgenGroupedRunInput(
+                phenotype_indices=tuple(int(phenotype_index) for phenotype_index in native_group.phenotype_indices),
+                run_input=build_native_bgen_multi_run_input(native_group.aligned_sample_data),
+            )
+        )
+    return tuple(grouped_run_inputs)
 
 
 def resolve_sample_key_mode(alignment_config: SampleAlignmentConfigProtocol | None) -> types.SampleKeyMode:
@@ -218,6 +247,35 @@ def load_native_bgen_multi_run_input(
         alignment_config=alignment_config,
     )
     return build_native_bgen_multi_run_input(native_multi_aligned_sample_data)
+
+
+def load_native_bgen_grouped_run_inputs(
+    *,
+    genotype_source_config: source.GenotypeSourceConfig,
+    engine: _core.Regenie2RunEngine,
+    phenotype_path: Path,
+    phenotype_names: tuple[str, ...],
+    covariate_path: Path | None,
+    covariate_names: tuple[str, ...] | None,
+    is_binary_trait: bool,
+    alignment_config: SampleAlignmentConfigProtocol | None = None,
+) -> tuple[NativeBgenGroupedRunInput, ...]:
+    """Load native grouped per-phenotype samples and JAX compute inputs."""
+    source.validate_genotype_source_config(genotype_source_config)
+    resolved_sample_path = source.resolve_bgen_sample_path(
+        genotype_source_config.source_path,
+        genotype_source_config.sample_path,
+    )
+    native_grouped_aligned_sample_data = engine.align_grouped_sample_data(
+        str(resolved_sample_path) if resolved_sample_path is not None else None,
+        str(phenotype_path),
+        list(phenotype_names),
+        str(covariate_path) if covariate_path is not None else None,
+        list(covariate_names) if covariate_names is not None else None,
+        is_binary_trait,
+        sample_key_mode=resolve_sample_key_mode(alignment_config).value,
+    )
+    return build_native_bgen_grouped_run_inputs(native_grouped_aligned_sample_data)
 
 
 def build_regenie_prediction_source(

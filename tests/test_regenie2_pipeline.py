@@ -57,6 +57,19 @@ class FakePredictionSource:
         prediction_source.native_aligned_sample_data = aligned_sample_data
         return prediction_source
 
+    @staticmethod
+    def from_native_multi_aligned_sample_data(
+        prediction_list_path: str,
+        aligned_sample_data: object,
+        sample_key_mode: str = "iid",
+    ) -> FakePredictionSource:
+        prediction_source = FakePredictionSource(
+            prediction_list_path=prediction_list_path,
+            sample_key_mode=sample_key_mode,
+        )
+        prediction_source.native_aligned_sample_data = aligned_sample_data
+        return prediction_source
+
     def get_chromosome_predictions(self, chromosome: str) -> np.ndarray:
         del chromosome
         return np.asarray([0.0, 0.0], dtype=np.float32)
@@ -311,6 +324,21 @@ def build_native_run_input_with_alignment(
         phenotype_vector=jnp.asarray(phenotype_values, dtype=jnp.float32),
         covariate_matrix=jnp.asarray(covariate_values, dtype=jnp.float32),
         is_binary_trait=False,
+    )
+
+
+def build_grouped_run_input_from_single_trait_inputs(
+    *,
+    phenotype_indices: tuple[int, ...],
+    phenotype_names: tuple[str, ...],
+    run_inputs: tuple[native_dispatch.NativeBgenRunInput, ...],
+) -> native_dispatch.NativeBgenGroupedRunInput:
+    return native_dispatch.NativeBgenGroupedRunInput(
+        phenotype_indices=phenotype_indices,
+        run_input=regenie2_pipeline.build_grouped_native_bgen_multi_run_input(
+            phenotype_names=phenotype_names,
+            run_inputs=run_inputs,
+        ),
     )
 
 
@@ -2125,11 +2153,18 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
             covariate_values=((1.0, 40.0), (1.0, 50.0)),
         ),
     )
+    grouped_run_inputs = (
+        build_grouped_run_input_from_single_trait_inputs(
+            phenotype_indices=(0, 1),
+            phenotype_names=("trait_a", "trait_b"),
+            run_inputs=run_inputs,
+        ),
+    )
 
     with (
         patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
-        patch("g.engine.native_dispatch.load_native_bgen_run_input", side_effect=run_inputs),
+        patch("g.engine.native_dispatch._core.MultiRegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.load_native_bgen_grouped_run_inputs", return_value=grouped_run_inputs),
         patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
         patch(
             "g.engine.regenie2_pipeline.output.create_output_writer_session",
@@ -2198,11 +2233,23 @@ def test_grouped_per_phenotype_pipeline_splits_different_alignments() -> None:
             covariate_values=((1.0, 50.0), (1.0, 40.0)),
         ),
     )
+    grouped_run_inputs = (
+        build_grouped_run_input_from_single_trait_inputs(
+            phenotype_indices=(0,),
+            phenotype_names=("trait_a",),
+            run_inputs=(run_inputs[0],),
+        ),
+        build_grouped_run_input_from_single_trait_inputs(
+            phenotype_indices=(1,),
+            phenotype_names=("trait_b",),
+            run_inputs=(run_inputs[1],),
+        ),
+    )
 
     with (
         patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
-        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
-        patch("g.engine.native_dispatch.load_native_bgen_run_input", side_effect=run_inputs),
+        patch("g.engine.native_dispatch._core.MultiRegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.load_native_bgen_grouped_run_inputs", return_value=grouped_run_inputs),
         patch("g.engine.regenie2_pipeline.run_multi_preflight"),
         patch(
             "g.engine.regenie2_pipeline.output.create_output_writer_session",

@@ -49,10 +49,20 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
 ) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
     """Compute linear score-test statistics for trait-major residuals and variant-major genotypes."""
-    normalized_genotype_matrix_by_variant = genotype.normalize_high_frequency_diploid_genotypes_variant_major(
-        genotype_matrix_by_variant,
-        score_dtype,
-    )
+    if genotype_dosage_sum is None or genotype_observation_count is None:
+        normalized_genotype_matrix_by_variant = genotype.normalize_high_frequency_diploid_genotypes_variant_major(
+            genotype_matrix_by_variant,
+            score_dtype,
+        )
+    else:
+        normalized_genotype_matrix_by_variant = (
+            genotype.normalize_high_frequency_diploid_genotypes_variant_major_from_stats(
+                genotype_matrix_by_variant,
+                genotype_dosage_sum,
+                genotype_observation_count,
+                score_dtype,
+            )
+        )
     if genotype_dosage_sum is None or genotype_observation_count is None or genotype_imputed_dosage_square_sum is None:
         genotype_sum_squares_compute = jnp.einsum(
             "ij,ij->i",

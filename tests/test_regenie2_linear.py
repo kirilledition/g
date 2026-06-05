@@ -354,6 +354,19 @@ class TestComputeRegenie2LinearChunk:
         normalized_genotype_matrix_by_variant = genotype.normalize_high_frequency_diploid_genotypes_variant_major(
             genotype_matrix_by_variant
         )
+        stats_normalized_genotype_matrix_by_variant = (
+            genotype.normalize_high_frequency_diploid_genotypes_variant_major_from_stats(
+                genotype_matrix_by_variant,
+                native_dosage_sum,
+                native_observation_count,
+            )
+        )
+        numpy.testing.assert_allclose(
+            stats_normalized_genotype_matrix_by_variant,
+            normalized_genotype_matrix_by_variant,
+            rtol=1e-6,
+            atol=1e-6,
+        )
         expected_sum_squares = jnp.einsum(
             "ij,ij->i",
             normalized_genotype_matrix_by_variant,
