@@ -63,6 +63,31 @@ def decode_toml_bytes(toml_data: bytes | str, *, source: str) -> toml_schema.Tom
         raise ValueError(message) from error
 
 
+def decode_toml_builtin_mapping(toml_data: bytes | str, *, source: str) -> dict[str, typing.Any]:
+    """Decode TOML bytes into built-in containers without schema coercion.
+
+    Args:
+        toml_data: TOML document bytes or text.
+        source: Human-readable source name for error messages.
+
+    Returns:
+        Decoded TOML mapping.
+
+    Raises:
+        ValueError: If parsing fails or the TOML root is not a mapping.
+
+    """
+    try:
+        raw_toml = msgspec.toml.decode(toml_data, type=typing.Any, strict=True)
+    except msgspec.DecodeError as error:
+        message = f"Invalid TOML config {source}: {error}"
+        raise ValueError(message) from error
+    if not isinstance(raw_toml, dict):
+        message = f"Invalid TOML config {source}: expected a top-level table."
+        raise ValueError(message)
+    return typing.cast("dict[str, typing.Any]", raw_toml)
+
+
 def decode_toml_file(path: Path) -> toml_schema.TomlConfig:
     """Decode a TOML file into the typed config schema."""
     return decode_toml_bytes(path.read_bytes(), source=str(path))

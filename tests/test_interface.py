@@ -160,6 +160,18 @@ def test_packaged_default_catalog_matches_option_policies() -> None:
     assert len(default_catalog.default_config_hash) == 64
 
 
+def test_packaged_default_hash_uses_raw_toml_payload() -> None:
+    raw_toml = config_layers.decode_toml_builtin_mapping(
+        defaults.load_default_toml_bytes(),
+        source="config.default.toml",
+    )
+    default_catalog = defaults.load_default_option_catalog()
+
+    assert default_catalog.raw_toml == raw_toml
+    assert default_catalog.default_config_hash == defaults.build_default_config_hash(raw_toml)
+    assert isinstance(raw_toml["g"]["diagnostics"]["progress-interval-seconds"], int)
+
+
 def test_typed_toml_schema_matches_option_registry() -> None:
     assert toml_schema.schema_toml_paths() == frozenset(options.OPTION_SPEC_BY_TOML_PATH)
 

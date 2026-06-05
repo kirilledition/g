@@ -36,8 +36,9 @@ class DefaultOptionCatalog:
 @functools.cache
 def load_default_option_catalog() -> DefaultOptionCatalog:
     """Load, normalize, validate, and hash packaged default options."""
-    toml_config = load_default_toml_config()
-    raw_toml = config_layers.toml_config_to_builtin_mapping(toml_config)
+    default_toml_bytes = load_default_toml_bytes()
+    toml_config = config_layers.decode_toml_bytes(default_toml_bytes, source=DEFAULT_CONFIG_RESOURCE)
+    raw_toml = config_layers.decode_toml_builtin_mapping(default_toml_bytes, source=DEFAULT_CONFIG_RESOURCE)
     normalized_options = normalize_default_toml(raw_toml)
     validate_default_catalog(normalized_options)
     return DefaultOptionCatalog(
@@ -50,11 +51,16 @@ def load_default_option_catalog() -> DefaultOptionCatalog:
 
 def load_default_toml_config() -> toml_schema.TomlConfig:
     """Load the packaged default TOML file into the typed schema."""
-    default_config_resource = importlib.resources.files("g").joinpath(DEFAULT_CONFIG_RESOURCE)
     return config_layers.decode_toml_bytes(
-        default_config_resource.read_bytes(),
+        load_default_toml_bytes(),
         source=DEFAULT_CONFIG_RESOURCE,
     )
+
+
+def load_default_toml_bytes() -> bytes:
+    """Load packaged default TOML file bytes."""
+    default_config_resource = importlib.resources.files("g").joinpath(DEFAULT_CONFIG_RESOURCE)
+    return default_config_resource.read_bytes()
 
 
 def load_raw_default_toml() -> dict[str, typing.Any]:
