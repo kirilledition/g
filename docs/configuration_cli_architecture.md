@@ -601,18 +601,18 @@ Example:
 
 ```text
 CLI:
-  --g-bgen-simd avx2
+  --g-bgen-decode-tile-variant-count 128
 
 TOML:
   [g.compute]
-  bgen-simd = "avx2"
+  bgen-decode-tile-variant-count = 128
 
 Internal canonical option:
-  g-bgen-simd
+  g-bgen-decode-tile-variant-count
 
 Python option dictionary:
-  {"g-bgen-simd": "avx2"}
-  {"g_bgen_simd": "avx2"}  # optional alias
+  {"g-bgen-decode-tile-variant-count": 128}
+  {"g_bgen_decode_tile_variant_count": 128}  # optional alias
 ```
 
 ### 4.8 Adding a new configurable Rust runtime value

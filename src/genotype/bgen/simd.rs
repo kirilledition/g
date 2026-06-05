@@ -10,61 +10,15 @@ const AVX2_PLOIDY_BYTE_COUNT: usize = 32;
 const EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL: f32 = 1.0_f32 / 255.0_f32;
 const EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL: f32 = 1.0_f32 / (255.0_f32 * 255.0_f32);
 const PRESENT_DIPLOID_BYTE_GROUP: [u8; 16] = [2_u8; 16];
-const BGEN_SIMD_ENVIRONMENT_VARIABLE: &str = "G_BGEN_SIMD";
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum BgenSimdMode {
-    Auto,
-    Scalar,
-    Avx2,
-}
-
-impl BgenSimdMode {
-    fn from_environment_value(environment_value: &str) -> Self {
-        let trimmed_environment_value = environment_value.trim();
-        if trimmed_environment_value.eq_ignore_ascii_case("auto") {
-            Self::Auto
-        } else if trimmed_environment_value.eq_ignore_ascii_case("scalar") {
-            Self::Scalar
-        } else if trimmed_environment_value.eq_ignore_ascii_case("avx2") {
-            Self::Avx2
-        } else {
-            panic!("{BGEN_SIMD_ENVIRONMENT_VARIABLE} must be one of auto, scalar, or avx2");
-        }
-    }
-}
-
-fn configured_bgen_simd_mode() -> BgenSimdMode {
-    static CONFIGURED_BGEN_SIMD_MODE: std::sync::OnceLock<BgenSimdMode> = std::sync::OnceLock::new();
-    *CONFIGURED_BGEN_SIMD_MODE.get_or_init(|| {
-        std::env::var(BGEN_SIMD_ENVIRONMENT_VARIABLE)
-            .map_or(BgenSimdMode::Auto, |environment_value| BgenSimdMode::from_environment_value(&environment_value))
-    })
-}
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 fn bgen_avx2_enabled() -> bool {
-    match configured_bgen_simd_mode() {
-        BgenSimdMode::Auto => std::arch::is_x86_feature_detected!("avx2"),
-        BgenSimdMode::Scalar => false,
-        BgenSimdMode::Avx2 => {
-            if std::arch::is_x86_feature_detected!("avx2") {
-                true
-            } else {
-                panic!("{BGEN_SIMD_ENVIRONMENT_VARIABLE}=avx2 requires an x86 CPU with AVX2 support");
-            }
-        }
-    }
+    std::arch::is_x86_feature_detected!("avx2")
 }
 
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 fn bgen_avx2_enabled() -> bool {
-    match configured_bgen_simd_mode() {
-        BgenSimdMode::Auto | BgenSimdMode::Scalar => false,
-        BgenSimdMode::Avx2 => {
-            panic!("{BGEN_SIMD_ENVIRONMENT_VARIABLE}=avx2 requires an x86 CPU with AVX2 support");
-        }
-    }
+    false
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -640,19 +594,6 @@ mod tests {
             rare_variant_like_probability_bytes(sample_count),
             deterministic_random_valid_probability_bytes(sample_count),
         ]
-    }
-
-    #[test]
-    fn bgen_simd_mode_parses_supported_environment_values() {
-        assert_eq!(BgenSimdMode::from_environment_value("auto"), BgenSimdMode::Auto);
-        assert_eq!(BgenSimdMode::from_environment_value(" scalar "), BgenSimdMode::Scalar);
-        assert_eq!(BgenSimdMode::from_environment_value("AVX2"), BgenSimdMode::Avx2);
-    }
-
-    #[test]
-    #[should_panic(expected = "G_BGEN_SIMD must be one of auto, scalar, or avx2")]
-    fn bgen_simd_mode_rejects_unsupported_environment_values() {
-        BgenSimdMode::from_environment_value("sse2");
     }
 
     #[test]
