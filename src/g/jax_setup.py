@@ -8,7 +8,7 @@ from pathlib import Path
 
 import jax
 
-from g import types
+from g import runtime_policy, types
 from g.interface import config
 
 DEFAULT_NODE_LOCAL_CACHE_ROOT = Path("/tmp")
@@ -43,7 +43,6 @@ PACKAGED_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = config.default_int_option(
 PACKAGED_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = config.default_int_option(
     "g-jax-persistent-cache-min-compile-time-seconds"
 )
-PACKAGED_JAX_ENABLE_X64 = config.default_bool_option("g-jax-enable-x64")
 CUDA_PLATFORM_NAME = "cuda"
 GPU_DEVICE_PLATFORM_NAME = "gpu"
 NVIDIA_CONTROL_DEVICE_PATH = Path("/dev/nvidiactl")
@@ -92,12 +91,11 @@ def configure_jax_runtime(
     persistent_cache: bool = PACKAGED_PERSISTENT_COMPILATION_CACHE,
     persistent_cache_min_entry_size_bytes: int = PACKAGED_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
     persistent_cache_min_compile_time_seconds: int = PACKAGED_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
-    enable_x64: bool = PACKAGED_JAX_ENABLE_X64,
     xla_autotune_cache: bool = False,
     transfer_guard: bool = False,
 ) -> None:
     """Configure JAX runtime knobs before engine modules are imported."""
-    jax.config.update("jax_enable_x64", enable_x64)
+    jax.config.update("jax_enable_x64", runtime_policy.JAX_ENABLE_X64)
     precision_value = JAX_MATMUL_PRECISION_WHEN_UNSET if matmul_precision is None else matmul_precision.value
     jax.config.update("jax_default_matmul_precision", precision_value)
     if persistent_cache:
@@ -125,7 +123,6 @@ def configure_jax_runtime_before_backend_init(
     persistent_cache: bool = PACKAGED_PERSISTENT_COMPILATION_CACHE,
     persistent_cache_min_entry_size_bytes: int = PACKAGED_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
     persistent_cache_min_compile_time_seconds: int = PACKAGED_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
-    enable_x64: bool = PACKAGED_JAX_ENABLE_X64,
     xla_autotune_cache: bool = False,
     transfer_guard: bool = False,
 ) -> None:
@@ -137,7 +134,6 @@ def configure_jax_runtime_before_backend_init(
         persistent_cache=persistent_cache,
         persistent_cache_min_entry_size_bytes=persistent_cache_min_entry_size_bytes,
         persistent_cache_min_compile_time_seconds=persistent_cache_min_compile_time_seconds,
-        enable_x64=enable_x64,
         xla_autotune_cache=xla_autotune_cache,
         transfer_guard=transfer_guard,
     )

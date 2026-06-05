@@ -47,7 +47,6 @@ class JaxRuntimePolicy:
         device: Requested JAX platform.
         cache_directory: Persistent compilation cache directory.
         matmul_precision: Requested matmul precision.
-        enable_x64: Whether JAX 64-bit arrays are enabled.
         persistent_cache: Whether persistent compilation caching is enabled.
         persistent_cache_min_entry_size_bytes: Minimum cache entry size.
         persistent_cache_min_compile_time_seconds: Minimum compile time for cache entries.
@@ -59,7 +58,6 @@ class JaxRuntimePolicy:
     device: types.Device
     cache_directory: Path | None
     matmul_precision: types.JaxMatmulPrecision | None
-    enable_x64: bool
     persistent_cache: bool
     persistent_cache_min_entry_size_bytes: int
     persistent_cache_min_compile_time_seconds: int
@@ -135,7 +133,6 @@ def build_jax_runtime_policy(compute_config: config.GComputeConfig) -> JaxRuntim
         device=compute_config.device,
         cache_directory=cache_directory,
         matmul_precision=compute_config.jax_matmul_precision,
-        enable_x64=compute_config.jax_enable_x64,
         persistent_cache=compute_config.jax_persistent_cache,
         persistent_cache_min_entry_size_bytes=compute_config.jax_persistent_cache_min_entry_size_bytes,
         persistent_cache_min_compile_time_seconds=compute_config.jax_persistent_cache_min_compile_time_seconds,
@@ -152,7 +149,6 @@ def describe_jax_runtime_policy(policy: JaxRuntimePolicy) -> str:
         f"device={policy.device.value}, "
         f"jax-cache-dir={cache_directory}, "
         f"jax-matmul-precision={matmul_precision}, "
-        f"jax-enable-x64={policy.enable_x64}, "
         f"jax-persistent-cache={policy.persistent_cache}, "
         f"jax-persistent-cache-min-entry-size-bytes={policy.persistent_cache_min_entry_size_bytes}, "
         f"jax-persistent-cache-min-compile-time-seconds={policy.persistent_cache_min_compile_time_seconds}, "
@@ -193,7 +189,6 @@ def configure_runtime_before_jax_import(compute_config: config.GComputeConfig) -
         device=compute_config.device,
         cache_directory=compute_config.jax_cache_dir,
         matmul_precision=compute_config.jax_matmul_precision,
-        enable_x64=compute_config.jax_enable_x64,
         persistent_cache=compute_config.jax_persistent_cache,
         persistent_cache_min_entry_size_bytes=compute_config.jax_persistent_cache_min_entry_size_bytes,
         persistent_cache_min_compile_time_seconds=compute_config.jax_persistent_cache_min_compile_time_seconds,
@@ -500,7 +495,6 @@ def build_common_engine_arguments(
         "bgen_simd": plan.kernel_config.bgen_simd,
         "jax_device": plan.kernel_config.device,
         "jax_matmul_precision": plan.kernel_config.alignment_config.jax_matmul_precision,
-        "jax_enable_x64": plan.kernel_config.alignment_config.jax_enable_x64,
         "score_dtype": plan.kernel_config.alignment_config.score_dtype,
         "firth_dtype": plan.kernel_config.alignment_config.firth_dtype,
         "output_format": plan.output_plan.output_format,

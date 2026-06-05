@@ -12,7 +12,7 @@ import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-from g import _core, types
+from g import _core, runtime_policy, types
 from g.interface import config
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,6 @@ JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
 RESUME_POLICY = "manifest_committed_chunks"
 PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT = config.default_int_option("g-bgen-decode-tile-variant-count")
 PACKAGED_BGEN_SIMD = types.BgenSimdMode(config.default_string_option("g-bgen-simd"))
-PACKAGED_JAX_ENABLE_X64 = config.default_bool_option("g-jax-enable-x64")
 PACKAGED_GPU_GENOTYPE_FORMAT = types.GpuGenotypeFormat(config.default_string_option("g-gpu-genotype-format"))
 PACKAGED_SCORE_DTYPE = types.FloatingPointDtype(config.default_string_option("g-score-dtype"))
 PACKAGED_FIRTH_DTYPE = types.FloatingPointDtype(config.default_string_option("g-firth-dtype"))
@@ -166,12 +165,11 @@ def build_jax_policy_manifest(
     *,
     device: types.Device = types.Device.CPU,
     matmul_precision: types.JaxMatmulPrecision | None = None,
-    enable_x64: bool = PACKAGED_JAX_ENABLE_X64,
 ) -> dict[str, typing.Any]:
     """Build manifest fields for JAX precision and backend policy."""
     return {
         "device": device.value,
-        "enable_x64": enable_x64,
+        "enable_x64": runtime_policy.JAX_ENABLE_X64,
         "matmul_precision": JAX_MATMUL_PRECISION_WHEN_UNSET if matmul_precision is None else matmul_precision.value,
     }
 
@@ -220,7 +218,6 @@ def build_current_run_manifest_header(
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
-    jax_enable_x64: bool = PACKAGED_JAX_ENABLE_X64,
     gpu_genotype_format: types.GpuGenotypeFormat = PACKAGED_GPU_GENOTYPE_FORMAT,
     score_dtype: types.FloatingPointDtype = PACKAGED_SCORE_DTYPE,
     firth_dtype: types.FloatingPointDtype = PACKAGED_FIRTH_DTYPE,
@@ -250,7 +247,6 @@ def build_current_run_manifest_header(
     jax_policy_manifest = build_jax_policy_manifest(
         device=jax_device,
         matmul_precision=jax_matmul_precision,
-        enable_x64=jax_enable_x64,
     )
     execution_plan = normalize_execution_plan_value(
         {

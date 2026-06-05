@@ -234,7 +234,6 @@ class GComputeConfig:
     )
     jax_cache_dir: Path | None = None
     jax_matmul_precision: types.JaxMatmulPrecision | None = None
-    jax_enable_x64: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-jax-enable-x64"))
     jax_persistent_cache: bool = dataclasses.field(
         default_factory=lambda: default_bool_option("g-jax-persistent-cache")
     )
@@ -545,7 +544,6 @@ def from_normalized_options(
             jax_matmul_precision=optional_jax_matmul_precision(
                 optional_option(resolved_options, "g-jax-matmul-precision")
             ),
-            jax_enable_x64=bool(required_option(resolved_options, "g-jax-enable-x64")),
             jax_persistent_cache=bool(required_option(resolved_options, "g-jax-persistent-cache")),
             jax_persistent_cache_min_entry_size_bytes=int(
                 required_option(resolved_options, "g-jax-persistent-cache-min-entry-size-bytes")
@@ -843,12 +841,6 @@ def validate_config(config: RegenieConfig) -> None:
     if config.g_compute.firth_dtype != types.FloatingPointDtype.FLOAT64:
         message = "--g-firth-dtype currently supports float64 only."
         raise ValueError(message)
-    if config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT64 and not config.g_compute.jax_enable_x64:
-        message = "--g-score-dtype=float64 requires --g-jax-enable-x64."
-        raise ValueError(message)
-    if config.binary.firth and not config.g_compute.jax_enable_x64:
-        message = "--firth uses float64 internals and requires --g-jax-enable-x64."
-        raise ValueError(message)
     validate_quantitative_binary_config(config)
     if config.g_output.writer_threads <= 0:
         message = "--g-writer-threads must be positive."
@@ -1060,7 +1052,6 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
                 "jax-matmul-precision",
                 None if config.g_compute.jax_matmul_precision is None else config.g_compute.jax_matmul_precision.value,
             ),
-            "jax-enable-x64": config.g_compute.jax_enable_x64,
             "jax-persistent-cache": config.g_compute.jax_persistent_cache,
             "jax-persistent-cache-min-entry-size-bytes": config.g_compute.jax_persistent_cache_min_entry_size_bytes,
             "jax-persistent-cache-min-compile-time-seconds": (

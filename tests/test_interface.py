@@ -68,7 +68,6 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-firth-dtype": "float64",
         "g-jax-cache-dir": "cache/jax",
         "g-jax-matmul-precision": "highest",
-        "g-jax-enable-x64": True,
         "g-jax-persistent-cache": False,
         "g-jax-persistent-cache-min-entry-size-bytes": 1024,
         "g-jax-persistent-cache-min-compile-time-seconds": 1,
@@ -110,7 +109,6 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_compute.firth_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_compute.jax_matmul_precision == types.JaxMatmulPrecision.HIGHEST
-    assert regenie_config.g_compute.jax_enable_x64 is True
     assert regenie_config.g_compute.jax_persistent_cache is False
     assert regenie_config.g_output.format == types.OutputFormat.ARROW
     assert regenie_config.g_output.chunks_per_arrow_file == 2
@@ -162,6 +160,32 @@ def test_packaged_default_catalog_matches_option_policies() -> None:
     assert len(default_catalog.default_config_hash) == 64
 
 
+def test_no_configurable_default_constants_reappear_in_source() -> None:
+    source_root = Path(__file__).resolve().parents[1] / "src" / "g"
+    forbidden_fragments = (
+        "DEFAULT_FIRTH",
+        "DEFAULT_BINARY_NULL",
+        "DEFAULT_BGEN_DECODE",
+        "DEFAULT_JAX",
+        "DEFAULT_OUTPUT_WRITER",
+        "DEFAULT_LOG",
+        "DEFAULT_PROGRESS",
+    )
+    checked_suffixes = {".py", ".pyi", ".rs"}
+    offenders: list[str] = []
+
+    for source_path in source_root.rglob("*"):
+        if source_path.suffix not in checked_suffixes:
+            continue
+        source_text = source_path.read_text(encoding="utf-8")
+        for forbidden_fragment in forbidden_fragments:
+            if forbidden_fragment in source_text:
+                relative_path = source_path.relative_to(source_root.parent.parent)
+                offenders.append(f"{relative_path}: {forbidden_fragment}")
+
+    assert offenders == []
+
+
 def test_logging_diagnostics_default_to_info_stderr() -> None:
     diagnostics_config = config.GDiagnosticsConfig()
 
@@ -191,7 +215,6 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT32
     assert regenie_config.g_compute.firth_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE
-    assert regenie_config.g_compute.jax_enable_x64 is True
     assert regenie_config.g_compute.jax_persistent_cache is True
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
     assert regenie_config.g_diagnostics.log_filter == config.default_string_option("g-log-filter")
@@ -275,7 +298,6 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
             "g-bgen-simd": "avx2",
             "g-score-dtype": "float64",
             "g-firth-dtype": "float64",
-            "g-jax-enable-x64": True,
             "g-jax-persistent-cache": False,
             "g-stage-timings-json": "timings.json",
             "g-log-filter": "g=trace",
@@ -323,6 +345,9 @@ def test_unknown_and_unsupported_options_raise_clear_errors() -> None:
 
     with pytest.raises(ValueError, match="Unknown g regenie option: g-allow-duplicate-iid-alignment"):
         config.RegenieConfig.from_options({"g-allow-duplicate-iid-alignment": True})
+
+    with pytest.raises(ValueError, match="Unknown g regenie option: g-jax-enable-x64"):
+        config.RegenieConfig.from_options({"g-jax-enable-x64": False})
 
     with pytest.raises(ValueError, match=r"Unknown g regenie option: g\.compute\.allow-duplicate-iid-alignment"):
         config.RegenieConfig.from_options({"g": {"compute": {"allow-duplicate-iid-alignment": True}}})
@@ -395,7 +420,6 @@ def test_config_validation_rejects_required_and_positive_option_errors(
         ({"pThresh": 1.0}, "--pThresh must be in"),
         ({"firth": True, "approx": False}, "Exact --firth is not implemented"),
         ({"firth": False, "approx": True}, "--approx requires --firth"),
-        ({"firth": True, "approx": True, "g-jax-enable-x64": False}, "--firth uses float64 internals"),
     ],
 )
 def test_binary_config_validation_rejects_invalid_fallback_combinations(
@@ -422,7 +446,6 @@ def test_binary_config_validation_rejects_invalid_fallback_combinations(
 @pytest.mark.parametrize(
     ("mutated_options", "error_match"),
     [
-        ({"g-score-dtype": "float64", "g-jax-enable-x64": False}, "--g-score-dtype=float64 requires"),
         ({"g-firth-dtype": "float32"}, "--g-firth-dtype currently supports float64 only"),
     ],
 )

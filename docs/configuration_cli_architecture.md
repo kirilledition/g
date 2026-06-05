@@ -510,6 +510,9 @@ JAX cache behavior
 telemetry intervals
 ```
 
+JAX x64 enablement is not in this category. The app requires it for core functionality and always enables it as a
+runtime invariant rather than exposing a config option.
+
 #### Mathematical or format constants
 
 These may be hardcoded, but only once.
