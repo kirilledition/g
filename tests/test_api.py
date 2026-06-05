@@ -444,12 +444,12 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
         log_filter="info",
         log_file=tmp_path / "logs" / "first.jsonl",
         log_stderr=True,
-        log_queue_size=config.DEFAULT_LOG_QUEUE_SIZE,
+        log_queue_size=config.default_int_option("g-log-queue-size"),
         log_lossy=True,
         include_source_location=False,
         include_span_events=False,
         trace_file=None,
-        trace_filter=config.DEFAULT_TRACE_FILTER,
+        trace_filter=config.default_string_option("g-trace-filter"),
     )
     diagnostics_config = config.GDiagnosticsConfig(log_file=tmp_path / "logs" / "second.jsonl")
 
@@ -462,7 +462,7 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
 
 
 def test_configure_runtime_sets_native_knobs_and_threads() -> None:
-    calls: list[tuple[str, int]] = []
+    calls: list[tuple[str, int | str]] = []
 
     class FakeCoreModule:
         def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
@@ -529,7 +529,7 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
 
     class FakeJaxSetupModule:
         def configure_jax_runtime_before_backend_init(self, **kwargs: object) -> None:
-            call_order.append(f"setup:{kwargs['cache_directory']}:{kwargs['enable_x64']}")
+            call_order.append(f"setup:{kwargs['cache_directory']}")
 
     class FakeTimingModule:
         def build_stage_timing_recorder(self, stage_timing_path: Path | None) -> None:
@@ -579,21 +579,6 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
             "g-jax-cache-dir": str(tmp_path / "other-jax-cache"),
         }
     )
-    incompatible_x64_config = config.RegenieConfig.from_options(
-        {
-            "step": 2,
-            "qt": True,
-            "bgen": "dataset.bgen",
-            "sample": "dataset.sample",
-            "phenoFile": "phenotype.tsv",
-            "phenoCol": "trait",
-            "pred": "predictions.list",
-            "out": "results/output",
-            "g-jax-cache-dir": str(tmp_path / "jax-cache"),
-            "g-jax-enable-x64": False,
-        }
-    )
-
     with (
         patch("g.runner.CONFIGURED_JAX_RUNTIME_POLICY", None),
         patch(
@@ -615,12 +600,9 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
 
         with pytest.raises(RuntimeError, match=r"JAX runtime is already configured.*incompatible settings"):
             api.regenie(incompatible_config)
-        with pytest.raises(RuntimeError, match=r"jax-enable-x64=True.*jax-enable-x64=False"):
-            api.regenie(incompatible_x64_config)
 
-    assert call_order.count(f"setup:{tmp_path / 'jax-cache'}:True") == 1
-    assert f"setup:{tmp_path / 'jax-cache'}:False" not in call_order
-    assert f"setup:{tmp_path / 'other-jax-cache'}:True" not in call_order
+    assert call_order.count(f"setup:{tmp_path / 'jax-cache'}") == 1
+    assert f"setup:{tmp_path / 'other-jax-cache'}" not in call_order
 
 
 def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_config() -> None:

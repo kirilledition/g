@@ -252,7 +252,6 @@ threads = 8
 [binary]
 firth = false
 approx = false
-spa = false
 pThresh = 0.05
 firth-se = false
 
@@ -489,6 +488,7 @@ resume mode
 ```
 
 Do not introduce new `DEFAULT_*` constants in Python or Rust for new user-tunable behavior. Existing legacy constants should be treated as migration debt unless they are pure mathematical constants.
+Typed `PACKAGED_*` views of the default catalog are acceptable at subsystem boundaries, but `config.default.toml` remains the source of truth.
 
 ### 4.4 Constants policy
 
@@ -508,6 +508,9 @@ BGEN tile size
 JAX cache behavior
 telemetry intervals
 ```
+
+JAX x64 enablement is not in this category. The app requires it for core functionality and always enables it as a
+runtime invariant rather than exposing a config option.
 
 #### Mathematical or format constants
 
@@ -732,14 +735,16 @@ no new user-tunable DEFAULT_* constants outside the default config loader
 
 ---
 
-## 6. Current migration notes
+## 6. Current implementation notes
 
 The current implementation already has the core pieces:
 
 ```text
 OptionSpec registry
+default policy and TOML path metadata
 Click generation from OptionSpec
 packaged config.default.toml
+validated default catalog hash
 TOML/CLI/Python normalization
 RegenieConfig
 ExecutionPlan
@@ -748,7 +753,7 @@ manifest validation
 
 Two areas need continuing discipline:
 
-1. **Some legacy `DEFAULT_*` constants still exist in `config.py`.** Do not copy this pattern for new user-tunable parameters. New tunable defaults belong in `config.default.toml`.
+1. **Binary-only defaults appear in `config.default.toml` but are commented in `g config init`.** This keeps starter configs quantitative by default without making `pThresh` or Firth flags explicit user overrides.
 2. **TOML `[g.*]` keys currently omit the `g-` prefix.** This is intentional: the table provides the namespace. The internal canonical name still includes `g-`.
 
 ---

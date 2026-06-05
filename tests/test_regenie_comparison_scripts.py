@@ -952,7 +952,7 @@ def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
 def test_binary_hot_benchmark_defaults_to_comparable_modes() -> None:
     arguments = binary_hot_benchmark.build_argument_parser().parse_args([])
     assert arguments.device == "gpu"
-    assert arguments.chunk_size == binary_hot_benchmark.interface_config.DEFAULT_BSIZE
+    assert arguments.chunk_size == binary_hot_benchmark.interface_config.default_int_option("bsize")
     assert arguments.output_writer_thread_count == 8
     assert arguments.trusted_no_missing_diploid is True
     assert arguments.assume_trusted_validated is False

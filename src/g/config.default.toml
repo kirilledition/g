@@ -7,7 +7,6 @@ bsize = 16384
 [binary]
 firth = false
 approx = false
-spa = false
 pThresh = 0.05
 firth-se = false
 
@@ -54,8 +53,6 @@ gpu-genotype-format = "dosage"
 score-dtype = "float32"
 # Firth internals are parity-sensitive and currently require float64.
 firth-dtype = "float64"
-# Enables JAX to create x64 arrays; it does not make all kernels float64.
-jax-enable-x64 = true
 jax-persistent-cache = true
 jax-persistent-cache-min-entry-size-bytes = -1
 jax-persistent-cache-min-compile-time-seconds = 0

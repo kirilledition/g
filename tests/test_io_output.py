@@ -106,7 +106,6 @@ def build_test_header(
     *,
     association_mode: AssociationMode = AssociationMode.REGENIE2_LINEAR,
     binary_kernel_config: typing.Any | None = None,
-    jax_enable_x64: bool = True,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     firth_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT64,
@@ -135,7 +134,6 @@ def build_test_header(
         trusted_no_missing_diploid=False,
         sample_key_mode=types.SampleKeyMode.IID,
         binary_kernel_config=binary_kernel_config,
-        jax_enable_x64=jax_enable_x64,
         gpu_genotype_format=gpu_genotype_format,
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
@@ -143,10 +141,10 @@ def build_test_header(
 
 
 def test_current_run_manifest_records_configured_x64_policy(tmp_path: Path) -> None:
-    current_header = build_test_header(tmp_path, jax_enable_x64=False)
+    current_header = build_test_header(tmp_path)
 
-    assert current_header["jax_policy"]["enable_x64"] is False
-    assert current_header["execution_plan"]["jax_policy"]["enable_x64"] is False
+    assert current_header["jax_policy"]["enable_x64"] is True
+    assert current_header["execution_plan"]["jax_policy"]["enable_x64"] is True
 
 
 def test_current_run_manifest_records_dtype_policy(tmp_path: Path) -> None:
@@ -159,7 +157,7 @@ def test_current_run_manifest_records_dtype_policy(tmp_path: Path) -> None:
 
 
 def test_current_run_manifest_records_result_statistic_output_dtype(tmp_path: Path) -> None:
-    current_header = build_test_header(tmp_path, jax_enable_x64=True)
+    current_header = build_test_header(tmp_path)
 
     assert current_header["output_writer"]["result_statistic_dtype"] == "float32"
     assert current_header["execution_plan"]["output_writer"]["result_statistic_dtype"] == "float32"

@@ -88,19 +88,6 @@ def test_configure_jax_runtime_before_backend_init_sets_platform_first(tmp_path:
     assert ("jax_compilation_cache_dir", str(cache_directory)) in [call.args for call in mock_update.call_args_list]
 
 
-def test_configure_jax_runtime_before_backend_init_can_disable_x64(tmp_path: Path) -> None:
-    cache_directory = tmp_path / "jax-cache"
-
-    with patch("g.jax_setup.jax.config.update") as mock_update:
-        configure_jax_runtime_before_backend_init(
-            device=Device.CPU,
-            cache_directory=cache_directory,
-            enable_x64=False,
-        )
-
-    assert ("jax_enable_x64", False) in [call.args for call in mock_update.call_args_list]
-
-
 def test_configure_jax_runtime_before_backend_init_validates_gpu_after_runtime(tmp_path: Path) -> None:
     """Ensure GPU validation happens after platform and cache settings are applied."""
     cache_directory = tmp_path / "jax-cache"

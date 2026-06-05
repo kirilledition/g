@@ -3,24 +3,20 @@
 from __future__ import annotations
 
 import dataclasses
-import importlib.resources
 import os
-import tomllib
 import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-from g import types
-from g.interface import options
+import msgspec
 
-DEFAULT_CONFIG_RESOURCE = "config.default.toml"
+from g import types
+from g.interface import config_layers, defaults, options, toml_schema
 
 
 def load_default_option_dictionary() -> dict[str, typing.Any]:
     """Load packaged default runtime options."""
-    default_config_resource = importlib.resources.files("g").joinpath(DEFAULT_CONFIG_RESOURCE)
-    with default_config_resource.open("rb") as config_file:
-        return tomllib.load(config_file)
+    return dict(defaults.load_default_option_catalog().raw_toml)
 
 
 def load_default_trait_option(option_name: str) -> typing.Any:
@@ -33,54 +29,53 @@ def load_default_g_output_option(option_name: str) -> typing.Any:
     return load_default_option_dictionary()["g"]["output"][option_name]
 
 
-DEFAULT_BSIZE = int(load_default_trait_option("bsize"))
-DEFAULT_P_THRESHOLD = 0.05
-DEFAULT_FIRTH_BATCH_SIZE = 64
-DEFAULT_FIRTH_CANDIDATE_CAPACITY = 1024
-DEFAULT_BINARY_NULL_MAXIMUM_ITERATIONS = 50
-DEFAULT_BINARY_NULL_COEFFICIENT_TOLERANCE = 1.0e-6
-DEFAULT_NULL_LOGISTIC_NONCONVERGENCE_POLICY = types.NullLogisticNonconvergencePolicy.FAIL
-DEFAULT_BINARY_MINIMUM_PROBABILITY = 1.0e-6
-DEFAULT_BINARY_MINIMUM_VARIANCE = 1.0e-8
-DEFAULT_BINARY_RELATIVE_VARIANCE_TOLERANCE = 1.0e-6
-DEFAULT_FIRTH_MAXIMUM_ITERATIONS = 250
-DEFAULT_FIRTH_GRADIENT_TOLERANCE = 2.5e-4
-DEFAULT_FIRTH_COEFFICIENT_TOLERANCE = 2.5e-4
-DEFAULT_FIRTH_LIKELIHOOD_TOLERANCE = 2.5e-4
-DEFAULT_FIRTH_MAXIMUM_STEP_SIZE = 5.0
-DEFAULT_FIRTH_PSEUDO_MAXIMUM_ITERATIONS = 50
-DEFAULT_FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS = 25
-DEFAULT_FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS = 100
-DEFAULT_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
-DEFAULT_FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS = 12
-DEFAULT_FIRTH_INITIAL_RESPONSE_SCALE = 4.863891244002886
-DEFAULT_FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD = 1.0e-4
-DEFAULT_FIRTH_STEP_HALVING_SCALE = 0.5
-DEFAULT_NULL_FIRTH_MAXIMUM_ITERATIONS = 1000
-DEFAULT_NULL_FIRTH_GRADIENT_TOLERANCE = 50.0e-6
-DEFAULT_NULL_FIRTH_MAXIMUM_STEP_SIZE = 25.0
-DEFAULT_NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER = 5
-DEFAULT_NULL_FIRTH_FALLBACK_STEP_DIVISOR = 5.0
-DEFAULT_NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
-DEFAULT_NULL_FIRTH_STEP_HALVING_SCALE = 0.5
-DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT = 64
-DEFAULT_GPU_GENOTYPE_FORMAT = types.GpuGenotypeFormat.DOSAGE
-DEFAULT_SCORE_DTYPE = types.FloatingPointDtype.FLOAT32
-DEFAULT_FIRTH_DTYPE = types.FloatingPointDtype.FLOAT64
-DEFAULT_JAX_ENABLE_X64 = True
-DEFAULT_JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = -1
-DEFAULT_JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
-DEFAULT_LOG_FILTER = "info"
-DEFAULT_TRACE_FILTER = "g.native.bgen=trace,g.output=debug"
-DEFAULT_PROGRESS_INTERVAL_SECONDS = 5.0
-DEFAULT_PROGRESS_INTERVAL_CHUNKS = 10
-DEFAULT_LOG_QUEUE_SIZE = 65536
 QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "spa", "pThresh")
 
 
-DEFAULT_OUTPUT_WRITER_THREADS = int(load_default_g_output_option("writer-threads"))
-DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH = int(load_default_g_output_option("writer-queue-depth"))
-DEFAULT_OUTPUT_CHUNKS_PER_ARROW_FILE = int(load_default_g_output_option("chunks-per-arrow-file"))
+def packaged_default_option(option_name: str) -> typing.Any:
+    """Return one packaged default option by canonical name."""
+    return required_option(defaults.load_default_option_catalog().normalized_options, option_name)
+
+
+def required_option(normalized_options: typing.Mapping[str, typing.Any], option_name: str) -> typing.Any:
+    """Return a required resolved option or fail loudly."""
+    if option_name not in normalized_options:
+        message = f"Default config is missing required default option {option_name!r}."
+        raise ValueError(message)
+    return normalized_options[option_name]
+
+
+def optional_option(normalized_options: typing.Mapping[str, typing.Any], option_name: str) -> typing.Any | None:
+    """Return an optional resolved option."""
+    return normalized_options.get(option_name)
+
+
+def default_bool_option(option_name: str) -> bool:
+    """Return one packaged boolean default."""
+    return bool(packaged_default_option(option_name))
+
+
+def default_int_option(option_name: str) -> int:
+    """Return one packaged integer default."""
+    return int(packaged_default_option(option_name))
+
+
+def default_float_option(option_name: str) -> float:
+    """Return one packaged floating-point default."""
+    return float(packaged_default_option(option_name))
+
+
+def default_string_option(option_name: str) -> str:
+    """Return one packaged string default."""
+    return str(packaged_default_option(option_name))
+
+
+def default_trait_type() -> types.RegenieTraitType:
+    """Return the packaged default trait type."""
+    return normalize_trait_type(
+        qt=default_bool_option("qt"),
+        bt=default_bool_option("bt"),
+    )
 
 
 @dataclass(frozen=True)
@@ -100,9 +95,9 @@ class InputConfig:
 class TraitConfig:
     """Trait-family and block-size settings."""
 
-    step: int = 2
-    trait_type: types.RegenieTraitType = types.RegenieTraitType.QUANTITATIVE
-    bsize: int = DEFAULT_BSIZE
+    step: int = dataclasses.field(default_factory=lambda: default_int_option("step"))
+    trait_type: types.RegenieTraitType = dataclasses.field(default_factory=default_trait_type)
+    bsize: int = dataclasses.field(default_factory=lambda: default_int_option("bsize"))
     threads: int | None = None
 
 
@@ -110,67 +105,146 @@ class TraitConfig:
 class BinaryConfig:
     """Binary-trait fallback settings."""
 
-    firth: bool = False
-    approx: bool = False
+    firth: bool = dataclasses.field(default_factory=lambda: default_bool_option("firth"))
+    approx: bool = dataclasses.field(default_factory=lambda: default_bool_option("approx"))
     spa: bool = False
-    p_threshold: float = DEFAULT_P_THRESHOLD
-    firth_se: bool = False
+    p_threshold: float = dataclasses.field(default_factory=lambda: default_float_option("pThresh"))
+    firth_se: bool = dataclasses.field(default_factory=lambda: default_bool_option("firth-se"))
 
 
 @dataclass(frozen=True)
 class GComputeConfig:
     """Engine-specific runtime and batching settings."""
 
-    device: types.Device = types.Device.CPU
-    staging_depth: int = 1
+    device: types.Device = dataclasses.field(default_factory=lambda: types.Device(default_string_option("g-device")))
+    staging_depth: int = dataclasses.field(default_factory=lambda: default_int_option("g-staging-depth"))
     variant_limit: int | None = None
-    trusted_no_missing_diploid: bool = False
-    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS
-    sample_key_mode: types.SampleKeyMode = types.SampleKeyMode.IID
-    multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode = types.MultiPhenotypeSampleMode.PER_PHENOTYPE
-    firth_batch_size: int = DEFAULT_FIRTH_BATCH_SIZE
-    firth_candidate_capacity: int = DEFAULT_FIRTH_CANDIDATE_CAPACITY
-    binary_null_maximum_iterations: int = DEFAULT_BINARY_NULL_MAXIMUM_ITERATIONS
-    binary_null_coefficient_tolerance: float = DEFAULT_BINARY_NULL_COEFFICIENT_TOLERANCE
-    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
-        DEFAULT_NULL_LOGISTIC_NONCONVERGENCE_POLICY
+    trusted_no_missing_diploid: bool = dataclasses.field(
+        default_factory=lambda: default_bool_option("g-trusted-no-missing-diploid")
     )
-    binary_minimum_probability: float = DEFAULT_BINARY_MINIMUM_PROBABILITY
-    binary_minimum_variance: float = DEFAULT_BINARY_MINIMUM_VARIANCE
-    binary_relative_variance_tolerance: float = DEFAULT_BINARY_RELATIVE_VARIANCE_TOLERANCE
-    firth_maximum_iterations: int = DEFAULT_FIRTH_MAXIMUM_ITERATIONS
-    firth_gradient_tolerance: float = DEFAULT_FIRTH_GRADIENT_TOLERANCE
-    firth_coefficient_tolerance: float = DEFAULT_FIRTH_COEFFICIENT_TOLERANCE
-    firth_likelihood_tolerance: float = DEFAULT_FIRTH_LIKELIHOOD_TOLERANCE
-    firth_maximum_step_size: float = DEFAULT_FIRTH_MAXIMUM_STEP_SIZE
-    firth_pseudo_maximum_iterations: int = DEFAULT_FIRTH_PSEUDO_MAXIMUM_ITERATIONS
-    firth_pseudo_inner_maximum_iterations: int = DEFAULT_FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS
-    firth_newton_raphson_zero_start_iterations: int = DEFAULT_FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS
-    firth_line_search_maximum_attempts: int = DEFAULT_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS
-    firth_step_halving_maximum_attempts: int = DEFAULT_FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS
-    firth_initial_response_scale: float = DEFAULT_FIRTH_INITIAL_RESPONSE_SCALE
-    firth_sparse_carrier_dosage_threshold: float = DEFAULT_FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD
-    firth_step_halving_scale: float = DEFAULT_FIRTH_STEP_HALVING_SCALE
-    null_firth_maximum_iterations: int = DEFAULT_NULL_FIRTH_MAXIMUM_ITERATIONS
-    null_firth_gradient_tolerance: float = DEFAULT_NULL_FIRTH_GRADIENT_TOLERANCE
-    null_firth_maximum_step_size: float = DEFAULT_NULL_FIRTH_MAXIMUM_STEP_SIZE
-    null_firth_fallback_iteration_multiplier: int = DEFAULT_NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER
-    null_firth_fallback_step_divisor: float = DEFAULT_NULL_FIRTH_FALLBACK_STEP_DIVISOR
-    null_firth_line_search_maximum_attempts: int = DEFAULT_NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS
-    null_firth_step_halving_scale: float = DEFAULT_NULL_FIRTH_STEP_HALVING_SCALE
-    use_block_firth_math: bool = False
-    bgen_decode_tile_variant_count: int = DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT
-    gpu_genotype_format: types.GpuGenotypeFormat = DEFAULT_GPU_GENOTYPE_FORMAT
-    score_dtype: types.FloatingPointDtype = DEFAULT_SCORE_DTYPE
-    firth_dtype: types.FloatingPointDtype = DEFAULT_FIRTH_DTYPE
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = dataclasses.field(
+        default_factory=lambda: types.TrustedBgenValidationMode(default_string_option("g-trusted-bgen-validation-mode"))
+    )
+    sample_key_mode: types.SampleKeyMode = dataclasses.field(
+        default_factory=lambda: types.SampleKeyMode(default_string_option("g-sample-key-mode"))
+    )
+    multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode = dataclasses.field(
+        default_factory=lambda: types.MultiPhenotypeSampleMode(default_string_option("g-multi-phenotype-sample-mode"))
+    )
+    firth_batch_size: int = dataclasses.field(default_factory=lambda: default_int_option("g-firth-batch-size"))
+    firth_candidate_capacity: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-firth-candidate-capacity")
+    )
+    binary_null_maximum_iterations: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-binary-null-maximum-iterations")
+    )
+    binary_null_coefficient_tolerance: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-binary-null-coefficient-tolerance")
+    )
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = dataclasses.field(
+        default_factory=lambda: types.NullLogisticNonconvergencePolicy(
+            default_string_option("g-null-logistic-nonconvergence")
+        )
+    )
+    binary_minimum_probability: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-binary-minimum-probability")
+    )
+    binary_minimum_variance: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-binary-minimum-variance")
+    )
+    binary_relative_variance_tolerance: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-binary-relative-variance-tolerance")
+    )
+    firth_maximum_iterations: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-firth-maximum-iterations")
+    )
+    firth_gradient_tolerance: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-firth-gradient-tolerance")
+    )
+    firth_coefficient_tolerance: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-firth-coefficient-tolerance")
+    )
+    firth_likelihood_tolerance: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-firth-likelihood-tolerance")
+    )
+    firth_maximum_step_size: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-firth-maximum-step-size")
+    )
+    firth_pseudo_maximum_iterations: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-firth-pseudo-maximum-iterations")
+    )
+    firth_pseudo_inner_maximum_iterations: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-firth-pseudo-inner-maximum-iterations")
+    )
+    firth_newton_raphson_zero_start_iterations: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-firth-newton-raphson-zero-start-iterations")
+    )
+    firth_line_search_maximum_attempts: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-firth-line-search-maximum-attempts")
+    )
+    firth_step_halving_maximum_attempts: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-firth-step-halving-maximum-attempts")
+    )
+    firth_initial_response_scale: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-firth-initial-response-scale")
+    )
+    firth_sparse_carrier_dosage_threshold: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-firth-sparse-carrier-dosage-threshold")
+    )
+    firth_step_halving_scale: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-firth-step-halving-scale")
+    )
+    null_firth_maximum_iterations: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-null-firth-maximum-iterations")
+    )
+    null_firth_gradient_tolerance: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-null-firth-gradient-tolerance")
+    )
+    null_firth_maximum_step_size: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-null-firth-maximum-step-size")
+    )
+    null_firth_fallback_iteration_multiplier: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-null-firth-fallback-iteration-multiplier")
+    )
+    null_firth_fallback_step_divisor: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-null-firth-fallback-step-divisor")
+    )
+    null_firth_line_search_maximum_attempts: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-null-firth-line-search-maximum-attempts")
+    )
+    null_firth_step_halving_scale: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-null-firth-step-halving-scale")
+    )
+    use_block_firth_math: bool = dataclasses.field(
+        default_factory=lambda: default_bool_option("g-use-block-firth-math")
+    )
+    bgen_decode_tile_variant_count: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-bgen-decode-tile-variant-count")
+    )
+    gpu_genotype_format: types.GpuGenotypeFormat = dataclasses.field(
+        default_factory=lambda: types.GpuGenotypeFormat(default_string_option("g-gpu-genotype-format"))
+    )
+    score_dtype: types.FloatingPointDtype = dataclasses.field(
+        default_factory=lambda: types.FloatingPointDtype(default_string_option("g-score-dtype"))
+    )
+    firth_dtype: types.FloatingPointDtype = dataclasses.field(
+        default_factory=lambda: types.FloatingPointDtype(default_string_option("g-firth-dtype"))
+    )
     jax_cache_dir: Path | None = None
     jax_matmul_precision: types.JaxMatmulPrecision | None = None
-    jax_enable_x64: bool = DEFAULT_JAX_ENABLE_X64
-    jax_persistent_cache: bool = True
-    jax_persistent_cache_min_entry_size_bytes: int = DEFAULT_JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES
-    jax_persistent_cache_min_compile_time_seconds: int = DEFAULT_JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS
-    jax_xla_autotune_cache: bool = False
-    jax_transfer_guard: bool = False
+    jax_persistent_cache: bool = dataclasses.field(
+        default_factory=lambda: default_bool_option("g-jax-persistent-cache")
+    )
+    jax_persistent_cache_min_entry_size_bytes: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-jax-persistent-cache-min-entry-size-bytes")
+    )
+    jax_persistent_cache_min_compile_time_seconds: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-jax-persistent-cache-min-compile-time-seconds")
+    )
+    jax_xla_autotune_cache: bool = dataclasses.field(
+        default_factory=lambda: default_bool_option("g-jax-xla-autotune-cache")
+    )
+    jax_transfer_guard: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-jax-transfer-guard"))
 
 
 @dataclass(frozen=True)
@@ -178,36 +252,52 @@ class GOutputConfig:
     """Engine-specific output settings."""
 
     out: Path | None = None
-    format: types.OutputFormat = types.OutputFormat.PARQUET
+    format: types.OutputFormat = dataclasses.field(
+        default_factory=lambda: types.OutputFormat(default_string_option("g-output-format"))
+    )
     output_run_directory: Path | None = None
-    writer_threads: int = DEFAULT_OUTPUT_WRITER_THREADS
-    writer_queue_depth: int = DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
-    chunks_per_arrow_file: int = DEFAULT_OUTPUT_CHUNKS_PER_ARROW_FILE
-    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD
-    resume: bool = False
-    resume_mode: types.ResumeMode = types.ResumeMode.FAST
-    finalize_parquet: bool = False
+    writer_threads: int = dataclasses.field(default_factory=lambda: default_int_option("g-writer-threads"))
+    writer_queue_depth: int = dataclasses.field(default_factory=lambda: default_int_option("g-writer-queue-depth"))
+    chunks_per_arrow_file: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-output-chunks-per-arrow-file")
+    )
+    arrow_compression: types.ArrowCompression = dataclasses.field(
+        default_factory=lambda: types.ArrowCompression(default_string_option("g-output-arrow-compression"))
+    )
+    resume: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-resume"))
+    resume_mode: types.ResumeMode = dataclasses.field(
+        default_factory=lambda: types.ResumeMode(default_string_option("g-resume-mode"))
+    )
+    finalize_parquet: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-finalize-parquet"))
 
 
 @dataclass(frozen=True)
 class GDiagnosticsConfig:
     """Engine diagnostics settings."""
 
-    telemetry: types.TelemetryMode = types.TelemetryMode.PROGRESS
+    telemetry: types.TelemetryMode = dataclasses.field(
+        default_factory=lambda: types.TelemetryMode(default_string_option("g-telemetry"))
+    )
     log_dir: Path | None = None
     stage_timings_json: Path | None = None
-    log_filter: str = DEFAULT_LOG_FILTER
+    log_filter: str = dataclasses.field(default_factory=lambda: default_string_option("g-log-filter"))
     log_file: Path | None = None
-    log_stderr: bool = True
-    progress_interval_seconds: float = DEFAULT_PROGRESS_INTERVAL_SECONDS
-    progress_interval_chunks: int = DEFAULT_PROGRESS_INTERVAL_CHUNKS
+    log_stderr: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-log-stderr"))
+    progress_interval_seconds: float = dataclasses.field(
+        default_factory=lambda: default_float_option("g-progress-interval-seconds")
+    )
+    progress_interval_chunks: int = dataclasses.field(
+        default_factory=lambda: default_int_option("g-progress-interval-chunks")
+    )
     profile_summary_json: Path | None = None
     trace_file: Path | None = None
-    trace_filter: str = DEFAULT_TRACE_FILTER
-    log_queue_size: int = DEFAULT_LOG_QUEUE_SIZE
-    log_lossy: bool = True
-    include_source_location: bool = False
-    include_span_events: bool = False
+    trace_filter: str = dataclasses.field(default_factory=lambda: default_string_option("g-trace-filter"))
+    log_queue_size: int = dataclasses.field(default_factory=lambda: default_int_option("g-log-queue-size"))
+    log_lossy: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-log-lossy"))
+    include_source_location: bool = dataclasses.field(
+        default_factory=lambda: default_bool_option("g-include-source-location")
+    )
+    include_span_events: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-include-span-events"))
 
 
 @dataclass(frozen=True)
@@ -303,9 +393,10 @@ def merge_option_dictionaries(
 
 def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
     """Build a normalized config from CLI/TOML/Python option dictionaries."""
-    return from_option_layers(
-        base_options=load_default_option_dictionary(),
-        explicit_option_layers=(raw_options,),
+    explicit_layer = config_layers.option_dictionary_to_toml_config_layer(raw_options, source="Python options")
+    return from_toml_config_layers(
+        base_config=defaults.load_default_option_catalog().toml_config,
+        explicit_layers=(explicit_layer,),
     )
 
 
@@ -315,15 +406,14 @@ def from_option_layers(
     explicit_option_layers: typing.Iterable[typing.Mapping[str, typing.Any]],
 ) -> RegenieConfig:
     """Build a normalized config from base options and explicit override layers."""
-    normalized_options = normalize_option_dictionary(base_options)
-    explicit_option_names: set[str] = set()
-    for raw_option_layer in explicit_option_layers:
-        normalized_option_layer = normalize_option_dictionary(raw_option_layer)
-        normalized_options = merge_option_dictionaries(normalized_options, normalized_option_layer)
-        explicit_option_names.update(normalized_option_layer)
-    return from_normalized_options(
-        normalized_options=normalized_options,
-        explicit_options=frozenset(explicit_option_names),
+    base_layer = config_layers.option_dictionary_to_toml_config_layer(base_options, source="base options")
+    explicit_layers = tuple(
+        config_layers.option_dictionary_to_toml_config_layer(raw_option_layer, source="explicit options")
+        for raw_option_layer in explicit_option_layers
+    )
+    return from_toml_config_layers(
+        base_config=base_layer.toml_config,
+        explicit_layers=explicit_layers,
     )
 
 
@@ -333,286 +423,358 @@ def from_normalized_options(
     explicit_options: frozenset[str],
 ) -> RegenieConfig:
     """Build a normalized config from already-merged normalized options."""
-    trait_type = resolve_configured_trait_type(normalized_options)
+    toml_config = config_layers.option_dictionary_to_toml_config_layer(
+        normalized_options,
+        source="normalized options",
+    ).toml_config
+    return from_toml_config(
+        toml_config=toml_config,
+        explicit_options=explicit_options,
+    )
+
+
+def from_toml_config_layers(
+    *,
+    base_config: toml_schema.TomlConfig,
+    explicit_layers: typing.Iterable[config_layers.TomlConfigLayer],
+) -> RegenieConfig:
+    """Build a resolved config by overlaying typed TOML config layers."""
+    merged_toml_config = base_config
+    explicit_option_names: set[str] = set()
+    for explicit_layer in explicit_layers:
+        merged_toml_config = config_layers.overlay_toml_configs(merged_toml_config, explicit_layer.toml_config)
+        explicit_option_names.update(explicit_layer.explicit_options)
+    return from_toml_config(
+        toml_config=merged_toml_config,
+        explicit_options=frozenset(explicit_option_names),
+    )
+
+
+def from_toml_config(
+    *,
+    toml_config: toml_schema.TomlConfig,
+    explicit_options: frozenset[str],
+) -> RegenieConfig:
+    """Build a resolved config from a merged typed TOML config."""
+    input_section = section_or_default(toml_config.input, toml_schema.InputToml)
+    trait_section = section_or_default(toml_config.trait, toml_schema.TraitToml)
+    binary_section = section_or_default(toml_config.binary, toml_schema.BinaryToml)
+    output_section = section_or_default(toml_config.output, toml_schema.OutputToml)
+    g_section = section_or_default(toml_config.g, toml_schema.GNamespaceToml)
+    g_compute_section = section_or_default(g_section.compute, toml_schema.GComputeToml)
+    g_output_section = section_or_default(g_section.output, toml_schema.GOutputToml)
+    g_diagnostics_section = section_or_default(g_section.diagnostics, toml_schema.GDiagnosticsToml)
+    normalized_options = config_layers.toml_config_to_option_dictionary(toml_config)
+    trait_type = resolve_configured_toml_trait_type(trait_section)
     reject_quantitative_binary_only_options(
         explicit_options=explicit_options,
         trait_type=trait_type,
     )
     reject_unsupported_options(normalized_options)
     validate_unknown_options(normalized_options)
-    pheno_columns = resolve_exclusive_columns(
-        normalized_options,
+    pheno_columns = resolve_exclusive_column_values(
+        repeated_value=input_section.pheno_col,
+        list_value=input_section.pheno_col_list,
         repeated_key="phenoCol",
         list_key="phenoColList",
-        repeated_snake_key="pheno_col",
-        list_snake_key="pheno_col_list",
     )
-    covar_columns = resolve_exclusive_columns(
-        normalized_options,
+    covar_columns = resolve_exclusive_column_values(
+        repeated_value=input_section.covar_col,
+        list_value=input_section.covar_col_list,
         repeated_key="covarCol",
         list_key="covarColList",
-        repeated_snake_key="covar_col",
-        list_snake_key="covar_col_list",
     )
     config = RegenieConfig(
         input=InputConfig(
-            bgen=path_or_none(normalized_options.get("bgen")),
-            sample=path_or_none(normalized_options.get("sample")),
-            pheno_file=path_or_none(normalized_options.get("phenoFile")),
+            bgen=path_or_none(optional_toml_value(input_section.bgen)),
+            sample=path_or_none(optional_toml_value(input_section.sample)),
+            pheno_file=path_or_none(optional_toml_value(input_section.pheno_file)),
             pheno_columns=pheno_columns,
-            covar_file=path_or_none(normalized_options.get("covarFile")),
+            covar_file=path_or_none(optional_toml_value(input_section.covar_file)),
             covar_columns=covar_columns,
-            pred=path_or_none(normalized_options.get("pred")),
+            pred=path_or_none(optional_toml_value(input_section.pred)),
         ),
         trait=TraitConfig(
-            step=int(normalized_options.get("step", 2)),
+            step=required_toml_value(trait_section.step, "step"),
             trait_type=trait_type,
-            bsize=int(normalized_options.get("bsize", DEFAULT_BSIZE)),
-            threads=optional_int(normalized_options.get("threads")),
+            bsize=required_toml_value(trait_section.bsize, "bsize"),
+            threads=optional_toml_value(trait_section.threads),
         ),
         binary=BinaryConfig(
-            firth=bool_or_false(normalized_options.get("firth")),
-            approx=bool_or_false(normalized_options.get("approx")),
-            spa=bool_or_false(normalized_options.get("spa")),
-            p_threshold=float(normalized_options.get("pThresh", DEFAULT_P_THRESHOLD)),
-            firth_se=bool_or_false(normalized_options.get("firth-se")),
+            firth=required_toml_value(binary_section.firth, "firth"),
+            approx=required_toml_value(binary_section.approx, "approx"),
+            spa=bool_or_false(optional_toml_value(binary_section.spa)),
+            p_threshold=required_toml_value(binary_section.p_threshold, "pThresh"),
+            firth_se=required_toml_value(binary_section.firth_se, "firth-se"),
         ),
         g_compute=GComputeConfig(
-            device=types.Device(str(normalized_options.get("g-device", types.Device.CPU.value))),
-            staging_depth=int(normalized_options.get("g-staging-depth", 1)),
-            variant_limit=optional_int(normalized_options.get("g-variant-limit")),
-            trusted_no_missing_diploid=bool_or_false(normalized_options.get("g-trusted-no-missing-diploid")),
+            device=types.Device(required_toml_value(g_compute_section.device, "g-device")),
+            staging_depth=required_toml_value(g_compute_section.staging_depth, "g-staging-depth"),
+            variant_limit=optional_toml_value(g_compute_section.variant_limit),
+            trusted_no_missing_diploid=required_toml_value(
+                g_compute_section.trusted_no_missing_diploid,
+                "g-trusted-no-missing-diploid",
+            ),
             trusted_bgen_validation_mode=types.TrustedBgenValidationMode(
-                str(
-                    normalized_options.get(
-                        "g-trusted-bgen-validation-mode",
-                        types.TrustedBgenValidationMode.CACHE_ON_MISS.value,
-                    )
+                required_toml_value(
+                    g_compute_section.trusted_bgen_validation_mode,
+                    "g-trusted-bgen-validation-mode",
                 )
             ),
             sample_key_mode=types.SampleKeyMode(
-                str(normalized_options.get("g-sample-key-mode", types.SampleKeyMode.IID.value))
+                required_toml_value(g_compute_section.sample_key_mode, "g-sample-key-mode")
             ),
             multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode(
-                str(
-                    normalized_options.get(
-                        "g-multi-phenotype-sample-mode",
-                        types.MultiPhenotypeSampleMode.PER_PHENOTYPE.value,
-                    )
+                required_toml_value(
+                    g_compute_section.multi_phenotype_sample_mode,
+                    "g-multi-phenotype-sample-mode",
                 )
             ),
-            firth_batch_size=int(normalized_options.get("g-firth-batch-size", DEFAULT_FIRTH_BATCH_SIZE)),
-            firth_candidate_capacity=int(
-                normalized_options.get("g-firth-candidate-capacity", DEFAULT_FIRTH_CANDIDATE_CAPACITY)
+            firth_batch_size=required_toml_value(g_compute_section.firth_batch_size, "g-firth-batch-size"),
+            firth_candidate_capacity=required_toml_value(
+                g_compute_section.firth_candidate_capacity,
+                "g-firth-candidate-capacity",
             ),
-            binary_null_maximum_iterations=int(
-                normalized_options.get(
-                    "g-binary-null-maximum-iterations",
-                    DEFAULT_BINARY_NULL_MAXIMUM_ITERATIONS,
-                )
+            binary_null_maximum_iterations=required_toml_value(
+                g_compute_section.binary_null_maximum_iterations,
+                "g-binary-null-maximum-iterations",
             ),
-            binary_null_coefficient_tolerance=float(
-                normalized_options.get(
-                    "g-binary-null-coefficient-tolerance",
-                    DEFAULT_BINARY_NULL_COEFFICIENT_TOLERANCE,
-                )
+            binary_null_coefficient_tolerance=required_toml_value(
+                g_compute_section.binary_null_coefficient_tolerance,
+                "g-binary-null-coefficient-tolerance",
             ),
             null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy(
-                str(
-                    normalized_options.get(
-                        "g-null-logistic-nonconvergence",
-                        DEFAULT_NULL_LOGISTIC_NONCONVERGENCE_POLICY.value,
-                    )
+                required_toml_value(
+                    g_compute_section.null_logistic_nonconvergence,
+                    "g-null-logistic-nonconvergence",
                 )
             ),
-            binary_minimum_probability=float(
-                normalized_options.get("g-binary-minimum-probability", DEFAULT_BINARY_MINIMUM_PROBABILITY)
+            binary_minimum_probability=required_toml_value(
+                g_compute_section.binary_minimum_probability,
+                "g-binary-minimum-probability",
             ),
-            binary_minimum_variance=float(
-                normalized_options.get("g-binary-minimum-variance", DEFAULT_BINARY_MINIMUM_VARIANCE)
+            binary_minimum_variance=required_toml_value(
+                g_compute_section.binary_minimum_variance,
+                "g-binary-minimum-variance",
             ),
-            binary_relative_variance_tolerance=float(
-                normalized_options.get(
-                    "g-binary-relative-variance-tolerance",
-                    DEFAULT_BINARY_RELATIVE_VARIANCE_TOLERANCE,
-                )
+            binary_relative_variance_tolerance=required_toml_value(
+                g_compute_section.binary_relative_variance_tolerance,
+                "g-binary-relative-variance-tolerance",
             ),
-            firth_maximum_iterations=int(
-                normalized_options.get("g-firth-maximum-iterations", DEFAULT_FIRTH_MAXIMUM_ITERATIONS)
+            firth_maximum_iterations=required_toml_value(
+                g_compute_section.firth_maximum_iterations,
+                "g-firth-maximum-iterations",
             ),
-            firth_gradient_tolerance=float(
-                normalized_options.get("g-firth-gradient-tolerance", DEFAULT_FIRTH_GRADIENT_TOLERANCE)
+            firth_gradient_tolerance=required_toml_value(
+                g_compute_section.firth_gradient_tolerance,
+                "g-firth-gradient-tolerance",
             ),
-            firth_coefficient_tolerance=float(
-                normalized_options.get("g-firth-coefficient-tolerance", DEFAULT_FIRTH_COEFFICIENT_TOLERANCE)
+            firth_coefficient_tolerance=required_toml_value(
+                g_compute_section.firth_coefficient_tolerance,
+                "g-firth-coefficient-tolerance",
             ),
-            firth_likelihood_tolerance=float(
-                normalized_options.get("g-firth-likelihood-tolerance", DEFAULT_FIRTH_LIKELIHOOD_TOLERANCE)
+            firth_likelihood_tolerance=required_toml_value(
+                g_compute_section.firth_likelihood_tolerance,
+                "g-firth-likelihood-tolerance",
             ),
-            firth_maximum_step_size=float(
-                normalized_options.get("g-firth-maximum-step-size", DEFAULT_FIRTH_MAXIMUM_STEP_SIZE)
+            firth_maximum_step_size=required_toml_value(
+                g_compute_section.firth_maximum_step_size,
+                "g-firth-maximum-step-size",
             ),
-            firth_pseudo_maximum_iterations=int(
-                normalized_options.get(
-                    "g-firth-pseudo-maximum-iterations",
-                    DEFAULT_FIRTH_PSEUDO_MAXIMUM_ITERATIONS,
-                )
+            firth_pseudo_maximum_iterations=required_toml_value(
+                g_compute_section.firth_pseudo_maximum_iterations,
+                "g-firth-pseudo-maximum-iterations",
             ),
-            firth_pseudo_inner_maximum_iterations=int(
-                normalized_options.get(
-                    "g-firth-pseudo-inner-maximum-iterations",
-                    DEFAULT_FIRTH_PSEUDO_INNER_MAXIMUM_ITERATIONS,
-                )
+            firth_pseudo_inner_maximum_iterations=required_toml_value(
+                g_compute_section.firth_pseudo_inner_maximum_iterations,
+                "g-firth-pseudo-inner-maximum-iterations",
             ),
-            firth_newton_raphson_zero_start_iterations=int(
-                normalized_options.get(
-                    "g-firth-newton-raphson-zero-start-iterations",
-                    DEFAULT_FIRTH_NEWTON_RAPHSON_ZERO_START_ITERATIONS,
-                )
+            firth_newton_raphson_zero_start_iterations=required_toml_value(
+                g_compute_section.firth_newton_raphson_zero_start_iterations,
+                "g-firth-newton-raphson-zero-start-iterations",
             ),
-            firth_line_search_maximum_attempts=int(
-                normalized_options.get(
-                    "g-firth-line-search-maximum-attempts",
-                    DEFAULT_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS,
-                )
+            firth_line_search_maximum_attempts=required_toml_value(
+                g_compute_section.firth_line_search_maximum_attempts,
+                "g-firth-line-search-maximum-attempts",
             ),
-            firth_step_halving_maximum_attempts=int(
-                normalized_options.get(
-                    "g-firth-step-halving-maximum-attempts",
-                    DEFAULT_FIRTH_STEP_HALVING_MAXIMUM_ATTEMPTS,
-                )
+            firth_step_halving_maximum_attempts=required_toml_value(
+                g_compute_section.firth_step_halving_maximum_attempts,
+                "g-firth-step-halving-maximum-attempts",
             ),
-            firth_initial_response_scale=float(
-                normalized_options.get(
-                    "g-firth-initial-response-scale",
-                    DEFAULT_FIRTH_INITIAL_RESPONSE_SCALE,
-                )
+            firth_initial_response_scale=required_toml_value(
+                g_compute_section.firth_initial_response_scale,
+                "g-firth-initial-response-scale",
             ),
-            firth_sparse_carrier_dosage_threshold=float(
-                normalized_options.get(
-                    "g-firth-sparse-carrier-dosage-threshold",
-                    DEFAULT_FIRTH_SPARSE_CARRIER_DOSAGE_THRESHOLD,
-                )
+            firth_sparse_carrier_dosage_threshold=required_toml_value(
+                g_compute_section.firth_sparse_carrier_dosage_threshold,
+                "g-firth-sparse-carrier-dosage-threshold",
             ),
-            firth_step_halving_scale=float(
-                normalized_options.get("g-firth-step-halving-scale", DEFAULT_FIRTH_STEP_HALVING_SCALE)
+            firth_step_halving_scale=required_toml_value(
+                g_compute_section.firth_step_halving_scale,
+                "g-firth-step-halving-scale",
             ),
-            null_firth_maximum_iterations=int(
-                normalized_options.get("g-null-firth-maximum-iterations", DEFAULT_NULL_FIRTH_MAXIMUM_ITERATIONS)
+            null_firth_maximum_iterations=required_toml_value(
+                g_compute_section.null_firth_maximum_iterations,
+                "g-null-firth-maximum-iterations",
             ),
-            null_firth_gradient_tolerance=float(
-                normalized_options.get("g-null-firth-gradient-tolerance", DEFAULT_NULL_FIRTH_GRADIENT_TOLERANCE)
+            null_firth_gradient_tolerance=required_toml_value(
+                g_compute_section.null_firth_gradient_tolerance,
+                "g-null-firth-gradient-tolerance",
             ),
-            null_firth_maximum_step_size=float(
-                normalized_options.get("g-null-firth-maximum-step-size", DEFAULT_NULL_FIRTH_MAXIMUM_STEP_SIZE)
+            null_firth_maximum_step_size=required_toml_value(
+                g_compute_section.null_firth_maximum_step_size,
+                "g-null-firth-maximum-step-size",
             ),
-            null_firth_fallback_iteration_multiplier=int(
-                normalized_options.get(
-                    "g-null-firth-fallback-iteration-multiplier",
-                    DEFAULT_NULL_FIRTH_FALLBACK_ITERATION_MULTIPLIER,
-                )
+            null_firth_fallback_iteration_multiplier=required_toml_value(
+                g_compute_section.null_firth_fallback_iteration_multiplier,
+                "g-null-firth-fallback-iteration-multiplier",
             ),
-            null_firth_fallback_step_divisor=float(
-                normalized_options.get(
-                    "g-null-firth-fallback-step-divisor",
-                    DEFAULT_NULL_FIRTH_FALLBACK_STEP_DIVISOR,
-                )
+            null_firth_fallback_step_divisor=required_toml_value(
+                g_compute_section.null_firth_fallback_step_divisor,
+                "g-null-firth-fallback-step-divisor",
             ),
-            null_firth_line_search_maximum_attempts=int(
-                normalized_options.get(
-                    "g-null-firth-line-search-maximum-attempts",
-                    DEFAULT_NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS,
-                )
+            null_firth_line_search_maximum_attempts=required_toml_value(
+                g_compute_section.null_firth_line_search_maximum_attempts,
+                "g-null-firth-line-search-maximum-attempts",
             ),
-            null_firth_step_halving_scale=float(
-                normalized_options.get(
-                    "g-null-firth-step-halving-scale",
-                    DEFAULT_NULL_FIRTH_STEP_HALVING_SCALE,
-                )
+            null_firth_step_halving_scale=required_toml_value(
+                g_compute_section.null_firth_step_halving_scale,
+                "g-null-firth-step-halving-scale",
             ),
-            use_block_firth_math=bool_or_false(normalized_options.get("g-use-block-firth-math")),
-            bgen_decode_tile_variant_count=int(
-                normalized_options.get(
-                    "g-bgen-decode-tile-variant-count",
-                    DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
-                )
+            use_block_firth_math=required_toml_value(
+                g_compute_section.use_block_firth_math,
+                "g-use-block-firth-math",
+            ),
+            bgen_decode_tile_variant_count=required_toml_value(
+                g_compute_section.bgen_decode_tile_variant_count,
+                "g-bgen-decode-tile-variant-count",
             ),
             gpu_genotype_format=types.GpuGenotypeFormat(
-                str(normalized_options.get("g-gpu-genotype-format", DEFAULT_GPU_GENOTYPE_FORMAT.value))
+                required_toml_value(g_compute_section.gpu_genotype_format, "g-gpu-genotype-format")
             ),
-            score_dtype=floating_point_dtype_or_default(
-                normalized_options.get("g-score-dtype"),
-                default=DEFAULT_SCORE_DTYPE,
+            score_dtype=types.FloatingPointDtype(required_toml_value(g_compute_section.score_dtype, "g-score-dtype")),
+            firth_dtype=types.FloatingPointDtype(required_toml_value(g_compute_section.firth_dtype, "g-firth-dtype")),
+            jax_cache_dir=path_or_none(optional_toml_value(g_compute_section.jax_cache_dir)),
+            jax_matmul_precision=optional_jax_matmul_precision(
+                optional_toml_value(g_compute_section.jax_matmul_precision)
             ),
-            firth_dtype=floating_point_dtype_or_default(
-                normalized_options.get("g-firth-dtype"),
-                default=DEFAULT_FIRTH_DTYPE,
+            jax_persistent_cache=required_toml_value(
+                g_compute_section.jax_persistent_cache,
+                "g-jax-persistent-cache",
             ),
-            jax_cache_dir=path_or_none(normalized_options.get("g-jax-cache-dir")),
-            jax_matmul_precision=optional_jax_matmul_precision(normalized_options.get("g-jax-matmul-precision")),
-            jax_enable_x64=bool_or_default(
-                normalized_options.get("g-jax-enable-x64"),
-                default=DEFAULT_JAX_ENABLE_X64,
+            jax_persistent_cache_min_entry_size_bytes=required_toml_value(
+                g_compute_section.jax_persistent_cache_min_entry_size_bytes,
+                "g-jax-persistent-cache-min-entry-size-bytes",
             ),
-            jax_persistent_cache=bool_or_default(normalized_options.get("g-jax-persistent-cache"), default=True),
-            jax_persistent_cache_min_entry_size_bytes=int(
-                normalized_options.get(
-                    "g-jax-persistent-cache-min-entry-size-bytes",
-                    DEFAULT_JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
-                )
+            jax_persistent_cache_min_compile_time_seconds=required_toml_value(
+                g_compute_section.jax_persistent_cache_min_compile_time_seconds,
+                "g-jax-persistent-cache-min-compile-time-seconds",
             ),
-            jax_persistent_cache_min_compile_time_seconds=int(
-                normalized_options.get(
-                    "g-jax-persistent-cache-min-compile-time-seconds",
-                    DEFAULT_JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
-                )
+            jax_xla_autotune_cache=required_toml_value(
+                g_compute_section.jax_xla_autotune_cache,
+                "g-jax-xla-autotune-cache",
             ),
-            jax_xla_autotune_cache=bool_or_false(normalized_options.get("g-jax-xla-autotune-cache")),
-            jax_transfer_guard=bool_or_false(normalized_options.get("g-jax-transfer-guard")),
+            jax_transfer_guard=required_toml_value(g_compute_section.jax_transfer_guard, "g-jax-transfer-guard"),
         ),
         g_output=GOutputConfig(
-            out=path_or_none(normalized_options.get("out")),
-            format=types.OutputFormat(str(normalized_options.get("g-output-format", types.OutputFormat.PARQUET.value))),
-            output_run_directory=path_or_none(normalized_options.get("g-output-run-directory")),
-            writer_threads=int(normalized_options.get("g-writer-threads", DEFAULT_OUTPUT_WRITER_THREADS)),
-            writer_queue_depth=int(normalized_options.get("g-writer-queue-depth", DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH)),
-            chunks_per_arrow_file=int(
-                normalized_options.get("g-output-chunks-per-arrow-file", DEFAULT_OUTPUT_CHUNKS_PER_ARROW_FILE)
+            out=path_or_none(optional_toml_value(output_section.out)),
+            format=types.OutputFormat(required_toml_value(g_output_section.format, "g-output-format")),
+            output_run_directory=path_or_none(optional_toml_value(g_output_section.output_run_directory)),
+            writer_threads=required_toml_value(g_output_section.writer_threads, "g-writer-threads"),
+            writer_queue_depth=required_toml_value(g_output_section.writer_queue_depth, "g-writer-queue-depth"),
+            chunks_per_arrow_file=required_toml_value(
+                g_output_section.chunks_per_arrow_file,
+                "g-output-chunks-per-arrow-file",
             ),
             arrow_compression=types.ArrowCompression(
-                str(normalized_options.get("g-output-arrow-compression", types.ArrowCompression.ZSTD.value))
+                required_toml_value(g_output_section.arrow_compression, "g-output-arrow-compression")
             ),
-            resume=bool_or_false(normalized_options.get("g-resume")),
-            resume_mode=types.ResumeMode(str(normalized_options.get("g-resume-mode", types.ResumeMode.FAST.value))),
-            finalize_parquet=bool_or_false(normalized_options.get("g-finalize-parquet")),
+            resume=required_toml_value(g_output_section.resume, "g-resume"),
+            resume_mode=types.ResumeMode(required_toml_value(g_output_section.resume_mode, "g-resume-mode")),
+            finalize_parquet=required_toml_value(g_output_section.finalize_parquet, "g-finalize-parquet"),
         ),
         g_diagnostics=GDiagnosticsConfig(
-            telemetry=types.TelemetryMode(
-                str(normalized_options.get("g-telemetry", types.TelemetryMode.PROGRESS.value))
+            telemetry=types.TelemetryMode(required_toml_value(g_diagnostics_section.telemetry, "g-telemetry")),
+            log_dir=path_or_none(optional_toml_value(g_diagnostics_section.log_dir)),
+            stage_timings_json=path_or_none(optional_toml_value(g_diagnostics_section.stage_timings_json)),
+            log_filter=required_toml_value(g_diagnostics_section.log_filter, "g-log-filter"),
+            log_file=path_or_none(optional_toml_value(g_diagnostics_section.log_file)),
+            log_stderr=required_toml_value(g_diagnostics_section.log_stderr, "g-log-stderr"),
+            progress_interval_seconds=required_toml_value(
+                g_diagnostics_section.progress_interval_seconds,
+                "g-progress-interval-seconds",
             ),
-            log_dir=path_or_none(normalized_options.get("g-log-dir")),
-            stage_timings_json=path_or_none(normalized_options.get("g-stage-timings-json")),
-            log_filter=optional_string(normalized_options.get("g-log-filter")) or DEFAULT_LOG_FILTER,
-            log_file=path_or_none(normalized_options.get("g-log-file")),
-            log_stderr=bool_or_default(normalized_options.get("g-log-stderr"), default=True),
-            progress_interval_seconds=float(
-                normalized_options.get("g-progress-interval-seconds", DEFAULT_PROGRESS_INTERVAL_SECONDS)
+            progress_interval_chunks=required_toml_value(
+                g_diagnostics_section.progress_interval_chunks,
+                "g-progress-interval-chunks",
             ),
-            progress_interval_chunks=int(
-                normalized_options.get("g-progress-interval-chunks", DEFAULT_PROGRESS_INTERVAL_CHUNKS)
+            profile_summary_json=path_or_none(optional_toml_value(g_diagnostics_section.profile_summary_json)),
+            trace_file=path_or_none(optional_toml_value(g_diagnostics_section.trace_file)),
+            trace_filter=required_toml_value(g_diagnostics_section.trace_filter, "g-trace-filter"),
+            log_queue_size=required_toml_value(g_diagnostics_section.log_queue_size, "g-log-queue-size"),
+            log_lossy=required_toml_value(g_diagnostics_section.log_lossy, "g-log-lossy"),
+            include_source_location=required_toml_value(
+                g_diagnostics_section.include_source_location,
+                "g-include-source-location",
             ),
-            profile_summary_json=path_or_none(normalized_options.get("g-profile-summary-json")),
-            trace_file=path_or_none(normalized_options.get("g-trace-file")),
-            trace_filter=optional_string(normalized_options.get("g-trace-filter")) or DEFAULT_TRACE_FILTER,
-            log_queue_size=int(normalized_options.get("g-log-queue-size", DEFAULT_LOG_QUEUE_SIZE)),
-            log_lossy=bool_or_default(normalized_options.get("g-log-lossy"), default=True),
-            include_source_location=bool_or_false(normalized_options.get("g-include-source-location")),
-            include_span_events=bool_or_false(normalized_options.get("g-include-span-events")),
+            include_span_events=required_toml_value(
+                g_diagnostics_section.include_span_events,
+                "g-include-span-events",
+            ),
         ),
         explicit_options=explicit_options,
     )
     validate_config(config)
     return config
+
+
+def section_or_default[TomlStructT: msgspec.Struct](
+    section: TomlStructT | msgspec.UnsetType,
+    section_type: type[TomlStructT],
+) -> TomlStructT:
+    """Return a TOML section or an empty section instance when absent."""
+    if section is msgspec.UNSET:
+        return section_type()
+    return section
+
+
+def required_toml_value[TomlValueT](raw_value: TomlValueT | msgspec.UnsetType, option_name: str) -> TomlValueT:
+    """Return a required resolved TOML value or fail loudly."""
+    if raw_value is msgspec.UNSET:
+        message = f"Default config is missing required default option {option_name!r}."
+        raise ValueError(message)
+    return raw_value
+
+
+def optional_toml_value[TomlValueT](raw_value: TomlValueT | msgspec.UnsetType) -> TomlValueT | None:
+    """Return an optional TOML value, mapping absent fields to None."""
+    if raw_value is msgspec.UNSET:
+        return None
+    return raw_value
+
+
+def resolve_configured_toml_trait_type(trait_section: toml_schema.TraitToml) -> types.RegenieTraitType:
+    """Resolve trait type from the typed TOML trait section."""
+    return normalize_trait_type(
+        qt=optional_toml_value(trait_section.qt),
+        bt=optional_toml_value(trait_section.bt),
+    )
+
+
+def resolve_exclusive_column_values(
+    *,
+    repeated_value: toml_schema.TomlStringList,
+    list_value: toml_schema.TomlStringList,
+    repeated_key: str,
+    list_key: str,
+) -> tuple[str, ...]:
+    """Resolve repeated and comma-delimited column-list TOML values."""
+    repeated_columns = split_name_list(optional_toml_value(repeated_value))
+    list_columns = split_name_list(optional_toml_value(list_value))
+    if repeated_columns and list_columns:
+        message = f"Use either --{repeated_key} or --{list_key}, not both."
+        raise ValueError(message)
+    return repeated_columns or list_columns
 
 
 def optional_int(raw_value: typing.Any) -> int | None:
@@ -653,215 +815,17 @@ def resolve_configured_trait_type(normalized_options: typing.Mapping[str, typing
 
 def normalize_option_dictionary(raw_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
     """Normalize snake-case aliases and nested dictionaries into option names."""
-    normalized_options: dict[str, typing.Any] = {}
-    for option_name, option_value in flatten_option_dictionary(raw_options).items():
-        normalized_name = normalize_option_name(option_name)
-        normalized_options[normalized_name] = option_value
-    return normalized_options
+    return config_layers.normalize_option_dictionary(raw_options)
 
 
 def flatten_option_dictionary(raw_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
     """Flatten TOML-style nested dictionaries into CLI-style names."""
-    flattened_options: dict[str, typing.Any] = {}
-    section_prefixes = {
-        "input": "",
-        "trait": "",
-        "binary": "",
-        "output": "",
-        "g.compute": "g-",
-        "g.output": "g-",
-        "g.diagnostics": "g-",
-    }
-    for option_name, option_value in raw_options.items():
-        if isinstance(option_value, dict):
-            nested_prefix = section_prefixes.get(option_name)
-            if nested_prefix is None and option_name == "g":
-                flattened_options.update(flatten_g_section(option_value))
-                continue
-            if nested_prefix is None:
-                flattened_options[option_name] = option_value
-                continue
-            for nested_name, nested_value in option_value.items():
-                flattened_options[f"{nested_prefix}{nested_name}"] = nested_value
-        else:
-            flattened_options[option_name] = option_value
-    return flattened_options
-
-
-def flatten_g_section(raw_g_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
-    """Flatten the reserved TOML [g.*] namespace."""
-    flattened_options: dict[str, typing.Any] = {}
-    g_output_aliases = {
-        "format": "g-output-format",
-        "output-run-directory": "g-output-run-directory",
-        "writer-threads": "g-writer-threads",
-        "writer-queue-depth": "g-writer-queue-depth",
-        "chunks-per-arrow-file": "g-output-chunks-per-arrow-file",
-        "arrow-compression": "g-output-arrow-compression",
-        "resume": "g-resume",
-        "resume-mode": "g-resume-mode",
-        "finalize-parquet": "g-finalize-parquet",
-    }
-    g_diagnostics_aliases = {
-        "telemetry": "g-telemetry",
-        "log-dir": "g-log-dir",
-        "stage-timings-json": "g-stage-timings-json",
-        "log-filter": "g-log-filter",
-        "log-file": "g-log-file",
-        "log-stderr": "g-log-stderr",
-        "progress-interval-seconds": "g-progress-interval-seconds",
-        "progress-interval-chunks": "g-progress-interval-chunks",
-        "profile-summary-json": "g-profile-summary-json",
-        "trace-file": "g-trace-file",
-        "trace-filter": "g-trace-filter",
-        "log-queue-size": "g-log-queue-size",
-        "log-lossy": "g-log-lossy",
-        "include-source-location": "g-include-source-location",
-        "include-span-events": "g-include-span-events",
-    }
-    for section_name, section_options in raw_g_options.items():
-        if not isinstance(section_options, dict):
-            flattened_options[f"g-{section_name}"] = section_options
-            continue
-        for option_name, option_value in section_options.items():
-            if section_name == "output":
-                flattened_options[g_output_aliases.get(option_name, f"g-{option_name}")] = option_value
-            elif section_name == "diagnostics":
-                flattened_options[g_diagnostics_aliases.get(option_name, f"g-{option_name}")] = option_value
-            else:
-                flattened_options[f"g-{option_name}"] = option_value
-    return flattened_options
+    return config_layers.flatten_toml_mapping(raw_options)
 
 
 def normalize_option_name(option_name: str) -> str:
     """Map Pythonic names to REGENIE-compatible names."""
-    if option_name == "trait_type":
-        return option_name
-    if option_name in options.OPTION_SPEC_BY_NAME:
-        return option_name
-    destination_option_spec = options.OPTION_SPEC_BY_DESTINATION.get(option_name)
-    if destination_option_spec is not None:
-        return destination_option_spec.name
-    aliases = {
-        "pheno_file": "phenoFile",
-        "pheno": "phenoFile",
-        "pheno_col": "phenoCol",
-        "pheno_name": "phenoCol",
-        "pheno_col_list": "phenoColList",
-        "covar_file": "covarFile",
-        "covar": "covarFile",
-        "covar_col": "covarCol",
-        "covar_col_list": "covarColList",
-        "covar_names": "covarColList",
-        "p_threshold": "pThresh",
-        "p_thresh": "pThresh",
-        "firth_se": "firth-se",
-        "chunk_size": "bsize",
-        "trait_type": "trait_type",
-        "g_device": "g-device",
-        "device": "g-device",
-        "g_staging_depth": "g-staging-depth",
-        "staging_depth": "g-staging-depth",
-        "g_variant_limit": "g-variant-limit",
-        "variant_limit": "g-variant-limit",
-        "g_trusted_bgen_validation_mode": "g-trusted-bgen-validation-mode",
-        "trusted_bgen_validation_mode": "g-trusted-bgen-validation-mode",
-        "g_sample_key_mode": "g-sample-key-mode",
-        "sample_key_mode": "g-sample-key-mode",
-        "g_multi_phenotype_sample_mode": "g-multi-phenotype-sample-mode",
-        "multi_phenotype_sample_mode": "g-multi-phenotype-sample-mode",
-        "g_output_format": "g-output-format",
-        "output_format": "g-output-format",
-        "g_output_run_directory": "g-output-run-directory",
-        "output_run_directory": "g-output-run-directory",
-        "g_writer_threads": "g-writer-threads",
-        "output_writer_thread_count": "g-writer-threads",
-        "g_writer_queue_depth": "g-writer-queue-depth",
-        "output_writer_queue_depth": "g-writer-queue-depth",
-        "g_resume": "g-resume",
-        "resume": "g-resume",
-        "g_resume_mode": "g-resume-mode",
-        "resume_mode": "g-resume-mode",
-        "g_finalize_parquet": "g-finalize-parquet",
-        "finalize_parquet": "g-finalize-parquet",
-        "g_firth_batch_size": "g-firth-batch-size",
-        "g_firth_candidate_capacity": "g-firth-candidate-capacity",
-        "g_binary_null_maximum_iterations": "g-binary-null-maximum-iterations",
-        "g_binary_null_coefficient_tolerance": "g-binary-null-coefficient-tolerance",
-        "g_null_logistic_nonconvergence": "g-null-logistic-nonconvergence",
-        "g_null_logistic_nonconvergence_policy": "g-null-logistic-nonconvergence",
-        "g_binary_minimum_probability": "g-binary-minimum-probability",
-        "g_binary_minimum_variance": "g-binary-minimum-variance",
-        "g_binary_relative_variance_tolerance": "g-binary-relative-variance-tolerance",
-        "g_firth_maximum_iterations": "g-firth-maximum-iterations",
-        "g_firth_gradient_tolerance": "g-firth-gradient-tolerance",
-        "g_firth_coefficient_tolerance": "g-firth-coefficient-tolerance",
-        "g_firth_likelihood_tolerance": "g-firth-likelihood-tolerance",
-        "g_firth_maximum_step_size": "g-firth-maximum-step-size",
-        "g_firth_pseudo_maximum_iterations": "g-firth-pseudo-maximum-iterations",
-        "g_firth_pseudo_inner_maximum_iterations": "g-firth-pseudo-inner-maximum-iterations",
-        "g_firth_newton_raphson_zero_start_iterations": "g-firth-newton-raphson-zero-start-iterations",
-        "g_firth_line_search_maximum_attempts": "g-firth-line-search-maximum-attempts",
-        "g_firth_step_halving_maximum_attempts": "g-firth-step-halving-maximum-attempts",
-        "g_firth_initial_response_scale": "g-firth-initial-response-scale",
-        "g_firth_sparse_carrier_dosage_threshold": "g-firth-sparse-carrier-dosage-threshold",
-        "g_firth_step_halving_scale": "g-firth-step-halving-scale",
-        "g_null_firth_maximum_iterations": "g-null-firth-maximum-iterations",
-        "g_null_firth_gradient_tolerance": "g-null-firth-gradient-tolerance",
-        "g_null_firth_maximum_step_size": "g-null-firth-maximum-step-size",
-        "g_null_firth_fallback_iteration_multiplier": "g-null-firth-fallback-iteration-multiplier",
-        "g_null_firth_fallback_step_divisor": "g-null-firth-fallback-step-divisor",
-        "g_null_firth_line_search_maximum_attempts": "g-null-firth-line-search-maximum-attempts",
-        "g_null_firth_step_halving_scale": "g-null-firth-step-halving-scale",
-        "g_use_block_firth_math": "g-use-block-firth-math",
-        "g_bgen_decode_tile_variant_count": "g-bgen-decode-tile-variant-count",
-        "g_gpu_genotype_format": "g-gpu-genotype-format",
-        "gpu_genotype_format": "g-gpu-genotype-format",
-        "g_score_dtype": "g-score-dtype",
-        "g_firth_dtype": "g-firth-dtype",
-        "g_jax_cache_dir": "g-jax-cache-dir",
-        "g_jax_matmul_precision": "g-jax-matmul-precision",
-        "g_jax_enable_x64": "g-jax-enable-x64",
-        "g_jax_persistent_cache": "g-jax-persistent-cache",
-        "g_jax_persistent_cache_min_entry_size_bytes": "g-jax-persistent-cache-min-entry-size-bytes",
-        "g_jax_persistent_cache_min_compile_time_seconds": "g-jax-persistent-cache-min-compile-time-seconds",
-        "g_jax_xla_autotune_cache": "g-jax-xla-autotune-cache",
-        "g_jax_transfer_guard": "g-jax-transfer-guard",
-        "g_output_chunks_per_arrow_file": "g-output-chunks-per-arrow-file",
-        "g_output_arrow_compression": "g-output-arrow-compression",
-        "g_telemetry": "g-telemetry",
-        "telemetry": "g-telemetry",
-        "g_log_dir": "g-log-dir",
-        "log_dir": "g-log-dir",
-        "g_stage_timings_json": "g-stage-timings-json",
-        "g_log_filter": "g-log-filter",
-        "log_filter": "g-log-filter",
-        "g_log_file": "g-log-file",
-        "log_file": "g-log-file",
-        "g_log_stderr": "g-log-stderr",
-        "log_stderr": "g-log-stderr",
-        "g_progress_interval_seconds": "g-progress-interval-seconds",
-        "progress_interval_seconds": "g-progress-interval-seconds",
-        "g_progress_interval_chunks": "g-progress-interval-chunks",
-        "progress_interval_chunks": "g-progress-interval-chunks",
-        "g_profile_summary_json": "g-profile-summary-json",
-        "profile_summary_json": "g-profile-summary-json",
-        "g_trace_file": "g-trace-file",
-        "trace_file": "g-trace-file",
-        "g_trace_filter": "g-trace-filter",
-        "trace_filter": "g-trace-filter",
-        "g_log_queue_size": "g-log-queue-size",
-        "log_queue_size": "g-log-queue-size",
-        "g_log_lossy": "g-log-lossy",
-        "log_lossy": "g-log-lossy",
-        "g_include_source_location": "g-include-source-location",
-        "include_source_location": "g-include-source-location",
-        "g_include_span_events": "g-include-span-events",
-        "include_span_events": "g-include-span-events",
-        "trusted_no_missing_diploid": "g-trusted-no-missing-diploid",
-        "g_trusted_no_missing_diploid": "g-trusted-no-missing-diploid",
-    }
-    return aliases.get(option_name, option_name.replace("_", "-") if option_name.startswith("g_") else option_name)
+    return config_layers.normalize_option_name(option_name)
 
 
 def reject_unsupported_options(normalized_options: typing.Mapping[str, typing.Any]) -> None:
@@ -1044,12 +1008,6 @@ def validate_config(config: RegenieConfig) -> None:
     if config.g_compute.firth_dtype != types.FloatingPointDtype.FLOAT64:
         message = "--g-firth-dtype currently supports float64 only."
         raise ValueError(message)
-    if config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT64 and not config.g_compute.jax_enable_x64:
-        message = "--g-score-dtype=float64 requires --g-jax-enable-x64."
-        raise ValueError(message)
-    if config.binary.firth and not config.g_compute.jax_enable_x64:
-        message = "--firth uses float64 internals and requires --g-jax-enable-x64."
-        raise ValueError(message)
     validate_quantitative_binary_config(config)
     if config.g_output.writer_threads <= 0:
         message = "--g-writer-threads must be positive."
@@ -1104,7 +1062,7 @@ def validate_quantitative_binary_config(config: RegenieConfig) -> None:
         binary_only_option_names.append("firth-se")
     if config.binary.spa or "spa" in config.explicit_options:
         binary_only_option_names.append("spa")
-    if config.binary.p_threshold != DEFAULT_P_THRESHOLD or "pThresh" in config.explicit_options:
+    if config.binary.p_threshold != default_float_option("pThresh") or "pThresh" in config.explicit_options:
         binary_only_option_names.append("pThresh")
     raise_for_quantitative_binary_only_options(tuple(binary_only_option_names))
 
@@ -1142,14 +1100,16 @@ def validate_probability_floor(option_name: str, value: float) -> None:
 
 def load_toml(path: Path) -> RegenieConfig:
     """Load a configuration from a TOML file."""
-    raw_config = read_toml_option_dictionary(path)
-    return from_options(raw_config)
+    toml_layer = config_layers.decode_toml_file_layer(path)
+    return from_toml_config_layers(
+        base_config=defaults.load_default_option_catalog().toml_config,
+        explicit_layers=(toml_layer,),
+    )
 
 
 def read_toml_option_dictionary(path: Path) -> dict[str, typing.Any]:
     """Read a TOML option dictionary from disk."""
-    with path.open("rb") as config_file:
-        return tomllib.load(config_file)
+    return config_layers.toml_config_to_builtin_mapping(config_layers.decode_toml_file(path))
 
 
 def write_toml(config: RegenieConfig, path: Path | str) -> None:
@@ -1260,7 +1220,6 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
                 "jax-matmul-precision",
                 None if config.g_compute.jax_matmul_precision is None else config.g_compute.jax_matmul_precision.value,
             ),
-            "jax-enable-x64": config.g_compute.jax_enable_x64,
             "jax-persistent-cache": config.g_compute.jax_persistent_cache,
             "jax-persistent-cache-min-entry-size-bytes": config.g_compute.jax_persistent_cache_min_entry_size_bytes,
             "jax-persistent-cache-min-compile-time-seconds": (
@@ -1297,6 +1256,10 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             "include-source-location": config.g_diagnostics.include_source_location,
             "include-span-events": config.g_diagnostics.include_span_events,
         },
+        "metadata": {
+            "default-config-hash": defaults.load_default_option_catalog().default_config_hash,
+            "option-schema-version": defaults.OPTION_SCHEMA_VERSION,
+        },
     }
 
 
@@ -1332,17 +1295,85 @@ def format_toml_string(value: str) -> str:
 
 
 def build_template() -> str:
-    """Return a documented starter config without comments."""
-    template_config = RegenieConfig(
-        input=InputConfig(
-            bgen=Path("data/chr22.bgen"),
-            sample=Path("data/chr22.sample"),
-            pheno_file=Path("data/pheno.tsv"),
-            pheno_columns=("BMI",),
-            covar_file=Path("data/covar.tsv"),
-            covar_columns=("age", "sex", "PC1", "PC2"),
-            pred=Path("data/step1_pred.list"),
-        ),
-        g_output=GOutputConfig(out=Path("results/bmi")),
-    )
-    return dumps_toml(template_config)
+    """Return a starter config with placeholders and packaged defaults."""
+    raw_default_toml = defaults.load_default_option_catalog().raw_toml
+    lines: list[str] = []
+    lines.extend(build_commented_section("input"))
+    lines.append("")
+    lines.extend(build_commented_section("output"))
+    lines.append("")
+    append_raw_template_sections(lines, raw_default_toml)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def build_commented_section(section_name: str) -> list[str]:
+    """Build commented placeholder lines for one no-default TOML section."""
+    placeholder_lines = [f"[{section_name}]"]
+    for option_spec in options.OPTION_SPECS:
+        if option_spec.section != section_name:
+            continue
+        if option_spec.default_policy not in {
+            options.DefaultPolicy.REQUIRED_AT_RUNTIME,
+            options.DefaultPolicy.ABSENT_IS_NONE,
+        }:
+            continue
+        placeholder_value = template_placeholder_for_option(option_spec)
+        if placeholder_value is None:
+            continue
+        placeholder_lines.append(f"# {format_toml_key(typing.cast('str', option_spec.toml_key))} = {placeholder_value}")
+    return placeholder_lines
+
+
+def template_placeholder_for_option(option_spec: options.OptionSpec) -> str | None:
+    """Return a TOML placeholder value for a no-default option."""
+    placeholders = {
+        "bgen": format_toml_string("data/chr22.bgen"),
+        "sample": format_toml_string("data/chr22.sample"),
+        "phenoFile": format_toml_string("data/pheno.tsv"),
+        "phenoCol": format_toml_string("BMI"),
+        "covarFile": format_toml_string("data/covar.tsv"),
+        "covarColList": format_toml_string("age,sex,PC1,PC2"),
+        "pred": format_toml_string("data/step1_pred.list"),
+        "out": format_toml_string("results/bmi"),
+    }
+    return placeholders.get(option_spec.name)
+
+
+def append_raw_template_sections(lines: list[str], raw_default_toml: typing.Mapping[str, typing.Any]) -> None:
+    """Append packaged default TOML sections to template lines."""
+    for section_name, section_value in raw_default_toml.items():
+        if not isinstance(section_value, dict):
+            continue
+        if section_name == "g":
+            for g_section_name, g_section_value in section_value.items():
+                if isinstance(g_section_value, dict):
+                    append_raw_template_section(lines, f"g.{g_section_name}", g_section_value)
+            continue
+        if section_name == "binary":
+            append_commented_raw_template_section(lines, section_name, section_value)
+            continue
+        append_raw_template_section(lines, section_name, section_value)
+
+
+def append_raw_template_section(
+    lines: list[str],
+    section_name: str,
+    section_values: typing.Mapping[str, typing.Any],
+) -> None:
+    """Append one raw TOML section to template lines."""
+    lines.append(f"[{section_name}]")
+    for key, value in section_values.items():
+        lines.append(f"{format_toml_key(key)} = {format_toml_value(value)}")
+    lines.append("")
+
+
+def append_commented_raw_template_section(
+    lines: list[str],
+    section_name: str,
+    section_values: typing.Mapping[str, typing.Any],
+) -> None:
+    """Append one raw TOML section as comments."""
+    lines.append(f"# [{section_name}]")
+    for key, value in section_values.items():
+        lines.append(f"# {format_toml_key(key)} = {format_toml_value(value)}")
+    lines.append("")

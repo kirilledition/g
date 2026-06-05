@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-import tomllib
 import typing
 from pathlib import Path
 
@@ -11,7 +10,7 @@ import click
 
 from g import api, types
 from g.engine import shutdown
-from g.interface import config, options
+from g.interface import config, config_layers, defaults, options
 
 
 class NaturalOrderGroup(click.Group):
@@ -79,12 +78,11 @@ def resolve_trusted_bgen_validation_mode(
     return types.TrustedBgenValidationMode.CACHE_ON_MISS
 
 
-def read_raw_toml(path: Path | None) -> dict[str, typing.Any]:
-    """Read a TOML file into a raw dictionary."""
+def read_typed_toml_mapping(path: Path | None) -> dict[str, typing.Any]:
+    """Read a TOML file through the typed schema into built-in containers."""
     if path is None:
         return {}
-    with path.open("rb") as config_file:
-        return tomllib.load(config_file)
+    return config_layers.toml_config_to_builtin_mapping(config_layers.decode_toml_file(path))
 
 
 def explicit_cli_options(context: click.Context, parameters: dict[str, typing.Any]) -> dict[str, typing.Any]:
@@ -105,12 +103,15 @@ def explicit_cli_options(context: click.Context, parameters: dict[str, typing.An
 
 def build_regenie_config_from_cli(context: click.Context, parameters: dict[str, typing.Any]) -> config.RegenieConfig:
     """Apply built-in defaults, TOML config, and explicit CLI overrides."""
-    raw_toml_options = read_raw_toml(parameters.get("config"))
-    raw_cli_options = explicit_cli_options(context, parameters)
     try:
-        return config.from_option_layers(
-            base_options=config.load_default_option_dictionary(),
-            explicit_option_layers=(raw_toml_options, raw_cli_options),
+        toml_layer = config_layers.decode_toml_file_layer(parameters.get("config"))
+        cli_layer = config_layers.option_dictionary_to_toml_config_layer(
+            explicit_cli_options(context, parameters),
+            source="CLI options",
+        )
+        return config.from_toml_config_layers(
+            base_config=defaults.load_default_option_catalog().toml_config,
+            explicit_layers=(toml_layer, cli_layer),
         )
     except ValueError as error:
         raise click.ClickException(str(error)) from error
@@ -147,8 +148,8 @@ def click_keyword_arguments_for_option(option_spec: options.OptionSpec) -> dict[
     click_type = click_type_for_option(option_spec)
     if click_type is not None:
         keyword_arguments["type"] = click_type
-    if option_spec.default is not None or not option_spec.multiple:
-        keyword_arguments["default"] = option_spec.default
+    if not option_spec.multiple:
+        keyword_arguments["default"] = None
     if option_spec.multiple:
         keyword_arguments["multiple"] = True
     if option_spec.is_flag and not any("/" in flag for flag in option_spec.cli_flags):

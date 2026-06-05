@@ -12,7 +12,7 @@ import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-from g import _core, types
+from g import _core, runtime_policy, types
 from g.interface import config
 
 logger = logging.getLogger(__name__)
@@ -23,12 +23,15 @@ CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
 RUN_MANIFEST_SCHEMA_VERSION = 5
 OUTPUT_SCHEMA_VERSION = 1
-DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT = 64
-DEFAULT_JAX_MATMUL_PRECISION = "float32"
+JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
 RESUME_POLICY = "manifest_committed_chunks"
-DEFAULT_WRITER_QUEUE_DEPTH = config.DEFAULT_OUTPUT_WRITER_QUEUE_DEPTH
-DEFAULT_WRITER_THREAD_COUNT = config.DEFAULT_OUTPUT_WRITER_THREADS
-DEFAULT_CHUNKS_PER_ARROW_FILE = config.DEFAULT_OUTPUT_CHUNKS_PER_ARROW_FILE
+PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT = config.default_int_option("g-bgen-decode-tile-variant-count")
+PACKAGED_GPU_GENOTYPE_FORMAT = types.GpuGenotypeFormat(config.default_string_option("g-gpu-genotype-format"))
+PACKAGED_SCORE_DTYPE = types.FloatingPointDtype(config.default_string_option("g-score-dtype"))
+PACKAGED_FIRTH_DTYPE = types.FloatingPointDtype(config.default_string_option("g-firth-dtype"))
+PACKAGED_WRITER_QUEUE_DEPTH = config.default_int_option("g-writer-queue-depth")
+PACKAGED_WRITER_THREAD_COUNT = config.default_int_option("g-writer-threads")
+PACKAGED_CHUNKS_PER_ARROW_FILE = config.default_int_option("g-output-chunks-per-arrow-file")
 RESULT_STATISTIC_OUTPUT_DTYPE = "float32"
 
 
@@ -161,13 +164,12 @@ def build_jax_policy_manifest(
     *,
     device: types.Device = types.Device.CPU,
     matmul_precision: types.JaxMatmulPrecision | None = None,
-    enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
 ) -> dict[str, typing.Any]:
     """Build manifest fields for JAX precision and backend policy."""
     return {
         "device": device.value,
-        "enable_x64": enable_x64,
-        "matmul_precision": DEFAULT_JAX_MATMUL_PRECISION if matmul_precision is None else matmul_precision.value,
+        "enable_x64": runtime_policy.JAX_ENABLE_X64,
+        "matmul_precision": JAX_MATMUL_PRECISION_WHEN_UNSET if matmul_precision is None else matmul_precision.value,
     }
 
 
@@ -175,9 +177,9 @@ def build_output_writer_manifest(
     *,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     finalize_parquet: bool = False,
-    writer_thread_count: int = DEFAULT_WRITER_THREAD_COUNT,
-    writer_queue_depth: int = DEFAULT_WRITER_QUEUE_DEPTH,
-    chunks_per_arrow_file: int = DEFAULT_CHUNKS_PER_ARROW_FILE,
+    writer_thread_count: int = PACKAGED_WRITER_THREAD_COUNT,
+    writer_queue_depth: int = PACKAGED_WRITER_QUEUE_DEPTH,
+    chunks_per_arrow_file: int = PACKAGED_CHUNKS_PER_ARROW_FILE,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
 ) -> dict[str, typing.Any]:
     """Build manifest fields for output materialization and writer settings."""
@@ -210,20 +212,19 @@ def build_current_run_manifest_header(
     trusted_no_missing_diploid: bool,
     sample_key_mode: types.SampleKeyMode,
     binary_kernel_config: typing.Any | None = None,
-    bgen_decode_tile_variant_count: int = DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
+    bgen_decode_tile_variant_count: int = PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
-    jax_enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
-    gpu_genotype_format: types.GpuGenotypeFormat = config.DEFAULT_GPU_GENOTYPE_FORMAT,
-    score_dtype: types.FloatingPointDtype = config.DEFAULT_SCORE_DTYPE,
-    firth_dtype: types.FloatingPointDtype = config.DEFAULT_FIRTH_DTYPE,
+    gpu_genotype_format: types.GpuGenotypeFormat = PACKAGED_GPU_GENOTYPE_FORMAT,
+    score_dtype: types.FloatingPointDtype = PACKAGED_SCORE_DTYPE,
+    firth_dtype: types.FloatingPointDtype = PACKAGED_FIRTH_DTYPE,
     multi_phenotype_sample_mode: MultiPhenotypeSampleMode = MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     finalize_parquet: bool = False,
-    writer_thread_count: int = DEFAULT_WRITER_THREAD_COUNT,
-    writer_queue_depth: int = DEFAULT_WRITER_QUEUE_DEPTH,
-    chunks_per_arrow_file: int = DEFAULT_CHUNKS_PER_ARROW_FILE,
+    writer_thread_count: int = PACKAGED_WRITER_THREAD_COUNT,
+    writer_queue_depth: int = PACKAGED_WRITER_QUEUE_DEPTH,
+    chunks_per_arrow_file: int = PACKAGED_CHUNKS_PER_ARROW_FILE,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
 ) -> dict[str, typing.Any]:
     """Build immutable run manifest fields from the current execution plan."""
@@ -244,7 +245,6 @@ def build_current_run_manifest_header(
     jax_policy_manifest = build_jax_policy_manifest(
         device=jax_device,
         matmul_precision=jax_matmul_precision,
-        enable_x64=jax_enable_x64,
     )
     execution_plan = normalize_execution_plan_value(
         {
@@ -472,7 +472,7 @@ def create_output_writer_session(
     writer_thread_count: int,
     writer_queue_depth: int,
     finalize_parquet: bool,
-    chunks_per_arrow_file: int = DEFAULT_CHUNKS_PER_ARROW_FILE,
+    chunks_per_arrow_file: int = PACKAGED_CHUNKS_PER_ARROW_FILE,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
     collect_stage_timings: bool = False,
 ) -> typing.Any:

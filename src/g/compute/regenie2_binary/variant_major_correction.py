@@ -27,7 +27,7 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
     result: regenie2_binary_result.Regenie2BinaryChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     sparse_candidate_mask: jax.Array | None = None,
-    candidate_capacity: int = regenie2_binary_config.DEFAULT_FIRTH_CANDIDATE_CAPACITY,
+    candidate_capacity: int = regenie2_binary_config.PACKAGED_FIRTH_CANDIDATE_CAPACITY,
     kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_result.Regenie2BinaryChunkResult:
     """Apply device-resident Firth corrections with a fixed candidate capacity."""

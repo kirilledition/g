@@ -8,7 +8,7 @@ from pathlib import Path
 
 import jax
 
-from g import types
+from g import runtime_policy, types
 from g.interface import config
 
 DEFAULT_NODE_LOCAL_CACHE_ROOT = Path("/tmp")
@@ -35,10 +35,14 @@ def path_is_node_local(path: Path) -> bool:
     return str(expanded_path).startswith("/tmp/") or str(expanded_path) == "/tmp"
 
 
-DEFAULT_MATMUL_PRECISION = "float32"
-ENABLE_PERSISTENT_COMPILATION_CACHE = True
-PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = -1
-PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = 0
+JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
+PACKAGED_PERSISTENT_COMPILATION_CACHE = config.default_bool_option("g-jax-persistent-cache")
+PACKAGED_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = config.default_int_option(
+    "g-jax-persistent-cache-min-entry-size-bytes"
+)
+PACKAGED_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = config.default_int_option(
+    "g-jax-persistent-cache-min-compile-time-seconds"
+)
 CUDA_PLATFORM_NAME = "cuda"
 GPU_DEVICE_PLATFORM_NAME = "gpu"
 NVIDIA_CONTROL_DEVICE_PATH = Path("/dev/nvidiactl")
@@ -84,16 +88,15 @@ def configure_jax_runtime(
     *,
     cache_directory: Path | None = None,
     matmul_precision: types.JaxMatmulPrecision | None = None,
-    persistent_cache: bool = ENABLE_PERSISTENT_COMPILATION_CACHE,
-    persistent_cache_min_entry_size_bytes: int = PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
-    persistent_cache_min_compile_time_seconds: int = PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
-    enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
+    persistent_cache: bool = PACKAGED_PERSISTENT_COMPILATION_CACHE,
+    persistent_cache_min_entry_size_bytes: int = PACKAGED_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
+    persistent_cache_min_compile_time_seconds: int = PACKAGED_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
     xla_autotune_cache: bool = False,
     transfer_guard: bool = False,
 ) -> None:
     """Configure JAX runtime knobs before engine modules are imported."""
-    jax.config.update("jax_enable_x64", enable_x64)
-    precision_value = DEFAULT_MATMUL_PRECISION if matmul_precision is None else matmul_precision.value
+    jax.config.update("jax_enable_x64", runtime_policy.JAX_ENABLE_X64)
+    precision_value = JAX_MATMUL_PRECISION_WHEN_UNSET if matmul_precision is None else matmul_precision.value
     jax.config.update("jax_default_matmul_precision", precision_value)
     if persistent_cache:
         resolved_cache_directory = resolve_jax_compilation_cache_directory(cache_directory)
@@ -117,10 +120,9 @@ def configure_jax_runtime_before_backend_init(
     device: types.Device,
     cache_directory: Path | None = None,
     matmul_precision: types.JaxMatmulPrecision | None = None,
-    persistent_cache: bool = ENABLE_PERSISTENT_COMPILATION_CACHE,
-    persistent_cache_min_entry_size_bytes: int = PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
-    persistent_cache_min_compile_time_seconds: int = PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
-    enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
+    persistent_cache: bool = PACKAGED_PERSISTENT_COMPILATION_CACHE,
+    persistent_cache_min_entry_size_bytes: int = PACKAGED_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
+    persistent_cache_min_compile_time_seconds: int = PACKAGED_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
     xla_autotune_cache: bool = False,
     transfer_guard: bool = False,
 ) -> None:
@@ -132,7 +134,6 @@ def configure_jax_runtime_before_backend_init(
         persistent_cache=persistent_cache,
         persistent_cache_min_entry_size_bytes=persistent_cache_min_entry_size_bytes,
         persistent_cache_min_compile_time_seconds=persistent_cache_min_compile_time_seconds,
-        enable_x64=enable_x64,
         xla_autotune_cache=xla_autotune_cache,
         transfer_guard=transfer_guard,
     )

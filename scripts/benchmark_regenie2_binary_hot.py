@@ -115,7 +115,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIRECTORY, help="Input data directory.")
     parser.add_argument("--output-dir", type=Path, help="Benchmark output directory.")
     parser.add_argument("--device", default=types.Device.GPU.value, choices=[device.value for device in types.Device])
-    parser.add_argument("--chunk-size", type=int, default=interface_config.DEFAULT_BSIZE, help="Variants per chunk.")
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=interface_config.default_int_option("bsize"),
+        help="Variants per chunk.",
+    )
     parser.add_argument(
         "--staging-depth",
         "--prefetch-chunks",

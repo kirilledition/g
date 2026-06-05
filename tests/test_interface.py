@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from g import execution_plan, types
-from g.interface import config, options
+from g.interface import config, config_layers, defaults, options, toml_schema
 
 
 def build_valid_quantitative_options() -> dict[str, object]:
@@ -67,7 +67,6 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-firth-dtype": "float64",
         "g-jax-cache-dir": "cache/jax",
         "g-jax-matmul-precision": "highest",
-        "g-jax-enable-x64": True,
         "g-jax-persistent-cache": False,
         "g-jax-persistent-cache-min-entry-size-bytes": 1024,
         "g-jax-persistent-cache-min-compile-time-seconds": 1,
@@ -108,7 +107,6 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_compute.firth_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_compute.jax_matmul_precision == types.JaxMatmulPrecision.HIGHEST
-    assert regenie_config.g_compute.jax_enable_x64 is True
     assert regenie_config.g_compute.jax_persistent_cache is False
     assert regenie_config.g_output.format == types.OutputFormat.ARROW
     assert regenie_config.g_output.chunks_per_arrow_file == 2
@@ -136,6 +134,111 @@ def test_every_supported_option_has_explain_metadata() -> None:
         assert option_name in explanation
 
 
+def test_packaged_default_catalog_matches_option_policies() -> None:
+    default_catalog = defaults.load_default_option_catalog()
+    defaulted_option_names = {
+        option_spec.name
+        for option_spec in options.OPTION_SPECS
+        if option_spec.default_policy == options.DefaultPolicy.VALUE
+    }
+    non_defaultable_option_names = {
+        option_spec.name
+        for option_spec in options.OPTION_SPECS
+        if option_spec.default_policy
+        in {
+            options.DefaultPolicy.ABSENT_IS_NONE,
+            options.DefaultPolicy.REQUIRED_AT_RUNTIME,
+            options.DefaultPolicy.UNSUPPORTED,
+            options.DefaultPolicy.DERIVED,
+        }
+    }
+
+    assert set(default_catalog.normalized_options) == defaulted_option_names
+    assert not set(default_catalog.normalized_options) & non_defaultable_option_names
+    assert len(default_catalog.default_config_hash) == 64
+
+
+def test_packaged_default_hash_uses_raw_toml_payload() -> None:
+    raw_toml = config_layers.decode_toml_builtin_mapping(
+        defaults.load_default_toml_bytes(),
+        source="config.default.toml",
+    )
+    default_catalog = defaults.load_default_option_catalog()
+
+    assert default_catalog.raw_toml == raw_toml
+    assert default_catalog.default_config_hash == defaults.build_default_config_hash(raw_toml)
+    assert isinstance(raw_toml["g"]["diagnostics"]["progress-interval-seconds"], int)
+
+
+def test_typed_toml_schema_matches_option_registry() -> None:
+    assert toml_schema.schema_toml_paths() == frozenset(options.OPTION_SPEC_BY_TOML_PATH)
+
+
+def test_packaged_default_toml_decodes_to_typed_config() -> None:
+    default_catalog = defaults.load_default_option_catalog()
+
+    assert isinstance(default_catalog.toml_config, toml_schema.TomlConfig)
+    assert default_catalog.raw_toml["trait"]["step"] == 2
+    assert default_catalog.normalized_options["g-device"] == "cpu"
+
+
+def test_msgspec_toml_schema_rejects_unknown_keys_and_wrong_types() -> None:
+    with pytest.raises(ValueError, match="unknown field `not-a-real-key`"):
+        config_layers.decode_toml_bytes(
+            "[g.compute]\nnot-a-real-key = true\n",
+            source="inline",
+        )
+
+    with pytest.raises(ValueError, match="Expected `int`"):
+        config_layers.decode_toml_bytes(
+            '[trait]\nstep = "2"\n',
+            source="inline",
+        )
+
+
+def test_msgspec_toml_schema_rejects_removed_jax_x64_option() -> None:
+    with pytest.raises(ValueError, match="jax-enable-x64"):
+        config_layers.decode_toml_bytes(
+            "[g.compute]\njax-enable-x64 = false\n",
+            source="inline",
+        )
+
+
+def test_toml_metadata_is_accepted_but_not_an_option() -> None:
+    toml_config = config_layers.decode_toml_bytes(
+        '[metadata]\ncustom = "ignored"\n[trait]\nstep = 2\n',
+        source="inline",
+    )
+
+    assert config_layers.toml_config_to_option_dictionary(toml_config) == {"step": 2}
+
+
+def test_no_configurable_default_constants_reappear_in_source() -> None:
+    source_root = Path(__file__).resolve().parents[1] / "src" / "g"
+    forbidden_fragments = (
+        "DEFAULT_FIRTH",
+        "DEFAULT_BINARY_NULL",
+        "DEFAULT_BGEN_DECODE",
+        "DEFAULT_JAX",
+        "DEFAULT_OUTPUT_WRITER",
+        "DEFAULT_LOG",
+        "DEFAULT_PROGRESS",
+    )
+    checked_suffixes = {".py", ".pyi", ".rs"}
+    offenders: list[str] = []
+
+    for source_path in source_root.rglob("*"):
+        if source_path.suffix not in checked_suffixes:
+            continue
+        source_text = source_path.read_text(encoding="utf-8")
+        for forbidden_fragment in forbidden_fragments:
+            if forbidden_fragment in source_text:
+                relative_path = source_path.relative_to(source_root.parent.parent)
+                offenders.append(f"{relative_path}: {forbidden_fragment}")
+
+    assert offenders == []
+
+
 def test_logging_diagnostics_default_to_info_stderr() -> None:
     diagnostics_config = config.GDiagnosticsConfig()
 
@@ -157,17 +260,16 @@ def test_logging_diagnostics_default_to_info_stderr() -> None:
 def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
 
-    assert config.load_default_option_dictionary()["trait"]["bsize"] == config.DEFAULT_BSIZE
-    assert regenie_config.trait.bsize == config.DEFAULT_BSIZE
+    assert config.load_default_option_dictionary()["trait"]["bsize"] == config.default_int_option("bsize")
+    assert regenie_config.trait.bsize == config.default_int_option("bsize")
     assert regenie_config.g_compute.device == types.Device.CPU
     assert regenie_config.g_compute.null_logistic_nonconvergence_policy == types.NullLogisticNonconvergencePolicy.FAIL
     assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT32
     assert regenie_config.g_compute.firth_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE
-    assert regenie_config.g_compute.jax_enable_x64 is True
     assert regenie_config.g_compute.jax_persistent_cache is True
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
-    assert regenie_config.g_diagnostics.log_filter == config.DEFAULT_LOG_FILTER
+    assert regenie_config.g_diagnostics.log_filter == config.default_string_option("g-log-filter")
     assert "pThresh" not in regenie_config.explicit_options
     assert "firth" not in regenie_config.explicit_options
 
@@ -247,7 +349,6 @@ def test_toml_round_trip_preserves_runtime_knobs(tmp_path: Path) -> None:
             "g-null-logistic-nonconvergence": "warn",
             "g-score-dtype": "float64",
             "g-firth-dtype": "float64",
-            "g-jax-enable-x64": True,
             "g-jax-persistent-cache": False,
             "g-stage-timings-json": "timings.json",
             "g-log-filter": "g=trace",
@@ -296,7 +397,10 @@ def test_unknown_and_unsupported_options_raise_clear_errors() -> None:
     with pytest.raises(ValueError, match="Unknown g regenie option: g-allow-duplicate-iid-alignment"):
         config.RegenieConfig.from_options({"g-allow-duplicate-iid-alignment": True})
 
-    with pytest.raises(ValueError, match="Unknown g regenie option: g-allow-duplicate-iid-alignment"):
+    with pytest.raises(ValueError, match="Unknown g regenie option: g-jax-enable-x64"):
+        config.RegenieConfig.from_options({"g-jax-enable-x64": False})
+
+    with pytest.raises(ValueError, match=r"Unknown g regenie option: g\.compute\.allow-duplicate-iid-alignment"):
         config.RegenieConfig.from_options({"g": {"compute": {"allow-duplicate-iid-alignment": True}}})
 
     with pytest.raises(ValueError, match="valid REGENIE option"):
@@ -367,7 +471,6 @@ def test_config_validation_rejects_required_and_positive_option_errors(
         ({"pThresh": 1.0}, "--pThresh must be in"),
         ({"firth": True, "approx": False}, "Exact --firth is not implemented"),
         ({"firth": False, "approx": True}, "--approx requires --firth"),
-        ({"firth": True, "approx": True, "g-jax-enable-x64": False}, "--firth uses float64 internals"),
     ],
 )
 def test_binary_config_validation_rejects_invalid_fallback_combinations(
@@ -394,7 +497,6 @@ def test_binary_config_validation_rejects_invalid_fallback_combinations(
 @pytest.mark.parametrize(
     ("mutated_options", "error_match"),
     [
-        ({"g-score-dtype": "float64", "g-jax-enable-x64": False}, "--g-score-dtype=float64 requires"),
         ({"g-firth-dtype": "float32"}, "--g-firth-dtype currently supports float64 only"),
     ],
 )
@@ -463,7 +565,7 @@ def test_repeated_and_list_columns_are_mutually_exclusive() -> None:
         ("approx", True),
         ("firth-se", True),
         ("spa", True),
-        ("pThresh", config.DEFAULT_P_THRESHOLD),
+        ("pThresh", config.default_float_option("pThresh")),
     ],
 )
 def test_quantitative_trait_rejects_explicit_binary_only_options(option_name: str, option_value: object) -> None:
@@ -477,7 +579,7 @@ def test_quantitative_trait_rejects_explicit_binary_only_options(option_name: st
 def test_quantitative_trait_accepts_defaulted_binary_threshold() -> None:
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
 
-    assert regenie_config.binary.p_threshold == config.DEFAULT_P_THRESHOLD
+    assert regenie_config.binary.p_threshold == config.default_float_option("pThresh")
 
 
 def test_output_tuning_defaults_come_from_packaged_default_config() -> None:
@@ -544,6 +646,7 @@ def test_config_helper_normalizers_cover_optional_and_trait_alias_paths() -> Non
     assert config.optional_string(123) == "123"
     assert config.optional_string(None) is None
     assert config.normalize_option_name("trait_type") == "trait_type"
+    assert config.normalize_option_name("g_null_logistic_nonconvergence_policy") == "g-null-logistic-nonconvergence"
     assert (
         config.floating_point_dtype_or_default(
             None,
@@ -577,11 +680,11 @@ def test_flatten_option_dictionary_preserves_unknown_sections_and_g_scalars() ->
         }
     )
 
-    assert flattened_options["unknown"] == {"nested": "value"}
+    assert flattened_options["unknown.nested"] == "value"
     assert flattened_options["g-device"] == "gpu"
     assert flattened_options["g-output-format"] == "arrow"
     assert flattened_options["g-log-file"] == "logs/g.jsonl"
-    assert flattened_options["g-scalar"] is True
+    assert flattened_options["g.scalar"] is True
 
 
 def test_config_positive_validation_helpers_raise_clear_errors() -> None:

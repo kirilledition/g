@@ -480,7 +480,7 @@ for:
 - `log(I_beta)` and Cholesky log determinants.
 - Rare-variant corrected statistics.
 
-JAX is configured with `jax_enable_x64=True` in the binary compute module.
+The runtime always configures JAX with `jax_enable_x64=True`.
 
 ### Output Writer
 
