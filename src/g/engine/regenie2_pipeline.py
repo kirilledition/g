@@ -61,7 +61,6 @@ def run_regenie2_linear_bgen_pipeline(
     """Run the native BGEN pipeline for quantitative REGENIE step 2."""
     logger.info("Starting linear REGENIE step 2 BGEN pipeline.")
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
-    use_variant_major = True
     engine_start_time = time.perf_counter()
     logger.debug("Opening native BGEN engine for linear pipeline.")
     engine = native_dispatch.build_bgen_run_engine(
@@ -221,7 +220,6 @@ def run_regenie2_linear_bgen_pipeline(
         writer_session=writer_session,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
-        variant_major_dosage=use_variant_major,
     )
 
 
@@ -268,7 +266,6 @@ def run_regenie2_binary_bgen_pipeline(
     logger.info("Starting binary REGENIE step 2 BGEN pipeline.")
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
     resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
-    use_variant_major = True
     use_packed8 = gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
     effective_trusted_no_missing_diploid = trusted_no_missing_diploid or use_packed8
     engine_start_time = time.perf_counter()
@@ -435,7 +432,6 @@ def run_regenie2_binary_bgen_pipeline(
         writer_session=writer_session,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
-        variant_major_dosage=use_variant_major,
         variant_major_packed8_probability_pairs=use_packed8,
     )
 
@@ -905,6 +901,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
         engine=engine,
         phenotype_path=phenotype_path,
         phenotype_names=phenotype_names,
+        prediction_list_path=prediction_list_path,
         covariate_path=covariate_path,
         covariate_names=covariate_names,
         is_binary_trait=association_mode == types.AssociationMode.REGENIE2_BINARY,
@@ -928,17 +925,10 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     for grouped_run_input in grouped_run_inputs:
         group_indices = grouped_run_input.phenotype_indices
         group_multi_run_input = grouped_run_input.run_input
-        prediction_start_time = time.perf_counter()
-        group_prediction_source = native_dispatch.build_multi_regenie_prediction_source(
-            prediction_list_path=prediction_list_path,
-            run_input=group_multi_run_input,
-            alignment_config=alignment_config,
-        )
-        timing.record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)
         group_final_parquet_paths = run_prepared_multi_phenotype_bgen_group(
             engine=engine,
             run_input=group_multi_run_input,
-            prediction_source=group_prediction_source,
+            prediction_source=grouped_run_input.prediction_source,
             genotype_source_config=genotype_source_config,
             phenotype_path=phenotype_path,
             phenotype_names=group_multi_run_input.phenotype_names,
@@ -1235,7 +1225,6 @@ def run_prepared_multi_phenotype_bgen_group(
         writer_sessions=writer_sessions,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
-        variant_major_dosage=True,
     )
 
 
@@ -1270,7 +1259,6 @@ def run_bgen_engine_with_multi_callback(
     writer_sessions: tuple[typing.Any, ...],
     callback: object,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    variant_major_dosage: bool = False,
 ) -> tuple[Path | None, ...]:
     """Run native BGEN chunk delivery once and close all per-phenotype writers."""
     callback_finished = False
@@ -1280,22 +1268,14 @@ def run_bgen_engine_with_multi_callback(
         engine_delivery_start_time = time.perf_counter()
         committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
         logger.debug(
-            "Starting multi-phenotype native BGEN delivery: committed_chunk_count=%s variant_major_dosage=%s.",
+            "Starting multi-phenotype native BGEN delivery: committed_chunk_count=%s.",
             len(committed_chunk_identifier_list),
-            variant_major_dosage,
         )
-        if variant_major_dosage:
-            processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
-                run_input.sample_indices,
-                callback,
-                committed_chunk_identifiers=committed_chunk_identifier_list,
-            )
-        else:
-            processed_chunk_count = engine.run_bgen_dosage_buffered_chunks(
-                run_input.sample_indices,
-                callback,
-                committed_chunk_identifiers=committed_chunk_identifier_list,
-            )
+        processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
+            run_input.sample_indices,
+            callback,
+            committed_chunk_identifiers=committed_chunk_identifier_list,
+        )
         timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
         logger.debug("Multi-phenotype native BGEN delivery finished: processed_chunk_count=%s.", processed_chunk_count)
         if stage_timing_recorder is not None:

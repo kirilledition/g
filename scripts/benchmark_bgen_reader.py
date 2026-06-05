@@ -22,7 +22,6 @@ from g import _core
 class BenchmarkPathMode(enum.StrEnum):
     """Selectable native BGEN delivery benchmark paths."""
 
-    SAMPLE_MAJOR_BUFFERED = "sample_major_buffered"
     VARIANT_MAJOR_BUFFERED = "variant_major_buffered"
 
 
@@ -62,13 +61,9 @@ class BenchmarkSweepReport:
 class ChecksumCallback:
     """Native chunk callback that accumulates finite dosage checksums."""
 
-    def __init__(self, *, variant_major: bool) -> None:
-        self.variant_major = variant_major
+    def __init__(self) -> None:
         self.checksum = 0.0
         self.free_buffers: list[np.ndarray] = []
-
-    def acquire_dosage_buffer(self, sample_count: int, variant_count: int) -> np.ndarray:
-        return self.acquire_buffer((sample_count, variant_count))
 
     def acquire_variant_major_dosage_buffer(self, variant_count: int, sample_count: int) -> np.ndarray:
         return self.acquire_buffer((variant_count, sample_count))
@@ -79,16 +74,6 @@ class ChecksumCallback:
             if buffer.shape == expected_shape:
                 return buffer
         return np.empty(expected_shape, dtype=np.float32, order="C")
-
-    def compute_preprocessed_dosage_chunk(
-        self,
-        metadata: _core.VariantMetadata,
-        genotype_matrix: np.ndarray,
-        chunk_stats: _core.ChunkStats,
-    ) -> None:
-        del metadata, chunk_stats
-        self.checksum += float(np.nansum(genotype_matrix))
-        self.free_buffers.append(genotype_matrix)
 
     def compute_preprocessed_variant_major_dosage_chunk(
         self,
@@ -166,7 +151,6 @@ def parse_boolean_mode_list(raw_values: str) -> list[bool]:
 
 def run_native_delivery(arguments: argparse.Namespace, path_mode: BenchmarkPathMode, variant_limit: int) -> float:
     """Run one native delivery path and return its checksum."""
-    variant_major = path_mode == BenchmarkPathMode.VARIANT_MAJOR_BUFFERED
     engine = _core.Regenie2RunEngine(
         str(arguments.bgen),
         chunk_size=arguments.chunk_size,
@@ -175,12 +159,12 @@ def run_native_delivery(arguments: argparse.Namespace, path_mode: BenchmarkPathM
     )
     if arguments.trusted_no_missing_diploid:
         engine.validate_trusted_no_missing_diploid()
-    callback = ChecksumCallback(variant_major=variant_major)
+    if path_mode != BenchmarkPathMode.VARIANT_MAJOR_BUFFERED:
+        message = f"Unsupported benchmark path mode after row-major binding removal: {path_mode.value}."
+        raise ValueError(message)
+    callback = ChecksumCallback()
     sample_indices = np.arange(engine.sample_count, dtype=np.int64)
-    if variant_major:
-        engine.run_bgen_variant_major_dosage_buffered_chunks(sample_indices, callback)
-    else:
-        engine.run_bgen_dosage_buffered_chunks(sample_indices, callback)
+    engine.run_bgen_variant_major_dosage_buffered_chunks(sample_indices, callback)
     return callback.checksum
 
 

@@ -110,12 +110,6 @@ class Regenie2RunEngine:
         variant_start: int,
         variant_stop: int,
     ) -> tuple[list[str], list[str], list[int], list[str], list[str]]: ...
-    def run_bgen_dosage_buffered_chunks(
-        self,
-        sample_indices: npt.NDArray[np.int64],
-        callback: object,
-        committed_chunk_identifiers: list[int] | None = None,
-    ) -> int: ...
     def run_bgen_variant_major_dosage_buffered_chunks(
         self,
         sample_indices: npt.NDArray[np.int64],
@@ -162,7 +156,18 @@ class MultiRegeniePredictionSource:
         aligned_sample_data: NativeMultiAlignedSampleData,
         sample_key_mode: str = "iid",
     ) -> MultiRegeniePredictionSource: ...
+    @staticmethod
+    def from_native_grouped_aligned_sample_data(
+        prediction_list_path: str,
+        grouped_aligned_sample_data: NativeGroupedAlignedSampleData,
+        sample_key_mode: str = "iid",
+    ) -> list[MultiRegeniePredictionSource]: ...
     def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]: ...
+
+class NativeTelemetrySession:
+    def __init__(self, stream_file: str, queue_size: int = 65536, lossy: bool = True) -> None: ...
+    def emit_json_line(self, json_line: str) -> None: ...
+    def finish(self) -> None: ...
 
 class OutputWriterSession:
     def __init__(

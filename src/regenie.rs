@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::sample::SampleKeyMode;
+use crate::sample::{MultiAlignedSampleData, SampleKeyMode};
 
 #[derive(Debug, Error)]
 pub enum PredictionError {
@@ -161,11 +161,47 @@ impl MultiPredictionSource {
         target_individual_identifiers: &[String],
         sample_key_mode: SampleKeyMode,
     ) -> Result<Self, PredictionError> {
+        let entries = parse_prediction_list_file(prediction_list_path)?;
+        Self::load_from_entries(
+            &entries,
+            phenotype_names,
+            target_family_identifiers,
+            target_individual_identifiers,
+            sample_key_mode,
+        )
+    }
+
+    pub fn load_grouped(
+        prediction_list_path: &Path,
+        aligned_sample_data_groups: &[&MultiAlignedSampleData],
+        sample_key_mode: SampleKeyMode,
+    ) -> Result<Vec<Self>, PredictionError> {
+        let entries = parse_prediction_list_file(prediction_list_path)?;
+        aligned_sample_data_groups
+            .iter()
+            .map(|aligned_sample_data| {
+                Self::load_from_entries(
+                    &entries,
+                    &aligned_sample_data.phenotype_names,
+                    &aligned_sample_data.family_identifiers,
+                    &aligned_sample_data.individual_identifiers,
+                    sample_key_mode,
+                )
+            })
+            .collect()
+    }
+
+    fn load_from_entries(
+        entries: &[PredictionListEntry],
+        phenotype_names: &[String],
+        target_family_identifiers: &[String],
+        target_individual_identifiers: &[String],
+        sample_key_mode: SampleKeyMode,
+    ) -> Result<Self, PredictionError> {
         validate_target_sample_keys(target_family_identifiers, target_individual_identifiers)?;
         if sample_key_mode == SampleKeyMode::Iid {
             validate_unique_target_individual_identifiers(target_individual_identifiers)?;
         }
-        let entries = parse_prediction_list_file(prediction_list_path)?;
         let mut chromosome_predictions_by_trait = Vec::with_capacity(phenotype_names.len());
         for phenotype_name in phenotype_names {
             let Some(entry) = entries.iter().find(|entry| entry.phenotype_name == *phenotype_name) else {

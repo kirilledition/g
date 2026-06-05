@@ -342,38 +342,36 @@ except ValueError:
 class RecordingCallback:
     def __init__(self, writer=None):
         self.writer = writer
-        self.row_major_shapes = []
         self.variant_major_shapes = []
-        self.free_row_major_buffers = []
         self.free_variant_major_buffers = []
         self.last_metadata = None
         self.last_chunk_stats = None
 
-    def acquire_dosage_buffer(self, sample_count, variant_count):
-        if self.free_row_major_buffers:
-            return self.free_row_major_buffers.pop()
-        return np.empty((sample_count, variant_count), dtype=np.float32, order="C")
+    def acquire_variant_major_dosage_buffer(self, variant_count, sample_count):
+        if self.free_variant_major_buffers:
+            return self.free_variant_major_buffers.pop()
+        return np.empty((variant_count, sample_count), dtype=np.float32, order="C")
 
-    def compute_preprocessed_dosage_chunk(self, metadata, genotype_matrix, chunk_stats):
-        self.row_major_shapes.append((metadata.variant_start_index, genotype_matrix.shape))
+    def compute_preprocessed_variant_major_dosage_chunk(self, metadata, genotype_matrix, chunk_stats):
+        self.variant_major_shapes.append((metadata.variant_start_index, genotype_matrix.shape))
         self.last_metadata = metadata
         self.last_chunk_stats = chunk_stats
-        assert len(metadata.chromosome) == genotype_matrix.shape[1]
-        assert len(metadata.variant_identifiers) == genotype_matrix.shape[1]
-        assert metadata.position.shape == (genotype_matrix.shape[1],)
-        assert len(metadata.allele_one) == genotype_matrix.shape[1]
-        assert len(metadata.allele_two) == genotype_matrix.shape[1]
-        assert chunk_stats.allele_one_frequency.shape == (genotype_matrix.shape[1],)
-        assert chunk_stats.observation_count.shape == (genotype_matrix.shape[1],)
-        assert chunk_stats.dosage_sum.shape == (genotype_matrix.shape[1],)
-        assert chunk_stats.dosage_square_sum.shape == (genotype_matrix.shape[1],)
-        assert chunk_stats.imputed_dosage_square_sum.shape == (genotype_matrix.shape[1],)
-        assert chunk_stats.info_score.shape == (genotype_matrix.shape[1],)
-        assert chunk_stats.minor_allele_count.shape == (genotype_matrix.shape[1],)
-        assert chunk_stats.zero_count.shape == (genotype_matrix.shape[1],)
-        assert chunk_stats.nonzero_count.shape == (genotype_matrix.shape[1],)
-        assert chunk_stats.is_sparse_candidate.shape == (genotype_matrix.shape[1],)
-        assert chunk_stats.is_rare_sparse_firth_candidate.shape == (genotype_matrix.shape[1],)
+        assert len(metadata.chromosome) == genotype_matrix.shape[0]
+        assert len(metadata.variant_identifiers) == genotype_matrix.shape[0]
+        assert metadata.position.shape == (genotype_matrix.shape[0],)
+        assert len(metadata.allele_one) == genotype_matrix.shape[0]
+        assert len(metadata.allele_two) == genotype_matrix.shape[0]
+        assert chunk_stats.allele_one_frequency.shape == (genotype_matrix.shape[0],)
+        assert chunk_stats.observation_count.shape == (genotype_matrix.shape[0],)
+        assert chunk_stats.dosage_sum.shape == (genotype_matrix.shape[0],)
+        assert chunk_stats.dosage_square_sum.shape == (genotype_matrix.shape[0],)
+        assert chunk_stats.imputed_dosage_square_sum.shape == (genotype_matrix.shape[0],)
+        assert chunk_stats.info_score.shape == (genotype_matrix.shape[0],)
+        assert chunk_stats.minor_allele_count.shape == (genotype_matrix.shape[0],)
+        assert chunk_stats.zero_count.shape == (genotype_matrix.shape[0],)
+        assert chunk_stats.nonzero_count.shape == (genotype_matrix.shape[0],)
+        assert chunk_stats.is_sparse_candidate.shape == (genotype_matrix.shape[0],)
+        assert chunk_stats.is_rare_sparse_firth_candidate.shape == (genotype_matrix.shape[0],)
         assert isinstance(chunk_stats.has_missing_values, bool)
         if self.writer is not None:
             variant_count = metadata.variant_stop_index - metadata.variant_start_index
@@ -386,44 +384,18 @@ class RecordingCallback:
                 np.full(variant_count, 5.0, dtype=np.float32),
                 np.full(variant_count, 1, dtype=np.int32),
             )
-        self.free_row_major_buffers.append(genotype_matrix)
-
-    def acquire_variant_major_dosage_buffer(self, variant_count, sample_count):
-        if self.free_variant_major_buffers:
-            return self.free_variant_major_buffers.pop()
-        return np.empty((variant_count, sample_count), dtype=np.float32, order="C")
-
-    def compute_preprocessed_variant_major_dosage_chunk(self, metadata, genotype_matrix, chunk_stats):
-        self.variant_major_shapes.append((metadata.variant_start_index, genotype_matrix.shape))
-        assert chunk_stats.allele_one_frequency.shape == (genotype_matrix.shape[0],)
-        assert chunk_stats.dosage_sum.shape == (genotype_matrix.shape[0],)
         self.free_variant_major_buffers.append(genotype_matrix)
 
 callback = RecordingCallback()
-assert engine.run_bgen_dosage_buffered_chunks(np.arange(4, dtype=np.int64), callback) == 2
-assert callback.row_major_shapes == [(0, (4, 2)), (2, (4, 2))]
-resume_callback = RecordingCallback()
-assert engine.run_bgen_dosage_buffered_chunks(np.arange(4, dtype=np.int64), resume_callback, [0]) == 1
-assert resume_callback.row_major_shapes == [(2, (4, 2))]
 assert engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), callback) == 2
 assert callback.variant_major_shapes == [(0, (2, 4)), (2, (2, 4))]
+resume_callback = RecordingCallback()
+assert engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), resume_callback, [0]) == 1
+assert resume_callback.variant_major_shapes == [(2, (2, 4))]
 profile = engine.profile_snapshot()
 assert "variant_decode_count" in profile
 engine.reset_profile()
 assert engine.profile_snapshot()["variant_decode_count"] == 0
-
-class BadRowMajorShapeCallback:
-    def acquire_dosage_buffer(self, sample_count, variant_count):
-        return np.empty((sample_count, variant_count + 1), dtype=np.float32)
-
-    def compute_preprocessed_dosage_chunk(self, metadata, genotype_matrix, chunk_stats):
-        raise AssertionError("bad buffer shape should fail before compute")
-
-try:
-    engine.run_bgen_dosage_buffered_chunks(np.arange(4, dtype=np.int64), BadRowMajorShapeCallback())
-    raise AssertionError("bad row-major buffer shape should fail")
-except ValueError:
-    pass
 
 class BadVariantMajorShapeCallback:
     def acquire_variant_major_dosage_buffer(self, variant_count, sample_count):
@@ -435,19 +407,6 @@ class BadVariantMajorShapeCallback:
 try:
     engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), BadVariantMajorShapeCallback())
     raise AssertionError("bad variant-major buffer shape should fail")
-except ValueError:
-    pass
-
-class FortranRowMajorBufferCallback:
-    def acquire_dosage_buffer(self, sample_count, variant_count):
-        return np.empty((sample_count, variant_count), dtype=np.float32, order="F")
-
-    def compute_preprocessed_dosage_chunk(self, metadata, genotype_matrix, chunk_stats):
-        raise AssertionError("non-C row-major buffer should fail before compute")
-
-try:
-    engine.run_bgen_dosage_buffered_chunks(np.arange(4, dtype=np.int64), FortranRowMajorBufferCallback())
-    raise AssertionError("non-C row-major buffer should fail")
 except ValueError:
     pass
 
@@ -476,7 +435,7 @@ writer = _core.OutputWriterSession(
     True,
 )
 writer_callback = RecordingCallback(writer)
-assert engine.run_bgen_dosage_buffered_chunks(np.arange(4, dtype=np.int64), writer_callback) == 2
+assert engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), writer_callback) == 2
 assert writer.finish() is None
 assert _core.scan_committed_chunk_identifiers(chunks_directory) == [0, 2]
 with open(os.path.join(run_directory, "run_manifest.json"), encoding="utf-8") as manifest_file:
@@ -578,7 +537,7 @@ interrupted_writer = _core.OutputWriterSession(
     False,
 )
 interrupted_callback = RecordingCallback(interrupted_writer)
-assert engine.run_bgen_dosage_buffered_chunks(np.arange(4, dtype=np.int64), interrupted_callback) == 2
+assert engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), interrupted_callback) == 2
 interrupted_writer.finish_interrupted("SIGINT")
 
 abort_run_directory = os.path.join(os.path.dirname(run_directory), "abort")

@@ -5,14 +5,13 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import queue
 import threading
 import time
 import typing
 import uuid
 from dataclasses import dataclass
 
-from g import types
+from g import _core, types
 
 TELEMETRY_SCHEMA_VERSION = 1
 
@@ -28,115 +27,16 @@ class TelemetryPaths:
 
     Attributes:
         log_dir: Directory containing telemetry streams.
-        event_file: Stable Python lifecycle and profiling event stream.
-        progress_file: Low-volume progress event stream.
-        trace_file: Optional high-volume Rust trace stream.
+        stream_file: Unified JSONL event stream.
         profile_summary_json: Optional aggregate profile summary path.
         stage_timings_json: Optional detailed synchronized stage timings path.
 
     """
 
     log_dir: Path | None
-    event_file: Path | None
-    progress_file: Path | None
-    trace_file: Path | None
+    stream_file: Path | None
     profile_summary_json: Path | None
     stage_timings_json: Path | None
-
-
-@dataclass(frozen=True)
-class JsonLineWriteRequest:
-    """Buffered JSONL write request.
-
-    Attributes:
-        path: Destination JSONL file path.
-        line: Serialized JSON line with trailing newline.
-
-    """
-
-    path: Path
-    line: str
-
-
-class BufferedJsonLineWriter:
-    """Session-scoped buffered JSONL writer."""
-
-    def __init__(self, *, queue_capacity: int = 8192) -> None:
-        """Initialize and start the background writer."""
-        self.write_queue: queue.Queue[JsonLineWriteRequest | None] = queue.Queue(maxsize=queue_capacity)
-        self.lock = threading.Lock()
-        self.closed = False
-        self.error: Exception | None = None
-        self.created_directories: set[Path] = set()
-        self.output_files: dict[Path, typing.TextIO] = {}
-        self.thread = threading.Thread(target=self.run, name="g-telemetry-jsonl-writer", daemon=True)
-        self.thread.start()
-
-    def write(self, path: Path, line: str) -> None:
-        """Queue one JSONL write."""
-        self.raise_background_error()
-        with self.lock:
-            if self.closed:
-                return
-            self.write_queue.put(JsonLineWriteRequest(path=path, line=line))
-
-    def close(self) -> None:
-        """Flush queued writes and close all open files."""
-        with self.lock:
-            if self.closed:
-                self.raise_background_error()
-                return
-            self.closed = True
-            self.write_queue.put(None)
-        self.thread.join()
-        self.raise_background_error()
-
-    def run(self) -> None:
-        """Drain the write queue until close is requested."""
-        try:
-            while True:
-                write_request = self.write_queue.get()
-                try:
-                    if write_request is None:
-                        return
-                    output_file = self.get_output_file(write_request.path)
-                    output_file.write(write_request.line)
-                finally:
-                    self.write_queue.task_done()
-        except OSError as exception:
-            self.error = exception
-        finally:
-            self.close_output_files()
-
-    def get_output_file(self, path: Path) -> typing.TextIO:
-        """Return an open output file for the destination path."""
-        output_file = self.output_files.get(path)
-        if output_file is not None:
-            return output_file
-        if path.parent not in self.created_directories:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            self.created_directories.add(path.parent)
-        output_file = path.open("a", encoding="utf-8")
-        self.output_files[path] = output_file
-        return output_file
-
-    def close_output_files(self) -> None:
-        """Flush and close all open output files."""
-        for output_file in self.output_files.values():
-            try:
-                output_file.flush()
-                output_file.close()
-            except OSError as exception:
-                if self.error is None:
-                    self.error = exception
-        self.output_files.clear()
-
-    def raise_background_error(self) -> None:
-        """Raise any exception captured by the background writer."""
-        if self.error is None:
-            return
-        message = "Buffered telemetry writer failed."
-        raise RuntimeError(message) from self.error
 
 
 class TelemetrySession:
@@ -149,6 +49,8 @@ class TelemetrySession:
         paths: TelemetryPaths,
         progress_interval_seconds: float,
         progress_interval_chunks: int,
+        queue_size: int = 8192,
+        lossy: bool = True,
         run_id: str | None = None,
     ) -> None:
         """Initialize a run telemetry session."""
@@ -160,13 +62,9 @@ class TelemetrySession:
         self.lock = threading.Lock()
         self.last_progress_time = 0.0
         self.last_progress_chunk_count = 0
-        self.buffered_json_line_writer = (
-            BufferedJsonLineWriter()
-            if self.mode
-            in {
-                types.TelemetryMode.PROFILE,
-                types.TelemetryMode.TRACE,
-            }
+        self.native_telemetry_session = (
+            _core.NativeTelemetrySession(str(paths.stream_file), queue_size=queue_size, lossy=lossy)
+            if self.enabled and paths.stream_file is not None
             else None
         )
 
@@ -185,7 +83,7 @@ class TelemetrySession:
         if not self.enabled:
             return
         payload = self.build_event_payload(event=event, level=level, **fields)
-        self.write_json_line(self.paths.event_file, payload)
+        self.write_json_line(payload)
 
     def log_progress(self, *, processed_chunk_count: int, **fields: object) -> None:
         """Write throttled progress telemetry."""
@@ -199,7 +97,7 @@ class TelemetrySession:
             processed_chunk_count=processed_chunk_count,
             **fields,
         )
-        self.write_json_line(self.paths.progress_file, payload)
+        self.write_json_line(payload)
 
     def should_emit_progress(self, processed_chunk_count: int) -> bool:
         """Return whether a progress event should be emitted now."""
@@ -233,24 +131,18 @@ class TelemetrySession:
         payload.update({key: value for key, value in fields.items() if value is not None})
         return payload
 
-    def write_json_line(self, path: Path | None, payload: dict[str, object]) -> None:
+    def write_json_line(self, payload: dict[str, object]) -> None:
         """Append one JSON line when the destination path is configured."""
-        if path is None:
+        if self.native_telemetry_session is None:
             return
         line = f"{json.dumps(payload, sort_keys=True, default=str)}\n"
-        if self.buffered_json_line_writer is not None:
-            self.buffered_json_line_writer.write(path, line)
-            return
-        with self.lock:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as output_file:
-                output_file.write(line)
+        self.native_telemetry_session.emit_json_line(line)
 
     def close(self) -> None:
         """Flush buffered telemetry resources."""
-        if self.buffered_json_line_writer is None:
+        if self.native_telemetry_session is None:
             return
-        self.buffered_json_line_writer.close()
+        self.native_telemetry_session.finish()
 
 
 def format_timestamp(timestamp_seconds: float) -> str:
@@ -272,15 +164,12 @@ def resolve_telemetry_paths(regenie_config: config.RegenieConfig) -> TelemetryPa
     log_dir = diagnostics_config.log_dir
     if log_dir is None and diagnostics_config.telemetry != types.TelemetryMode.OFF:
         log_dir = resolve_output_run_root(regenie_config) / "logs"
-    event_file = None
-    if log_dir is not None and diagnostics_config.telemetry != types.TelemetryMode.OFF:
-        event_file = log_dir / "python.events.jsonl"
-    progress_file = None
-    if log_dir is not None and diagnostics_config.telemetry != types.TelemetryMode.OFF:
-        progress_file = log_dir / "progress.jsonl"
-    trace_file = diagnostics_config.trace_file
-    if trace_file is None and log_dir is not None and diagnostics_config.telemetry == types.TelemetryMode.TRACE:
-        trace_file = log_dir / "rust.events.jsonl"
+    stream_file = resolve_telemetry_stream_file(
+        telemetry_mode=diagnostics_config.telemetry,
+        log_dir=log_dir,
+        log_file=diagnostics_config.log_file,
+        trace_file=diagnostics_config.trace_file,
+    )
     profile_summary_json = diagnostics_config.profile_summary_json
     if (
         profile_summary_json is None
@@ -305,12 +194,37 @@ def resolve_telemetry_paths(regenie_config: config.RegenieConfig) -> TelemetryPa
         stage_timings_json = log_dir / "stage-timings.json"
     return TelemetryPaths(
         log_dir=log_dir,
-        event_file=event_file,
-        progress_file=progress_file,
-        trace_file=trace_file,
+        stream_file=stream_file,
         profile_summary_json=profile_summary_json,
         stage_timings_json=stage_timings_json,
     )
+
+
+def resolve_telemetry_stream_file(
+    *,
+    telemetry_mode: types.TelemetryMode,
+    log_dir: Path | None,
+    log_file: Path | None,
+    trace_file: Path | None,
+) -> Path | None:
+    """Resolve the unified telemetry stream file."""
+    if telemetry_mode == types.TelemetryMode.OFF:
+        return None
+    if log_file is not None and trace_file is not None and not paths_refer_to_same_file(log_file, trace_file):
+        message = "g-log-file and g-trace-file both configure the unified telemetry stream; use one path."
+        raise ValueError(message)
+    if log_file is not None:
+        return log_file
+    if trace_file is not None:
+        return trace_file
+    if log_dir is None:
+        return None
+    return log_dir / "events.jsonl"
+
+
+def paths_refer_to_same_file(first_path: Path, second_path: Path) -> bool:
+    """Return whether two paths resolve to the same filesystem target."""
+    return first_path.resolve(strict=False) == second_path.resolve(strict=False)
 
 
 def build_telemetry_session(regenie_config: config.RegenieConfig) -> TelemetrySession:
@@ -321,6 +235,8 @@ def build_telemetry_session(regenie_config: config.RegenieConfig) -> TelemetrySe
         paths=resolve_telemetry_paths(regenie_config),
         progress_interval_seconds=diagnostics_config.progress_interval_seconds,
         progress_interval_chunks=diagnostics_config.progress_interval_chunks,
+        queue_size=diagnostics_config.log_queue_size,
+        lossy=diagnostics_config.log_lossy,
     )
 
 

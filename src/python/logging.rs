@@ -4,7 +4,8 @@
 
 use std::ffi::CString;
 use std::fs::{self, OpenOptions};
-use std::path::Path;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -20,6 +21,61 @@ const PYTHON_LOGGING_TARGET: &str = "g.python";
 
 static LOGGING_GUARDS: Mutex<Option<Vec<WorkerGuard>>> = Mutex::new(None);
 static PYTHON_LOGGING_INSTALLED: AtomicBool = AtomicBool::new(false);
+static TELEMETRY_WRITER: Mutex<Option<SharedTelemetryWriter>> = Mutex::new(None);
+
+#[derive(Clone)]
+struct SharedTelemetryWriter {
+    path: PathBuf,
+    writer: NonBlocking,
+}
+
+#[pyclass]
+pub struct NativeTelemetrySession {
+    path: PathBuf,
+    writer: Mutex<Option<NonBlocking>>,
+    guard: Mutex<Option<WorkerGuard>>,
+}
+
+#[pymethods]
+impl NativeTelemetrySession {
+    #[new]
+    #[pyo3(signature = (stream_file, queue_size=65536, lossy=true))]
+    pub fn new(stream_file: String, queue_size: usize, lossy: bool) -> PyResult<Self> {
+        let path = PathBuf::from(stream_file);
+        let (writer, guard) = build_log_file_writer(&path, queue_size, lossy)?;
+        replace_shared_telemetry_writer(path.clone(), writer.clone())?;
+        Ok(Self { path, writer: Mutex::new(Some(writer)), guard: Mutex::new(Some(guard)) })
+    }
+
+    pub fn emit_json_line(&self, json_line: &str) -> PyResult<()> {
+        let mut writer_guard = self
+            .writer
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
+        let Some(writer) = writer_guard.as_mut() else {
+            return Ok(());
+        };
+        writer.write_all(json_line.as_bytes()).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        if !json_line.ends_with('\n') {
+            writer.write_all(b"\n").map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub fn finish(&self) -> PyResult<()> {
+        let mut writer_guard = self
+            .writer
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
+        let _dropped_writer = writer_guard.take();
+        let mut guard = self
+            .guard
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("Telemetry guard mutex was poisoned."))?;
+        let _dropped_guard = guard.take();
+        clear_shared_telemetry_writer(&self.path)
+    }
+}
 
 #[pyfunction]
 #[expect(
@@ -79,8 +135,11 @@ pub fn initialize_logging(
         None
     };
     let file_layer = if let Some(log_file_path) = log_file {
-        let (file_writer, file_guard) = build_log_file_writer(Path::new(&log_file_path), log_queue_size, log_lossy)?;
-        worker_guards.push(file_guard);
+        let (file_writer, maybe_file_guard) =
+            build_shared_or_log_file_writer(Path::new(&log_file_path), log_queue_size, log_lossy)?;
+        if let Some(file_guard) = maybe_file_guard {
+            worker_guards.push(file_guard);
+        }
         let layer = tracing_subscriber::fmt::layer()
             .json()
             .flatten_event(true)
@@ -94,9 +153,11 @@ pub fn initialize_logging(
         None
     };
     let trace_layer = if let Some(trace_file_path) = trace_file {
-        let (trace_writer, trace_guard) =
-            build_log_file_writer(Path::new(&trace_file_path), log_queue_size, log_lossy)?;
-        worker_guards.push(trace_guard);
+        let (trace_writer, maybe_trace_guard) =
+            build_shared_or_log_file_writer(Path::new(&trace_file_path), log_queue_size, log_lossy)?;
+        if let Some(trace_guard) = maybe_trace_guard {
+            worker_guards.push(trace_guard);
+        }
         let resolved_trace_filter = trace_filter
             .filter(|candidate_filter| !candidate_filter.trim().is_empty())
             .unwrap_or_else(|| resolved_log_filter.clone());
@@ -138,6 +199,10 @@ pub fn shutdown_logging() -> PyResult<()> {
 
 fn lock_logging_guards() -> PyResult<std::sync::MutexGuard<'static, Option<Vec<WorkerGuard>>>> {
     LOGGING_GUARDS.lock().map_err(|_| PyRuntimeError::new_err("Logging guard mutex was poisoned."))
+}
+
+fn lock_telemetry_writer() -> PyResult<std::sync::MutexGuard<'static, Option<SharedTelemetryWriter>>> {
+    TELEMETRY_WRITER.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))
 }
 
 fn setup_python_logging(py: Python<'_>) -> PyResult<()> {
@@ -198,6 +263,49 @@ fn build_log_file_writer(path: &Path, log_queue_size: usize, log_lossy: bool) ->
         .open(path)
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
     Ok(build_non_blocking_writer(log_file, "g-tracing-file", log_queue_size, log_lossy))
+}
+
+fn build_shared_or_log_file_writer(
+    path: &Path,
+    log_queue_size: usize,
+    log_lossy: bool,
+) -> PyResult<(NonBlocking, Option<WorkerGuard>)> {
+    if let Some(shared_writer) = shared_telemetry_writer_for_path(path)? {
+        return Ok((shared_writer, None));
+    }
+    let (writer, guard) = build_log_file_writer(path, log_queue_size, log_lossy)?;
+    Ok((writer, Some(guard)))
+}
+
+fn shared_telemetry_writer_for_path(path: &Path) -> PyResult<Option<NonBlocking>> {
+    let normalized_path = normalize_path_for_comparison(path);
+    let telemetry_writer = lock_telemetry_writer()?;
+    Ok(telemetry_writer
+        .as_ref()
+        .filter(|shared_writer| normalize_path_for_comparison(&shared_writer.path) == normalized_path)
+        .map(|shared_writer| shared_writer.writer.clone()))
+}
+
+fn replace_shared_telemetry_writer(path: PathBuf, writer: NonBlocking) -> PyResult<()> {
+    let mut telemetry_writer = lock_telemetry_writer()?;
+    *telemetry_writer = Some(SharedTelemetryWriter { path, writer });
+    Ok(())
+}
+
+fn clear_shared_telemetry_writer(path: &Path) -> PyResult<()> {
+    let normalized_path = normalize_path_for_comparison(path);
+    let mut telemetry_writer = lock_telemetry_writer()?;
+    if telemetry_writer
+        .as_ref()
+        .is_some_and(|shared_writer| normalize_path_for_comparison(&shared_writer.path) == normalized_path)
+    {
+        let _dropped_writer = telemetry_writer.take();
+    }
+    Ok(())
+}
+
+fn normalize_path_for_comparison(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn build_non_blocking_writer<Writer>(

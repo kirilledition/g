@@ -70,6 +70,21 @@ class FakePredictionSource:
         prediction_source.native_aligned_sample_data = aligned_sample_data
         return prediction_source
 
+    @staticmethod
+    def from_native_grouped_aligned_sample_data(
+        prediction_list_path: str,
+        grouped_aligned_sample_data: object,
+        sample_key_mode: str = "iid",
+    ) -> list[FakePredictionSource]:
+        return [
+            FakePredictionSource.from_native_multi_aligned_sample_data(
+                prediction_list_path,
+                native_group.aligned_sample_data,
+                sample_key_mode=sample_key_mode,
+            )
+            for native_group in typing.cast("typing.Any", grouped_aligned_sample_data).groups
+        ]
+
     def get_chromosome_predictions(self, chromosome: str) -> np.ndarray:
         del chromosome
         return np.asarray([0.0, 0.0], dtype=np.float32)
@@ -244,17 +259,6 @@ class FakeRunEngine:
             ["G"] * selected_variant_count,
         )
 
-    def run_bgen_dosage_buffered_chunks(
-        self,
-        sample_indices: np.ndarray,
-        callback: object,
-        committed_chunk_identifiers: list[int] | None = None,
-    ) -> int:
-        self.run_method = "buffered"
-        self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
-        self.run_call_arguments.append(self.run_arguments)
-        return 0
-
     def run_bgen_variant_major_dosage_buffered_chunks(
         self,
         sample_indices: np.ndarray,
@@ -339,6 +343,7 @@ def build_grouped_run_input_from_single_trait_inputs(
             phenotype_names=phenotype_names,
             run_inputs=run_inputs,
         ),
+        prediction_source=FakePredictionSource(),
     )
 
 
@@ -1763,25 +1768,25 @@ class FinishTrackingCallback:
 
 
 class GracefulShutdownRunEngine(FakeRunEngine):
-    def run_bgen_dosage_buffered_chunks(
+    def run_bgen_variant_major_dosage_buffered_chunks(
         self,
         sample_indices: np.ndarray,
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
     ) -> int:
-        self.run_method = "buffered"
+        self.run_method = "variant_major_buffered"
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
         raise shutdown.GracefulShutdownRequested(shutdown.ShutdownSignal(number=2, name="SIGINT", exit_code=130))
 
 
 class HardInterruptRunEngine(FakeRunEngine):
-    def run_bgen_dosage_buffered_chunks(
+    def run_bgen_variant_major_dosage_buffered_chunks(
         self,
         sample_indices: np.ndarray,
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
     ) -> int:
-        self.run_method = "buffered"
+        self.run_method = "variant_major_buffered"
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
         raise KeyboardInterrupt
 
@@ -1799,7 +1804,6 @@ def test_native_dispatch_graceful_shutdown_drains_and_marks_writer_interrupted()
             writer_session=writer_session,
             callback=callback,
             stage_timing_recorder=None,
-            variant_major_dosage=False,
         )
 
     assert callback.finished is True
@@ -1822,7 +1826,6 @@ def test_native_dispatch_hard_interrupt_aborts_callback_and_writer() -> None:
             writer_session=writer_session,
             callback=callback,
             stage_timing_recorder=None,
-            variant_major_dosage=False,
         )
 
     assert callback.finished is False
@@ -1852,7 +1855,6 @@ def test_native_dispatch_records_profile_and_allows_no_final_path() -> None:
         writer_session=writer_session,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
-        variant_major_dosage=False,
         stage_timing_snapshot_writer=record_snapshot,
     )
 
@@ -1880,7 +1882,6 @@ def test_multi_dispatch_graceful_shutdown_drains_and_marks_all_writers_interrupt
             writer_sessions=writer_sessions,
             callback=callback,
             stage_timing_recorder=None,
-            variant_major_dosage=False,
         )
 
     assert callback.finished is True

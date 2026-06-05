@@ -83,9 +83,8 @@ def test_bgen_reader_benchmark_parses_sweep_lists() -> None:
 
 
 def test_bgen_reader_benchmark_parses_path_modes() -> None:
-    path_modes = bgen_reader_benchmark.parse_path_modes("sample_major_buffered,variant_major_buffered")
+    path_modes = bgen_reader_benchmark.parse_path_modes("variant_major_buffered")
     assert [path_mode.value for path_mode in path_modes] == [
-        "sample_major_buffered",
         "variant_major_buffered",
     ]
 

@@ -1,11 +1,8 @@
 # Telemetry And Logging
 
-`g` has one run-level diagnostics surface with two implementation pieces:
-
-- Python telemetry in `src/g/engine/telemetry.py` writes run lifecycle,
-  progress, and profile events.
-- Rust tracing in the native extension writes compact stderr logs, optional
-  JSONL logs, and optional trace JSONL logs.
+`g` has one run-level diagnostics surface. Python builds lifecycle, progress,
+and profile payloads, while Rust owns the physical JSONL writer queue used by
+both Python telemetry and native tracing.
 
 The production rule is strict:
 
@@ -49,21 +46,14 @@ The default stream layout is:
 
 ```text
 <out>.g/logs/
-  python.events.jsonl     # Python lifecycle and profile events
-  progress.jsonl          # Python progress ticks
-  rust.events.jsonl       # Rust trace mode only, unless explicitly configured
+  events.jsonl            # unified Python telemetry and Rust tracing stream
   profile.summary.json    # Python profile or trace mode, unless explicitly configured
   stage-timings.json      # Python profile or trace mode, unless explicitly configured
 ```
 
-`python.events.jsonl` and `progress.jsonl` are Python telemetry streams. Rust
-tracing uses `g-log-file` and `g-trace-file`; by default, Rust JSON tracing is
-absent unless those paths are configured or trace mode resolves
-`rust.events.jsonl`.
-
-Do not configure Python telemetry and Rust tracing to append to the same file.
-Today they are separate writers, and the runtime rejects a Rust file path that
-matches the Python event stream.
+`g-log-file` configures the unified JSONL stream path. `g-trace-file` remains
+accepted as a compatibility alias for the same stream. If both are configured,
+they must point at the same path.
 
 ## Supported Modes
 
@@ -74,8 +64,8 @@ matches the Python event stream.
 telemetry = "off"
 ```
 
-No Python telemetry streams are written. Rust stderr logging still follows
-`log-stderr` and `log-filter`.
+No telemetry stream is written. Rust stderr logging still follows `log-stderr`
+and `log-filter`.
 
 ### Progress
 
@@ -90,7 +80,7 @@ log-lossy = true
 ```
 
 This is the production default. It writes low-volume lifecycle events and
-throttled progress ticks. It must not call `jax.device_get`,
+throttled progress ticks into `events.jsonl`. It must not call `jax.device_get`,
 `block_until_ready`, `np.asarray(jax_array)`, or any other operation that
 forces device synchronization just to log.
 
@@ -138,7 +128,7 @@ Use both when evaluating performance changes.
 telemetry = "trace"
 log-filter = "g=debug"
 trace-filter = "g.native.bgen=trace,g.output=debug"
-trace-file = "results/run/logs/rust.events.jsonl"
+log-file = "results/run/logs/events.jsonl"
 log-stderr = false
 log-lossy = true
 ```
@@ -208,7 +198,6 @@ Do not emit one event per candidate iteration in production mode.
 ## Remaining Telemetry Roadmap
 
 - Keep file handles or queue-backed writers open for profile and trace streams
-  instead of opening JSONL files for every event.
 - Add explicit timing for Firth candidate-count host synchronization.
 - Add bounded event caps for trace mode so accidental high-volume tracing
   fails clearly instead of filling disks.

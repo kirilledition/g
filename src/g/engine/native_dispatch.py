@@ -27,6 +27,14 @@ class SampleAlignmentConfigProtocol(typing.Protocol):
     sample_key_mode: types.SampleKeyMode
 
 
+class MultiRegeniePredictionSourceProtocol(typing.Protocol):
+    """Prediction source interface used by grouped native run inputs."""
+
+    def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]:
+        """Return trait-major LOCO predictions for one chromosome."""
+        ...
+
+
 @dataclass(frozen=True)
 class NativeBgenRunInput:
     """Sample-aligned inputs retained in native form for BGEN REGENIE step 2.
@@ -80,11 +88,13 @@ class NativeBgenGroupedRunInput:
     Attributes:
         phenotype_indices: Original phenotype indices included in this group.
         run_input: Multi-trait run input for the compatible phenotype group.
+        prediction_source: Native multi-trait prediction source aligned to the group.
 
     """
 
     phenotype_indices: tuple[int, ...]
     run_input: NativeBgenMultiRunInput
+    prediction_source: MultiRegeniePredictionSourceProtocol
 
 
 def build_native_bgen_run_input(
@@ -118,14 +128,27 @@ def build_native_bgen_multi_run_input(
 
 def build_native_bgen_grouped_run_inputs(
     native_grouped_aligned_sample_data: _core.NativeGroupedAlignedSampleData,
+    prediction_sources: list[_core.MultiRegeniePredictionSource],
 ) -> tuple[NativeBgenGroupedRunInput, ...]:
     """Build Python/JAX views over native grouped per-phenotype alignment data."""
+    if len(native_grouped_aligned_sample_data.groups) != len(prediction_sources):
+        message = (
+            "Grouped prediction source count does not match grouped aligned sample data count: "
+            f"{len(prediction_sources)} prediction source(s), "
+            f"{len(native_grouped_aligned_sample_data.groups)} aligned group(s)."
+        )
+        raise ValueError(message)
     grouped_run_inputs: list[NativeBgenGroupedRunInput] = []
-    for native_group in native_grouped_aligned_sample_data.groups:
+    for native_group, prediction_source in zip(
+        native_grouped_aligned_sample_data.groups,
+        prediction_sources,
+        strict=True,
+    ):
         grouped_run_inputs.append(
             NativeBgenGroupedRunInput(
                 phenotype_indices=tuple(int(phenotype_index) for phenotype_index in native_group.phenotype_indices),
                 run_input=build_native_bgen_multi_run_input(native_group.aligned_sample_data),
+                prediction_source=prediction_source,
             )
         )
     return tuple(grouped_run_inputs)
@@ -255,6 +278,7 @@ def load_native_bgen_grouped_run_inputs(
     engine: _core.Regenie2RunEngine,
     phenotype_path: Path,
     phenotype_names: tuple[str, ...],
+    prediction_list_path: Path,
     covariate_path: Path | None,
     covariate_names: tuple[str, ...] | None,
     is_binary_trait: bool,
@@ -275,7 +299,12 @@ def load_native_bgen_grouped_run_inputs(
         is_binary_trait,
         sample_key_mode=resolve_sample_key_mode(alignment_config).value,
     )
-    return build_native_bgen_grouped_run_inputs(native_grouped_aligned_sample_data)
+    prediction_sources = _core.MultiRegeniePredictionSource.from_native_grouped_aligned_sample_data(
+        str(prediction_list_path),
+        native_grouped_aligned_sample_data,
+        sample_key_mode=resolve_sample_key_mode(alignment_config).value,
+    )
+    return build_native_bgen_grouped_run_inputs(native_grouped_aligned_sample_data, prediction_sources)
 
 
 def build_regenie_prediction_source(
@@ -398,7 +427,6 @@ def run_bgen_engine_with_callback(
     writer_session: typing.Any,
     callback: object,
     stage_timing_recorder: timing.StageTimingRecorder | None,
-    variant_major_dosage: bool = False,
     variant_major_packed8_probability_pairs: bool = False,
     stage_timing_snapshot_writer: typing.Callable[
         [timing.StageTimingRecorder | None, Path | None], None
@@ -413,10 +441,8 @@ def run_bgen_engine_with_callback(
         sample_indices = run_input.sample_indices
         committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
         logger.debug(
-            "Starting native BGEN delivery: committed_chunk_count=%s variant_major_dosage=%s "
-            "variant_major_packed8_probability_pairs=%s.",
+            "Starting native BGEN delivery: committed_chunk_count=%s variant_major_packed8_probability_pairs=%s.",
             len(committed_chunk_identifier_list),
-            variant_major_dosage,
             variant_major_packed8_probability_pairs,
         )
         if variant_major_packed8_probability_pairs:
@@ -425,14 +451,8 @@ def run_bgen_engine_with_callback(
                 callback,
                 committed_chunk_identifiers=committed_chunk_identifier_list,
             )
-        elif variant_major_dosage:
-            processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
-                sample_indices,
-                callback,
-                committed_chunk_identifiers=committed_chunk_identifier_list,
-            )
         else:
-            processed_chunk_count = engine.run_bgen_dosage_buffered_chunks(
+            processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
                 sample_indices,
                 callback,
                 committed_chunk_identifiers=committed_chunk_identifier_list,

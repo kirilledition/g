@@ -24,7 +24,7 @@ use crate::sample::{
 mod logging;
 mod output;
 
-use logging::{initialize_logging, shutdown_logging};
+use logging::{NativeTelemetrySession, initialize_logging, shutdown_logging};
 use output::{
     OutputWriterSession, finalize_output_run_chunks, repair_strict_manifest_chunk_commits,
     scan_committed_chunk_identifiers, validate_strict_manifest_chunks, write_regenie2_multi_native_chunk,
@@ -627,31 +627,6 @@ impl Regenie2RunEngine {
 
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (sample_indices, callback, committed_chunk_identifiers=None))]
-    fn run_bgen_dosage_buffered_chunks<'py>(
-        &self,
-        py: Python<'py>,
-        sample_indices: PyReadonlyArray1<'py, i64>,
-        callback: &Bound<'py, PyAny>,
-        committed_chunk_identifiers: Option<Vec<usize>>,
-    ) -> PyResult<usize> {
-        let sample_index_values = sample_indices.as_slice()?.to_vec();
-        self.engine.reader().prepare_sample_selection(&sample_index_values).map_err(convert_bgen_error)?;
-
-        let run_result = self.run_prepared_bgen_dosage_buffered_chunks(
-            py,
-            &sample_index_values,
-            callback,
-            committed_chunk_identifiers,
-        );
-        let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
-        match (run_result, clear_result) {
-            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
-            (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
-        }
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (sample_indices, callback, committed_chunk_identifiers=None))]
     fn run_bgen_variant_major_dosage_buffered_chunks<'py>(
         &self,
         py: Python<'py>,
@@ -822,6 +797,34 @@ impl MultiRegeniePredictionSource {
         Ok(Self { source })
     }
 
+    #[staticmethod]
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (
+        prediction_list_path,
+        grouped_aligned_sample_data,
+        sample_key_mode="iid".to_string()
+    ))]
+    fn from_native_grouped_aligned_sample_data(
+        prediction_list_path: String,
+        grouped_aligned_sample_data: PyRef<'_, NativeGroupedAlignedSampleData>,
+        sample_key_mode: String,
+    ) -> PyResult<Vec<Self>> {
+        let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
+        let aligned_sample_data_groups = grouped_aligned_sample_data
+            .data
+            .groups
+            .iter()
+            .map(|group| &group.aligned_sample_data)
+            .collect::<Vec<_>>();
+        let sources = NativeMultiPredictionSource::load_grouped(
+            Path::new(&prediction_list_path),
+            &aligned_sample_data_groups,
+            parsed_sample_key_mode,
+        )
+        .map_err(convert_prediction_error)?;
+        Ok(sources.into_iter().map(|source| Self { source }).collect())
+    }
+
     #[allow(clippy::needless_pass_by_value)]
     fn get_chromosome_predictions<'py>(
         &self,
@@ -837,65 +840,6 @@ impl MultiRegeniePredictionSource {
 }
 
 impl Regenie2RunEngine {
-    fn run_prepared_bgen_dosage_buffered_chunks<'py>(
-        &self,
-        py: Python<'py>,
-        sample_index_values: &[i64],
-        callback: &Bound<'py, PyAny>,
-        committed_chunk_identifiers: Option<Vec<usize>>,
-    ) -> PyResult<usize> {
-        let committed_identifier_set = build_committed_identifier_set(committed_chunk_identifiers);
-        let chunk_specs = self.engine.plan_chunks(&committed_identifier_set).map_err(convert_genotype_error)?;
-        for chunk_spec in &chunk_specs {
-            py.check_signals()?;
-            let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
-            let output_array_object =
-                callback.call_method1("acquire_dosage_buffer", (sample_index_values.len(), selected_variant_count))?;
-            let stats = {
-                let mut output_array = output_array_object.extract::<PyReadwriteArray2<'_, f32>>()?;
-                let output_shape = output_array.shape();
-                if output_shape != [sample_index_values.len(), selected_variant_count] {
-                    return Err(PyValueError::new_err(format!(
-                        "Reusable BGEN dosage buffer shape mismatch: expected ({}, {selected_variant_count}), observed ({}, {}).",
-                        sample_index_values.len(),
-                        output_shape[0],
-                        output_shape[1],
-                    )));
-                }
-                if !output_array.is_c_contiguous() {
-                    return Err(PyValueError::new_err("Reusable BGEN dosage buffer must be C-contiguous float32."));
-                }
-                let output_slice = output_array.as_slice_mut().map_err(|_| {
-                    PyValueError::new_err("Reusable BGEN dosage buffer must expose a contiguous mutable slice.")
-                })?;
-                let output_pointer_address = output_slice.as_mut_ptr() as usize;
-                let output_value_count = output_slice.len();
-                let chunk_stats = py
-                    .detach(|| {
-                        self.engine.reader().read_preprocessed_dosage_f32_into_address_prepared(
-                            chunk_spec.variant_start_index,
-                            chunk_spec.variant_stop_index,
-                            output_pointer_address,
-                            output_value_count,
-                        )
-                    })
-                    .map_err(convert_bgen_error)?;
-                Py::new(py, ChunkStats::new(chunk_stats))?
-            };
-            let metadata_columns = self
-                .engine
-                .reader()
-                .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
-                .map_err(convert_bgen_error)?;
-            let metadata = Py::new(
-                py,
-                VariantMetadata::new(chunk_spec.variant_start_index, chunk_spec.variant_stop_index, metadata_columns),
-            )?;
-            callback.call_method1("compute_preprocessed_dosage_chunk", (metadata, output_array_object, stats))?;
-        }
-        Ok(chunk_specs.len())
-    }
-
     fn run_prepared_bgen_variant_major_dosage_buffered_chunks<'py>(
         &self,
         py: Python<'py>,
@@ -1386,6 +1330,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;
     module.add_class::<MultiRegeniePredictionSource>()?;
+    module.add_class::<NativeTelemetrySession>()?;
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(repair_strict_manifest_chunk_commits, module)?)?;

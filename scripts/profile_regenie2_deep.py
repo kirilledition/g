@@ -804,10 +804,10 @@ def summarize_bgen_case(case_report: typing.Any) -> BgenCandidateSummary:
     matching_results = [
         path_result
         for path_result in case_report.path_results
-        if path_result.path_mode == benchmark_bgen_reader.BenchmarkPathMode.SAMPLE_MAJOR_BUFFERED.value
+        if path_result.path_mode == benchmark_bgen_reader.BenchmarkPathMode.VARIANT_MAJOR_BUFFERED.value
     ]
     if len(matching_results) != 1:
-        message = "Expected exactly one sample-major buffered BGEN result."
+        message = "Expected exactly one variant-major buffered BGEN result."
         raise ValueError(message)
     path_result = matching_results[0]
     return BgenCandidateSummary(

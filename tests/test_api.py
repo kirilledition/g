@@ -379,46 +379,59 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
     ]
 
 
-def test_initialize_logging_rejects_rust_log_file_matching_python_event_stream(tmp_path: Path) -> None:
-    python_event_file = tmp_path / "logs" / "python.events.jsonl"
-    diagnostics_config = config.GDiagnosticsConfig(log_file=python_event_file)
+def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeCoreModule:
+        def initialize_logging(self, **kwargs: object) -> bool:
+            calls.append(kwargs)
+            return True
+
+    stream_file = tmp_path / "logs" / "events.jsonl"
+    diagnostics_config = config.GDiagnosticsConfig(log_file=stream_file)
     telemetry_paths = telemetry_module.TelemetryPaths(
         log_dir=tmp_path / "logs",
-        event_file=python_event_file,
-        progress_file=tmp_path / "logs" / "progress.jsonl",
-        trace_file=None,
+        stream_file=stream_file,
         profile_summary_json=None,
         stage_timings_json=None,
     )
 
     with (
-        patch("g.runner.importlib.import_module") as mock_import_module,
-        pytest.raises(ValueError, match="g-log-file points at the Python telemetry event stream"),
+        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()) as mock_import_module,
     ):
         runner.initialize_logging(diagnostics_config, telemetry_paths)
 
-    mock_import_module.assert_not_called()
+    mock_import_module.assert_called_once_with("g._core")
+    assert calls[0]["log_file"] is None
+    assert calls[0]["trace_file"] == str(stream_file)
 
 
-def test_initialize_logging_rejects_rust_trace_file_matching_python_event_stream(tmp_path: Path) -> None:
-    python_event_file = tmp_path / "logs" / "python.events.jsonl"
-    diagnostics_config = config.GDiagnosticsConfig(trace_file=python_event_file)
+def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeCoreModule:
+        def initialize_logging(self, **kwargs: object) -> bool:
+            calls.append(kwargs)
+            return True
+
+    stream_file = tmp_path / "logs" / "events.jsonl"
+    diagnostics_config = config.GDiagnosticsConfig(trace_file=stream_file)
     telemetry_paths = telemetry_module.TelemetryPaths(
         log_dir=tmp_path / "logs",
-        event_file=python_event_file,
-        progress_file=tmp_path / "logs" / "progress.jsonl",
-        trace_file=python_event_file,
+        stream_file=stream_file,
         profile_summary_json=None,
         stage_timings_json=None,
     )
 
     with (
-        patch("g.runner.importlib.import_module") as mock_import_module,
-        pytest.raises(ValueError, match="g-trace-file points at the Python telemetry event stream"),
+        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
     ):
         runner.initialize_logging(diagnostics_config, telemetry_paths)
 
-    mock_import_module.assert_not_called()
+    assert calls[0]["log_file"] is None
+    assert calls[0]["trace_file"] == str(stream_file)
 
 
 def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path: Path) -> None:

@@ -97,18 +97,18 @@ def test_plan_genotype_chunks_splits_by_boundaries_and_resume_state() -> None:
     ]
 
 
-def test_regenie2_run_engine_buffered_chunks_deliver_preprocessed_dosage_chunks() -> None:
+def test_regenie2_run_engine_buffered_chunks_deliver_preprocessed_variant_major_dosage_chunks() -> None:
     class RecordingCallback:
         def __init__(self) -> None:
             self.chunk_shapes: list[tuple[int, int, int]] = []
             self.free_buffers: list[np.ndarray] = []
 
-        def acquire_dosage_buffer(self, sample_count: int, variant_count: int) -> np.ndarray:
+        def acquire_variant_major_dosage_buffer(self, variant_count: int, sample_count: int) -> np.ndarray:
             if self.free_buffers:
                 return self.free_buffers.pop()
-            return np.empty((sample_count, variant_count), dtype=np.float32, order="C")
+            return np.empty((variant_count, sample_count), dtype=np.float32, order="C")
 
-        def compute_preprocessed_dosage_chunk(
+        def compute_preprocessed_variant_major_dosage_chunk(
             self,
             metadata: _core.VariantMetadata,
             genotype_matrix: np.ndarray,
@@ -122,20 +122,20 @@ def test_regenie2_run_engine_buffered_chunks_deliver_preprocessed_dosage_chunks(
                 )
             )
             assert not np.isnan(genotype_matrix).any()
-            np.testing.assert_allclose(chunk_stats.allele_one_frequency, genotype_matrix.mean(axis=0) / 2.0)
-            np.testing.assert_array_equal(chunk_stats.observation_count, np.full(genotype_matrix.shape[1], 4))
+            np.testing.assert_allclose(chunk_stats.allele_one_frequency, genotype_matrix.mean(axis=1) / 2.0)
+            np.testing.assert_array_equal(chunk_stats.observation_count, np.full(genotype_matrix.shape[0], 4))
             self.free_buffers.append(genotype_matrix)
 
     callback = RecordingCallback()
     engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
 
-    processed_chunk_count = engine.run_bgen_dosage_buffered_chunks(
+    processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
         np.arange(4, dtype=np.int64),
         callback,
     )
 
     assert processed_chunk_count == 2
-    assert callback.chunk_shapes == [(0, 4, 2), (2, 4, 2)]
+    assert callback.chunk_shapes == [(0, 2, 4), (2, 2, 4)]
 
 
 def test_regenie2_run_engine_variant_major_chunks_support_untrusted_bgen() -> None:

@@ -49,14 +49,14 @@ class NativeChunkWritingCallback:
         self.extra_code_value = extra_code_value
         self.free_buffers: list[np.ndarray] = []
 
-    def acquire_dosage_buffer(self, sample_count: int, variant_count: int) -> np.ndarray:
+    def acquire_variant_major_dosage_buffer(self, variant_count: int, sample_count: int) -> np.ndarray:
         if self.free_buffers:
             dosage_buffer = self.free_buffers.pop()
-            if dosage_buffer.shape == (sample_count, variant_count):
+            if dosage_buffer.shape == (variant_count, sample_count):
                 return dosage_buffer
-        return np.empty((sample_count, variant_count), dtype=np.float32, order="C")
+        return np.empty((variant_count, sample_count), dtype=np.float32, order="C")
 
-    def compute_preprocessed_dosage_chunk(
+    def compute_preprocessed_variant_major_dosage_chunk(
         self,
         metadata: _core.VariantMetadata,
         genotype_matrix: np.ndarray,
@@ -94,7 +94,7 @@ def write_native_chunks(
     callback = NativeChunkWritingCallback(writer_session, extra_code_value)
     try:
         engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
-        engine.run_bgen_dosage_buffered_chunks(np.arange(4, dtype=np.int64), callback)
+        engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), callback)
         writer_session.finish()
     except Exception:
         writer_session.abort()
@@ -346,7 +346,7 @@ def test_native_writer_records_output_stage_timings_when_requested(tmp_path: Pat
     callback = NativeChunkWritingCallback(writer_session)
     try:
         engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
-        engine.run_bgen_dosage_buffered_chunks(np.arange(4, dtype=np.int64), callback)
+        engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), callback)
         writer_session.finish()
     except Exception:
         writer_session.abort()
@@ -906,7 +906,7 @@ def test_output_writer_finish_interrupted_flushes_commits_without_final_parquet(
     callback = NativeChunkWritingCallback(writer_session)
     try:
         engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
-        engine.run_bgen_dosage_buffered_chunks(np.arange(4, dtype=np.int64), callback)
+        engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), callback)
         writer_session.finish_interrupted("SIGTERM")
     except Exception:
         writer_session.abort()
