@@ -48,6 +48,7 @@ null-firth-line-search-maximum-attempts = 25
 null-firth-step-halving-scale = 0.5
 use-block-firth-math = false
 bgen-decode-tile-variant-count = 64
+gpu-genotype-format = "dosage"
 # Score-test kernels default to the float32 fast path. Use float64 only when
 # parity or numerical debugging needs outweigh throughput.
 score-dtype = "float32"

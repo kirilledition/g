@@ -32,6 +32,7 @@ class KernelConfig:
         variant_limit: Optional debug cap on variants.
         thread_count: Requested CPU thread count.
         bgen_decode_tile_variant_count: Native BGEN decode tile variant count.
+        gpu_genotype_format: Host-to-device genotype representation for GPU kernels.
         trusted_no_missing_diploid: Whether BGEN records can use the trusted diploid fast path.
         trusted_bgen_validation_mode: Validation policy for trusted BGEN decoding.
         alignment_config: Sample alignment settings consumed by the native dispatcher.
@@ -46,6 +47,7 @@ class KernelConfig:
     variant_limit: int | None
     thread_count: int | None
     bgen_decode_tile_variant_count: int
+    gpu_genotype_format: types.GpuGenotypeFormat
     trusted_no_missing_diploid: bool
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
     alignment_config: config.GComputeConfig
@@ -281,6 +283,7 @@ def build_kernel_config(regenie_config: config.RegenieConfig) -> KernelConfig:
         variant_limit=regenie_config.g_compute.variant_limit,
         thread_count=regenie_config.trait.threads,
         bgen_decode_tile_variant_count=regenie_config.g_compute.bgen_decode_tile_variant_count,
+        gpu_genotype_format=regenie_config.g_compute.gpu_genotype_format,
         trusted_no_missing_diploid=regenie_config.g_compute.trusted_no_missing_diploid,
         trusted_bgen_validation_mode=regenie_config.g_compute.trusted_bgen_validation_mode,
         alignment_config=regenie_config.g_compute,

@@ -11,6 +11,8 @@ from g import types
 from g.compute.common import dtype as compute_dtype
 
 ALLELE_COUNT_MULTIPLIER = 2.0
+EIGHT_BIT_PROBABILITY_DENOMINATOR = 255.0
+PACKED8_DIPLOID_NUMERATOR = 510.0
 
 
 @jax.tree_util.register_dataclass
@@ -43,6 +45,31 @@ def convert_sample_major_to_variant_major(
 
     """
     return jnp.asarray(genotype_matrix, dtype=compute_dtype.resolve_jax_dtype(score_dtype)).T
+
+
+def decode_packed8_probability_pairs_to_variant_major_dosage(
+    packed_probability_pairs_by_variant: jax.Array,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> jax.Array:
+    """Decode trusted unphased 8-bit BGEN probability pairs to variant-major dosage.
+
+    Args:
+        packed_probability_pairs_by_variant: Variant-major uint8 probability pairs.
+        score_dtype: Floating-point dtype for the decoded dosage matrix.
+
+    Returns:
+        Variant-major dosage matrix decoded on the active JAX device.
+
+    """
+    compute_type = compute_dtype.resolve_jax_dtype(score_dtype)
+    probability_values = jnp.asarray(packed_probability_pairs_by_variant, dtype=compute_type)
+    homozygous_reference_probability_byte = probability_values[:, :, 0]
+    heterozygous_probability_byte = probability_values[:, :, 1]
+    return (
+        PACKED8_DIPLOID_NUMERATOR
+        - (ALLELE_COUNT_MULTIPLIER * homozygous_reference_probability_byte)
+        - heterozygous_probability_byte
+    ) / EIGHT_BIT_PROBABILITY_DENOMINATOR
 
 
 def normalize_high_frequency_diploid_genotypes_sample_major(

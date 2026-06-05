@@ -105,6 +105,12 @@ class Regenie2RunEngine:
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
     ) -> int: ...
+    def run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+        self,
+        sample_indices: npt.NDArray[np.int64],
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int: ...
 
 class RegeniePredictionSource:
     def __init__(

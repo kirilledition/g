@@ -22,6 +22,7 @@ from g.engine import telemetry, timing
 
 RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 60.0
 logger = logging.getLogger(__name__)
+type HostGenotypeBuffer = npt.NDArray[np.float32] | npt.NDArray[np.uint8]
 
 if typing.TYPE_CHECKING:
     import collections.abc
@@ -57,6 +58,15 @@ class PreprocessedVariantMajorDosageChunkWorkItem:
 
 
 @dataclass(frozen=True)
+class PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem:
+    """One variant-major packed8 probability-pair chunk staged for JAX compute."""
+
+    metadata: typing.Any
+    packed_probability_pairs_by_variant: npt.NDArray[np.uint8]
+    chunk_stats: _core.ChunkStats
+
+
+@dataclass(frozen=True)
 class Regenie2ResultWriteWorkItem:
     """One computed REGENIE result awaiting host materialization and output writing."""
 
@@ -67,7 +77,7 @@ class Regenie2ResultWriteWorkItem:
     chi_squared: jax.Array
     log10_p_value: jax.Array
     extra_code: jax.Array | None
-    host_dosage_buffer: npt.NDArray[np.float32] | None
+    host_dosage_buffer: HostGenotypeBuffer | None
     release_in_flight_slot: bool
 
 
@@ -82,7 +92,7 @@ class Regenie2MultiResultWriteWorkItem:
     chi_squared: jax.Array
     log10_p_value: jax.Array
     extra_code: jax.Array | None
-    host_dosage_buffer: npt.NDArray[np.float32] | None
+    host_dosage_buffer: HostGenotypeBuffer | None
     release_in_flight_slot: bool
 
 
@@ -179,7 +189,7 @@ def record_binary_chunk_diagnostics(
 
 
 def put_genotype_matrix_on_device(
-    genotype_matrix: jax.Array | npt.NDArray[np.float32],
+    genotype_matrix: jax.Array | HostGenotypeBuffer,
     stage_timing_recorder: timing.StageTimingRecorder | None,
 ) -> jax.Array:
     """Transfer a genotype chunk to the active JAX device with optional timing."""
@@ -352,13 +362,16 @@ class NativeBgenCallbackRunner:
         self.result_in_flight_limit = self.result_queue_depth + 1
         self.dosage_buffer_limit = self.dosage_queue_depth + 1
         self.dosage_queue: queue.Queue[
-            PreprocessedDosageChunkWorkItem | PreprocessedVariantMajorDosageChunkWorkItem | None
+            PreprocessedDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkWorkItem
+            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+            | None
         ] = queue.Queue(maxsize=self.dosage_queue_depth)
         self.result_queue: queue.Queue[Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None] = (
             queue.Queue(maxsize=self.result_queue_depth)
         )
         self.result_in_flight_slots = threading.BoundedSemaphore(self.result_in_flight_limit)
-        self.free_dosage_buffers: queue.Queue[npt.NDArray[np.float32]] = queue.Queue(maxsize=self.dosage_buffer_limit)
+        self.free_dosage_buffers: queue.Queue[HostGenotypeBuffer] = queue.Queue(maxsize=self.dosage_buffer_limit)
         self.dosage_buffer_count = 0
         self.worker_error: BaseException | None = None
         self.result_worker_error: BaseException | None = None
@@ -405,6 +418,16 @@ class NativeBgenCallbackRunner:
         """Compute one Rust-preprocessed variant-major chunk and write it."""
         raise NotImplementedError
 
+    def compute_preprocessed_variant_major_packed8_chunk(
+        self,
+        *,
+        variant_metadata: _core.VariantMetadata,
+        packed_probability_pairs_by_variant: jax.Array | npt.NDArray[np.uint8],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Compute one Rust-preprocessed packed8 chunk and write it."""
+        raise NotImplementedError
+
     def compute_preprocessed_dosage_chunk(
         self,
         metadata: _core.VariantMetadata,
@@ -435,6 +458,21 @@ class NativeBgenCallbackRunner:
             )
         )
 
+    def compute_preprocessed_variant_major_packed8_probability_pair_chunk(
+        self,
+        metadata: _core.VariantMetadata,
+        packed_probability_pairs_by_variant: npt.NDArray[np.uint8],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Enqueue one Rust-preprocessed packed8 chunk for JAX association."""
+        self.put_dosage_work_item(
+            PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem(
+                metadata=metadata,
+                packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+                chunk_stats=chunk_stats,
+            )
+        )
+
     def consume_dosage_chunks(self) -> None:
         """Consume queued dosage chunks and run JAX work in order."""
         try:
@@ -442,6 +480,15 @@ class NativeBgenCallbackRunner:
                 work_item = self.dosage_queue.get()
                 if work_item is None:
                     return
+                if isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
+                    self.compute_preprocessed_variant_major_packed8_chunk(
+                        variant_metadata=work_item.metadata,
+                        packed_probability_pairs_by_variant=work_item.packed_probability_pairs_by_variant,
+                        chunk_stats=work_item.chunk_stats,
+                    )
+                    self.processed_chunk_count += 1
+                    self.record_progress(work_item.metadata)
+                    continue
                 if isinstance(work_item, PreprocessedVariantMajorDosageChunkWorkItem):
                     self.compute_preprocessed_variant_major_chunk(
                         variant_metadata=work_item.metadata,
@@ -518,7 +565,12 @@ class NativeBgenCallbackRunner:
 
     def put_dosage_work_item(
         self,
-        work_item: PreprocessedDosageChunkWorkItem | PreprocessedVariantMajorDosageChunkWorkItem | None,
+        work_item: (
+            PreprocessedDosageChunkWorkItem
+            | PreprocessedVariantMajorDosageChunkWorkItem
+            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+            | None
+        ),
     ) -> None:
         """Put work into the bounded worker queue while surfacing worker errors."""
         while True:
@@ -634,48 +686,70 @@ class NativeBgenCallbackRunner:
     def acquire_dosage_buffer(self, sample_count: int, variant_count: int) -> npt.NDArray[np.float32]:
         """Return a reusable host dosage buffer for Rust to fill."""
         expected_shape = (sample_count, variant_count)
-        return self.acquire_dosage_buffer_with_shape(expected_shape)
+        return typing.cast(
+            "npt.NDArray[np.float32]",
+            self.acquire_dosage_buffer_with_shape(expected_shape, np.float32),
+        )
 
     def acquire_variant_major_dosage_buffer(self, variant_count: int, sample_count: int) -> npt.NDArray[np.float32]:
         """Return a reusable host variant-major dosage buffer for Rust to fill."""
         expected_shape = (variant_count, sample_count)
-        return self.acquire_dosage_buffer_with_shape(expected_shape)
+        return typing.cast(
+            "npt.NDArray[np.float32]",
+            self.acquire_dosage_buffer_with_shape(expected_shape, np.float32),
+        )
 
-    def acquire_dosage_buffer_with_shape(self, expected_shape: tuple[int, int]) -> npt.NDArray[np.float32]:
+    def acquire_variant_major_packed8_probability_pair_buffer(
+        self,
+        variant_count: int,
+        sample_count: int,
+    ) -> npt.NDArray[np.uint8]:
+        """Return a reusable host variant-major packed8 probability-pair buffer."""
+        expected_shape = (variant_count, sample_count, 2)
+        return typing.cast(
+            "npt.NDArray[np.uint8]",
+            self.acquire_dosage_buffer_with_shape(expected_shape, np.uint8),
+        )
+
+    def acquire_dosage_buffer_with_shape(
+        self,
+        expected_shape: tuple[int, ...],
+        dtype: npt.DTypeLike = np.float32,
+    ) -> HostGenotypeBuffer:
         """Return a reusable host dosage buffer with the requested shape."""
         while True:
             self.raise_worker_error_if_present()
             with contextlib.suppress(queue.Empty):
                 dosage_buffer = self.free_dosage_buffers.get_nowait()
-                if dosage_buffer.shape == expected_shape:
+                if dosage_buffer.shape == expected_shape and dosage_buffer.dtype == dtype:
                     return dosage_buffer
-                return np.empty(expected_shape, dtype=np.float32, order="C")
+                return typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
             if self.dosage_buffer_count < self.dosage_buffer_limit:
                 self.dosage_buffer_count += 1
-                return np.empty(expected_shape, dtype=np.float32, order="C")
+                return typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
             with contextlib.suppress(queue.Empty):
                 dosage_buffer = self.free_dosage_buffers.get(timeout=0.1)
-                if dosage_buffer.shape == expected_shape:
+                if dosage_buffer.shape == expected_shape and dosage_buffer.dtype == dtype:
                     return dosage_buffer
-                return np.empty(expected_shape, dtype=np.float32, order="C")
+                return typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
 
-    def release_dosage_buffer(self, dosage_buffer: npt.NDArray[np.float32]) -> None:
+    def release_dosage_buffer(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Return a processed host dosage buffer to the reusable pool."""
         with contextlib.suppress(queue.Full):
             self.free_dosage_buffers.put_nowait(dosage_buffer)
 
-    def release_numpy_dosage_buffer(self, dosage_buffer: jax.Array | npt.NDArray[np.float32]) -> None:
+    def release_numpy_dosage_buffer(self, dosage_buffer: jax.Array | HostGenotypeBuffer) -> None:
         """Return a NumPy host dosage buffer to the pool after device transfer."""
         if isinstance(dosage_buffer, np.ndarray):
-            self.release_dosage_buffer(typing.cast("npt.NDArray[np.float32]", dosage_buffer))
+            self.release_dosage_buffer(typing.cast("HostGenotypeBuffer", dosage_buffer))
 
     def get_releasable_dosage_buffer(
         self,
-        dosage_buffer: jax.Array | npt.NDArray[np.float32],
-    ) -> npt.NDArray[np.float32] | None:
+        dosage_buffer: jax.Array | HostGenotypeBuffer,
+    ) -> HostGenotypeBuffer | None:
         """Return a host dosage buffer reference when it belongs to the reusable pool."""
         if isinstance(dosage_buffer, np.ndarray):
-            return typing.cast("npt.NDArray[np.float32]", dosage_buffer)
+            return typing.cast("HostGenotypeBuffer", dosage_buffer)
         return None
 
     def release_result_work_item_buffer(
@@ -793,7 +867,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
         result: regenie2_linear.Regenie2LinearChunkResult,
-        host_dosage_buffer: npt.NDArray[np.float32] | None = None,
+        host_dosage_buffer: HostGenotypeBuffer | None = None,
         release_in_flight_slot: bool = False,
     ) -> None:
         """Enqueue a linear result for materialization and writing."""
@@ -1052,7 +1126,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
         result: regenie2_linear.Regenie2MultiLinearChunkResult,
-        host_dosage_buffer: npt.NDArray[np.float32] | None = None,
+        host_dosage_buffer: HostGenotypeBuffer | None = None,
         release_in_flight_slot: bool = False,
     ) -> None:
         """Enqueue a multi-linear result for materialization and writing."""
@@ -1154,7 +1228,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
         result: (regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult),
-        host_dosage_buffer: npt.NDArray[np.float32] | None = None,
+        host_dosage_buffer: HostGenotypeBuffer | None = None,
         release_in_flight_slot: bool = False,
     ) -> None:
         """Enqueue a binary result for materialization and writing."""
@@ -1305,6 +1379,69 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         except Exception:
             if host_dosage_buffer is not None:
                 self.release_dosage_buffer(host_dosage_buffer)
+            self.release_result_in_flight_slot()
+            raise
+
+    def compute_preprocessed_variant_major_packed8_chunk(
+        self,
+        *,
+        variant_metadata: _core.VariantMetadata,
+        packed_probability_pairs_by_variant: jax.Array | npt.NDArray[np.uint8],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Compute one packed8 chunk and enqueue its result for writing."""
+        host_packed_buffer = self.get_releasable_dosage_buffer(packed_probability_pairs_by_variant)
+        self.acquire_result_in_flight_slot()
+        try:
+            self.prepare_chromosome_state(variant_metadata)
+            assert self.current_chromosome_state is not None
+
+            packed_device_array = put_genotype_matrix_on_device(
+                packed_probability_pairs_by_variant,
+                self.stage_timing_recorder,
+            )
+            dosage_sum = jax.device_put(chunk_stats.dosage_sum)
+            observation_count = jax.device_put(chunk_stats.observation_count)
+            compute_start_time = time.perf_counter()
+            if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
+                compute_score_test = regenie2_binary.compute_binary_score_test_packed8_donating_inputs
+                result = compute_score_test(
+                    chromosome_state=self.current_chromosome_state,
+                    packed_probability_pairs_by_variant=packed_device_array,
+                    correction_plan=self.correction_plan,
+                    kernel_config=self.kernel_config,
+                    dosage_sum=dosage_sum,
+                    observation_count=observation_count,
+                    score_dtype=self.score_dtype,
+                )
+            else:
+                result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_packed8(
+                    chromosome_state=self.current_chromosome_state,
+                    packed_probability_pairs_by_variant=packed_device_array,
+                    correction_plan=self.correction_plan,
+                    sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
+                    kernel_config=self.kernel_config,
+                    score_dtype=self.score_dtype,
+                    stage_duration_recorder=self.get_stage_duration_recorder(),
+                    dosage_sum=dosage_sum,
+                    observation_count=observation_count,
+                )
+            block_compute_result_for_timing(
+                result_ready_value=result.log10_p_value,
+                stage_timing_recorder=self.stage_timing_recorder,
+                start_time=compute_start_time,
+            )
+            record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
+            self.enqueue_binary_result_for_write(
+                variant_metadata=variant_metadata,
+                chunk_stats=chunk_stats,
+                result=result,
+                host_dosage_buffer=host_packed_buffer,
+                release_in_flight_slot=True,
+            )
+        except Exception:
+            if host_packed_buffer is not None:
+                self.release_dosage_buffer(host_packed_buffer)
             self.release_result_in_flight_slot()
             raise
 
@@ -1533,7 +1670,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         variant_metadata: _core.VariantMetadata,
         chunk_stats: _core.ChunkStats,
         result: regenie2_binary.Regenie2MultiBinaryScoreChunkResult | regenie2_binary.Regenie2MultiBinaryChunkResult,
-        host_dosage_buffer: npt.NDArray[np.float32] | None = None,
+        host_dosage_buffer: HostGenotypeBuffer | None = None,
         release_in_flight_slot: bool = False,
     ) -> None:
         """Enqueue a multi-binary result for materialization and writing."""

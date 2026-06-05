@@ -537,6 +537,7 @@ def dispatch_one_phenotype_engine_pipeline(
             null_logistic_nonconvergence_policy=(
                 plan.kernel_config.alignment_config.null_logistic_nonconvergence_policy
             ),
+            gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
         )
         log_writer_finished(
             telemetry_session=telemetry_session,

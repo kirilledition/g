@@ -3,7 +3,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use numpy::ndarray::{Array1, Array2};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadwriteArray2, PyUntypedArrayMethods};
+use numpy::{
+    IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadwriteArray2, PyReadwriteArray3, PyUntypedArrayMethods,
+};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
@@ -561,6 +563,31 @@ impl Regenie2RunEngine {
             (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
         }
     }
+
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (sample_indices, callback, committed_chunk_identifiers=None))]
+    fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks<'py>(
+        &self,
+        py: Python<'py>,
+        sample_indices: PyReadonlyArray1<'py, i64>,
+        callback: &Bound<'py, PyAny>,
+        committed_chunk_identifiers: Option<Vec<usize>>,
+    ) -> PyResult<usize> {
+        let sample_index_values = sample_indices.as_slice()?.to_vec();
+        self.engine.reader().prepare_sample_selection(&sample_index_values).map_err(convert_bgen_error)?;
+
+        let run_result = self.run_prepared_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+            py,
+            &sample_index_values,
+            callback,
+            committed_chunk_identifiers,
+        );
+        let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
+        match (run_result, clear_result) {
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+            (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
+        }
+    }
 }
 
 #[pymethods]
@@ -820,6 +847,77 @@ impl Regenie2RunEngine {
             )?;
             callback.call_method1(
                 "compute_preprocessed_variant_major_dosage_chunk",
+                (metadata, output_array_object, stats),
+            )?;
+        }
+        Ok(chunk_specs.len())
+    }
+
+    fn run_prepared_bgen_variant_major_packed8_probability_pair_buffered_chunks<'py>(
+        &self,
+        py: Python<'py>,
+        sample_index_values: &[i64],
+        callback: &Bound<'py, PyAny>,
+        committed_chunk_identifiers: Option<Vec<usize>>,
+    ) -> PyResult<usize> {
+        let committed_identifier_set = build_committed_identifier_set(committed_chunk_identifiers);
+        let chunk_specs = self.engine.plan_chunks(&committed_identifier_set).map_err(convert_genotype_error)?;
+        for chunk_spec in &chunk_specs {
+            py.check_signals()?;
+            let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
+            let output_array_object = callback.call_method1(
+                "acquire_variant_major_packed8_probability_pair_buffer",
+                (selected_variant_count, sample_index_values.len()),
+            )?;
+            let stats = {
+                let mut output_array = output_array_object.extract::<PyReadwriteArray3<'_, u8>>()?;
+                let output_shape = output_array.shape();
+                if output_shape != [selected_variant_count, sample_index_values.len(), 2] {
+                    return Err(PyValueError::new_err(format!(
+                        "Reusable variant-major BGEN packed8 probability-pair buffer shape mismatch: expected ({selected_variant_count}, {}, 2), observed ({}, {}, {}).",
+                        sample_index_values.len(),
+                        output_shape[0],
+                        output_shape[1],
+                        output_shape[2],
+                    )));
+                }
+                if !output_array.is_c_contiguous() {
+                    return Err(PyValueError::new_err(
+                        "Reusable variant-major BGEN packed8 probability-pair buffer must be C-contiguous uint8.",
+                    ));
+                }
+                let output_slice = output_array.as_slice_mut().map_err(|_| {
+                    PyValueError::new_err(
+                        "Reusable variant-major BGEN packed8 probability-pair buffer must expose a contiguous mutable slice.",
+                    )
+                })?;
+                let output_pointer_address = output_slice.as_mut_ptr() as usize;
+                let output_value_count = output_slice.len();
+                let chunk_stats = py
+                    .detach(|| {
+                        self.engine
+                            .reader()
+                            .read_preprocessed_variant_major_packed8_probability_pairs_into_address_prepared(
+                                chunk_spec.variant_start_index,
+                                chunk_spec.variant_stop_index,
+                                output_pointer_address,
+                                output_value_count,
+                            )
+                    })
+                    .map_err(convert_bgen_error)?;
+                Py::new(py, ChunkStats::new(chunk_stats))?
+            };
+            let metadata_columns = self
+                .engine
+                .reader()
+                .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
+                .map_err(convert_bgen_error)?;
+            let metadata = Py::new(
+                py,
+                VariantMetadata::new(chunk_spec.variant_start_index, chunk_spec.variant_stop_index, metadata_columns),
+            )?;
+            callback.call_method1(
+                "compute_preprocessed_variant_major_packed8_probability_pair_chunk",
                 (metadata, output_array_object, stats),
             )?;
         }

@@ -253,6 +253,17 @@ class FakeRunEngine:
         self.run_call_arguments.append(self.run_arguments)
         return 0
 
+    def run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+        self,
+        sample_indices: np.ndarray,
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int:
+        self.run_method = "variant_major_packed8"
+        self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
+        self.run_call_arguments.append(self.run_arguments)
+        return 0
+
 
 def build_native_aligned_sample_data() -> SimpleNamespace:
     return SimpleNamespace(
@@ -1149,6 +1160,89 @@ def test_binary_score_only_variant_major_callback_uses_jitted_variant_major_scor
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
+def test_binary_score_only_packed8_callback_uses_jitted_packed_score_compute() -> None:
+    writer_session = FakeWriterSession()
+    kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    result = regenie2_binary_result.Regenie2BinaryScoreChunkResult(
+        beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4, 0.5], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0, 5.0], dtype=jnp.float32),
+        extra_code=jnp.asarray(
+            [
+                types.BinaryExtraCode.SCORE.value,
+                types.BinaryExtraCode.SCORE.value,
+                types.BinaryExtraCode.SCORE.value,
+            ],
+            dtype=jnp.int32,
+        ),
+        valid_mask=jnp.asarray([True, True, True]),
+    )
+    callback = callbacks.BinaryRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+        correction_plan=types.BinaryCorrectionPlan(),
+        kernel_config=kernel_config,
+    )
+    packed_probability_pairs_by_variant = np.asarray(
+        [
+            [[255, 0], [0, 0]],
+            [[0, 255], [255, 0]],
+            [[0, 0], [0, 255]],
+        ],
+        dtype=np.uint8,
+    )
+    chunk_stats = SimpleNamespace(
+        dosage_sum=np.asarray([2.0, 1.0, 3.0], dtype=np.float32),
+        observation_count=np.asarray([2, 2, 2], dtype=np.int32),
+        is_rare_sparse_firth_candidate=np.asarray([True, False, True], dtype=np.bool_),
+    )
+    chromosome_state = build_binary_chromosome_state()
+
+    with (
+        patch(
+            "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
+            return_value=chromosome_state,
+        ),
+        patch(
+            "g.compute.regenie2_binary.api.compute_binary_score_test_packed8_donating_inputs",
+            return_value=result,
+        ) as mock_packed_score_compute,
+        patch(
+            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state_packed8",
+        ) as mock_packed_chunk_compute,
+        patch(
+            "g.compute.regenie2_binary.api.compute_binary_score_test_variant_major_donating_inputs",
+        ) as mock_variant_major_score_compute,
+        patch(
+            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state",
+        ) as mock_sample_major_compute,
+    ):
+        callback.compute_preprocessed_variant_major_packed8_probability_pair_chunk(
+            metadata=build_native_metadata(),
+            packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+            chunk_stats=typing.cast("typing.Any", chunk_stats),
+        )
+        callback.finish()
+
+    packed_probability_pairs_argument = mock_packed_score_compute.call_args.kwargs[
+        "packed_probability_pairs_by_variant"
+    ]
+    np.testing.assert_array_equal(np.asarray(packed_probability_pairs_argument), packed_probability_pairs_by_variant)
+    assert mock_packed_score_compute.call_args.kwargs["chromosome_state"] is chromosome_state
+    assert mock_packed_score_compute.call_args.kwargs["kernel_config"] is kernel_config
+    dosage_sum = mock_packed_score_compute.call_args.kwargs["dosage_sum"]
+    np.testing.assert_array_equal(np.asarray(dosage_sum), [2.0, 1.0, 3.0])
+    observation_count = mock_packed_score_compute.call_args.kwargs["observation_count"]
+    np.testing.assert_array_equal(np.asarray(observation_count), [2, 2, 2])
+    assert "stage_duration_recorder" not in mock_packed_score_compute.call_args.kwargs
+    mock_packed_chunk_compute.assert_not_called()
+    mock_variant_major_score_compute.assert_not_called()
+    mock_sample_major_compute.assert_not_called()
+    assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
+
+
 def build_multi_linear_result() -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
     return regenie2_linear_result.Regenie2MultiLinearChunkResult(
         beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
@@ -1882,6 +1976,63 @@ def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> No
     assert engine.validation_count == 0
     assert engine.run_method == "variant_major_buffered"
     assert engine.trusted_no_missing_diploid is False
+
+
+def test_binary_pipeline_invokes_packed8_engine_and_forces_trusted_validation() -> None:
+    FakeRunEngine.instances.clear()
+    FakePredictionSource.instances.clear()
+    writer_session = FakeWriterSession()
+    run_input = build_native_run_input()
+
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch(
+            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
+        ),
+        patch("g.engine.native_dispatch.load_native_bgen_run_input", return_value=run_input),
+        patch("g.engine.regenie2_pipeline.output.create_output_writer_session", return_value=writer_session),
+        patch("g.engine.regenie2_pipeline.output.build_current_run_manifest_header") as mock_manifest_header,
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset({64, 0})),
+        ),
+        patch(
+            "g.compute.regenie2_binary.api.prepare_regenie2_binary_state",
+            return_value=typing.cast("regenie2_binary_state.Regenie2BinaryState", "state"),
+        ),
+    ):
+        mock_manifest_header.return_value = {"header": "current"}
+        final_path = regenie2_pipeline.run_regenie2_binary_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths=output.OutputRunPaths(Path("run"), Path("run/chunks")),
+            staging_depth=3,
+            existing_manifest={"header": "current", "committed_chunks": []},
+            resume=True,
+            trusted_no_missing_diploid=False,
+            gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
+        )
+
+    assert final_path == Path("results/final.parquet")
+    engine = FakeRunEngine.instances[0]
+    assert engine.trusted_no_missing_diploid is True
+    assert engine.validation_count == 1
+    assert engine.run_method == "variant_major_packed8"
+    assert engine.run_arguments is not None
+    sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
+    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    assert isinstance(callback, callbacks.BinaryRegenie2PipelineCallback)
+    assert committed_chunk_identifiers == [0, 64]
+    assert mock_manifest_header.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
+    assert mock_manifest_header.call_args.kwargs["trusted_no_missing_diploid"] is True
 
 
 def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed_chunks() -> None:

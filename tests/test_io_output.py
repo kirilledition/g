@@ -107,6 +107,7 @@ def build_test_header(
     association_mode: AssociationMode = AssociationMode.REGENIE2_LINEAR,
     binary_kernel_config: typing.Any | None = None,
     jax_enable_x64: bool = True,
+    gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     firth_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT64,
 ) -> dict[str, typing.Any]:
@@ -135,6 +136,7 @@ def build_test_header(
         sample_key_mode=types.SampleKeyMode.IID,
         binary_kernel_config=binary_kernel_config,
         jax_enable_x64=jax_enable_x64,
+        gpu_genotype_format=gpu_genotype_format,
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
     )
@@ -161,6 +163,13 @@ def test_current_run_manifest_records_result_statistic_output_dtype(tmp_path: Pa
 
     assert current_header["output_writer"]["result_statistic_dtype"] == "float32"
     assert current_header["execution_plan"]["output_writer"]["result_statistic_dtype"] == "float32"
+
+
+def test_current_run_manifest_records_gpu_genotype_format(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path, gpu_genotype_format=types.GpuGenotypeFormat.PACKED8)
+
+    assert current_header["gpu_genotype_format"] == "packed8"
+    assert current_header["execution_plan"]["gpu_genotype_format"] == "packed8"
 
 
 def initialize_test_output_run(
@@ -614,6 +623,7 @@ def build_test_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConf
         ("output_schema_version", 2),
         ("bgen_decode_tile_variant_count", 128),
         ("jax_policy", {"device": "gpu", "enable_x64": True, "matmul_precision": "highest"}),
+        ("gpu_genotype_format", "packed8"),
         ("score_dtype", "float64"),
         ("firth_dtype", "float32"),
         ("multi_phenotype_sample_mode", "complete_case_intersection"),
@@ -674,6 +684,7 @@ def test_initialize_output_run_rejects_manifest_header_mismatch(
         ("output_schema_version", 2),
         ("trusted_no_missing_diploid", True),
         ("bgen_decode_tile_variant_count", 128),
+        ("gpu_genotype_format", "packed8"),
         ("score_dtype", "float64"),
         ("firth_dtype", "float32"),
         ("chunk_size", 4),

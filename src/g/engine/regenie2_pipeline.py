@@ -256,6 +256,7 @@ def run_regenie2_binary_bgen_pipeline(
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None,
+    gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
         types.NullLogisticNonconvergencePolicy.FAIL
     ),
@@ -268,13 +269,15 @@ def run_regenie2_binary_bgen_pipeline(
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
     resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
     use_variant_major = True
+    use_packed8 = gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
+    effective_trusted_no_missing_diploid = trusted_no_missing_diploid or use_packed8
     engine_start_time = time.perf_counter()
     logger.debug("Opening native BGEN engine for binary pipeline.")
     engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
-        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_no_missing_diploid=effective_trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
     timing.record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
@@ -334,7 +337,7 @@ def run_regenie2_binary_bgen_pipeline(
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         binary_correction_plan=correction_plan,
-        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_no_missing_diploid=effective_trusted_no_missing_diploid,
         sample_key_mode=native_dispatch.resolve_sample_key_mode(alignment_config),
         binary_kernel_config=resolved_kernel_config,
         bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
@@ -342,6 +345,7 @@ def run_regenie2_binary_bgen_pipeline(
         jax_device=jax_device,
         jax_matmul_precision=jax_matmul_precision,
         jax_enable_x64=jax_enable_x64,
+        gpu_genotype_format=gpu_genotype_format,
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
         output_format=output_format,
@@ -394,7 +398,7 @@ def run_regenie2_binary_bgen_pipeline(
         engine=engine,
         variant_limit=variant_limit,
         is_binary_trait=True,
-        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_no_missing_diploid=effective_trusted_no_missing_diploid,
     )
     timing.record_stage_duration(stage_timing_recorder, "preflight_validation", preflight_start_time)
     logger.debug(
@@ -432,6 +436,7 @@ def run_regenie2_binary_bgen_pipeline(
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
         variant_major_dosage=use_variant_major,
+        variant_major_packed8_probability_pairs=use_packed8,
     )
 
 

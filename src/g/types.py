@@ -48,6 +48,13 @@ class FloatingPointDtype(enum.StrEnum):
     FLOAT64 = "float64"
 
 
+class GpuGenotypeFormat(enum.StrEnum):
+    """Host-to-device genotype representation for GPU kernels."""
+
+    DOSAGE = "dosage"
+    PACKED8 = "packed8"
+
+
 class ArrowCompression(enum.StrEnum):
     """Arrow IPC compression codec for internal chunk files."""
 

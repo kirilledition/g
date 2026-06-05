@@ -6,6 +6,7 @@ import typing
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 from g import types
@@ -388,6 +389,65 @@ def build_variant_major_parity_chromosome_state(
         state,
         fixture.loco_offset,
         correction_plan,
+    )
+
+
+def encode_integer_dosage_matrix_to_packed8_probability_pairs(
+    genotype_matrix_by_variant: npt.NDArray[np.float32],
+) -> npt.NDArray[np.uint8]:
+    """Encode exact 0/1/2 dosages as trusted unphased 8-bit probability pairs."""
+    packed_probability_pairs = np.zeros((*genotype_matrix_by_variant.shape, 2), dtype=np.uint8)
+    packed_probability_pairs[:, :, 0] = np.where(genotype_matrix_by_variant == 0.0, 255, 0).astype(np.uint8)
+    packed_probability_pairs[:, :, 1] = np.where(genotype_matrix_by_variant == 1.0, 255, 0).astype(np.uint8)
+    return packed_probability_pairs
+
+
+def build_packed8_binary_fixture() -> BinaryVariantMajorParityFixture:
+    """Build an exact integer-dosage fixture for packed8 parity checks."""
+    covariate_matrix = jnp.asarray(
+        [
+            [1.0, -1.2],
+            [1.0, -0.9],
+            [1.0, -0.6],
+            [1.0, -0.3],
+            [1.0, 0.0],
+            [1.0, 0.3],
+            [1.0, 0.6],
+            [1.0, 0.9],
+            [1.0, 1.2],
+            [1.0, 1.5],
+            [1.0, 1.8],
+            [1.0, 2.1],
+        ],
+        dtype=jnp.float32,
+    )
+    phenotype_vector = jnp.asarray(
+        [0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        dtype=jnp.float32,
+    )
+    genotype_matrix = jnp.asarray(
+        [
+            [0.0, 2.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [2.0, 0.0, 2.0],
+            [2.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [2.0, 0.0, 2.0],
+            [0.0, 2.0, 0.0],
+            [2.0, 0.0, 0.0],
+        ],
+        dtype=jnp.float32,
+    )
+    return BinaryVariantMajorParityFixture(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        genotype_matrix=genotype_matrix,
+        loco_offset=jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32),
+        sparse_candidate_mask=jnp.asarray([False, False, True], dtype=jnp.bool_),
     )
 
 
@@ -1596,6 +1656,78 @@ def test_variant_major_binary_chunk_matches_sample_major() -> None:
         np.asarray(variant_major_result.firth_convergence_reason_code),
         np.asarray(sample_major_result.firth_convergence_reason_code),
     )
+
+
+def test_packed8_score_only_binary_chunk_matches_variant_major_dosage() -> None:
+    fixture = build_packed8_binary_fixture()
+    correction_plan = types.BinaryCorrectionPlan()
+    chromosome_state = build_variant_major_parity_chromosome_state(fixture, correction_plan)
+    genotype_matrix_by_variant = jnp.transpose(fixture.genotype_matrix)
+    packed_probability_pairs_by_variant = encode_integer_dosage_matrix_to_packed8_probability_pairs(
+        np.asarray(genotype_matrix_by_variant, dtype=np.float32)
+    )
+    dosage_sum = jnp.sum(genotype_matrix_by_variant, axis=1)
+    observation_count = jnp.full((genotype_matrix_by_variant.shape[0],), genotype_matrix_by_variant.shape[1])
+
+    variant_major_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        correction_plan=correction_plan,
+        sparse_candidate_mask=fixture.sparse_candidate_mask,
+        dosage_sum=dosage_sum,
+        observation_count=observation_count,
+    )
+    packed_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_packed8(
+        chromosome_state=chromosome_state,
+        packed_probability_pairs_by_variant=jnp.asarray(packed_probability_pairs_by_variant),
+        correction_plan=correction_plan,
+        sparse_candidate_mask=fixture.sparse_candidate_mask,
+        dosage_sum=dosage_sum,
+        observation_count=observation_count,
+    )
+
+    assert_binary_chunk_results_match(variant_major_result, packed_result)
+
+
+def test_packed8_approximate_firth_binary_chunk_matches_variant_major_dosage() -> None:
+    fixture = build_packed8_binary_fixture()
+    correction_plan = types.BinaryCorrectionPlan(
+        method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+        p_threshold=0.99,
+        firth_se=True,
+    )
+    chromosome_state = build_variant_major_parity_chromosome_state(fixture, correction_plan)
+    genotype_matrix_by_variant = jnp.transpose(fixture.genotype_matrix)
+    packed_probability_pairs_by_variant = encode_integer_dosage_matrix_to_packed8_probability_pairs(
+        np.asarray(genotype_matrix_by_variant, dtype=np.float32)
+    )
+    dosage_sum = jnp.sum(genotype_matrix_by_variant, axis=1)
+    observation_count = jnp.full((genotype_matrix_by_variant.shape[0],), genotype_matrix_by_variant.shape[1])
+    kernel_config = replace_binary_kernel_config(
+        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        firth_candidate={"batch_size": 2, "candidate_capacity": 4},
+    )
+
+    variant_major_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        correction_plan=correction_plan,
+        sparse_candidate_mask=fixture.sparse_candidate_mask,
+        kernel_config=kernel_config,
+        dosage_sum=dosage_sum,
+        observation_count=observation_count,
+    )
+    packed_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_packed8(
+        chromosome_state=chromosome_state,
+        packed_probability_pairs_by_variant=jnp.asarray(packed_probability_pairs_by_variant),
+        correction_plan=correction_plan,
+        sparse_candidate_mask=fixture.sparse_candidate_mask,
+        kernel_config=kernel_config,
+        dosage_sum=dosage_sum,
+        observation_count=observation_count,
+    )
+
+    assert_binary_chunk_results_match(variant_major_result, packed_result)
 
 
 def test_variant_major_score_only_bt_matches_sample_major_with_covariates_loco_and_edge_genotypes() -> None:

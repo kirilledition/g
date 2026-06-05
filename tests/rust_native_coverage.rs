@@ -45,6 +45,16 @@ fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_string()).collect()
 }
 
+fn assert_f32_vectors_close(left: &[f32], right: &[f32], tolerance: f32) {
+    assert_eq!(left.len(), right.len());
+    for (left_value, right_value) in left.iter().zip(right.iter()) {
+        assert!(
+            (left_value - right_value).abs() <= tolerance,
+            "left value {left_value} differed from right value {right_value} by more than {tolerance}"
+        );
+    }
+}
+
 fn haplotypes_bgen_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/bgen/haplotypes.bgen")
 }
@@ -352,6 +362,22 @@ fn bgen_reader_exercises_trusted_validation_and_variant_major_decode_paths() {
             .contains("non-trusted")
     );
 
+    let unvalidated_trusted_reader = BgenReaderCore::open(&bgen_path, true).expect("trusted reader should open");
+    unvalidated_trusted_reader.prepare_sample_selection(&[0, 1, 2]).expect("identity selection should prepare");
+    let mut unvalidated_packed_output = vec![0_u8; 6];
+    assert!(
+        unvalidated_trusted_reader
+            .read_preprocessed_variant_major_packed8_probability_pairs_into_address_prepared(
+                0,
+                1,
+                unvalidated_packed_output.as_mut_ptr() as usize,
+                unvalidated_packed_output.len(),
+            )
+            .expect_err("packed8 delivery should require trusted validation")
+            .to_string()
+            .contains("requires trusted no-missing diploid validation")
+    );
+
     let trusted_reader = BgenReaderCore::open(&bgen_path, true).expect("trusted reader should open");
     trusted_reader.validate_trusted_no_missing_diploid().expect("trusted fixture should validate");
     trusted_reader.mark_trusted_no_missing_diploid_validated().expect("trusted mark should succeed");
@@ -369,6 +395,22 @@ fn bgen_reader_exercises_trusted_validation_and_variant_major_decode_paths() {
     assert_eq!(variant_major_stats.observation_count, vec![3]);
     assert_eq!(variant_major_stats.zero_count, vec![1]);
     assert_eq!(variant_major_output, vec![2.0, 0.0, 1.0]);
+
+    let mut packed_output = vec![0_u8; 6];
+    let packed_stats = trusted_reader
+        .read_preprocessed_variant_major_packed8_probability_pairs_into_address_prepared(
+            0,
+            1,
+            packed_output.as_mut_ptr() as usize,
+            packed_output.len(),
+        )
+        .expect("trusted packed8 probability pairs should decode");
+    assert_eq!(packed_output, vec![0, 0, 255, 0, 0, 255]);
+    assert_eq!(packed_stats.observation_count, variant_major_stats.observation_count);
+    assert_eq!(packed_stats.zero_count, variant_major_stats.zero_count);
+    assert_eq!(packed_stats.nonzero_count, variant_major_stats.nonzero_count);
+    assert_f32_vectors_close(&packed_stats.dosage_sum, &variant_major_stats.dosage_sum, 1.0e-5);
+    assert_f32_vectors_close(&packed_stats.dosage_square_sum, &variant_major_stats.dosage_square_sum, 1.0e-5);
 
     let empty_variant_stats = trusted_reader
         .read_preprocessed_variant_major_dosage_f32_into_address_prepared(
@@ -395,6 +437,19 @@ fn bgen_reader_exercises_trusted_validation_and_variant_major_decode_paths() {
         .expect("trusted row-major preprocessed read should decode");
     assert_eq!(row_major_stats.observation_count, vec![2]);
     assert_eq!(row_major_output, vec![1.0, 2.0]);
+
+    let mut noncontiguous_packed_output = vec![0_u8; 4];
+    let noncontiguous_packed_stats = trusted_reader
+        .read_preprocessed_variant_major_packed8_probability_pairs_into_address_prepared(
+            0,
+            1,
+            noncontiguous_packed_output.as_mut_ptr() as usize,
+            noncontiguous_packed_output.len(),
+        )
+        .expect("trusted selected packed8 probability pairs should decode");
+    assert_eq!(noncontiguous_packed_output, vec![0, 255, 0, 0]);
+    assert_eq!(noncontiguous_packed_stats.observation_count, vec![2]);
+    assert_f32_vectors_close(&noncontiguous_packed_stats.dosage_sum, &[3.0], 1.0e-5);
 }
 
 #[test]

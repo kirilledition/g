@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
-RUN_MANIFEST_SCHEMA_VERSION = 4
+RUN_MANIFEST_SCHEMA_VERSION = 5
 OUTPUT_SCHEMA_VERSION = 1
 DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT = 64
 DEFAULT_JAX_MATMUL_PRECISION = "float32"
@@ -215,6 +215,7 @@ def build_current_run_manifest_header(
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
     jax_enable_x64: bool = config.DEFAULT_JAX_ENABLE_X64,
+    gpu_genotype_format: types.GpuGenotypeFormat = config.DEFAULT_GPU_GENOTYPE_FORMAT,
     score_dtype: types.FloatingPointDtype = config.DEFAULT_SCORE_DTYPE,
     firth_dtype: types.FloatingPointDtype = config.DEFAULT_FIRTH_DTYPE,
     multi_phenotype_sample_mode: MultiPhenotypeSampleMode = MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
@@ -268,6 +269,7 @@ def build_current_run_manifest_header(
             "sample_key_mode": sample_key_mode,
             "bgen_decode_tile_variant_count": bgen_decode_tile_variant_count,
             "jax_policy": jax_policy_manifest,
+            "gpu_genotype_format": gpu_genotype_format,
             "score_dtype": score_dtype,
             "firth_dtype": firth_dtype,
             "multi_phenotype_sample_mode": multi_phenotype_sample_mode,
@@ -297,6 +299,7 @@ def build_current_run_manifest_header(
         "sample_key_mode": str(sample_key_mode),
         "bgen_decode_tile_variant_count": bgen_decode_tile_variant_count,
         "jax_policy": jax_policy_manifest,
+        "gpu_genotype_format": gpu_genotype_format.value,
         "score_dtype": score_dtype.value,
         "firth_dtype": firth_dtype.value,
         "multi_phenotype_sample_mode": multi_phenotype_sample_mode.value,

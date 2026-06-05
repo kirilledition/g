@@ -62,6 +62,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-firth-maximum-step-size": 4.0,
         "g-use-block-firth-math": True,
         "g-bgen-decode-tile-variant-count": 32,
+        "g-gpu-genotype-format": "dosage",
         "g-score-dtype": "float64",
         "g-firth-dtype": "float64",
         "g-jax-cache-dir": "cache/jax",
@@ -103,6 +104,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_compute.binary_relative_variance_tolerance == 2.0e-6
     assert regenie_config.g_compute.use_block_firth_math is True
     assert regenie_config.g_compute.bgen_decode_tile_variant_count == 32
+    assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE
     assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_compute.firth_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_compute.jax_matmul_precision == types.JaxMatmulPrecision.HIGHEST
@@ -161,6 +163,7 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     assert regenie_config.g_compute.null_logistic_nonconvergence_policy == types.NullLogisticNonconvergencePolicy.FAIL
     assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT32
     assert regenie_config.g_compute.firth_dtype == types.FloatingPointDtype.FLOAT64
+    assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE
     assert regenie_config.g_compute.jax_enable_x64 is True
     assert regenie_config.g_compute.jax_persistent_cache is True
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
@@ -400,6 +403,44 @@ def test_config_validation_rejects_invalid_dtype_policy(
     error_match: str,
 ) -> None:
     raw_options = build_valid_quantitative_options()
+    raw_options.update(mutated_options)
+
+    with pytest.raises(ValueError, match=error_match):
+        config.RegenieConfig.from_options(raw_options)
+
+
+@pytest.mark.parametrize(
+    ("mutated_options", "error_match"),
+    [
+        ({"g-gpu-genotype-format": "packed8", "g-device": "cpu"}, "--g-gpu-genotype-format=packed8 requires"),
+        (
+            {"g-gpu-genotype-format": "packed8", "g-device": "gpu", "qt": True, "bt": False},
+            "packed8 currently supports binary traits only",
+        ),
+        (
+            {
+                "g-gpu-genotype-format": "packed8",
+                "g-device": "gpu",
+                "phenoCol": ("first", "second"),
+            },
+            "packed8 currently supports one binary phenotype",
+        ),
+    ],
+)
+def test_config_validation_rejects_unsupported_packed8_uses(
+    mutated_options: dict[str, object],
+    error_match: str,
+) -> None:
+    raw_options: dict[str, object] = {
+        "step": 2,
+        "bt": True,
+        "bgen": "dataset.bgen",
+        "phenoFile": "phenotype.tsv",
+        "phenoCol": "trait",
+        "pred": "predictions.list",
+        "out": "results/output",
+        "g-device": "gpu",
+    }
     raw_options.update(mutated_options)
 
     with pytest.raises(ValueError, match=error_match):

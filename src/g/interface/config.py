@@ -64,6 +64,7 @@ DEFAULT_NULL_FIRTH_FALLBACK_STEP_DIVISOR = 5.0
 DEFAULT_NULL_FIRTH_LINE_SEARCH_MAXIMUM_ATTEMPTS = 25
 DEFAULT_NULL_FIRTH_STEP_HALVING_SCALE = 0.5
 DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT = 64
+DEFAULT_GPU_GENOTYPE_FORMAT = types.GpuGenotypeFormat.DOSAGE
 DEFAULT_SCORE_DTYPE = types.FloatingPointDtype.FLOAT32
 DEFAULT_FIRTH_DTYPE = types.FloatingPointDtype.FLOAT64
 DEFAULT_JAX_ENABLE_X64 = True
@@ -159,6 +160,7 @@ class GComputeConfig:
     null_firth_step_halving_scale: float = DEFAULT_NULL_FIRTH_STEP_HALVING_SCALE
     use_block_firth_math: bool = False
     bgen_decode_tile_variant_count: int = DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT
+    gpu_genotype_format: types.GpuGenotypeFormat = DEFAULT_GPU_GENOTYPE_FORMAT
     score_dtype: types.FloatingPointDtype = DEFAULT_SCORE_DTYPE
     firth_dtype: types.FloatingPointDtype = DEFAULT_FIRTH_DTYPE
     jax_cache_dir: Path | None = None
@@ -535,6 +537,9 @@ def from_normalized_options(
                     DEFAULT_BGEN_DECODE_TILE_VARIANT_COUNT,
                 )
             ),
+            gpu_genotype_format=types.GpuGenotypeFormat(
+                str(normalized_options.get("g-gpu-genotype-format", DEFAULT_GPU_GENOTYPE_FORMAT.value))
+            ),
             score_dtype=floating_point_dtype_or_default(
                 normalized_options.get("g-score-dtype"),
                 default=DEFAULT_SCORE_DTYPE,
@@ -810,6 +815,8 @@ def normalize_option_name(option_name: str) -> str:
         "g_null_firth_step_halving_scale": "g-null-firth-step-halving-scale",
         "g_use_block_firth_math": "g-use-block-firth-math",
         "g_bgen_decode_tile_variant_count": "g-bgen-decode-tile-variant-count",
+        "g_gpu_genotype_format": "g-gpu-genotype-format",
+        "gpu_genotype_format": "g-gpu-genotype-format",
         "g_score_dtype": "g-score-dtype",
         "g_firth_dtype": "g-firth-dtype",
         "g_jax_cache_dir": "g-jax-cache-dir",
@@ -1024,6 +1031,16 @@ def validate_config(config: RegenieConfig) -> None:
         "--g-bgen-decode-tile-variant-count",
         config.g_compute.bgen_decode_tile_variant_count,
     )
+    if config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.PACKED8:
+        if config.g_compute.device != types.Device.GPU:
+            message = "--g-gpu-genotype-format=packed8 requires --g-device=gpu."
+            raise ValueError(message)
+        if config.trait.trait_type != types.RegenieTraitType.BINARY:
+            message = "--g-gpu-genotype-format=packed8 currently supports binary traits only."
+            raise ValueError(message)
+        if len(config.input.pheno_columns) != 1:
+            message = "--g-gpu-genotype-format=packed8 currently supports one binary phenotype at a time."
+            raise ValueError(message)
     if config.g_compute.firth_dtype != types.FloatingPointDtype.FLOAT64:
         message = "--g-firth-dtype currently supports float64 only."
         raise ValueError(message)
@@ -1235,6 +1252,7 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             "null-firth-step-halving-scale": config.g_compute.null_firth_step_halving_scale,
             "use-block-firth-math": config.g_compute.use_block_firth_math,
             "bgen-decode-tile-variant-count": config.g_compute.bgen_decode_tile_variant_count,
+            "gpu-genotype-format": config.g_compute.gpu_genotype_format.value,
             "score-dtype": config.g_compute.score_dtype.value,
             "firth-dtype": config.g_compute.firth_dtype.value,
             **optional_mapping("jax-cache-dir", config.g_compute.jax_cache_dir),

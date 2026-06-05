@@ -69,6 +69,7 @@ OUTPUT_FORMAT_VALUES = tuple(item.value for item in types.OutputFormat)
 RESUME_MODE_VALUES = tuple(item.value for item in types.ResumeMode)
 JAX_MATMUL_PRECISION_VALUES = tuple(item.value for item in types.JaxMatmulPrecision)
 FLOATING_POINT_DTYPE_VALUES = tuple(item.value for item in types.FloatingPointDtype)
+GPU_GENOTYPE_FORMAT_VALUES = tuple(item.value for item in types.GpuGenotypeFormat)
 ARROW_COMPRESSION_VALUES = tuple(item.value for item in types.ArrowCompression)
 TELEMETRY_MODE_VALUES = tuple(item.value for item in types.TelemetryMode)
 
@@ -715,6 +716,15 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         "Native BGEN decode tile variant count.",
         cli_flags=("--g-bgen-decode-tile-variant-count", "g_bgen_decode_tile_variant_count"),
         type=OptionValueType.INTEGER,
+    ),
+    OptionSpec(
+        "g-gpu-genotype-format",
+        "g_gpu_genotype_format",
+        SupportLevel.G_EXTENSION,
+        "g.compute",
+        "GPU genotype transfer format.",
+        cli_flags=("--g-gpu-genotype-format", "g_gpu_genotype_format"),
+        accepted_values=GPU_GENOTYPE_FORMAT_VALUES,
     ),
     OptionSpec(
         "g-score-dtype",

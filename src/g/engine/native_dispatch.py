@@ -341,6 +341,7 @@ def run_bgen_engine_with_callback(
     callback: object,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     variant_major_dosage: bool = False,
+    variant_major_packed8_probability_pairs: bool = False,
     stage_timing_snapshot_writer: typing.Callable[
         [timing.StageTimingRecorder | None, Path | None], None
     ] = timing.write_stage_timing_snapshot,
@@ -354,11 +355,19 @@ def run_bgen_engine_with_callback(
         sample_indices = run_input.sample_indices
         committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
         logger.debug(
-            "Starting native BGEN delivery: committed_chunk_count=%s variant_major_dosage=%s.",
+            "Starting native BGEN delivery: committed_chunk_count=%s variant_major_dosage=%s "
+            "variant_major_packed8_probability_pairs=%s.",
             len(committed_chunk_identifier_list),
             variant_major_dosage,
+            variant_major_packed8_probability_pairs,
         )
-        if variant_major_dosage:
+        if variant_major_packed8_probability_pairs:
+            processed_chunk_count = engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+                sample_indices,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
+        elif variant_major_dosage:
             processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
                 sample_indices,
                 callback,

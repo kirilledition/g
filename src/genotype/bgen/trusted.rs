@@ -150,6 +150,246 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
     Ok(VariantMajorTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, has_missing_values: false })
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn decode_trusted_variant_major_packed8_probability_pair_tile(
+    mmap: &[u8],
+    compression_type: CompressionType,
+    sample_count: usize,
+    sample_selection: &SampleSelection,
+    variant_record_chunk: &[VariantRecord],
+    output_pointer_address: usize,
+    selected_sample_count: usize,
+    tile_variant_start_index: usize,
+    profiling_enabled: bool,
+    tile_stats: &mut VariantMajorTileStatsMut<'_>,
+    thread_scratch: &mut ThreadScratch,
+) -> Result<VariantMajorTileDecodeResult, BgenError> {
+    validate_variant_major_tile_stats_lengths(tile_stats, variant_record_chunk.len())?;
+    let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
+    for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
+        let variant_decode_result = decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pairs(
+            mmap,
+            compression_type,
+            sample_count,
+            sample_selection,
+            variant_record,
+            output_pointer_address,
+            tile_variant_start_index + tile_variant_index,
+            selected_sample_count,
+            profiling_enabled,
+            thread_scratch,
+        )?;
+        let variant_profile_snapshot = variant_decode_result.profile_snapshot;
+        tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.selected_dosage_total;
+        tile_stats.dosage_square_sum[tile_variant_index] = variant_decode_result.selected_dosage_square_total;
+        tile_stats.observation_count[tile_variant_index] = variant_decode_result.selected_observation_count;
+        tile_stats.zero_count[tile_variant_index] = variant_decode_result.zero_count;
+        tile_stats.nonzero_count[tile_variant_index] = variant_decode_result.nonzero_count;
+        tile_stats.homozygous_reference_count[tile_variant_index] = variant_decode_result.homozygous_reference_count;
+        tile_stats.heterozygous_count[tile_variant_index] = variant_decode_result.heterozygous_count;
+        tile_stats.homozygous_alternate_count[tile_variant_index] = variant_decode_result.homozygous_alternate_count;
+        thread_local_profile_snapshot.compressed_block_fetch_ns += variant_profile_snapshot.compressed_block_fetch_ns;
+        thread_local_profile_snapshot.compressed_block_fetch_count +=
+            variant_profile_snapshot.compressed_block_fetch_count;
+        thread_local_profile_snapshot.compressed_byte_count += variant_profile_snapshot.compressed_byte_count;
+        thread_local_profile_snapshot.decompression_ns += variant_profile_snapshot.decompression_ns;
+        thread_local_profile_snapshot.decompression_count += variant_profile_snapshot.decompression_count;
+        thread_local_profile_snapshot.uncompressed_byte_count += variant_profile_snapshot.uncompressed_byte_count;
+        thread_local_profile_snapshot.zlib_stream_count += variant_profile_snapshot.zlib_stream_count;
+        thread_local_profile_snapshot.probability_decode_ns += variant_profile_snapshot.probability_decode_ns;
+        thread_local_profile_snapshot.probability_decode_count += variant_profile_snapshot.probability_decode_count;
+        thread_local_profile_snapshot.variant_decode_count += variant_profile_snapshot.variant_decode_count;
+        thread_local_profile_snapshot.output_write_ns += variant_profile_snapshot.output_write_ns;
+        thread_local_profile_snapshot.output_write_count += variant_profile_snapshot.output_write_count;
+        thread_local_profile_snapshot.output_byte_count += variant_profile_snapshot.output_byte_count;
+    }
+    thread_local_profile_snapshot.decode_tile_count += 1;
+    Ok(VariantMajorTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, has_missing_values: false })
+}
+
+#[derive(Debug, Default)]
+struct PackedProbabilitySummary {
+    dosage_sum: f32,
+    dosage_square_sum: f32,
+    zero_count: i32,
+    nonzero_count: i32,
+    homozygous_reference_count: i32,
+    heterozygous_count: i32,
+    homozygous_alternate_count: i32,
+}
+
+impl PackedProbabilitySummary {
+    fn add_probability_pair(&mut self, probability_pair: [u8; 2], dosage_lookup: &[f32]) {
+        let dosage_value = dosage_lookup[packed_eight_bit_probability_index(probability_pair)];
+        self.dosage_sum += dosage_value;
+        self.dosage_square_sum += dosage_value * dosage_value;
+        preprocess::increment_dosage_summary_counts(
+            dosage_value,
+            &mut self.zero_count,
+            &mut self.nonzero_count,
+            &mut self.homozygous_reference_count,
+            &mut self.heterozygous_count,
+            &mut self.homozygous_alternate_count,
+        );
+    }
+}
+
+fn summarize_packed_probability_bytes(
+    probability_bytes: &[u8],
+    dosage_lookup: &[f32],
+) -> Result<PackedProbabilitySummary, BgenError> {
+    let mut probability_byte_chunks = probability_bytes.chunks_exact(2);
+    let mut summary = PackedProbabilitySummary::default();
+    for probability_pair_bytes in &mut probability_byte_chunks {
+        summary.add_probability_pair([probability_pair_bytes[0], probability_pair_bytes[1]], dosage_lookup);
+    }
+    if !probability_byte_chunks.remainder().is_empty() {
+        return Err(BgenError::InvalidFormat(
+            "Packed 8-bit BGEN probability-pair slices must contain two bytes per sample.".to_string(),
+        ));
+    }
+    Ok(summary)
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
+fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pairs(
+    mmap: &[u8],
+    compression_type: CompressionType,
+    sample_count: usize,
+    sample_selection: &SampleSelection,
+    variant_record: &VariantRecord,
+    output_pointer_address: usize,
+    variant_index: usize,
+    selected_sample_count: usize,
+    profiling_enabled: bool,
+    thread_scratch: &mut ThreadScratch,
+) -> Result<VariantDecodeResult, BgenError> {
+    let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
+    let probability_block = read_probability_block(
+        mmap,
+        compression_type,
+        variant_record,
+        thread_scratch,
+        &mut thread_local_profile_snapshot,
+        profiling_enabled,
+    )?;
+
+    let mut cursor = 0;
+    let stored_sample_count = u32_to_usize(read_u32_at(probability_block, cursor)?)?;
+    cursor += 4;
+    if stored_sample_count != sample_count {
+        return Err(BgenError::InvalidFormat(format!(
+            "Variant '{}' stores {stored_sample_count} samples in its probability block, but the file header reports {sample_count}.",
+            variant_record.resolved_variant_identifier,
+        )));
+    }
+
+    let allele_count = read_u16_at(probability_block, cursor)?;
+    cursor += 2;
+    if allele_count != 2 {
+        return Err(BgenError::UnsupportedFormat(format!(
+            "Variant '{}' is not biallelic.",
+            variant_record.resolved_variant_identifier,
+        )));
+    }
+
+    let minimum_ploidy = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    let maximum_ploidy = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    if minimum_ploidy != 2 || maximum_ploidy != 2 {
+        return Err(BgenError::UnsupportedFormat(format!(
+            "Variant '{}' uses ploidy bounds [{minimum_ploidy}, {maximum_ploidy}], but packed8 trusted reads require diploid variants.",
+            variant_record.resolved_variant_identifier,
+        )));
+    }
+
+    read_exact_bytes(probability_block, cursor, sample_count)?;
+    cursor += sample_count;
+
+    let phased_flag = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    let probability_bit_count = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    if phased_flag != 0 || probability_bit_count != 8 {
+        return Err(BgenError::UnsupportedFormat(format!(
+            "Variant '{}' is not an unphased 8-bit BGEN variant.",
+            variant_record.resolved_variant_identifier,
+        )));
+    }
+
+    let expected_probability_byte_count = sample_count.checked_mul(2).ok_or_else(|| {
+        BgenError::InvalidFormat("Integer overflow while decoding 8-bit BGEN probabilities.".to_string())
+    })?;
+    let packed_probability_bytes = read_exact_bytes(probability_block, cursor, expected_probability_byte_count)?;
+    let probability_decode_start_time = profiling_enabled.then(Instant::now);
+    let output_write_start_time = profiling_enabled.then(Instant::now);
+    let output_pointer = output_pointer_address as *mut u8;
+    let variant_row_byte_offset =
+        variant_index.checked_mul(selected_sample_count).and_then(|value| value.checked_mul(2)).ok_or_else(|| {
+            BgenError::Range("Integer overflow while locating variant-major packed8 BGEN output row.".to_string())
+        })?;
+    let selected_probability_byte_count = selected_sample_count.checked_mul(2).ok_or_else(|| {
+        BgenError::Range("Integer overflow while sizing variant-major packed8 BGEN output row.".to_string())
+    })?;
+    let output_row = unsafe {
+        // Each parallel worker owns a distinct variant row in the variant-major packed output matrix.
+        std::slice::from_raw_parts_mut(output_pointer.add(variant_row_byte_offset), selected_probability_byte_count)
+    };
+    let dosage_lookup = unphased_eight_bit_dosage_lookup();
+    let mut summary = PackedProbabilitySummary::default();
+
+    if sample_selection.is_identity {
+        output_row.copy_from_slice(packed_probability_bytes);
+        summary = summarize_packed_probability_bytes(packed_probability_bytes, dosage_lookup)?;
+    } else if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start {
+        let probability_offset = contiguous_file_index_start.checked_mul(2).ok_or_else(|| {
+            BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
+        })?;
+        let selected_probability_bytes =
+            read_exact_bytes(packed_probability_bytes, probability_offset, selected_probability_byte_count)?;
+        output_row.copy_from_slice(selected_probability_bytes);
+        summary = summarize_packed_probability_bytes(selected_probability_bytes, dosage_lookup)?;
+    } else {
+        for (selected_index, file_sample_index) in sample_selection.selected_file_indices.iter().copied().enumerate() {
+            let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
+                BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
+            })?;
+            let probability_pair = read_eight_bit_probability_pair(packed_probability_bytes, probability_offset)?;
+            let output_offset = selected_index.checked_mul(2).ok_or_else(|| {
+                BgenError::Range("Integer overflow while writing selected packed8 probabilities.".to_string())
+            })?;
+            output_row[output_offset] = probability_pair[0];
+            output_row[output_offset + 1] = probability_pair[1];
+            summary.add_probability_pair(probability_pair, dosage_lookup);
+        }
+    }
+    if let Some(output_write_start_time) = output_write_start_time {
+        thread_local_profile_snapshot.output_write_ns += elapsed_nanoseconds(output_write_start_time);
+        thread_local_profile_snapshot.output_write_count += 1;
+        thread_local_profile_snapshot.output_byte_count =
+            u64::try_from(selected_probability_byte_count).unwrap_or(u64::MAX);
+    }
+    if let Some(probability_decode_start_time) = probability_decode_start_time {
+        thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
+        thread_local_profile_snapshot.probability_decode_count += 1;
+    }
+    thread_local_profile_snapshot.variant_decode_count += 1;
+    Ok(VariantDecodeResult {
+        profile_snapshot: thread_local_profile_snapshot,
+        selected_dosage_total: summary.dosage_sum,
+        selected_dosage_square_total: summary.dosage_square_sum,
+        selected_observation_count: i32::try_from(selected_sample_count).unwrap_or(i32::MAX),
+        has_missing_values: false,
+        zero_count: summary.zero_count,
+        nonzero_count: summary.nonzero_count,
+        homozygous_reference_count: summary.homozygous_reference_count,
+        heterozygous_count: summary.heterozygous_count,
+        homozygous_alternate_count: summary.homozygous_alternate_count,
+    })
+}
+
 #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
 fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
