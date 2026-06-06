@@ -383,6 +383,13 @@ def finish_callback_drain(
     timing.record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
 
 
+def start_callback(callback: object) -> None:
+    """Start callback workers when the callback exposes an explicit lifecycle hook."""
+    start_callback_method = getattr(callback, "start", None)
+    if callable(start_callback_method):
+        start_callback_method()
+
+
 def finish_writer_session(
     *,
     writer_session: typing.Any,
@@ -490,6 +497,7 @@ def run_bgen_engine_with_writer_sessions(
             len(committed_chunk_identifier_list),
             variant_major_packed8_probability_pairs,
         )
+        start_callback(callback)
         if variant_major_packed8_probability_pairs:
             processed_chunk_count = engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
                 run_input.sample_indices,

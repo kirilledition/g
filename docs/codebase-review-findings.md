@@ -109,6 +109,12 @@ the correction.
 
 ### P2. Multi-phenotype resume recomputes partially committed chunks
 
+Status: current behavior is covered by multi-linear and multi-binary complete-case
+pipeline tests in `tests/test_regenie2_pipeline.py`. The tests lock the
+resume-fast-but-not-minimal contract: native delivery skips only chunks committed by every
+phenotype, while the callback keeps each phenotype's committed set for duplicate-write
+suppression.
+
 The multi-phenotype path reads a committed chunk set for each phenotype at
 `src/g/engine/regenie2_pipeline.py:1064` to `src/g/engine/regenie2_pipeline.py:1066`, but
 engine delivery skips only chunks committed by every phenotype:
@@ -142,6 +148,12 @@ runners start callbacks after writer sessions and telemetry are fully prepared.
 
 ### P2. Native unsafe pointer writes are spread across several wrappers
 
+Status: first bounded Rust patch landed in `cleanup/review-easy-nonconfig`. The trusted
+no-missing variant-major dosage and packed8 paths now use a local `VariantMajorOutputMatrix`
+helper to validate non-null output pointers, centralize row-offset overflow checks, and
+reconstitute typed mutable row slices in one place. The hot decode loops still write through
+ordinary slices and do not add per-element abstraction overhead.
+
 The BGEN reader validates buffer lengths and then reconstitutes Python-owned memory with
 raw pointers, for example `src/genotype/bgen/reader.rs:298` to
 `src/genotype/bgen/reader.rs:300`. Trusted decode workers write variant rows through raw
@@ -155,8 +167,10 @@ shape checks. The risk is that the safety contract is implicit and duplicated: b
 lifetime, alignment, exclusivity, and row partitioning assumptions are spread across
 multiple call sites.
 
-Suggested direction: centralize the unsafe boundary behind small helper types, document each
-invariant once, and keep the `unsafe` blocks as small as possible.
+Suggested direction: continue centralizing the unsafe boundary behind small helper types.
+Next candidates are the generic BGEN row-major preprocessing slice in
+`src/genotype/bgen/reader.rs`, lower-level generic decode output slices, and the Python-owned
+Arrow buffer wrapper in `src/python/output.rs`.
 
 ### P2. BGEN decode orchestration functions are too large to audit comfortably
 
@@ -218,8 +232,9 @@ by default.
   GPU benchmark or full parity workload in this review.
 - Approximate Firth multi-trait performance should be benchmarked separately from score-only
   packed8 because it still uses the per-trait correction path.
-- Resume tests should include multi-phenotype partial-commit cases where each phenotype has
-  a different committed chunk set.
+- Multi-phenotype resume has focused multi-linear and multi-binary partial-commit coverage
+  for the current resume-fast-but-not-minimal behavior; future resume-minimization work
+  should add optimization-specific tests.
 - Config-default cleanup has good focused coverage, but future config changes should keep
   the historical planning docs out of the active architecture path.
 
@@ -251,11 +266,12 @@ work:
 - Completed config rewrite planning docs now have historical headers, and the active
   architecture doc says runtime subsystems should receive resolved `RegenieConfig` or
   `ExecutionPlan` values rather than packaged default views.
+- Multi-phenotype resume has targeted multi-linear and multi-binary pipeline regressions
+  for partial per-phenotype committed chunk sets.
 
 ## Suggested Implementation Order
 
-1. Add a targeted multi-phenotype resume test for partial committed chunk sets.
-2. Split callback start from construction.
-3. Centralize Rust unsafe buffer boundary helpers.
-4. Benchmark and then redesign multi-binary approximate Firth batching.
-5. Decide the public dtype/output precision contract.
+1. Split callback start from construction.
+2. Continue centralizing Rust unsafe buffer boundary helpers.
+3. Benchmark and then redesign multi-binary approximate Firth batching.
+4. Decide the public dtype/output precision contract.

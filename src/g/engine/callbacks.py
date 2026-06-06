@@ -404,8 +404,21 @@ class NativeBgenCallbackRunner(abc.ABC):
             name=f"{worker_name}-writer",
             daemon=True,
         )
-        self.result_worker_thread.start()
-        self.worker_thread.start()
+        self.worker_start_lock = threading.Lock()
+        self.worker_threads_started = False
+
+    def start(self) -> None:
+        """Start asynchronous callback workers after owner setup is complete."""
+        with self.worker_start_lock:
+            if self.worker_threads_started:
+                return
+            self.result_worker_thread.start()
+            self.worker_thread.start()
+            self.worker_threads_started = True
+
+    def worker_threads_have_started(self) -> bool:
+        """Return whether callback worker threads have been started."""
+        return self.worker_threads_started
 
     def record_stage_duration(self, stage_name: str, start_time: float) -> None:
         """Record a nested callback stage using this runner's timing recorder."""
@@ -595,6 +608,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         ),
     ) -> None:
         """Put work into the bounded worker queue while surfacing worker errors."""
+        self.start()
         while True:
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
@@ -622,6 +636,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None,
     ) -> None:
         """Put a computed result into the bounded materialization/write queue."""
+        self.start()
         while True:
             self.raise_worker_error_if_present()
             put_start_time = time.perf_counter()
@@ -680,6 +695,8 @@ class NativeBgenCallbackRunner(abc.ABC):
     def stop_dosage_worker(self, timeout_seconds: float | None = None) -> None:
         """Signal the dosage worker to exit after queued dosage chunks drain."""
         effective_timeout_seconds = DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        if not self.worker_threads_have_started():
+            return
         if self.worker_error is not None:
             return
         if not self.worker_thread.is_alive():
@@ -703,6 +720,8 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def join_dosage_worker(self, timeout_seconds: float | None = None) -> None:
         """Join the dosage worker with a bounded shutdown wait."""
+        if not self.worker_threads_have_started():
+            return
         effective_timeout_seconds = DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
         self.worker_thread.join(timeout=effective_timeout_seconds)
         if self.worker_thread.is_alive():
@@ -714,6 +733,8 @@ class NativeBgenCallbackRunner(abc.ABC):
     def stop_result_worker(self, timeout_seconds: float | None = None) -> None:
         """Signal the result worker to exit after queued results drain."""
         effective_timeout_seconds = RESULT_WORKER_JOIN_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        if not self.worker_threads_have_started():
+            return
         if self.result_worker_error is not None:
             return
         if not self.result_worker_thread.is_alive():
@@ -737,6 +758,8 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def join_result_worker(self, timeout_seconds: float | None = None) -> None:
         """Join the result writer worker with a bounded shutdown wait."""
+        if not self.worker_threads_have_started():
+            return
         effective_timeout_seconds = RESULT_WORKER_JOIN_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
         self.result_worker_thread.join(timeout=effective_timeout_seconds)
         if self.result_worker_thread.is_alive():

@@ -330,6 +330,25 @@ class FakeRunEngine:
         return 0
 
 
+class PartialCommitDeliveringRunEngine(FakeRunEngine):
+    def run_bgen_variant_major_dosage_buffered_chunks(
+        self,
+        sample_indices: np.ndarray,
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int:
+        self.run_method = "variant_major_buffered"
+        self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
+        self.run_call_arguments.append(self.run_arguments)
+        for chunk_identifier in (0, 64):
+            typing.cast("typing.Any", callback).compute_preprocessed_variant_major_dosage_chunk(
+                metadata=build_native_metadata_for_chunk(chunk_identifier=chunk_identifier),
+                genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
+                chunk_stats=typing.cast("typing.Any", LinearNativeSumChunkStats()),
+            )
+        return 2
+
+
 def build_native_aligned_sample_data() -> SimpleNamespace:
     return SimpleNamespace(
         sample_indices=np.asarray([1, 0], dtype=np.int64),
@@ -439,12 +458,16 @@ def build_native_multi_run_input() -> native_dispatch.NativeBgenMultiRunInput:
 
 
 def build_native_metadata() -> typing.Any:
+    return build_native_metadata_for_chunk(chunk_identifier=5)
+
+
+def build_native_metadata_for_chunk(*, chunk_identifier: int) -> typing.Any:
     return SimpleNamespace(
-        variant_start_index=5,
-        variant_stop_index=7,
+        variant_start_index=chunk_identifier,
+        variant_stop_index=chunk_identifier + 2,
         chromosome=["22", "22"],
-        variant_identifiers=["variant5", "variant6"],
-        position=np.asarray([100, 200], dtype=np.int64),
+        variant_identifiers=[f"variant{chunk_identifier}", f"variant{chunk_identifier + 1}"],
+        position=np.asarray([chunk_identifier * 100, (chunk_identifier + 1) * 100], dtype=np.int64),
         allele_one=["A", "C"],
         allele_two=["G", "T"],
     )
@@ -611,6 +634,56 @@ def test_native_callback_runner_records_chromosome_progress_transitions() -> Non
     assert telemetry_session.progress_events[1]["chunk_identifier"] == 7
 
 
+def test_native_callback_runner_defers_worker_start_until_explicit_start() -> None:
+    class ThreadedManualCallbackRunner(callbacks.NativeBgenCallbackRunner):
+        def __init__(self) -> None:
+            super().__init__(worker_name="threaded-manual-callback")
+
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix_by_variant, chunk_stats
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+
+    callback = ThreadedManualCallbackRunner()
+
+    assert callback.worker_threads_started is False
+    assert not callback.worker_thread.is_alive()
+    assert not callback.result_worker_thread.is_alive()
+
+    callback.start()
+    try:
+        assert callback.worker_threads_started is True
+        assert callback.worker_thread.is_alive()
+        assert callback.result_worker_thread.is_alive()
+    finally:
+        callback.finish()
+
+    assert not callback.worker_thread.is_alive()
+    assert not callback.result_worker_thread.is_alive()
+
+
 def test_native_callback_runner_consumes_both_dosage_layouts() -> None:
     callback = ManualCallbackRunner()
     metadata = build_native_metadata()
@@ -749,6 +822,7 @@ def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> No
     callback.result_queue = result_queue
     callback.result_worker_error = RuntimeError("writer failed")
     callback.result_worker_thread = result_worker_thread
+    callback.worker_threads_started = True
 
     try:
         callback.stop_result_worker()
@@ -769,6 +843,7 @@ def test_stop_dosage_worker_returns_when_failed_worker_leaves_full_queue() -> No
     callback.dosage_queue = dosage_queue
     callback.worker_error = RuntimeError("dosage failed")
     callback.worker_thread = worker_thread
+    callback.worker_threads_started = True
 
     try:
         callback.stop_dosage_worker()
@@ -791,6 +866,7 @@ def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
     callback.result_queue = result_queue
     callback.result_worker_error = None
     callback.result_worker_thread = result_worker_thread
+    callback.worker_threads_started = True
 
     try:
         with (
@@ -813,6 +889,7 @@ def test_stop_dosage_worker_raises_when_live_worker_leaves_full_queue() -> None:
     callback.dosage_queue = dosage_queue
     callback.worker_error = None
     callback.worker_thread = worker_thread
+    callback.worker_threads_started = True
 
     try:
         with (
@@ -831,6 +908,7 @@ def test_join_result_worker_raises_when_worker_does_not_stop() -> None:
     result_worker_thread.start()
     callback = object.__new__(ManualCallbackRunner)
     callback.result_worker_thread = result_worker_thread
+    callback.worker_threads_started = True
 
     try:
         with (
@@ -849,6 +927,7 @@ def test_join_dosage_worker_raises_when_worker_does_not_stop() -> None:
     worker_thread.start()
     callback = object.__new__(ManualCallbackRunner)
     callback.worker_thread = worker_thread
+    callback.worker_threads_started = True
 
     try:
         with (
@@ -2733,6 +2812,186 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
     assert mock_run_multi_preflight.call_args.kwargs["variant_limit"] == 100
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+
+
+def test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes() -> None:
+    FakeRunEngine.instances.clear()
+    writer_session_for_trait_a = FakeWriterSession()
+    writer_session_for_trait_b = FakeWriterSession()
+    pending_writer_sessions = [writer_session_for_trait_a, writer_session_for_trait_b]
+    run_input = build_native_multi_run_input()
+    initialized_chunk_sets = [frozenset({0, 32}), frozenset({32, 64})]
+    pipeline_options = build_default_pipeline_runtime_options()
+    chromosome_state = SimpleNamespace(adjusted_residual_matrix=jnp.asarray([[0.0, 0.0]], dtype=jnp.float32))
+
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", PartialCommitDeliveringRunEngine),
+        patch("g.engine.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
+        patch(
+            "g.engine.native_dispatch.build_multi_regenie_prediction_source",
+            return_value=FakePredictionSource(),
+        ),
+        patch("g.engine.regenie2_pipeline.run_multi_preflight"),
+        patch(
+            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            side_effect=lambda *args, **kwargs: pending_writer_sessions.pop(0),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            side_effect=lambda **kwargs: output.InitializedOutputRun(
+                committed_chunk_identifiers=initialized_chunk_sets.pop(0)
+            ),
+        ),
+        patch(
+            "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
+            return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
+        ),
+        patch(
+            "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_chromosome_state",
+            return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearChromosomeState", chromosome_state),
+        ),
+        patch(
+            "g.compute.regenie2_linear.api.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major",
+            return_value=build_multi_linear_result(),
+        ) as mock_compute,
+    ):
+        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_names=("trait_a", "trait_b"),
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths_by_phenotype=(
+                output.OutputRunPaths(Path("run/a"), Path("run/a/chunks")),
+                output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
+            ),
+            staging_depth=2,
+            existing_manifests_by_phenotype=(
+                {"header": "trait_a", "committed_chunks": []},
+                {"header": "trait_b", "committed_chunks": []},
+            ),
+            resume=True,
+            trusted_no_missing_diploid=False,
+            writer_thread_count=pipeline_options.writer_thread_count,
+            writer_queue_depth=pipeline_options.writer_queue_depth,
+            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
+            parquet_compression=pipeline_options.parquet_compression,
+            bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
+            score_dtype=pipeline_options.score_dtype,
+            firth_dtype=pipeline_options.firth_dtype,
+            sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+        )
+
+    assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+    engine = FakeRunEngine.instances[0]
+    assert engine.run_arguments is not None
+    sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
+    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    assert isinstance(callback, callbacks.MultiLinearRegenie2PipelineCallback)
+    assert committed_chunk_identifiers == [32]
+    assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
+    assert mock_compute.call_count == 2
+    assert len(writer_session_for_trait_a.native_chunks) == 1
+    assert len(writer_session_for_trait_b.native_chunks) == 1
+    assert writer_session_for_trait_a.native_chunks[0]["metadata"].variant_start_index == 64
+    assert writer_session_for_trait_b.native_chunks[0]["metadata"].variant_start_index == 0
+    np.testing.assert_array_equal(
+        writer_session_for_trait_a.native_chunks[0]["beta"],
+        np.asarray([0.1, 0.2], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        writer_session_for_trait_b.native_chunks[0]["beta"],
+        np.asarray([0.3, 0.4], dtype=np.float32),
+    )
+    assert writer_session_for_trait_a.finished is True
+    assert writer_session_for_trait_b.finished is True
+
+
+def test_multi_binary_pipeline_opens_engine_once_and_skips_only_shared_committed_chunks() -> None:
+    FakeRunEngine.instances.clear()
+    writer_sessions = [FakeWriterSession(), FakeWriterSession()]
+    run_input = build_native_multi_run_input()
+    initialized_chunk_sets = [frozenset({0, 32}), frozenset({32, 64})]
+    kernel_config = build_default_binary_kernel_config()
+    pipeline_options = build_default_pipeline_runtime_options()
+
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
+        patch(
+            "g.engine.native_dispatch.build_multi_regenie_prediction_source",
+            return_value=FakePredictionSource(),
+        ),
+        patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
+        patch(
+            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            side_effect=lambda **kwargs: output.InitializedOutputRun(
+                committed_chunk_identifiers=initialized_chunk_sets.pop(0)
+            ),
+        ),
+        patch(
+            "g.compute.regenie2_binary.api.prepare_regenie2_multi_binary_state",
+            return_value=typing.cast("regenie2_binary_state.Regenie2MultiBinaryState", "state"),
+        ),
+    ):
+        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_binary_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_names=("trait_a", "trait_b"),
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths_by_phenotype=(
+                output.OutputRunPaths(Path("run/a"), Path("run/a/chunks")),
+                output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
+            ),
+            staging_depth=2,
+            existing_manifests_by_phenotype=(
+                {"header": "trait_a", "committed_chunks": []},
+                {"header": "trait_b", "committed_chunks": []},
+            ),
+            resume=True,
+            trusted_no_missing_diploid=False,
+            writer_thread_count=pipeline_options.writer_thread_count,
+            writer_queue_depth=pipeline_options.writer_queue_depth,
+            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
+            parquet_compression=pipeline_options.parquet_compression,
+            bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
+            score_dtype=pipeline_options.score_dtype,
+            firth_dtype=pipeline_options.firth_dtype,
+            kernel_config=kernel_config,
+            sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+        )
+
+    assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+    assert len(FakeRunEngine.instances) == 1
+    engine = FakeRunEngine.instances[0]
+    assert engine.run_method == "variant_major_buffered"
+    assert engine.run_arguments is not None
+    sample_indices, callback, committed_chunk_identifiers = engine.run_arguments
+    np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
+    assert isinstance(callback, callbacks.MultiBinaryRegenie2PipelineCallback)
+    assert callback.kernel_config is kernel_config
+    assert committed_chunk_identifiers == [32]
+    assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
+    assert mock_run_multi_preflight.call_args.kwargs["variant_limit"] == 100
 
 
 def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifests() -> None:

@@ -1,3 +1,4 @@
+use std::ptr::NonNull;
 use std::time::Instant;
 
 use super::decode::{
@@ -19,6 +20,51 @@ fn selected_sample_count_to_i32(selected_sample_count: usize) -> Result<i32, Bge
             "Selected sample count {selected_sample_count} exceeds the supported i32 statistics range.",
         ))
     })
+}
+
+struct VariantMajorOutputMatrix<Value> {
+    pointer: NonNull<Value>,
+    row_value_count: usize,
+    row_context: &'static str,
+}
+
+impl<Value> VariantMajorOutputMatrix<Value> {
+    /// Builds a typed view over a caller-owned variant-major output matrix.
+    ///
+    /// # Safety
+    ///
+    /// `output_pointer_address` must point to writable memory with enough initialized
+    /// storage for every row requested through this helper. Concurrent workers must
+    /// request disjoint variant rows for the same allocation.
+    unsafe fn from_pointer_address(
+        output_pointer_address: usize,
+        row_value_count: usize,
+        row_context: &'static str,
+    ) -> Result<Self, BgenError> {
+        if row_value_count == 0 {
+            return Err(BgenError::Range(format!("{row_context} output row length must be positive.")));
+        }
+        let value_alignment = std::mem::align_of::<Value>();
+        if !output_pointer_address.is_multiple_of(value_alignment) {
+            return Err(BgenError::Range(format!(
+                "{row_context} output pointer is not aligned to {value_alignment} bytes.",
+            )));
+        }
+        let pointer = NonNull::new(output_pointer_address as *mut Value)
+            .ok_or_else(|| BgenError::Range(format!("{row_context} output pointer is null.")))?;
+        Ok(Self { pointer, row_value_count, row_context })
+    }
+
+    fn row_mut(&mut self, variant_index: usize) -> Result<&mut [Value], BgenError> {
+        let row_offset = variant_index.checked_mul(self.row_value_count).ok_or_else(|| {
+            BgenError::Range(format!("Integer overflow while locating {} output row.", self.row_context))
+        })?;
+        let row_pointer = unsafe {
+            // Constructor callers guarantee that the backing allocation spans the requested rows.
+            self.pointer.as_ptr().add(row_offset)
+        };
+        Ok(unsafe { std::slice::from_raw_parts_mut(row_pointer, self.row_value_count) })
+    }
 }
 
 pub(super) fn all_samples_present_diploid(sample_ploidy_and_missingness: &[u8]) -> bool {
@@ -333,18 +379,17 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
     let packed_probability_bytes = read_exact_bytes(probability_block, cursor, expected_probability_byte_count)?;
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let output_write_start_time = profiling_enabled.then(Instant::now);
-    let output_pointer = output_pointer_address as *mut u8;
-    let variant_row_byte_offset =
-        variant_index.checked_mul(selected_sample_count).and_then(|value| value.checked_mul(2)).ok_or_else(|| {
-            BgenError::Range("Integer overflow while locating variant-major packed8 BGEN output row.".to_string())
-        })?;
     let selected_probability_byte_count = selected_sample_count.checked_mul(2).ok_or_else(|| {
         BgenError::Range("Integer overflow while sizing variant-major packed8 BGEN output row.".to_string())
     })?;
-    let output_row = unsafe {
-        // Each parallel worker owns a distinct variant row in the variant-major packed output matrix.
-        std::slice::from_raw_parts_mut(output_pointer.add(variant_row_byte_offset), selected_probability_byte_count)
+    let mut output_matrix = unsafe {
+        VariantMajorOutputMatrix::<u8>::from_pointer_address(
+            output_pointer_address,
+            selected_probability_byte_count,
+            "variant-major packed8 BGEN",
+        )?
     };
+    let output_row = output_matrix.row_mut(variant_index)?;
     let dosage_lookup = unphased_eight_bit_dosage_lookup();
     let mut summary = PackedProbabilitySummary::default();
 
@@ -472,10 +517,13 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
     let packed_probability_bytes = read_exact_bytes(probability_block, cursor, expected_probability_byte_count)?;
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let output_write_start_time = profiling_enabled.then(Instant::now);
-    let output_pointer = output_pointer_address as *mut f32;
-    let variant_row_offset = variant_index.checked_mul(selected_sample_count).ok_or_else(|| {
-        BgenError::Range("Integer overflow while locating variant-major BGEN output row.".to_string())
-    })?;
+    let mut output_matrix = unsafe {
+        VariantMajorOutputMatrix::<f32>::from_pointer_address(
+            output_pointer_address,
+            selected_sample_count,
+            "variant-major BGEN",
+        )?
+    };
     let mut selected_dosage_total = 0.0_f32;
     let mut selected_dosage_square_total = 0.0_f32;
     let mut selected_observation_count = selected_sample_count_to_i32(selected_sample_count)?;
@@ -485,10 +533,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
     let mut heterozygous_count = 0_i32;
     let mut homozygous_alternate_count = 0_i32;
     if sample_selection.is_identity {
-        let output_row = unsafe {
-            // Each parallel worker owns a distinct variant row in the variant-major output matrix.
-            std::slice::from_raw_parts_mut(output_pointer.add(variant_row_offset), selected_sample_count)
-        };
+        let output_row = output_matrix.row_mut(variant_index)?;
         let decode_summary =
             simd::decode_unphased_eight_bit_identity_simd_or_scalar(packed_probability_bytes, output_row);
         selected_dosage_total = decode_summary.selected_dosage_total;
@@ -508,10 +553,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         })?;
         let selected_probability_bytes =
             read_exact_bytes(packed_probability_bytes, probability_offset, selected_probability_byte_count)?;
-        let output_row = unsafe {
-            // The contiguous selected sample run maps directly to a contiguous output row.
-            std::slice::from_raw_parts_mut(output_pointer.add(variant_row_offset), selected_sample_count)
-        };
+        let output_row = output_matrix.row_mut(variant_index)?;
         let decode_summary =
             simd::decode_unphased_eight_bit_identity_simd_or_scalar(selected_probability_bytes, output_row);
         selected_dosage_total = decode_summary.selected_dosage_total;
@@ -524,6 +566,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         homozygous_alternate_count = decode_summary.homozygous_alternate_count;
     } else {
         let dosage_lookup = unphased_eight_bit_dosage_lookup();
+        let output_row = output_matrix.row_mut(variant_index)?;
         for (selected_index, file_sample_index) in sample_selection.selected_file_indices.iter().copied().enumerate() {
             let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
                 BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
@@ -541,10 +584,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
                 &mut heterozygous_count,
                 &mut homozygous_alternate_count,
             );
-            unsafe {
-                // Selected sample order maps directly to the caller's output row order.
-                output_pointer.add(variant_row_offset + selected_index).write(dosage_value);
-            }
+            output_row[selected_index] = dosage_value;
         }
     }
     if let Some(output_write_start_time) = output_write_start_time {
@@ -611,6 +651,56 @@ mod tests {
         let error = selected_sample_count_to_i32(selected_sample_count).expect_err("oversized count should fail");
 
         assert!(error.to_string().contains("exceeds the supported i32 statistics range"));
+    }
+
+    #[test]
+    fn variant_major_output_matrix_returns_requested_row() {
+        let mut output_values = [0_i32; 6];
+        let mut output_matrix = unsafe {
+            VariantMajorOutputMatrix::<i32>::from_pointer_address(
+                output_values.as_mut_ptr() as usize,
+                3,
+                "test variant-major",
+            )
+        }
+        .expect("test output matrix should build");
+
+        output_matrix.row_mut(1).expect("second row should be available").copy_from_slice(&[4, 5, 6]);
+
+        assert_eq!(output_values, [0, 0, 0, 4, 5, 6]);
+    }
+
+    #[test]
+    fn variant_major_output_matrix_rejects_invalid_boundary_state() {
+        let null_result = unsafe { VariantMajorOutputMatrix::<u8>::from_pointer_address(0, 1, "test variant-major") };
+        assert!(matches!(null_result, Err(error) if error.to_string().contains("output pointer is null")));
+
+        let empty_row_result = unsafe {
+            VariantMajorOutputMatrix::<u8>::from_pointer_address(
+                std::ptr::NonNull::<u8>::dangling().as_ptr() as usize,
+                0,
+                "test variant-major",
+            )
+        };
+        assert!(
+            matches!(empty_row_result, Err(error) if error.to_string().contains("output row length must be positive"))
+        );
+
+        let misaligned_result =
+            unsafe { VariantMajorOutputMatrix::<i32>::from_pointer_address(1, 1, "test variant-major") };
+        assert!(matches!(misaligned_result, Err(error) if error.to_string().contains("output pointer is not aligned")));
+
+        let mut output_matrix = unsafe {
+            VariantMajorOutputMatrix::<u8>::from_pointer_address(
+                std::ptr::NonNull::<u8>::dangling().as_ptr() as usize,
+                usize::MAX,
+                "test variant-major",
+            )
+        }
+        .expect("dangling pointer is acceptable when offset validation fails before dereference");
+        let error = output_matrix.row_mut(2).expect_err("oversized row offset should fail");
+
+        assert!(error.to_string().contains("Integer overflow while locating test variant-major output row"));
     }
 
     fn valid_trusted_probability_block(probability_bytes: &[u8]) -> Vec<u8> {
