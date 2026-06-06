@@ -268,9 +268,12 @@ def option_dictionary_to_toml_config_layer(
     apply_trait_type_alias(toml_mapping, normalized_options.get("trait_type"))
     apply_explicit_trait_flag_precedence(toml_mapping, normalized_options)
     toml_config = convert_toml_mapping(toml_mapping, source=source)
+    explicit_option_names = frozenset(
+        option_name for option_name, option_value in normalized_options.items() if option_value is not None
+    )
     return TomlConfigLayer(
         toml_config=toml_config,
-        explicit_options=frozenset(normalized_options),
+        explicit_options=explicit_option_names,
     )
 
 

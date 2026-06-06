@@ -19,16 +19,6 @@ def load_default_option_dictionary() -> dict[str, typing.Any]:
     return dict(defaults.load_default_option_catalog().raw_toml)
 
 
-def load_default_trait_option(option_name: str) -> typing.Any:
-    """Load one packaged default trait option."""
-    return load_default_option_dictionary()["trait"][option_name]
-
-
-def load_default_g_output_option(option_name: str) -> typing.Any:
-    """Load one packaged default output option."""
-    return load_default_option_dictionary()["g"]["output"][option_name]
-
-
 QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "spa", "pThresh")
 
 
@@ -370,66 +360,12 @@ def normalize_trait_type(*, qt: bool | None, bt: bool | None) -> types.RegenieTr
     return types.RegenieTraitType.QUANTITATIVE
 
 
-def merge_option_dictionaries(
-    base_options: typing.Mapping[str, typing.Any],
-    override_options: typing.Mapping[str, typing.Any],
-) -> dict[str, typing.Any]:
-    """Merge options while ignoring unspecified overrides."""
-    merged_options = dict(base_options)
-    for option_name, option_value in override_options.items():
-        if option_value is not None:
-            merged_options[option_name] = option_value
-    raw_trait_type = override_options.get("trait_type")
-    if raw_trait_type is not None:
-        trait_type = types.RegenieTraitType(str(raw_trait_type))
-        merged_options["qt"] = trait_type == types.RegenieTraitType.QUANTITATIVE
-        merged_options["bt"] = trait_type == types.RegenieTraitType.BINARY
-    if override_options.get("qt") is True:
-        merged_options["bt"] = False
-    if override_options.get("bt") is True:
-        merged_options["qt"] = False
-    return merged_options
-
-
 def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
     """Build a normalized config from CLI/TOML/Python option dictionaries."""
     explicit_layer = config_layers.option_dictionary_to_toml_config_layer(raw_options, source="Python options")
     return from_toml_config_layers(
         base_config=defaults.load_default_option_catalog().toml_config,
         explicit_layers=(explicit_layer,),
-    )
-
-
-def from_option_layers(
-    *,
-    base_options: typing.Mapping[str, typing.Any],
-    explicit_option_layers: typing.Iterable[typing.Mapping[str, typing.Any]],
-) -> RegenieConfig:
-    """Build a normalized config from base options and explicit override layers."""
-    base_layer = config_layers.option_dictionary_to_toml_config_layer(base_options, source="base options")
-    explicit_layers = tuple(
-        config_layers.option_dictionary_to_toml_config_layer(raw_option_layer, source="explicit options")
-        for raw_option_layer in explicit_option_layers
-    )
-    return from_toml_config_layers(
-        base_config=base_layer.toml_config,
-        explicit_layers=explicit_layers,
-    )
-
-
-def from_normalized_options(
-    *,
-    normalized_options: typing.Mapping[str, typing.Any],
-    explicit_options: frozenset[str],
-) -> RegenieConfig:
-    """Build a normalized config from already-merged normalized options."""
-    toml_config = config_layers.option_dictionary_to_toml_config_layer(
-        normalized_options,
-        source="normalized options",
-    ).toml_config
-    return from_toml_config(
-        toml_config=toml_config,
-        explicit_options=explicit_options,
     )
 
 
@@ -777,40 +713,11 @@ def resolve_exclusive_column_values(
     return repeated_columns or list_columns
 
 
-def optional_int(raw_value: typing.Any) -> int | None:
-    """Convert an optional integer value."""
-    if raw_value is None:
-        return None
-    return int(raw_value)
-
-
 def optional_jax_matmul_precision(raw_value: typing.Any) -> types.JaxMatmulPrecision | None:
     """Convert optional JAX matmul precision."""
     if raw_value is None:
         return None
     return types.JaxMatmulPrecision(str(raw_value))
-
-
-def floating_point_dtype_or_default(
-    raw_value: typing.Any,
-    *,
-    default: types.FloatingPointDtype,
-) -> types.FloatingPointDtype:
-    """Convert a floating-point dtype value or return the default."""
-    if raw_value is None:
-        return default
-    return types.FloatingPointDtype(str(raw_value))
-
-
-def resolve_configured_trait_type(normalized_options: typing.Mapping[str, typing.Any]) -> types.RegenieTraitType:
-    """Resolve trait type from normalized option names."""
-    raw_trait_type = normalized_options.get("trait_type")
-    if raw_trait_type is not None and normalized_options.get("qt") is None and normalized_options.get("bt") is None:
-        return types.RegenieTraitType(str(raw_trait_type))
-    return normalize_trait_type(
-        qt=typing.cast("bool | None", normalized_options.get("qt")),
-        bt=typing.cast("bool | None", normalized_options.get("bt")),
-    )
 
 
 def normalize_option_dictionary(raw_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
@@ -851,7 +758,6 @@ def validate_unknown_options(normalized_options: typing.Mapping[str, typing.Any]
         | options.unsupported_option_names()
         | {
             "trait_type",
-            "g-trusted-no-missing-diploid",
         }
     )
     for option_name in normalized_options:
@@ -872,24 +778,6 @@ def reject_quantitative_binary_only_options(
         option_name for option_name in QUANTITATIVE_BINARY_ONLY_OPTION_NAMES if option_name in explicit_options
     )
     raise_for_quantitative_binary_only_options(binary_only_option_names)
-
-
-def resolve_exclusive_columns(
-    normalized_options: typing.Mapping[str, typing.Any],
-    *,
-    repeated_key: str,
-    list_key: str,
-    repeated_snake_key: str,
-    list_snake_key: str,
-) -> tuple[str, ...]:
-    """Resolve repeated column options and comma-delimited column-list options."""
-    del repeated_snake_key, list_snake_key
-    repeated_columns = split_name_list(normalized_options.get(repeated_key))
-    list_columns = split_name_list(normalized_options.get(list_key))
-    if repeated_columns and list_columns:
-        message = f"Use either --{repeated_key} or --{list_key}, not both."
-        raise ValueError(message)
-    return repeated_columns or list_columns
 
 
 def validate_config(config: RegenieConfig) -> None:
@@ -1275,13 +1163,15 @@ def format_toml_key(key: str) -> str:
 
 
 def format_toml_value(value: typing.Any) -> str:
-    """Format one TOML scalar."""
+    """Format one TOML value."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int | float):
         return str(value)
     if isinstance(value, Path):
         return format_toml_string(os.fspath(value))
+    if isinstance(value, list | tuple):
+        return f"[{', '.join(format_toml_value(item_value) for item_value in value)}]"
     return format_toml_string(str(value))
 
 
