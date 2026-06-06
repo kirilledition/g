@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import functools
-import typing
 
 import jax
 
@@ -303,45 +302,28 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult | regenie2_binary_result.Regenie2MultiBinaryChunkResult:
     """Compute multi-trait binary association from variant-major genotypes.
 
-    Multi-binary score-only execution is true batched GPU compute. Multi-binary approximate Firth currently shares
-    the genotype transfer, then applies correction one trait at a time in Python and should be benchmarked separately.
+    Multi-binary score-only and approximate Firth execution share one batched
+    score result per chunk. Approximate Firth correction then runs only the
+    selected flattened trait-variant candidate lanes.
 
     """
-    if correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
-        return regenie2_binary_score.compute_multi_binary_score_test_chunk_variant_major(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=genotype_matrix_by_variant,
-            correction_plan=correction_plan,
-            kernel_config=kernel_config,
-            dosage_sum=dosage_sum,
-            observation_count=observation_count,
-            score_dtype=score_dtype,
-        )
-
-    def compute_one_trait(trait_index: int) -> regenie2_binary_result.Regenie2BinaryChunkResult:
-        single_chromosome_state = regenie2_binary_state.build_single_binary_chromosome_state_from_multi(
-            chromosome_state,
-            trait_index,
-        )
-        result = compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
-            chromosome_state=single_chromosome_state,
-            genotype_matrix_by_variant=genotype_matrix_by_variant,
-            correction_plan=correction_plan,
-            sparse_candidate_mask=sparse_candidate_mask,
-            kernel_config=kernel_config,
-            score_dtype=score_dtype,
-            stage_duration_recorder=stage_duration_recorder,
-            dosage_sum=dosage_sum,
-            observation_count=observation_count,
-        )
-        return typing.cast("regenie2_binary_result.Regenie2BinaryChunkResult", result)
-
-    trait_count = chromosome_state.phenotype_matrix.shape[0]
-    # Approximate Firth is not yet a fully batched multi-trait correction workload:
-    # it reuses the variant-major genotype chunk, then dispatches each trait through
-    # the single-trait correction path before stacking the results.
-    return regenie2_binary_result.stack_binary_chunk_results(
-        [compute_one_trait(trait_index) for trait_index in range(trait_count)]
+    score_test_result = regenie2_binary_score.compute_multi_binary_score_test_chunk_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        correction_plan=correction_plan,
+        kernel_config=kernel_config,
+        dosage_sum=dosage_sum,
+        observation_count=observation_count,
+        score_dtype=score_dtype,
+    )
+    return regenie2_binary_variant_major_correction.apply_device_candidate_corrections_multi_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        result=score_test_result,
+        correction_plan=correction_plan,
+        sparse_candidate_mask=sparse_candidate_mask,
+        kernel_config=kernel_config,
+        stage_duration_recorder=stage_duration_recorder,
     )
 
 

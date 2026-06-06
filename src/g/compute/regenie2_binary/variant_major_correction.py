@@ -72,6 +72,60 @@ def apply_firth_variant_major_fixed_capacity_corrections(
     )
 
 
+def apply_firth_multi_variant_major_fixed_capacity_corrections(
+    *,
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
+    genotype_matrix_by_variant: jax.Array,
+    result: regenie2_binary_result.Regenie2MultiBinaryChunkResult,
+    correction_plan: types.BinaryCorrectionPlan,
+    candidate_mask: jax.Array,
+    fallback_count: jax.Array,
+    candidate_capacity: int,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    sparse_candidate_mask: jax.Array | None = None,
+) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+    """Apply device-resident multi-trait Firth corrections with a fixed candidate capacity."""
+    firth_batch_size = kernel_config.firth_candidate.batch_size
+    prepared_batch = regenie2_binary_firth_batch.prepare_multi_firth_candidate_batch(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        candidate_mask=candidate_mask,
+        score_beta=result.beta,
+        sparse_candidate_mask=sparse_candidate_mask,
+        candidate_capacity=candidate_capacity,
+        firth_batch_size=firth_batch_size,
+        kernel_config=kernel_config,
+    )
+    firth_result = regenie2_binary_firth_batch.compute_firth_multi_variantwise_fixed_batches(
+        covariate_matrix=chromosome_state.covariate_matrix,
+        null_logistic_coefficients=prepared_batch.candidate_inputs.null_logistic_coefficients,
+        null_firth_offset_matrix=prepared_batch.candidate_inputs.null_firth_offset_matrix,
+        phenotype_matrix=prepared_batch.candidate_inputs.phenotype_matrix,
+        genotype_matrix_by_variant=prepared_batch.candidate_inputs.genotype_matrix_by_variant,
+        raw_genotype_matrix_by_variant=prepared_batch.candidate_inputs.raw_genotype_matrix_by_variant,
+        loco_offset_matrix=prepared_batch.candidate_inputs.loco_offset_matrix,
+        initial_coefficients=prepared_batch.initial_coefficients,
+        active_mask=prepared_batch.candidate_inputs.flat_active_mask,
+        sparse_correction_mask=prepared_batch.candidate_inputs.sparse_correction_mask,
+        fallback_count=fallback_count,
+        firth_batch_size=firth_batch_size,
+        null_penalized_log_likelihood=prepared_batch.candidate_inputs.null_firth_penalized_log_likelihood,
+        kernel_config=kernel_config,
+    )
+    active_flat_positions = prepared_batch.batch_plan.active_flat_position_vector
+    active_trait_indices = prepared_batch.candidate_inputs.flat_trait_indices[active_flat_positions]
+    active_variant_indices = prepared_batch.candidate_inputs.flat_variant_indices[active_flat_positions]
+    return regenie2_binary_correction.merge_firth_variant_result_into_multi_chunk(
+        result=result,
+        firth_result=firth_result,
+        active_flat_positions=active_flat_positions,
+        active_trait_indices=active_trait_indices,
+        active_variant_indices=active_variant_indices,
+        genotype_flip_mask=prepared_batch.candidate_inputs.genotype_flip_mask,
+        firth_se=correction_plan.firth_se,
+    )
+
+
 @functools.partial(
     jax.jit,
     static_argnames=(
@@ -141,6 +195,75 @@ def apply_device_candidate_corrections_firth_variant_major_with_device_dispatch(
     )
 
 
+@functools.partial(
+    jax.jit,
+    static_argnames=(
+        "correction_plan",
+        "kernel_config",
+        "bounded_candidate_capacity",
+        "overflow_candidate_capacity",
+    ),
+)
+def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dispatch(
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
+    genotype_matrix_by_variant: jax.Array,
+    result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
+    correction_plan: types.BinaryCorrectionPlan,
+    bounded_candidate_capacity: int,
+    overflow_candidate_capacity: int,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    sparse_candidate_mask: jax.Array | None = None,
+) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+    """Apply multi-trait Firth corrections with device-side capacity dispatch."""
+    candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
+    fallback_count = jnp.sum(candidate_mask, dtype=jnp.int32)
+    diagnostic_result = regenie2_binary_result.expand_multi_score_result_with_empty_firth_diagnostics(result)
+
+    def return_empty_diagnostics(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+        return diagnostic_result
+
+    def apply_candidate_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+        def apply_bounded_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+            return apply_firth_multi_variant_major_fixed_capacity_corrections(
+                chromosome_state=chromosome_state,
+                genotype_matrix_by_variant=genotype_matrix_by_variant,
+                result=diagnostic_result,
+                correction_plan=correction_plan,
+                candidate_mask=candidate_mask,
+                fallback_count=fallback_count,
+                candidate_capacity=bounded_candidate_capacity,
+                kernel_config=kernel_config,
+                sparse_candidate_mask=sparse_candidate_mask,
+            )
+
+        def apply_overflow_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+            return apply_firth_multi_variant_major_fixed_capacity_corrections(
+                chromosome_state=chromosome_state,
+                genotype_matrix_by_variant=genotype_matrix_by_variant,
+                result=diagnostic_result,
+                correction_plan=correction_plan,
+                candidate_mask=candidate_mask,
+                fallback_count=fallback_count,
+                candidate_capacity=overflow_candidate_capacity,
+                kernel_config=kernel_config,
+                sparse_candidate_mask=sparse_candidate_mask,
+            )
+
+        return jax.lax.cond(
+            fallback_count <= bounded_candidate_capacity,
+            apply_bounded_corrections,
+            apply_overflow_corrections,
+            operand=None,
+        )
+
+    return jax.lax.cond(
+        fallback_count == 0,
+        return_empty_diagnostics,
+        apply_candidate_corrections,
+        operand=None,
+    )
+
+
 def apply_device_candidate_corrections_firth_variant_major(
     chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
@@ -173,6 +296,40 @@ def apply_device_candidate_corrections_firth_variant_major(
     )
 
 
+def apply_device_candidate_corrections_multi_firth_variant_major(
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
+    genotype_matrix_by_variant: jax.Array,
+    result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
+    correction_plan: types.BinaryCorrectionPlan,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    sparse_candidate_mask: jax.Array | None = None,
+    stage_duration_recorder: StageDurationRecorder | None = None,
+) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+    """Apply multi-trait Firth corrections with non-blocking device-side capacity dispatch."""
+    if genotype_matrix_by_variant.shape[0] == 0:
+        return regenie2_binary_result.expand_multi_score_result_with_empty_firth_diagnostics(result)
+    capacity_plan_start_time = time.perf_counter() if stage_duration_recorder is not None else 0.0
+    trait_count = chromosome_state.phenotype_matrix.shape[0]
+    variant_count = genotype_matrix_by_variant.shape[0]
+    capacity_plan = regenie2_binary_candidate_planning.build_multi_firth_candidate_capacity_plan(
+        trait_count=trait_count,
+        variant_count=variant_count,
+        preferred_candidate_capacity=kernel_config.firth_candidate.candidate_capacity,
+    )
+    if stage_duration_recorder is not None:
+        stage_duration_recorder("firth_candidate_dispatch_plan", capacity_plan_start_time)
+    return apply_device_candidate_corrections_multi_firth_variant_major_with_device_dispatch(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        result=result,
+        correction_plan=correction_plan,
+        bounded_candidate_capacity=capacity_plan.bounded_candidate_capacity,
+        overflow_candidate_capacity=capacity_plan.overflow_candidate_capacity,
+        sparse_candidate_mask=sparse_candidate_mask,
+        kernel_config=kernel_config,
+    )
+
+
 def apply_device_candidate_corrections_variant_major(
     chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
@@ -187,6 +344,30 @@ def apply_device_candidate_corrections_variant_major(
     if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
         return result
     return apply_device_candidate_corrections_firth_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        result=result,
+        correction_plan=correction_plan,
+        sparse_candidate_mask=sparse_candidate_mask,
+        kernel_config=kernel_config,
+        stage_duration_recorder=stage_duration_recorder,
+    )
+
+
+def apply_device_candidate_corrections_multi_variant_major(
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
+    genotype_matrix_by_variant: jax.Array,
+    result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
+    correction_plan: types.BinaryCorrectionPlan,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    sparse_candidate_mask: jax.Array | None = None,
+    stage_duration_recorder: StageDurationRecorder | None = None,
+) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult | regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+    """Apply multi-trait binary candidate corrections for variant-major genotype chunks."""
+    regenie2_binary_correction.validate_runtime_correction_plan(correction_plan)
+    if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
+        return result
+    return apply_device_candidate_corrections_multi_firth_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         result=result,
