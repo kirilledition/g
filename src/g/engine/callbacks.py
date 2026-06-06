@@ -21,7 +21,9 @@ from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.engine import telemetry, timing
 
+DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS = 60.0
 RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 60.0
+WORKER_ABORT_STOP_TIMEOUT_SECONDS = 1.0
 logger = logging.getLogger(__name__)
 type HostGenotypeBuffer = npt.NDArray[np.float32] | npt.NDArray[np.uint8]
 
@@ -655,8 +657,8 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def finish(self) -> None:
         """Wait until all queued JAX work has been written."""
-        self.put_dosage_work_item(None)
-        self.worker_thread.join()
+        self.stop_dosage_worker()
+        self.join_dosage_worker()
         self.stop_result_worker()
         self.join_result_worker()
         self.raise_worker_error_if_present()
@@ -670,37 +672,77 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def abort(self) -> None:
         """Stop the worker after an upstream failure."""
-        with contextlib.suppress(queue.Full):
-            self.dosage_queue.put_nowait(None)
-        with contextlib.suppress(queue.Full):
-            self.result_queue.put_nowait(None)
+        with contextlib.suppress(NativeBgenWorkerShutdownError):
+            self.stop_dosage_worker(timeout_seconds=WORKER_ABORT_STOP_TIMEOUT_SECONDS)
+        with contextlib.suppress(NativeBgenWorkerShutdownError):
+            self.stop_result_worker(timeout_seconds=WORKER_ABORT_STOP_TIMEOUT_SECONDS)
 
-    def stop_result_worker(self) -> None:
+    def stop_dosage_worker(self, timeout_seconds: float | None = None) -> None:
+        """Signal the dosage worker to exit after queued dosage chunks drain."""
+        effective_timeout_seconds = DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        if self.worker_error is not None:
+            return
+        if not self.worker_thread.is_alive():
+            return
+        stop_deadline = time.monotonic() + effective_timeout_seconds
+        while time.monotonic() < stop_deadline:
+            if self.worker_error is not None:
+                return
+            if not self.worker_thread.is_alive():
+                return
+            current_timeout_seconds = max(0.0, min(0.1, stop_deadline - time.monotonic()))
+            try:
+                self.dosage_queue.put(None, timeout=current_timeout_seconds)
+                return
+            except queue.Full:
+                continue
+        raise NativeBgenWorkerShutdownError(
+            worker_name=self.worker_thread.name,
+            timeout_seconds=effective_timeout_seconds,
+        )
+
+    def join_dosage_worker(self, timeout_seconds: float | None = None) -> None:
+        """Join the dosage worker with a bounded shutdown wait."""
+        effective_timeout_seconds = DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        self.worker_thread.join(timeout=effective_timeout_seconds)
+        if self.worker_thread.is_alive():
+            raise NativeBgenWorkerShutdownError(
+                worker_name=self.worker_thread.name,
+                timeout_seconds=effective_timeout_seconds,
+            )
+
+    def stop_result_worker(self, timeout_seconds: float | None = None) -> None:
         """Signal the result worker to exit after queued results drain."""
-        stop_deadline = time.monotonic() + RESULT_WORKER_JOIN_TIMEOUT_SECONDS
+        effective_timeout_seconds = RESULT_WORKER_JOIN_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        if self.result_worker_error is not None:
+            return
+        if not self.result_worker_thread.is_alive():
+            return
+        stop_deadline = time.monotonic() + effective_timeout_seconds
         while time.monotonic() < stop_deadline:
             if self.result_worker_error is not None:
                 return
             if not self.result_worker_thread.is_alive():
                 return
-            timeout_seconds = max(0.0, min(0.1, stop_deadline - time.monotonic()))
+            current_timeout_seconds = max(0.0, min(0.1, stop_deadline - time.monotonic()))
             try:
-                self.result_queue.put(None, timeout=timeout_seconds)
+                self.result_queue.put(None, timeout=current_timeout_seconds)
                 return
             except queue.Full:
                 continue
         raise NativeBgenWorkerShutdownError(
             worker_name=self.result_worker_thread.name,
-            timeout_seconds=RESULT_WORKER_JOIN_TIMEOUT_SECONDS,
+            timeout_seconds=effective_timeout_seconds,
         )
 
-    def join_result_worker(self) -> None:
+    def join_result_worker(self, timeout_seconds: float | None = None) -> None:
         """Join the result writer worker with a bounded shutdown wait."""
-        self.result_worker_thread.join(timeout=RESULT_WORKER_JOIN_TIMEOUT_SECONDS)
+        effective_timeout_seconds = RESULT_WORKER_JOIN_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        self.result_worker_thread.join(timeout=effective_timeout_seconds)
         if self.result_worker_thread.is_alive():
             raise NativeBgenWorkerShutdownError(
                 worker_name=self.result_worker_thread.name,
-                timeout_seconds=RESULT_WORKER_JOIN_TIMEOUT_SECONDS,
+                timeout_seconds=effective_timeout_seconds,
             )
 
     def acquire_dosage_buffer(self, sample_count: int, variant_count: int) -> npt.NDArray[np.float32]:

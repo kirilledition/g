@@ -37,6 +37,7 @@ Completed in this branch:
 - Removed old Python-owned grouped-alignment helpers from the production pipeline module.
 - Made the native callback runner compute hooks an explicit abstract base-class contract.
 - Replaced unsupported exact Firth/SPA runtime compute `NotImplementedError` branches with explicit validation.
+- Added bounded dosage-worker stop/join handling for native callback shutdown.
 
 Verification in this branch:
 
@@ -70,6 +71,10 @@ Verification in this branch:
 - `uv run ruff format --check src/g/compute/regenie2_binary/correction.py src/g/compute/regenie2_binary/variant_major_correction.py tests/test_regenie2_binary.py` - passed after unsupported correction branch cleanup.
 - `uv run ruff check src/g/compute/regenie2_binary/correction.py src/g/compute/regenie2_binary/variant_major_correction.py tests/test_regenie2_binary.py` - passed after unsupported correction branch cleanup.
 - `uv run ty check src/g/compute/regenie2_binary/correction.py src/g/compute/regenie2_binary/variant_major_correction.py` - passed after unsupported correction branch cleanup.
+- `uv run pytest tests/test_regenie2_pipeline.py -q` - 58 passed after bounded dosage-worker shutdown cleanup.
+- `uv run ruff format --check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py` - passed after bounded dosage-worker shutdown cleanup.
+- `uv run ruff check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py` - passed after bounded dosage-worker shutdown cleanup.
+- `uv run ty check src/g/engine/callbacks.py` - passed after bounded dosage-worker shutdown cleanup.
 
 Implementation learnings:
 
@@ -86,6 +91,7 @@ Implementation learnings:
 - The active grouped per-phenotype path already uses native grouped alignment; the removed Python-owned grouping code was only a test fixture builder.
 - `abc.ABC` catches missing callback compute hooks before worker threads can start, but splitting thread startup out of `NativeBgenCallbackRunner.__init__()` remains a larger lifecycle refactor.
 - Exact Firth and SPA remain config-rejected modes. Direct binary compute now treats them as unsupported runtime input rather than unfinished implementation branches.
+- Native callback `finish()` now drains the dosage worker with the same bounded stop/join pattern used by the result worker. `abort()` still stays best-effort, but it now attempts bounded sentinel delivery instead of ignoring full queues immediately.
 
 ## Suggested Work Order
 
@@ -117,7 +123,7 @@ This branch will take the remaining review findings in order of implementation e
    Medium, lifecycle-sensitive.
 8. Done: Unsupported exact Firth and SPA compute branches.
    Medium, changes lower-level behavior and tests currently assert failures.
-9. Native callback bounded shutdown.
+9. Done: Native callback bounded shutdown.
    Medium, important but concurrency-sensitive.
 10. INFO score missingness contract test.
     Medium, safe as characterization-only; formula changes need a statistical decision.
@@ -210,7 +216,9 @@ Recommendation: track the configured thread count in Python and log or raise on 
 
 ### P1. Native callback finish can hang indefinitely
 
-`NativeBgenCallbackRunner.finish()` joins the dosage worker with no timeout:
+Status: done in `codebase-review-cleanups`. The dosage worker now has bounded `stop_dosage_worker()` and `join_dosage_worker()` helpers, `finish()` uses them, and `abort()` makes bounded stop attempts for both dosage and result queues.
+
+Original finding: `NativeBgenCallbackRunner.finish()` joined the dosage worker with no timeout:
 
 - `src/g/engine/callbacks.py:636-641`
 

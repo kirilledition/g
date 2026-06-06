@@ -724,6 +724,26 @@ def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> No
     assert result_queue.full()
 
 
+def test_stop_dosage_worker_returns_when_failed_worker_leaves_full_queue() -> None:
+    dosage_queue: queue.Queue[callbacks.PreprocessedDosageChunkWorkItem | None] = queue.Queue(maxsize=1)
+    dosage_queue.put_nowait(None)
+    stop_event = threading.Event()
+    worker_thread = threading.Thread(target=stop_event.wait, name="failed-dosage-worker")
+    worker_thread.start()
+    callback = object.__new__(ManualCallbackRunner)
+    callback.dosage_queue = dosage_queue
+    callback.worker_error = RuntimeError("dosage failed")
+    callback.worker_thread = worker_thread
+
+    try:
+        callback.stop_dosage_worker()
+    finally:
+        stop_event.set()
+        worker_thread.join()
+
+    assert dosage_queue.full()
+
+
 def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
     result_queue: queue.Queue[
         callbacks.Regenie2ResultWriteWorkItem | callbacks.Regenie2MultiResultWriteWorkItem | None
@@ -748,6 +768,28 @@ def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
         result_worker_thread.join()
 
 
+def test_stop_dosage_worker_raises_when_live_worker_leaves_full_queue() -> None:
+    dosage_queue: queue.Queue[callbacks.PreprocessedDosageChunkWorkItem | None] = queue.Queue(maxsize=1)
+    dosage_queue.put_nowait(None)
+    stop_event = threading.Event()
+    worker_thread = threading.Thread(target=stop_event.wait, name="blocked-dosage-worker")
+    worker_thread.start()
+    callback = object.__new__(ManualCallbackRunner)
+    callback.dosage_queue = dosage_queue
+    callback.worker_error = None
+    callback.worker_thread = worker_thread
+
+    try:
+        with (
+            patch("g.engine.callbacks.DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
+            np.testing.assert_raises_regex(callbacks.NativeBgenWorkerShutdownError, "blocked-dosage-worker"),
+        ):
+            callback.stop_dosage_worker()
+    finally:
+        stop_event.set()
+        worker_thread.join()
+
+
 def test_join_result_worker_raises_when_worker_does_not_stop() -> None:
     stop_event = threading.Event()
     result_worker_thread = threading.Thread(target=stop_event.wait, name="stuck-result-worker")
@@ -764,6 +806,24 @@ def test_join_result_worker_raises_when_worker_does_not_stop() -> None:
     finally:
         stop_event.set()
         result_worker_thread.join()
+
+
+def test_join_dosage_worker_raises_when_worker_does_not_stop() -> None:
+    stop_event = threading.Event()
+    worker_thread = threading.Thread(target=stop_event.wait, name="stuck-dosage-worker")
+    worker_thread.start()
+    callback = object.__new__(ManualCallbackRunner)
+    callback.worker_thread = worker_thread
+
+    try:
+        with (
+            patch("g.engine.callbacks.DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
+            np.testing.assert_raises_regex(callbacks.NativeBgenWorkerShutdownError, "stuck-dosage-worker"),
+        ):
+            callback.join_dosage_worker()
+    finally:
+        stop_event.set()
+        worker_thread.join()
 
 
 def test_native_bgen_callback_runner_rejects_nonpositive_staging_depth() -> None:
