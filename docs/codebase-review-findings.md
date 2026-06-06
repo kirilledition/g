@@ -18,6 +18,15 @@ are summarized near the end instead of kept as historical work logs.
 - `cargo test --lib genotype::bgen::trusted`: 5 passed.
 - `cargo test --lib genotype::bgen::decode`: 7 passed.
 - `cargo test --lib genotype::bgen::simd`: 7 passed.
+- `cargo fmt --check`: passed after row-major BGEN buffer cleanup.
+- `. scripts/server_env.sh && cargo test --lib genotype::bgen`: 25 passed after
+  row-major BGEN buffer cleanup.
+- `uv run pytest tests/test_regenie2_binary.py -q`: 44 passed, 1 skipped after
+  preparatory Firth correctness tests.
+- `uv run ty check src/g tests/test_regenie2_binary.py`: passed after preparatory
+  Firth correctness tests.
+- `uv run ruff check tests/test_regenie2_binary.py --output-format=concise`: passed
+  after preparatory Firth correctness tests.
 
 I also fetched `origin` and confirmed the reviewed base matched `origin/main` before the
 cleanup integration. I did not run GPU benchmarks or the full test suite on the head node.
@@ -80,6 +89,9 @@ construction from thread startup remains a separate lifecycle cleanup.
 
 ### P2. Multi-binary approximate Firth is not batched
 
+Status: preparatory correctness coverage has been expanded, but the implementation is
+still intentionally unbatched.
+
 Multi-binary score-only execution is batched, but approximate Firth still falls back to
 one-trait-at-a-time Python dispatch. The code documents this at
 `src/g/compute/regenie2_binary/api.py:306` to `src/g/compute/regenie2_binary/api.py:307`,
@@ -96,9 +108,14 @@ Suggested direction: keep this as a known performance limitation until score-onl
 and output are stable. Then batch candidate extraction and correction over trait dimension,
 or split the fallback workload into a clearly separate optimized kernel path.
 
-Detailed implementation plan: `docs/firth-optimization-plan.md`.
+Detailed implementation plan: `docs/firth-optimization-plan.md`. The plan now records
+current prep coverage and the remaining null-Firth failure-isolation and multi-binary
+packed8 parity gaps.
 
 ### P2. Firth candidate capacity selection syncs to host
+
+Status: preparatory correctness coverage is in place. The host-sync implementation work is
+now unblocked, but the runtime still performs the host count.
 
 `apply_device_candidate_corrections_firth_variant_major` builds `candidate_mask` on device
 at `src/g/compute/regenie2_binary/variant_major_correction.py:95`, then calls
@@ -251,8 +268,12 @@ Recommended staged plan:
 
 - Packed8 multi-phenotype dispatch has interface and pipeline coverage, but I did not run a
   GPU benchmark or full parity workload in this review.
-- Approximate Firth multi-trait performance should be benchmarked separately from score-only
-  packed8 because it still uses the per-trait correction path.
+- Preparatory Firth tests now cover zero-candidate diagnostic preservation and
+  multi-binary approximate Firth parity with distinct per-trait score-stage candidate
+  masks. Remaining Firth prep gaps are null-Firth failure isolation and multi-binary
+  packed8 approximate Firth parity.
+- Approximate Firth multi-trait performance should be benchmarked separately from
+  score-only packed8 because it still uses the per-trait correction path.
 - Multi-phenotype resume has focused multi-linear and multi-binary partial-commit coverage
   for the current resume-fast-but-not-minimal behavior; future resume-minimization work
   should add optimization-specific tests.
@@ -292,13 +313,20 @@ work:
 - Dtype docs now state the current contract: score/Firth dtype options control internal
   compute precision, while public association statistics remain float32.
 - Callback worker startup now has an explicit lifecycle and focused tests.
+- Non-destructive archive hygiene now keeps `/archive/` out of default `rg`/`fd`
+  searches and documents the tree as historical reference material.
+- The row-major BGEN preprocessing boundary now uses `RowMajorDosageBuffer` to centralize
+  null/alignment validation and typed mutable slice reconstruction.
+- Preparatory Firth correctness tests now cover zero-candidate diagnostics and distinct
+  per-trait multi-binary approximate Firth candidate masks.
 
 ## Suggested Implementation Order
 
-1. Continue centralizing Rust unsafe buffer boundary helpers.
-2. Add preparatory Firth correctness tests from `docs/firth-optimization-plan.md`.
-3. Remove the Firth candidate-count host sync with device-side bounded/overflow dispatch.
-4. Redesign multi-binary approximate Firth batching over flattened trait-variant lanes.
-5. Decide whether to preserve archive snapshots on a dedicated branch/tag and remove them
+1. Remove the Firth candidate-count host sync with device-side bounded/overflow dispatch.
+2. Continue remaining Rust unsafe boundary helper consolidation in small independent
+   patches, especially lower-level generic decode output slices and
+   `src/python/output.rs`.
+3. Redesign multi-binary approximate Firth batching over flattened trait-variant lanes.
+4. Decide whether to preserve archive snapshots on a dedicated branch/tag and remove them
    from active `main`; this requires explicit approval before any deletion.
-6. Revisit public output dtype only if users need float64 result files.
+5. Revisit public output dtype only if users need float64 result files.
