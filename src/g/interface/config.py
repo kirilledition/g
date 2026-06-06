@@ -738,13 +738,12 @@ def validate_config(config: RegenieConfig) -> None:
         "--g-bgen-decode-tile-variant-count",
         config.g_compute.bgen_decode_tile_variant_count,
     )
-    if config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.PACKED8:
-        if config.g_compute.device != types.Device.GPU:
-            message = "--g-gpu-genotype-format=packed8 requires --g-device=gpu."
-            raise ValueError(message)
-        if len(config.input.pheno_columns) != 1:
-            message = "--g-gpu-genotype-format=packed8 currently supports one phenotype at a time."
-            raise ValueError(message)
+    if (
+        config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
+        and config.g_compute.device != types.Device.GPU
+    ):
+        message = "--g-gpu-genotype-format=packed8 requires --g-device=gpu."
+        raise ValueError(message)
     if config.g_compute.firth_dtype != types.FloatingPointDtype.FLOAT64:
         message = "--g-firth-dtype currently supports float64 only."
         raise ValueError(message)

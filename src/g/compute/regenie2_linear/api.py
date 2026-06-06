@@ -209,6 +209,44 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
     )
 
 
+@functools.partial(
+    jax.jit,
+    static_argnames=("score_dtype",),
+    donate_argnames=(
+        "packed_probability_pairs_by_variant",
+        "genotype_dosage_sum",
+        "genotype_observation_count",
+        "genotype_imputed_dosage_square_sum",
+    ),
+)
+def compute_regenie2_multi_linear_chunk_from_chromosome_state_packed8_donating_inputs(
+    chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
+    packed_probability_pairs_by_variant: jax.Array,
+    genotype_dosage_sum: jax.Array | None = None,
+    genotype_observation_count: jax.Array | None = None,
+    genotype_imputed_dosage_square_sum: jax.Array | None = None,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
+    """Decode packed8 probabilities on device and compute multi-trait quantitative statistics."""
+    genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
+        packed_probability_pairs_by_variant,
+        score_dtype,
+    )
+    return compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        genotype_dosage_sum=genotype_dosage_sum,
+        genotype_observation_count=genotype_observation_count,
+        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
+        score_dtype=score_dtype,
+    )
+
+
+compute_multi_linear_chunk_packed8_donating_inputs = (
+    compute_regenie2_multi_linear_chunk_from_chromosome_state_packed8_donating_inputs
+)
+
+
 def compute_regenie2_linear_chunk(
     state: regenie2_linear_state.Regenie2LinearState,
     genotype_matrix: jax.Array,

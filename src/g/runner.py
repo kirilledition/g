@@ -557,8 +557,6 @@ def dispatch_multi_phenotype_engine_pipeline(
     telemetry_session: telemetry.TelemetrySession | None = None,
 ) -> tuple[Path | None, ...]:
     """Dispatch multiple phenotypes to the shared native pipeline."""
-    # Config validation rejects packed8 with multiple phenotypes, so the multi-phenotype path only dispatches dosage
-    # chunks until packed8 multi-trait execution is implemented end-to-end.
     common_arguments = build_common_engine_arguments(
         plan=plan,
         stage_timing_recorder=stage_timing_recorder,
@@ -576,6 +574,7 @@ def dispatch_multi_phenotype_engine_pipeline(
             "existing_manifests_by_phenotype": tuple(
                 phenotype_run_plan.existing_manifest for phenotype_run_plan in plan.phenotype_run_plans
             ),
+            "gpu_genotype_format": plan.kernel_config.gpu_genotype_format,
         }
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:

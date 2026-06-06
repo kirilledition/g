@@ -1261,9 +1261,45 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         packed_probability_pairs_by_variant: jax.Array | npt.NDArray[np.uint8],
         chunk_stats: _core.ChunkStats,
     ) -> None:
-        """Reject packed8 chunks for multi-trait linear callbacks."""
-        del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
-        raise NotImplementedError("Packed8 multi-trait linear callbacks are not supported.")
+        """Compute one packed8 chunk and enqueue multi-trait results."""
+        host_packed_buffer = self.get_releasable_dosage_buffer(packed_probability_pairs_by_variant)
+        self.acquire_result_in_flight_slot()
+        try:
+            self.prepare_chromosome_state(variant_metadata)
+            chromosome_state = require_current_chromosome_state(
+                self.current_chromosome_state,
+                chromosome=self.current_chromosome,
+            )
+            packed_device_array = put_genotype_matrix_on_device(
+                packed_probability_pairs_by_variant,
+                self.stage_timing_recorder,
+            )
+            compute_start_time = time.perf_counter()
+            result = regenie2_linear.compute_multi_linear_chunk_packed8_donating_inputs(
+                chromosome_state=chromosome_state,
+                packed_probability_pairs_by_variant=packed_device_array,
+                genotype_dosage_sum=jax.device_put(chunk_stats.dosage_sum),
+                genotype_observation_count=jax.device_put(chunk_stats.observation_count),
+                genotype_imputed_dosage_square_sum=jax.device_put(chunk_stats.imputed_dosage_square_sum),
+                score_dtype=self.score_dtype,
+            )
+            block_compute_result_for_timing(
+                result_ready_value=result.log10_p_value,
+                stage_timing_recorder=self.stage_timing_recorder,
+                start_time=compute_start_time,
+            )
+            self.enqueue_multi_result_for_write(
+                variant_metadata=variant_metadata,
+                chunk_stats=chunk_stats,
+                result=result,
+                host_dosage_buffer=host_packed_buffer,
+                release_in_flight_slot=True,
+            )
+        except Exception:
+            if host_packed_buffer is not None:
+                self.release_dosage_buffer(host_packed_buffer)
+            self.release_result_in_flight_slot()
+            raise
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
         """Prepare cached multi-linear chromosome state for the metadata chromosome."""
@@ -1810,9 +1846,67 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         packed_probability_pairs_by_variant: jax.Array | npt.NDArray[np.uint8],
         chunk_stats: _core.ChunkStats,
     ) -> None:
-        """Reject packed8 chunks for multi-trait binary callbacks."""
-        del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
-        raise NotImplementedError("Packed8 multi-trait binary callbacks are not supported.")
+        """Compute one packed8 chunk and enqueue multi-trait binary results."""
+        host_packed_buffer = self.get_releasable_dosage_buffer(packed_probability_pairs_by_variant)
+        self.acquire_result_in_flight_slot()
+        try:
+            self.prepare_chromosome_state(variant_metadata)
+            chromosome_state = require_current_chromosome_state(
+                self.current_chromosome_state,
+                chromosome=self.current_chromosome,
+            )
+            packed_device_array = put_genotype_matrix_on_device(
+                packed_probability_pairs_by_variant,
+                self.stage_timing_recorder,
+            )
+            dosage_sum = jax.device_put(chunk_stats.dosage_sum)
+            observation_count = jax.device_put(chunk_stats.observation_count)
+            compute_start_time = time.perf_counter()
+            sparse_candidate_mask = (
+                None
+                if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
+                else jax.device_put(chunk_stats.is_rare_sparse_firth_candidate)
+            )
+            if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
+                compute_score_test = regenie2_binary.compute_multi_binary_score_test_packed8_donating_inputs
+                result = compute_score_test(
+                    chromosome_state=chromosome_state,
+                    packed_probability_pairs_by_variant=packed_device_array,
+                    correction_plan=self.correction_plan,
+                    kernel_config=self.kernel_config,
+                    dosage_sum=dosage_sum,
+                    observation_count=observation_count,
+                    score_dtype=self.score_dtype,
+                )
+            else:
+                result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
+                    chromosome_state=chromosome_state,
+                    packed_probability_pairs_by_variant=packed_device_array,
+                    correction_plan=self.correction_plan,
+                    sparse_candidate_mask=sparse_candidate_mask,
+                    kernel_config=self.kernel_config,
+                    score_dtype=self.score_dtype,
+                    stage_duration_recorder=self.get_stage_duration_recorder(),
+                    dosage_sum=dosage_sum,
+                    observation_count=observation_count,
+                )
+            block_compute_result_for_timing(
+                result_ready_value=result.log10_p_value,
+                stage_timing_recorder=self.stage_timing_recorder,
+                start_time=compute_start_time,
+            )
+            self.enqueue_multi_result_for_write(
+                variant_metadata=variant_metadata,
+                chunk_stats=chunk_stats,
+                result=result,
+                host_dosage_buffer=host_packed_buffer,
+                release_in_flight_slot=True,
+            )
+        except Exception:
+            if host_packed_buffer is not None:
+                self.release_dosage_buffer(host_packed_buffer)
+            self.release_result_in_flight_slot()
+            raise
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
         """Prepare cached multi-binary chromosome state for the metadata chromosome."""
