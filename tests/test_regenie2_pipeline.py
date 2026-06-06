@@ -483,6 +483,7 @@ class ManualCallbackRunner(callbacks.NativeBgenCallbackRunner):
         self.result_in_flight_slots = threading.BoundedSemaphore(2)
         self.free_dosage_buffers: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
         self.dosage_buffer_count = 0
+        self.dosage_buffer_identifiers: set[int] = set()
         self.dosage_buffer_limit = 2
         self.worker_error = None
         self.result_worker_error = None
@@ -611,14 +612,34 @@ def test_native_callback_runner_reuses_and_replaces_host_dosage_buffers() -> Non
     reused_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
     assert reused_buffer is first_buffer
 
-    callback.release_dosage_buffer(np.empty((3, 2), dtype=np.float32))
+    mismatched_buffer = callback.acquire_dosage_buffer(sample_count=3, variant_count=2)
+    mismatched_buffer_identifier = id(mismatched_buffer)
+    callback.release_dosage_buffer(mismatched_buffer)
     replacement_buffer = callback.acquire_variant_major_dosage_buffer(variant_count=2, sample_count=3)
     assert replacement_buffer.shape == (2, 3)
+    assert callback.dosage_buffer_count == 2
+    assert mismatched_buffer_identifier not in callback.dosage_buffer_identifiers
+    assert id(replacement_buffer) in callback.dosage_buffer_identifiers
 
-    callback.dosage_buffer_count = callback.dosage_buffer_limit
-    callback.free_dosage_buffers.put_nowait(np.empty((1, 1), dtype=np.float32))
-    blocked_replacement = callback.acquire_dosage_buffer_with_shape((4, 5))
+    limited_callback = ManualCallbackRunner()
+    first_limited_buffer = limited_callback.acquire_dosage_buffer_with_shape((1, 1))
+    second_limited_buffer = limited_callback.acquire_dosage_buffer_with_shape((1, 2))
+    limited_callback.release_dosage_buffer(first_limited_buffer)
+    blocked_replacement = limited_callback.acquire_dosage_buffer_with_shape((4, 5))
     assert blocked_replacement.shape == (4, 5)
+    assert limited_callback.dosage_buffer_count == limited_callback.dosage_buffer_limit
+    assert id(first_limited_buffer) not in limited_callback.dosage_buffer_identifiers
+    assert id(second_limited_buffer) in limited_callback.dosage_buffer_identifiers
+    assert id(blocked_replacement) in limited_callback.dosage_buffer_identifiers
+
+
+def test_native_callback_runner_ignores_unowned_host_dosage_buffers() -> None:
+    callback = ManualCallbackRunner()
+
+    callback.release_dosage_buffer(np.empty((2, 2), dtype=np.float32))
+
+    assert callback.dosage_buffer_count == 0
+    assert callback.free_dosage_buffers.empty()
 
 
 def test_native_callback_runner_surfaces_worker_and_writer_errors() -> None:
@@ -949,7 +970,8 @@ def test_result_worker_releases_in_flight_slot_after_materialization() -> None:
         writer_session=writer_session,
         staging_depth=1,
     )
-    host_dosage_buffer = np.ones((2, 2), dtype=np.float32)
+    host_dosage_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=2)
+    host_dosage_buffer.fill(1)
     callback.acquire_result_in_flight_slot()
     callback.acquire_result_in_flight_slot()
 

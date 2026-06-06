@@ -33,6 +33,7 @@ Completed in this branch:
 - Added warning-only Rayon thread pool configuration tracking.
 - Documented and tested the current packed8 single-phenotype-only dispatch contract.
 - Replaced Rust preprocessing sample-count saturation with an explicit range error.
+- Hardened native host genotype buffer pool accounting across shape/dtype replacement.
 
 Verification in this branch:
 
@@ -51,6 +52,9 @@ Verification in this branch:
 - `uv run ty check src/g/runner.py src/g/interface` - passed.
 - `rustfmt --check src/genotype/preprocess.rs src/genotype/bgen/reader.rs` - passed after Rust sample-count saturation cleanup.
 - `env LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --lib genotype::preprocess` - 5 passed after Rust sample-count saturation cleanup.
+- `uv run pytest tests/test_regenie2_pipeline.py -q` - 55 passed after buffer pool accounting cleanup.
+- `uv run ruff check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py` - passed after buffer pool accounting cleanup.
+- `uv run ty check src/g/engine/callbacks.py` - passed after buffer pool accounting cleanup.
 
 Implementation learnings:
 
@@ -63,6 +67,7 @@ Implementation learnings:
 - Rayon thread configuration is process-global. Warning-only handling preserves current repeated-run permissiveness while making ignored incompatible requests visible.
 - The packed8/multi-phenotype contract is currently enforced entirely by config validation. Multi dispatch intentionally stays dosage-only until packed8 multi-trait execution exists end-to-end.
 - The native stats schema is still `i32` for count-like fields. Failing at the shared stats builder is the narrowest fix until the schema moves to wider counters.
+- Host genotype buffers need ownership tracking, not just queue membership, because result work items can carry any NumPy array-shaped value through the same release path in tests and fallback paths.
 
 ## Suggested Work Order
 
@@ -86,7 +91,7 @@ This branch will take the remaining review findings in order of implementation e
    Easy, highly non-destructive: make the current config rejection explicit in tests/docs so future packed8 work does not miss the multi path.
 4. Done: Rust sample-count saturation.
    Easy-medium, non-destructive for realistic data: replace silent `i32::MAX` saturation with explicit error behavior.
-5. Buffer pool accounting drift.
+5. Done: Buffer pool accounting drift.
    Medium, mostly local but concurrency-sensitive.
 6. Old Python grouped-alignment helpers.
    Medium, production-dead but test refactoring is needed.
@@ -370,7 +375,9 @@ Recommendation: make this an explicit ABC/protocol or split it into a concrete w
 
 ### P2. Buffer pool accounting can drift across shape or dtype changes
 
-`acquire_dosage_buffer_with_shape()` replaces a free buffer when shape or dtype differs, but it does not account for the discarded buffer:
+Status: done in `codebase-review-cleanups`. The native callback runner now registers buffers allocated by the pool, ignores unowned arrays on release, and removes discarded owned buffers from accounting before allocating shape/dtype replacements.
+
+Original finding: `acquire_dosage_buffer_with_shape()` replaced a free buffer when shape or dtype differed, but did not account for the discarded buffer:
 
 - `src/g/engine/callbacks.py:714-734`
 

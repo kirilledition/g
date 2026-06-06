@@ -388,6 +388,7 @@ class NativeBgenCallbackRunner:
         self.result_in_flight_slots = threading.BoundedSemaphore(self.result_in_flight_limit)
         self.free_dosage_buffers: queue.Queue[HostGenotypeBuffer] = queue.Queue(maxsize=self.dosage_buffer_limit)
         self.dosage_buffer_count = 0
+        self.dosage_buffer_identifiers: set[int] = set()
         self.worker_error: BaseException | None = None
         self.result_worker_error: BaseException | None = None
         self.worker_thread = threading.Thread(
@@ -738,20 +739,48 @@ class NativeBgenCallbackRunner:
                 dosage_buffer = self.free_dosage_buffers.get_nowait()
                 if dosage_buffer.shape == expected_shape and dosage_buffer.dtype == dtype:
                     return dosage_buffer
-                return typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
+                self.discard_dosage_buffer_slot(dosage_buffer)
+                if self.dosage_buffer_count < self.dosage_buffer_limit:
+                    return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
+                continue
             if self.dosage_buffer_count < self.dosage_buffer_limit:
-                self.dosage_buffer_count += 1
-                return typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
+                return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
             with contextlib.suppress(queue.Empty):
                 dosage_buffer = self.free_dosage_buffers.get(timeout=0.1)
                 if dosage_buffer.shape == expected_shape and dosage_buffer.dtype == dtype:
                     return dosage_buffer
-                return typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
+                self.discard_dosage_buffer_slot(dosage_buffer)
+                if self.dosage_buffer_count < self.dosage_buffer_limit:
+                    return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
 
     def release_dosage_buffer(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Return a processed host dosage buffer to the reusable pool."""
-        with contextlib.suppress(queue.Full):
+        if id(dosage_buffer) not in self.dosage_buffer_identifiers:
+            return
+        try:
             self.free_dosage_buffers.put_nowait(dosage_buffer)
+        except queue.Full:
+            self.discard_dosage_buffer_slot(dosage_buffer)
+
+    def allocate_dosage_buffer_with_shape(
+        self,
+        expected_shape: tuple[int, ...],
+        dtype: npt.DTypeLike,
+    ) -> HostGenotypeBuffer:
+        """Allocate and register one host genotype buffer slot."""
+        dosage_buffer = typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
+        self.dosage_buffer_count += 1
+        self.dosage_buffer_identifiers.add(id(dosage_buffer))
+        return dosage_buffer
+
+    def discard_dosage_buffer_slot(self, dosage_buffer: HostGenotypeBuffer) -> None:
+        """Remove one discarded host genotype buffer slot from pool accounting."""
+        dosage_buffer_identifier = id(dosage_buffer)
+        if dosage_buffer_identifier not in self.dosage_buffer_identifiers:
+            return
+        self.dosage_buffer_identifiers.remove(dosage_buffer_identifier)
+        if self.dosage_buffer_count > 0:
+            self.dosage_buffer_count -= 1
 
     def release_numpy_dosage_buffer(self, dosage_buffer: jax.Array | HostGenotypeBuffer) -> None:
         """Return a NumPy host dosage buffer to the pool after device transfer."""
