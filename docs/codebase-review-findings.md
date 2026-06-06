@@ -38,6 +38,12 @@ are summarized near the end instead of kept as historical work logs.
 - `uv run ruff check src/g/compute/regenie2_binary tests/test_regenie2_binary.py tests/test_regenie2_pipeline.py --output-format=concise`:
   passed after device-side Firth capacity dispatch.
 - `git diff --check`: passed after device-side Firth capacity dispatch.
+- `uv run pytest tests/test_regenie_comparison_scripts.py -q -k 'binary_hot'`: 4 passed
+  after binary hot benchmark sweep expansion.
+- `uv run ruff check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
+  passed after binary hot benchmark sweep expansion.
+- `uv run ty check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`:
+  passed after binary hot benchmark sweep expansion.
 
 I also fetched `origin` and confirmed the reviewed base matched `origin/main` before the
 cleanup integration. I did not run GPU benchmarks or the full test suite on the head node.
@@ -285,8 +291,10 @@ Recommended staged plan:
   multi-binary approximate Firth parity with distinct per-trait score-stage candidate
   masks. Remaining Firth prep gaps are null-Firth failure isolation and multi-binary
   packed8 approximate Firth parity.
-- Approximate Firth multi-trait performance should be benchmarked separately from
-  score-only packed8 because it still uses the per-trait correction path.
+- The binary hot benchmark harness now supports multi-binary trait-count,
+  Firth batch-size, Firth candidate-capacity, storage-mode, and fallback-density
+  sweeps. GPU smoke/full benchmark runs remain pending and should run through
+  SLURM rather than on the head node.
 - Multi-phenotype resume has focused multi-linear and multi-binary partial-commit coverage
   for the current resume-fast-but-not-minimal behavior; future resume-minimization work
   should add optimization-specific tests.
@@ -336,16 +344,16 @@ work:
   per-trait multi-binary approximate Firth candidate masks.
 - Single-trait approximate Firth now uses device-side zero, bounded, and overflow
   capacity dispatch instead of a host candidate-count synchronization.
+- The binary hot benchmark harness now expands reproducible multi-binary
+  approximate-Firth sweeps and records the per-case configuration in JSON output.
 
 ## Suggested Implementation Order
 
-1. Extend the binary hot benchmark harness for multi-binary Firth trait counts,
-   Firth batch sizes, and candidate capacities.
-2. Redesign multi-binary approximate Firth batching over flattened trait-variant lanes
+1. Redesign multi-binary approximate Firth batching over flattened trait-variant lanes
    while reusing one batched multi-score result per chunk.
-3. Continue remaining Rust unsafe boundary helper consolidation in small independent
+2. Continue remaining Rust unsafe boundary helper consolidation in small independent
    patches, especially lower-level generic decode output slices; this can run in
    parallel with Firth design work.
-4. Decide whether to preserve archive snapshots on a dedicated branch/tag and remove them
+3. Decide whether to preserve archive snapshots on a dedicated branch/tag and remove them
    from active `main`; this requires explicit approval before any deletion.
-5. Revisit public output dtype only if users need float64 result files.
+4. Revisit public output dtype only if users need float64 result files.
