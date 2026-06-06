@@ -217,6 +217,11 @@ statistical policy remains a product/science decision.
 
 ### P3. The repository is still dominated by tracked archive files
 
+Status: non-destructive search and documentation hygiene is now applied. The
+root `.ignore` excludes `/archive/` from default `rg`/`fd` searches, and
+`archive/README.md` identifies the tree as historical reference material rather
+than active application code.
+
 Current tracked file counts:
 
 - Total tracked files: 18,428.
@@ -226,20 +231,20 @@ Why this matters: code search, reviews, and agent context gathering all have to 
 large historical tree that is not part of the active app. This has already produced noisy
 static searches.
 
-Suggested direction: move archive history out of the active repository, convert it to an
-external branch/tag/artifact, or add very explicit tooling/docs so reviewers do not scan it
-by default.
+Remaining direction: decide whether to move archive history out of the active
+repository or convert it to an external branch/tag/artifact. Do not remove or
+rewrite archive history without explicit approval.
 
 Recommended staged plan:
 
-1. Add a root `.ignore` entry for `/archive/` and an `archive/README.md` that says the
-   archive is historical, not active app code. This is non-destructive and removes default
-   `rg`/`fd` noise.
-2. Preserve the archive on a dedicated branch/tag before removal, for example with
+1. Done: add a root `.ignore` entry for `/archive/` and an `archive/README.md`
+   that says the archive is historical, not active app code.
+2. If removal is approved, preserve the archive on a dedicated branch/tag before removal, for example with
    `git subtree split --prefix=archive/direct_association -b archive/direct-association`
    plus a dated archive tag.
-3. Remove `archive/direct_association` from active `main` with a normal commit, leaving the
-   README/index. This preserves history without rewriting every clone.
+3. After preservation, remove `archive/direct_association` from active `main`
+   with a normal commit, leaving the README/index. This preserves history
+   without rewriting every clone.
 4. Avoid destructive `git filter-repo` history rewrites unless clone size becomes a real
    problem and all branch/worktree users coordinate.
 
@@ -292,9 +297,9 @@ work:
 ## Suggested Implementation Order
 
 1. Continue centralizing Rust unsafe buffer boundary helpers.
-2. Apply non-destructive archive search/documentation hygiene, then decide whether to move
-   archive snapshots to a dedicated branch/tag.
-3. Add preparatory Firth correctness tests from `docs/firth-optimization-plan.md`.
-4. Remove the Firth candidate-count host sync with device-side bounded/overflow dispatch.
-5. Redesign multi-binary approximate Firth batching over flattened trait-variant lanes.
+2. Add preparatory Firth correctness tests from `docs/firth-optimization-plan.md`.
+3. Remove the Firth candidate-count host sync with device-side bounded/overflow dispatch.
+4. Redesign multi-binary approximate Firth batching over flattened trait-variant lanes.
+5. Decide whether to preserve archive snapshots on a dedicated branch/tag and remove them
+   from active `main`; this requires explicit approval before any deletion.
 6. Revisit public output dtype only if users need float64 result files.
