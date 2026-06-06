@@ -48,6 +48,15 @@ are summarized near the end instead of kept as historical work logs.
 - `. scripts/server_env.sh && cargo test --lib genotype::bgen`: 27 passed after
   BGEN decode output boundary cleanup.
 - `git diff --check`: passed after BGEN decode output boundary cleanup.
+- `uv run pytest tests/test_regenie2_binary.py -q -k 'multi_trait_approximate_firth_uses_one_multi_score_dispatch or multi_trait_approximate_firth_variant_major_handles_distinct_candidate_masks or packed8_multi_trait_approximate_firth_matches_variant_major_dosage or multi_trait_sparse_candidate_mask_does_not_create_firth_candidates or multi_trait_null_firth_failure_does_not_poison_other_traits or multi_trait_null_logistic_failure_does_not_poison_other_traits'`:
+  6 passed after multi-binary approximate Firth batching.
+- `uv run pytest tests/test_regenie2_binary.py tests/test_regenie2_pipeline.py -q`:
+  118 passed, 1 skipped after multi-binary approximate Firth batching.
+- `uv run ty check src/g tests/test_regenie2_binary.py tests/test_regenie2_pipeline.py`:
+  passed after multi-binary approximate Firth batching.
+- `uv run ruff check src/g/compute/regenie2_binary tests/test_regenie2_binary.py tests/test_regenie2_pipeline.py --output-format=concise`:
+  passed after multi-binary approximate Firth batching.
+- `git diff --check`: passed after multi-binary approximate Firth batching.
 
 I also fetched `origin` and confirmed the reviewed base matched `origin/main` before the
 cleanup integration. I did not run GPU benchmarks or the full test suite on the head node.
@@ -108,30 +117,27 @@ Remaining risk: public entry points still forward a large set of CLI/API options
 and callback worker threads still start in callback constructors. Splitting callback
 construction from thread startup remains a separate lifecycle cleanup.
 
-### P2. Multi-binary approximate Firth is not batched
+### P2. Multi-binary approximate Firth batching
 
-Status: preparatory correctness coverage has been expanded, but the implementation is
-still intentionally unbatched.
+Status: addressed in `opt/multi-binary-firth-batching`.
 
-Multi-binary score-only execution is batched, but approximate Firth still falls back to
-one-trait-at-a-time Python dispatch. The code documents this at
-`src/g/compute/regenie2_binary/api.py:306` to `src/g/compute/regenie2_binary/api.py:307`,
-then builds `compute_one_trait` at `src/g/compute/regenie2_binary/api.py:321` and stacks a
-Python list at `src/g/compute/regenie2_binary/api.py:343`. Packed8 non-score multi-binary
-first decodes to dosage and then calls the same per-trait correction path at
-`src/g/compute/regenie2_binary/api.py:370` to `src/g/compute/regenie2_binary/api.py:374`.
+The multi-binary approximate Firth path now computes one batched multi-trait
+score result per chunk, builds a trait-major candidate mask, flattens selected
+trait-variant lanes, and applies Firth correction through a device-side
+zero/bounded/overflow dispatcher. Candidate lane identity keeps both
+`trait_index` and `variant_index` through grouping so corrected statistics and
+diagnostics scatter back to `[traits, variants]`.
 
-Why this matters: packed8 and multi-phenotype speedups mostly help score-only execution.
-When approximate Firth is enabled, the pipeline can still pay per-trait launch and Python
-overhead on the fallback subset.
+The implementation preserves the single-trait correction path and uses
+multi-specific helpers for capacity planning, sparse-mask handling, lane
+residualization, lane-specific null state, and multi-result merge. Packed8
+multi-binary approximate Firth still decodes to variant-major dosage before
+entering the same multi correction path.
 
-Suggested direction: keep this as a known performance limitation until score-only packed8
-and output are stable. Then batch candidate extraction and correction over trait dimension,
-or split the fallback workload into a clearly separate optimized kernel path.
-
-Detailed implementation plan: `docs/firth-optimization-plan.md`. The plan now records
-current prep coverage and the remaining null-Firth failure-isolation and multi-binary
-packed8 parity gaps.
+Remaining risk: GPU compile time, peak memory, and runtime should be measured
+before making a final performance call. Full overflow capacity is now
+`trait_count * variant_count`, and both bounded and overflow branches are part
+of the jitted dispatcher.
 
 ### P2. Firth candidate capacity selection syncs to host
 
@@ -149,8 +155,8 @@ Why this matters: approximate Firth chunks no longer force the host to observe
 the candidate count before launching correction.
 
 Remaining risk: both bounded and overflow correction branches are part of the
-compiled dispatcher, so GPU compile time and memory should be measured before
-building the multi-binary batching work on top of this primitive.
+compiled dispatcher, so GPU compile time and memory should be measured for the
+single-trait and multi-binary Firth paths.
 
 Detailed follow-up plan: `docs/firth-optimization-plan.md`.
 
@@ -270,20 +276,22 @@ Why this matters: code search, reviews, and agent context gathering all have to 
 large historical tree that is not part of the active app. This has already produced noisy
 static searches.
 
-Remaining direction: decide whether to move archive history out of the active
-repository or convert it to an external branch/tag/artifact. Do not remove or
-rewrite archive history without explicit approval.
+Remaining direction: preservation is done on branch
+`preserve-direct-association-g-code-20260607` and tag
+`archive-direct-association-g-code-20260607`. Removing archived GWAS-engine code
+from active `main` still requires explicit approval. Do not remove or rewrite
+archive history without that approval.
 
 Recommended staged plan:
 
 1. Done: add a root `.ignore` entry for `/archive/` and an `archive/README.md`
    that says the archive is historical, not active app code.
-2. If removal is approved, preserve the archive on a dedicated branch/tag before removal, for example with
-   `git subtree split --prefix=archive/direct_association -b archive/direct-association`
-   plus a dated archive tag.
-3. After preservation, remove `archive/direct_association` from active `main`
-   with a normal commit, leaving the README/index. This preserves history
-   without rewriting every clone.
+2. Done: preserve the archive on dedicated Git refs:
+   `preserve-direct-association-g-code-20260607` and
+   `archive-direct-association-g-code-20260607`.
+3. If removal is approved, remove the archived GWAS-engine code from active
+   `main` with a normal commit while keeping the patched REGENIE tree intact.
+   This preserves history without rewriting every clone.
 4. Avoid destructive `git filter-repo` history rewrites unless clone size becomes a real
    problem and all branch/worktree users coordinate.
 
@@ -291,10 +299,11 @@ Recommended staged plan:
 
 - Packed8 multi-phenotype dispatch has interface and pipeline coverage, but I did not run a
   GPU benchmark or full parity workload in this review.
-- Preparatory Firth tests now cover zero-candidate diagnostic preservation and
-  multi-binary approximate Firth parity with distinct per-trait score-stage candidate
-  masks. Remaining Firth prep gaps are null-Firth failure isolation and multi-binary
-  packed8 approximate Firth parity.
+- Firth tests now cover zero-candidate diagnostic preservation, distinct
+  per-trait multi-binary approximate Firth candidate masks, packed8
+  multi-binary approximate Firth parity, sparse-mask non-expansion, one
+  multi-score dispatch per corrected chunk, and per-trait null Firth/logistic
+  failure isolation.
 - The binary hot benchmark harness now supports multi-binary trait-count,
   Firth batch-size, Firth candidate-capacity, storage-mode, and fallback-density
   sweeps. GPU smoke/full benchmark runs remain pending and should run through
@@ -351,13 +360,16 @@ work:
   per-trait multi-binary approximate Firth candidate masks.
 - Single-trait approximate Firth now uses device-side zero, bounded, and overflow
   capacity dispatch instead of a host candidate-count synchronization.
+- Multi-binary approximate Firth now batches flattened trait-variant candidate
+  lanes while reusing one batched multi-score result per chunk.
 - The binary hot benchmark harness now expands reproducible multi-binary
   approximate-Firth sweeps and records the per-case configuration in JSON output.
 
 ## Suggested Implementation Order
 
-1. Redesign multi-binary approximate Firth batching over flattened trait-variant lanes
-   while reusing one batched multi-score result per chunk.
-2. Decide whether to preserve archive snapshots on a dedicated branch/tag and remove them
-   from active `main`; this requires explicit approval before any deletion.
-3. Revisit public output dtype only if users need float64 result files.
+1. Run the SLURM GPU smoke/full binary-hot benchmarks before making a final
+   performance call on flattened multi-binary Firth batching.
+2. If explicitly approved, remove preserved archived GWAS-engine code from
+   active `main`, while keeping patched REGENIE intact.
+3. Keep public output statistics float32 unless a future user requirement explicitly asks
+   for float64 result files.
