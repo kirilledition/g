@@ -1,4 +1,5 @@
 use std::mem::MaybeUninit;
+use std::ptr::NonNull;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
@@ -17,6 +18,148 @@ const MISSING_SAMPLE_FLAG_MASK: u8 = 0x80;
 const PLOIDY_MASK: u8 = 0x3F;
 const DEFAULT_DECODE_TILE_VARIANT_COUNT: usize = 64;
 static DECODE_TILE_VARIANT_COUNT: AtomicUsize = AtomicUsize::new(DEFAULT_DECODE_TILE_VARIANT_COUNT);
+
+pub(super) struct VariantMajorOutputMatrix<Value> {
+    pointer: NonNull<Value>,
+    row_value_count: usize,
+    row_context: &'static str,
+}
+
+impl<Value> VariantMajorOutputMatrix<Value> {
+    /// Builds a typed view over a caller-owned variant-major output matrix.
+    ///
+    /// # Safety
+    ///
+    /// `output_pointer_address` must point to writable memory with enough initialized
+    /// storage for every row requested through this helper. Concurrent workers must
+    /// request disjoint variant rows for the same allocation.
+    pub(super) unsafe fn from_pointer_address(
+        output_pointer_address: usize,
+        row_value_count: usize,
+        row_context: &'static str,
+    ) -> Result<Self, BgenError> {
+        if row_value_count == 0 {
+            return Err(BgenError::Range(format!("{row_context} output row length must be positive.")));
+        }
+        let value_alignment = std::mem::align_of::<Value>();
+        if !output_pointer_address.is_multiple_of(value_alignment) {
+            return Err(BgenError::Range(format!(
+                "{row_context} output pointer is not aligned to {value_alignment} bytes.",
+            )));
+        }
+        let pointer = NonNull::new(output_pointer_address as *mut Value)
+            .ok_or_else(|| BgenError::Range(format!("{row_context} output pointer is null.")))?;
+        Ok(Self { pointer, row_value_count, row_context })
+    }
+
+    pub(super) fn row_mut(&mut self, variant_index: usize) -> Result<&mut [Value], BgenError> {
+        let row_offset = variant_index.checked_mul(self.row_value_count).ok_or_else(|| {
+            BgenError::Range(format!("Integer overflow while locating {} output row.", self.row_context))
+        })?;
+        let row_pointer = unsafe {
+            // Constructor callers guarantee that the backing allocation spans the requested rows.
+            self.pointer.as_ptr().add(row_offset)
+        };
+        Ok(unsafe { std::slice::from_raw_parts_mut(row_pointer, self.row_value_count) })
+    }
+}
+
+struct RowMajorOutputMatrix<Value> {
+    pointer: NonNull<Value>,
+    row_value_count: usize,
+    row_context: &'static str,
+}
+
+impl<Value> RowMajorOutputMatrix<Value> {
+    /// Builds a typed view over a caller-owned row-major output matrix.
+    ///
+    /// # Safety
+    ///
+    /// `output_pointer_address` must point to writable memory with enough initialized
+    /// storage for every row requested through this helper. Concurrent workers must
+    /// request disjoint variant columns or row ranges for the same allocation.
+    unsafe fn from_pointer_address(
+        output_pointer_address: usize,
+        row_value_count: usize,
+        row_context: &'static str,
+    ) -> Result<Self, BgenError> {
+        if row_value_count == 0 {
+            return Err(BgenError::Range(format!("{row_context} output row length must be positive.")));
+        }
+        let value_alignment = std::mem::align_of::<Value>();
+        if !output_pointer_address.is_multiple_of(value_alignment) {
+            return Err(BgenError::Range(format!(
+                "{row_context} output pointer is not aligned to {value_alignment} bytes.",
+            )));
+        }
+        let pointer = NonNull::new(output_pointer_address as *mut Value)
+            .ok_or_else(|| BgenError::Range(format!("{row_context} output pointer is null.")))?;
+        Ok(Self { pointer, row_value_count, row_context })
+    }
+
+    fn row_mut(&mut self, row_index: usize) -> Result<&mut [Value], BgenError> {
+        let row_offset = row_index.checked_mul(self.row_value_count).ok_or_else(|| {
+            BgenError::Range(format!("Integer overflow while locating {} output row.", self.row_context))
+        })?;
+        let row_pointer = unsafe {
+            // Constructor callers guarantee that the backing allocation spans the requested rows.
+            self.pointer.as_ptr().add(row_offset)
+        };
+        Ok(unsafe { std::slice::from_raw_parts_mut(row_pointer, self.row_value_count) })
+    }
+
+    fn row_range_mut(
+        &mut self,
+        row_index: usize,
+        column_start: usize,
+        value_count: usize,
+    ) -> Result<&mut [Value], BgenError> {
+        let row_context = self.row_context;
+        let column_stop = column_start.checked_add(value_count).ok_or_else(|| {
+            BgenError::Range(format!("Integer overflow while locating {row_context} output row range."))
+        })?;
+        let row_values = self.row_mut(row_index)?;
+        row_values
+            .get_mut(column_start..column_stop)
+            .ok_or_else(|| BgenError::Range(format!("{row_context} output row range exceeds the row length.")))
+    }
+
+    fn column_mut(&mut self, column_index: usize) -> Result<RowMajorOutputColumnMut<'_, Value>, BgenError> {
+        if column_index >= self.row_value_count {
+            return Err(BgenError::Range(format!(
+                "{} output column {column_index} exceeds the row length {}.",
+                self.row_context, self.row_value_count,
+            )));
+        }
+        Ok(RowMajorOutputColumnMut { matrix: self, column_index })
+    }
+}
+
+struct RowMajorOutputColumnMut<'a, Value> {
+    matrix: &'a mut RowMajorOutputMatrix<Value>,
+    column_index: usize,
+}
+
+impl<Value> RowMajorOutputColumnMut<'_, Value> {
+    /// Writes one value in the validated column.
+    ///
+    /// # Safety
+    ///
+    /// `row_index` must be within the caller-owned matrix row count covered by the
+    /// constructor safety contract. Parallel callers must own disjoint columns or
+    /// row spans.
+    unsafe fn write_unchecked(&mut self, row_index: usize, value: Value) {
+        let value_offset = (row_index * self.matrix.row_value_count) + self.column_index;
+        let value_pointer = unsafe {
+            // The matrix safety contract covers all rows written through this column view.
+            self.matrix.pointer.as_ptr().add(value_offset)
+        };
+        unsafe {
+            value_pointer.write(value);
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct VariantDecodeResult {
     pub(super) profile_snapshot: ThreadLocalProfileSnapshot,
@@ -206,18 +349,19 @@ pub(super) fn decode_variant_dosage_tile_into_row_major_matrix(
     thread_local_profile_snapshot.decode_tile_count += 1;
 
     let copy_tile_start_time = profiling_enabled.then(Instant::now);
-    let output_pointer = output_pointer_address as *mut f32;
+    let mut output_matrix = unsafe {
+        RowMajorOutputMatrix::<f32>::from_pointer_address(
+            output_pointer_address,
+            selected_variant_count,
+            "row-major BGEN dosage",
+        )?
+    };
     for selected_sample_index in 0..sample_selection.selected_sample_count {
         let tile_row_start = selected_sample_index * tile_variant_count;
-        let output_row_start = (selected_sample_index * selected_variant_count) + tile_variant_start_index;
-        unsafe {
-            // Each parallel worker owns a disjoint contiguous variant span in every output row.
-            std::ptr::copy_nonoverlapping(
-                thread_scratch.dosage_tile.as_ptr().add(tile_row_start),
-                output_pointer.add(output_row_start),
-                tile_variant_count,
-            );
-        }
+        let tile_row_stop = tile_row_start + tile_variant_count;
+        let output_row_range =
+            output_matrix.row_range_mut(selected_sample_index, tile_variant_start_index, tile_variant_count)?;
+        output_row_range.copy_from_slice(&thread_scratch.dosage_tile[tile_row_start..tile_row_stop]);
     }
     if let Some(copy_tile_start_time) = copy_tile_start_time {
         thread_local_profile_snapshot.output_write_ns += elapsed_nanoseconds(copy_tile_start_time);
@@ -401,7 +545,14 @@ fn decode_variant_dosages_into_row_major_matrix(
         if probability_bit_count == 32 { f64::from(u32::MAX) } else { f64::from((1_u32 << probability_bit_count) - 1) };
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let mut bit_reader = PackedProbabilityReader::new(&block_bytes[cursor..]);
-    let output_pointer = output_pointer_address as *mut f32;
+    let mut output_matrix = unsafe {
+        RowMajorOutputMatrix::<f32>::from_pointer_address(
+            output_pointer_address,
+            variant_count,
+            "row-major BGEN dosage",
+        )?
+    };
+    let mut output_column = output_matrix.column_mut(variant_index)?;
     let mut selected_dosage_total = 0.0_f32;
     if sample_selection.is_identity {
         let output_write_start_time = profiling_enabled.then(Instant::now);
@@ -450,10 +601,9 @@ fn decode_variant_dosages_into_row_major_matrix(
                 }
             };
 
-            let output_offset = (file_sample_index * variant_count) + variant_index;
             unsafe {
-                // Identity-aligned full-sample reads map file-order rows directly into output rows.
-                output_pointer.add(output_offset).write(dosage_value);
+                // Identity-aligned full-sample reads write one validated variant column across file-order rows.
+                output_column.write_unchecked(file_sample_index, dosage_value);
             }
             if collect_dosage_totals && !dosage_value.is_nan() {
                 selected_dosage_total += dosage_value;
@@ -525,10 +675,9 @@ fn decode_variant_dosages_into_row_major_matrix(
 
         let selected_index = sample_selection.file_to_selected_index[file_sample_index];
         if selected_index != usize::MAX {
-            let output_offset = (selected_index * variant_count) + variant_index;
             unsafe {
-                // Each parallel worker owns one distinct variant column, so these writes do not overlap.
-                output_pointer.add(output_offset).write(dosage_value);
+                // Selected indices are built by sample selection and map to valid output rows.
+                output_column.write_unchecked(selected_index, dosage_value);
             }
             if collect_dosage_totals && !dosage_value.is_nan() {
                 selected_dosage_total += dosage_value;
@@ -583,7 +732,14 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
 
     let dosage_lookup = unphased_eight_bit_dosage_lookup();
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
-    let output_pointer = output_pointer_address as *mut f32;
+    let mut output_matrix = unsafe {
+        RowMajorOutputMatrix::<f32>::from_pointer_address(
+            output_pointer_address,
+            variant_count,
+            "row-major BGEN dosage",
+        )?
+    };
+    let mut output_column = output_matrix.column_mut(variant_index)?;
     let probability_pairs =
         exact_eight_bit_probability_pairs(&packed_probability_bytes[..expected_probability_byte_count]);
     let all_samples_present =
@@ -591,14 +747,12 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     let mut selected_dosage_total = 0.0_f32;
     if sample_selection.is_identity && all_samples_present {
         let output_write_start_time = profiling_enabled.then(Instant::now);
-        let mut output_row_pointer = unsafe { output_pointer.add(variant_index) };
-        for probability_pair in probability_pairs.iter().copied() {
+        for (file_sample_index, probability_pair) in probability_pairs.iter().copied().enumerate() {
             let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
             let dosage_value = dosage_lookup[packed_probability_index];
             unsafe {
-                // Identity-aligned full-sample reads map file-order rows directly into output rows.
-                output_row_pointer.write(dosage_value);
-                output_row_pointer = output_row_pointer.add(variant_count);
+                // Identity-aligned full-sample reads write file-order rows in the validated output column.
+                output_column.write_unchecked(file_sample_index, dosage_value);
             }
             if collect_dosage_totals {
                 selected_dosage_total += dosage_value;
@@ -624,9 +778,8 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     }
     if sample_selection.is_identity {
         let output_write_start_time = profiling_enabled.then(Instant::now);
-        let mut output_row_pointer = unsafe { output_pointer.add(variant_index) };
-        for (ploidy_and_missingness, probability_pair) in
-            sample_ploidy_and_missingness.iter().zip(probability_pairs.iter().copied())
+        for (file_sample_index, (ploidy_and_missingness, probability_pair)) in
+            sample_ploidy_and_missingness.iter().zip(probability_pairs.iter().copied()).enumerate()
         {
             let observed_ploidy = ploidy_and_missingness & PLOIDY_MASK;
             if observed_ploidy != 2 {
@@ -644,9 +797,8 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
                 dosage_lookup[packed_probability_index]
             };
             unsafe {
-                // Identity-aligned full-sample reads map file-order rows directly into output rows.
-                output_row_pointer.write(dosage_value);
-                output_row_pointer = output_row_pointer.add(variant_count);
+                // Identity-aligned full-sample reads write file-order rows in the validated output column.
+                output_column.write_unchecked(file_sample_index, dosage_value);
             }
             if collect_dosage_totals && !dosage_value.is_nan() {
                 selected_dosage_total += dosage_value;
@@ -679,10 +831,9 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
 
             let selected_index = sample_selection.file_to_selected_index[file_sample_index];
             if selected_index != usize::MAX {
-                let output_offset = (selected_index * variant_count) + variant_index;
                 unsafe {
-                    // Each parallel worker owns one distinct variant column, so these writes do not overlap.
-                    output_pointer.add(output_offset).write(dosage_value);
+                    // Selected indices are built by sample selection and map to valid output rows.
+                    output_column.write_unchecked(selected_index, dosage_value);
                 }
                 if collect_dosage_totals {
                     selected_dosage_total += dosage_value;
@@ -731,10 +882,9 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
 
         let selected_index = sample_selection.file_to_selected_index[file_sample_index];
         if selected_index != usize::MAX {
-            let output_offset = (selected_index * variant_count) + variant_index;
             unsafe {
-                // Each parallel worker owns one distinct variant column, so these writes do not overlap.
-                output_pointer.add(output_offset).write(dosage_value);
+                // Selected indices are built by sample selection and map to valid output rows.
+                output_column.write_unchecked(selected_index, dosage_value);
             }
             if collect_dosage_totals && !dosage_value.is_nan() {
                 selected_dosage_total += dosage_value;
@@ -851,10 +1001,14 @@ fn decode_variant_dosages_into_variant_major_matrix(
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let output_write_start_time = profiling_enabled.then(Instant::now);
     let mut bit_reader = PackedProbabilityReader::new(&probability_block[cursor..]);
-    let output_pointer = output_pointer_address as *mut f32;
-    let variant_row_offset = variant_index.checked_mul(selected_sample_count).ok_or_else(|| {
-        BgenError::Range("Integer overflow while locating variant-major BGEN output row.".to_string())
-    })?;
+    let mut output_matrix = unsafe {
+        VariantMajorOutputMatrix::<f32>::from_pointer_address(
+            output_pointer_address,
+            selected_sample_count,
+            "variant-major BGEN",
+        )?
+    };
+    let output_row = output_matrix.row_mut(variant_index)?;
     let all_samples_present =
         trusted_no_missing_diploid || trusted::all_samples_present_diploid(sample_ploidy_and_missingness);
     let mut selected_dosage_total = 0.0_f32;
@@ -910,10 +1064,7 @@ fn decode_variant_dosages_into_variant_major_matrix(
 
         let is_missing = !all_samples_present && (ploidy_and_missingness & MISSING_SAMPLE_FLAG_MASK) != 0;
         let output_value = if is_missing { f32::NAN } else { dosage_value };
-        unsafe {
-            // Each parallel worker owns a distinct variant row in the variant-major output matrix.
-            output_pointer.add(variant_row_offset + selected_index).write(output_value);
-        }
+        output_row[selected_index] = output_value;
         if is_missing {
             has_missing_values = true;
             continue;
@@ -932,9 +1083,7 @@ fn decode_variant_dosages_into_variant_major_matrix(
     }
 
     impute_variant_major_row_if_needed(
-        output_pointer,
-        variant_row_offset,
-        selected_sample_count,
+        output_row,
         selected_dosage_total,
         selected_observation_count,
         has_missing_values,
@@ -985,18 +1134,18 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
 
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let output_write_start_time = profiling_enabled.then(Instant::now);
-    let output_pointer = output_pointer_address as *mut f32;
-    let variant_row_offset = variant_index.checked_mul(selected_sample_count).ok_or_else(|| {
-        BgenError::Range("Integer overflow while locating variant-major BGEN output row.".to_string())
-    })?;
+    let mut output_matrix = unsafe {
+        VariantMajorOutputMatrix::<f32>::from_pointer_address(
+            output_pointer_address,
+            selected_sample_count,
+            "variant-major BGEN",
+        )?
+    };
+    let output_row = output_matrix.row_mut(variant_index)?;
     let all_samples_present =
         trusted_no_missing_diploid || trusted::all_samples_present_diploid(sample_ploidy_and_missingness);
 
     if sample_selection.is_identity && all_samples_present {
-        let output_row = unsafe {
-            // Each parallel worker owns a distinct variant row in the variant-major output matrix.
-            std::slice::from_raw_parts_mut(output_pointer.add(variant_row_offset), selected_sample_count)
-        };
         let decode_summary = simd::decode_unphased_eight_bit_identity_simd_or_scalar(
             &packed_probability_bytes[..expected_probability_byte_count],
             output_row,
@@ -1049,10 +1198,6 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
                 probability_offset,
                 selected_probability_byte_count,
             )?;
-            let output_row = unsafe {
-                // The contiguous selected sample run maps directly to a contiguous output row.
-                std::slice::from_raw_parts_mut(output_pointer.add(variant_row_offset), selected_sample_count)
-            };
             let decode_summary =
                 simd::decode_unphased_eight_bit_identity_simd_or_scalar(selected_probability_bytes, output_row);
             record_variant_major_decode_profile(
@@ -1087,10 +1232,7 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
             )?;
             let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
             let dosage_value = dosage_lookup[packed_probability_index];
-            unsafe {
-                // Selected sample order maps directly to the caller's output row order.
-                output_pointer.add(variant_row_offset + selected_index).write(dosage_value);
-            }
+            output_row[selected_index] = dosage_value;
             selected_dosage_total += dosage_value;
             selected_dosage_square_total += dosage_value * dosage_value;
             selected_observation_count += 1;
@@ -1149,10 +1291,7 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
         let dosage_value = dosage_lookup[packed_probability_index];
         let is_missing = !all_samples_present && (ploidy_and_missingness & MISSING_SAMPLE_FLAG_MASK) != 0;
         let output_value = if is_missing { f32::NAN } else { dosage_value };
-        unsafe {
-            // Each parallel worker owns a distinct variant row in the variant-major output matrix.
-            output_pointer.add(variant_row_offset + selected_index).write(output_value);
-        }
+        output_row[selected_index] = output_value;
         if is_missing {
             has_missing_values = true;
             continue;
@@ -1171,9 +1310,7 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
     }
 
     impute_variant_major_row_if_needed(
-        output_pointer,
-        variant_row_offset,
-        selected_sample_count,
+        output_row,
         selected_dosage_total,
         selected_observation_count,
         has_missing_values,
@@ -1201,9 +1338,7 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
 
 #[allow(clippy::cast_precision_loss)]
 fn impute_variant_major_row_if_needed(
-    output_pointer: *mut f32,
-    variant_row_offset: usize,
-    selected_sample_count: usize,
+    output_row: &mut [f32],
     selected_dosage_total: f32,
     selected_observation_count: i32,
     has_missing_values: bool,
@@ -1212,12 +1347,9 @@ fn impute_variant_major_row_if_needed(
         return;
     }
     let imputed_dosage_value = selected_dosage_total / selected_observation_count.max(1) as f32;
-    for selected_sample_index in 0..selected_sample_count {
-        let output_value = unsafe { output_pointer.add(variant_row_offset + selected_sample_index) };
-        if unsafe { output_value.read().is_nan() } {
-            unsafe {
-                output_value.write(imputed_dosage_value);
-            }
+    for output_value in output_row {
+        if output_value.is_nan() {
+            *output_value = imputed_dosage_value;
         }
     }
 }
@@ -1490,6 +1622,66 @@ mod tests {
         let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(payload).expect("payload should compress");
         encoder.finish().expect("compressed payload should finish")
+    }
+
+    #[test]
+    fn row_major_output_matrix_returns_requested_row_range_and_column() {
+        let mut output_values = [0_i32; 8];
+        let mut output_matrix = unsafe {
+            RowMajorOutputMatrix::<i32>::from_pointer_address(output_values.as_mut_ptr() as usize, 4, "test row-major")
+        }
+        .expect("test output matrix should build");
+
+        output_matrix.row_range_mut(1, 1, 2).expect("second row range should be available").copy_from_slice(&[5, 6]);
+        unsafe {
+            output_matrix.column_mut(0).expect("first column should be available").write_unchecked(1, 4);
+        }
+
+        assert_eq!(output_values, [0, 0, 0, 0, 4, 5, 6, 0]);
+    }
+
+    #[test]
+    fn row_major_output_matrix_rejects_invalid_boundary_state() {
+        let null_result = unsafe { RowMajorOutputMatrix::<u8>::from_pointer_address(0, 1, "test row-major") };
+        assert!(matches!(null_result, Err(error) if error.to_string().contains("output pointer is null")));
+
+        let empty_row_result = unsafe {
+            RowMajorOutputMatrix::<u8>::from_pointer_address(
+                std::ptr::NonNull::<u8>::dangling().as_ptr() as usize,
+                0,
+                "test row-major",
+            )
+        };
+        assert!(
+            matches!(empty_row_result, Err(error) if error.to_string().contains("output row length must be positive"))
+        );
+
+        let misaligned_result = unsafe { RowMajorOutputMatrix::<i32>::from_pointer_address(1, 1, "test row-major") };
+        assert!(matches!(misaligned_result, Err(error) if error.to_string().contains("output pointer is not aligned")));
+
+        let mut output_matrix = unsafe {
+            RowMajorOutputMatrix::<u8>::from_pointer_address(
+                std::ptr::NonNull::<u8>::dangling().as_ptr() as usize,
+                usize::MAX,
+                "test row-major",
+            )
+        }
+        .expect("dangling pointer is acceptable when offset validation fails before dereference");
+        let row_error = output_matrix.row_mut(2).expect_err("oversized row offset should fail");
+        assert!(row_error.to_string().contains("Integer overflow while locating test row-major output row"));
+
+        let mut output_values = [0_u8; 4];
+        let mut output_matrix = unsafe {
+            RowMajorOutputMatrix::<u8>::from_pointer_address(output_values.as_mut_ptr() as usize, 2, "test row-major")
+        }
+        .expect("test output matrix should build");
+        let column_result = output_matrix.column_mut(2);
+        assert!(
+            matches!(column_result, Err(error) if error.to_string().contains("output column 2 exceeds the row length 2"))
+        );
+
+        let range_error = output_matrix.row_range_mut(0, 1, 2).expect_err("oversized row range should fail");
+        assert!(range_error.to_string().contains("output row range exceeds the row length"));
     }
 
     #[test]

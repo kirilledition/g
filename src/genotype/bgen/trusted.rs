@@ -1,10 +1,9 @@
-use std::ptr::NonNull;
 use std::time::Instant;
 
 use super::decode::{
-    ThreadScratch, VariantDecodeResult, VariantMajorTileDecodeResult, VariantMajorTileStatsMut,
-    packed_eight_bit_probability_index, read_eight_bit_probability_pair, read_exact_bytes, read_probability_block,
-    read_u8_at, read_u16_at, read_u32_at, u32_to_usize, unphased_eight_bit_dosage_lookup,
+    ThreadScratch, VariantDecodeResult, VariantMajorOutputMatrix, VariantMajorTileDecodeResult,
+    VariantMajorTileStatsMut, packed_eight_bit_probability_index, read_eight_bit_probability_pair, read_exact_bytes,
+    read_probability_block, read_u8_at, read_u16_at, read_u32_at, u32_to_usize, unphased_eight_bit_dosage_lookup,
     validate_variant_major_tile_stats_lengths,
 };
 use super::metadata::VariantRecord;
@@ -20,51 +19,6 @@ fn selected_sample_count_to_i32(selected_sample_count: usize) -> Result<i32, Bge
             "Selected sample count {selected_sample_count} exceeds the supported i32 statistics range.",
         ))
     })
-}
-
-struct VariantMajorOutputMatrix<Value> {
-    pointer: NonNull<Value>,
-    row_value_count: usize,
-    row_context: &'static str,
-}
-
-impl<Value> VariantMajorOutputMatrix<Value> {
-    /// Builds a typed view over a caller-owned variant-major output matrix.
-    ///
-    /// # Safety
-    ///
-    /// `output_pointer_address` must point to writable memory with enough initialized
-    /// storage for every row requested through this helper. Concurrent workers must
-    /// request disjoint variant rows for the same allocation.
-    unsafe fn from_pointer_address(
-        output_pointer_address: usize,
-        row_value_count: usize,
-        row_context: &'static str,
-    ) -> Result<Self, BgenError> {
-        if row_value_count == 0 {
-            return Err(BgenError::Range(format!("{row_context} output row length must be positive.")));
-        }
-        let value_alignment = std::mem::align_of::<Value>();
-        if !output_pointer_address.is_multiple_of(value_alignment) {
-            return Err(BgenError::Range(format!(
-                "{row_context} output pointer is not aligned to {value_alignment} bytes.",
-            )));
-        }
-        let pointer = NonNull::new(output_pointer_address as *mut Value)
-            .ok_or_else(|| BgenError::Range(format!("{row_context} output pointer is null.")))?;
-        Ok(Self { pointer, row_value_count, row_context })
-    }
-
-    fn row_mut(&mut self, variant_index: usize) -> Result<&mut [Value], BgenError> {
-        let row_offset = variant_index.checked_mul(self.row_value_count).ok_or_else(|| {
-            BgenError::Range(format!("Integer overflow while locating {} output row.", self.row_context))
-        })?;
-        let row_pointer = unsafe {
-            // Constructor callers guarantee that the backing allocation spans the requested rows.
-            self.pointer.as_ptr().add(row_offset)
-        };
-        Ok(unsafe { std::slice::from_raw_parts_mut(row_pointer, self.row_value_count) })
-    }
 }
 
 pub(super) fn all_samples_present_diploid(sample_ploidy_and_missingness: &[u8]) -> bool {
