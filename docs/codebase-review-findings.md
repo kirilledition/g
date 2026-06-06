@@ -4,9 +4,9 @@ Date: 2026-06-06
 Reviewed base: `7ec2d10f` (`main` before cleanup integration)
 
 This is a current-state review of active application code after the config default cleanup,
-output, packed8, BGEN orchestration, REGENIE2 lifecycle, and easy non-config cleanup work.
-It replaces the older review notes; items that were fixed are summarized near the end
-instead of kept as historical work logs.
+output, packed8, BGEN orchestration, REGENIE2 lifecycle, easy non-config cleanup, and
+orchestrated review cleanup work. It replaces the older review notes; items that were fixed
+are summarized near the end instead of kept as historical work logs.
 
 ## Checks Run
 
@@ -138,21 +138,17 @@ Suggested direction: for now document this as resume-fast-but-not-minimal. A lat
 optimization could group phenotypes by remaining chunk sets or deliver a sparse
 trait/chunk schedule to the compute layer.
 
-### P2. Callback worker threads start during construction
+### P2. Callback worker startup lifecycle is now explicit
 
-`NativeBgenCallbackRunner.__init__` creates worker threads at
-`src/g/engine/callbacks.py:397` and `src/g/engine/callbacks.py:402`, then starts them at
-`src/g/engine/callbacks.py:407` and `src/g/engine/callbacks.py:408`. The abstract compute
-hooks are declared below at `src/g/engine/callbacks.py:420`,
-`src/g/engine/callbacks.py:431`, and `src/g/engine/callbacks.py:442`.
+Status: addressed in `cleanup/review-easy-nonconfig`. `NativeBgenCallbackRunner.__init__`
+now constructs queues and worker thread objects without starting them. `start()` owns
+thread startup, and native dispatch calls it immediately before Rust engine delivery.
+`finish()` and shutdown helpers tolerate callbacks that were constructed but never started.
 
-The ABC prevents direct instantiation of incomplete subclasses, so this is not an immediate
-abstract-method bug. It is still a lifecycle smell: thread startup is coupled to object
-construction before the owner has a chance to finish external setup, register it, or enter a
-managed context.
-
-Suggested direction: add an explicit `start()` method or context manager and have pipeline
-runners start callbacks after writer sessions and telemetry are fully prepared.
+Focused coverage lives in `tests/test_callback_lifecycle.py` and
+`tests/test_regenie2_pipeline.py`. Remaining risk is ordinary lifecycle regression risk if
+new callback owners bypass the native dispatch helpers; future callback types should either
+use the same dispatch path or explicitly call `start()` before queuing work.
 
 ### P2. Native unsafe pointer writes are spread across several wrappers
 
@@ -291,12 +287,14 @@ work:
   for partial per-phenotype committed chunk sets.
 - Dtype docs now state the current contract: score/Firth dtype options control internal
   compute precision, while public association statistics remain float32.
+- Callback worker startup now has an explicit lifecycle and focused tests.
 
 ## Suggested Implementation Order
 
-1. Split callback start from construction.
-2. Continue centralizing Rust unsafe buffer boundary helpers.
-3. Apply non-destructive archive search/documentation hygiene, then decide whether to move
+1. Continue centralizing Rust unsafe buffer boundary helpers.
+2. Apply non-destructive archive search/documentation hygiene, then decide whether to move
    archive snapshots to a dedicated branch/tag.
-4. Benchmark and then redesign multi-binary approximate Firth batching.
-5. Revisit public output dtype only if users need float64 result files.
+3. Add preparatory Firth correctness tests from `docs/firth-optimization-plan.md`.
+4. Remove the Firth candidate-count host sync with device-side bounded/overflow dispatch.
+5. Redesign multi-binary approximate Firth batching over flattened trait-variant lanes.
+6. Revisit public output dtype only if users need float64 result files.
