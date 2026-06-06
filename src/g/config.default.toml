@@ -48,10 +48,12 @@ null-firth-step-halving-scale = 0.5
 use-block-firth-math = false
 bgen-decode-tile-variant-count = 64
 gpu-genotype-format = "dosage"
-# Score-test kernels default to the float32 fast path. Use float64 only when
-# parity or numerical debugging needs outweigh throughput.
+# Score-test kernels default to the float32 fast path. This is an internal
+# JAX compute dtype; public result statistics are still written as float32.
+# Use float64 only when parity or numerical debugging needs outweigh throughput.
 score-dtype = "float32"
-# Firth internals are parity-sensitive and currently require float64.
+# Firth internals are parity-sensitive and currently require float64. Public
+# result statistics are still written as float32.
 firth-dtype = "float64"
 jax-persistent-cache = true
 jax-persistent-cache-min-entry-size-bytes = -1

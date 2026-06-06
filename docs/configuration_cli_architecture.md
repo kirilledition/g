@@ -487,6 +487,10 @@ telemetry mode
 resume mode
 ```
 
+Score and Firth dtype options currently control internal JAX compute precision.
+Public association statistics use the writer schema and remain float32 in
+Arrow/Parquet output unless a separate output dtype feature is added later.
+
 Do not introduce new `DEFAULT_*` constants in Python or Rust for new user-tunable behavior. Existing legacy constants should be treated as migration debt unless they are pure mathematical constants.
 Packaged default catalog views should stay inside the config layer. Runtime subsystems should receive resolved `RegenieConfig` or `ExecutionPlan` values rather than reading typed `PACKAGED_*` defaults at their own boundaries.
 

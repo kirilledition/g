@@ -30,7 +30,13 @@ cleanup integration. I did not run GPU benchmarks or the full test suite on the 
 
 ## Findings
 
-### P1. Float64 compute/output knobs are not end-to-end
+### P2. Float64 compute/output knobs are internal-only
+
+Status: policy clarified in `cleanup/review-easy-nonconfig`. The current contract is
+internal-compute-only dtype knobs with fixed float32 public result statistics. Config
+comments, option help, and architecture docs now say `score-dtype` and `firth-dtype`
+control internal JAX compute precision; Arrow/Parquet `BETA`, `SE`, `CHISQ`, and `LOG10P`
+remain float32 under the current writer schema.
 
 The new config advertises score and Firth dtypes in `src/g/config.default.toml:51` and
 `src/g/config.default.toml:55`, and manifests record `score_dtype` and `firth_dtype` in
@@ -47,14 +53,12 @@ at `src/g/engine/callbacks.py:258`, `src/g/engine/callbacks.py:259`,
 `src/g/engine/callbacks.py:307`, `src/g/engine/callbacks.py:308`,
 `src/g/engine/callbacks.py:309`, and `src/g/engine/callbacks.py:310`.
 
-Why this matters: users can choose float64 score/Firth internals, but inputs and outputs do
-not preserve a full float64 contract. This is fine as a deliberate performance policy, but
-the current naming and manifest fields imply more precision control than the pipeline
-actually provides.
+Why this matters: this is now explicit rather than misleading. Users who need float64
+result files will need a separate output schema feature, not just `--g-score-dtype=float64`.
 
-Suggested direction: decide the contract explicitly. Either rename/document these as
-internal compute dtype knobs with float32 output, or add an output/result dtype option and
-plumb selected input dtypes where parity requires them.
+Suggested direction: defer end-to-end float64 or a separate output dtype until there is a
+clear user requirement. That future work would need output schema/version, writer, manifest,
+resume, and native dispatch changes.
 
 ### P2. Pipeline lifecycle code is duplicated across too many entry points
 
@@ -92,6 +96,8 @@ Suggested direction: keep this as a known performance limitation until score-onl
 and output are stable. Then batch candidate extraction and correction over trait dimension,
 or split the fallback workload into a clearly separate optimized kernel path.
 
+Detailed implementation plan: `docs/firth-optimization-plan.md`.
+
 ### P2. Firth candidate capacity selection syncs to host
 
 `apply_device_candidate_corrections_firth_variant_major` builds `candidate_mask` on device
@@ -106,6 +112,8 @@ synchronization point before correction. That is often more expensive than the c
 Suggested direction: use a fixed bounded capacity, a JAX-side count with a compiled branch,
 or an overflow strategy that avoids forcing the host to observe every chunk before launching
 the correction.
+
+Detailed implementation plan: `docs/firth-optimization-plan.md`.
 
 ### P2. Multi-phenotype resume recomputes partially committed chunks
 
@@ -226,6 +234,19 @@ Suggested direction: move archive history out of the active repository, convert 
 external branch/tag/artifact, or add very explicit tooling/docs so reviewers do not scan it
 by default.
 
+Recommended staged plan:
+
+1. Add a root `.ignore` entry for `/archive/` and an `archive/README.md` that says the
+   archive is historical, not active app code. This is non-destructive and removes default
+   `rg`/`fd` noise.
+2. Preserve the archive on a dedicated branch/tag before removal, for example with
+   `git subtree split --prefix=archive/direct_association -b archive/direct-association`
+   plus a dated archive tag.
+3. Remove `archive/direct_association` from active `main` with a normal commit, leaving the
+   README/index. This preserves history without rewriting every clone.
+4. Avoid destructive `git filter-repo` history rewrites unless clone size becomes a real
+   problem and all branch/worktree users coordinate.
+
 ## Test And Benchmark Gaps
 
 - Packed8 multi-phenotype dispatch has interface and pipeline coverage, but I did not run a
@@ -268,10 +289,14 @@ work:
   `ExecutionPlan` values rather than packaged default views.
 - Multi-phenotype resume has targeted multi-linear and multi-binary pipeline regressions
   for partial per-phenotype committed chunk sets.
+- Dtype docs now state the current contract: score/Firth dtype options control internal
+  compute precision, while public association statistics remain float32.
 
 ## Suggested Implementation Order
 
 1. Split callback start from construction.
 2. Continue centralizing Rust unsafe buffer boundary helpers.
-3. Benchmark and then redesign multi-binary approximate Firth batching.
-4. Decide the public dtype/output precision contract.
+3. Apply non-destructive archive search/documentation hygiene, then decide whether to move
+   archive snapshots to a dedicated branch/tag.
+4. Benchmark and then redesign multi-binary approximate Firth batching.
+5. Revisit public output dtype only if users need float64 result files.
