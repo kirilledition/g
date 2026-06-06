@@ -44,6 +44,10 @@ are summarized near the end instead of kept as historical work logs.
   passed after binary hot benchmark sweep expansion.
 - `uv run ty check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`:
   passed after binary hot benchmark sweep expansion.
+- `cargo fmt --check`: passed after BGEN decode output boundary cleanup.
+- `. scripts/server_env.sh && cargo test --lib genotype::bgen`: 27 passed after
+  BGEN decode output boundary cleanup.
+- `git diff --check`: passed after BGEN decode output boundary cleanup.
 
 I also fetched `origin` and confirmed the reviewed base matched `origin/main` before the
 cleanup integration. I did not run GPU benchmarks or the full test suite on the head node.
@@ -187,7 +191,7 @@ use the same dispatch path or explicitly call `start()` before queuing work.
 
 ### P2. Native unsafe pointer writes are spread across several wrappers
 
-Status: partially addressed. The first bounded Rust patch landed in
+Status: addressed. The first bounded Rust patch landed in
 `cleanup/review-easy-nonconfig`: trusted no-missing variant-major dosage and packed8 paths
 now use a local `VariantMajorOutputMatrix` helper to validate non-null output pointers,
 centralize row-offset overflow checks, and reconstitute typed mutable row slices in one
@@ -199,17 +203,17 @@ pointer validation, byte-length bookkeeping, and the retained Python-owner lifet
 contract. The hot decode loops still write through ordinary slices and do not add
 per-element abstraction overhead.
 
-Trusted decode workers still write variant rows through raw pointer-derived slices at
-`src/genotype/bgen/trusted.rs:336`, `src/genotype/bgen/trusted.rs:480`,
-`src/genotype/bgen/trusted.rs:503`, and `src/genotype/bgen/trusted.rs:536`.
+The lower-level BGEN decode paths now share audited output helpers in
+`src/genotype/bgen/decode.rs`: variant-major rows go through
+`VariantMajorOutputMatrix`, row-major contiguous spans go through
+`RowMajorOutputMatrix::row_range_mut`, and row-major column writes go through
+`RowMajorOutputColumnMut`. Trusted decode paths import the same variant-major
+helper instead of carrying a duplicate local definition.
 
 This is expected at the Python/Rust zero-copy boundary, and the surrounding code has useful
-shape checks. The risk is that the safety contract is implicit and duplicated: buffer
-lifetime, alignment, exclusivity, and row partitioning assumptions are spread across
-multiple call sites.
-
-Suggested direction: continue centralizing the unsafe boundary behind small helper types.
-Next candidates are lower-level generic decode output slices.
+shape checks. Remaining unsafe is the expected zero-copy contract: caller-owned allocation
+lifetime, exclusivity, and disjoint Rayon ownership. SIMD internals remain separate
+performance-specific unsafe code.
 
 ### P2. BGEN decode orchestration functions are too large to audit comfortably
 
@@ -340,6 +344,9 @@ work:
   null/alignment validation and typed mutable slice reconstruction.
 - The Python-owned Arrow output boundary now uses `PythonOwnedArrowValues` to centralize
   pointer validation, buffer sizing, and the retained-owner safety contract.
+- Lower-level BGEN decode output rows, row ranges, and row-major columns now go through
+  shared helper types that centralize pointer validation, row-offset checks, and typed
+  slice or column reconstruction.
 - Preparatory Firth correctness tests now cover zero-candidate diagnostics and distinct
   per-trait multi-binary approximate Firth candidate masks.
 - Single-trait approximate Firth now uses device-side zero, bounded, and overflow
@@ -351,9 +358,6 @@ work:
 
 1. Redesign multi-binary approximate Firth batching over flattened trait-variant lanes
    while reusing one batched multi-score result per chunk.
-2. Continue remaining Rust unsafe boundary helper consolidation in small independent
-   patches, especially lower-level generic decode output slices; this can run in
-   parallel with Firth design work.
-3. Decide whether to preserve archive snapshots on a dedicated branch/tag and remove them
+2. Decide whether to preserve archive snapshots on a dedicated branch/tag and remove them
    from active `main`; this requires explicit approval before any deletion.
-4. Revisit public output dtype only if users need float64 result files.
+3. Revisit public output dtype only if users need float64 result files.
