@@ -1,8 +1,8 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use memmap2::{Mmap, MmapOptions};
@@ -12,15 +12,14 @@ use crate::genotype::common::{ChunkStats, GenotypeError, GenotypeReaderCore, Var
 use crate::genotype::preprocess;
 
 use super::decode::{
-    DosageTileDecodeResult, ThreadScratch, VariantMajorTileStatsMut, decode_tile_variant_count,
-    decode_variant_dosage_tile_into_row_major_matrix, decode_variant_major_dosage_tile, read_exact_bytes, read_u32_at,
-    u32_to_usize,
+    decode_tile_variant_count, decode_variant_dosage_tile_into_row_major_matrix, decode_variant_major_dosage_tile,
+    read_exact_bytes, read_u32_at, u32_to_usize, DosageTileDecodeResult, ThreadScratch, VariantMajorTileStatsMut,
 };
-use super::error::{BgenError, convert_bgen_error_to_genotype_error};
+use super::error::{convert_bgen_error_to_genotype_error, BgenError};
 use super::format::CompressionType;
 use super::metadata::VariantRecord;
-use super::profile::{ReaderProfileSnapshot, ReaderProfiling, ThreadLocalProfileSnapshot, elapsed_nanoseconds};
-use super::sample_selection::{SampleSelection, build_sample_selection};
+use super::profile::{elapsed_nanoseconds, ReaderProfileSnapshot, ReaderProfiling, ThreadLocalProfileSnapshot};
+use super::sample_selection::{build_sample_selection, SampleSelection};
 use super::{index, metadata, trusted};
 
 #[derive(Debug)]
@@ -428,7 +427,7 @@ impl BgenReaderCore {
             profiling.merge_thread_local_snapshot(&decode_result.profile_snapshot);
             has_missing_values |= decode_result.has_missing_values;
         }
-        Ok(preprocess::build_chunk_stats_from_summaries(
+        preprocess::build_chunk_stats_from_summaries(
             dosage_sum,
             dosage_square_sum,
             observation_count,
@@ -439,7 +438,8 @@ impl BgenReaderCore {
             homozygous_alternate_count,
             has_missing_values,
             selected_sample_count,
-        ))
+        )
+        .map_err(|error| BgenError::Range(error.to_string()))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -556,7 +556,7 @@ impl BgenReaderCore {
         for decode_result in decode_results {
             profiling.merge_thread_local_snapshot(&decode_result.profile_snapshot);
         }
-        Ok(preprocess::build_chunk_stats_from_summaries(
+        preprocess::build_chunk_stats_from_summaries(
             dosage_sum,
             dosage_square_sum,
             observation_count,
@@ -567,7 +567,8 @@ impl BgenReaderCore {
             homozygous_alternate_count,
             false,
             selected_sample_count,
-        ))
+        )
+        .map_err(|error| BgenError::Range(error.to_string()))
     }
 
     pub fn bgen_path(&self) -> &Path {

@@ -32,6 +32,7 @@ Completed in this branch:
 - Replaced runtime callback chromosome-state assertions with explicit invariant checks.
 - Added warning-only Rayon thread pool configuration tracking.
 - Documented and tested the current packed8 single-phenotype-only dispatch contract.
+- Replaced Rust preprocessing sample-count saturation with an explicit range error.
 
 Verification in this branch:
 
@@ -48,6 +49,8 @@ Verification in this branch:
 - `uv run pytest tests/test_interface.py tests/test_api.py -q` - 86 passed after packed8 contract cleanup.
 - `uv run ruff check src/g/runner.py tests/test_interface.py` - passed.
 - `uv run ty check src/g/runner.py src/g/interface` - passed.
+- `rustfmt --check src/genotype/preprocess.rs src/genotype/bgen/reader.rs` - passed after Rust sample-count saturation cleanup.
+- `env LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --lib genotype::preprocess` - 5 passed after Rust sample-count saturation cleanup.
 
 Implementation learnings:
 
@@ -59,6 +62,7 @@ Implementation learnings:
 - Callback chromosome state is guaranteed by control flow after `prepare_chromosome_state()`, but an explicit helper preserves the invariant under optimized Python and gives clearer failures if the lifecycle is broken.
 - Rayon thread configuration is process-global. Warning-only handling preserves current repeated-run permissiveness while making ignored incompatible requests visible.
 - The packed8/multi-phenotype contract is currently enforced entirely by config validation. Multi dispatch intentionally stays dosage-only until packed8 multi-trait execution exists end-to-end.
+- The native stats schema is still `i32` for count-like fields. Failing at the shared stats builder is the narrowest fix until the schema moves to wider counters.
 
 ## Suggested Work Order
 
@@ -80,7 +84,7 @@ This branch will take the remaining review findings in order of implementation e
    Easy, non-destructive if warning-only: stop silently ignoring incompatible repeated thread settings.
 3. Done: Packed8 multi-dispatch contract.
    Easy, highly non-destructive: make the current config rejection explicit in tests/docs so future packed8 work does not miss the multi path.
-4. Rust sample-count saturation.
+4. Done: Rust sample-count saturation.
    Easy-medium, non-destructive for realistic data: replace silent `i32::MAX` saturation with explicit error behavior.
 5. Buffer pool accounting drift.
    Medium, mostly local but concurrency-sensitive.
@@ -416,7 +420,9 @@ Recommendation: verify against REGENIE or the desired statistical definition wit
 
 ### P2. Rust sample-count conversion silently saturates in one preprocessing path
 
-Missing count uses `i32::try_from(selected_sample_count).unwrap_or(i32::MAX)`:
+Status: done in `codebase-review-cleanups`. The shared Rust stats builder now rejects selected sample counts that exceed the existing `i32` statistics representation, and BGEN preprocessing paths surface that as a range error.
+
+Original finding: missing count used `i32::try_from(selected_sample_count).unwrap_or(i32::MAX)`:
 
 - `src/genotype/preprocess.rs:350`
 

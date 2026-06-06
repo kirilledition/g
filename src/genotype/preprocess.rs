@@ -105,7 +105,7 @@ pub fn preprocess_row_major_dosage_matrix(
         homozygous_alternate_count,
         has_missing_values,
         selected_sample_count,
-    );
+    )?;
 
     if has_missing_values {
         for sample_index in 0..selected_sample_count {
@@ -167,7 +167,7 @@ pub fn summarize_variant_major_dosage_matrix(
         has_missing_values |= row_summary.has_missing_values;
     }
 
-    Ok(build_chunk_stats_from_summaries(
+    build_chunk_stats_from_summaries(
         dosage_sum,
         dosage_square_sum,
         observation_count,
@@ -178,7 +178,7 @@ pub fn summarize_variant_major_dosage_matrix(
         homozygous_alternate_count,
         has_missing_values,
         selected_sample_count,
-    ))
+    )
 }
 
 fn summarize_variant_major_row_simd_or_scalar(dosage_values: &[f32]) -> VariantMajorRowSummary {
@@ -229,14 +229,14 @@ pub fn build_empty_chunk_stats(selected_variant_count: usize, has_missing_values
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
-    __m256, _CMP_GT_OQ, _CMP_LT_OQ, _CMP_ORD_Q, _mm256_add_ps, _mm256_and_ps, _mm256_cmp_ps, _mm256_loadu_ps,
-    _mm256_movemask_ps, _mm256_mul_ps, _mm256_set1_ps, _mm256_setzero_ps, _mm256_storeu_ps,
+    __m256, _mm256_add_ps, _mm256_and_ps, _mm256_cmp_ps, _mm256_loadu_ps, _mm256_movemask_ps, _mm256_mul_ps,
+    _mm256_set1_ps, _mm256_setzero_ps, _mm256_storeu_ps, _CMP_GT_OQ, _CMP_LT_OQ, _CMP_ORD_Q,
 };
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m256, _CMP_GT_OQ, _CMP_LT_OQ, _CMP_ORD_Q, _mm256_add_ps, _mm256_and_ps, _mm256_cmp_ps, _mm256_loadu_ps,
-    _mm256_movemask_ps, _mm256_mul_ps, _mm256_set1_ps, _mm256_setzero_ps, _mm256_storeu_ps,
+    __m256, _mm256_add_ps, _mm256_and_ps, _mm256_cmp_ps, _mm256_loadu_ps, _mm256_movemask_ps, _mm256_mul_ps,
+    _mm256_set1_ps, _mm256_setzero_ps, _mm256_storeu_ps, _CMP_GT_OQ, _CMP_LT_OQ, _CMP_ORD_Q,
 };
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -310,7 +310,6 @@ unsafe fn horizontal_sum_avx2(values: __m256) -> f32 {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[must_use]
 pub fn build_chunk_stats_from_summaries(
     dosage_sum: Vec<f32>,
     dosage_square_sum: Vec<f32>,
@@ -322,8 +321,13 @@ pub fn build_chunk_stats_from_summaries(
     homozygous_alternate_count: Vec<i32>,
     has_missing_values: bool,
     selected_sample_count: usize,
-) -> ChunkStats {
+) -> Result<ChunkStats, GenotypeError> {
     let selected_variant_count = observation_count.len();
+    let selected_sample_count_i32 = i32::try_from(selected_sample_count).map_err(|_| {
+        GenotypeError::InvalidInput(format!(
+            "Selected sample count {selected_sample_count} exceeds the supported i32 statistics range.",
+        ))
+    })?;
     let mut allele_one_frequency = Vec::with_capacity(selected_variant_count);
     let mut imputed_dosage_square_sum = Vec::with_capacity(selected_variant_count);
     let mut dosage_variance_numerator = Vec::with_capacity(selected_variant_count);
@@ -347,7 +351,7 @@ pub fn build_chunk_stats_from_summaries(
 
         let count_float = count as f32;
         let dosage_mean = dosage_sum[variant_index] / count_float;
-        let missing_count = i32::try_from(selected_sample_count).unwrap_or(i32::MAX).saturating_sub(count).max(0);
+        let missing_count = selected_sample_count_i32.saturating_sub(count).max(0);
         let current_imputed_dosage_square_sum =
             dosage_square_sum[variant_index] + (missing_count as f32 * dosage_mean * dosage_mean);
         let allele_frequency = dosage_mean / 2.0;
@@ -381,7 +385,7 @@ pub fn build_chunk_stats_from_summaries(
         );
     }
 
-    ChunkStats {
+    Ok(ChunkStats {
         allele_one_frequency,
         observation_count,
         has_missing_values,
@@ -399,7 +403,7 @@ pub fn build_chunk_stats_from_summaries(
         homozygous_alternate_count,
         is_sparse_candidate,
         is_rare_sparse_firth_candidate,
-    }
+    })
 }
 
 pub fn increment_dosage_summary_counts(
@@ -427,8 +431,8 @@ pub fn increment_dosage_summary_counts(
 #[cfg(test)]
 mod tests {
     use super::{
-        preprocess_row_major_dosage_matrix, summarize_variant_major_dosage_matrix, summarize_variant_major_row_scalar,
-        summarize_variant_major_row_simd_or_scalar,
+        build_chunk_stats_from_summaries, preprocess_row_major_dosage_matrix, summarize_variant_major_dosage_matrix,
+        summarize_variant_major_row_scalar, summarize_variant_major_row_simd_or_scalar,
     };
 
     const SUMMARY_SAMPLE_COUNTS: [usize; 10] = [0, 1, 7, 8, 15, 16, 17, 31, 32, 33];
@@ -529,6 +533,27 @@ mod tests {
         assert!(stats.is_sparse_candidate[1]);
         assert!(stats.is_rare_sparse_firth_candidate[1]);
         assert_eq!(stats.info_score, vec![Some(0.799_999_95), Some(1.0)]);
+    }
+
+    #[test]
+    fn build_chunk_stats_rejects_sample_count_outside_i32_range() {
+        let selected_sample_count = usize::try_from(i32::MAX).expect("i32 max should fit usize") + 1;
+
+        let error = build_chunk_stats_from_summaries(
+            vec![1.0],
+            vec![1.0],
+            vec![1],
+            vec![0],
+            vec![1],
+            vec![0],
+            vec![1],
+            vec![0],
+            false,
+            selected_sample_count,
+        )
+        .expect_err("sample counts outside the statistics schema should fail");
+
+        assert!(error.to_string().contains("supported i32 statistics range"));
     }
 
     #[test]
