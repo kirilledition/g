@@ -523,6 +523,15 @@ def test_config_validation_rejects_invalid_dtype_policy(
             },
             "packed8 currently supports one phenotype",
         ),
+        (
+            {
+                "g-gpu-genotype-format": "packed8",
+                "g-device": "gpu",
+                "phenoCol": None,
+                "phenoColList": "first,second",
+            },
+            "packed8 currently supports one phenotype",
+        ),
     ],
 )
 def test_config_validation_rejects_unsupported_packed8_uses(

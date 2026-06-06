@@ -31,6 +31,7 @@ Completed in this branch:
 - Removed legacy config helpers that were superseded by the TOML layer system.
 - Replaced runtime callback chromosome-state assertions with explicit invariant checks.
 - Added warning-only Rayon thread pool configuration tracking.
+- Documented and tested the current packed8 single-phenotype-only dispatch contract.
 
 Verification in this branch:
 
@@ -44,6 +45,9 @@ Verification in this branch:
 - `uv run pytest tests/test_api.py -q` - 27 passed after Rayon thread tracking cleanup.
 - `uv run ruff check src/g/runner.py tests/test_api.py` - passed.
 - `uv run ty check src/g/runner.py` - passed.
+- `uv run pytest tests/test_interface.py tests/test_api.py -q` - 86 passed after packed8 contract cleanup.
+- `uv run ruff check src/g/runner.py tests/test_interface.py` - passed.
+- `uv run ty check src/g/runner.py src/g/interface` - passed.
 
 Implementation learnings:
 
@@ -54,6 +58,7 @@ Implementation learnings:
 - The suspected legacy config helpers were genuinely production-dead. The only active references were test assertions that preserved the old helper surface.
 - Callback chromosome state is guaranteed by control flow after `prepare_chromosome_state()`, but an explicit helper preserves the invariant under optimized Python and gives clearer failures if the lifecycle is broken.
 - Rayon thread configuration is process-global. Warning-only handling preserves current repeated-run permissiveness while making ignored incompatible requests visible.
+- The packed8/multi-phenotype contract is currently enforced entirely by config validation. Multi dispatch intentionally stays dosage-only until packed8 multi-trait execution exists end-to-end.
 
 ## Suggested Work Order
 
@@ -73,7 +78,7 @@ This branch will take the remaining review findings in order of implementation e
    Easy, highly non-destructive: replace optimized-away assertions with explicit `RuntimeError` checks.
 2. Done: Rayon thread configuration feedback.
    Easy, non-destructive if warning-only: stop silently ignoring incompatible repeated thread settings.
-3. Packed8 multi-dispatch contract.
+3. Done: Packed8 multi-dispatch contract.
    Easy, highly non-destructive: make the current config rejection explicit in tests/docs so future packed8 work does not miss the multi path.
 4. Rust sample-count saturation.
    Easy-medium, non-destructive for realistic data: replace silent `i32::MAX` saturation with explicit error behavior.
@@ -232,6 +237,8 @@ Impact: lifecycle behavior, shutdown, timing, telemetry, packed8 support, and re
 Recommendation: introduce a shared pipeline runner that owns engine open, alignment, preflight, writer creation, callback drain, interrupted finish, abort, timing snapshots, and telemetry. Specialize only the small parts: state construction, callback type, correction plan, and writer shape.
 
 ### P2. Packed8 support is single-path only by validation and not threaded through multi dispatch
+
+Status: done in `codebase-review-cleanups`. The canonical `phenoColList` multi-phenotype packed8 path is covered by validation tests, and multi dispatch documents that it intentionally remains dosage-only while config rejects packed8 multi-trait runs.
 
 Single-phenotype dispatch passes `gpu_genotype_format`:
 
