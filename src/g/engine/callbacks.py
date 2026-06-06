@@ -338,6 +338,21 @@ def get_metadata_chromosome(metadata: typing.Any) -> str:
     return str(metadata.chromosome[0])
 
 
+def require_current_chromosome_state[ChromosomeStateType](
+    chromosome_state: ChromosomeStateType | None,
+    *,
+    chromosome: str | None,
+) -> ChromosomeStateType:
+    """Return a prepared chromosome state or fail with an explicit runtime error."""
+    if chromosome_state is not None:
+        return chromosome_state
+    if chromosome is None:
+        message = "Chromosome state was not prepared before chunk computation."
+    else:
+        message = f"Chromosome state for {chromosome!r} was not prepared before chunk computation."
+    raise RuntimeError(message)
+
+
 class NativeBgenCallbackRunner:
     """Reusable callback lifecycle for native BGEN chunk delivery."""
 
@@ -873,7 +888,10 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            assert self.current_chromosome_state is not None
+            chromosome_state = require_current_chromosome_state(
+                self.current_chromosome_state,
+                chromosome=self.current_chromosome,
+            )
 
             packed_device_array = put_genotype_matrix_on_device(
                 packed_probability_pairs_by_variant,
@@ -881,7 +899,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             )
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_linear_chunk_packed8_donating_inputs(
-                chromosome_state=self.current_chromosome_state,
+                chromosome_state=chromosome_state,
                 packed_probability_pairs_by_variant=packed_device_array,
                 genotype_dosage_sum=jax.device_put(chunk_stats.dosage_sum),
                 genotype_observation_count=jax.device_put(chunk_stats.observation_count),
@@ -939,7 +957,10 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     ) -> regenie2_linear.Regenie2LinearChunkResult:
         """Compute quantitative REGENIE step 2 statistics for a variant-major chunk."""
         self.prepare_chromosome_state(variant_metadata)
-        assert self.current_chromosome_state is not None
+        chromosome_state = require_current_chromosome_state(
+            self.current_chromosome_state,
+            chromosome=self.current_chromosome,
+        )
 
         genotype_device_array = put_genotype_matrix_on_device(genotype_matrix_by_variant, self.stage_timing_recorder)
         genotype_dosage_sum = jax.device_put(chunk_stats.dosage_sum)
@@ -947,7 +968,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         genotype_imputed_dosage_square_sum = jax.device_put(chunk_stats.imputed_dosage_square_sum)
         compute_start_time = time.perf_counter()
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
-            chromosome_state=self.current_chromosome_state,
+            chromosome_state=chromosome_state,
             genotype_matrix_by_variant=genotype_device_array,
             genotype_dosage_sum=genotype_dosage_sum,
             genotype_observation_count=genotype_observation_count,
@@ -990,12 +1011,15 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
     ) -> regenie2_linear.Regenie2LinearChunkResult:
         """Compute quantitative REGENIE step 2 statistics for one chunk."""
         self.prepare_chromosome_state(variant_metadata)
-        assert self.current_chromosome_state is not None
+        chromosome_state = require_current_chromosome_state(
+            self.current_chromosome_state,
+            chromosome=self.current_chromosome,
+        )
 
         genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
         compute_start_time = time.perf_counter()
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
-            chromosome_state=self.current_chromosome_state,
+            chromosome_state=chromosome_state,
             genotype_matrix=genotype_device_array,
             score_dtype=self.score_dtype,
         )
@@ -1079,11 +1103,14 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            assert self.current_chromosome_state is not None
+            chromosome_state = require_current_chromosome_state(
+                self.current_chromosome_state,
+                chromosome=self.current_chromosome,
+            )
             genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state(
-                chromosome_state=self.current_chromosome_state,
+                chromosome_state=chromosome_state,
                 genotype_matrix=genotype_device_array,
                 score_dtype=self.score_dtype,
             )
@@ -1117,14 +1144,17 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            assert self.current_chromosome_state is not None
+            chromosome_state = require_current_chromosome_state(
+                self.current_chromosome_state,
+                chromosome=self.current_chromosome,
+            )
             genotype_device_array = put_genotype_matrix_on_device(
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
             )
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
-                chromosome_state=self.current_chromosome_state,
+                chromosome_state=chromosome_state,
                 genotype_matrix_by_variant=genotype_device_array,
                 genotype_dosage_sum=jax.device_put(chunk_stats.dosage_sum),
                 genotype_observation_count=jax.device_put(chunk_stats.observation_count),
@@ -1343,12 +1373,15 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
     ) -> regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult:
         """Compute binary REGENIE step 2 statistics for one chunk."""
         self.prepare_chromosome_state(variant_metadata)
-        assert self.current_chromosome_state is not None
+        chromosome_state = require_current_chromosome_state(
+            self.current_chromosome_state,
+            chromosome=self.current_chromosome,
+        )
 
         genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
         compute_start_time = time.perf_counter()
         result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
-            chromosome_state=self.current_chromosome_state,
+            chromosome_state=chromosome_state,
             genotype_matrix=genotype_device_array,
             correction_plan=self.correction_plan,
             sparse_candidate_mask=sparse_candidate_mask,
@@ -1376,7 +1409,10 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            assert self.current_chromosome_state is not None
+            chromosome_state = require_current_chromosome_state(
+                self.current_chromosome_state,
+                chromosome=self.current_chromosome,
+            )
 
             genotype_device_array = put_genotype_matrix_on_device(
                 genotype_matrix_by_variant,
@@ -1388,7 +1424,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
                 compute_score_test = regenie2_binary.compute_binary_score_test_variant_major_donating_inputs
                 result = compute_score_test(
-                    chromosome_state=self.current_chromosome_state,
+                    chromosome_state=chromosome_state,
                     genotype_matrix_by_variant=genotype_device_array,
                     correction_plan=self.correction_plan,
                     kernel_config=self.kernel_config,
@@ -1398,7 +1434,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 )
             else:
                 result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
-                    chromosome_state=self.current_chromosome_state,
+                    chromosome_state=chromosome_state,
                     genotype_matrix_by_variant=genotype_device_array,
                     correction_plan=self.correction_plan,
                     sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
@@ -1439,7 +1475,10 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            assert self.current_chromosome_state is not None
+            chromosome_state = require_current_chromosome_state(
+                self.current_chromosome_state,
+                chromosome=self.current_chromosome,
+            )
 
             packed_device_array = put_genotype_matrix_on_device(
                 packed_probability_pairs_by_variant,
@@ -1451,7 +1490,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
                 compute_score_test = regenie2_binary.compute_binary_score_test_packed8_donating_inputs
                 result = compute_score_test(
-                    chromosome_state=self.current_chromosome_state,
+                    chromosome_state=chromosome_state,
                     packed_probability_pairs_by_variant=packed_device_array,
                     correction_plan=self.correction_plan,
                     kernel_config=self.kernel_config,
@@ -1461,7 +1500,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 )
             else:
                 result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_packed8(
-                    chromosome_state=self.current_chromosome_state,
+                    chromosome_state=chromosome_state,
                     packed_probability_pairs_by_variant=packed_device_array,
                     correction_plan=self.correction_plan,
                     sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
@@ -1571,7 +1610,10 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            assert self.current_chromosome_state is not None
+            chromosome_state = require_current_chromosome_state(
+                self.current_chromosome_state,
+                chromosome=self.current_chromosome,
+            )
             genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
             compute_start_time = time.perf_counter()
             sparse_candidate_mask = (
@@ -1580,7 +1622,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 else jax.device_put(chunk_stats.is_rare_sparse_firth_candidate)
             )
             result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
-                chromosome_state=self.current_chromosome_state,
+                chromosome_state=chromosome_state,
                 genotype_matrix=genotype_device_array,
                 correction_plan=self.correction_plan,
                 sparse_candidate_mask=sparse_candidate_mask,
@@ -1618,7 +1660,10 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            assert self.current_chromosome_state is not None
+            chromosome_state = require_current_chromosome_state(
+                self.current_chromosome_state,
+                chromosome=self.current_chromosome,
+            )
             genotype_device_array = put_genotype_matrix_on_device(
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
@@ -1634,7 +1679,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
                 compute_score_test = regenie2_binary.compute_multi_binary_score_test_variant_major_donating_inputs
                 result = compute_score_test(
-                    chromosome_state=self.current_chromosome_state,
+                    chromosome_state=chromosome_state,
                     genotype_matrix_by_variant=genotype_device_array,
                     correction_plan=self.correction_plan,
                     kernel_config=self.kernel_config,
@@ -1644,7 +1689,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 )
             else:
                 result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
-                    chromosome_state=self.current_chromosome_state,
+                    chromosome_state=chromosome_state,
                     genotype_matrix_by_variant=genotype_device_array,
                     correction_plan=self.correction_plan,
                     sparse_candidate_mask=sparse_candidate_mask,

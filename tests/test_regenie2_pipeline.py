@@ -135,6 +135,19 @@ class NoFinalWriterSession:
         self.aborted = True
 
 
+def test_require_current_chromosome_state_returns_prepared_state() -> None:
+    chromosome_state = object()
+
+    resolved_state = callbacks.require_current_chromosome_state(chromosome_state, chromosome="chr22")
+
+    assert resolved_state is chromosome_state
+
+
+def test_require_current_chromosome_state_raises_clear_error_when_missing() -> None:
+    with pytest.raises(RuntimeError, match="Chromosome state for 'chr22' was not prepared"):
+        callbacks.require_current_chromosome_state(None, chromosome="chr22")
+
+
 def test_cast_statistic_array_for_native_writer_uses_public_float32_schema() -> None:
     precise_values = np.asarray([1.0, 1.0 + 2.0**-30], dtype=np.float64)
 

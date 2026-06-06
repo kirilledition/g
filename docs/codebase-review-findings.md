@@ -29,6 +29,7 @@ Completed in this branch:
 - Added TOML array serialization for list/tuple values.
 - Removed the stale manual `g-trusted-no-missing-diploid` unknown-option exception.
 - Removed legacy config helpers that were superseded by the TOML layer system.
+- Replaced runtime callback chromosome-state assertions with explicit invariant checks.
 
 Verification in this branch:
 
@@ -36,6 +37,9 @@ Verification in this branch:
 - `uv run ruff format --check src/g/interface/config.py src/g/interface/config_layers.py tests/test_interface.py` - passed.
 - `uv run ruff check src/g/interface/config.py src/g/interface/config_layers.py tests/test_interface.py` - passed.
 - `uv run ty check src/g/interface` - passed.
+- `uv run pytest tests/test_regenie2_pipeline.py -q` - 54 passed after callback invariant cleanup.
+- `uv run ruff check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py` - passed.
+- `uv run ty check src/g/engine/callbacks.py` - passed.
 
 Implementation learnings:
 
@@ -44,6 +48,7 @@ Implementation learnings:
 - `g-trusted-no-missing-diploid` is already in the option registry, so it does not need a special case in unknown-option validation.
 - Normal `RegenieConfig.to_toml()` currently emits comma-delimited column-list strings, but `format_toml_value()` is a general helper and now handles list/tuple values safely.
 - The suspected legacy config helpers were genuinely production-dead. The only active references were test assertions that preserved the old helper surface.
+- Callback chromosome state is guaranteed by control flow after `prepare_chromosome_state()`, but an explicit helper preserves the invariant under optimized Python and gives clearer failures if the lifecycle is broken.
 
 ## Suggested Work Order
 
@@ -59,7 +64,7 @@ Implementation learnings:
 
 This branch will take the remaining review findings in order of implementation ease and non-destructiveness. Completed config cleanups are excluded from this ranking.
 
-1. Runtime callback `assert` invariants.
+1. Done: Runtime callback `assert` invariants.
    Easy, highly non-destructive: replace optimized-away assertions with explicit `RuntimeError` checks.
 2. Rayon thread configuration feedback.
    Easy, non-destructive if warning-only: stop silently ignoring incompatible repeated thread settings.
@@ -184,7 +189,9 @@ Recommendation: use a bounded join for the dosage worker too, make abort robust 
 
 ### P1. Runtime invariants rely on `assert`
 
-Callback implementations use `assert self.current_chromosome_state is not None` in runtime paths:
+Status: done in `codebase-review-cleanups`. Runtime assertions were replaced with `require_current_chromosome_state()`, which returns the prepared state or raises `RuntimeError` with chromosome context.
+
+Original finding: callback implementations used `assert self.current_chromosome_state is not None` in runtime paths:
 
 - `src/g/engine/callbacks.py:876`
 - `src/g/engine/callbacks.py:942`
