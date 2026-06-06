@@ -57,9 +57,19 @@ are summarized near the end instead of kept as historical work logs.
 - `uv run ruff check src/g/compute/regenie2_binary tests/test_regenie2_binary.py tests/test_regenie2_pipeline.py --output-format=concise`:
   passed after multi-binary approximate Firth batching.
 - `git diff --check`: passed after multi-binary approximate Firth batching.
+- `uv run pytest tests/test_regenie_comparison_scripts.py -q -k 'binary_hot'`: 4 passed
+  after the binary hot benchmark telemetry fix.
+- `uv run ruff check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
+  passed after the binary hot benchmark telemetry fix.
+- `uv run ty check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`:
+  passed after the binary hot benchmark telemetry fix.
+- `XDG_RUNTIME_DIR=/tmp TMPDIR=/tmp just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke`:
+  passed on `landau`; summary path
+  `data/profiles/regenie2_binary_hot_20260606T182522Z/regenie2_binary_hot_summary.json`.
 
 I also fetched `origin` and confirmed the reviewed base matched `origin/main` before the
-cleanup integration. I did not run GPU benchmarks or the full test suite on the head node.
+cleanup integration. The GPU smoke benchmark ran through SLURM on `landau`; I did not run
+the full GPU benchmark or the full test suite on the head node.
 
 ## Severity Guide
 
@@ -306,8 +316,8 @@ Recommended staged plan:
   failure isolation.
 - The binary hot benchmark harness now supports multi-binary trait-count,
   Firth batch-size, Firth candidate-capacity, storage-mode, and fallback-density
-  sweeps. GPU smoke/full benchmark runs remain pending and should run through
-  SLURM rather than on the head node.
+  sweeps. The SLURM GPU smoke run passed on `landau`; the full benchmark remains
+  pending and should run through SLURM rather than on the head node.
 - Multi-phenotype resume has focused multi-linear and multi-binary partial-commit coverage
   for the current resume-fast-but-not-minimal behavior; future resume-minimization work
   should add optimization-specific tests.
@@ -364,11 +374,14 @@ work:
   lanes while reusing one batched multi-score result per chunk.
 - The binary hot benchmark harness now expands reproducible multi-binary
   approximate-Firth sweeps and records the per-case configuration in JSON output.
+- The binary hot benchmark harness now disables run telemetry for same-process
+  synthetic timing trials so process-global logging can be reused while
+  per-trial stage timing JSON is still written.
 
 ## Suggested Implementation Order
 
-1. Run the SLURM GPU smoke/full binary-hot benchmarks before making a final
-   performance call on flattened multi-binary Firth batching.
+1. Run the full SLURM GPU binary-hot benchmark before making a final performance
+   call on flattened multi-binary Firth batching.
 2. If explicitly approved, remove preserved archived GWAS-engine code from
    active `main`, while keeping patched REGENIE intact.
 3. Keep public output statistics float32 unless a future user requirement explicitly asks

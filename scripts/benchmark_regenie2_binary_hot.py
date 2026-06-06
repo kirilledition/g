@@ -836,6 +836,7 @@ def build_compute_config(
         "g-staging-depth": configuration.staging_depth,
         "g-output-run-directory": output_root,
         "g-output-format": "parquet" if finalize_parquet else "arrow",
+        "g-telemetry": "off",
         "g-jax-cache-dir": configuration.jax_cache_directory,
         "g-jax-persistent-cache-min-entry-size-bytes": -1,
         "g-jax-persistent-cache-min-compile-time-seconds": 0,

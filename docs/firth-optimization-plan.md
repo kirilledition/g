@@ -13,7 +13,8 @@ It focuses on three performance items:
 - extending the binary benchmark harness so Firth batching and capacity choices
   are measured across trait counts, addressed in `bench/multi-binary-firth-hot`.
 
-No GPU benchmark has been run for the completed batching work yet.
+The SLURM GPU smoke benchmark has passed for the completed batching work. The
+full GPU benchmark remains pending.
 
 ## Current State
 
@@ -242,8 +243,8 @@ buffer-donation warning.
 ## Parallelization
 
 Task 1 prep coverage, Task 2 device-side dispatch, Task 3 multi-binary batching,
-and benchmark harness extension have landed on `main`. Remaining work is GPU
-benchmark execution and any follow-up tuning suggested by those results.
+and benchmark harness extension have landed on `main`. Remaining work is full
+GPU benchmark execution and any follow-up tuning suggested by those results.
 
 - no runtime path may call `count_firth_candidates_on_host`;
 - capacity selection is device-side bounded/overflow dispatch;
@@ -261,6 +262,11 @@ node:
 ```bash
 just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke
 ```
+
+Smoke status: passed on `landau` with summary at
+`data/profiles/regenie2_binary_hot_20260606T182522Z/regenie2_binary_hot_summary.json`.
+The hot no-final timing was 0.38s for the 1,000-variant smoke slice; stage
+timings included `firth_candidate_dispatch_plan` and no host-sync timing.
 
 Then run the full binary hot benchmark:
 

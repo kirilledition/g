@@ -1035,6 +1035,7 @@ def test_binary_hot_benchmark_expands_multi_binary_firth_sweep(tmp_path: Path) -
     assert compute_config["g-firth-batch-size"] == 32
     assert compute_config["g-firth-candidate-capacity"] == 128
     assert compute_config["g-gpu-genotype-format"] == "packed8"
+    assert compute_config["g-telemetry"] == "off"
     assert packed_high_case.firth_p_threshold == 0.5
 
 
