@@ -547,6 +547,7 @@ def dispatch_multi_phenotype_engine_pipeline(
             "existing_manifests_by_phenotype": tuple(
                 phenotype_run_plan.existing_manifest for phenotype_run_plan in plan.phenotype_run_plans
             ),
+            "gpu_genotype_format": plan.kernel_config.gpu_genotype_format,
         }
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:

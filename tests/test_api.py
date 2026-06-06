@@ -749,6 +749,7 @@ def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:
 
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"] is plan.kernel_config.binary_kernel_config
     assert mock_binary_pipeline.call_args.kwargs["kernel_config"].firth_candidate.batch_size == 5
+    assert mock_binary_pipeline.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.DOSAGE
     assert (
         mock_binary_pipeline.call_args.kwargs["null_logistic_nonconvergence_policy"]
         == types.NullLogisticNonconvergencePolicy.WARN
@@ -851,6 +852,47 @@ def test_default_multi_phenotype_plan_dispatches_grouped_multi_phenotype_run() -
 
     mock_multi_pipeline.assert_called_once()
     assert mock_multi_pipeline.call_args.kwargs["sample_mode"] == types.MultiPhenotypeSampleMode.PER_PHENOTYPE
+    assert mock_multi_pipeline.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.DOSAGE
+
+
+def test_multi_phenotype_plan_dispatch_forwards_packed8_genotype_format() -> None:
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoColList": "one,two",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "g-device": "gpu",
+            "g-gpu-genotype-format": "packed8",
+            "g-multi-phenotype-sample-mode": "complete-case",
+        }
+    )
+    run_paths = (
+        output.OutputRunPaths(Path("run/one"), Path("run/one/chunks")),
+        output.OutputRunPaths(Path("run/two"), Path("run/two/chunks")),
+    )
+
+    with (
+        patch(
+            "g.execution_plan.output.prepare_output_run",
+            side_effect=(
+                output.PreparedOutputRun(run_paths[0], None),
+                output.PreparedOutputRun(run_paths[1], None),
+            ),
+        ),
+        patch("g.runner.run_regenie2_multi_phenotype_linear_bgen_pipeline") as mock_multi_pipeline,
+    ):
+        plan = execution_plan.build_regenie_execution_plan(regenie_config)
+        runner.dispatch_multi_phenotype_engine_pipeline(
+            plan=plan,
+            stage_timing_recorder=None,
+        )
+
+    assert mock_multi_pipeline.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
+    assert mock_multi_pipeline.call_args.kwargs["sample_mode"] == types.MultiPhenotypeSampleMode.COMPLETE_CASE
 
 
 def test_multi_run_plan_forwards_existing_manifests() -> None:

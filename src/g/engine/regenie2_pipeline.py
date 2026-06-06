@@ -527,6 +527,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     score_dtype: types.FloatingPointDtype = output.PACKAGED_SCORE_DTYPE,
     firth_dtype: types.FloatingPointDtype = output.PACKAGED_FIRTH_DTYPE,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+    gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
     telemetry_session: telemetry.TelemetrySession | None = None,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
@@ -560,6 +561,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
         output_format=output_format,
+        gpu_genotype_format=gpu_genotype_format,
         correction_plan=types.BinaryCorrectionPlan(),
         kernel_config=None,
         null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy.FAIL,
@@ -601,6 +603,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
     kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None,
+    gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
         types.NullLogisticNonconvergencePolicy.FAIL
     ),
@@ -638,6 +641,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
         output_format=output_format,
+        gpu_genotype_format=gpu_genotype_format,
         correction_plan=correction_plan,
         kernel_config=resolved_kernel_config,
         null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
@@ -677,6 +681,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
     output_format: types.OutputFormat,
+    gpu_genotype_format: types.GpuGenotypeFormat,
     correction_plan: types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
@@ -715,6 +720,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
             score_dtype=score_dtype,
             firth_dtype=firth_dtype,
             output_format=output_format,
+            gpu_genotype_format=gpu_genotype_format,
             correction_plan=correction_plan,
             kernel_config=kernel_config,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
@@ -729,6 +735,8 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     logger.info("Starting multi-phenotype REGENIE step 2 BGEN pipeline.")
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
     resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    use_packed8 = gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
+    effective_trusted_no_missing_diploid = trusted_no_missing_diploid or use_packed8
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
     engine_start_time = time.perf_counter()
     logger.debug("Opening native BGEN engine for multi-phenotype pipeline.")
@@ -736,7 +744,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
-        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_no_missing_diploid=effective_trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
     timing.record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
@@ -809,7 +817,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         writer_queue_depth=writer_queue_depth,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
-        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_no_missing_diploid=effective_trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
         bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
         jax_device=jax_device,
@@ -817,6 +825,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
         output_format=output_format,
+        gpu_genotype_format=gpu_genotype_format,
         correction_plan=correction_plan,
         resolved_kernel_config=resolved_kernel_config,
         null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
@@ -856,6 +865,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
     output_format: types.OutputFormat,
+    gpu_genotype_format: types.GpuGenotypeFormat,
     correction_plan: types.BinaryCorrectionPlan,
     kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
@@ -868,6 +878,8 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     logger.info("Starting grouped per-phenotype REGENIE step 2 BGEN pipeline.")
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
     resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    use_packed8 = gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
+    effective_trusted_no_missing_diploid = trusted_no_missing_diploid or use_packed8
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
     engine_start_time = time.perf_counter()
     logger.debug("Opening native BGEN engine for grouped per-phenotype pipeline.")
@@ -875,7 +887,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
         variant_limit=variant_limit,
-        trusted_no_missing_diploid=trusted_no_missing_diploid,
+        trusted_no_missing_diploid=effective_trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
     timing.record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
@@ -940,7 +952,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             writer_queue_depth=writer_queue_depth,
             chunks_per_arrow_file=chunks_per_arrow_file,
             arrow_compression=arrow_compression,
-            trusted_no_missing_diploid=trusted_no_missing_diploid,
+            trusted_no_missing_diploid=effective_trusted_no_missing_diploid,
             trusted_bgen_validation_mode=trusted_bgen_validation_mode,
             bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
             jax_device=jax_device,
@@ -948,6 +960,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             score_dtype=score_dtype,
             firth_dtype=firth_dtype,
             output_format=output_format,
+            gpu_genotype_format=gpu_genotype_format,
             correction_plan=correction_plan,
             resolved_kernel_config=resolved_kernel_config,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
@@ -1074,6 +1087,7 @@ def run_prepared_multi_phenotype_bgen_group(
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
     output_format: types.OutputFormat,
+    gpu_genotype_format: types.GpuGenotypeFormat,
     correction_plan: types.BinaryCorrectionPlan,
     resolved_kernel_config: regenie2_binary_config.BinaryKernelConfig,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
@@ -1111,6 +1125,7 @@ def run_prepared_multi_phenotype_bgen_group(
             trusted_bgen_validation_mode=trusted_bgen_validation_mode,
             jax_device=jax_device,
             jax_matmul_precision=jax_matmul_precision,
+            gpu_genotype_format=gpu_genotype_format,
             score_dtype=score_dtype,
             firth_dtype=firth_dtype,
             multi_phenotype_sample_mode=output_sample_mode,
@@ -1214,6 +1229,7 @@ def run_prepared_multi_phenotype_bgen_group(
         writer_sessions=writer_sessions,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
+        variant_major_packed8_probability_pairs=gpu_genotype_format == types.GpuGenotypeFormat.PACKED8,
     )
 
 
@@ -1248,6 +1264,7 @@ def run_bgen_engine_with_multi_callback(
     writer_sessions: tuple[typing.Any, ...],
     callback: object,
     stage_timing_recorder: timing.StageTimingRecorder | None,
+    variant_major_packed8_probability_pairs: bool = False,
 ) -> tuple[Path | None, ...]:
     """Run native BGEN chunk delivery once and close all per-phenotype writers."""
     callback_finished = False
@@ -1257,14 +1274,23 @@ def run_bgen_engine_with_multi_callback(
         engine_delivery_start_time = time.perf_counter()
         committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
         logger.debug(
-            "Starting multi-phenotype native BGEN delivery: committed_chunk_count=%s.",
+            "Starting multi-phenotype native BGEN delivery: committed_chunk_count=%s "
+            "variant_major_packed8_probability_pairs=%s.",
             len(committed_chunk_identifier_list),
+            variant_major_packed8_probability_pairs,
         )
-        processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
-            run_input.sample_indices,
-            callback,
-            committed_chunk_identifiers=committed_chunk_identifier_list,
-        )
+        if variant_major_packed8_probability_pairs:
+            processed_chunk_count = engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+                run_input.sample_indices,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
+        else:
+            processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
+                run_input.sample_indices,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
         timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
         logger.debug("Multi-phenotype native BGEN delivery finished: processed_chunk_count=%s.", processed_chunk_count)
         if stage_timing_recorder is not None:

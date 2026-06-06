@@ -515,14 +515,6 @@ def test_config_validation_rejects_invalid_dtype_policy(
     ("mutated_options", "error_match"),
     [
         ({"g-gpu-genotype-format": "packed8", "g-device": "cpu"}, "--g-gpu-genotype-format=packed8 requires"),
-        (
-            {
-                "g-gpu-genotype-format": "packed8",
-                "g-device": "gpu",
-                "phenoCol": ("first", "second"),
-            },
-            "packed8 currently supports one phenotype",
-        ),
     ],
 )
 def test_config_validation_rejects_unsupported_packed8_uses(
@@ -552,6 +544,22 @@ def test_config_validation_accepts_quantitative_single_phenotype_packed8_gpu() -
     regenie_config = config.RegenieConfig.from_options(raw_options)
 
     assert regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
+    assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
+
+
+def test_config_validation_accepts_quantitative_multi_phenotype_packed8_gpu() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options.update(
+        {
+            "g-gpu-genotype-format": "packed8",
+            "g-device": "gpu",
+            "phenoCol": ("first", "second"),
+        }
+    )
+
+    regenie_config = config.RegenieConfig.from_options(raw_options)
+
+    assert regenie_config.input.pheno_columns == ("first", "second")
     assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
 
 
