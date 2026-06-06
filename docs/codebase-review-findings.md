@@ -447,6 +447,8 @@ Recommendation: centralize the "validated writable NumPy buffer to raw pointer" 
 
 ### P2. Large Rust decode functions are difficult to reason about
 
+Status: addressed in `refactor/bgen-reader-orchestration-helpers`. The public variant-major dosage and packed8 reader methods now delegate selected count resolution, output-value validation, empty-chunk stats, trusted packed8 precondition checks, profiling setup, stats buffer allocation/reduction, and Rayon tile execution to named helpers in `src/genotype/bgen/reader.rs`. The low-level generic, trusted, SIMD, and packed8 decode kernels were not redesigned.
+
 Variant-major decode logic has long, deeply nested iterator chains and unsafe/tile-specific branches:
 
 - `src/genotype/bgen/reader.rs:306-443`
