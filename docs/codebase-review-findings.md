@@ -31,13 +31,11 @@ are summarized near the end instead of kept as historical work logs.
   Python-owned Arrow buffer cleanup.
 - `. scripts/server_env.sh && cargo test --lib python::output`: 2 passed after
   Python-owned Arrow buffer cleanup.
-- `uv run pytest tests/test_regenie2_binary.py -q`: 44 passed, 1 skipped after
-  device-side Firth capacity dispatch.
-- `uv run pytest tests/test_regenie2_pipeline.py::test_binary_variant_major_callback_uses_direct_variant_major_firth_compute tests/test_regenie2_pipeline.py::test_multi_binary_variant_major_callback_forwards_non_default_kernel_config -q`:
-  2 passed after device-side Firth capacity dispatch telemetry updates.
-- `uv run ty check src/g tests/test_regenie2_binary.py`: passed after
-  device-side Firth capacity dispatch.
-- `uv run ruff check src/g/compute/regenie2_binary tests/test_regenie2_binary.py --output-format=concise`:
+- `uv run pytest tests/test_regenie2_binary.py tests/test_regenie2_pipeline.py -q`:
+  111 passed, 1 skipped after device-side Firth capacity dispatch.
+- `uv run ty check src/g tests/test_regenie2_binary.py tests/test_regenie2_pipeline.py`:
+  passed after device-side Firth capacity dispatch.
+- `uv run ruff check src/g/compute/regenie2_binary tests/test_regenie2_binary.py tests/test_regenie2_pipeline.py --output-format=concise`:
   passed after device-side Firth capacity dispatch.
 - `git diff --check`: passed after device-side Firth capacity dispatch.
 

@@ -2900,8 +2900,10 @@ def test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes(
     assert mock_compute.call_count == 2
     assert len(writer_session_for_trait_a.native_chunks) == 1
     assert len(writer_session_for_trait_b.native_chunks) == 1
-    assert writer_session_for_trait_a.native_chunks[0]["metadata"].variant_start_index == 64
-    assert writer_session_for_trait_b.native_chunks[0]["metadata"].variant_start_index == 0
+    trait_a_metadata = typing.cast("typing.Any", writer_session_for_trait_a.native_chunks[0]["metadata"])
+    trait_b_metadata = typing.cast("typing.Any", writer_session_for_trait_b.native_chunks[0]["metadata"])
+    assert trait_a_metadata.variant_start_index == 64
+    assert trait_b_metadata.variant_start_index == 0
     np.testing.assert_array_equal(
         writer_session_for_trait_a.native_chunks[0]["beta"],
         np.asarray([0.1, 0.2], dtype=np.float32),
