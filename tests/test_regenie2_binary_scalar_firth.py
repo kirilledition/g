@@ -15,7 +15,7 @@ from g.interface import config as interface_config
 
 def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
     """Build the packaged-default kernel config for tests."""
-    return execution_plan.build_binary_kernel_config(interface_config.GComputeConfig())
+    return execution_plan.build_binary_kernel_config(interface_config.load_packaged_config().g_compute)
 
 
 def build_scalar_fixture() -> tuple[regenie2_binary_state.Regenie2BinaryChromosomeState, jax.Array, jax.Array]:

@@ -36,7 +36,7 @@ APPROXIMATE_FIRTH_PLAN = types.BinaryCorrectionPlan(
 
 def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
     """Build the packaged-default kernel config for tests."""
-    return execution_plan.build_binary_kernel_config(interface_config.GComputeConfig())
+    return execution_plan.build_binary_kernel_config(interface_config.load_packaged_config().g_compute)
 
 
 def compute_score_test_chunk(
@@ -584,7 +584,7 @@ def assert_test_fail_statistics_nan(
 
 
 def test_firth_candidate_capacity_uses_default() -> None:
-    compute_config = interface_config.GComputeConfig()
+    compute_config = interface_config.load_packaged_config().g_compute
 
     assert (
         build_default_binary_kernel_config().firth_candidate.candidate_capacity

@@ -21,7 +21,7 @@ from g.cli import (
     resolve_trusted_bgen_validation_mode,
 )
 from g.engine import shutdown
-from g.interface import defaults, options
+from g.interface import config, options
 
 runner = CliRunner()
 
@@ -170,7 +170,7 @@ def test_regenie_command_loads_packaged_default_toml() -> None:
     assert result.exit_code == 0
     regenie_config = mock_regenie_api.call_args.args[0]
     assert regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
-    assert regenie_config.trait.bsize == defaults.load_packaged_runtime_defaults().trait.bsize
+    assert regenie_config.trait.bsize == config.load_packaged_config().trait.bsize
     assert regenie_config.g_compute.device == types.Device.CPU
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
 
