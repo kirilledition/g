@@ -1,3 +1,10 @@
+Historical note: this was the implementation plan for the msgspec-based configuration
+loader. The active code now uses typed TOML schema/config layer modules and a packaged
+default catalog. Do not read the original problem statement below as current-state
+architecture; use `docs/configuration_cli_architecture.md` for the live contract.
+
+The notes below are retained only as implementation history.
+
 Yes — your discomfort is valid. The current code is doing a lot of manual “dict archaeology”: `tomllib` loads raw dictionaries, then `config.py` manually normalizes names and casts each value into a typed dataclass. You can see this pattern in the current config module: it loads `config.default.toml` through `tomllib.load(...)`, then defines many fallback constants, and later builds `GComputeConfig`, `GOutputConfig`, etc. by repeatedly doing `int(...)`, `float(...)`, enum constructors, and `.get(..., DEFAULT_...)` lookups.  
 
 Python does have better options. The stdlib `tomllib` intentionally only parses TOML into built-in containers; it does not validate into a typed structure. For Rust/Go-like typed loading, I would use **msgspec** or **Pydantic v2**. For `g`, I would choose **msgspec**.

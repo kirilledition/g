@@ -488,7 +488,7 @@ resume mode
 ```
 
 Do not introduce new `DEFAULT_*` constants in Python or Rust for new user-tunable behavior. Existing legacy constants should be treated as migration debt unless they are pure mathematical constants.
-Typed `PACKAGED_*` views of the default catalog are acceptable at subsystem boundaries, but `config.default.toml` remains the source of truth.
+Packaged default catalog views should stay inside the config layer. Runtime subsystems should receive resolved `RegenieConfig` or `ExecutionPlan` values rather than reading typed `PACKAGED_*` defaults at their own boundaries.
 
 ### 4.4 Constants policy
 

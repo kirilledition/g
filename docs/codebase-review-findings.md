@@ -197,37 +197,6 @@ Suggested direction: only change the formula after comparing against the intende
 REGENIE/BGEN INFO definition. The code now makes the current behavior explicit, but the
 statistical policy remains a product/science decision.
 
-### P3. Config conversion fallback still raises `NotImplementedError`
-
-The public config path now rejects exact Firth before execution, which closes the old
-public-option placeholder. One small config cleanup remains: the msgspec conversion hook
-only handles `Path` and raises `NotImplementedError` for any future custom type at
-`src/g/interface/config.py:398` to `src/g/interface/config.py:402`.
-
-This is not currently user-visible because the active runtime dataclasses only need the
-`Path` hook. It is still a poor failure mode for future config fields: users would see an
-implementation placeholder instead of a typed validation error.
-
-Suggested direction: raise `TypeError` or `ValueError` with the target type in the message,
-and add a tiny unit test around the fallback.
-
-### P3. Some architecture docs are stale after the config cleanup
-
-The completed config rewrite left old planning documents that still describe the former
-state as current. For example, `docs/01.rewrite_configuration.md:1` says `config.py` still
-defines many `DEFAULT_*` values, which is no longer true after `src/g/interface/defaults.py`
-was added. `docs/msgspec.md` has similar historical rewrite-plan language.
-`docs/configuration_cli_architecture.md:491` still allows `PACKAGED_*` views at subsystem
-boundaries, while the active code moved away from that pattern.
-
-Why this matters: these docs are now easy to misread as active architecture guidance. That
-can cause future workers to reintroduce defaults or plan work that already landed.
-
-Suggested direction: either delete/archive completed rewrite plans or add a clear
-"historical plan, already implemented" header. Update the architecture doc to say resolved
-runtime values should be passed explicitly rather than exposed as subsystem `PACKAGED_*`
-constants.
-
 ### P3. The repository is still dominated by tracked archive files
 
 Current tracked file counts:
@@ -251,8 +220,8 @@ by default.
   packed8 because it still uses the per-trait correction path.
 - Resume tests should include multi-phenotype partial-commit cases where each phenotype has
   a different committed chunk set.
-- Config-default cleanup has good focused coverage, but the old rewrite-plan docs still need
-  documentation hygiene.
+- Config-default cleanup has good focused coverage, but future config changes should keep
+  the historical planning docs out of the active architecture path.
 
 ## Closed From Previous Review
 
@@ -276,14 +245,17 @@ work:
   i32 statistics fields instead of saturating to `i32::MAX`.
 - The INFO score denominator behavior is documented and covered by a named Rust regression
   test. The formula itself was not changed.
+- The config conversion fallback finding no longer applies. Typed TOML conversion now lives
+  in `src/g/interface/config_layers.py` and raises `ValueError` around msgspec validation
+  failures instead of surfacing an implementation placeholder.
+- Completed config rewrite planning docs now have historical headers, and the active
+  architecture doc says runtime subsystems should receive resolved `RegenieConfig` or
+  `ExecutionPlan` values rather than packaged default views.
 
 ## Suggested Implementation Order
 
-1. Replace the config conversion fallback `NotImplementedError` with a typed validation
-   error.
-2. Mark completed config rewrite docs as historical or remove them.
-3. Add a targeted multi-phenotype resume test for partial committed chunk sets.
-4. Split callback start from construction.
-5. Centralize Rust unsafe buffer boundary helpers.
-6. Benchmark and then redesign multi-binary approximate Firth batching.
-7. Decide the public dtype/output precision contract.
+1. Add a targeted multi-phenotype resume test for partial committed chunk sets.
+2. Split callback start from construction.
+3. Centralize Rust unsafe buffer boundary helpers.
+4. Benchmark and then redesign multi-binary approximate Firth batching.
+5. Decide the public dtype/output precision contract.
