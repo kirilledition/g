@@ -27,6 +27,10 @@ are summarized near the end instead of kept as historical work logs.
   Firth correctness tests.
 - `uv run ruff check tests/test_regenie2_binary.py --output-format=concise`: passed
   after preparatory Firth correctness tests.
+- `. scripts/server_env.sh && cargo test --lib output::`: 31 passed after
+  Python-owned Arrow buffer cleanup.
+- `. scripts/server_env.sh && cargo test --lib python::output`: 2 passed after
+  Python-owned Arrow buffer cleanup.
 
 I also fetched `origin` and confirmed the reviewed base matched `origin/main` before the
 cleanup integration. I did not run GPU benchmarks or the full test suite on the head node.
@@ -175,13 +179,15 @@ now use a local `VariantMajorOutputMatrix` helper to validate non-null output po
 centralize row-offset overflow checks, and reconstitute typed mutable row slices in one
 place. The row-major BGEN preprocessing path now uses a local `RowMajorDosageBuffer`
 helper in `src/genotype/bgen/reader.rs` to validate null/alignment boundaries and
-centralize typed slice reconstruction before preprocessing. The hot decode loops still
-write through ordinary slices and do not add per-element abstraction overhead.
+centralize typed slice reconstruction before preprocessing. The Python-owned Arrow output
+path now uses `PythonOwnedArrowValues` in `src/python/output.rs` to centralize typed slice
+pointer validation, byte-length bookkeeping, and the retained Python-owner lifetime
+contract. The hot decode loops still write through ordinary slices and do not add
+per-element abstraction overhead.
 
 Trusted decode workers still write variant rows through raw pointer-derived slices at
 `src/genotype/bgen/trusted.rs:336`, `src/genotype/bgen/trusted.rs:480`,
-`src/genotype/bgen/trusted.rs:503`, and `src/genotype/bgen/trusted.rs:536`. Output uses a
-Python-owned Arrow buffer wrapper at `src/python/output.rs:348`.
+`src/genotype/bgen/trusted.rs:503`, and `src/genotype/bgen/trusted.rs:536`.
 
 This is expected at the Python/Rust zero-copy boundary, and the surrounding code has useful
 shape checks. The risk is that the safety contract is implicit and duplicated: buffer
@@ -189,8 +195,7 @@ lifetime, alignment, exclusivity, and row partitioning assumptions are spread ac
 multiple call sites.
 
 Suggested direction: continue centralizing the unsafe boundary behind small helper types.
-Next candidates are lower-level generic decode output slices and the Python-owned Arrow
-buffer wrapper in `src/python/output.rs`.
+Next candidates are lower-level generic decode output slices.
 
 ### P2. BGEN decode orchestration functions are too large to audit comfortably
 
@@ -317,6 +322,8 @@ work:
   searches and documents the tree as historical reference material.
 - The row-major BGEN preprocessing boundary now uses `RowMajorDosageBuffer` to centralize
   null/alignment validation and typed mutable slice reconstruction.
+- The Python-owned Arrow output boundary now uses `PythonOwnedArrowValues` to centralize
+  pointer validation, buffer sizing, and the retained-owner safety contract.
 - Preparatory Firth correctness tests now cover zero-candidate diagnostics and distinct
   per-trait multi-binary approximate Firth candidate masks.
 
@@ -324,8 +331,7 @@ work:
 
 1. Remove the Firth candidate-count host sync with device-side bounded/overflow dispatch.
 2. Continue remaining Rust unsafe boundary helper consolidation in small independent
-   patches, especially lower-level generic decode output slices and
-   `src/python/output.rs`.
+   patches, especially lower-level generic decode output slices.
 3. Redesign multi-binary approximate Firth batching over flattened trait-variant lanes.
 4. Decide whether to preserve archive snapshots on a dedicated branch/tag and remove them
    from active `main`; this requires explicit approval before any deletion.
