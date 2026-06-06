@@ -13,6 +13,14 @@ use super::simd;
 use super::{BgenError, CompressionType};
 use crate::genotype::preprocess;
 
+fn selected_sample_count_to_i32(selected_sample_count: usize) -> Result<i32, BgenError> {
+    i32::try_from(selected_sample_count).map_err(|_| {
+        BgenError::Range(format!(
+            "Selected sample count {selected_sample_count} exceeds the supported i32 statistics range.",
+        ))
+    })
+}
+
 pub(super) fn all_samples_present_diploid(sample_ploidy_and_missingness: &[u8]) -> bool {
     simd::all_samples_present_diploid_simd_or_scalar(sample_ploidy_and_missingness)
 }
@@ -380,7 +388,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
         profile_snapshot: thread_local_profile_snapshot,
         selected_dosage_total: summary.dosage_sum,
         selected_dosage_square_total: summary.dosage_square_sum,
-        selected_observation_count: i32::try_from(selected_sample_count).unwrap_or(i32::MAX),
+        selected_observation_count: selected_sample_count_to_i32(selected_sample_count)?,
         has_missing_values: false,
         zero_count: summary.zero_count,
         nonzero_count: summary.nonzero_count,
@@ -470,7 +478,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
     })?;
     let mut selected_dosage_total = 0.0_f32;
     let mut selected_dosage_square_total = 0.0_f32;
-    let mut selected_observation_count = i32::try_from(selected_sample_count).unwrap_or(i32::MAX);
+    let mut selected_observation_count = selected_sample_count_to_i32(selected_sample_count)?;
     let mut zero_count = 0_i32;
     let mut nonzero_count = 0_i32;
     let mut homozygous_reference_count = 0_i32;
@@ -594,6 +602,15 @@ mod tests {
         block.push(probability_bit_count);
         block.extend_from_slice(probability_bytes);
         block
+    }
+
+    #[test]
+    fn selected_sample_count_to_i32_rejects_overflow() {
+        let selected_sample_count = usize::try_from(i32::MAX).expect("i32 max should fit usize") + 1;
+
+        let error = selected_sample_count_to_i32(selected_sample_count).expect_err("oversized count should fail");
+
+        assert!(error.to_string().contains("exceeds the supported i32 statistics range"));
     }
 
     fn valid_trusted_probability_block(probability_bytes: &[u8]) -> Vec<u8> {

@@ -1191,12 +1191,6 @@ fn align_multi_sample_data_from_sample_file(
 }
 
 #[pyfunction]
-fn hello_from_bin() -> String {
-    tracing::info!(target: "g.native", "hello_from_bin called");
-    "Hello from g!".to_string()
-}
-
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 #[pyo3(signature = (variant_count, chunk_size, chromosome_boundary_indices, variant_limit=None, committed_chunk_identifiers=None))]
 fn plan_genotype_chunks(
@@ -1337,7 +1331,6 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(configure_rayon_global_thread_pool, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;
     module.add_function(wrap_pyfunction!(shutdown_logging, module)?)?;
-    module.add_function(wrap_pyfunction!(hello_from_bin, module)?)?;
     module.add_function(wrap_pyfunction!(plan_genotype_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(align_sample_data, module)?)?;
     module.add_function(wrap_pyfunction!(align_grouped_sample_data, module)?)?;

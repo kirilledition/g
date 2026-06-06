@@ -1,11 +1,12 @@
 # Codebase Review Findings
 
 Date: 2026-06-06
-Reviewed commit: `01c8db0a` (`main`)
+Reviewed base: `7ec2d10f` (`main` before cleanup integration)
 
 This is a current-state review of active application code after the config default cleanup,
-output, and packed8 work. It replaces the older review notes; items that were fixed are
-summarized near the end instead of kept as historical work logs.
+output, packed8, BGEN orchestration, REGENIE2 lifecycle, and easy non-config cleanup work.
+It replaces the older review notes; items that were fixed are summarized near the end
+instead of kept as historical work logs.
 
 ## Checks Run
 
@@ -18,8 +19,8 @@ summarized near the end instead of kept as historical work logs.
 - `cargo test --lib genotype::bgen::decode`: 7 passed.
 - `cargo test --lib genotype::bgen::simd`: 7 passed.
 
-I also fetched `origin` and confirmed `HEAD` matches `origin/main`. I did not run GPU
-benchmarks or the full test suite on the head node.
+I also fetched `origin` and confirmed the reviewed base matched `origin/main` before the
+cleanup integration. I did not run GPU benchmarks or the full test suite on the head node.
 
 ## Severity Guide
 
@@ -179,35 +180,22 @@ Suggested direction: split each path into validation, output-view construction,
 parallel-decode planning, decode execution, and stats reduction helpers. Avoid abstracting
 the hot inner loop until benchmarks show it is safe.
 
-### P2. INFO score denominator contract remains undecided
+### P2. INFO score denominator contract remains a statistical decision
 
-The shared preprocessing builder now rejects selected sample counts that do not fit i32 at
+Status: characterized and documented in the easy cleanup branch. A Rust unit test locks the
+current behavior, and the implementation now states that INFO is defined on observed
+genotype calls. Missing calls are still mean-imputed for downstream dosage sums, but not for
+the expected Hardy-Weinberg variance denominator.
+
+The shared preprocessing builder rejects selected sample counts that do not fit i32 at
 `src/genotype/preprocess.rs:326` to `src/genotype/preprocess.rs:330`. For variants with
 missing calls, it imputes missing dosage square mass using the selected sample count at
 `src/genotype/preprocess.rs:354` to `src/genotype/preprocess.rs:356`, but computes expected
-variance using observed call count at `src/genotype/preprocess.rs:360`.
+variance using observed call count at `src/genotype/preprocess.rs:363`.
 
-The behavior is characterized by tests and may be intentional, but the statistical contract
-is not obvious from the implementation.
-
-Suggested direction: compare against the intended REGENIE/BGEN INFO definition and write a
-short comment plus a named test case describing the selected-sample versus observed-sample
-choice.
-
-### P3. Some trusted sample-count conversions still saturate
-
-Most shared preprocessing now errors on sample counts outside i32 range, but a few trusted
-decode paths still saturate to `i32::MAX` or rely on an `expect`:
-
-- `src/genotype/bgen/trusted.rs:383`
-- `src/genotype/bgen/trusted.rs:473`
-- `src/genotype/bgen/simd.rs:421` to `src/genotype/bgen/simd.rs:422`
-
-This is probably unreachable in practical memory limits, but it is inconsistent with the
-new explicit error behavior.
-
-Suggested direction: replace these with shared checked conversion helpers. This is a small
-non-destructive cleanup.
+Suggested direction: only change the formula after comparing against the intended
+REGENIE/BGEN INFO definition. The code now makes the current behavior explicit, but the
+statistical policy remains a product/science decision.
 
 ### P3. Config conversion fallback still raises `NotImplementedError`
 
@@ -222,17 +210,6 @@ implementation placeholder instead of a typed validation error.
 
 Suggested direction: raise `TypeError` or `ValueError` with the target type in the message,
 and add a tiny unit test around the fallback.
-
-### P3. Demo native binding is still exported
-
-The production extension still exposes a demo function: `hello_from_bin` is defined at
-`src/python/mod.rs:1193`, registered at `src/python/mod.rs:1340`, and declared in
-`src/g/_core.pyi:237`.
-
-This is harmless but looks like scaffold code in the public native API.
-
-Suggested direction: remove the binding and its tests unless it is intentionally serving as
-a smoke-test API.
 
 ### P3. Some architecture docs are stale after the config cleanup
 
@@ -294,17 +271,19 @@ work:
 - Buffer pool accounting drift was fixed.
 - TOML array serialization was fixed.
 - Stale manual unknown-option behavior was fixed.
+- The scaffold `hello_from_bin` native binding, Python stub, and tests were removed.
+- Trusted BGEN selected-sample counts now use explicit checked conversion before filling
+  i32 statistics fields instead of saturating to `i32::MAX`.
+- The INFO score denominator behavior is documented and covered by a named Rust regression
+  test. The formula itself was not changed.
 
 ## Suggested Implementation Order
 
-1. Remove or intentionally rename `hello_from_bin`.
-2. Replace the config conversion fallback `NotImplementedError` with a typed validation
+1. Replace the config conversion fallback `NotImplementedError` with a typed validation
    error.
-3. Replace residual trusted-path sample-count saturation with checked helpers.
-4. Mark completed config rewrite docs as historical or remove them.
-5. Document and test the INFO score denominator contract.
-6. Add a targeted multi-phenotype resume test for partial committed chunk sets.
-7. Split callback start from construction.
-8. Centralize Rust unsafe buffer boundary helpers.
-9. Benchmark and then redesign multi-binary approximate Firth batching.
-10. Decide the public dtype/output precision contract.
+2. Mark completed config rewrite docs as historical or remove them.
+3. Add a targeted multi-phenotype resume test for partial committed chunk sets.
+4. Split callback start from construction.
+5. Centralize Rust unsafe buffer boundary helpers.
+6. Benchmark and then redesign multi-binary approximate Firth batching.
+7. Decide the public dtype/output precision contract.
