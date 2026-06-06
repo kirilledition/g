@@ -198,7 +198,8 @@ Do not emit one event per candidate iteration in production mode.
 ## Remaining Telemetry Roadmap
 
 - Keep file handles or queue-backed writers open for profile and trace streams
-- Add explicit timing for Firth candidate-count host synchronization.
+- Keep the non-blocking `firth_candidate_dispatch_plan` timing stage aligned
+  with future Firth dispatch changes.
 - Add bounded event caps for trace mode so accidental high-volume tracing
   fails clearly instead of filling disks.
 - Keep profile summary generation aligned with stage timings, native BGEN
