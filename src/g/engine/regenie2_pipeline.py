@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import time
 import typing
 from dataclasses import dataclass
 from pathlib import Path
-
-import jax.numpy as jnp
-import numpy as np
-import numpy.typing as npt
 
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
@@ -454,49 +449,6 @@ class SingleTraitPredictionView:
     def get_chromosome_predictions(self, chromosome: str) -> typing.Any:
         """Return one trait's aligned LOCO predictions for preflight validation."""
         return self.prediction_source.get_chromosome_predictions(chromosome)[self.trait_index]
-
-
-@dataclass(frozen=True)
-class GroupedAlignedSampleData:
-    """Python-owned multi-trait alignment assembled from per-phenotype alignments.
-
-    Attributes:
-        phenotype_names: Phenotype names in trait-major matrix order.
-        sample_indices: BGEN sample indices shared by all grouped phenotypes.
-        family_identifiers: Family identifiers for the shared sample order.
-        individual_identifiers: Individual identifiers for the shared sample order.
-        phenotype_matrix: Trait-major phenotype matrix.
-        covariate_names: Covariate names shared by all grouped phenotypes.
-        covariate_matrix: Shared design matrix.
-        is_binary_trait: Whether phenotypes are binary traits.
-
-    """
-
-    phenotype_names: tuple[str, ...]
-    sample_indices: npt.NDArray[np.int64]
-    family_identifiers: tuple[str, ...]
-    individual_identifiers: tuple[str, ...]
-    phenotype_matrix: npt.NDArray[np.float32]
-    covariate_names: tuple[str, ...]
-    covariate_matrix: npt.NDArray[np.float32]
-    is_binary_trait: bool
-
-
-@dataclass(frozen=True)
-class GroupedSingleTraitPredictionSource:
-    """Trait-major prediction source assembled from single-trait sources."""
-
-    prediction_sources: tuple[typing.Any, ...]
-
-    def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]:
-        """Return trait-major aligned LOCO predictions for one chromosome."""
-        return np.stack(
-            tuple(
-                np.asarray(prediction_source.get_chromosome_predictions(chromosome), dtype=np.float32)
-                for prediction_source in self.prediction_sources
-            ),
-            axis=0,
-        )
 
 
 def run_regenie2_multi_phenotype_linear_bgen_pipeline(
@@ -960,88 +912,6 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
         for phenotype_index, final_parquet_path in zip(group_indices, group_final_parquet_paths, strict=True):
             final_parquet_paths_by_index[phenotype_index] = final_parquet_path
     return tuple(final_parquet_paths_by_index)
-
-
-def group_per_phenotype_run_inputs(
-    indexed_run_inputs: tuple[tuple[int, native_dispatch.NativeBgenRunInput], ...],
-) -> tuple[tuple[tuple[int, native_dispatch.NativeBgenRunInput], ...], ...]:
-    """Group independently aligned phenotypes by identical sample and covariate alignment."""
-    groups_by_fingerprint: dict[str, list[tuple[int, native_dispatch.NativeBgenRunInput]]] = {}
-    group_order: list[str] = []
-    for indexed_run_input in indexed_run_inputs:
-        _phenotype_index, run_input = indexed_run_input
-        fingerprint = compute_sample_covariate_alignment_fingerprint(run_input)
-        if fingerprint not in groups_by_fingerprint:
-            groups_by_fingerprint[fingerprint] = []
-            group_order.append(fingerprint)
-        groups_by_fingerprint[fingerprint].append(indexed_run_input)
-    return tuple(tuple(groups_by_fingerprint[fingerprint]) for fingerprint in group_order)
-
-
-def compute_sample_covariate_alignment_fingerprint(run_input: native_dispatch.NativeBgenRunInput) -> str:
-    """Fingerprint sample indices and covariate values for per-phenotype grouping."""
-    sample_indices = np.ascontiguousarray(run_input.sample_indices, dtype=np.int64)
-    covariate_matrix = np.ascontiguousarray(np.asarray(run_input.covariate_matrix, dtype=np.float32))
-    digest = hashlib.sha256()
-    digest.update(str(sample_indices.shape).encode())
-    digest.update(str(sample_indices.dtype).encode())
-    digest.update(sample_indices.tobytes())
-    digest.update(str(covariate_matrix.shape).encode())
-    digest.update(str(covariate_matrix.dtype).encode())
-    digest.update(covariate_matrix.tobytes())
-    return digest.hexdigest()
-
-
-def build_grouped_native_bgen_multi_run_input(
-    *,
-    phenotype_names: tuple[str, ...],
-    run_inputs: tuple[native_dispatch.NativeBgenRunInput, ...],
-) -> native_dispatch.NativeBgenMultiRunInput:
-    """Build a multi-trait run input from independently aligned compatible traits."""
-    first_run_input = run_inputs[0]
-    grouped_aligned_sample_data = GroupedAlignedSampleData(
-        phenotype_names=phenotype_names,
-        sample_indices=first_run_input.sample_indices,
-        family_identifiers=tuple(first_run_input.native_aligned_sample_data.family_identifiers),
-        individual_identifiers=tuple(first_run_input.native_aligned_sample_data.individual_identifiers),
-        phenotype_matrix=np.stack(
-            tuple(np.asarray(run_input.phenotype_vector, dtype=np.float32) for run_input in run_inputs),
-            axis=0,
-        ),
-        covariate_names=tuple(first_run_input.native_aligned_sample_data.covariate_names),
-        covariate_matrix=np.asarray(first_run_input.covariate_matrix, dtype=np.float32),
-        is_binary_trait=first_run_input.is_binary_trait,
-    )
-    return native_dispatch.NativeBgenMultiRunInput(
-        native_multi_aligned_sample_data=typing.cast("typing.Any", grouped_aligned_sample_data),
-        phenotype_names=phenotype_names,
-        sample_indices=np.ascontiguousarray(grouped_aligned_sample_data.sample_indices, dtype=np.int64),
-        family_identifiers=grouped_aligned_sample_data.family_identifiers,
-        individual_identifiers=grouped_aligned_sample_data.individual_identifiers,
-        phenotype_matrix=jnp.asarray(grouped_aligned_sample_data.phenotype_matrix, dtype=jnp.float32),
-        covariate_matrix=jnp.asarray(grouped_aligned_sample_data.covariate_matrix, dtype=jnp.float32),
-        is_binary_trait=grouped_aligned_sample_data.is_binary_trait,
-    )
-
-
-def build_grouped_single_trait_prediction_source(
-    *,
-    prediction_list_path: Path,
-    phenotype_names: tuple[str, ...],
-    run_inputs: tuple[native_dispatch.NativeBgenRunInput, ...],
-    alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None,
-) -> GroupedSingleTraitPredictionSource:
-    """Build one trait-major prediction source from independently aligned traits."""
-    prediction_sources = tuple(
-        native_dispatch.build_regenie_prediction_source(
-            prediction_list_path=prediction_list_path,
-            phenotype_name=phenotype_name,
-            run_input=run_input,
-            alignment_config=alignment_config,
-        )
-        for phenotype_name, run_input in zip(phenotype_names, run_inputs, strict=True)
-    )
-    return GroupedSingleTraitPredictionSource(prediction_sources=prediction_sources)
 
 
 def run_prepared_multi_phenotype_bgen_group(

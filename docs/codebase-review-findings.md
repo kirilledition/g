@@ -34,6 +34,7 @@ Completed in this branch:
 - Documented and tested the current packed8 single-phenotype-only dispatch contract.
 - Replaced Rust preprocessing sample-count saturation with an explicit range error.
 - Hardened native host genotype buffer pool accounting across shape/dtype replacement.
+- Removed old Python-owned grouped-alignment helpers from the production pipeline module.
 
 Verification in this branch:
 
@@ -55,6 +56,10 @@ Verification in this branch:
 - `uv run pytest tests/test_regenie2_pipeline.py -q` - 55 passed after buffer pool accounting cleanup.
 - `uv run ruff check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py` - passed after buffer pool accounting cleanup.
 - `uv run ty check src/g/engine/callbacks.py` - passed after buffer pool accounting cleanup.
+- `uv run pytest tests/test_regenie2_pipeline.py -q` - 55 passed after grouped-alignment helper cleanup.
+- `uv run ruff format --check src/g/engine/regenie2_pipeline.py tests/test_regenie2_pipeline.py` - passed after grouped-alignment helper cleanup.
+- `uv run ruff check src/g/engine/regenie2_pipeline.py tests/test_regenie2_pipeline.py` - passed after grouped-alignment helper cleanup.
+- `uv run ty check src/g/engine/regenie2_pipeline.py` - passed after grouped-alignment helper cleanup.
 
 Implementation learnings:
 
@@ -68,6 +73,7 @@ Implementation learnings:
 - The packed8/multi-phenotype contract is currently enforced entirely by config validation. Multi dispatch intentionally stays dosage-only until packed8 multi-trait execution exists end-to-end.
 - The native stats schema is still `i32` for count-like fields. Failing at the shared stats builder is the narrowest fix until the schema moves to wider counters.
 - Host genotype buffers need ownership tracking, not just queue membership, because result work items can carry any NumPy array-shaped value through the same release path in tests and fallback paths.
+- The active grouped per-phenotype path already uses native grouped alignment; the removed Python-owned grouping code was only a test fixture builder.
 
 ## Suggested Work Order
 
@@ -93,7 +99,7 @@ This branch will take the remaining review findings in order of implementation e
    Easy-medium, non-destructive for realistic data: replace silent `i32::MAX` saturation with explicit error behavior.
 5. Done: Buffer pool accounting drift.
    Medium, mostly local but concurrency-sensitive.
-6. Old Python grouped-alignment helpers.
+6. Done: Old Python grouped-alignment helpers.
    Medium, production-dead but test refactoring is needed.
 7. Callback runner abstract contract.
    Medium, lifecycle-sensitive.
@@ -267,12 +273,14 @@ Recommendation: either keep the validation and add a comment/test that multi dis
 
 ### P2. Old Python grouped-alignment implementation remains in production module
 
-The active grouped per-phenotype path uses native grouped alignment:
+Status: done in `codebase-review-cleanups`. The old Python-owned grouped alignment dataclasses/builders were removed from `regenie2_pipeline.py`; the only remaining need was moved into `tests/test_regenie2_pipeline.py` as local fixture construction.
+
+Original finding: the active grouped per-phenotype path used native grouped alignment:
 
 - `src/g/engine/regenie2_pipeline.py:831-925`
 - `src/g/engine/native_dispatch.py:275-307`
 
-But older Python-owned grouped helpers remain in the production pipeline module:
+But older Python-owned grouped helpers remained in the production pipeline module:
 
 - `src/g/engine/regenie2_pipeline.py:459-500`
 - `src/g/engine/regenie2_pipeline.py:965-1027`

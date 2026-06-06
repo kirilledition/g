@@ -350,11 +350,31 @@ def build_grouped_run_input_from_single_trait_inputs(
     phenotype_names: tuple[str, ...],
     run_inputs: tuple[native_dispatch.NativeBgenRunInput, ...],
 ) -> native_dispatch.NativeBgenGroupedRunInput:
+    first_run_input = run_inputs[0]
+    native_multi_aligned_sample_data = SimpleNamespace(
+        phenotype_names=phenotype_names,
+        sample_indices=first_run_input.sample_indices,
+        family_identifiers=tuple(first_run_input.native_aligned_sample_data.family_identifiers),
+        individual_identifiers=tuple(first_run_input.native_aligned_sample_data.individual_identifiers),
+        phenotype_matrix=np.stack(
+            tuple(np.asarray(run_input.phenotype_vector, dtype=np.float32) for run_input in run_inputs),
+            axis=0,
+        ),
+        covariate_names=tuple(first_run_input.native_aligned_sample_data.covariate_names),
+        covariate_matrix=np.asarray(first_run_input.covariate_matrix, dtype=np.float32),
+        is_binary_trait=first_run_input.is_binary_trait,
+    )
     return native_dispatch.NativeBgenGroupedRunInput(
         phenotype_indices=phenotype_indices,
-        run_input=regenie2_pipeline.build_grouped_native_bgen_multi_run_input(
+        run_input=native_dispatch.NativeBgenMultiRunInput(
+            native_multi_aligned_sample_data=typing.cast("typing.Any", native_multi_aligned_sample_data),
             phenotype_names=phenotype_names,
-            run_inputs=run_inputs,
+            sample_indices=np.ascontiguousarray(native_multi_aligned_sample_data.sample_indices, dtype=np.int64),
+            family_identifiers=native_multi_aligned_sample_data.family_identifiers,
+            individual_identifiers=native_multi_aligned_sample_data.individual_identifiers,
+            phenotype_matrix=jnp.asarray(native_multi_aligned_sample_data.phenotype_matrix, dtype=jnp.float32),
+            covariate_matrix=jnp.asarray(native_multi_aligned_sample_data.covariate_matrix, dtype=jnp.float32),
+            is_binary_trait=native_multi_aligned_sample_data.is_binary_trait,
         ),
         prediction_source=FakePredictionSource(),
     )
