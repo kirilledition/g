@@ -25,52 +25,7 @@ QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "spa", "
 INPUT_RUNTIME_FIELD_NAMES = frozenset({"bgen", "sample", "pheno_file", "covar_file", "pred"})
 TRAIT_RUNTIME_FIELD_NAMES = frozenset({"step", "bsize", "threads"})
 G_COMPUTE_FIELD_RENAMES = {"null_logistic_nonconvergence": "null_logistic_nonconvergence_policy"}
-
-
-def packaged_default_option(option_name: str) -> typing.Any:
-    """Return one packaged default option by canonical name."""
-    return required_option(defaults.load_default_option_catalog().normalized_options, option_name)
-
-
-def required_option(normalized_options: typing.Mapping[str, typing.Any], option_name: str) -> typing.Any:
-    """Return a required resolved option or fail loudly."""
-    if option_name not in normalized_options:
-        message = f"Default config is missing required default option {option_name!r}."
-        raise ValueError(message)
-    return normalized_options[option_name]
-
-
-def optional_option(normalized_options: typing.Mapping[str, typing.Any], option_name: str) -> typing.Any | None:
-    """Return an optional resolved option."""
-    return normalized_options.get(option_name)
-
-
-def default_bool_option(option_name: str) -> bool:
-    """Return one packaged boolean default."""
-    return bool(packaged_default_option(option_name))
-
-
-def default_int_option(option_name: str) -> int:
-    """Return one packaged integer default."""
-    return int(packaged_default_option(option_name))
-
-
-def default_float_option(option_name: str) -> float:
-    """Return one packaged floating-point default."""
-    return float(packaged_default_option(option_name))
-
-
-def default_string_option(option_name: str) -> str:
-    """Return one packaged string default."""
-    return str(packaged_default_option(option_name))
-
-
-def default_trait_type() -> types.RegenieTraitType:
-    """Return the packaged default trait type."""
-    return normalize_trait_type(
-        qt=default_bool_option("qt"),
-        bt=default_bool_option("bt"),
-    )
+RUNTIME_DEFAULTS = defaults.load_packaged_runtime_defaults()
 
 
 @dataclass(frozen=True)
@@ -90,9 +45,9 @@ class InputConfig:
 class TraitConfig:
     """Trait-family and block-size settings."""
 
-    step: int = dataclasses.field(default_factory=lambda: default_int_option("step"))
-    trait_type: types.RegenieTraitType = dataclasses.field(default_factory=default_trait_type)
-    bsize: int = dataclasses.field(default_factory=lambda: default_int_option("bsize"))
+    step: int = RUNTIME_DEFAULTS.trait.step
+    trait_type: types.RegenieTraitType = RUNTIME_DEFAULTS.trait.trait_type
+    bsize: int = RUNTIME_DEFAULTS.trait.bsize
     threads: int | None = None
 
 
@@ -100,146 +55,84 @@ class TraitConfig:
 class BinaryConfig:
     """Binary-trait fallback settings."""
 
-    firth: bool = dataclasses.field(default_factory=lambda: default_bool_option("firth"))
-    approx: bool = dataclasses.field(default_factory=lambda: default_bool_option("approx"))
+    firth: bool = RUNTIME_DEFAULTS.binary.firth
+    approx: bool = RUNTIME_DEFAULTS.binary.approx
     spa: bool = False
-    p_threshold: float = dataclasses.field(default_factory=lambda: default_float_option("pThresh"))
-    firth_se: bool = dataclasses.field(default_factory=lambda: default_bool_option("firth-se"))
+    p_threshold: float = RUNTIME_DEFAULTS.binary.p_threshold
+    firth_se: bool = RUNTIME_DEFAULTS.binary.firth_se
 
 
 @dataclass(frozen=True)
 class GComputeConfig:
     """Engine-specific runtime and batching settings."""
 
-    device: types.Device = dataclasses.field(default_factory=lambda: types.Device(default_string_option("g-device")))
-    staging_depth: int = dataclasses.field(default_factory=lambda: default_int_option("g-staging-depth"))
+    device: types.Device = RUNTIME_DEFAULTS.g_compute.device
+    staging_depth: int = RUNTIME_DEFAULTS.g_compute.staging_depth
     variant_limit: int | None = None
-    trusted_no_missing_diploid: bool = dataclasses.field(
-        default_factory=lambda: default_bool_option("g-trusted-no-missing-diploid")
+    trusted_no_missing_diploid: bool = RUNTIME_DEFAULTS.g_compute.trusted_no_missing_diploid
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = (
+        RUNTIME_DEFAULTS.g_compute.trusted_bgen_validation_mode
     )
-    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = dataclasses.field(
-        default_factory=lambda: types.TrustedBgenValidationMode(default_string_option("g-trusted-bgen-validation-mode"))
+    sample_key_mode: types.SampleKeyMode = RUNTIME_DEFAULTS.g_compute.sample_key_mode
+    multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode = (
+        RUNTIME_DEFAULTS.g_compute.multi_phenotype_sample_mode
     )
-    sample_key_mode: types.SampleKeyMode = dataclasses.field(
-        default_factory=lambda: types.SampleKeyMode(default_string_option("g-sample-key-mode"))
+    firth_batch_size: int = RUNTIME_DEFAULTS.g_compute.firth_batch_size
+    firth_candidate_capacity: int = RUNTIME_DEFAULTS.g_compute.firth_candidate_capacity
+    binary_null_maximum_iterations: int = RUNTIME_DEFAULTS.g_compute.binary_null_maximum_iterations
+    binary_null_coefficient_tolerance: float = RUNTIME_DEFAULTS.g_compute.binary_null_coefficient_tolerance
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
+        RUNTIME_DEFAULTS.g_compute.null_logistic_nonconvergence_policy
     )
-    multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode = dataclasses.field(
-        default_factory=lambda: types.MultiPhenotypeSampleMode(default_string_option("g-multi-phenotype-sample-mode"))
+    binary_minimum_probability: float = RUNTIME_DEFAULTS.g_compute.binary_minimum_probability
+    binary_minimum_variance: float = RUNTIME_DEFAULTS.g_compute.binary_minimum_variance
+    binary_relative_variance_tolerance: float = RUNTIME_DEFAULTS.g_compute.binary_relative_variance_tolerance
+    firth_maximum_iterations: int = RUNTIME_DEFAULTS.g_compute.firth_maximum_iterations
+    firth_gradient_tolerance: float = RUNTIME_DEFAULTS.g_compute.firth_gradient_tolerance
+    firth_coefficient_tolerance: float = RUNTIME_DEFAULTS.g_compute.firth_coefficient_tolerance
+    firth_likelihood_tolerance: float = RUNTIME_DEFAULTS.g_compute.firth_likelihood_tolerance
+    firth_maximum_step_size: float = RUNTIME_DEFAULTS.g_compute.firth_maximum_step_size
+    firth_pseudo_maximum_iterations: int = RUNTIME_DEFAULTS.g_compute.firth_pseudo_maximum_iterations
+    firth_pseudo_inner_maximum_iterations: int = (
+        RUNTIME_DEFAULTS.g_compute.firth_pseudo_inner_maximum_iterations
     )
-    firth_batch_size: int = dataclasses.field(default_factory=lambda: default_int_option("g-firth-batch-size"))
-    firth_candidate_capacity: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-firth-candidate-capacity")
+    firth_newton_raphson_zero_start_iterations: int = (
+        RUNTIME_DEFAULTS.g_compute.firth_newton_raphson_zero_start_iterations
     )
-    binary_null_maximum_iterations: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-binary-null-maximum-iterations")
+    firth_line_search_maximum_attempts: int = RUNTIME_DEFAULTS.g_compute.firth_line_search_maximum_attempts
+    firth_step_halving_maximum_attempts: int = RUNTIME_DEFAULTS.g_compute.firth_step_halving_maximum_attempts
+    firth_initial_response_scale: float = RUNTIME_DEFAULTS.g_compute.firth_initial_response_scale
+    firth_sparse_carrier_dosage_threshold: float = (
+        RUNTIME_DEFAULTS.g_compute.firth_sparse_carrier_dosage_threshold
     )
-    binary_null_coefficient_tolerance: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-binary-null-coefficient-tolerance")
+    firth_step_halving_scale: float = RUNTIME_DEFAULTS.g_compute.firth_step_halving_scale
+    null_firth_maximum_iterations: int = RUNTIME_DEFAULTS.g_compute.null_firth_maximum_iterations
+    null_firth_gradient_tolerance: float = RUNTIME_DEFAULTS.g_compute.null_firth_gradient_tolerance
+    null_firth_maximum_step_size: float = RUNTIME_DEFAULTS.g_compute.null_firth_maximum_step_size
+    null_firth_fallback_iteration_multiplier: int = (
+        RUNTIME_DEFAULTS.g_compute.null_firth_fallback_iteration_multiplier
     )
-    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = dataclasses.field(
-        default_factory=lambda: types.NullLogisticNonconvergencePolicy(
-            default_string_option("g-null-logistic-nonconvergence")
-        )
+    null_firth_fallback_step_divisor: float = RUNTIME_DEFAULTS.g_compute.null_firth_fallback_step_divisor
+    null_firth_line_search_maximum_attempts: int = (
+        RUNTIME_DEFAULTS.g_compute.null_firth_line_search_maximum_attempts
     )
-    binary_minimum_probability: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-binary-minimum-probability")
-    )
-    binary_minimum_variance: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-binary-minimum-variance")
-    )
-    binary_relative_variance_tolerance: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-binary-relative-variance-tolerance")
-    )
-    firth_maximum_iterations: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-firth-maximum-iterations")
-    )
-    firth_gradient_tolerance: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-firth-gradient-tolerance")
-    )
-    firth_coefficient_tolerance: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-firth-coefficient-tolerance")
-    )
-    firth_likelihood_tolerance: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-firth-likelihood-tolerance")
-    )
-    firth_maximum_step_size: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-firth-maximum-step-size")
-    )
-    firth_pseudo_maximum_iterations: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-firth-pseudo-maximum-iterations")
-    )
-    firth_pseudo_inner_maximum_iterations: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-firth-pseudo-inner-maximum-iterations")
-    )
-    firth_newton_raphson_zero_start_iterations: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-firth-newton-raphson-zero-start-iterations")
-    )
-    firth_line_search_maximum_attempts: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-firth-line-search-maximum-attempts")
-    )
-    firth_step_halving_maximum_attempts: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-firth-step-halving-maximum-attempts")
-    )
-    firth_initial_response_scale: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-firth-initial-response-scale")
-    )
-    firth_sparse_carrier_dosage_threshold: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-firth-sparse-carrier-dosage-threshold")
-    )
-    firth_step_halving_scale: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-firth-step-halving-scale")
-    )
-    null_firth_maximum_iterations: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-null-firth-maximum-iterations")
-    )
-    null_firth_gradient_tolerance: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-null-firth-gradient-tolerance")
-    )
-    null_firth_maximum_step_size: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-null-firth-maximum-step-size")
-    )
-    null_firth_fallback_iteration_multiplier: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-null-firth-fallback-iteration-multiplier")
-    )
-    null_firth_fallback_step_divisor: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-null-firth-fallback-step-divisor")
-    )
-    null_firth_line_search_maximum_attempts: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-null-firth-line-search-maximum-attempts")
-    )
-    null_firth_step_halving_scale: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-null-firth-step-halving-scale")
-    )
-    use_block_firth_math: bool = dataclasses.field(
-        default_factory=lambda: default_bool_option("g-use-block-firth-math")
-    )
-    bgen_decode_tile_variant_count: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-bgen-decode-tile-variant-count")
-    )
-    gpu_genotype_format: types.GpuGenotypeFormat = dataclasses.field(
-        default_factory=lambda: types.GpuGenotypeFormat(default_string_option("g-gpu-genotype-format"))
-    )
-    score_dtype: types.FloatingPointDtype = dataclasses.field(
-        default_factory=lambda: types.FloatingPointDtype(default_string_option("g-score-dtype"))
-    )
-    firth_dtype: types.FloatingPointDtype = dataclasses.field(
-        default_factory=lambda: types.FloatingPointDtype(default_string_option("g-firth-dtype"))
-    )
+    null_firth_step_halving_scale: float = RUNTIME_DEFAULTS.g_compute.null_firth_step_halving_scale
+    use_block_firth_math: bool = RUNTIME_DEFAULTS.g_compute.use_block_firth_math
+    bgen_decode_tile_variant_count: int = RUNTIME_DEFAULTS.g_compute.bgen_decode_tile_variant_count
+    gpu_genotype_format: types.GpuGenotypeFormat = RUNTIME_DEFAULTS.g_compute.gpu_genotype_format
+    score_dtype: types.FloatingPointDtype = RUNTIME_DEFAULTS.g_compute.score_dtype
+    firth_dtype: types.FloatingPointDtype = RUNTIME_DEFAULTS.g_compute.firth_dtype
     jax_cache_dir: Path | None = None
     jax_matmul_precision: types.JaxMatmulPrecision | None = None
-    jax_persistent_cache: bool = dataclasses.field(
-        default_factory=lambda: default_bool_option("g-jax-persistent-cache")
+    jax_persistent_cache: bool = RUNTIME_DEFAULTS.g_compute.jax_persistent_cache
+    jax_persistent_cache_min_entry_size_bytes: int = (
+        RUNTIME_DEFAULTS.g_compute.jax_persistent_cache_min_entry_size_bytes
     )
-    jax_persistent_cache_min_entry_size_bytes: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-jax-persistent-cache-min-entry-size-bytes")
+    jax_persistent_cache_min_compile_time_seconds: int = (
+        RUNTIME_DEFAULTS.g_compute.jax_persistent_cache_min_compile_time_seconds
     )
-    jax_persistent_cache_min_compile_time_seconds: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-jax-persistent-cache-min-compile-time-seconds")
-    )
-    jax_xla_autotune_cache: bool = dataclasses.field(
-        default_factory=lambda: default_bool_option("g-jax-xla-autotune-cache")
-    )
-    jax_transfer_guard: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-jax-transfer-guard"))
+    jax_xla_autotune_cache: bool = RUNTIME_DEFAULTS.g_compute.jax_xla_autotune_cache
+    jax_transfer_guard: bool = RUNTIME_DEFAULTS.g_compute.jax_transfer_guard
 
 
 @dataclass(frozen=True)
@@ -247,55 +140,37 @@ class GOutputConfig:
     """Engine-specific output settings."""
 
     out: Path | None = None
-    format: types.OutputFormat = dataclasses.field(
-        default_factory=lambda: types.OutputFormat(default_string_option("g-output-format"))
-    )
+    format: types.OutputFormat = RUNTIME_DEFAULTS.g_output.format
     output_run_directory: Path | None = None
-    writer_threads: int = dataclasses.field(default_factory=lambda: default_int_option("g-writer-threads"))
-    writer_queue_depth: int = dataclasses.field(default_factory=lambda: default_int_option("g-writer-queue-depth"))
-    chunks_per_arrow_file: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-output-chunks-per-arrow-file")
-    )
-    arrow_compression: types.ArrowCompression = dataclasses.field(
-        default_factory=lambda: types.ArrowCompression(default_string_option("g-output-arrow-compression"))
-    )
-    parquet_compression: types.ParquetCompression = dataclasses.field(
-        default_factory=lambda: types.ParquetCompression(default_string_option("g-output-parquet-compression"))
-    )
-    resume: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-resume"))
-    resume_mode: types.ResumeMode = dataclasses.field(
-        default_factory=lambda: types.ResumeMode(default_string_option("g-resume-mode"))
-    )
-    finalize_parquet: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-finalize-parquet"))
+    writer_threads: int = RUNTIME_DEFAULTS.g_output.writer_threads
+    writer_queue_depth: int = RUNTIME_DEFAULTS.g_output.writer_queue_depth
+    chunks_per_arrow_file: int = RUNTIME_DEFAULTS.g_output.chunks_per_arrow_file
+    arrow_compression: types.ArrowCompression = RUNTIME_DEFAULTS.g_output.arrow_compression
+    parquet_compression: types.ParquetCompression = RUNTIME_DEFAULTS.g_output.parquet_compression
+    resume: bool = RUNTIME_DEFAULTS.g_output.resume
+    resume_mode: types.ResumeMode = RUNTIME_DEFAULTS.g_output.resume_mode
+    finalize_parquet: bool = RUNTIME_DEFAULTS.g_output.finalize_parquet
 
 
 @dataclass(frozen=True)
 class GDiagnosticsConfig:
     """Engine diagnostics settings."""
 
-    telemetry: types.TelemetryMode = dataclasses.field(
-        default_factory=lambda: types.TelemetryMode(default_string_option("g-telemetry"))
-    )
+    telemetry: types.TelemetryMode = RUNTIME_DEFAULTS.g_diagnostics.telemetry
     log_dir: Path | None = None
     stage_timings_json: Path | None = None
-    log_filter: str = dataclasses.field(default_factory=lambda: default_string_option("g-log-filter"))
+    log_filter: str = RUNTIME_DEFAULTS.g_diagnostics.log_filter
     log_file: Path | None = None
-    log_stderr: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-log-stderr"))
-    progress_interval_seconds: float = dataclasses.field(
-        default_factory=lambda: default_float_option("g-progress-interval-seconds")
-    )
-    progress_interval_chunks: int = dataclasses.field(
-        default_factory=lambda: default_int_option("g-progress-interval-chunks")
-    )
+    log_stderr: bool = RUNTIME_DEFAULTS.g_diagnostics.log_stderr
+    progress_interval_seconds: float = RUNTIME_DEFAULTS.g_diagnostics.progress_interval_seconds
+    progress_interval_chunks: int = RUNTIME_DEFAULTS.g_diagnostics.progress_interval_chunks
     profile_summary_json: Path | None = None
     trace_file: Path | None = None
-    trace_filter: str = dataclasses.field(default_factory=lambda: default_string_option("g-trace-filter"))
-    log_queue_size: int = dataclasses.field(default_factory=lambda: default_int_option("g-log-queue-size"))
-    log_lossy: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-log-lossy"))
-    include_source_location: bool = dataclasses.field(
-        default_factory=lambda: default_bool_option("g-include-source-location")
-    )
-    include_span_events: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-include-span-events"))
+    trace_filter: str = RUNTIME_DEFAULTS.g_diagnostics.trace_filter
+    log_queue_size: int = RUNTIME_DEFAULTS.g_diagnostics.log_queue_size
+    log_lossy: bool = RUNTIME_DEFAULTS.g_diagnostics.log_lossy
+    include_source_location: bool = RUNTIME_DEFAULTS.g_diagnostics.include_source_location
+    include_span_events: bool = RUNTIME_DEFAULTS.g_diagnostics.include_span_events
 
 
 @dataclass(frozen=True)
@@ -801,7 +676,10 @@ def validate_quantitative_binary_config(config: RegenieConfig) -> None:
         binary_only_option_names.append("firth-se")
     if config.binary.spa or "spa" in config.explicit_options:
         binary_only_option_names.append("spa")
-    if config.binary.p_threshold != default_float_option("pThresh") or "pThresh" in config.explicit_options:
+    if (
+        config.binary.p_threshold != RUNTIME_DEFAULTS.binary.p_threshold
+        or "pThresh" in config.explicit_options
+    ):
         binary_only_option_names.append("pThresh")
     raise_for_quantitative_binary_only_options(tuple(binary_only_option_names))
 

@@ -158,10 +158,9 @@ def warm_regenie2_binary_bgen_cache(
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for binary REGENIE step 2."""
-    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
     engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=genotype_source_config,
         chunk_size=chunk_size,
@@ -194,7 +193,7 @@ def warm_regenie2_binary_bgen_cache(
         state=regenie_state,
         loco_offset=jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
         correction_plan=correction_plan,
-        kernel_config=resolved_kernel_config,
+        kernel_config=kernel_config,
     )
     shapes = build_warm_cache_shapes(
         engine=engine,
@@ -212,7 +211,7 @@ def warm_regenie2_binary_bgen_cache(
             chromosome_state=chromosome_state,
             genotype_matrix=genotype_matrix,
             correction_plan=correction_plan,
-            kernel_config=resolved_kernel_config,
+            kernel_config=kernel_config,
         )
         callbacks.block_until_ready(result.log10_p_value)
     return WarmCacheReport(warmed_shapes=shapes)

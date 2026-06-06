@@ -1354,7 +1354,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         prediction_source: RegeniePredictionSourceProtocol,
         writer_session: typing.Any,
         correction_plan: types.BinaryCorrectionPlan,
-        kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        kernel_config: regenie2_binary_config.BinaryKernelConfig,
         null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
             types.NullLogisticNonconvergencePolicy.FAIL
         ),
@@ -1662,7 +1662,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         writer_sessions: tuple[typing.Any, ...],
         committed_chunk_identifier_sets: tuple[set[int], ...],
         correction_plan: types.BinaryCorrectionPlan,
-        kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        kernel_config: regenie2_binary_config.BinaryKernelConfig,
         null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
             types.NullLogisticNonconvergencePolicy.FAIL
         ),

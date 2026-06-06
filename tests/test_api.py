@@ -11,7 +11,7 @@ import pytest
 import g
 import g.engine.telemetry as telemetry_module
 from g import api, execution_plan, runner, types
-from g.interface import config
+from g.interface import config, defaults
 from g.io import output
 from g.io.output import OutputRunPaths, PreparedOutputRun
 
@@ -450,12 +450,12 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
         log_filter="info",
         log_file=tmp_path / "logs" / "first.jsonl",
         log_stderr=True,
-        log_queue_size=config.default_int_option("g-log-queue-size"),
+        log_queue_size=defaults.load_packaged_runtime_defaults().g_diagnostics.log_queue_size,
         log_lossy=True,
         include_source_location=False,
         include_span_events=False,
         trace_file=None,
-        trace_filter=config.default_string_option("g-trace-filter"),
+        trace_filter=defaults.load_packaged_runtime_defaults().g_diagnostics.trace_filter,
     )
     diagnostics_config = config.GDiagnosticsConfig(log_file=tmp_path / "logs" / "second.jsonl")
 

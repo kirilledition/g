@@ -9,6 +9,7 @@ from unittest.mock import patch
 if typing.TYPE_CHECKING:
     import pytest
 
+from g.interface import config
 from g.jax_setup import (
     configure_jax_device,
     configure_jax_runtime_before_backend_init,
@@ -17,6 +18,11 @@ from g.jax_setup import (
     resolve_xla_cache_option,
 )
 from g.types import Device
+
+
+def build_compute_config() -> config.GComputeConfig:
+    """Build explicit JAX runtime policy for tests."""
+    return config.GComputeConfig()
 
 
 def test_resolve_jax_cache_uses_explicit_config_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -79,9 +85,16 @@ def test_configure_jax_device_cpu() -> None:
 def test_configure_jax_runtime_before_backend_init_sets_platform_first(tmp_path: Path) -> None:
     """Ensure platform selection happens before other JAX runtime settings."""
     cache_directory = tmp_path / "jax-cache"
+    compute_config = build_compute_config()
 
     with patch("g.jax_setup.jax.config.update") as mock_update:
-        configure_jax_runtime_before_backend_init(device=Device.CPU, cache_directory=cache_directory)
+        configure_jax_runtime_before_backend_init(
+            device=Device.CPU,
+            cache_directory=cache_directory,
+            persistent_cache=compute_config.jax_persistent_cache,
+            persistent_cache_min_entry_size_bytes=compute_config.jax_persistent_cache_min_entry_size_bytes,
+            persistent_cache_min_compile_time_seconds=compute_config.jax_persistent_cache_min_compile_time_seconds,
+        )
 
     assert mock_update.call_args_list[0].args == ("jax_platforms", "cpu")
     assert ("jax_enable_x64", True) in [call.args for call in mock_update.call_args_list]
@@ -91,6 +104,7 @@ def test_configure_jax_runtime_before_backend_init_sets_platform_first(tmp_path:
 def test_configure_jax_runtime_before_backend_init_validates_gpu_after_runtime(tmp_path: Path) -> None:
     """Ensure GPU validation happens after platform and cache settings are applied."""
     cache_directory = tmp_path / "jax-cache"
+    compute_config = build_compute_config()
     call_order: list[str] = []
 
     def record_config_update(setting_name: str, value: object) -> None:
@@ -104,7 +118,13 @@ def test_configure_jax_runtime_before_backend_init_validates_gpu_after_runtime(t
         patch("g.jax_setup.jax.config.update", side_effect=record_config_update),
         patch("g.jax_setup.require_gpu_device", side_effect=record_require_gpu_device),
     ):
-        configure_jax_runtime_before_backend_init(device=Device.GPU, cache_directory=cache_directory)
+        configure_jax_runtime_before_backend_init(
+            device=Device.GPU,
+            cache_directory=cache_directory,
+            persistent_cache=compute_config.jax_persistent_cache,
+            persistent_cache_min_entry_size_bytes=compute_config.jax_persistent_cache_min_entry_size_bytes,
+            persistent_cache_min_compile_time_seconds=compute_config.jax_persistent_cache_min_compile_time_seconds,
+        )
 
     assert call_order[0] == "jax_platforms"
     assert "jax_compilation_cache_dir" in call_order

@@ -19,7 +19,6 @@ import typing
 from datetime import UTC, datetime
 from pathlib import Path
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_PARENT = Path("data/profiles")
 DEFAULT_VARIANT_COUNT = 418_943
@@ -310,7 +309,11 @@ def build_candidate_slug(candidate: Step2Candidate) -> str:
         f"staging{candidate.staging_depth}",
         f"writer{candidate.output_writer_thread_count}",
         f"queue{candidate.output_writer_queue_depth}",
-        f"tile{candidate.bgen_decode_tile_variant_count if candidate.bgen_decode_tile_variant_count is not None else 'default'}",
+        (
+            f"tile{candidate.bgen_decode_tile_variant_count}"
+            if candidate.bgen_decode_tile_variant_count is not None
+            else "tiledefault"
+        ),
         f"rayon{candidate.rayon_thread_count if candidate.rayon_thread_count is not None else 'default'}",
     ]
     if candidate.firth_batch_size is not None:
@@ -376,11 +379,10 @@ def build_g_trial_environment(
 ) -> dict[str, str]:
     """Build child process environment overrides for one g trial."""
     del cache_directory, stage_timing_path
-    environment = {
+    return {
         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
         "XLA_PYTHON_CLIENT_MEM_FRACTION": ".50",
     }
-    return environment
 
 
 def build_g_step2_child_command(

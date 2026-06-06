@@ -19,6 +19,16 @@ REGENIE_COMPUTE_PATCH_TARGETS = (regenie2_binary, regenie2_linear)
 logger = logging.getLogger(__name__)
 
 
+def require_binary_kernel_config(
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
+) -> regenie2_binary_config.BinaryKernelConfig:
+    """Return the binary kernel config or fail at an internal boundary."""
+    if kernel_config is None:
+        message = "Binary kernel config is required for binary association."
+        raise ValueError(message)
+    return kernel_config
+
+
 def run_regenie2_linear_bgen_pipeline(
     *,
     genotype_source_config: source.GenotypeSourceConfig,
@@ -35,18 +45,18 @@ def run_regenie2_linear_bgen_pipeline(
     resume: bool = False,
     resume_mode: types.ResumeMode = types.ResumeMode.FAST,
     finalize_parquet: bool = False,
-    writer_thread_count: int = output.PACKAGED_WRITER_THREAD_COUNT,
-    writer_queue_depth: int = output.PACKAGED_WRITER_QUEUE_DEPTH,
-    chunks_per_arrow_file: int = output.PACKAGED_CHUNKS_PER_ARROW_FILE,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
-    parquet_compression: types.ParquetCompression = output.PACKAGED_PARQUET_COMPRESSION,
+    parquet_compression: types.ParquetCompression,
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
-    bgen_decode_tile_variant_count: int = output.PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT,
+    bgen_decode_tile_variant_count: int,
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
-    score_dtype: types.FloatingPointDtype = output.PACKAGED_SCORE_DTYPE,
-    firth_dtype: types.FloatingPointDtype = output.PACKAGED_FIRTH_DTYPE,
+    score_dtype: types.FloatingPointDtype,
+    firth_dtype: types.FloatingPointDtype,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
@@ -240,21 +250,21 @@ def run_regenie2_binary_bgen_pipeline(
     resume: bool = False,
     resume_mode: types.ResumeMode = types.ResumeMode.FAST,
     finalize_parquet: bool = False,
-    writer_thread_count: int = output.PACKAGED_WRITER_THREAD_COUNT,
-    writer_queue_depth: int = output.PACKAGED_WRITER_QUEUE_DEPTH,
-    chunks_per_arrow_file: int = output.PACKAGED_CHUNKS_PER_ARROW_FILE,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
-    parquet_compression: types.ParquetCompression = output.PACKAGED_PARQUET_COMPRESSION,
+    parquet_compression: types.ParquetCompression,
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
-    bgen_decode_tile_variant_count: int = output.PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT,
+    bgen_decode_tile_variant_count: int,
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
-    score_dtype: types.FloatingPointDtype = output.PACKAGED_SCORE_DTYPE,
-    firth_dtype: types.FloatingPointDtype = output.PACKAGED_FIRTH_DTYPE,
+    score_dtype: types.FloatingPointDtype,
+    firth_dtype: types.FloatingPointDtype,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
-    kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
         types.NullLogisticNonconvergencePolicy.FAIL
@@ -266,7 +276,7 @@ def run_regenie2_binary_bgen_pipeline(
     """Run the native BGEN pipeline for binary REGENIE step 2."""
     logger.info("Starting binary REGENIE step 2 BGEN pipeline.")
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
-    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    resolved_kernel_config = require_binary_kernel_config(kernel_config)
     use_packed8 = gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
     effective_trusted_no_missing_diploid = trusted_no_missing_diploid or use_packed8
     engine_start_time = time.perf_counter()
@@ -475,18 +485,18 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     resume: bool = False,
     resume_mode: types.ResumeMode = types.ResumeMode.FAST,
     finalize_parquet: bool = False,
-    writer_thread_count: int = output.PACKAGED_WRITER_THREAD_COUNT,
-    writer_queue_depth: int = output.PACKAGED_WRITER_QUEUE_DEPTH,
-    chunks_per_arrow_file: int = output.PACKAGED_CHUNKS_PER_ARROW_FILE,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
-    parquet_compression: types.ParquetCompression = output.PACKAGED_PARQUET_COMPRESSION,
+    parquet_compression: types.ParquetCompression,
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
-    bgen_decode_tile_variant_count: int = output.PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT,
+    bgen_decode_tile_variant_count: int,
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
-    score_dtype: types.FloatingPointDtype = output.PACKAGED_SCORE_DTYPE,
-    firth_dtype: types.FloatingPointDtype = output.PACKAGED_FIRTH_DTYPE,
+    score_dtype: types.FloatingPointDtype,
+    firth_dtype: types.FloatingPointDtype,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
@@ -551,21 +561,21 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     resume: bool = False,
     resume_mode: types.ResumeMode = types.ResumeMode.FAST,
     finalize_parquet: bool = False,
-    writer_thread_count: int = output.PACKAGED_WRITER_THREAD_COUNT,
-    writer_queue_depth: int = output.PACKAGED_WRITER_QUEUE_DEPTH,
-    chunks_per_arrow_file: int = output.PACKAGED_CHUNKS_PER_ARROW_FILE,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
-    parquet_compression: types.ParquetCompression = output.PACKAGED_PARQUET_COMPRESSION,
+    parquet_compression: types.ParquetCompression,
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
-    bgen_decode_tile_variant_count: int = output.PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT,
+    bgen_decode_tile_variant_count: int,
     jax_device: types.Device = types.Device.CPU,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
-    score_dtype: types.FloatingPointDtype = output.PACKAGED_SCORE_DTYPE,
-    firth_dtype: types.FloatingPointDtype = output.PACKAGED_FIRTH_DTYPE,
+    score_dtype: types.FloatingPointDtype,
+    firth_dtype: types.FloatingPointDtype,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     correction_plan: types.BinaryCorrectionPlan = types.BinaryCorrectionPlan(),
-    kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy = (
         types.NullLogisticNonconvergencePolicy.FAIL
@@ -576,7 +586,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     sample_mode: types.MultiPhenotypeSampleMode | None = None,
 ) -> tuple[Path | None, ...]:
     """Run the complete-case native BGEN pipeline once for multiple binary phenotypes."""
-    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    resolved_kernel_config = require_binary_kernel_config(kernel_config)
     return run_regenie2_multi_phenotype_bgen_pipeline(
         genotype_source_config=genotype_source_config,
         phenotype_path=phenotype_path,
@@ -700,7 +710,11 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         raise ValueError(message)
     logger.info("Starting multi-phenotype REGENIE step 2 BGEN pipeline.")
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
-    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    resolved_kernel_config = (
+        require_binary_kernel_config(kernel_config)
+        if association_mode == types.AssociationMode.REGENIE2_BINARY
+        else None
+    )
     use_packed8 = gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
     effective_trusted_no_missing_diploid = trusted_no_missing_diploid or use_packed8
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
@@ -845,7 +859,11 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     """Group independently aligned phenotypes and run one BGEN pass per compatible group."""
     logger.info("Starting grouped per-phenotype REGENIE step 2 BGEN pipeline.")
     stage_timing_recorder = stage_timing_recorder or timing.build_stage_timing_recorder()
-    resolved_kernel_config = kernel_config or regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    resolved_kernel_config = (
+        require_binary_kernel_config(kernel_config)
+        if association_mode == types.AssociationMode.REGENIE2_BINARY
+        else None
+    )
     use_packed8 = gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
     effective_trusted_no_missing_diploid = trusted_no_missing_diploid or use_packed8
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
@@ -977,7 +995,7 @@ def run_prepared_multi_phenotype_bgen_group(
     output_format: types.OutputFormat,
     gpu_genotype_format: types.GpuGenotypeFormat,
     correction_plan: types.BinaryCorrectionPlan,
-    resolved_kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    resolved_kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
@@ -1088,13 +1106,14 @@ def run_prepared_multi_phenotype_bgen_group(
             sample_count=int(run_input.sample_indices.shape[0]),
         )
     if association_mode == types.AssociationMode.REGENIE2_BINARY:
+        binary_kernel_config = require_binary_kernel_config(resolved_kernel_config)
         callback = callbacks.MultiBinaryRegenie2PipelineCallback(
             run_input=run_input,
             prediction_source=prediction_source,
             writer_sessions=writer_sessions,
             committed_chunk_identifier_sets=committed_chunk_identifier_sets,
             correction_plan=correction_plan,
-            kernel_config=resolved_kernel_config,
+            kernel_config=binary_kernel_config,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
             staging_depth=staging_depth,
             score_dtype=score_dtype,

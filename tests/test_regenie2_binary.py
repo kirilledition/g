@@ -9,7 +9,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from g import types
+from g import execution_plan, types
 from g.compute.common import genotype as common_genotype
 from g.compute.common import pvalue as common_pvalue
 from g.compute.regenie2_binary import api as regenie2_binary
@@ -25,6 +25,7 @@ from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_
 from g.compute.regenie2_binary.firth import line_search as regenie2_binary_firth_line_search
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+from g.interface import config as interface_config
 
 APPROXIMATE_FIRTH_PLAN = types.BinaryCorrectionPlan(
     method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
@@ -32,30 +33,68 @@ APPROXIMATE_FIRTH_PLAN = types.BinaryCorrectionPlan(
     firth_se=False,
 )
 
-BinaryScoreComputeFunction = typing.Callable[
-    [regenie2_binary_state.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan],
-    regenie2_binary_result.Regenie2BinaryScoreChunkResult,
-]
-BinaryChunkComputeFunction = typing.Callable[
-    [regenie2_binary_state.Regenie2BinaryChromosomeState, jax.Array, types.BinaryCorrectionPlan],
-    regenie2_binary_result.Regenie2BinaryChunkResult,
-]
-compute_score_test_chunk = typing.cast(
-    "BinaryScoreComputeFunction",
-    regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state,
-)
-compute_binary_chunk = typing.cast(
-    "BinaryChunkComputeFunction",
-    regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state,
-)
-compute_score_test_chunk_variant_major = typing.cast(
-    "BinaryScoreComputeFunction",
-    regenie2_binary_score.compute_binary_score_test_chunk_variant_major,
-)
-compute_binary_chunk_variant_major = typing.cast(
-    "BinaryChunkComputeFunction",
-    regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major,
-)
+
+def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
+    """Build the packaged-default kernel config for tests."""
+    return execution_plan.build_binary_kernel_config(interface_config.GComputeConfig())
+
+
+def compute_score_test_chunk(
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
+    genotype_matrix: jax.Array,
+    correction_plan: types.BinaryCorrectionPlan,
+) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
+    """Compute a binary score-test chunk with packaged-default test config."""
+    return regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state(
+        chromosome_state,
+        genotype_matrix,
+        correction_plan,
+        build_default_binary_kernel_config(),
+    )
+
+
+def compute_binary_chunk(
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
+    genotype_matrix: jax.Array,
+    correction_plan: types.BinaryCorrectionPlan,
+) -> regenie2_binary_result.Regenie2BinaryChunkResult:
+    """Compute a binary chunk with packaged-default test config."""
+    result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
+        chromosome_state,
+        genotype_matrix,
+        correction_plan,
+        build_default_binary_kernel_config(),
+    )
+    return require_binary_chunk_result(result)
+
+
+def compute_score_test_chunk_variant_major(
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
+    genotype_matrix_by_variant: jax.Array,
+    correction_plan: types.BinaryCorrectionPlan,
+) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
+    """Compute a variant-major binary score-test chunk with packaged-default test config."""
+    return regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
+        chromosome_state,
+        genotype_matrix_by_variant,
+        correction_plan,
+        build_default_binary_kernel_config(),
+    )
+
+
+def compute_binary_chunk_variant_major(
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
+    genotype_matrix_by_variant: jax.Array,
+    correction_plan: types.BinaryCorrectionPlan,
+) -> regenie2_binary_result.Regenie2BinaryChunkResult:
+    """Compute a variant-major binary chunk with packaged-default test config."""
+    result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+        chromosome_state,
+        genotype_matrix_by_variant,
+        correction_plan,
+        build_default_binary_kernel_config(),
+    )
+    return require_binary_chunk_result(result)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -198,6 +237,8 @@ def build_chromosome_state() -> tuple[
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state,
         jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32),
+        types.BinaryCorrectionPlan(),
+        build_default_binary_kernel_config(),
     )
     return genotype_matrix, chromosome_state
 
@@ -212,12 +253,16 @@ def test_score_dtype_float64_controls_binary_score_kernel_dtype() -> None:
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state,
         jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float64),
+        types.BinaryCorrectionPlan(),
+        build_default_binary_kernel_config(),
         score_dtype=types.FloatingPointDtype.FLOAT64,
     )
 
     result = regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state(
         chromosome_state,
         genotype_matrix,
+        types.BinaryCorrectionPlan(),
+        build_default_binary_kernel_config(),
         score_dtype=types.FloatingPointDtype.FLOAT64,
     )
 
@@ -267,7 +312,7 @@ def compute_reference_multi_binary_score_test_chunk_variant_major(
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     correction_plan: types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig = build_default_binary_kernel_config(),
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Compute a tiny-test reference result with the explicit weighted tensor formula."""
     raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
@@ -389,6 +434,7 @@ def build_variant_major_parity_chromosome_state(
         state,
         fixture.loco_offset,
         correction_plan,
+        build_default_binary_kernel_config(),
     )
 
 
@@ -538,16 +584,18 @@ def assert_test_fail_statistics_nan(
 
 
 def test_firth_candidate_capacity_uses_default() -> None:
+    compute_config = interface_config.GComputeConfig()
+
     assert (
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.firth_candidate.candidate_capacity
-        == regenie2_binary_config.PACKAGED_FIRTH_CANDIDATE_CAPACITY
+        build_default_binary_kernel_config().firth_candidate.candidate_capacity
+        == compute_config.firth_candidate_capacity
     )
 
 
 def test_firth_candidate_capacity_rejects_invalid_config() -> None:
     with pytest.raises(ValueError, match="Firth candidate capacity"):
         replace_binary_kernel_config(
-            regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+            build_default_binary_kernel_config(),
             firth_candidate={"candidate_capacity": 0},
         )
 
@@ -638,6 +686,7 @@ def test_firth_candidate_host_sync_records_profile_stage() -> None:
         genotype_matrix_by_variant=jnp.ones((3, 2), dtype=jnp.float32),
         result=score_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
+        kernel_config=build_default_binary_kernel_config(),
         stage_duration_recorder=record_stage_duration,
     )
 
@@ -651,22 +700,24 @@ def test_null_logistic_kernel_config_retraces_same_shape_without_cache_clear() -
     state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
     loco_offset = jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32)
     one_iteration_config = replace_binary_kernel_config(
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        build_default_binary_kernel_config(),
         null_logistic={"maximum_iterations": 1, "coefficient_tolerance": 1.0e-12},
     )
     two_iteration_config = replace_binary_kernel_config(
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        build_default_binary_kernel_config(),
         null_logistic={"maximum_iterations": 2, "coefficient_tolerance": 1.0e-12},
     )
 
     one_iteration_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state,
         loco_offset,
+        correction_plan=types.BinaryCorrectionPlan(),
         kernel_config=one_iteration_config,
     )
     two_iteration_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state,
         loco_offset,
+        correction_plan=types.BinaryCorrectionPlan(),
         kernel_config=two_iteration_config,
     )
 
@@ -678,12 +729,13 @@ def test_non_converged_null_logistic_fit_invalidates_score_results() -> None:
     covariate_matrix, phenotype_vector, genotype_matrix = build_binary_inputs()
     state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector)
     kernel_config = replace_binary_kernel_config(
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        build_default_binary_kernel_config(),
         null_logistic={"maximum_iterations": 1, "coefficient_tolerance": 1.0e-12},
     )
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state,
         jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32),
+        correction_plan=types.BinaryCorrectionPlan(),
         kernel_config=kernel_config,
     )
 
@@ -769,11 +821,12 @@ def test_score_only_chromosome_prep_skips_firth_null_fit(monkeypatch: pytest.Mon
         state,
         jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32),
         types.BinaryCorrectionPlan(),
+        build_default_binary_kernel_config(),
     )
 
     assert float(np.asarray(chromosome_state.null_firth_penalized_log_likelihood)) == 0.0
     assert int(np.asarray(chromosome_state.null_logistic_iteration_count)) <= (
-        regenie2_binary_config.PACKAGED_MAXIMUM_NULL_ITERATIONS
+        build_default_binary_kernel_config().null_logistic.maximum_iterations
     )
 
 
@@ -786,23 +839,26 @@ def test_multi_trait_score_kernel_matches_stacked_single_trait_results() -> None
         multi_state,
         loco_offset_matrix,
         types.BinaryCorrectionPlan(),
+        build_default_binary_kernel_config(),
     )
     multi_result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
         multi_chromosome_state,
         genotype_matrix,
         types.BinaryCorrectionPlan(),
+        build_default_binary_kernel_config(),
     )
 
-    single_results: list[regenie2_binary_result.Regenie2BinaryChunkResult] = []
+    single_results: list[regenie2_binary_result.Regenie2BinaryScoreChunkResult] = []
     for trait_index in range(phenotype_matrix.shape[0]):
         single_state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_matrix[trait_index])
         single_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
             single_state,
             loco_offset_matrix[trait_index],
             types.BinaryCorrectionPlan(),
+            build_default_binary_kernel_config(),
         )
         single_results.append(
-            compute_binary_chunk(
+            compute_score_test_chunk(
                 single_chromosome_state,
                 genotype_matrix,
                 types.BinaryCorrectionPlan(),
@@ -839,17 +895,20 @@ def test_multi_trait_score_kernel_variant_major_matches_sample_major() -> None:
         multi_state,
         loco_offset_matrix,
         correction_plan,
+        build_default_binary_kernel_config(),
     )
 
     sample_major_result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
         multi_chromosome_state,
         genotype_matrix,
         correction_plan,
+        build_default_binary_kernel_config(),
     )
     variant_major_result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
         multi_chromosome_state,
         jnp.transpose(genotype_matrix),
         correction_plan,
+        build_default_binary_kernel_config(),
     )
 
     np.testing.assert_allclose(np.asarray(variant_major_result.beta), np.asarray(sample_major_result.beta))
@@ -891,6 +950,7 @@ def test_multi_trait_variant_major_score_kernel_matches_reference_weighted_tenso
         multi_state,
         loco_offset_matrix,
         correction_plan,
+        build_default_binary_kernel_config(),
     )
     genotype_matrix_by_variant = jnp.transpose(genotype_matrix)
 
@@ -898,6 +958,7 @@ def test_multi_trait_variant_major_score_kernel_matches_reference_weighted_tenso
         chromosome_state=multi_chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         correction_plan=correction_plan,
+        kernel_config=build_default_binary_kernel_config(),
         dosage_sum=jnp.sum(genotype_matrix_by_variant, axis=1),
         observation_count=jnp.full(genotype_matrix_by_variant.shape[0], genotype_matrix_by_variant.shape[1]),
     )
@@ -960,11 +1021,13 @@ def test_multi_trait_approximate_firth_matches_stacked_single_trait_results(firt
         multi_state,
         loco_offset_matrix,
         correction_plan,
+        build_default_binary_kernel_config(),
     )
     multi_result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
         multi_chromosome_state,
         genotype_matrix,
         correction_plan,
+        build_default_binary_kernel_config(),
         sparse_candidate_mask=jnp.asarray([False, True, False], dtype=jnp.bool_),
     )
 
@@ -975,11 +1038,13 @@ def test_multi_trait_approximate_firth_matches_stacked_single_trait_results(firt
             single_state,
             loco_offset_matrix[trait_index],
             correction_plan,
+            build_default_binary_kernel_config(),
         )
         single_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
             chromosome_state=single_chromosome_state,
             genotype_matrix=genotype_matrix,
             correction_plan=correction_plan,
+            kernel_config=build_default_binary_kernel_config(),
             sparse_candidate_mask=jnp.asarray([False, True, False], dtype=jnp.bool_),
         )
         single_results.append(require_binary_chunk_result(single_result))
@@ -1023,7 +1088,7 @@ def test_multi_trait_approximate_firth_honors_non_default_kernel_config() -> Non
         firth_se=True,
     )
     kernel_config = replace_binary_kernel_config(
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        build_default_binary_kernel_config(),
         null_logistic={"maximum_iterations": 3, "coefficient_tolerance": 1.0e-12},
         firth_candidate={"batch_size": 1},
         approximate_firth={
@@ -1152,6 +1217,7 @@ def test_unsupported_direct_binary_compute_paths_fail_loudly(
             genotype_matrix_by_variant=genotype_matrix[:, :1].T,
             result=score_result,
             correction_plan=unsupported_plan,
+            kernel_config=build_default_binary_kernel_config(),
         )
 
 
@@ -1164,7 +1230,7 @@ def test_full_model_adjusted_weight_components_match_design_matrix_path() -> Non
         + genotype_vector * coefficients[-1]
         + chromosome_state.loco_offset
     )
-    kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    kernel_config = build_default_binary_kernel_config()
     probability_vector = regenie2_binary_logistic.compute_clipped_logistic_probability(
         linear_predictor,
         kernel_config,
@@ -1219,7 +1285,7 @@ def test_firth_convergence_rejects_large_negative_likelihood_delta() -> None:
         candidate_penalized_log_likelihood=jnp.asarray(-100.0, dtype=jnp.float32),
         coefficient_step=jnp.asarray([1.0e-6, -1.0e-6], dtype=jnp.float32),
         adjusted_score=jnp.asarray([1.0e-6, -1.0e-6], dtype=jnp.float32),
-        kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        kernel_config=build_default_binary_kernel_config(),
     )
 
     assert not bool(np.asarray(converged))
@@ -1234,7 +1300,7 @@ def test_firth_step_halving_rejects_full_step_and_accepts_halved_step() -> None:
         current_penalized_log_likelihood=jnp.asarray(-1.0, dtype=jnp.float32),
         coefficient_step=jnp.asarray([4.0], dtype=jnp.float32),
         evaluate_penalized_log_likelihood=evaluate_penalized_log_likelihood,
-        kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        kernel_config=build_default_binary_kernel_config(),
     )
 
     assert bool(np.asarray(result.accepted))
@@ -1252,7 +1318,7 @@ def test_firth_step_halving_exhaustion_returns_failure_result() -> None:
         current_penalized_log_likelihood=jnp.asarray(-1.0, dtype=jnp.float32),
         coefficient_step=jnp.asarray([1.0], dtype=jnp.float32),
         evaluate_penalized_log_likelihood=evaluate_penalized_log_likelihood,
-        kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        kernel_config=build_default_binary_kernel_config(),
     )
     failure_code = regenie2_binary_firth_types.map_firth_reason_code_to_failure_code(
         jnp.asarray(regenie2_binary_firth_types.FirthConvergenceReason.STEP_HALVING_EXHAUSTED.value, dtype=jnp.int32)
@@ -1287,6 +1353,7 @@ def test_device_firth_candidate_correction_returns_finite_statistics() -> None:
         genotype_matrix_by_variant=candidate_genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
+        kernel_config=build_default_binary_kernel_config(),
     )
     result = require_binary_chunk_result(result)
 
@@ -1319,7 +1386,7 @@ def test_firth_candidate_max_iteration_failure_is_labelled() -> None:
         valid_mask=jnp.asarray([True]),
     )
     maximum_iteration_kernel_config = replace_binary_kernel_config(
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        build_default_binary_kernel_config(),
         approximate_firth={
             "maximum_iterations": 1,
             "gradient_tolerance": 1.0e-12,
@@ -1375,6 +1442,7 @@ def test_null_firth_failure_propagates_to_candidate_failure() -> None:
         genotype_matrix_by_variant=candidate_genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
+        kernel_config=build_default_binary_kernel_config(),
     )
     result = require_binary_chunk_result(result)
 
@@ -1414,12 +1482,14 @@ def test_firth_se_changes_only_successful_firth_standard_error() -> None:
         genotype_matrix_by_variant=candidate_genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
+        kernel_config=build_default_binary_kernel_config(),
     )
     firth_se_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=candidate_genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=firth_se_plan,
+        kernel_config=build_default_binary_kernel_config(),
     )
 
     assert int(np.asarray(firth_se_result.extra_code[0])) == types.BinaryExtraCode.FIRTH.value
@@ -1446,6 +1516,7 @@ def test_sparse_candidate_mask_does_not_expand_score_candidates() -> None:
         chromosome_state,
         low_score_genotype_matrix,
         APPROXIMATE_FIRTH_PLAN,
+        build_default_binary_kernel_config(),
         jnp.asarray([True], dtype=jnp.bool_),
     )
     sparse_result = require_binary_chunk_result(sparse_result)
@@ -1471,7 +1542,7 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback() -> None
     )
 
     overflow_kernel_config = replace_binary_kernel_config(
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        build_default_binary_kernel_config(),
         firth_candidate={"candidate_capacity": 1},
     )
     overflow_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
@@ -1483,7 +1554,7 @@ def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback() -> None
     )
 
     bounded_kernel_config = replace_binary_kernel_config(
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        build_default_binary_kernel_config(),
         firth_candidate={"candidate_capacity": 8},
     )
     bounded_result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
@@ -1529,11 +1600,11 @@ def test_firth_correction_kernel_config_retraces_same_shape_without_cache_clear(
         valid_mask=jnp.ones((genotype_matrix.shape[1],), dtype=jnp.bool_),
     )
     small_batch_config = replace_binary_kernel_config(
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        build_default_binary_kernel_config(),
         firth_candidate={"batch_size": 1, "candidate_capacity": 1},
     )
     larger_batch_config = replace_binary_kernel_config(
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        build_default_binary_kernel_config(),
         firth_candidate={"batch_size": 2, "candidate_capacity": 8},
     )
 
@@ -1688,6 +1759,7 @@ def test_packed8_score_only_binary_chunk_matches_variant_major_dosage() -> None:
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         correction_plan=correction_plan,
+        kernel_config=build_default_binary_kernel_config(),
         sparse_candidate_mask=fixture.sparse_candidate_mask,
         dosage_sum=dosage_sum,
         observation_count=observation_count,
@@ -1696,6 +1768,7 @@ def test_packed8_score_only_binary_chunk_matches_variant_major_dosage() -> None:
         chromosome_state=chromosome_state,
         packed_probability_pairs_by_variant=jnp.asarray(packed_probability_pairs_by_variant),
         correction_plan=correction_plan,
+        kernel_config=build_default_binary_kernel_config(),
         sparse_candidate_mask=fixture.sparse_candidate_mask,
         dosage_sum=dosage_sum,
         observation_count=observation_count,
@@ -1719,7 +1792,7 @@ def test_packed8_approximate_firth_binary_chunk_matches_variant_major_dosage() -
     dosage_sum = jnp.sum(genotype_matrix_by_variant, axis=1)
     observation_count = jnp.full((genotype_matrix_by_variant.shape[0],), genotype_matrix_by_variant.shape[1])
     kernel_config = replace_binary_kernel_config(
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        build_default_binary_kernel_config(),
         firth_candidate={"batch_size": 2, "candidate_capacity": 4},
     )
 
@@ -1754,12 +1827,14 @@ def test_variant_major_score_only_bt_matches_sample_major_with_covariates_loco_a
         chromosome_state=chromosome_state,
         genotype_matrix=fixture.genotype_matrix,
         correction_plan=correction_plan,
+        kernel_config=build_default_binary_kernel_config(),
         sparse_candidate_mask=fixture.sparse_candidate_mask,
     )
     variant_major_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=jnp.transpose(fixture.genotype_matrix),
         correction_plan=correction_plan,
+        kernel_config=build_default_binary_kernel_config(),
         sparse_candidate_mask=fixture.sparse_candidate_mask,
     )
 
@@ -1784,13 +1859,14 @@ def test_variant_major_approximate_firth_candidate_selection_matches_sample_majo
         chromosome_state=chromosome_state,
         genotype_matrix=fixture.genotype_matrix,
         correction_plan=correction_plan,
+        kernel_config=build_default_binary_kernel_config(),
     )
     variant_major_score_result = (
         regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
             chromosome_state=chromosome_state,
             genotype_matrix_by_variant=jnp.transpose(fixture.genotype_matrix),
             correction_plan=correction_plan,
-            kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+            kernel_config=build_default_binary_kernel_config(),
         )
     )
 
@@ -1815,12 +1891,14 @@ def test_variant_major_approximate_firth_matches_sample_major_with_covariates_lo
         chromosome_state=chromosome_state,
         genotype_matrix=fixture.genotype_matrix,
         correction_plan=correction_plan,
+        kernel_config=build_default_binary_kernel_config(),
         sparse_candidate_mask=fixture.sparse_candidate_mask,
     )
     variant_major_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=jnp.transpose(fixture.genotype_matrix),
         correction_plan=correction_plan,
+        kernel_config=build_default_binary_kernel_config(),
         sparse_candidate_mask=fixture.sparse_candidate_mask,
     )
 
@@ -1847,6 +1925,8 @@ def test_failed_firth_lanes_become_test_fail() -> None:
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state,
         jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32),
+        types.BinaryCorrectionPlan(),
+        build_default_binary_kernel_config(),
     )
     genotype_matrix = covariate_matrix[:, 1:2]
     score_result = compute_score_test_chunk(
@@ -1868,6 +1948,7 @@ def test_failed_firth_lanes_become_test_fail() -> None:
         genotype_matrix_by_variant=genotype_matrix.T,
         result=forced_candidate_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
+        kernel_config=build_default_binary_kernel_config(),
     )
     corrected_result = require_binary_chunk_result(corrected_result)
 
@@ -1892,6 +1973,8 @@ def test_cpu_and_gpu_jax_outputs_match_on_toy_chunk() -> None:
     cpu_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         cpu_state,
         jax.device_put(jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32), cpu_device),
+        APPROXIMATE_FIRTH_PLAN,
+        build_default_binary_kernel_config(),
     )
     cpu_result = compute_binary_chunk(
         cpu_chromosome_state,
@@ -1906,6 +1989,8 @@ def test_cpu_and_gpu_jax_outputs_match_on_toy_chunk() -> None:
     gpu_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         gpu_state,
         jax.device_put(jnp.zeros((phenotype_vector.shape[0],), dtype=jnp.float32), gpu_device),
+        APPROXIMATE_FIRTH_PLAN,
+        build_default_binary_kernel_config(),
     )
     gpu_result = compute_binary_chunk(
         gpu_chromosome_state,

@@ -92,6 +92,9 @@ def write_native_chunks(
         writer_queue_depth=1,
         finalize_parquet=False,
         output_format=output_format,
+        chunks_per_arrow_file=16,
+        arrow_compression=types.ArrowCompression.ZSTD,
+        parquet_compression=types.ParquetCompression.NONE,
     )
     callback = NativeChunkWritingCallback(writer_session, extra_code_value)
     try:
@@ -141,6 +144,15 @@ def build_test_header(
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
         output_format=output_format,
+        bgen_decode_tile_variant_count=64,
+        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
+        jax_device=types.Device.CPU,
+        finalize_parquet=False,
+        writer_thread_count=1,
+        writer_queue_depth=1,
+        chunks_per_arrow_file=16,
+        arrow_compression=types.ArrowCompression.ZSTD,
+        parquet_compression=types.ParquetCompression.NONE,
     )
 
 
@@ -391,6 +403,9 @@ def test_native_writer_records_output_stage_timings_when_requested(tmp_path: Pat
         writer_queue_depth=1,
         finalize_parquet=False,
         output_format=types.OutputFormat.ARROW,
+        chunks_per_arrow_file=16,
+        arrow_compression=types.ArrowCompression.ZSTD,
+        parquet_compression=types.ParquetCompression.NONE,
         collect_stage_timings=True,
     )
     callback = NativeChunkWritingCallback(writer_session)
@@ -996,6 +1011,10 @@ def test_output_writer_finish_interrupted_flushes_commits_without_final_parquet(
         writer_thread_count=1,
         writer_queue_depth=1,
         finalize_parquet=True,
+        output_format=types.OutputFormat.PARQUET,
+        chunks_per_arrow_file=16,
+        arrow_compression=types.ArrowCompression.ZSTD,
+        parquet_compression=types.ParquetCompression.NONE,
     )
     callback = NativeChunkWritingCallback(writer_session)
     try:

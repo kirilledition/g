@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from g import _core, runtime_policy, types
-from g.interface import config
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +25,6 @@ RUN_MANIFEST_SCHEMA_VERSION = 6
 OUTPUT_SCHEMA_VERSION = 1
 JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
 RESUME_POLICY = "manifest_committed_chunks"
-PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT = config.default_int_option("g-bgen-decode-tile-variant-count")
-PACKAGED_GPU_GENOTYPE_FORMAT = types.GpuGenotypeFormat(config.default_string_option("g-gpu-genotype-format"))
-PACKAGED_SCORE_DTYPE = types.FloatingPointDtype(config.default_string_option("g-score-dtype"))
-PACKAGED_FIRTH_DTYPE = types.FloatingPointDtype(config.default_string_option("g-firth-dtype"))
-PACKAGED_WRITER_QUEUE_DEPTH = config.default_int_option("g-writer-queue-depth")
-PACKAGED_WRITER_THREAD_COUNT = config.default_int_option("g-writer-threads")
-PACKAGED_CHUNKS_PER_ARROW_FILE = config.default_int_option("g-output-chunks-per-arrow-file")
-PACKAGED_PARQUET_COMPRESSION = types.ParquetCompression(config.default_string_option("g-output-parquet-compression"))
 RESULT_STATISTIC_OUTPUT_DTYPE = "float32"
 
 
@@ -182,13 +173,13 @@ def build_jax_policy_manifest(
 
 def build_output_writer_manifest(
     *,
-    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
-    finalize_parquet: bool = False,
-    writer_thread_count: int = PACKAGED_WRITER_THREAD_COUNT,
-    writer_queue_depth: int = PACKAGED_WRITER_QUEUE_DEPTH,
-    chunks_per_arrow_file: int = PACKAGED_CHUNKS_PER_ARROW_FILE,
-    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
-    parquet_compression: types.ParquetCompression = PACKAGED_PARQUET_COMPRESSION,
+    output_format: types.OutputFormat,
+    finalize_parquet: bool,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
+    arrow_compression: types.ArrowCompression,
+    parquet_compression: types.ParquetCompression,
 ) -> dict[str, typing.Any]:
     """Build manifest fields for output materialization and writer settings."""
     return {
@@ -221,21 +212,21 @@ def build_current_run_manifest_header(
     trusted_no_missing_diploid: bool,
     sample_key_mode: types.SampleKeyMode,
     binary_kernel_config: typing.Any | None = None,
-    bgen_decode_tile_variant_count: int = PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT,
-    trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
-    jax_device: types.Device = types.Device.CPU,
+    bgen_decode_tile_variant_count: int,
+    trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
+    jax_device: types.Device,
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
-    gpu_genotype_format: types.GpuGenotypeFormat = PACKAGED_GPU_GENOTYPE_FORMAT,
-    score_dtype: types.FloatingPointDtype = PACKAGED_SCORE_DTYPE,
-    firth_dtype: types.FloatingPointDtype = PACKAGED_FIRTH_DTYPE,
+    gpu_genotype_format: types.GpuGenotypeFormat,
+    score_dtype: types.FloatingPointDtype,
+    firth_dtype: types.FloatingPointDtype,
     multi_phenotype_sample_mode: MultiPhenotypeSampleMode = MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
-    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
-    finalize_parquet: bool = False,
-    writer_thread_count: int = PACKAGED_WRITER_THREAD_COUNT,
-    writer_queue_depth: int = PACKAGED_WRITER_QUEUE_DEPTH,
-    chunks_per_arrow_file: int = PACKAGED_CHUNKS_PER_ARROW_FILE,
-    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
-    parquet_compression: types.ParquetCompression = PACKAGED_PARQUET_COMPRESSION,
+    output_format: types.OutputFormat,
+    finalize_parquet: bool,
+    writer_thread_count: int,
+    writer_queue_depth: int,
+    chunks_per_arrow_file: int,
+    arrow_compression: types.ArrowCompression,
+    parquet_compression: types.ParquetCompression,
 ) -> dict[str, typing.Any]:
     """Build immutable run manifest fields from the current execution plan."""
     bgen_fingerprint = build_file_fingerprint(bgen_path)
@@ -484,10 +475,10 @@ def create_output_writer_session(
     writer_thread_count: int,
     writer_queue_depth: int,
     finalize_parquet: bool,
-    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
-    chunks_per_arrow_file: int = PACKAGED_CHUNKS_PER_ARROW_FILE,
-    arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
-    parquet_compression: types.ParquetCompression = PACKAGED_PARQUET_COMPRESSION,
+    output_format: types.OutputFormat,
+    chunks_per_arrow_file: int,
+    arrow_compression: types.ArrowCompression,
+    parquet_compression: types.ParquetCompression,
     collect_stage_timings: bool = False,
 ) -> typing.Any:
     """Create one native Rust output writer session."""

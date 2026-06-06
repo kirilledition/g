@@ -26,9 +26,9 @@ def apply_device_candidate_corrections_firth_variant_major_with_capacity(
     genotype_matrix_by_variant: jax.Array,
     result: regenie2_binary_result.Regenie2BinaryChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
+    candidate_capacity: int,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
     sparse_candidate_mask: jax.Array | None = None,
-    candidate_capacity: int = regenie2_binary_config.PACKAGED_FIRTH_CANDIDATE_CAPACITY,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
 ) -> regenie2_binary_result.Regenie2BinaryChunkResult:
     """Apply device-resident Firth corrections with a fixed candidate capacity."""
     candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
@@ -87,8 +87,8 @@ def apply_device_candidate_corrections_firth_variant_major(
     genotype_matrix_by_variant: jax.Array,
     result: regenie2_binary_result.Regenie2BinaryScoreChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
     sparse_candidate_mask: jax.Array | None = None,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
     stage_duration_recorder: StageDurationRecorder | None = None,
 ) -> regenie2_binary_result.Regenie2BinaryChunkResult:
     """Select bounded or overflow Firth capacity on the host before correction."""
@@ -125,8 +125,8 @@ def apply_device_candidate_corrections_variant_major(
     genotype_matrix_by_variant: jax.Array,
     result: regenie2_binary_result.Regenie2BinaryScoreChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
     sparse_candidate_mask: jax.Array | None = None,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
     stage_duration_recorder: StageDurationRecorder | None = None,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult:
     """Apply binary candidate corrections for variant-major genotype chunks."""

@@ -7,11 +7,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from g import types
+from g import execution_plan, types
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+from g.interface import config as interface_config
 
 
 def build_full_model_fixture() -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
@@ -37,10 +38,11 @@ def build_kernel_config(
     maximum_iterations: int = 25,
     use_block_math: bool = False,
 ) -> regenie2_binary_config.BinaryKernelConfig:
+    default_kernel_config = execution_plan.build_binary_kernel_config(interface_config.GComputeConfig())
     return dataclasses.replace(
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        default_kernel_config,
         approximate_firth=dataclasses.replace(
-            regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.approximate_firth,
+            default_kernel_config.approximate_firth,
             maximum_iterations=maximum_iterations,
             use_block_math=use_block_math,
         ),
@@ -85,7 +87,7 @@ def test_full_model_information_matrix_stacks_blocks() -> None:
 def test_weighted_information_components_match_probability_path() -> None:
     covariate_matrix, _phenotype_vector, genotype_vector, _loco_offset = build_full_model_fixture()
     probability_vector = jnp.asarray([0.15, 0.25, 0.55, 0.45, 0.75, 0.85], dtype=jnp.float32)
-    kernel_config = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG
+    kernel_config = build_kernel_config()
     weight_vector = probability_vector * (1.0 - probability_vector)
 
     probability_components = regenie2_binary_firth_full_model.compute_information_components(
@@ -137,7 +139,7 @@ def test_penalized_log_likelihood_rejects_invalid_cholesky_factor() -> None:
         probability_vector,
         phenotype_vector,
         information_cholesky_factor,
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        build_kernel_config(),
     )
 
     assert np.isneginf(np.asarray(likelihood))

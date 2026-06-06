@@ -9,7 +9,6 @@ from pathlib import Path
 import jax
 
 from g import runtime_policy, types
-from g.interface import config
 
 DEFAULT_NODE_LOCAL_CACHE_ROOT = Path("/tmp")
 DEFAULT_CACHE_DIRECTORY_NAME = "g-jax-cache"
@@ -36,13 +35,6 @@ def path_is_node_local(path: Path) -> bool:
 
 
 JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
-PACKAGED_PERSISTENT_COMPILATION_CACHE = config.default_bool_option("g-jax-persistent-cache")
-PACKAGED_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES = config.default_int_option(
-    "g-jax-persistent-cache-min-entry-size-bytes"
-)
-PACKAGED_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS = config.default_int_option(
-    "g-jax-persistent-cache-min-compile-time-seconds"
-)
 CUDA_PLATFORM_NAME = "cuda"
 GPU_DEVICE_PLATFORM_NAME = "gpu"
 NVIDIA_CONTROL_DEVICE_PATH = Path("/dev/nvidiactl")
@@ -88,9 +80,9 @@ def configure_jax_runtime(
     *,
     cache_directory: Path | None = None,
     matmul_precision: types.JaxMatmulPrecision | None = None,
-    persistent_cache: bool = PACKAGED_PERSISTENT_COMPILATION_CACHE,
-    persistent_cache_min_entry_size_bytes: int = PACKAGED_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
-    persistent_cache_min_compile_time_seconds: int = PACKAGED_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
+    persistent_cache: bool,
+    persistent_cache_min_entry_size_bytes: int,
+    persistent_cache_min_compile_time_seconds: int,
     xla_autotune_cache: bool = False,
     transfer_guard: bool = False,
 ) -> None:
@@ -120,9 +112,9 @@ def configure_jax_runtime_before_backend_init(
     device: types.Device,
     cache_directory: Path | None = None,
     matmul_precision: types.JaxMatmulPrecision | None = None,
-    persistent_cache: bool = PACKAGED_PERSISTENT_COMPILATION_CACHE,
-    persistent_cache_min_entry_size_bytes: int = PACKAGED_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
-    persistent_cache_min_compile_time_seconds: int = PACKAGED_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
+    persistent_cache: bool,
+    persistent_cache_min_entry_size_bytes: int,
+    persistent_cache_min_compile_time_seconds: int,
     xla_autotune_cache: bool = False,
     transfer_guard: bool = False,
 ) -> None:

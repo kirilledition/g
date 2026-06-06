@@ -261,9 +261,10 @@ def test_logging_diagnostics_default_to_info_stderr() -> None:
 
 def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
+    runtime_defaults = defaults.load_packaged_runtime_defaults()
 
-    assert config.load_default_option_dictionary()["trait"]["bsize"] == config.default_int_option("bsize")
-    assert regenie_config.trait.bsize == config.default_int_option("bsize")
+    assert config.load_default_option_dictionary()["trait"]["bsize"] == runtime_defaults.trait.bsize
+    assert regenie_config.trait.bsize == runtime_defaults.trait.bsize
     assert regenie_config.g_compute.device == types.Device.CPU
     assert regenie_config.g_compute.null_logistic_nonconvergence_policy == types.NullLogisticNonconvergencePolicy.FAIL
     assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT32
@@ -271,7 +272,7 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE
     assert regenie_config.g_compute.jax_persistent_cache is True
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
-    assert regenie_config.g_diagnostics.log_filter == config.default_string_option("g-log-filter")
+    assert regenie_config.g_diagnostics.log_filter == runtime_defaults.g_diagnostics.log_filter
     assert "pThresh" not in regenie_config.explicit_options
     assert "firth" not in regenie_config.explicit_options
 
@@ -582,7 +583,7 @@ def test_repeated_and_list_columns_are_mutually_exclusive() -> None:
         ("approx", True),
         ("firth-se", True),
         ("spa", True),
-        ("pThresh", config.default_float_option("pThresh")),
+        ("pThresh", defaults.load_packaged_runtime_defaults().binary.p_threshold),
     ],
 )
 def test_quantitative_trait_rejects_explicit_binary_only_options(option_name: str, option_value: object) -> None:
@@ -636,7 +637,7 @@ def test_python_trait_type_alias_selects_binary_trait() -> None:
 def test_quantitative_trait_accepts_defaulted_binary_threshold() -> None:
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
 
-    assert regenie_config.binary.p_threshold == config.default_float_option("pThresh")
+    assert regenie_config.binary.p_threshold == defaults.load_packaged_runtime_defaults().binary.p_threshold
 
 
 def test_output_tuning_defaults_come_from_packaged_default_config() -> None:

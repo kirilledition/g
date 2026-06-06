@@ -16,8 +16,8 @@ import textwrap
 import typing
 from pathlib import Path
 
-from g import api, types
-from g.io import output
+from g import types
+from g.interface import defaults
 
 
 def load_script_module(module_name: str, relative_path: str) -> typing.Any:
@@ -44,6 +44,7 @@ benchmark_regenie_comparison = load_script_module(
 DEFAULT_OUTPUT_DIRECTORY = Path("data/benchmarks/regenie2_gpu_tuning")
 DEFAULT_BGEN_PRE_SWEEP_CHUNK_SIZE = 8192
 DEFAULT_BGEN_PATH_MODE = benchmark_bgen_reader.BenchmarkPathMode.VARIANT_MAJOR_BUFFERED
+RUNTIME_DEFAULTS = defaults.load_packaged_runtime_defaults()
 
 
 class TraitSelection(enum.StrEnum):
@@ -227,8 +228,8 @@ def build_compute_stage_candidates(
                                 trait_type=trait_type,
                                 chunk_size=chunk_size,
                                 staging_depth=staging_depth,
-                                output_writer_thread_count=output.PACKAGED_WRITER_THREAD_COUNT,
-                                output_writer_queue_depth=output.PACKAGED_WRITER_QUEUE_DEPTH,
+                                output_writer_thread_count=RUNTIME_DEFAULTS.g_output.writer_threads,
+                                output_writer_queue_depth=RUNTIME_DEFAULTS.g_output.writer_queue_depth,
                                 bgen_decode_tile_variant_count=bgen_candidate_summary.candidate.decode_tile_variant_count,
                                 rayon_thread_count=bgen_candidate_summary.candidate.rayon_thread_count,
                                 firth_batch_size=firth_batch_size,
@@ -240,8 +241,8 @@ def build_compute_stage_candidates(
                         trait_type=trait_type,
                         chunk_size=chunk_size,
                         staging_depth=staging_depth,
-                        output_writer_thread_count=output.PACKAGED_WRITER_THREAD_COUNT,
-                        output_writer_queue_depth=output.PACKAGED_WRITER_QUEUE_DEPTH,
+                        output_writer_thread_count=RUNTIME_DEFAULTS.g_output.writer_threads,
+                        output_writer_queue_depth=RUNTIME_DEFAULTS.g_output.writer_queue_depth,
                         bgen_decode_tile_variant_count=bgen_candidate_summary.candidate.decode_tile_variant_count,
                         rayon_thread_count=bgen_candidate_summary.candidate.rayon_thread_count,
                         firth_batch_size=None,

@@ -9,13 +9,19 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from g import types
-from g.compute.regenie2_binary import config as regenie2_binary_config
+from g import execution_plan, types
 from g.engine import warm_cache
+from g.interface import config as interface_config
 from g.io import source
 
 if typing.TYPE_CHECKING:
     from g import _core
+    from g.compute.regenie2_binary import config as regenie2_binary_config
+
+
+def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
+    """Build the packaged-default kernel config for tests."""
+    return execution_plan.build_binary_kernel_config(interface_config.GComputeConfig())
 
 
 @dataclasses.dataclass(frozen=True)
@@ -232,10 +238,11 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
     run_input = build_fake_run_input(is_binary_trait=True)
     install_native_dispatch_fakes(monkeypatch, engine=engine, run_input=run_input)
     correction_plan = types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE)
+    default_kernel_config = build_default_binary_kernel_config()
     kernel_config = dataclasses.replace(
-        regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        default_kernel_config,
         firth_candidate=dataclasses.replace(
-            regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.firth_candidate,
+            default_kernel_config.firth_candidate,
             batch_size=4,
         ),
     )

@@ -13,8 +13,6 @@ import textwrap
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from g import api
-
 DEFAULT_DATA_DIRECTORY = Path("data")
 DEFAULT_OUTPUT_DIRECTORY = Path("data/benchmarks/regenie2_linear_fresh_process")
 

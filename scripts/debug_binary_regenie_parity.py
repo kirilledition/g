@@ -16,13 +16,14 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-from g import _core, types
+from g import _core, execution_plan, types
 from g.compute.common import genotype
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 from g.engine import native_dispatch
+from g.interface import config as interface_config
 
 
 @dataclass(frozen=True)
@@ -263,6 +264,7 @@ def build_selector(arguments: argparse.Namespace) -> VariantSelector:
 def compute_score_debug_arrays(
     chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> ScoreDebugArrays:
     """Compute score-test internal arrays for selected variants."""
     raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
@@ -285,8 +287,7 @@ def compute_score_debug_arrays(
     allele_count = jnp.sum(raw_genotype_matrix_by_variant, axis=1)
     flipped_allele_count = jnp.sum(genotype_matrix_by_variant_float32, axis=1)
     carrier_count = jnp.sum(
-        genotype_matrix_by_variant_float32
-        > regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.approximate_firth.sparse_carrier_dosage_threshold,
+        genotype_matrix_by_variant_float32 > kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
         axis=1,
     )
     host_values = jax.device_get(
@@ -328,6 +329,7 @@ def build_debug_records_for_chunk(
         chromosome_state,
         selected_genotype_matrix_by_variant.T,
         correction_plan,
+        kernel_config,
     )
     final_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
         chromosome_state=chromosome_state,
@@ -336,7 +338,9 @@ def build_debug_records_for_chunk(
         sparse_candidate_mask=jnp.asarray(chunk_stats.is_rare_sparse_firth_candidate[selected_offsets]),
         kernel_config=kernel_config,
     )
-    score_debug_arrays = compute_score_debug_arrays(chromosome_state, selected_genotype_matrix_by_variant)
+    score_debug_arrays = compute_score_debug_arrays(
+        chromosome_state, selected_genotype_matrix_by_variant, kernel_config
+    )
     score_host = jax.device_get(score_result)
     final_host = jax.device_get(final_result)
     null_logistic_offset = chromosome_state.covariate_matrix @ chromosome_state.null_logistic_coefficients + (
@@ -594,12 +598,13 @@ def capture_g_records(arguments: argparse.Namespace, selector: VariantSelector) 
         p_threshold=float(arguments.p_threshold),
         firth_se=False,
     )
+    kernel_config = execution_plan.build_binary_kernel_config(interface_config.GComputeConfig())
     callback = BinaryVariantDebugCaptureCallback(
         run_input=run_input,
         prediction_source=prediction_source,
         selector=selector,
         correction_plan=correction_plan,
-        kernel_config=regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+        kernel_config=kernel_config,
     )
     engine.run_bgen_variant_major_dosage_buffered_chunks(run_input.sample_indices, callback)
     return sorted(callback.records, key=lambda record: record.variant_index)

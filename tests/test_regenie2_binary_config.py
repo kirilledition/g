@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 import dataclasses
+import typing
 
 import pytest
 
-from g.compute.regenie2_binary import config as regenie2_binary_config
+from g import execution_plan
+from g.interface import config as interface_config
+
+if typing.TYPE_CHECKING:
+    from g.compute.regenie2_binary import config as regenie2_binary_config
+
+
+def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
+    """Build the packaged-default kernel config for tests."""
+    return execution_plan.build_binary_kernel_config(interface_config.GComputeConfig())
 
 
 @pytest.mark.parametrize(
@@ -21,7 +31,7 @@ def test_binary_numerical_config_rejects_invalid_values(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        dataclasses.replace(regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.numerical, **overrides)
+        dataclasses.replace(build_default_binary_kernel_config().numerical, **overrides)
 
 
 @pytest.mark.parametrize(
@@ -36,7 +46,7 @@ def test_binary_null_logistic_config_rejects_invalid_values(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        dataclasses.replace(regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.null_logistic, **overrides)
+        dataclasses.replace(build_default_binary_kernel_config().null_logistic, **overrides)
 
 
 @pytest.mark.parametrize(
@@ -51,7 +61,7 @@ def test_firth_candidate_config_rejects_invalid_values(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        dataclasses.replace(regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.firth_candidate, **overrides)
+        dataclasses.replace(build_default_binary_kernel_config().firth_candidate, **overrides)
 
 
 @pytest.mark.parametrize(
@@ -77,7 +87,7 @@ def test_approximate_firth_config_rejects_invalid_values(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        dataclasses.replace(regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.approximate_firth, **overrides)
+        dataclasses.replace(build_default_binary_kernel_config().approximate_firth, **overrides)
 
 
 @pytest.mark.parametrize(
@@ -97,4 +107,4 @@ def test_null_firth_config_rejects_invalid_values(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        dataclasses.replace(regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG.null_firth, **overrides)
+        dataclasses.replace(build_default_binary_kernel_config().null_firth, **overrides)

@@ -19,7 +19,7 @@ from pathlib import Path
 import polars as pl
 
 from g import api, types
-from g.interface import config as interface_config
+from g.interface import defaults
 
 DEFAULT_DATA_DIRECTORY = Path("data")
 DEFAULT_OUTPUT_PARENT = Path("data/profiles")
@@ -118,7 +118,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=interface_config.default_int_option("bsize"),
+        default=defaults.load_packaged_runtime_defaults().trait.bsize,
         help="Variants per chunk.",
     )
     parser.add_argument(
