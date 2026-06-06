@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import functools
 import os
 import typing
 from dataclasses import dataclass
@@ -149,17 +150,23 @@ def overlay_struct_values(
 ) -> msgspec.Struct:
     """Overlay one msgspec struct over another, ignoring unset override fields."""
     struct_values: dict[str, typing.Any] = {}
-    struct_information = typing.cast("msgspec.inspect.StructType", msgspec.inspect.type_info(type(base_value)))
-    for field_information in struct_information.fields:
-        base_field_value = getattr(base_value, field_information.name)
-        override_field_value = getattr(override_value, field_information.name)
+    for field_name in struct_field_names(type(base_value)):
+        base_field_value = getattr(base_value, field_name)
+        override_field_value = getattr(override_value, field_name)
         if override_field_value is msgspec.UNSET:
-            struct_values[field_information.name] = base_field_value
+            struct_values[field_name] = base_field_value
         elif isinstance(base_field_value, msgspec.Struct) and isinstance(override_field_value, msgspec.Struct):
-            struct_values[field_information.name] = overlay_struct_values(base_field_value, override_field_value)
+            struct_values[field_name] = overlay_struct_values(base_field_value, override_field_value)
         else:
-            struct_values[field_information.name] = override_field_value
+            struct_values[field_name] = override_field_value
     return type(base_value)(**struct_values)
+
+
+@functools.cache
+def struct_field_names(struct_type: type[msgspec.Struct]) -> tuple[str, ...]:
+    """Return cached msgspec struct field names."""
+    struct_information = typing.cast("msgspec.inspect.StructType", msgspec.inspect.type_info(struct_type))
+    return tuple(field_information.name for field_information in struct_information.fields)
 
 
 def replace_struct_values(
@@ -168,11 +175,10 @@ def replace_struct_values(
 ) -> msgspec.Struct:
     """Return a msgspec struct with selected fields replaced."""
     struct_values: dict[str, typing.Any] = {}
-    struct_information = typing.cast("msgspec.inspect.StructType", msgspec.inspect.type_info(type(struct_value)))
-    for field_information in struct_information.fields:
-        struct_values[field_information.name] = updated_values.get(
-            field_information.name,
-            getattr(struct_value, field_information.name),
+    for field_name in struct_field_names(type(struct_value)):
+        struct_values[field_name] = updated_values.get(
+            field_name,
+            getattr(struct_value, field_name),
         )
     return type(struct_value)(**struct_values)
 
