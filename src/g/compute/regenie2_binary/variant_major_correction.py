@@ -130,14 +130,9 @@ def apply_device_candidate_corrections_variant_major(
     stage_duration_recorder: StageDurationRecorder | None = None,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult:
     """Apply binary candidate corrections for variant-major genotype chunks."""
+    regenie2_binary_correction.validate_runtime_correction_plan(correction_plan)
     if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
         return result
-    if correction_plan.method == types.BinaryFallbackMethod.FIRTH:
-        message = "Exact REGENIE --firth without --approx is not implemented yet. Use --firth --approx."
-        raise NotImplementedError(message)
-    if correction_plan.method == types.BinaryFallbackMethod.SPA:
-        message = "SPA fallback is not implemented yet. Omit --spa for score-test-only output."
-        raise NotImplementedError(message)
     return apply_device_candidate_corrections_firth_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,

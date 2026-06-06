@@ -1135,9 +1135,24 @@ def test_unsupported_direct_binary_compute_paths_fail_loudly(
     unsupported_plan: types.BinaryCorrectionPlan,
 ) -> None:
     genotype_matrix, chromosome_state = build_chromosome_state()
+    score_result = regenie2_binary_result.Regenie2BinaryScoreChunkResult(
+        beta=jnp.asarray([0.1], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([0.1], dtype=jnp.float32),
+        extra_code=jnp.asarray([types.BinaryExtraCode.SCORE.value], dtype=jnp.int32),
+        valid_mask=jnp.asarray([True]),
+    )
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="Unsupported binary correction method"):
         compute_score_test_chunk(chromosome_state, genotype_matrix[:, :1], unsupported_plan)
+    with pytest.raises(ValueError, match="Unsupported binary correction method"):
+        regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
+            chromosome_state=chromosome_state,
+            genotype_matrix_by_variant=genotype_matrix[:, :1].T,
+            result=score_result,
+            correction_plan=unsupported_plan,
+        )
 
 
 def test_full_model_adjusted_weight_components_match_design_matrix_path() -> None:

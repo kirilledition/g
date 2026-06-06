@@ -36,6 +36,7 @@ Completed in this branch:
 - Hardened native host genotype buffer pool accounting across shape/dtype replacement.
 - Removed old Python-owned grouped-alignment helpers from the production pipeline module.
 - Made the native callback runner compute hooks an explicit abstract base-class contract.
+- Replaced unsupported exact Firth/SPA runtime compute `NotImplementedError` branches with explicit validation.
 
 Verification in this branch:
 
@@ -65,6 +66,10 @@ Verification in this branch:
 - `uv run ruff format --check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py` - passed after callback ABC cleanup.
 - `uv run ruff check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py` - passed after callback ABC cleanup.
 - `uv run ty check src/g/engine/callbacks.py` - passed after callback ABC cleanup.
+- `uv run pytest tests/test_regenie2_binary.py -q` - 43 passed, 1 skipped after unsupported correction branch cleanup.
+- `uv run ruff format --check src/g/compute/regenie2_binary/correction.py src/g/compute/regenie2_binary/variant_major_correction.py tests/test_regenie2_binary.py` - passed after unsupported correction branch cleanup.
+- `uv run ruff check src/g/compute/regenie2_binary/correction.py src/g/compute/regenie2_binary/variant_major_correction.py tests/test_regenie2_binary.py` - passed after unsupported correction branch cleanup.
+- `uv run ty check src/g/compute/regenie2_binary/correction.py src/g/compute/regenie2_binary/variant_major_correction.py` - passed after unsupported correction branch cleanup.
 
 Implementation learnings:
 
@@ -80,6 +85,7 @@ Implementation learnings:
 - Host genotype buffers need ownership tracking, not just queue membership, because result work items can carry any NumPy array-shaped value through the same release path in tests and fallback paths.
 - The active grouped per-phenotype path already uses native grouped alignment; the removed Python-owned grouping code was only a test fixture builder.
 - `abc.ABC` catches missing callback compute hooks before worker threads can start, but splitting thread startup out of `NativeBgenCallbackRunner.__init__()` remains a larger lifecycle refactor.
+- Exact Firth and SPA remain config-rejected modes. Direct binary compute now treats them as unsupported runtime input rather than unfinished implementation branches.
 
 ## Suggested Work Order
 
@@ -109,7 +115,7 @@ This branch will take the remaining review findings in order of implementation e
    Medium, production-dead but test refactoring is needed.
 7. Done: Callback runner abstract contract.
    Medium, lifecycle-sensitive.
-8. Unsupported exact Firth and SPA compute branches.
+8. Done: Unsupported exact Firth and SPA compute branches.
    Medium, changes lower-level behavior and tests currently assert failures.
 9. Native callback bounded shutdown.
    Medium, important but concurrency-sensitive.
@@ -319,11 +325,13 @@ Recommendation: delete unused helpers or move compatibility-only functions behin
 
 ### P2. Public-ish unsupported binary correction paths still contain `NotImplementedError`
 
-Exact Firth and SPA are rejected by config:
+Status: done in `codebase-review-cleanups`. Direct runtime compute paths now validate unsupported exact Firth/SPA plans through a shared `ValueError` boundary instead of carrying `NotImplementedError` branches. Config-level rejection remains the primary user-facing guard.
+
+Original finding: exact Firth and SPA were rejected by config:
 
 - `src/g/interface/config.py:1024-1032`
 
-But compute modules still contain branches that raise `NotImplementedError`:
+But compute modules still contained branches that raised `NotImplementedError`:
 
 - `src/g/compute/regenie2_binary/correction.py:31-36`
 - `src/g/compute/regenie2_binary/variant_major_correction.py:133-140`
