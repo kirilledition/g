@@ -13,8 +13,10 @@ It focuses on three performance items:
 - extending the binary benchmark harness so Firth batching and capacity choices
   are measured across trait counts, addressed in `bench/multi-binary-firth-hot`.
 
-The SLURM GPU smoke benchmark has passed for the completed batching work. The
-full GPU benchmark remains pending.
+SLURM GPU validation has passed for the completed batching work: the default
+smoke benchmark, default full binary-hot benchmark, and a targeted two-trait
+variant-major plus packed8 smoke all ran on `landau`. A larger 1/2/4/8-trait
+matrix remains optional follow-up for deeper tuning.
 
 ## Current State
 
@@ -47,8 +49,8 @@ statistics back to trait-major `[traits, variants]` arrays.
    multi-score result.
 4. Done in `bench/multi-binary-firth-hot`: extend benchmark coverage for
    multi-binary Firth trait counts, candidate capacities, and Firth batch sizes.
-5. Run GPU benchmarks to measure compile time, peak memory, and runtime of the
-   flattened multi-lane path.
+5. Done for the default full benchmark and targeted two-trait smoke: run larger
+   GPU sweeps only if tuning decisions need more data.
 
 The completed single-trait dispatcher is the primitive the multi-binary batching
 work reuses conceptually. Multi-binary batching did not reintroduce per-trait
@@ -243,8 +245,9 @@ buffer-donation warning.
 ## Parallelization
 
 Task 1 prep coverage, Task 2 device-side dispatch, Task 3 multi-binary batching,
-and benchmark harness extension have landed on `main`. Remaining work is full
-GPU benchmark execution and any follow-up tuning suggested by those results.
+benchmark harness extension, and focused GPU validation have landed on `main`.
+Remaining Firth work is only follow-up tuning suggested by future larger
+benchmark sweeps.
 
 - no runtime path may call `count_firth_candidates_on_host`;
 - capacity selection is device-side bounded/overflow dispatch;
@@ -274,8 +277,19 @@ Then run the full binary hot benchmark:
 just slurm-benchmark-regenie2-binary-hot-gpu
 ```
 
+Full default status: passed on `landau` with summary at
+`data/profiles/regenie2_binary_hot_20260606T183223Z/regenie2_binary_hot_summary.json`.
+Headline timings were 54.39s cold finalized, 3.88s hot no-final, and 3.93s
+hot finalized.
+
+Targeted multi-trait status: a two-trait, high-fallback smoke over variant-major
+and packed8 storage passed on `landau` with summary at
+`data/profiles/regenie2_binary_hot_20260606T184618Z/regenie2_binary_hot_summary.json`.
+The summary aggregated 2,000 output rows per two-trait case, and stage timings
+included `firth_candidate_dispatch_plan` with no host-sync timing.
+
 The benchmark workload now supports the multi-binary batching cases needed
-before making a final performance call:
+for deeper tuning sweeps:
 
 - 1, 2, 4, and 8 binary traits;
 - variant-major dosage and packed8 inputs;

@@ -59,17 +59,27 @@ are summarized near the end instead of kept as historical work logs.
 - `git diff --check`: passed after multi-binary approximate Firth batching.
 - `uv run pytest tests/test_regenie_comparison_scripts.py -q -k 'binary_hot'`: 4 passed
   after the binary hot benchmark telemetry fix.
+- `uv run pytest tests/test_regenie_comparison_scripts.py -q -k 'binary_hot'`: 5 passed
+  after multi-trait benchmark output metric aggregation.
 - `uv run ruff check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
-  passed after the binary hot benchmark telemetry fix.
+  passed after the binary hot benchmark telemetry and metric aggregation fixes.
 - `uv run ty check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`:
-  passed after the binary hot benchmark telemetry fix.
+  passed after the binary hot benchmark telemetry and metric aggregation fixes.
 - `XDG_RUNTIME_DIR=/tmp TMPDIR=/tmp just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke`:
   passed on `landau`; summary path
   `data/profiles/regenie2_binary_hot_20260606T182522Z/regenie2_binary_hot_summary.json`.
+- `XDG_RUNTIME_DIR=/tmp TMPDIR=/tmp just slurm-benchmark-regenie2-binary-hot-gpu`:
+  passed on `landau`; summary path
+  `data/profiles/regenie2_binary_hot_20260606T183223Z/regenie2_binary_hot_summary.json`.
+- Targeted two-trait GPU smoke with variant-major plus packed8, high fallback
+  density, `--firth-batch-sizes 32`, and `--firth-candidate-capacities 128`:
+  passed on `landau`; summary path
+  `data/profiles/regenie2_binary_hot_20260606T184618Z/regenie2_binary_hot_summary.json`.
 
 I also fetched `origin` and confirmed the reviewed base matched `origin/main` before the
-cleanup integration. The GPU smoke benchmark ran through SLURM on `landau`; I did not run
-the full GPU benchmark or the full test suite on the head node.
+cleanup integration. The GPU smoke, default full binary-hot benchmark, and targeted
+two-trait GPU smoke ran through SLURM on `landau`; I did not run the full test suite on the
+head node.
 
 ## Severity Guide
 
@@ -307,8 +317,9 @@ Recommended staged plan:
 
 ## Test And Benchmark Gaps
 
-- Packed8 multi-phenotype dispatch has interface and pipeline coverage, but I did not run a
-  GPU benchmark or full parity workload in this review.
+- Packed8 multi-phenotype dispatch has interface and pipeline coverage, and a
+  targeted two-trait packed8 GPU smoke passed. I did not run an exhaustive
+  packed8 parity workload across the full trait/storage/fallback matrix.
 - Firth tests now cover zero-candidate diagnostic preservation, distinct
   per-trait multi-binary approximate Firth candidate masks, packed8
   multi-binary approximate Firth parity, sparse-mask non-expansion, one
@@ -316,8 +327,8 @@ Recommended staged plan:
   failure isolation.
 - The binary hot benchmark harness now supports multi-binary trait-count,
   Firth batch-size, Firth candidate-capacity, storage-mode, and fallback-density
-  sweeps. The SLURM GPU smoke run passed on `landau`; the full benchmark remains
-  pending and should run through SLURM rather than on the head node.
+  sweeps. The SLURM GPU smoke, default full binary-hot benchmark, and targeted
+  two-trait variant-major plus packed8 smoke passed on `landau`.
 - Multi-phenotype resume has focused multi-linear and multi-binary partial-commit coverage
   for the current resume-fast-but-not-minimal behavior; future resume-minimization work
   should add optimization-specific tests.
@@ -377,12 +388,14 @@ work:
 - The binary hot benchmark harness now disables run telemetry for same-process
   synthetic timing trials so process-global logging can be reused while
   per-trial stage timing JSON is still written.
+- The binary hot benchmark harness now aggregates output row, INFO, chunk-count,
+  and byte metrics across multi-trait `RunArtifacts`.
 
 ## Suggested Implementation Order
 
-1. Run the full SLURM GPU binary-hot benchmark before making a final performance
-   call on flattened multi-binary Firth batching.
-2. If explicitly approved, remove preserved archived GWAS-engine code from
+1. If explicitly approved, remove preserved archived GWAS-engine code from
    active `main`, while keeping patched REGENIE intact.
-3. Keep public output statistics float32 unless a future user requirement explicitly asks
+2. Keep public output statistics float32 unless a future user requirement explicitly asks
    for float64 result files.
+3. Run a larger 1/2/4/8-trait GPU benchmark matrix only if deeper Firth tuning
+   decisions need more data.
