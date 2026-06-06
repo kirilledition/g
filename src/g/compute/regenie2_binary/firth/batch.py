@@ -96,13 +96,34 @@ def prepare_firth_candidate_batch(
         firth_batch_size,
     )
     flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
-    flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
     candidate_genotype_matrix_by_variant = jnp.take(
         genotype_matrix_by_variant_float32,
         flat_fallback_indices,
         axis=0,
     )
-    raw_candidate_genotype_matrix_by_variant = candidate_genotype_matrix_by_variant
+    return prepare_firth_candidate_batch_from_raw_candidate_genotypes(
+        chromosome_state=chromosome_state,
+        batch_plan=batch_plan,
+        raw_candidate_genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
+        score_beta=score_beta,
+        sparse_candidate_mask=sparse_candidate_mask,
+        kernel_config=kernel_config,
+    )
+
+
+def prepare_firth_candidate_batch_from_raw_candidate_genotypes(
+    *,
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
+    batch_plan: regenie2_binary_candidate_planning.FirthBatchPlan,
+    raw_candidate_genotype_matrix_by_variant: jax.Array,
+    score_beta: jax.Array,
+    sparse_candidate_mask: jax.Array | None,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+) -> PreparedFirthCandidateBatch:
+    """Prepare fixed-capacity Firth lanes from already-gathered raw candidate genotypes."""
+    flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
+    flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
+    raw_candidate_genotype_matrix_by_variant = jnp.asarray(raw_candidate_genotype_matrix_by_variant, dtype=jnp.float32)
     genotype_flip_result = compute_genotype.build_regenie_flipped_genotypes(raw_candidate_genotype_matrix_by_variant)
     if kernel_config.approximate_firth.use_block_math:
         firth_raw_candidate_genotype_matrix_by_variant = raw_candidate_genotype_matrix_by_variant

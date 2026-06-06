@@ -1730,6 +1730,121 @@ def test_packed8_approximate_firth_binary_chunk_matches_variant_major_dosage() -
     assert_binary_chunk_results_match(variant_major_result, packed_result)
 
 
+def test_packed8_approximate_firth_uses_packed_candidate_correction(monkeypatch: pytest.MonkeyPatch) -> None:
+    chromosome_state = typing.cast("regenie2_binary_state.Regenie2BinaryChromosomeState", object())
+    packed_probability_pairs_by_variant = jnp.asarray(np.zeros((2, 3, 2), dtype=np.uint8))
+    sparse_candidate_mask = jnp.asarray([True, False], dtype=jnp.bool_)
+    dosage_sum = jnp.asarray([1.0, 2.0], dtype=jnp.float32)
+    observation_count = jnp.asarray([3, 3], dtype=jnp.int32)
+    correction_plan = types.BinaryCorrectionPlan(
+        method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+        p_threshold=0.99,
+    )
+    score_result = regenie2_binary_result.Regenie2BinaryScoreChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        extra_code=jnp.asarray(
+            [types.BinaryExtraCode.FIRTH.value, types.BinaryExtraCode.SCORE.value],
+            dtype=jnp.int32,
+        ),
+        valid_mask=jnp.asarray([True, True], dtype=jnp.bool_),
+    )
+    corrected_result = regenie2_binary_result.expand_score_result_with_empty_firth_diagnostics(score_result)
+    calls: dict[str, object] = {}
+
+    def compute_score(
+        *,
+        chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
+        packed_probability_pairs_by_variant: jax.Array,
+        correction_plan: types.BinaryCorrectionPlan,
+        kernel_config: regenie2_binary_config.BinaryKernelConfig,
+        dosage_sum: jax.Array | None,
+        observation_count: jax.Array | None,
+        score_dtype: types.FloatingPointDtype,
+    ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
+        calls["score_chromosome_state"] = chromosome_state
+        calls["score_packed_probability_pairs_by_variant"] = packed_probability_pairs_by_variant
+        calls["score_correction_plan"] = correction_plan
+        calls["score_kernel_config"] = kernel_config
+        calls["score_dosage_sum"] = dosage_sum
+        calls["score_observation_count"] = observation_count
+        calls["score_dtype"] = score_dtype
+        return score_result
+
+    def apply_packed_candidate_correction(
+        *,
+        chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
+        packed_probability_pairs_by_variant: jax.Array,
+        result: regenie2_binary_result.Regenie2BinaryScoreChunkResult,
+        correction_plan: types.BinaryCorrectionPlan,
+        sparse_candidate_mask: jax.Array | None,
+        kernel_config: regenie2_binary_config.BinaryKernelConfig,
+        score_dtype: types.FloatingPointDtype,
+        stage_duration_recorder: regenie2_binary.StageDurationRecorder | None,
+    ) -> regenie2_binary_result.Regenie2BinaryChunkResult:
+        calls["correction_chromosome_state"] = chromosome_state
+        calls["correction_packed_probability_pairs_by_variant"] = packed_probability_pairs_by_variant
+        calls["correction_result"] = result
+        calls["correction_plan"] = correction_plan
+        calls["correction_sparse_candidate_mask"] = sparse_candidate_mask
+        calls["correction_kernel_config"] = kernel_config
+        calls["correction_score_dtype"] = score_dtype
+        calls["correction_stage_duration_recorder"] = stage_duration_recorder
+        return corrected_result
+
+    def fail_full_chunk_decode(*arguments: object, **keyword_arguments: object) -> jax.Array:
+        del arguments, keyword_arguments
+        raise AssertionError("packed approximate-Firth path should not decode a full chunk outside the score kernel")
+
+    def fail_variant_major_chunk(*arguments: object, **keyword_arguments: object) -> jax.Array:
+        del arguments, keyword_arguments
+        raise AssertionError("packed approximate-Firth path should not route through full variant-major correction")
+
+    monkeypatch.setattr(
+        regenie2_binary,
+        "compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8",
+        compute_score,
+    )
+    monkeypatch.setattr(
+        regenie2_binary_variant_major_correction,
+        "apply_device_candidate_corrections_packed8_variant_major",
+        apply_packed_candidate_correction,
+    )
+    monkeypatch.setattr(
+        regenie2_binary,
+        "decode_packed8_probability_pairs_to_variant_major_dosage_donating_input",
+        fail_full_chunk_decode,
+    )
+    monkeypatch.setattr(
+        regenie2_binary,
+        "compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
+        fail_variant_major_chunk,
+    )
+
+    observed_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_packed8(
+        chromosome_state=chromosome_state,
+        packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+        correction_plan=correction_plan,
+        sparse_candidate_mask=sparse_candidate_mask,
+        dosage_sum=dosage_sum,
+        observation_count=observation_count,
+    )
+
+    assert observed_result is corrected_result
+    assert calls["score_chromosome_state"] is chromosome_state
+    assert calls["score_packed_probability_pairs_by_variant"] is packed_probability_pairs_by_variant
+    assert calls["score_correction_plan"] is correction_plan
+    assert calls["score_dosage_sum"] is dosage_sum
+    assert calls["score_observation_count"] is observation_count
+    assert calls["correction_chromosome_state"] is chromosome_state
+    assert calls["correction_packed_probability_pairs_by_variant"] is packed_probability_pairs_by_variant
+    assert calls["correction_result"] is score_result
+    assert calls["correction_plan"] is correction_plan
+    assert calls["correction_sparse_candidate_mask"] is sparse_candidate_mask
+
+
 def test_variant_major_score_only_bt_matches_sample_major_with_covariates_loco_and_edge_genotypes() -> None:
     fixture = build_variant_major_parity_fixture()
     correction_plan = types.BinaryCorrectionPlan()

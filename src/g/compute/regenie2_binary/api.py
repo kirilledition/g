@@ -202,6 +202,35 @@ def decode_packed8_probability_pairs_to_variant_major_dosage_donating_input(
 @functools.partial(
     jax.jit,
     static_argnames=("correction_plan", "kernel_config", "score_dtype"),
+)
+def compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8(
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
+    packed_probability_pairs_by_variant: jax.Array,
+    correction_plan: g_types.BinaryCorrectionPlan = g_types.BinaryCorrectionPlan(),
+    kernel_config: regenie2_binary_config.BinaryKernelConfig = regenie2_binary_config.DEFAULT_BINARY_KERNEL_CONFIG,
+    dosage_sum: jax.Array | None = None,
+    observation_count: jax.Array | None = None,
+    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
+    """Decode packed8 probabilities on device and compute binary score statistics."""
+    genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
+        packed_probability_pairs_by_variant,
+        score_dtype,
+    )
+    return regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        correction_plan=correction_plan,
+        kernel_config=kernel_config,
+        dosage_sum=dosage_sum,
+        observation_count=observation_count,
+        score_dtype=score_dtype,
+    )
+
+
+@functools.partial(
+    jax.jit,
+    static_argnames=("correction_plan", "kernel_config", "score_dtype"),
     donate_argnames=("packed_probability_pairs_by_variant", "dosage_sum", "observation_count"),
 )
 def compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8_donating_inputs(
@@ -214,13 +243,9 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8_donat
     score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
 ) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
     """Decode packed8 probabilities on device and compute score-only binary statistics."""
-    genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
-        packed_probability_pairs_by_variant,
-        score_dtype,
-    )
-    return regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
+    return compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8(
         chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
         correction_plan=correction_plan,
         kernel_config=kernel_config,
         dosage_sum=dosage_sum,
@@ -356,8 +381,8 @@ def compute_regenie2_binary_chunk_from_chromosome_state_packed8(
     """Compute binary association from packed8 BGEN probability pairs.
 
     Score-test and candidate correction work remains on the JAX device. The
-    packed probability rows are decoded to dosage on device before reusing the
-    canonical variant-major score and approximate-Firth kernels.
+    score kernel decodes all variants on device, then Firth correction gathers
+    only packed candidate rows and decodes those candidate genotypes on device.
     """
     if correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
         return compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8_donating_inputs(
@@ -369,20 +394,24 @@ def compute_regenie2_binary_chunk_from_chromosome_state_packed8(
             observation_count=observation_count,
             score_dtype=score_dtype,
         )
-    genotype_matrix_by_variant = decode_packed8_probability_pairs_to_variant_major_dosage_donating_input(
-        packed_probability_pairs_by_variant,
-        score_dtype,
-    )
-    return compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+    score_test_result = compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8(
         chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        correction_plan=correction_plan,
+        kernel_config=kernel_config,
+        dosage_sum=dosage_sum,
+        observation_count=observation_count,
+        packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+        score_dtype=score_dtype,
+    )
+    return regenie2_binary_variant_major_correction.apply_device_candidate_corrections_packed8_variant_major(
+        chromosome_state=chromosome_state,
+        packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+        result=score_test_result,
         correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
         kernel_config=kernel_config,
         score_dtype=score_dtype,
         stage_duration_recorder=stage_duration_recorder,
-        dosage_sum=dosage_sum,
-        observation_count=observation_count,
     )
 
 
