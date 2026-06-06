@@ -690,9 +690,26 @@ def test_firth_candidate_host_sync_records_profile_stage() -> None:
         stage_duration_recorder=record_stage_duration,
     )
 
-    assert isinstance(result, regenie2_binary_result.Regenie2BinaryChunkResult)
+    result = require_binary_chunk_result(result)
     assert [stage_name for stage_name, _ in recorded_stages] == ["firth_candidate_count_host_sync"]
     assert isinstance(recorded_stages[0][1], float)
+    np.testing.assert_allclose(np.asarray(result.beta), np.asarray(score_result.beta))
+    np.testing.assert_allclose(np.asarray(result.standard_error), np.asarray(score_result.standard_error))
+    np.testing.assert_allclose(np.asarray(result.chi_squared), np.asarray(score_result.chi_squared))
+    np.testing.assert_allclose(np.asarray(result.log10_p_value), np.asarray(score_result.log10_p_value))
+    np.testing.assert_array_equal(np.asarray(result.extra_code), np.asarray(score_result.extra_code))
+    np.testing.assert_array_equal(np.asarray(result.valid_mask), np.asarray(score_result.valid_mask))
+    np.testing.assert_array_equal(np.asarray(result.firth_iteration_count), np.zeros((3,), dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(result.firth_failure_code), np.zeros((3,), dtype=np.int32))
+    np.testing.assert_array_equal(
+        np.asarray(result.firth_convergence_reason_code),
+        np.zeros((3,), dtype=np.int32),
+    )
+    np.testing.assert_array_equal(np.asarray(result.firth_correction_code), np.zeros((3,), dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(result.firth_sparse_correction_mask), np.zeros((3,), dtype=bool))
+    np.testing.assert_array_equal(np.asarray(result.pseudo_firth_iteration_count), np.zeros((3,), dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(result.nr_zero_start_iteration_count), np.zeros((3,), dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(result.nr_warm_start_iteration_count), np.zeros((3,), dtype=np.int32))
 
 
 def test_null_logistic_kernel_config_retraces_same_shape_without_cache_clear() -> None:
@@ -1074,6 +1091,185 @@ def test_multi_trait_approximate_firth_matches_stacked_single_trait_results(firt
     np.testing.assert_array_equal(
         np.asarray(require_multi_binary_chunk_result(multi_result).firth_failure_code),
         np.stack([np.asarray(result.firth_failure_code) for result in single_results], axis=0),
+    )
+
+
+def test_multi_trait_approximate_firth_variant_major_handles_distinct_candidate_masks() -> None:
+    covariate_matrix = jnp.asarray(
+        [
+            [1.0, -1.20],
+            [1.0, -0.98],
+            [1.0, -0.76],
+            [1.0, -0.55],
+            [1.0, -0.33],
+            [1.0, -0.11],
+            [1.0, 0.11],
+            [1.0, 0.33],
+            [1.0, 0.55],
+            [1.0, 0.76],
+            [1.0, 0.98],
+            [1.0, 1.20],
+        ],
+        dtype=jnp.float32,
+    )
+    phenotype_matrix = jnp.asarray(
+        [
+            [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        ],
+        dtype=jnp.float32,
+    )
+    genotype_matrix = jnp.asarray(
+        [
+            [1.0, 2.0, 2.0, 0.0, 0.0],
+            [2.0, 0.0, 2.0, 2.0, 1.0],
+            [0.0, 0.0, 0.0, 1.0, 1.0],
+            [1.0, 2.0, 2.0, 1.0, 2.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [1.0, 1.0, 2.0, 1.0, 1.0],
+            [1.0, 0.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0, 2.0, 0.0],
+            [0.0, 2.0, 1.0, 2.0, 1.0],
+            [1.0, 0.0, 1.0, 1.0, 2.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0, 2.0, 1.0],
+        ],
+        dtype=jnp.float32,
+    )
+    loco_offset = jnp.linspace(-0.1, 0.1, covariate_matrix.shape[0], dtype=jnp.float32)
+    loco_offset_matrix = jnp.stack([loco_offset, loco_offset], axis=0)
+    genotype_matrix_by_variant = jnp.transpose(genotype_matrix)
+    correction_plan = types.BinaryCorrectionPlan(
+        method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+        p_threshold=0.50,
+        firth_se=True,
+    )
+    multi_state = regenie2_binary.prepare_regenie2_multi_binary_state(
+        covariate_matrix,
+        phenotype_matrix,
+    )
+    multi_chromosome_state = regenie2_binary.prepare_regenie2_multi_binary_chromosome_state(
+        multi_state,
+        loco_offset_matrix,
+        correction_plan,
+        build_default_binary_kernel_config(),
+    )
+    multi_result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
+        chromosome_state=multi_chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        correction_plan=correction_plan,
+        kernel_config=build_default_binary_kernel_config(),
+    )
+    multi_result = require_multi_binary_chunk_result(multi_result)
+
+    single_score_results: list[regenie2_binary_result.Regenie2BinaryScoreChunkResult] = []
+    single_results: list[regenie2_binary_result.Regenie2BinaryChunkResult] = []
+    for trait_index in range(phenotype_matrix.shape[0]):
+        single_state = regenie2_binary.prepare_regenie2_binary_state(
+            covariate_matrix,
+            phenotype_matrix[trait_index],
+        )
+        single_chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
+            single_state,
+            loco_offset_matrix[trait_index],
+            correction_plan,
+            build_default_binary_kernel_config(),
+        )
+        single_score_results.append(
+            regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
+                chromosome_state=single_chromosome_state,
+                genotype_matrix_by_variant=genotype_matrix_by_variant,
+                correction_plan=correction_plan,
+                kernel_config=build_default_binary_kernel_config(),
+            )
+        )
+        single_result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+            chromosome_state=single_chromosome_state,
+            genotype_matrix_by_variant=genotype_matrix_by_variant,
+            correction_plan=correction_plan,
+            kernel_config=build_default_binary_kernel_config(),
+        )
+        single_results.append(require_binary_chunk_result(single_result))
+
+    score_extra_code_matrix = np.stack([np.asarray(result.extra_code) for result in single_score_results], axis=0)
+    assert not np.array_equal(score_extra_code_matrix[0], score_extra_code_matrix[1])
+    np.testing.assert_array_equal(
+        score_extra_code_matrix == types.BinaryExtraCode.FIRTH.value,
+        np.asarray(
+            [
+                [True, True, False, True, False],
+                [True, False, False, False, True],
+            ],
+            dtype=bool,
+        ),
+    )
+    np.testing.assert_allclose(
+        np.asarray(multi_result.beta),
+        np.stack([np.asarray(result.beta) for result in single_results], axis=0),
+        rtol=1.0e-4,
+        atol=1.0e-4,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        np.asarray(multi_result.standard_error),
+        np.stack([np.asarray(result.standard_error) for result in single_results], axis=0),
+        rtol=1.0e-4,
+        atol=1.0e-4,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        np.asarray(multi_result.chi_squared),
+        np.stack([np.asarray(result.chi_squared) for result in single_results], axis=0),
+        rtol=1.0e-4,
+        atol=1.0e-4,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        np.asarray(multi_result.log10_p_value),
+        np.stack([np.asarray(result.log10_p_value) for result in single_results], axis=0),
+        rtol=1.0e-4,
+        atol=1.0e-4,
+        equal_nan=True,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(multi_result.extra_code),
+        np.stack([np.asarray(result.extra_code) for result in single_results], axis=0),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(multi_result.valid_mask),
+        np.stack([np.asarray(result.valid_mask) for result in single_results], axis=0),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(multi_result.firth_iteration_count),
+        np.stack([np.asarray(result.firth_iteration_count) for result in single_results], axis=0),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(multi_result.firth_failure_code),
+        np.stack([np.asarray(result.firth_failure_code) for result in single_results], axis=0),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(multi_result.firth_convergence_reason_code),
+        np.stack([np.asarray(result.firth_convergence_reason_code) for result in single_results], axis=0),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(multi_result.firth_correction_code),
+        np.stack([np.asarray(result.firth_correction_code) for result in single_results], axis=0),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(multi_result.firth_sparse_correction_mask),
+        np.stack([np.asarray(result.firth_sparse_correction_mask) for result in single_results], axis=0),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(multi_result.pseudo_firth_iteration_count),
+        np.stack([np.asarray(result.pseudo_firth_iteration_count) for result in single_results], axis=0),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(multi_result.nr_zero_start_iteration_count),
+        np.stack([np.asarray(result.nr_zero_start_iteration_count) for result in single_results], axis=0),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(multi_result.nr_warm_start_iteration_count),
+        np.stack([np.asarray(result.nr_warm_start_iteration_count) for result in single_results], axis=0),
     )
 
 

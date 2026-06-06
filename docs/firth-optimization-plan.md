@@ -61,6 +61,18 @@ Add CPU-safe tests before optimizing:
 - packed8 approximate Firth multi-binary output matches decoded variant-major
   dosage output.
 
+Current prep coverage now strengthens the zero-candidate diagnostic contract and
+adds a variant-major multi-binary approximate Firth parity test whose traits
+have different score-stage Firth candidate masks. Existing tests already cover
+bounded/overflow equivalence, sparse masks, single-binary packed8 approximate
+Firth parity, and failed Firth candidate labeling.
+
+Remaining gap: a lightweight passing null-Firth failure-isolation regression was
+not added. Local inspection found that vectorized multi-trait null-Firth
+preparation can still couple a failing trait with another trait in some small
+fixtures, so this should be handled as a production correctness fix before
+locking the desired isolation behavior in a passing test.
+
 Expected files:
 
 - `tests/test_regenie2_binary.py`
@@ -240,4 +252,3 @@ Recommended benchmark extension:
 - add `--pheno-col-list` / multi-trait support to `scripts/benchmark_regenie2_binary_hot.py`;
 - expose `--firth-candidate-capacity` so bounded/overflow behavior can be
   profiled directly.
-
