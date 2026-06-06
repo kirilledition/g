@@ -137,12 +137,11 @@ assert _core.initialize_logging(
 ) is True
 assert _core.initialize_logging(log_filter="debug", log_file=log_path, log_stderr=False) is False
 logging.warning("python warning reaches tracing")
-assert _core.hello_from_bin() == "Hello from g!"
 _core.shutdown_logging()
 with open(log_path, encoding="utf-8") as log_file:
     log_text = log_file.read()
 assert "python warning reaches tracing" in log_text
-assert "hello_from_bin called" in log_text
+assert "logging initialized" in log_text
 assert os.path.exists(trace_path)
 chunks = _core.plan_genotype_chunks(12, 5, [0, 3, 9, 12], None, [5])
 assert [(chunk.variant_start_index, chunk.variant_stop_index) for chunk in chunks] == [(0, 3), (3, 5), (9, 10), (10, 12)]

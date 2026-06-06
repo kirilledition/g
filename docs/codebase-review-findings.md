@@ -106,6 +106,19 @@ Implementation learnings:
 - Current Rust INFO score behavior uses the observed genotype count in the expected variance denominator, even though imputed dosage square sums account for all selected samples. This is now covered as a characterization test.
 - Main's msgspec runtime config conversion supersedes the older manual conversion helpers. The cleanup branch now keeps that path and only preserves the still-relevant explicit-option and validation tests.
 
+Additional cleanup branch:
+
+Worktree: `/mnt/beegfs/kirill/Projects/g-worktrees/review-easy-nonconfig`
+Branch: `cleanup/review-easy-nonconfig`
+
+Completed in this branch:
+
+- Removed the scaffold `hello_from_bin` native binding, Python stub, and tests.
+- Switched native logging tests to assert the real Rust logging initialization event.
+- Replaced trusted BGEN selected-sample count saturation with an explicit range error helper.
+- Added direct Rust coverage for trusted selected-sample count overflow.
+- Added an implementation comment for the observed-count INFO denominator contract.
+
 ## Suggested Work Order
 
 1. Done: Fix the Python config `None` explicit-option bug.
@@ -458,7 +471,7 @@ Recommendation: keep the hot loops, but refactor the surrounding orchestration i
 
 ### P2. INFO score denominator needs an explicit statistical contract
 
-Status: characterized in `codebase-review-cleanups`. A Rust unit test now locks the current behavior: INFO uses the observed-count denominator when missing genotypes are present. No statistical formula change was made.
+Status: characterized in `codebase-review-cleanups` and documented in `cleanup/review-easy-nonconfig`. A Rust unit test now locks the current behavior, and the implementation comments state that INFO uses the observed-count denominator when missing genotypes are present. No statistical formula change was made.
 
 Original finding: Rust preprocessing computed an imputed dosage square sum using missing-count imputation:
 
@@ -470,11 +483,11 @@ But INFO score used an expected variance denominator based on observed count:
 
 Impact: this may be intentional, but the contract is not obvious. If the intended INFO metric is after mean-imputation over all selected samples, the denominator may need selected sample count instead of observed count.
 
-Recommendation: verify against REGENIE or the desired statistical definition with missing genotypes. Add a focused test with known missingness where the expected INFO differs between observed-only and imputed-denominator definitions.
+Recommendation: only change the formula after verifying against REGENIE or the desired statistical definition with missing genotypes.
 
 ### P2. Rust sample-count conversion silently saturates in one preprocessing path
 
-Status: done in `codebase-review-cleanups`. The shared Rust stats builder now rejects selected sample counts that exceed the existing `i32` statistics representation, and BGEN preprocessing paths surface that as a range error.
+Status: done in `codebase-review-cleanups` and extended in `cleanup/review-easy-nonconfig`. The shared Rust stats builder now rejects selected sample counts that exceed the existing `i32` statistics representation, and trusted BGEN fast paths now use the same explicit range-error policy instead of saturating.
 
 Original finding: missing count used `i32::try_from(selected_sample_count).unwrap_or(i32::MAX)`:
 
@@ -483,6 +496,16 @@ Original finding: missing count used `i32::try_from(selected_sample_count).unwra
 Impact: absurdly large sample counts are not realistic today, but silent saturation is the wrong failure mode in statistical code. If limits are exceeded, output statistics become wrong instead of failing loudly.
 
 Recommendation: return an error on sample counts that exceed the supported statistics representation, or move counts to a wider type consistently.
+
+### P3. Demo native binding is still exported
+
+Status: done in `cleanup/review-easy-nonconfig`. The scaffold `hello_from_bin` binding was removed from the Rust module registration, Python stub, and tests. Native logging tests now assert the real `logging initialized` event instead.
+
+Original finding: the production extension exposed a demo health-check function even though it was not part of the app surface.
+
+Impact: harmless at runtime, but it made the public native API look like it still contained scaffold code.
+
+Recommendation: keep smoke tests anchored to real public APIs.
 
 ### P3. TOML serialization only handles scalars
 

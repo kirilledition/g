@@ -229,14 +229,14 @@ pub fn build_empty_chunk_stats(selected_variant_count: usize, has_missing_values
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
-    __m256, _mm256_add_ps, _mm256_and_ps, _mm256_cmp_ps, _mm256_loadu_ps, _mm256_movemask_ps, _mm256_mul_ps,
-    _mm256_set1_ps, _mm256_setzero_ps, _mm256_storeu_ps, _CMP_GT_OQ, _CMP_LT_OQ, _CMP_ORD_Q,
+    __m256, _CMP_GT_OQ, _CMP_LT_OQ, _CMP_ORD_Q, _mm256_add_ps, _mm256_and_ps, _mm256_cmp_ps, _mm256_loadu_ps,
+    _mm256_movemask_ps, _mm256_mul_ps, _mm256_set1_ps, _mm256_setzero_ps, _mm256_storeu_ps,
 };
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m256, _mm256_add_ps, _mm256_and_ps, _mm256_cmp_ps, _mm256_loadu_ps, _mm256_movemask_ps, _mm256_mul_ps,
-    _mm256_set1_ps, _mm256_setzero_ps, _mm256_storeu_ps, _CMP_GT_OQ, _CMP_LT_OQ, _CMP_ORD_Q,
+    __m256, _CMP_GT_OQ, _CMP_LT_OQ, _CMP_ORD_Q, _mm256_add_ps, _mm256_and_ps, _mm256_cmp_ps, _mm256_loadu_ps,
+    _mm256_movemask_ps, _mm256_mul_ps, _mm256_set1_ps, _mm256_setzero_ps, _mm256_storeu_ps,
 };
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -357,6 +357,9 @@ pub fn build_chunk_stats_from_summaries(
         let allele_frequency = dosage_mean / 2.0;
         let variance_numerator =
             (dosage_square_sum[variant_index] - (dosage_sum[variant_index] * dosage_mean)).max(0.0);
+        // INFO is currently defined on observed genotype calls. Missing calls are
+        // mean-imputed for downstream dosage sums, but not for the expected
+        // Hardy-Weinberg variance denominator.
         let expected_variance_numerator = count_float * 2.0 * allele_frequency * (1.0 - allele_frequency);
         let current_info_score = if expected_variance_numerator > 0.0 {
             Some((variance_numerator / expected_variance_numerator).clamp(0.0, 1.0))

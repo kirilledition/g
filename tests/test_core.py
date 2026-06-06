@@ -22,11 +22,6 @@ def run_logging_subprocess(script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_hello_from_bin_returns_expected_message() -> None:
-    """Ensure the extension module exports a simple health-check string."""
-    assert _core.hello_from_bin() == "Hello from g!"
-
-
 def test_initialize_logging_is_idempotent_and_writes_python_and_rust_jsonl(tmp_path: Path) -> None:
     log_path = tmp_path / "g.jsonl"
 
@@ -39,7 +34,6 @@ def test_initialize_logging_is_idempotent_and_writes_python_and_rust_jsonl(tmp_p
                 'first_result = _core.initialize_logging(log_filter="info", log_file=log_path, log_stderr=False)',
                 'second_result = _core.initialize_logging(log_filter="debug", log_file=log_path, log_stderr=False)',
                 'logging.warning("python warning reaches tracing")',
-                "_core.hello_from_bin()",
                 "_core.shutdown_logging()",
                 "print(first_result, second_result)",
             ]
@@ -52,7 +46,7 @@ def test_initialize_logging_is_idempotent_and_writes_python_and_rust_jsonl(tmp_p
     assert completed_process.stdout.strip() == "True False"
     assert records
     assert "python warning reaches tracing" in log_text
-    assert "hello_from_bin called" in log_text
+    assert "logging initialized" in log_text
 
 
 def test_initialize_logging_defaults_to_info_filter(tmp_path: Path) -> None:
@@ -65,7 +59,6 @@ def test_initialize_logging_defaults_to_info_filter(tmp_path: Path) -> None:
                 "from g import _core",
                 f"log_path = {str(log_path)!r}",
                 "_core.initialize_logging(log_file=log_path, log_stderr=False)",
-                "_core.hello_from_bin()",
                 'logging.warning("default warning is visible")',
                 "_core.shutdown_logging()",
             ]
@@ -77,7 +70,7 @@ def test_initialize_logging_defaults_to_info_filter(tmp_path: Path) -> None:
 
     assert records
     assert "default warning is visible" in log_text
-    assert "hello_from_bin called" in log_text
+    assert "logging initialized" in log_text
 
 
 def test_plan_genotype_chunks_splits_by_boundaries_and_resume_state() -> None:

@@ -25,7 +25,7 @@ mod tests {
         Python::attach(|py| {
             let module = PyModule::new(py, "_core_test")?;
             super::_core(&module)?;
-            assert!(module.hasattr("hello_from_bin")?);
+            assert!(module.hasattr("plan_genotype_chunks")?);
             Ok(())
         })
     }
