@@ -13,7 +13,8 @@ use crate::genotype::preprocess;
 
 use super::decode::{
     decode_tile_variant_count, decode_variant_dosage_tile_into_row_major_matrix, decode_variant_major_dosage_tile,
-    read_exact_bytes, read_u32_at, u32_to_usize, DosageTileDecodeResult, ThreadScratch, VariantMajorTileStatsMut,
+    read_exact_bytes, read_u32_at, u32_to_usize, DosageTileDecodeResult, ThreadScratch, VariantMajorTileDecodeResult,
+    VariantMajorTileStatsMut,
 };
 use super::error::{convert_bgen_error_to_genotype_error, BgenError};
 use super::format::CompressionType;
@@ -37,6 +38,89 @@ pub struct BgenReaderCore {
     chromosome_boundary_indices: Vec<usize>,
     prepared_sample_selection: Mutex<Option<Arc<SampleSelection>>>,
     profiling: ReaderProfiling,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct VariantMajorReadShape {
+    selected_variant_count: usize,
+    selected_sample_count: usize,
+}
+
+impl VariantMajorReadShape {
+    fn from_selection(sample_selection: &SampleSelection, variant_start: usize, variant_stop: usize) -> Self {
+        Self {
+            selected_variant_count: variant_stop.saturating_sub(variant_start),
+            selected_sample_count: sample_selection.selected_sample_count,
+        }
+    }
+
+    fn empty_chunk_stats(self) -> Option<ChunkStats> {
+        if self.selected_variant_count == 0 {
+            return Some(preprocess::build_empty_chunk_stats(0, false));
+        }
+        if self.selected_sample_count == 0 {
+            return Some(preprocess::build_empty_chunk_stats(self.selected_variant_count, false));
+        }
+        None
+    }
+}
+
+#[derive(Clone, Copy)]
+struct VariantMajorDecodePlan<'a> {
+    profiling: &'a ReaderProfiling,
+    profiling_enabled: bool,
+    decode_tile_variant_count: usize,
+}
+
+#[derive(Clone, Copy)]
+struct VariantMajorDecodeRequest<'a> {
+    sample_selection: &'a SampleSelection,
+    variant_start: usize,
+    output_pointer_address: usize,
+    shape: VariantMajorReadShape,
+    plan: VariantMajorDecodePlan<'a>,
+}
+
+struct VariantMajorStatsBuffers {
+    dosage_sum: Vec<f32>,
+    dosage_square_sum: Vec<f32>,
+    observation_count: Vec<i32>,
+    zero_count: Vec<i32>,
+    nonzero_count: Vec<i32>,
+    homozygous_reference_count: Vec<i32>,
+    heterozygous_count: Vec<i32>,
+    homozygous_alternate_count: Vec<i32>,
+}
+
+impl VariantMajorStatsBuffers {
+    fn new(selected_variant_count: usize) -> Self {
+        Self {
+            dosage_sum: vec![0.0_f32; selected_variant_count],
+            dosage_square_sum: vec![0.0_f32; selected_variant_count],
+            observation_count: vec![0_i32; selected_variant_count],
+            zero_count: vec![0_i32; selected_variant_count],
+            nonzero_count: vec![0_i32; selected_variant_count],
+            homozygous_reference_count: vec![0_i32; selected_variant_count],
+            heterozygous_count: vec![0_i32; selected_variant_count],
+            homozygous_alternate_count: vec![0_i32; selected_variant_count],
+        }
+    }
+
+    fn into_chunk_stats(self, has_missing_values: bool, selected_sample_count: usize) -> Result<ChunkStats, BgenError> {
+        preprocess::build_chunk_stats_from_summaries(
+            self.dosage_sum,
+            self.dosage_square_sum,
+            self.observation_count,
+            self.zero_count,
+            self.nonzero_count,
+            self.homozygous_reference_count,
+            self.heterozygous_count,
+            self.homozygous_alternate_count,
+            has_missing_values,
+            selected_sample_count,
+        )
+        .map_err(|error| BgenError::Range(error.to_string()))
+    }
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -301,7 +385,6 @@ impl BgenReaderCore {
             .map_err(|error| BgenError::Range(error.to_string()))
     }
 
-    #[allow(clippy::too_many_lines)]
     pub fn read_preprocessed_variant_major_dosage_f32_into_address_prepared(
         &self,
         variant_start: usize,
@@ -311,135 +394,27 @@ impl BgenReaderCore {
     ) -> Result<ChunkStats, BgenError> {
         let sample_selection = self.prepared_sample_selection_arc()?;
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
-        let selected_variant_count = variant_stop.saturating_sub(variant_start);
-        let selected_sample_count = sample_selection.selected_sample_count;
-        let expected_output_value_count =
-            selected_sample_count.checked_mul(selected_variant_count).ok_or_else(|| {
-                BgenError::Range("Integer overflow while validating variant-major BGEN output buffer size.".to_string())
-            })?;
-        if output_value_count != expected_output_value_count {
-            return Err(BgenError::Range(format!(
-                "Variant-major output buffer shape mismatch for BGEN dosage read. Expected {expected_output_value_count} float32 values, observed {output_value_count}.",
-            )));
-        }
-        if selected_variant_count == 0 {
-            return Ok(preprocess::build_empty_chunk_stats(0, false));
-        }
-        if selected_sample_count == 0 {
-            return Ok(preprocess::build_empty_chunk_stats(selected_variant_count, false));
+        let read_shape = VariantMajorReadShape::from_selection(&sample_selection, variant_start, variant_stop);
+        validate_variant_major_dosage_output_value_count(read_shape, output_value_count)?;
+        if let Some(empty_chunk_stats) = read_shape.empty_chunk_stats() {
+            return Ok(empty_chunk_stats);
         }
 
-        let profiling = &self.profiling;
-        let profiling_enabled = profiling.is_enabled();
-        profiling.record_selected_sample_count(selected_sample_count);
-        let decode_tile_variant_count = decode_tile_variant_count();
-        let trusted_decode_enabled =
-            self.trusted_no_missing_diploid && self.trusted_no_missing_diploid_validated.load(Ordering::Acquire);
-        let mut dosage_sum = vec![0.0_f32; selected_variant_count];
-        let mut dosage_square_sum = vec![0.0_f32; selected_variant_count];
-        let mut observation_count = vec![0_i32; selected_variant_count];
-        let mut zero_count = vec![0_i32; selected_variant_count];
-        let mut nonzero_count = vec![0_i32; selected_variant_count];
-        let mut homozygous_reference_count = vec![0_i32; selected_variant_count];
-        let mut heterozygous_count = vec![0_i32; selected_variant_count];
-        let mut homozygous_alternate_count = vec![0_i32; selected_variant_count];
-        let decode_results = self.variant_records[variant_start..variant_stop]
-            .par_chunks(decode_tile_variant_count)
-            .zip(dosage_sum.par_chunks_mut(decode_tile_variant_count))
-            .zip(dosage_square_sum.par_chunks_mut(decode_tile_variant_count))
-            .zip(observation_count.par_chunks_mut(decode_tile_variant_count))
-            .zip(zero_count.par_chunks_mut(decode_tile_variant_count))
-            .zip(nonzero_count.par_chunks_mut(decode_tile_variant_count))
-            .zip(homozygous_reference_count.par_chunks_mut(decode_tile_variant_count))
-            .zip(heterozygous_count.par_chunks_mut(decode_tile_variant_count))
-            .zip(homozygous_alternate_count.par_chunks_mut(decode_tile_variant_count))
-            .enumerate()
-            .map_init(
-                ThreadScratch::default,
-                |thread_scratch,
-                 (
-                    tile_index,
-                    (
-                        (
-                            (
-                                (
-                                    (
-                                        (
-                                            ((variant_record_chunk, dosage_sum_chunk), dosage_square_sum_chunk),
-                                            observation_count_chunk,
-                                        ),
-                                        zero_count_chunk,
-                                    ),
-                                    nonzero_count_chunk,
-                                ),
-                                homozygous_reference_count_chunk,
-                            ),
-                            heterozygous_count_chunk,
-                        ),
-                        homozygous_alternate_count_chunk,
-                    ),
-                )| {
-                    let mut tile_stats = VariantMajorTileStatsMut {
-                        dosage_sum: dosage_sum_chunk,
-                        dosage_square_sum: dosage_square_sum_chunk,
-                        observation_count: observation_count_chunk,
-                        zero_count: zero_count_chunk,
-                        nonzero_count: nonzero_count_chunk,
-                        homozygous_reference_count: homozygous_reference_count_chunk,
-                        heterozygous_count: heterozygous_count_chunk,
-                        homozygous_alternate_count: homozygous_alternate_count_chunk,
-                    };
-                    if trusted_decode_enabled {
-                        trusted::decode_trusted_variant_major_dosage_tile(
-                            &self.mmap,
-                            self.compression_type,
-                            self.sample_count,
-                            &sample_selection,
-                            variant_record_chunk,
-                            output_pointer_address,
-                            selected_sample_count,
-                            tile_index * decode_tile_variant_count,
-                            profiling_enabled,
-                            &mut tile_stats,
-                            thread_scratch,
-                        )
-                    } else {
-                        decode_variant_major_dosage_tile(
-                            &self.mmap,
-                            self.compression_type,
-                            self.sample_count,
-                            &sample_selection,
-                            variant_record_chunk,
-                            output_pointer_address,
-                            selected_sample_count,
-                            tile_index * decode_tile_variant_count,
-                            profiling_enabled,
-                            trusted_decode_enabled,
-                            &mut tile_stats,
-                            thread_scratch,
-                        )
-                    }
-                },
-            )
-            .collect::<Result<Vec<_>, BgenError>>()?;
-        let mut has_missing_values = false;
-        for decode_result in decode_results {
-            profiling.merge_thread_local_snapshot(&decode_result.profile_snapshot);
-            has_missing_values |= decode_result.has_missing_values;
-        }
-        preprocess::build_chunk_stats_from_summaries(
-            dosage_sum,
-            dosage_square_sum,
-            observation_count,
-            zero_count,
-            nonzero_count,
-            homozygous_reference_count,
-            heterozygous_count,
-            homozygous_alternate_count,
-            has_missing_values,
-            selected_sample_count,
-        )
-        .map_err(|error| BgenError::Range(error.to_string()))
+        let decode_request = VariantMajorDecodeRequest {
+            sample_selection: &sample_selection,
+            variant_start,
+            output_pointer_address,
+            shape: read_shape,
+            plan: build_variant_major_decode_plan(&self.profiling, read_shape.selected_sample_count),
+        };
+        let trusted_decode_enabled = self.trusted_no_missing_diploid_decode_enabled();
+        let mut stats_buffers = VariantMajorStatsBuffers::new(read_shape.selected_variant_count);
+        let has_missing_values = self.decode_preprocessed_variant_major_dosage_tiles(
+            decode_request,
+            &mut stats_buffers,
+            trusted_decode_enabled,
+        )?;
+        stats_buffers.into_chunk_stats(has_missing_values, read_shape.selected_sample_count)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -585,6 +560,100 @@ impl BgenReaderCore {
         })
     }
 
+    fn trusted_no_missing_diploid_decode_enabled(&self) -> bool {
+        self.trusted_no_missing_diploid && self.trusted_no_missing_diploid_validated.load(Ordering::Acquire)
+    }
+
+    fn decode_preprocessed_variant_major_dosage_tiles(
+        &self,
+        request: VariantMajorDecodeRequest<'_>,
+        stats_buffers: &mut VariantMajorStatsBuffers,
+        trusted_decode_enabled: bool,
+    ) -> Result<bool, BgenError> {
+        let decode_tile_variant_count = request.plan.decode_tile_variant_count;
+        let decode_results = self.variant_records
+            [request.variant_start..request.variant_start + request.shape.selected_variant_count]
+            .par_chunks(decode_tile_variant_count)
+            .zip(stats_buffers.dosage_sum.par_chunks_mut(decode_tile_variant_count))
+            .zip(stats_buffers.dosage_square_sum.par_chunks_mut(decode_tile_variant_count))
+            .zip(stats_buffers.observation_count.par_chunks_mut(decode_tile_variant_count))
+            .zip(stats_buffers.zero_count.par_chunks_mut(decode_tile_variant_count))
+            .zip(stats_buffers.nonzero_count.par_chunks_mut(decode_tile_variant_count))
+            .zip(stats_buffers.homozygous_reference_count.par_chunks_mut(decode_tile_variant_count))
+            .zip(stats_buffers.heterozygous_count.par_chunks_mut(decode_tile_variant_count))
+            .zip(stats_buffers.homozygous_alternate_count.par_chunks_mut(decode_tile_variant_count))
+            .enumerate()
+            .map_init(
+                ThreadScratch::default,
+                |thread_scratch,
+                 (
+                    tile_index,
+                    (
+                        (
+                            (
+                                (
+                                    (
+                                        (
+                                            ((variant_record_chunk, dosage_sum_chunk), dosage_square_sum_chunk),
+                                            observation_count_chunk,
+                                        ),
+                                        zero_count_chunk,
+                                    ),
+                                    nonzero_count_chunk,
+                                ),
+                                homozygous_reference_count_chunk,
+                            ),
+                            heterozygous_count_chunk,
+                        ),
+                        homozygous_alternate_count_chunk,
+                    ),
+                )| {
+                    let mut tile_stats = variant_major_tile_stats_mut(
+                        dosage_sum_chunk,
+                        dosage_square_sum_chunk,
+                        observation_count_chunk,
+                        zero_count_chunk,
+                        nonzero_count_chunk,
+                        homozygous_reference_count_chunk,
+                        heterozygous_count_chunk,
+                        homozygous_alternate_count_chunk,
+                    );
+                    if trusted_decode_enabled {
+                        trusted::decode_trusted_variant_major_dosage_tile(
+                            &self.mmap,
+                            self.compression_type,
+                            self.sample_count,
+                            request.sample_selection,
+                            variant_record_chunk,
+                            request.output_pointer_address,
+                            request.shape.selected_sample_count,
+                            tile_index * decode_tile_variant_count,
+                            request.plan.profiling_enabled,
+                            &mut tile_stats,
+                            thread_scratch,
+                        )
+                    } else {
+                        decode_variant_major_dosage_tile(
+                            &self.mmap,
+                            self.compression_type,
+                            self.sample_count,
+                            request.sample_selection,
+                            variant_record_chunk,
+                            request.output_pointer_address,
+                            request.shape.selected_sample_count,
+                            tile_index * decode_tile_variant_count,
+                            request.plan.profiling_enabled,
+                            trusted_decode_enabled,
+                            &mut tile_stats,
+                            thread_scratch,
+                        )
+                    }
+                },
+            )
+            .collect::<Result<Vec<_>, BgenError>>()?;
+        Ok(merge_variant_major_decode_results(request.plan.profiling, decode_results))
+    }
+
     fn read_dosage_f32_into_address_with_selection(
         &self,
         sample_selection: &SampleSelection,
@@ -662,6 +731,66 @@ impl BgenReaderCore {
         }
         Ok(selected_dosage_totals)
     }
+}
+
+fn build_variant_major_decode_plan(
+    profiling: &ReaderProfiling,
+    selected_sample_count: usize,
+) -> VariantMajorDecodePlan<'_> {
+    let profiling_enabled = profiling.is_enabled();
+    profiling.record_selected_sample_count(selected_sample_count);
+    VariantMajorDecodePlan { profiling, profiling_enabled, decode_tile_variant_count: decode_tile_variant_count() }
+}
+
+fn validate_variant_major_dosage_output_value_count(
+    read_shape: VariantMajorReadShape,
+    output_value_count: usize,
+) -> Result<(), BgenError> {
+    let expected_output_value_count =
+        read_shape.selected_sample_count.checked_mul(read_shape.selected_variant_count).ok_or_else(|| {
+            BgenError::Range("Integer overflow while validating variant-major BGEN output buffer size.".to_string())
+        })?;
+    if output_value_count != expected_output_value_count {
+        return Err(BgenError::Range(format!(
+            "Variant-major output buffer shape mismatch for BGEN dosage read. Expected {expected_output_value_count} float32 values, observed {output_value_count}.",
+        )));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn variant_major_tile_stats_mut<'a>(
+    dosage_sum: &'a mut [f32],
+    dosage_square_sum: &'a mut [f32],
+    observation_count: &'a mut [i32],
+    zero_count: &'a mut [i32],
+    nonzero_count: &'a mut [i32],
+    homozygous_reference_count: &'a mut [i32],
+    heterozygous_count: &'a mut [i32],
+    homozygous_alternate_count: &'a mut [i32],
+) -> VariantMajorTileStatsMut<'a> {
+    VariantMajorTileStatsMut {
+        dosage_sum,
+        dosage_square_sum,
+        observation_count,
+        zero_count,
+        nonzero_count,
+        homozygous_reference_count,
+        heterozygous_count,
+        homozygous_alternate_count,
+    }
+}
+
+fn merge_variant_major_decode_results(
+    profiling: &ReaderProfiling,
+    decode_results: Vec<VariantMajorTileDecodeResult>,
+) -> bool {
+    let mut has_missing_values = false;
+    for decode_result in decode_results {
+        profiling.merge_thread_local_snapshot(&decode_result.profile_snapshot);
+        has_missing_values |= decode_result.has_missing_values;
+    }
+    has_missing_values
 }
 
 impl GenotypeReaderCore for BgenReaderCore {
