@@ -471,7 +471,10 @@ def test_configure_runtime_sets_native_knobs_and_threads() -> None:
         def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
             calls.append(("threads", thread_count))
 
-    with patch("g.runner.importlib.import_module", return_value=FakeCoreModule()) as mock_import_module:
+    with (
+        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", None),
+        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()) as mock_import_module,
+    ):
         runner.configure_runtime(
             config.GComputeConfig(bgen_decode_tile_variant_count=32),
             config.TraitConfig(threads=4),
@@ -479,6 +482,79 @@ def test_configure_runtime_sets_native_knobs_and_threads() -> None:
 
     mock_import_module.assert_called_once_with("g._core")
     assert calls == [("tile", 32), ("threads", 4)]
+
+
+def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None:
+    calls: list[tuple[str, int | str]] = []
+
+    class FakeCoreModule:
+        def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
+            calls.append(("tile", tile_variant_count))
+
+        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
+            calls.append(("threads", thread_count))
+
+    with (
+        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", 4),
+        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
+    ):
+        runner.configure_runtime(
+            config.GComputeConfig(bgen_decode_tile_variant_count=32),
+            config.TraitConfig(threads=4),
+        )
+
+    assert calls == [("tile", 32)]
+
+
+def test_configure_runtime_warns_on_incompatible_rayon_thread_reconfiguration(caplog: pytest.LogCaptureFixture) -> None:
+    calls: list[tuple[str, int | str]] = []
+
+    class FakeCoreModule:
+        def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
+            calls.append(("tile", tile_variant_count))
+
+        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
+            calls.append(("threads", thread_count))
+
+    with (
+        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", 4),
+        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
+        caplog.at_level("WARNING", logger="g.runner"),
+    ):
+        runner.configure_runtime(
+            config.GComputeConfig(bgen_decode_tile_variant_count=32),
+            config.TraitConfig(threads=8),
+        )
+
+    assert calls == [("tile", 32)]
+    assert "already configured with 4 thread(s)" in caplog.text
+    assert "ignoring requested --threads=8" in caplog.text
+
+
+def test_configure_runtime_warns_when_native_rayon_configuration_fails(caplog: pytest.LogCaptureFixture) -> None:
+    calls: list[tuple[str, int | str]] = []
+
+    class FakeCoreModule:
+        def configure_bgen_decode_tile_variant_count(self, tile_variant_count: int) -> None:
+            calls.append(("tile", tile_variant_count))
+
+        def configure_rayon_global_thread_pool(self, thread_count: int) -> None:
+            calls.append(("threads", thread_count))
+            raise RuntimeError("global pool already initialized")
+
+    with (
+        patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", None),
+        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
+        caplog.at_level("WARNING", logger="g.runner"),
+    ):
+        runner.configure_runtime(
+            config.GComputeConfig(bgen_decode_tile_variant_count=32),
+            config.TraitConfig(threads=4),
+        )
+
+    assert calls == [("tile", 32), ("threads", 4)]
+    assert "Unable to configure Rayon global thread pool for --threads=4" in caplog.text
+    assert "global pool already initialized" in caplog.text
 
 
 def test_runtime_bootstrap_sets_jax_platform_before_setup_import() -> None:

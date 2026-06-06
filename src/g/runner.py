@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import importlib
 import logging
 import time
@@ -95,6 +94,7 @@ class LoggingRuntimePolicy:
 
 CONFIGURED_JAX_RUNTIME_POLICY: JaxRuntimePolicy | None = None
 CONFIGURED_LOGGING_RUNTIME_POLICY: LoggingRuntimePolicy | None = None
+CONFIGURED_RAYON_THREAD_COUNT: int | None = None
 
 
 def load_regenie2_pipeline_module() -> typing.Any:
@@ -261,14 +261,38 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> t
     )
 
 
+def configure_rayon_thread_pool(core_module: typing.Any, thread_count: int) -> None:
+    """Configure Rayon global thread count once and warn on incompatible repeats."""
+    global CONFIGURED_RAYON_THREAD_COUNT
+    if thread_count == CONFIGURED_RAYON_THREAD_COUNT:
+        return
+    if CONFIGURED_RAYON_THREAD_COUNT is not None:
+        logger.warning(
+            "Rayon global thread pool is already configured with %s thread(s); ignoring requested --threads=%s.",
+            CONFIGURED_RAYON_THREAD_COUNT,
+            thread_count,
+        )
+        return
+    try:
+        core_module.configure_rayon_global_thread_pool(thread_count)
+    except RuntimeError as error:
+        logger.warning(
+            "Unable to configure Rayon global thread pool for --threads=%s; "
+            "continuing with existing Rayon settings: %s",
+            thread_count,
+            error,
+        )
+        return
+    CONFIGURED_RAYON_THREAD_COUNT = thread_count
+
+
 def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
     """Apply native runtime knobs before engine execution."""
     core_module = importlib.import_module("g._core")
     logger.debug("Configuring native runtime knobs.")
     core_module.configure_bgen_decode_tile_variant_count(compute_config.bgen_decode_tile_variant_count)
     if trait_config.threads is not None:
-        with contextlib.suppress(RuntimeError):
-            core_module.configure_rayon_global_thread_pool(trait_config.threads)
+        configure_rayon_thread_pool(core_module, trait_config.threads)
 
 
 def initialize_logging(

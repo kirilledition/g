@@ -30,6 +30,7 @@ Completed in this branch:
 - Removed the stale manual `g-trusted-no-missing-diploid` unknown-option exception.
 - Removed legacy config helpers that were superseded by the TOML layer system.
 - Replaced runtime callback chromosome-state assertions with explicit invariant checks.
+- Added warning-only Rayon thread pool configuration tracking.
 
 Verification in this branch:
 
@@ -40,6 +41,9 @@ Verification in this branch:
 - `uv run pytest tests/test_regenie2_pipeline.py -q` - 54 passed after callback invariant cleanup.
 - `uv run ruff check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py` - passed.
 - `uv run ty check src/g/engine/callbacks.py` - passed.
+- `uv run pytest tests/test_api.py -q` - 27 passed after Rayon thread tracking cleanup.
+- `uv run ruff check src/g/runner.py tests/test_api.py` - passed.
+- `uv run ty check src/g/runner.py` - passed.
 
 Implementation learnings:
 
@@ -49,6 +53,7 @@ Implementation learnings:
 - Normal `RegenieConfig.to_toml()` currently emits comma-delimited column-list strings, but `format_toml_value()` is a general helper and now handles list/tuple values safely.
 - The suspected legacy config helpers were genuinely production-dead. The only active references were test assertions that preserved the old helper surface.
 - Callback chromosome state is guaranteed by control flow after `prepare_chromosome_state()`, but an explicit helper preserves the invariant under optimized Python and gives clearer failures if the lifecycle is broken.
+- Rayon thread configuration is process-global. Warning-only handling preserves current repeated-run permissiveness while making ignored incompatible requests visible.
 
 ## Suggested Work Order
 
@@ -66,7 +71,7 @@ This branch will take the remaining review findings in order of implementation e
 
 1. Done: Runtime callback `assert` invariants.
    Easy, highly non-destructive: replace optimized-away assertions with explicit `RuntimeError` checks.
-2. Rayon thread configuration feedback.
+2. Done: Rayon thread configuration feedback.
    Easy, non-destructive if warning-only: stop silently ignoring incompatible repeated thread settings.
 3. Packed8 multi-dispatch contract.
    Easy, highly non-destructive: make the current config rejection explicit in tests/docs so future packed8 work does not miss the multi path.
@@ -153,7 +158,9 @@ Recommendation: make a product decision:
 
 ### P1. Rayon thread configuration can be silently ignored
 
-`runner.configure_runtime()` suppresses `RuntimeError` from `configure_rayon_global_thread_pool()`:
+Status: done in `codebase-review-cleanups`. The runner now tracks the configured Rayon thread count, skips identical repeats, and logs warnings for incompatible repeats or native configuration failures.
+
+Original finding: `runner.configure_runtime()` suppressed `RuntimeError` from `configure_rayon_global_thread_pool()`:
 
 - `src/g/runner.py:264-271`
 
