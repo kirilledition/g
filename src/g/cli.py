@@ -94,10 +94,6 @@ def explicit_cli_options(context: click.Context, parameters: dict[str, typing.An
         source = context.get_parameter_source(parameter_name)
         if source == click.core.ParameterSource.COMMANDLINE:
             cli_options[parameter_name] = parameter_value
-    if cli_options.get("qt") is True:
-        cli_options["bt"] = False
-    if cli_options.get("bt") is True:
-        cli_options["qt"] = False
     return cli_options
 
 

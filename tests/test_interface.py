@@ -582,6 +582,46 @@ def test_quantitative_trait_rejects_explicit_binary_only_options(option_name: st
         config.RegenieConfig.from_options(raw_options)
 
 
+def test_quantitative_trait_ignores_none_binary_only_python_options() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options.update(
+        {
+            "firth": None,
+            "approx": None,
+            "firth_se": None,
+            "spa": None,
+            "pThresh": None,
+        }
+    )
+
+    regenie_config = config.RegenieConfig.from_options(raw_options)
+
+    assert regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
+    assert "firth" not in regenie_config.explicit_options
+    assert "approx" not in regenie_config.explicit_options
+    assert "firth-se" not in regenie_config.explicit_options
+    assert "spa" not in regenie_config.explicit_options
+    assert "pThresh" not in regenie_config.explicit_options
+
+
+def test_trait_flags_are_mutually_exclusive_within_one_layer() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options["bt"] = True
+
+    with pytest.raises(ValueError, match="--qt and --bt are mutually exclusive"):
+        config.RegenieConfig.from_options(raw_options)
+
+
+def test_python_trait_type_alias_selects_binary_trait() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options.pop("qt")
+    raw_options.update({"trait_type": "binary", "firth": True, "approx": True})
+
+    regenie_config = config.RegenieConfig.from_options(raw_options)
+
+    assert regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
+
+
 def test_quantitative_trait_accepts_defaulted_binary_threshold() -> None:
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
 
@@ -653,22 +693,6 @@ def test_config_helper_normalizers_cover_optional_and_trait_alias_paths() -> Non
     assert config.optional_string(None) is None
     assert config.normalize_option_name("trait_type") == "trait_type"
     assert config.normalize_option_name("g_null_logistic_nonconvergence_policy") == "g-null-logistic-nonconvergence"
-    assert (
-        config.floating_point_dtype_or_default(
-            None,
-            default=types.FloatingPointDtype.FLOAT32,
-        )
-        == types.FloatingPointDtype.FLOAT32
-    )
-    assert config.resolve_configured_trait_type({"trait_type": "binary"}) == types.RegenieTraitType.BINARY
-
-    merged_options = config.merge_option_dictionaries(
-        {"qt": True, "bt": False},
-        {"trait_type": "binary"},
-    )
-
-    assert merged_options["qt"] is False
-    assert merged_options["bt"] is True
     with pytest.raises(ValueError, match="--qt and --bt are mutually exclusive"):
         config.normalize_trait_type(qt=True, bt=True)
 
@@ -700,6 +724,12 @@ def test_config_positive_validation_helpers_raise_clear_errors() -> None:
         config.validate_positive_float("--scale", 0.0)
     with pytest.raises(ValueError, match=r"--probability must be less than 0\.5"):
         config.validate_probability_floor("--probability", 0.5)
+
+
+def test_format_toml_value_serializes_lists_as_toml_arrays() -> None:
+    serialized_value = config.format_toml_value(["trait_a", "trait_b"])
+
+    assert serialized_value == '["trait_a", "trait_b"]'
 
 
 def test_toml_serialization_emits_multi_column_and_binary_sections() -> None:

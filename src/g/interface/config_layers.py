@@ -137,11 +137,10 @@ def overlay_toml_configs(
     override_config: toml_schema.TomlConfig,
 ) -> toml_schema.TomlConfig:
     """Overlay one typed config over another, ignoring unset override fields."""
-    merged_config = typing.cast(
+    return typing.cast(
         "toml_schema.TomlConfig",
         overlay_struct_values(base_config, override_config),
     )
-    return apply_trait_flag_overlay_precedence(merged_config, override_config)
 
 
 def overlay_struct_values(
@@ -161,31 +160,6 @@ def overlay_struct_values(
         else:
             struct_values[field_information.name] = override_field_value
     return type(base_value)(**struct_values)
-
-
-def apply_trait_flag_overlay_precedence(
-    merged_config: toml_schema.TomlConfig,
-    override_config: toml_schema.TomlConfig,
-) -> toml_schema.TomlConfig:
-    """Apply cross-layer trait flag exclusivity after a typed overlay."""
-    override_trait_section = override_config.trait
-    merged_trait_section = merged_config.trait
-    if override_trait_section is msgspec.UNSET or merged_trait_section is msgspec.UNSET:
-        return merged_config
-
-    trait_updates: dict[str, typing.Any] = {}
-    if override_trait_section.qt is True:
-        trait_updates["bt"] = False
-    if override_trait_section.bt is True:
-        trait_updates["qt"] = False
-    if not trait_updates:
-        return merged_config
-
-    updated_trait_section = replace_struct_values(merged_trait_section, trait_updates)
-    return typing.cast(
-        "toml_schema.TomlConfig",
-        replace_struct_values(merged_config, {"trait": updated_trait_section}),
-    )
 
 
 def replace_struct_values(
@@ -266,11 +240,13 @@ def option_dictionary_to_toml_config_layer(
         set_toml_option_value(toml_mapping, option_spec, coerce_option_value(option_value, option_spec))
 
     apply_trait_type_alias(toml_mapping, normalized_options.get("trait_type"))
-    apply_explicit_trait_flag_precedence(toml_mapping, normalized_options)
     toml_config = convert_toml_mapping(toml_mapping, source=source)
+    explicit_option_names = frozenset(
+        option_name for option_name, option_value in normalized_options.items() if option_value is not None
+    )
     return TomlConfigLayer(
         toml_config=toml_config,
-        explicit_options=frozenset(normalized_options),
+        explicit_options=explicit_option_names,
     )
 
 
@@ -353,15 +329,3 @@ def apply_trait_type_alias(
     trait_mapping = typing.cast("dict[str, typing.Any]", toml_mapping.setdefault("trait", {}))
     trait_mapping["qt"] = trait_type == types.RegenieTraitType.QUANTITATIVE
     trait_mapping["bt"] = trait_type == types.RegenieTraitType.BINARY
-
-
-def apply_explicit_trait_flag_precedence(
-    toml_mapping: dict[str, typing.Any],
-    normalized_options: typing.Mapping[str, typing.Any],
-) -> None:
-    """Preserve the CLI trait flag precedence rules for typed option layers."""
-    trait_mapping = typing.cast("dict[str, typing.Any]", toml_mapping.setdefault("trait", {}))
-    if normalized_options.get("qt") is True:
-        trait_mapping["bt"] = False
-    if normalized_options.get("bt") is True:
-        trait_mapping["qt"] = False
