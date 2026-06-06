@@ -968,24 +968,108 @@ def test_binary_hot_benchmark_defaults_to_comparable_modes() -> None:
         "warm_same_process_finalized",
         "hot_same_process_finalized",
     ]
+    configuration = binary_hot_benchmark.build_configuration(arguments)
+    benchmark_cases = binary_hot_benchmark.build_benchmark_cases(configuration)
+    assert [benchmark_case.name for benchmark_case in benchmark_cases] == [
+        "traits1_variant_major_default_batch64_capacity1024"
+    ]
+    assert benchmark_cases[0].phenotype_columns == ("phenotype_binary",)
+    assert benchmark_cases[0].gpu_genotype_format == binary_hot_benchmark.types.GpuGenotypeFormat.DOSAGE
+
+
+def test_binary_hot_benchmark_expands_multi_binary_firth_sweep(tmp_path: Path) -> None:
+    arguments = binary_hot_benchmark.build_argument_parser().parse_args(
+        [
+            "--output-dir",
+            str(tmp_path / "profile"),
+            "--phenotype-columns",
+            "trait_one,trait_two,trait_three,trait_four",
+            "--binary-trait-counts",
+            "1,2",
+            "--firth-batch-sizes",
+            "32,64",
+            "--firth-candidate-capacities",
+            "128,512",
+            "--storage-modes",
+            "variant_major,packed8",
+            "--fallback-density-scenarios",
+            "low,high",
+            "--low-fallback-p-threshold",
+            "1e-6",
+            "--high-fallback-p-threshold",
+            "0.5",
+        ]
+    )
+
+    configuration = binary_hot_benchmark.build_configuration(arguments)
+    benchmark_cases = binary_hot_benchmark.build_benchmark_cases(configuration)
+
+    assert len(benchmark_cases) == 32
+    assert {benchmark_case.binary_trait_count for benchmark_case in benchmark_cases} == {1, 2}
+    assert {benchmark_case.firth_batch_size for benchmark_case in benchmark_cases} == {32, 64}
+    assert {benchmark_case.firth_candidate_capacity for benchmark_case in benchmark_cases} == {128, 512}
+    assert {benchmark_case.storage_mode.value for benchmark_case in benchmark_cases} == {"variant_major", "packed8"}
+    assert {benchmark_case.fallback_density.value for benchmark_case in benchmark_cases} == {"low", "high"}
+    assert next(
+        benchmark_case for benchmark_case in benchmark_cases if benchmark_case.binary_trait_count == 2
+    ).phenotype_columns == (
+        "trait_one",
+        "trait_two",
+    )
+
+    packed_high_case = next(
+        benchmark_case
+        for benchmark_case in benchmark_cases
+        if benchmark_case.storage_mode == binary_hot_benchmark.BenchmarkStorageMode.PACKED8
+        and benchmark_case.fallback_density == binary_hot_benchmark.FallbackDensityScenario.HIGH
+        and benchmark_case.firth_batch_size == 32
+        and benchmark_case.firth_candidate_capacity == 128
+    )
+    compute_config = binary_hot_benchmark.build_compute_config(
+        configuration=configuration,
+        benchmark_case=packed_high_case,
+        output_root=tmp_path / "out",
+        finalize_parquet=False,
+        stage_timing_path=tmp_path / "stage.json",
+    )
+    assert compute_config["g-firth-batch-size"] == 32
+    assert compute_config["g-firth-candidate-capacity"] == 128
+    assert compute_config["g-gpu-genotype-format"] == "packed8"
+    assert packed_high_case.firth_p_threshold == 0.5
 
 
 def test_binary_hot_child_process_command_contains_binary_controls(tmp_path: Path) -> None:
-    configuration = binary_hot_benchmark.BenchmarkConfiguration(
-        data_directory=Path("data"),
-        output_directory=tmp_path / "profile",
-        device=binary_hot_benchmark.types.Device.CPU,
-        chunk_size=4096,
-        staging_depth=2,
-        output_writer_thread_count=4,
-        output_writer_queue_depth=8,
-        trusted_no_missing_diploid=True,
-        assume_trusted_validated=True,
-        firth_batch_size=64,
-        variant_limit=1000,
-        python_executable=sys.executable,
-        jax_cache_directory=tmp_path / "jax-cache",
+    arguments = binary_hot_benchmark.build_argument_parser().parse_args(
+        [
+            "--data-dir",
+            "data",
+            "--output-dir",
+            str(tmp_path / "profile"),
+            "--device",
+            "cpu",
+            "--chunk-size",
+            "4096",
+            "--staging-depth",
+            "2",
+            "--output-writer-thread-count",
+            "4",
+            "--output-writer-queue-depth",
+            "8",
+            "--assume-trusted-validated",
+            "--firth-batch-size",
+            "64",
+            "--firth-candidate-capacity",
+            "256",
+            "--variant-limit",
+            "1000",
+            "--python-executable",
+            sys.executable,
+            "--jax-cache-dir",
+            str(tmp_path / "jax-cache"),
+        ]
     )
+    configuration = binary_hot_benchmark.build_configuration(arguments)
+    benchmark_case = binary_hot_benchmark.build_benchmark_cases(configuration)[0]
     trial_spec = binary_hot_benchmark.TrialSpec(
         name="cold_process_finalized",
         mode=binary_hot_benchmark.BenchmarkMode.COLD_PROCESS_FINALIZED,
@@ -995,6 +1079,7 @@ def test_binary_hot_child_process_command_contains_binary_controls(tmp_path: Pat
     )
     child_command = binary_hot_benchmark.build_fresh_process_command(
         configuration=configuration,
+        benchmark_case=benchmark_case,
         trial_spec=trial_spec,
         stage_timing_path=tmp_path / "stages.json",
     )
@@ -1003,27 +1088,25 @@ def test_binary_hot_child_process_command_contains_binary_controls(tmp_path: Pat
     assert "benchmark_regenie2_binary_hot" in command_text
     assert "trusted_no_missing_diploid" in command_text
     assert "variant_limit" in command_text
+    assert "benchmark_case" in command_text
+    assert "firth_candidate_capacity" in command_text
     assert "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE" not in child_command.environment_overrides
     assert "G_REGENIE2_ASSUME_TRUSTED_NO_MISSING_DIPLOID_VALIDATED" not in child_command.environment_overrides
     assert "JAX_PLATFORMS" not in child_command.environment_overrides
 
 
 def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
-    configuration = binary_hot_benchmark.BenchmarkConfiguration(
-        data_directory=Path("data"),
-        output_directory=tmp_path / "profile",
-        device=binary_hot_benchmark.types.Device.GPU,
-        chunk_size=8192,
-        staging_depth=1,
-        output_writer_thread_count=8,
-        output_writer_queue_depth=8,
-        trusted_no_missing_diploid=True,
-        assume_trusted_validated=True,
-        firth_batch_size=64,
-        variant_limit=None,
-        python_executable=sys.executable,
-        jax_cache_directory=tmp_path / "jax-cache",
+    arguments = binary_hot_benchmark.build_argument_parser().parse_args(
+        [
+            "--output-dir",
+            str(tmp_path / "profile"),
+            "--assume-trusted-validated",
+            "--jax-cache-dir",
+            str(tmp_path / "jax-cache"),
+        ]
     )
+    configuration = binary_hot_benchmark.build_configuration(arguments)
+    benchmark_case = binary_hot_benchmark.build_benchmark_cases(configuration)[0]
     output_metrics = binary_hot_benchmark.OutputMetrics(
         output_run_directory="run",
         final_parquet=None,
@@ -1035,7 +1118,8 @@ def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
     )
     trial_results = [
         binary_hot_benchmark.TrialResult(
-            name="hot_same_process_no_final",
+            name=f"{benchmark_case.name}_hot_same_process_no_final",
+            benchmark_case=benchmark_case,
             mode=binary_hot_benchmark.BenchmarkMode.HOT_SAME_PROCESS_NO_FINAL,
             fresh_process=False,
             finalize_parquet=False,
@@ -1045,7 +1129,8 @@ def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
             output_metrics=output_metrics,
         ),
         binary_hot_benchmark.TrialResult(
-            name="hot_same_process_finalized",
+            name=f"{benchmark_case.name}_hot_same_process_finalized",
+            benchmark_case=benchmark_case,
             mode=binary_hot_benchmark.BenchmarkMode.HOT_SAME_PROCESS_FINALIZED,
             fresh_process=False,
             finalize_parquet=True,
@@ -1059,6 +1144,8 @@ def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
     assert summary["headline"]["hot_same_process_no_final_seconds"] == 7.25
     assert summary["headline"]["hot_same_process_finalized_seconds"] == 7.85
     assert summary["metadata"]["configuration"]["trusted_no_missing_diploid"] is True
+    assert summary["metadata"]["configuration"]["firth_candidate_capacities"] == [1024]
+    assert summary["headline_by_case"][benchmark_case.name]["hot_same_process_finalized_seconds"] == 7.85
 
 
 def test_output_stage_benchmark_builds_recommended_matrix() -> None:
