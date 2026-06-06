@@ -20,8 +20,9 @@ logger = logging.getLogger(__name__)
 
 OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
+PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.parquet$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
-RUN_MANIFEST_SCHEMA_VERSION = 5
+RUN_MANIFEST_SCHEMA_VERSION = 6
 OUTPUT_SCHEMA_VERSION = 1
 JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
 RESUME_POLICY = "manifest_committed_chunks"
@@ -32,6 +33,7 @@ PACKAGED_FIRTH_DTYPE = types.FloatingPointDtype(config.default_string_option("g-
 PACKAGED_WRITER_QUEUE_DEPTH = config.default_int_option("g-writer-queue-depth")
 PACKAGED_WRITER_THREAD_COUNT = config.default_int_option("g-writer-threads")
 PACKAGED_CHUNKS_PER_ARROW_FILE = config.default_int_option("g-output-chunks-per-arrow-file")
+PACKAGED_PARQUET_COMPRESSION = types.ParquetCompression(config.default_string_option("g-output-parquet-compression"))
 RESULT_STATISTIC_OUTPUT_DTYPE = "float32"
 
 
@@ -70,10 +72,15 @@ def get_run_manifest_path(output_run_paths: OutputRunPaths) -> Path:
     return output_run_paths.run_directory / RUN_MANIFEST_FILENAME
 
 
-def resolve_output_run_paths(output_root: Path, association_mode: types.AssociationMode) -> OutputRunPaths:
+def resolve_output_run_paths(
+    output_root: Path,
+    association_mode: types.AssociationMode,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
+) -> OutputRunPaths:
     """Derive run paths from an output root and association mode."""
     run_directory = output_root if output_root.suffix == ".run" else output_root.with_suffix(f".{association_mode}.run")
-    return OutputRunPaths(run_directory=run_directory, chunks_directory=run_directory / "chunks")
+    output_directory_name = "parts" if output_format == types.OutputFormat.PARQUET else "chunks"
+    return OutputRunPaths(run_directory=run_directory, chunks_directory=run_directory / output_directory_name)
 
 
 def build_chunk_file_name(chunk_identifier: int) -> str:
@@ -181,6 +188,7 @@ def build_output_writer_manifest(
     writer_queue_depth: int = PACKAGED_WRITER_QUEUE_DEPTH,
     chunks_per_arrow_file: int = PACKAGED_CHUNKS_PER_ARROW_FILE,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+    parquet_compression: types.ParquetCompression = PACKAGED_PARQUET_COMPRESSION,
 ) -> dict[str, typing.Any]:
     """Build manifest fields for output materialization and writer settings."""
     return {
@@ -190,6 +198,7 @@ def build_output_writer_manifest(
         "writer_queue_depth": writer_queue_depth,
         "chunks_per_arrow_file": chunks_per_arrow_file,
         "arrow_compression": arrow_compression.value,
+        "parquet_compression": parquet_compression.value,
         "result_statistic_dtype": RESULT_STATISTIC_OUTPUT_DTYPE,
     }
 
@@ -226,6 +235,7 @@ def build_current_run_manifest_header(
     writer_queue_depth: int = PACKAGED_WRITER_QUEUE_DEPTH,
     chunks_per_arrow_file: int = PACKAGED_CHUNKS_PER_ARROW_FILE,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+    parquet_compression: types.ParquetCompression = PACKAGED_PARQUET_COMPRESSION,
 ) -> dict[str, typing.Any]:
     """Build immutable run manifest fields from the current execution plan."""
     bgen_fingerprint = build_file_fingerprint(bgen_path)
@@ -241,6 +251,7 @@ def build_current_run_manifest_header(
         writer_queue_depth=writer_queue_depth,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
+        parquet_compression=parquet_compression,
     )
     jax_policy_manifest = build_jax_policy_manifest(
         device=jax_device,
@@ -374,7 +385,7 @@ def validate_strict_manifest_chunks(
     output_run_paths: OutputRunPaths,
     manifest: dict[str, typing.Any],
 ) -> frozenset[int]:
-    """Validate committed manifest chunks against Arrow files."""
+    """Validate committed manifest chunks against output files."""
     chunk_identifiers = _core.validate_strict_manifest_chunks(
         str(output_run_paths.chunks_directory),
         json.dumps(manifest),
@@ -386,7 +397,7 @@ def repair_strict_manifest_chunk_commits(
     output_run_paths: OutputRunPaths,
     manifest: dict[str, typing.Any],
 ) -> list[typing.Any]:
-    """Recover committed chunk manifest records from Arrow metadata."""
+    """Recover committed chunk manifest records from output metadata."""
     repaired_commits = json.loads(
         _core.repair_strict_manifest_chunk_commits(
             str(output_run_paths.chunks_directory),
@@ -443,11 +454,12 @@ def prepare_output_run(
     *,
     output_root: Path,
     association_mode: types.AssociationMode,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     resume: bool,
     resume_mode: types.ResumeMode = types.ResumeMode.FAST,
 ) -> PreparedOutputRun:
     """Prepare a chunked output run directory and load existing manifest state."""
-    output_run_paths = resolve_output_run_paths(output_root, association_mode)
+    output_run_paths = resolve_output_run_paths(output_root, association_mode, output_format)
     if not resume and output_run_paths.run_directory.exists() and any(output_run_paths.run_directory.iterdir()):
         message = (
             f"Output run directory '{output_run_paths.run_directory}' already exists and is not empty. "
@@ -472,8 +484,10 @@ def create_output_writer_session(
     writer_thread_count: int,
     writer_queue_depth: int,
     finalize_parquet: bool,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     chunks_per_arrow_file: int = PACKAGED_CHUNKS_PER_ARROW_FILE,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+    parquet_compression: types.ParquetCompression = PACKAGED_PARQUET_COMPRESSION,
     collect_stage_timings: bool = False,
 ) -> typing.Any:
     """Create one native Rust output writer session."""
@@ -483,9 +497,11 @@ def create_output_writer_session(
         association_mode=str(association_mode),
         writer_thread_count=writer_thread_count,
         writer_queue_depth=writer_queue_depth,
+        output_format=output_format.value,
         finalize_parquet=finalize_parquet,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression.value,
+        parquet_compression=parquet_compression.value,
         collect_stage_timings=collect_stage_timings,
     )
 
@@ -499,6 +515,7 @@ def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:
             child_path
             for child_path in chunks_directory.iterdir()
             if CHUNK_FILENAME_PATTERN.match(child_path.name) is not None
+            or PART_FILENAME_PATTERN.match(child_path.name) is not None
         )
     )
 
@@ -506,11 +523,13 @@ def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:
 def finalize_chunks_to_parquet(
     output_run_paths: OutputRunPaths,
     association_mode: types.AssociationMode,
+    output_format: types.OutputFormat = types.OutputFormat.ARROW,
 ) -> Path:
     """Compact committed chunk files into one compressed Parquet file in Rust."""
     final_parquet_path = _core.finalize_output_run_chunks(
         run_directory=str(output_run_paths.run_directory),
         chunks_directory=str(output_run_paths.chunks_directory),
         association_mode=str(association_mode),
+        output_format=output_format.value,
     )
     return Path(final_parquet_path)

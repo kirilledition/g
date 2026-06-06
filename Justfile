@@ -236,9 +236,8 @@ verify-regenie2-binary-gpu-output:
     #!/usr/bin/env bash
     set -euo pipefail
     run_directory="{{data_dir}}/regenie2_binary_chr22_gpu.regenie2_binary.run"
-    test -d "${run_directory}/chunks"
-    find "${run_directory}/chunks" -type f -name '*.arrow' | grep -q .
-    test -s "${run_directory}/final.parquet"
+    test -d "${run_directory}/parts"
+    find "${run_directory}/parts" -type f -name '*.parquet' | grep -q .
     echo "Binary REGENIE step 2 GPU output is present."
 
 # Verify binary REGENIE step 2 GPU smoke output artifacts
@@ -246,9 +245,8 @@ verify-regenie2-binary-gpu-smoke-output:
     #!/usr/bin/env bash
     set -euo pipefail
     run_directory="{{data_dir}}/regenie2_binary_chr22_gpu_smoke.regenie2_binary.run"
-    test -d "${run_directory}/chunks"
-    find "${run_directory}/chunks" -type f -name '*.arrow' | grep -q .
-    test -s "${run_directory}/final.parquet"
+    test -d "${run_directory}/parts"
+    find "${run_directory}/parts" -type f -name '*.parquet' | grep -q .
     echo "Binary REGENIE step 2 GPU smoke output is present."
 
 # Run CPU/GPU JAX runtime probe
@@ -263,7 +261,7 @@ benchmark-bgen-reader: install-perf-extension
 benchmark-regenie2-linear-fresh-gpu: install-perf-extension
     {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu
 
-# Benchmark REGENIE step 2 in fresh Python processes using Arrow chunks + Parquet finalization
+# Benchmark REGENIE step 2 in fresh Python processes using Parquet dataset output plus finalization
 benchmark-regenie2-linear-fresh-gpu-parquet: install-perf-extension
     {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --finalize-parquet
 

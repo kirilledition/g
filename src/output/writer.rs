@@ -10,12 +10,19 @@ use arrow::array::{Array, ArrayRef, Float32Array, Int32Array, Int64Array, Record
 use arrow::datatypes::Schema;
 use arrow::ipc::CompressionType;
 use arrow::ipc::writer::{FileWriter, IpcWriteOptions};
+use parquet::arrow::ArrowWriter;
+use parquet::basic::{Compression, ZstdLevel};
+use parquet::file::metadata::KeyValue;
+use parquet::file::properties::WriterProperties;
+use parquet::schema::types::ColumnPath;
 use serde_json::json;
 use thiserror::Error;
 
 use crate::output::NativeChunkHandle;
 use crate::output::manifest;
 use crate::output::schema;
+
+const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 
 #[derive(Debug, Error)]
 pub enum OutputWriterError {
@@ -43,6 +50,31 @@ pub(crate) struct RegenieStep2ChunkJob {
 pub(crate) struct RegenieStep2ChunkWriteBatch {
     pub(crate) chunk_file_name: String,
     pub(crate) chunks: Vec<RegenieStep2ChunkJob>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum OutputFileFormat {
+    Arrow,
+    Parquet,
+}
+
+impl OutputFileFormat {
+    pub(crate) fn parse(output_format: &str) -> Result<Self, String> {
+        match output_format {
+            "arrow" => Ok(Self::Arrow),
+            "parquet" => Ok(Self::Parquet),
+            unsupported_output_format => {
+                Err(format!("Output format must be 'arrow' or 'parquet', observed '{unsupported_output_format}'."))
+            }
+        }
+    }
+
+    fn value(self) -> &'static str {
+        match self {
+            Self::Arrow => "arrow",
+            Self::Parquet => "parquet",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -102,18 +134,27 @@ pub(crate) struct RegenieStep2ChunkWriteResult {
 pub(crate) fn write_regenie_step2_chunk_job(
     chunks_directory: &Path,
     job: RegenieStep2ChunkWriteBatch,
+    output_format: OutputFileFormat,
     arrow_compression: &str,
+    parquet_compression: &str,
 ) -> Result<RegenieStep2ChunkWriteResult, String> {
     let total_start_time = Instant::now();
     let chunk_file_path = chunks_directory.join(&job.chunk_file_name);
-    let temporary_chunk_file_path = chunk_file_path.with_extension("arrow.tmp");
+    let temporary_chunk_file_path = match output_format {
+        OutputFileFormat::Arrow => chunk_file_path.with_extension("arrow.tmp"),
+        OutputFileFormat::Parquet => chunk_file_path.with_extension("parquet.tmp"),
+    };
     let chunk_count = u64::try_from(job.chunks.len()).map_err(|error| error.to_string())?;
     let row_count = job
         .chunks
         .iter()
         .map(|chunk_job| u64::try_from(chunk_job.chunk_handle.row_count()).map_err(|error| error.to_string()))
         .sum::<Result<u64, String>>()?;
-    let chunk_commits = build_run_manifest_chunk_commits(&job)?;
+    let compression = match output_format {
+        OutputFileFormat::Arrow => arrow_compression,
+        OutputFileFormat::Parquet => parquet_compression,
+    };
+    let chunk_commits = build_run_manifest_chunk_commits(&job, output_format, compression)?;
 
     let record_batch_build_start_time = Instant::now();
     let schema_metadata_build_start_time = Instant::now();
@@ -127,12 +168,21 @@ pub(crate) fn write_regenie_step2_chunk_job(
     let record_batch_build_seconds = record_batch_build_start_time.elapsed().as_secs_f64();
 
     let arrow_file_write_start_time = Instant::now();
-    let arrow_file_write_timing = write_record_batches_to_arrow_file(
-        &record_batch_build_result.record_batches,
-        chunk_schema,
-        &temporary_chunk_file_path,
-        arrow_compression,
-    )?;
+    let arrow_file_write_timing = match output_format {
+        OutputFileFormat::Arrow => write_record_batches_to_arrow_file(
+            &record_batch_build_result.record_batches,
+            chunk_schema,
+            &temporary_chunk_file_path,
+            arrow_compression,
+        )?,
+        OutputFileFormat::Parquet => write_record_batches_to_parquet_file(
+            &record_batch_build_result.record_batches,
+            chunk_schema,
+            &temporary_chunk_file_path,
+            parquet_compression,
+            &chunk_commits,
+        )?,
+    };
     let arrow_file_rename_start_time = Instant::now();
     std::fs::rename(&temporary_chunk_file_path, &chunk_file_path).map_err(|error| error.to_string())?;
     let arrow_file_rename_seconds = arrow_file_rename_start_time.elapsed().as_secs_f64();
@@ -168,6 +218,8 @@ pub(crate) fn write_regenie_step2_chunk_job(
 
 fn build_run_manifest_chunk_commits(
     job: &RegenieStep2ChunkWriteBatch,
+    output_format: OutputFileFormat,
+    compression: &str,
 ) -> Result<Vec<manifest::RunManifestChunkCommit>, String> {
     job.chunks
         .iter()
@@ -175,6 +227,8 @@ fn build_run_manifest_chunk_commits(
             let variant_stop_index = chunk_job.chunk_handle.variant_stop_index().map_err(|error| error.to_string())?;
             Ok(manifest::RunManifestChunkCommit {
                 chunk_identifier: chunk_job.chunk_handle.chunk_identifier,
+                output_format: output_format.value().to_string(),
+                compression: compression.to_string(),
                 variant_start_index: chunk_job.chunk_handle.variant_start_index(),
                 variant_stop_index,
                 row_count: chunk_job.chunk_handle.row_count(),
@@ -187,11 +241,19 @@ fn build_run_manifest_chunk_commits(
 fn build_regenie_step2_chunk_file_schema(
     chunk_commits: &[manifest::RunManifestChunkCommit],
 ) -> Result<Arc<Schema>, String> {
+    let mut metadata = HashMap::new();
+    metadata.insert(schema::CHUNK_COMMITS_METADATA_KEY.to_string(), build_chunk_commit_metadata_text(chunk_commits)?);
+    Ok(Arc::new(schema::get_regenie_step2_chunk_schema().as_ref().clone().with_metadata(metadata)))
+}
+
+fn build_chunk_commit_metadata_text(chunk_commits: &[manifest::RunManifestChunkCommit]) -> Result<String, String> {
     let chunk_commit_values = chunk_commits
         .iter()
         .map(|chunk_commit| {
             json!({
                 "chunk_identifier": chunk_commit.chunk_identifier,
+                "output_format": chunk_commit.output_format,
+                "compression": chunk_commit.compression,
                 "variant_start_index": chunk_commit.variant_start_index,
                 "variant_stop_index": chunk_commit.variant_stop_index,
                 "row_count": chunk_commit.row_count,
@@ -199,12 +261,7 @@ fn build_regenie_step2_chunk_file_schema(
             })
         })
         .collect::<Vec<_>>();
-    let mut metadata = HashMap::new();
-    metadata.insert(
-        schema::CHUNK_COMMITS_METADATA_KEY.to_string(),
-        serde_json::to_string(&chunk_commit_values).map_err(|error| error.to_string())?,
-    );
-    Ok(Arc::new(schema::get_regenie_step2_chunk_schema().as_ref().clone().with_metadata(metadata)))
+    serde_json::to_string(&chunk_commit_values).map_err(|error| error.to_string())
 }
 
 pub(crate) fn build_chunk_file_name(first_chunk_identifier: i64, last_chunk_identifier: i64) -> String {
@@ -212,6 +269,24 @@ pub(crate) fn build_chunk_file_name(first_chunk_identifier: i64, last_chunk_iden
         return format!("chunk_{first_chunk_identifier:09}.arrow");
     }
     format!("chunk_{first_chunk_identifier:09}_{last_chunk_identifier:09}.arrow")
+}
+
+pub(crate) fn build_part_file_name(first_chunk_identifier: i64, last_chunk_identifier: i64) -> String {
+    if first_chunk_identifier == last_chunk_identifier {
+        return format!("part_{first_chunk_identifier:09}.parquet");
+    }
+    format!("part_{first_chunk_identifier:09}_{last_chunk_identifier:09}.parquet")
+}
+
+pub(crate) fn build_output_file_name(
+    output_format: OutputFileFormat,
+    first_chunk_identifier: i64,
+    last_chunk_identifier: i64,
+) -> String {
+    match output_format {
+        OutputFileFormat::Arrow => build_chunk_file_name(first_chunk_identifier, last_chunk_identifier),
+        OutputFileFormat::Parquet => build_part_file_name(first_chunk_identifier, last_chunk_identifier),
+    }
 }
 
 fn build_regenie_step2_record_batches(
@@ -380,6 +455,39 @@ fn write_record_batches_to_arrow_file(
     Ok(RegenieStep2ArrowFileWriteTiming { file_create, writer_init, batch_write, writer_finish })
 }
 
+fn write_record_batches_to_parquet_file(
+    record_batches: &[RecordBatch],
+    chunk_schema: Arc<Schema>,
+    chunk_file_path: &Path,
+    parquet_compression: &str,
+    chunk_commits: &[manifest::RunManifestChunkCommit],
+) -> Result<RegenieStep2ArrowFileWriteTiming, String> {
+    let file_create_start_time = Instant::now();
+    let output_file = File::create(chunk_file_path).map_err(|error| error.to_string())?;
+    let file_create = file_create_start_time.elapsed().as_secs_f64();
+
+    let writer_init_start_time = Instant::now();
+    let writer_properties = build_regenie_step2_parquet_writer_properties(parquet_compression)?;
+    let mut writer =
+        ArrowWriter::try_new(output_file, chunk_schema, Some(writer_properties)).map_err(|error| error.to_string())?;
+    writer.append_key_value_metadata(KeyValue {
+        key: schema::CHUNK_COMMITS_METADATA_KEY.to_string(),
+        value: Some(build_chunk_commit_metadata_text(chunk_commits)?),
+    });
+    let writer_init = writer_init_start_time.elapsed().as_secs_f64();
+
+    let mut batch_write = 0.0;
+    for record_batch in record_batches {
+        let batch_write_start_time = Instant::now();
+        writer.write(record_batch).map_err(|error| error.to_string())?;
+        batch_write += batch_write_start_time.elapsed().as_secs_f64();
+    }
+    let writer_finish_start_time = Instant::now();
+    writer.close().map_err(|error| error.to_string())?;
+    let writer_finish = writer_finish_start_time.elapsed().as_secs_f64();
+    Ok(RegenieStep2ArrowFileWriteTiming { file_create, writer_init, batch_write, writer_finish })
+}
+
 fn build_regenie_step2_ipc_write_options(arrow_compression: &str) -> Result<IpcWriteOptions, String> {
     match arrow_compression.to_ascii_lowercase().as_str() {
         "zstd" => IpcWriteOptions::default()
@@ -392,6 +500,27 @@ fn build_regenie_step2_ipc_write_options(arrow_compression: &str) -> Result<IpcW
     }
 }
 
+fn build_regenie_step2_parquet_writer_properties(parquet_compression: &str) -> Result<WriterProperties, String> {
+    let compression = match parquet_compression.to_ascii_lowercase().as_str() {
+        "zstd" => Compression::ZSTD(ZstdLevel::default()),
+        "none" => Compression::UNCOMPRESSED,
+        unsupported_compression => {
+            return Err(format!("Parquet compression must be 'zstd' or 'none', observed '{unsupported_compression}'."));
+        }
+    };
+    Ok(WriterProperties::builder()
+        .set_compression(compression)
+        .set_max_row_group_row_count(Some(REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE))
+        .set_dictionary_enabled(false)
+        .set_column_dictionary_enabled(ColumnPath::from("CHROM"), true)
+        .set_column_dictionary_enabled(ColumnPath::from("ALLELE0"), true)
+        .set_column_dictionary_enabled(ColumnPath::from("ALLELE1"), true)
+        .set_column_dictionary_enabled(ColumnPath::from("N"), true)
+        .set_column_dictionary_enabled(ColumnPath::from("TEST"), true)
+        .set_column_dictionary_enabled(ColumnPath::from("EXTRA"), true)
+        .build())
+}
+
 #[cfg(test)]
 mod tests {
     use std::assert_matches;
@@ -400,6 +529,7 @@ mod tests {
 
     use arrow::array::Array;
     use arrow::ipc::reader::FileReader as ArrowFileReader;
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet::file::reader::{FileReader as ParquetFileReader, SerializedFileReader};
 
     use crate::genotype::common::{ChunkStats, VariantMetadataColumns};
@@ -462,7 +592,8 @@ mod tests {
 
     fn build_test_record_batches(chunks: Vec<RegenieStep2ChunkJob>) -> Vec<RecordBatch> {
         let write_batch = build_test_batch(chunks);
-        let chunk_commits = build_run_manifest_chunk_commits(&write_batch).expect("chunk commits should build");
+        let chunk_commits = build_run_manifest_chunk_commits(&write_batch, OutputFileFormat::Arrow, "none")
+            .expect("chunk commits should build");
         let chunk_schema = build_regenie_step2_chunk_file_schema(&chunk_commits).expect("chunk schema should build");
         build_regenie_step2_record_batches(write_batch, chunk_schema)
             .expect("record batches should build")
@@ -538,6 +669,8 @@ mod tests {
         let write_result = write_regenie_step2_chunk_job(
             &chunks_directory,
             build_test_batch(vec![build_test_chunk(0, Some(vec![1])), build_test_chunk(1, Some(vec![2]))]),
+            OutputFileFormat::Arrow,
+            "none",
             "none",
         )
         .expect("chunk batch should write");
@@ -567,6 +700,50 @@ mod tests {
     }
 
     #[test]
+    fn grouped_parquet_part_writes_expected_schema_and_footer_commits() {
+        let run_directory = create_test_directory();
+        let parts_directory = run_directory.join("parts");
+        std::fs::create_dir_all(&parts_directory).expect("parts directory should be created");
+        let write_batch = RegenieStep2ChunkWriteBatch {
+            chunk_file_name: build_part_file_name(0, 1),
+            chunks: vec![build_test_chunk(0, Some(vec![1])), build_test_chunk(1, Some(vec![2]))],
+        };
+        let write_result =
+            write_regenie_step2_chunk_job(&parts_directory, write_batch, OutputFileFormat::Parquet, "none", "none")
+                .expect("Parquet part should write");
+
+        assert_eq!(write_result.chunk_commits.len(), 2);
+        assert_eq!(write_result.chunk_commits[0].output_format, "parquet");
+        assert_eq!(write_result.chunk_commits[0].compression, "none");
+        let part_file_path = parts_directory.join("part_000000000_000000001.parquet");
+        assert!(part_file_path.exists());
+        assert!(!parts_directory.join("part_000000000_000000001.parquet.tmp").exists());
+
+        let parquet_schema =
+            ParquetRecordBatchReaderBuilder::try_new(File::open(&part_file_path).expect("Parquet part should open"))
+                .expect("Parquet reader should build")
+                .schema()
+                .clone();
+        assert_eq!(parquet_schema.fields().len(), 14);
+        assert!(parquet_schema.field_with_name("chunk_identifier").is_err());
+
+        let parquet_file = File::open(part_file_path).expect("Parquet part should open");
+        let parquet_reader = SerializedFileReader::new(parquet_file).expect("Parquet reader should open");
+        assert_eq!(parquet_reader.metadata().file_metadata().num_rows(), 2);
+        let key_value_metadata =
+            parquet_reader.metadata().file_metadata().key_value_metadata().expect("footer metadata should exist");
+        let chunk_metadata = key_value_metadata
+            .iter()
+            .find(|entry| entry.key == schema::CHUNK_COMMITS_METADATA_KEY)
+            .and_then(|entry| entry.value.as_deref())
+            .expect("chunk commit footer metadata should exist");
+        assert!(chunk_metadata.contains("\"output_format\":\"parquet\""));
+        assert!(chunk_metadata.contains("\"compression\":\"none\""));
+
+        std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
+    }
+
+    #[test]
     fn finalization_writes_footer_metadata() {
         let run_directory = create_test_directory();
         let chunks_directory = run_directory.join("chunks");
@@ -574,13 +751,20 @@ mod tests {
         write_regenie_step2_chunk_job(
             &chunks_directory,
             build_test_batch(vec![build_test_chunk(0, Some(vec![1])), build_test_chunk(1, Some(vec![0]))]),
+            OutputFileFormat::Arrow,
             "zstd",
+            "none",
         )
         .expect("chunk batch should write");
 
         let final_parquet_path = run_directory.join("final.parquet");
-        finalization::write_final_parquet_from_chunk_files(&chunks_directory, &final_parquet_path, "regenie2_binary")
-            .expect("final parquet should write");
+        finalization::write_final_parquet_from_chunk_files(
+            &chunks_directory,
+            &final_parquet_path,
+            "regenie2_binary",
+            OutputFileFormat::Arrow,
+        )
+        .expect("final parquet should write");
 
         let parquet_file = File::open(final_parquet_path).expect("final parquet should open");
         let parquet_reader = SerializedFileReader::new(parquet_file).expect("parquet reader should open");

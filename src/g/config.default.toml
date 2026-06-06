@@ -65,6 +65,7 @@ writer-threads = 4
 writer-queue-depth = 16
 chunks-per-arrow-file = 16
 arrow-compression = "zstd"
+parquet-compression = "none"
 resume = false
 resume-mode = "fast"
 finalize-parquet = false

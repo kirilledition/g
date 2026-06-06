@@ -112,12 +112,12 @@ def test_installed_cli_runs_regenie2_linear_smoke(tmp_path: Path) -> None:
     (artifact_directory / "g-stderr.txt").write_text(completed_process.stderr, encoding="utf-8")
 
     assert completed_process.returncode == 0, build_cli_failure_message(completed_process)
-    assert "Finalized Parquet saved" in completed_process.stdout
+    assert "Parquet dataset saved" in completed_process.stdout
 
-    final_parquet_paths = sorted(output_run_root.glob("*.run/final.parquet"))
-    assert len(final_parquet_paths) == 1
+    part_paths = sorted(output_run_root.glob("*.run/parts/*.parquet"))
+    assert len(part_paths) == 2
 
-    result_frame = pl.read_parquet(final_parquet_paths[0])
+    result_frame = pl.concat([pl.read_parquet(part_path) for part_path in part_paths])
     assert result_frame.height == 4
     assert result_frame.get_column("CHROM").to_list() == ["1"] * 4
     assert result_frame.get_column("ID").to_list() == EXPECTED_VARIANT_IDENTIFIERS

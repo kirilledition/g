@@ -26,6 +26,7 @@ class RunArtifacts:
 
     Attributes:
         output_run_directory: Chunked output run directory.
+        final_dataset: Parquet dataset directory for part-based output.
         final_parquet: Finalized Parquet output path.
         effective_config: Written effective TOML config path.
         phenotype_artifacts: Per-phenotype artifacts for multi-phenotype runs.
@@ -33,6 +34,7 @@ class RunArtifacts:
     """
 
     output_run_directory: Path | None = None
+    final_dataset: Path | None = None
     final_parquet: Path | None = None
     effective_config: Path | None = None
     phenotype_artifacts: tuple[RunArtifacts, ...] = ()
@@ -481,6 +483,7 @@ def build_common_engine_arguments(
         "writer_queue_depth": plan.output_plan.writer_queue_depth,
         "chunks_per_arrow_file": plan.output_plan.chunks_per_arrow_file,
         "arrow_compression": plan.output_plan.arrow_compression,
+        "parquet_compression": plan.output_plan.parquet_compression,
         "trusted_no_missing_diploid": plan.kernel_config.trusted_no_missing_diploid,
         "trusted_bgen_validation_mode": plan.kernel_config.trusted_bgen_validation_mode,
         "bgen_decode_tile_variant_count": plan.kernel_config.bgen_decode_tile_variant_count,
@@ -689,9 +692,15 @@ def finalize_phenotype_run(
     final_parquet_path: Path | None,
 ) -> RunArtifacts:
     """Build artifacts for one phenotype."""
-    del regenie_config, plan
+    del regenie_config
+    final_dataset = (
+        phenotype_run_plan.output_run_paths.chunks_directory
+        if plan.output_plan.output_format == types.OutputFormat.PARQUET
+        else None
+    )
     return RunArtifacts(
         output_run_directory=phenotype_run_plan.output_run_paths.run_directory,
+        final_dataset=final_dataset,
         final_parquet=final_parquet_path,
         effective_config=phenotype_run_plan.effective_config_path,
     )
@@ -718,6 +727,7 @@ def extend_run_manifest(
         "writer_queue_depth": plan.output_plan.writer_queue_depth,
         "chunks_per_arrow_file": plan.output_plan.chunks_per_arrow_file,
         "arrow_compression": plan.output_plan.arrow_compression.value,
+        "parquet_compression": plan.output_plan.parquet_compression.value,
         "bgen_decode_tile_variant_count": plan.kernel_config.bgen_decode_tile_variant_count,
         "trusted_no_missing_diploid": plan.kernel_config.trusted_no_missing_diploid,
         "trusted_bgen_validation_mode": plan.kernel_config.trusted_bgen_validation_mode.value,

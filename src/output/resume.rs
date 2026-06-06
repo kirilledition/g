@@ -8,6 +8,8 @@ use std::sync::Arc;
 use arrow::array::{Array, Int64Array};
 use arrow::datatypes::Schema;
 use arrow::ipc::reader::FileReader as ArrowFileReader;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::file::reader::{FileReader as ParquetFileReader, SerializedFileReader};
 use serde_json::Value;
 
 use crate::output::manifest;
@@ -15,42 +17,10 @@ use crate::output::schema;
 use crate::output::writer::OutputWriterError;
 
 pub fn scan_committed_chunk_identifiers(chunks_directory: &Path) -> Result<Vec<i64>, OutputWriterError> {
-    if !chunks_directory.exists() {
-        return Ok(Vec::new());
-    }
-    let mut committed_identifiers = BTreeSet::new();
-    let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
-        .map_err(OutputWriterError::runtime)?
-        .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
-        .filter(|chunk_file_path| chunk_file_path.extension().is_some_and(|extension| extension == "arrow"))
-        .collect::<Vec<_>>();
-    chunk_file_paths.sort();
-    for chunk_file_path in chunk_file_paths {
-        let input_file = File::open(&chunk_file_path).map_err(OutputWriterError::runtime)?;
-        let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
-        if let Some(chunk_commits) = read_schema_chunk_commits(file_reader.schema().as_ref())? {
-            validate_schema_chunk_commit_batches(file_reader, &chunk_commits)?;
-            committed_identifiers.extend(chunk_commits.into_iter().map(|chunk_commit| chunk_commit.chunk_identifier));
-            continue;
-        }
-        for maybe_batch in file_reader {
-            let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
-            let chunk_identifier_array = batch
-                .column_by_name("chunk_identifier")
-                .and_then(|column| column.as_any().downcast_ref::<Int64Array>())
-                .ok_or_else(|| {
-                    OutputWriterError::Runtime(
-                        "Rust output writer could not read chunk identifiers from Arrow chunk.".to_string(),
-                    )
-                })?;
-            for row_index in 0..chunk_identifier_array.len() {
-                if !chunk_identifier_array.is_null(row_index) {
-                    committed_identifiers.insert(chunk_identifier_array.value(row_index));
-                }
-            }
-        }
-    }
-    Ok(committed_identifiers.into_iter().collect())
+    Ok(scan_committed_chunk_commits(chunks_directory)?
+        .into_iter()
+        .map(|chunk_commit| chunk_commit.chunk_identifier)
+        .collect())
 }
 
 pub fn validate_strict_manifest_chunks(
@@ -83,6 +53,14 @@ pub fn validate_strict_manifest_chunks(
         if chunk_observation.row_count != row_count {
             return Err(OutputWriterError::InvalidInput(format!(
                 "Strict resume row count mismatch for chunk {}.",
+                committed_chunk.chunk_identifier
+            )));
+        }
+        if chunk_observation.output_format.as_deref() != Some(committed_chunk.output_format.as_str())
+            || chunk_observation.compression.as_deref() != Some(committed_chunk.compression.as_str())
+        {
+            return Err(OutputWriterError::InvalidInput(format!(
+                "Strict resume output metadata mismatch for chunk {}.",
                 committed_chunk.chunk_identifier
             )));
         }
@@ -128,6 +106,8 @@ pub(crate) fn repair_strict_manifest_chunk_commits(
 struct ManifestChunkObservation {
     schema: Arc<Schema>,
     row_count: i64,
+    output_format: Option<String>,
+    compression: Option<String>,
     variant_start_index: Option<i64>,
     variant_stop_index: Option<i64>,
 }
@@ -135,6 +115,8 @@ struct ManifestChunkObservation {
 #[derive(Clone)]
 struct ChunkCommitObservation {
     chunk_identifier: i64,
+    output_format: String,
+    compression: String,
     variant_start_index: i64,
     variant_stop_index: i64,
     row_count: i64,
@@ -162,6 +144,10 @@ fn read_manifest_chunk_commits(
             })?;
             Ok(manifest::RunManifestChunkCommit {
                 chunk_identifier: read_manifest_integer(committed_chunk, "chunk_identifier")?,
+                output_format: read_optional_manifest_string(committed_chunk, "output_format")
+                    .unwrap_or_else(|| infer_output_format_from_file_name(chunk_file_name).to_string()),
+                compression: read_optional_manifest_string(committed_chunk, "compression")
+                    .unwrap_or_else(|| "none".to_string()),
                 variant_start_index: read_manifest_integer(committed_chunk, "variant_start_index")?,
                 variant_stop_index: read_manifest_integer(committed_chunk, "variant_stop_index")?,
                 row_count: read_manifest_usize(committed_chunk, "row_count")?,
@@ -169,6 +155,17 @@ fn read_manifest_chunk_commits(
             })
         })
         .collect()
+}
+
+fn read_optional_manifest_string(committed_chunk: &Value, field_name: &str) -> Option<String> {
+    committed_chunk.get(field_name).and_then(Value::as_str).map(str::to_string)
+}
+
+fn infer_output_format_from_file_name(chunk_file_name: &str) -> &'static str {
+    if chunk_file_name.ends_with(".parquet") {
+        return "parquet";
+    }
+    "arrow"
 }
 
 fn read_manifest_integer(committed_chunk: &Value, field_name: &str) -> Result<i64, OutputWriterError> {
@@ -195,7 +192,9 @@ fn scan_committed_chunk_commits(
     let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
         .map_err(OutputWriterError::runtime)?
         .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
-        .filter(|chunk_file_path| chunk_file_path.extension().is_some_and(|extension| extension == "arrow"))
+        .filter(|chunk_file_path| {
+            chunk_file_path.extension().is_some_and(|extension| extension == "arrow" || extension == "parquet")
+        })
         .collect::<Vec<_>>();
     chunk_file_paths.sort();
     let mut chunk_commits = BTreeMap::new();
@@ -224,6 +223,9 @@ fn scan_committed_chunk_commits(
 }
 
 fn inspect_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFileCommitObservation, OutputWriterError> {
+    if chunk_file_path.extension().is_some_and(|extension| extension == "parquet") {
+        return inspect_parquet_chunk_file_commits(chunk_file_path);
+    }
     let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
     let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
     let schema = file_reader.schema();
@@ -265,6 +267,8 @@ fn inspect_metadata_chunk_file_commits(
         }
         manifest_commits.push(manifest::RunManifestChunkCommit {
             chunk_identifier: chunk_commit.chunk_identifier,
+            output_format: chunk_commit.output_format,
+            compression: chunk_commit.compression,
             variant_start_index: chunk_commit.variant_start_index,
             variant_stop_index: chunk_commit.variant_stop_index,
             row_count: usize::try_from(chunk_commit.row_count).map_err(OutputWriterError::runtime)?,
@@ -300,6 +304,8 @@ fn inspect_legacy_chunk_file_commits(
                 })
                 .or_insert(ChunkCommitObservation {
                     chunk_identifier,
+                    output_format: "arrow".to_string(),
+                    compression: "none".to_string(),
                     variant_start_index,
                     variant_stop_index,
                     row_count: 1,
@@ -311,6 +317,8 @@ fn inspect_legacy_chunk_file_commits(
         .map(|chunk_commit| {
             Ok(manifest::RunManifestChunkCommit {
                 chunk_identifier: chunk_commit.chunk_identifier,
+                output_format: chunk_commit.output_format,
+                compression: chunk_commit.compression,
                 variant_start_index: chunk_commit.variant_start_index,
                 variant_stop_index: chunk_commit.variant_stop_index,
                 row_count: usize::try_from(chunk_commit.row_count).map_err(OutputWriterError::runtime)?,
@@ -318,6 +326,91 @@ fn inspect_legacy_chunk_file_commits(
             })
         })
         .collect()
+}
+
+fn inspect_parquet_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFileCommitObservation, OutputWriterError> {
+    let schema = read_parquet_arrow_schema(chunk_file_path)?;
+    let chunk_file_name = chunk_file_path
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .ok_or_else(|| OutputWriterError::Runtime("Rust output writer part file name is not UTF-8.".to_string()))?
+        .to_string();
+    let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
+    let parquet_reader = SerializedFileReader::new(input_file).map_err(OutputWriterError::runtime)?;
+    let file_metadata = parquet_reader.metadata().file_metadata();
+    let observed_row_count = file_metadata.num_rows();
+    let chunk_commit_text = file_metadata
+        .key_value_metadata()
+        .and_then(|metadata| metadata.iter().find(|entry| entry.key == schema::CHUNK_COMMITS_METADATA_KEY))
+        .and_then(|entry| entry.value.as_deref())
+        .ok_or_else(|| {
+            OutputWriterError::InvalidInput(format!(
+                "Strict resume Parquet part is missing chunk commit metadata: {}",
+                chunk_file_path.display()
+            ))
+        })?;
+    let chunk_commits = read_chunk_commit_observations_text(chunk_commit_text)?;
+    let summed_row_count = chunk_commits
+        .iter()
+        .try_fold(0_i64, |total, chunk_commit| total.checked_add(chunk_commit.row_count).ok_or(()))
+        .map_err(|()| OutputWriterError::Runtime("Rust output writer Parquet row count overflowed.".to_string()))?;
+    if summed_row_count != observed_row_count {
+        return Err(OutputWriterError::InvalidInput(format!(
+            "Strict resume Parquet row count mismatch for part {chunk_file_name}."
+        )));
+    }
+    let mut manifest_commits = Vec::with_capacity(chunk_commits.len());
+    for chunk_commit in chunk_commits {
+        if chunk_commit.output_format != "parquet" {
+            return Err(OutputWriterError::InvalidInput(format!(
+                "Strict resume Parquet part has non-Parquet commit metadata for chunk {}.",
+                chunk_commit.chunk_identifier
+            )));
+        }
+        manifest_commits.push(manifest::RunManifestChunkCommit {
+            chunk_identifier: chunk_commit.chunk_identifier,
+            output_format: chunk_commit.output_format,
+            compression: chunk_commit.compression,
+            variant_start_index: chunk_commit.variant_start_index,
+            variant_stop_index: chunk_commit.variant_stop_index,
+            row_count: usize::try_from(chunk_commit.row_count).map_err(OutputWriterError::runtime)?,
+            chunk_file_name: chunk_file_name.clone(),
+        });
+    }
+    Ok(ChunkFileCommitObservation { schema, chunk_commits: manifest_commits })
+}
+
+fn inspect_parquet_manifest_chunk_file(
+    chunk_file_path: &Path,
+    chunk_identifier: i64,
+) -> Result<ManifestChunkObservation, OutputWriterError> {
+    let chunk_file_observation = inspect_parquet_chunk_file_commits(chunk_file_path)?;
+    let Some(chunk_commit) =
+        chunk_file_observation.chunk_commits.into_iter().find(|commit| commit.chunk_identifier == chunk_identifier)
+    else {
+        return Ok(ManifestChunkObservation {
+            schema: chunk_file_observation.schema,
+            row_count: 0,
+            output_format: None,
+            compression: None,
+            variant_start_index: None,
+            variant_stop_index: None,
+        });
+    };
+    Ok(ManifestChunkObservation {
+        schema: chunk_file_observation.schema,
+        row_count: i64::try_from(chunk_commit.row_count).map_err(OutputWriterError::runtime)?,
+        output_format: Some(chunk_commit.output_format),
+        compression: Some(chunk_commit.compression),
+        variant_start_index: Some(chunk_commit.variant_start_index),
+        variant_stop_index: Some(chunk_commit.variant_stop_index),
+    })
+}
+
+fn read_parquet_arrow_schema(chunk_file_path: &Path) -> Result<Arc<Schema>, OutputWriterError> {
+    let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
+    let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(input_file).map_err(OutputWriterError::runtime)?;
+    Ok(parquet_reader.schema().clone())
 }
 
 fn read_required_int64_value(
@@ -335,6 +428,12 @@ fn read_schema_chunk_commits(chunk_schema: &Schema) -> Result<Option<Vec<ChunkCo
     let Some(chunk_commits_text) = chunk_schema.metadata().get(schema::CHUNK_COMMITS_METADATA_KEY) else {
         return Ok(None);
     };
+    Ok(Some(read_chunk_commit_observations_text(chunk_commits_text)?))
+}
+
+fn read_chunk_commit_observations_text(
+    chunk_commits_text: &str,
+) -> Result<Vec<ChunkCommitObservation>, OutputWriterError> {
     let chunk_commit_values = serde_json::from_str::<Value>(chunk_commits_text).map_err(OutputWriterError::runtime)?;
     let chunk_commit_array = chunk_commit_values.as_array().ok_or_else(|| {
         OutputWriterError::Runtime("Rust output writer chunk commit metadata must be a list.".to_string())
@@ -343,12 +442,16 @@ fn read_schema_chunk_commits(chunk_schema: &Schema) -> Result<Option<Vec<ChunkCo
     for chunk_commit_value in chunk_commit_array {
         chunk_commits.push(ChunkCommitObservation {
             chunk_identifier: read_manifest_integer(chunk_commit_value, "chunk_identifier")?,
+            output_format: read_optional_manifest_string(chunk_commit_value, "output_format")
+                .unwrap_or_else(|| "arrow".to_string()),
+            compression: read_optional_manifest_string(chunk_commit_value, "compression")
+                .unwrap_or_else(|| "none".to_string()),
             variant_start_index: read_manifest_integer(chunk_commit_value, "variant_start_index")?,
             variant_stop_index: read_manifest_integer(chunk_commit_value, "variant_stop_index")?,
             row_count: read_manifest_integer(chunk_commit_value, "row_count")?,
         });
     }
-    Ok(Some(chunk_commits))
+    Ok(chunk_commits)
 }
 
 fn validate_schema_chunk_commit_batches(
@@ -380,6 +483,9 @@ fn inspect_manifest_chunk_file(
     chunk_file_path: &Path,
     chunk_identifier: i64,
 ) -> Result<ManifestChunkObservation, OutputWriterError> {
+    if chunk_file_path.extension().is_some_and(|extension| extension == "parquet") {
+        return inspect_parquet_manifest_chunk_file(chunk_file_path, chunk_identifier);
+    }
     let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
     let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
     let schema = file_reader.schema();
@@ -413,6 +519,8 @@ fn inspect_manifest_chunk_file(
     Ok(ManifestChunkObservation {
         schema,
         row_count,
+        output_format: Some("arrow".to_string()),
+        compression: Some("none".to_string()),
         variant_start_index: observed_start,
         variant_stop_index: observed_stop,
     })
@@ -429,6 +537,8 @@ fn inspect_metadata_manifest_chunk_file(
         return Ok(ManifestChunkObservation {
             schema,
             row_count: 0,
+            output_format: None,
+            compression: None,
             variant_start_index: None,
             variant_stop_index: None,
         });
@@ -437,6 +547,8 @@ fn inspect_metadata_manifest_chunk_file(
     Ok(ManifestChunkObservation {
         schema,
         row_count: chunk_commit.row_count,
+        output_format: Some(chunk_commit.output_format),
+        compression: Some(chunk_commit.compression),
         variant_start_index: Some(chunk_commit.variant_start_index),
         variant_stop_index: Some(chunk_commit.variant_stop_index),
     })
@@ -461,6 +573,8 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::ipc::writer::FileWriter;
     use arrow::record_batch::RecordBatch;
+    use parquet::arrow::ArrowWriter;
+    use parquet::file::metadata::KeyValue;
 
     use crate::output::schema as output_schema;
 
@@ -493,6 +607,20 @@ mod tests {
         writer.finish().expect("Arrow writer should finish");
     }
 
+    fn write_parquet_batches(path: &Path, schema: &Arc<Schema>, batches: &[RecordBatch], chunk_commits_json: &str) {
+        let file = std::fs::File::create(path).expect("Parquet file should be created");
+        let mut writer =
+            ArrowWriter::try_new(file, Arc::clone(schema), None).expect("Parquet writer should be created");
+        writer.append_key_value_metadata(KeyValue {
+            key: output_schema::CHUNK_COMMITS_METADATA_KEY.to_string(),
+            value: Some(chunk_commits_json.to_string()),
+        });
+        for batch in batches {
+            writer.write(batch).expect("Parquet batch should be written");
+        }
+        writer.close().expect("Parquet writer should close");
+    }
+
     fn required_resume_schema(extra_field: Option<Field>) -> Arc<Schema> {
         let mut fields = vec![
             Field::new("chunk_identifier", DataType::Int64, false),
@@ -521,6 +649,10 @@ mod tests {
                     .collect(),
             ),
         )
+    }
+
+    fn parquet_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![Field::new("value", DataType::Int64, false)]))
     }
 
     #[test]
@@ -572,6 +704,61 @@ mod tests {
     }
 
     #[test]
+    fn scan_and_strict_resume_read_parquet_part_footer_commits_and_ignore_tmp_files() {
+        let directory_path = create_test_directory();
+        let schema = parquet_schema();
+        let first_batch =
+            RecordBatch::try_new(Arc::clone(&schema), vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef])
+                .expect("first batch should build");
+        let second_batch =
+            RecordBatch::try_new(Arc::clone(&schema), vec![Arc::new(Int64Array::from(vec![2, 3])) as ArrayRef])
+                .expect("second batch should build");
+        let chunk_commits_json = r#"[{"chunk_identifier":0,"output_format":"parquet","compression":"none","variant_start_index":0,"variant_stop_index":1,"row_count":1,"chunk_file_name":"part_000000000_000000002.parquet"},{"chunk_identifier":2,"output_format":"parquet","compression":"none","variant_start_index":2,"variant_stop_index":4,"row_count":2,"chunk_file_name":"part_000000000_000000002.parquet"}]"#;
+        write_parquet_batches(
+            &directory_path.join("part_000000000_000000002.parquet"),
+            &schema,
+            &[first_batch, second_batch],
+            chunk_commits_json,
+        );
+        std::fs::write(directory_path.join("part_000000004.parquet.tmp"), b"incomplete")
+            .expect("tmp file should be written");
+
+        let committed_identifiers =
+            scan_committed_chunk_identifiers(&directory_path).expect("Parquet part should scan");
+
+        assert_eq!(committed_identifiers, vec![0, 2]);
+        let manifest = r#"{"committed_chunks":[{"chunk_identifier":0,"output_format":"parquet","compression":"none","variant_start_index":0,"variant_stop_index":1,"row_count":1,"chunk_file_name":"part_000000000_000000002.parquet"},{"chunk_identifier":2,"output_format":"parquet","compression":"none","variant_start_index":2,"variant_stop_index":4,"row_count":2,"chunk_file_name":"part_000000000_000000002.parquet"}]}"#;
+        assert_eq!(
+            validate_strict_manifest_chunks(&directory_path, manifest).expect("Parquet manifest should validate"),
+            vec![0, 2],
+        );
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
+    fn strict_resume_rejects_parquet_part_row_count_mismatch() {
+        let directory_path = create_test_directory();
+        let schema = parquet_schema();
+        let batch = RecordBatch::try_new(Arc::clone(&schema), vec![Arc::new(Int64Array::from(vec![0])) as ArrayRef])
+            .expect("batch should build");
+        write_parquet_batches(
+            &directory_path.join("part_000000000.parquet"),
+            &schema,
+            &[batch],
+            r#"[{"chunk_identifier":0,"output_format":"parquet","compression":"none","variant_start_index":0,"variant_stop_index":2,"row_count":2,"chunk_file_name":"part_000000000.parquet"}]"#,
+        );
+
+        let error = scan_committed_chunk_identifiers(&directory_path)
+            .expect_err("Parquet row count mismatch should fail")
+            .to_string();
+
+        assert!(error.contains("row count mismatch"));
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
     fn scan_rejects_schema_metadata_row_count_mismatch() {
         let directory_path = create_test_directory();
         let schema = Arc::new(
@@ -613,7 +800,7 @@ mod tests {
         let error = scan_committed_chunk_identifiers(&directory_path)
             .expect_err("range chunk without chunk_identifier column should fail")
             .to_string();
-        assert!(error.contains("chunk identifiers"));
+        assert!(error.contains("chunk_identifier"));
 
         std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
     }

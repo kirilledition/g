@@ -82,6 +82,7 @@ def write_native_chunks(
     output_run_paths: output.OutputRunPaths,
     association_mode: AssociationMode,
     *,
+    output_format: types.OutputFormat = types.OutputFormat.ARROW,
     extra_code_value: int | None = None,
 ) -> None:
     writer_session = output.create_output_writer_session(
@@ -90,6 +91,7 @@ def write_native_chunks(
         writer_thread_count=1,
         writer_queue_depth=1,
         finalize_parquet=False,
+        output_format=output_format,
     )
     callback = NativeChunkWritingCallback(writer_session, extra_code_value)
     try:
@@ -109,6 +111,7 @@ def build_test_header(
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     firth_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT64,
+    output_format: types.OutputFormat = types.OutputFormat.PARQUET,
 ) -> dict[str, typing.Any]:
     bgen_path = tmp_path / "study.bgen"
     sample_path = tmp_path / "study.sample"
@@ -137,6 +140,7 @@ def build_test_header(
         gpu_genotype_format=gpu_genotype_format,
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
+        output_format=output_format,
     )
 
 
@@ -161,6 +165,8 @@ def test_current_run_manifest_records_result_statistic_output_dtype(tmp_path: Pa
 
     assert current_header["output_writer"]["result_statistic_dtype"] == "float32"
     assert current_header["execution_plan"]["output_writer"]["result_statistic_dtype"] == "float32"
+    assert current_header["output_writer"]["parquet_compression"] == "none"
+    assert current_header["execution_plan"]["output_writer"]["parquet_compression"] == "none"
 
 
 def test_current_run_manifest_records_gpu_genotype_format(tmp_path: Path) -> None:
@@ -189,7 +195,14 @@ def initialize_test_output_run(
 def test_resolve_output_run_paths_appends_mode_suffix(tmp_path: Path) -> None:
     output_run_paths = output.resolve_output_run_paths(tmp_path / "results/output", AssociationMode.REGENIE2_LINEAR)
     assert output_run_paths.run_directory == tmp_path / "results/output.regenie2_linear.run"
-    assert output_run_paths.chunks_directory == tmp_path / "results/output.regenie2_linear.run/chunks"
+    assert output_run_paths.chunks_directory == tmp_path / "results/output.regenie2_linear.run/parts"
+
+    arrow_run_paths = output.resolve_output_run_paths(
+        tmp_path / "results/output",
+        AssociationMode.REGENIE2_LINEAR,
+        types.OutputFormat.ARROW,
+    )
+    assert arrow_run_paths.chunks_directory == tmp_path / "results/output.regenie2_linear.run/chunks"
 
 
 def test_output_manifest_helpers_cover_empty_paths_and_invalid_json(tmp_path: Path) -> None:
@@ -331,6 +344,44 @@ def test_native_writer_uses_shared_schema_and_null_placeholders(tmp_path: Path) 
     assert frame.get_column("EXTRA").to_list() == [None, None, None, None]
 
 
+def test_native_writer_writes_parquet_dataset_parts_with_footer_metadata(tmp_path: Path) -> None:
+    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
+    write_native_chunks(
+        output_run_paths,
+        AssociationMode.REGENIE2_LINEAR,
+        output_format=types.OutputFormat.PARQUET,
+    )
+
+    part_paths = output.iter_sorted_chunk_file_paths(tmp_path)
+    assert [part_path.name for part_path in part_paths] == ["part_000000000_000000002.parquet"]
+    frame = pl.read_parquet(part_paths[0])
+    assert frame.columns == EXPECTED_FINAL_COLUMNS
+    assert frame.get_column("TEST").to_list() == ["ADD", "ADD", "ADD", "ADD"]
+    parquet_metadata = pq.ParquetFile(part_paths[0]).metadata.metadata
+    assert parquet_metadata is not None
+    chunk_commits = json.loads(parquet_metadata[b"g.output.chunk_commits"])
+    assert chunk_commits == [
+        {
+            "chunk_file_name": "part_000000000_000000002.parquet",
+            "chunk_identifier": 0,
+            "compression": "none",
+            "output_format": "parquet",
+            "row_count": 2,
+            "variant_start_index": 0,
+            "variant_stop_index": 2,
+        },
+        {
+            "chunk_file_name": "part_000000000_000000002.parquet",
+            "chunk_identifier": 2,
+            "compression": "none",
+            "output_format": "parquet",
+            "row_count": 2,
+            "variant_start_index": 2,
+            "variant_stop_index": 4,
+        },
+    ]
+
+
 def test_native_writer_records_output_stage_timings_when_requested(tmp_path: Path) -> None:
     output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
     writer_session = output.create_output_writer_session(
@@ -339,6 +390,7 @@ def test_native_writer_records_output_stage_timings_when_requested(tmp_path: Pat
         writer_thread_count=1,
         writer_queue_depth=1,
         finalize_parquet=False,
+        output_format=types.OutputFormat.ARROW,
         collect_stage_timings=True,
     )
     callback = NativeChunkWritingCallback(writer_session)
@@ -392,7 +444,11 @@ def test_initialize_output_run_compatible_resume_preserves_committed_chunks(tmp_
         resume=False,
     )
     initialize_test_output_run(prepared_output_run, current_header)
-    write_native_chunks(prepared_output_run.output_run_paths, AssociationMode.REGENIE2_LINEAR)
+    write_native_chunks(
+        prepared_output_run.output_run_paths,
+        AssociationMode.REGENIE2_LINEAR,
+        output_format=types.OutputFormat.PARQUET,
+    )
 
     resumed_output_run = output.prepare_output_run(
         output_root=tmp_path / "output",
@@ -442,7 +498,11 @@ def test_prepare_output_run_strict_resume_validates_manifest_chunks(tmp_path: Pa
         resume=False,
     )
     initialize_test_output_run(prepared_output_run, current_header)
-    write_native_chunks(prepared_output_run.output_run_paths, AssociationMode.REGENIE2_LINEAR)
+    write_native_chunks(
+        prepared_output_run.output_run_paths,
+        AssociationMode.REGENIE2_LINEAR,
+        output_format=types.OutputFormat.PARQUET,
+    )
 
     resumed_output_run = output.prepare_output_run(
         output_root=tmp_path / "output",
@@ -461,10 +521,11 @@ def test_prepare_output_run_strict_resume_validates_manifest_chunks(tmp_path: Pa
 
 
 def test_strict_resume_repairs_manifest_commits_from_arrow_metadata(tmp_path: Path) -> None:
-    current_header = build_test_header(tmp_path)
+    current_header = build_test_header(tmp_path, output_format=types.OutputFormat.ARROW)
     prepared_output_run = output.prepare_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
+        output_format=types.OutputFormat.ARROW,
         resume=False,
     )
     initialize_test_output_run(prepared_output_run, current_header)
@@ -477,6 +538,7 @@ def test_strict_resume_repairs_manifest_commits_from_arrow_metadata(tmp_path: Pa
     resumed_output_run = output.prepare_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_LINEAR,
+        output_format=types.OutputFormat.ARROW,
         resume=True,
         resume_mode=output.types.ResumeMode.STRICT,
     )
@@ -494,6 +556,8 @@ def test_strict_resume_repairs_manifest_commits_from_arrow_metadata(tmp_path: Pa
         {
             "chunk_file_name": "chunk_000000000_000000002.arrow",
             "chunk_identifier": 0,
+            "compression": "zstd",
+            "output_format": "arrow",
             "row_count": 2,
             "variant_start_index": 0,
             "variant_stop_index": 2,
@@ -501,6 +565,8 @@ def test_strict_resume_repairs_manifest_commits_from_arrow_metadata(tmp_path: Pa
         {
             "chunk_file_name": "chunk_000000000_000000002.arrow",
             "chunk_identifier": 2,
+            "compression": "zstd",
+            "output_format": "arrow",
             "row_count": 2,
             "variant_start_index": 2,
             "variant_stop_index": 4,
@@ -847,10 +913,15 @@ def test_chunk_arrow_schema_is_shared_between_linear_and_binary(tmp_path: Path) 
 
 
 def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Path) -> None:
-    current_header = build_test_header(tmp_path, association_mode=AssociationMode.REGENIE2_BINARY)
+    current_header = build_test_header(
+        tmp_path,
+        association_mode=AssociationMode.REGENIE2_BINARY,
+        output_format=types.OutputFormat.ARROW,
+    )
     prepared_output_run = output.prepare_output_run(
         output_root=tmp_path / "output",
         association_mode=AssociationMode.REGENIE2_BINARY,
+        output_format=types.OutputFormat.ARROW,
         resume=False,
     )
     initialize_test_output_run(prepared_output_run, current_header)
@@ -884,6 +955,31 @@ def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Pa
     )
     assert manifest["finalized"] is True
     assert manifest["final_row_count"] == 4
+
+
+def test_finalize_parquet_dataset_parts_to_single_parquet(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path)
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        resume=False,
+    )
+    initialize_test_output_run(prepared_output_run, current_header)
+    write_native_chunks(
+        prepared_output_run.output_run_paths,
+        AssociationMode.REGENIE2_LINEAR,
+        output_format=types.OutputFormat.PARQUET,
+    )
+
+    parquet_path = output.finalize_chunks_to_parquet(
+        prepared_output_run.output_run_paths,
+        AssociationMode.REGENIE2_LINEAR,
+        output_format=types.OutputFormat.PARQUET,
+    )
+
+    parquet_frame = pl.read_parquet(parquet_path)
+    assert parquet_frame.height == 4
+    assert parquet_frame.columns == EXPECTED_FINAL_COLUMNS
 
 
 def test_output_writer_finish_interrupted_flushes_commits_without_final_parquet(tmp_path: Path) -> None:
@@ -935,6 +1031,7 @@ def test_finalize_chunks_to_parquet_writes_empty_schema_when_no_chunks_exist(tmp
     parquet_path = output.finalize_chunks_to_parquet(
         prepared_output_run.output_run_paths,
         AssociationMode.REGENIE2_LINEAR,
+        output_format=types.OutputFormat.PARQUET,
     )
 
     parquet_frame = pl.read_parquet(parquet_path)

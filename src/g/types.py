@@ -62,6 +62,13 @@ class ArrowCompression(enum.StrEnum):
     NONE = "none"
 
 
+class ParquetCompression(enum.StrEnum):
+    """Parquet compression codec for dataset part files."""
+
+    ZSTD = "zstd"
+    NONE = "none"
+
+
 class TelemetryMode(enum.StrEnum):
     """Run telemetry detail level."""
 

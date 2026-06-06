@@ -11,8 +11,8 @@ use crate::genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataCol
 use crate::output::finalization;
 use crate::output::manifest;
 use crate::output::writer::{
-    OutputWriterError, RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, RegenieStep2ChunkWriteTiming,
-    build_chunk_file_name, write_regenie_step2_chunk_job,
+    OutputFileFormat, OutputWriterError, RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch,
+    RegenieStep2ChunkWriteTiming, build_output_file_name, write_regenie_step2_chunk_job,
 };
 
 const OUTPUT_STAGE_TIMING_FILE_NAME: &str = "output_stage_timings.json";
@@ -58,9 +58,11 @@ struct OutputWriterConfig {
     run_directory: PathBuf,
     chunks_directory: PathBuf,
     association_mode: String,
+    output_format: OutputFileFormat,
     finalize_parquet: bool,
     chunks_per_arrow_file: usize,
     arrow_compression: String,
+    parquet_compression: String,
     collect_stage_timings: bool,
 }
 
@@ -200,9 +202,11 @@ impl OutputWriterSession {
         association_mode: String,
         writer_thread_count: usize,
         writer_queue_depth: usize,
+        output_format: &str,
         finalize_parquet: bool,
         chunks_per_arrow_file: usize,
         arrow_compression: String,
+        parquet_compression: String,
         collect_stage_timings: bool,
     ) -> Result<Self, OutputWriterError> {
         if writer_thread_count == 0 {
@@ -215,9 +219,11 @@ impl OutputWriterSession {
             run_directory: PathBuf::from(run_directory),
             chunks_directory: PathBuf::from(chunks_directory),
             association_mode,
+            output_format: OutputFileFormat::parse(output_format).map_err(OutputWriterError::InvalidInput)?,
             finalize_parquet,
             chunks_per_arrow_file,
             arrow_compression,
+            parquet_compression,
             collect_stage_timings,
         };
         let (sender, receiver) = bounded(writer_queue_depth.max(1));
@@ -245,6 +251,7 @@ impl OutputWriterSession {
         let coordinator_worker_errors = Arc::clone(&worker_errors);
         let coordinator_stage_timings = Arc::clone(&stage_timings);
         let coordinator_chunks_per_arrow_file = config.chunks_per_arrow_file;
+        let coordinator_output_format = config.output_format;
         let coordinator_collect_stage_timings = config.collect_stage_timings;
         let coordinator_handle = std::thread::spawn(move || {
             run_output_writer_coordinator(
@@ -252,6 +259,7 @@ impl OutputWriterSession {
                 writer_sender,
                 writer_thread_count,
                 coordinator_chunks_per_arrow_file,
+                coordinator_output_format,
                 coordinator_worker_errors,
                 coordinator_stage_timings,
                 coordinator_collect_stage_timings,
@@ -294,6 +302,7 @@ impl OutputWriterSession {
             &self.config.chunks_directory,
             &final_parquet_path,
             &self.config.association_mode,
+            self.config.output_format,
         )?;
         self.record_stage_timing(|stage_timings| stage_timings.add_finalization_timing(finalization_timing))?;
         self.record_finish_timing(finish_start_time)?;
@@ -700,6 +709,7 @@ fn run_output_writer_coordinator(
     writer_sender: Sender<OutputWriteJob>,
     writer_thread_count: usize,
     chunks_per_arrow_file: usize,
+    output_format: OutputFileFormat,
     worker_errors: Arc<Mutex<Vec<String>>>,
     stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
     collect_stage_timings: bool,
@@ -713,6 +723,7 @@ fn run_output_writer_coordinator(
                     && flush_pending_regenie_step2_chunks(
                         &writer_sender,
                         &mut pending_chunks,
+                        output_format,
                         &worker_errors,
                         &stage_timings,
                         collect_stage_timings,
@@ -726,6 +737,7 @@ fn run_output_writer_coordinator(
                 let _ = flush_pending_regenie_step2_chunks(
                     &writer_sender,
                     &mut pending_chunks,
+                    output_format,
                     &worker_errors,
                     &stage_timings,
                     collect_stage_timings,
@@ -746,6 +758,7 @@ fn run_output_writer_coordinator(
 fn flush_pending_regenie_step2_chunks(
     writer_sender: &Sender<OutputWriteJob>,
     pending_chunks: &mut Vec<RegenieStep2ChunkJob>,
+    output_format: OutputFileFormat,
     worker_errors: &Arc<Mutex<Vec<String>>>,
     stage_timings: &Arc<Mutex<OutputStageTimingAccumulator>>,
     collect_stage_timings: bool,
@@ -757,7 +770,7 @@ fn flush_pending_regenie_step2_chunks(
     let first_chunk_identifier = pending_chunks.first().map_or(0, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
     let last_chunk_identifier =
         pending_chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
-    let chunk_file_name = build_chunk_file_name(first_chunk_identifier, last_chunk_identifier);
+    let chunk_file_name = build_output_file_name(output_format, first_chunk_identifier, last_chunk_identifier);
     let write_batch = RegenieStep2ChunkWriteBatch { chunk_file_name, chunks: std::mem::take(pending_chunks) };
     writer_sender.send(OutputWriteJob::RegenieStep2(Box::new(write_batch))).map_err(|error| {
         push_worker_error(worker_errors, error.to_string());
@@ -788,9 +801,13 @@ fn run_output_writer_worker(
 ) {
     while let Ok(job) = receiver.recv() {
         let write_result = match job {
-            OutputWriteJob::RegenieStep2(regenie_step2_job) => {
-                write_regenie_step2_chunk_job(&config.chunks_directory, *regenie_step2_job, &config.arrow_compression)
-            }
+            OutputWriteJob::RegenieStep2(regenie_step2_job) => write_regenie_step2_chunk_job(
+                &config.chunks_directory,
+                *regenie_step2_job,
+                config.output_format,
+                &config.arrow_compression,
+                &config.parquet_compression,
+            ),
             OutputWriteJob::Shutdown => return,
         };
         match write_result {
@@ -871,8 +888,10 @@ mod tests {
             "regenie2_linear".to_string(),
             1,
             1,
+            "arrow",
             false,
             1,
+            "none".to_string(),
             "none".to_string(),
             false,
         )

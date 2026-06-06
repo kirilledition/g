@@ -64,6 +64,7 @@ def test_regenie_command_dispatches_config_api() -> None:
         "g.cli.api.regenie",
         return_value=api.RunArtifacts(
             output_run_directory=Path("results/output.g/trait.regenie2_linear.run"),
+            final_dataset=Path("results/output.g/trait.regenie2_linear.run/parts"),
             final_parquet=Path("results/output.g/trait.regenie2_linear.run/final.parquet"),
         ),
     ) as mock_regenie_api:
@@ -143,6 +144,7 @@ def test_regenie_command_dispatches_config_api() -> None:
     assert regenie_config.g_diagnostics.log_lossy is False
     assert regenie_config.g_diagnostics.include_source_location is True
     assert regenie_config.g_diagnostics.include_span_events is True
+    assert "Parquet dataset saved" in result.output
     assert "final.parquet" in result.output
 
 
@@ -480,11 +482,13 @@ def test_print_success_message_reports_run_directory_outputs(capsys: typing.Any)
     print_success_message(
         api.RunArtifacts(
             output_run_directory=Path("results/output.g/trait.regenie2_linear.run"),
+            final_dataset=Path("results/output.g/trait.regenie2_linear.run/parts"),
             final_parquet=Path("results/output.g/trait.regenie2_linear.run/final.parquet"),
         )
     )
     captured = capsys.readouterr()
     assert "results/output.g/trait.regenie2_linear.run" in captured.out
+    assert "Parquet dataset" in captured.out
     assert "final.parquet" in captured.out
 
 

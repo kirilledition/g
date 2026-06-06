@@ -42,9 +42,11 @@ impl OutputWriterSession {
         association_mode: String,
         writer_thread_count: usize,
         writer_queue_depth: usize,
+        output_format: String,
         finalize_parquet: bool,
         chunks_per_arrow_file: usize,
         arrow_compression: String,
+        parquet_compression: String,
         collect_stage_timings: bool,
     ) -> PyResult<Self> {
         let inner = NativeOutputWriterSession::new(
@@ -53,9 +55,11 @@ impl OutputWriterSession {
             association_mode,
             writer_thread_count,
             writer_queue_depth,
+            &output_format,
             finalize_parquet,
             chunks_per_arrow_file,
             arrow_compression,
+            parquet_compression,
             collect_stage_timings,
         )
         .map_err(output_writer_error_to_py)?;
@@ -223,10 +227,17 @@ pub(crate) fn finalize_output_run_chunks(
     run_directory: String,
     chunks_directory: String,
     association_mode: String,
+    output_format: String,
 ) -> PyResult<String> {
-    finalize_native_output_run_chunks(Path::new(&run_directory), Path::new(&chunks_directory), &association_mode)
-        .map(|path| path.display().to_string())
-        .map_err(output_writer_error_to_py)
+    let native_output_format = crate::output::OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
+    finalize_native_output_run_chunks(
+        Path::new(&run_directory),
+        Path::new(&chunks_directory),
+        &association_mode,
+        native_output_format,
+    )
+    .map(|path| path.display().to_string())
+    .map_err(output_writer_error_to_py)
 }
 
 #[pyfunction]
@@ -256,6 +267,8 @@ pub(crate) fn repair_strict_manifest_chunk_commits(
             .map(|chunk_commit| {
                 serde_json::json!({
                     "chunk_identifier": chunk_commit.chunk_identifier,
+                    "output_format": chunk_commit.output_format,
+                    "compression": chunk_commit.compression,
                     "variant_start_index": chunk_commit.variant_start_index,
                     "variant_stop_index": chunk_commit.variant_stop_index,
                     "row_count": chunk_commit.row_count,

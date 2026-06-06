@@ -86,6 +86,7 @@ JAX_MATMUL_PRECISION_VALUES = tuple(item.value for item in types.JaxMatmulPrecis
 FLOATING_POINT_DTYPE_VALUES = tuple(item.value for item in types.FloatingPointDtype)
 GPU_GENOTYPE_FORMAT_VALUES = tuple(item.value for item in types.GpuGenotypeFormat)
 ARROW_COMPRESSION_VALUES = tuple(item.value for item in types.ArrowCompression)
+PARQUET_COMPRESSION_VALUES = tuple(item.value for item in types.ParquetCompression)
 TELEMETRY_MODE_VALUES = tuple(item.value for item in types.TelemetryMode)
 
 
@@ -833,7 +834,7 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         "g_output_chunks_per_arrow_file",
         SupportLevel.G_EXTENSION,
         "g.output",
-        "Number of engine chunks grouped into one Arrow file.",
+        "Number of engine chunks grouped into one Arrow file or Parquet part.",
         cli_flags=("--g-output-chunks-per-arrow-file", "g_output_chunks_per_arrow_file"),
         type=OptionValueType.INTEGER,
     ),
@@ -845,6 +846,15 @@ G_OPTIONS: tuple[OptionSpec, ...] = (
         "Arrow IPC compression for internal chunk files.",
         cli_flags=("--g-output-arrow-compression", "g_output_arrow_compression"),
         accepted_values=ARROW_COMPRESSION_VALUES,
+    ),
+    OptionSpec(
+        "g-output-parquet-compression",
+        "g_output_parquet_compression",
+        SupportLevel.G_EXTENSION,
+        "g.output",
+        "Parquet compression for dataset part files.",
+        cli_flags=("--g-output-parquet-compression", "g_output_parquet_compression"),
+        accepted_values=PARQUET_COMPRESSION_VALUES,
     ),
     OptionSpec(
         "g-telemetry",
@@ -1044,6 +1054,7 @@ VALUE_OPTION_NAMES = frozenset(
         "g-writer-queue-depth",
         "g-output-chunks-per-arrow-file",
         "g-output-arrow-compression",
+        "g-output-parquet-compression",
         "g-resume",
         "g-resume-mode",
         "g-finalize-parquet",
@@ -1066,6 +1077,7 @@ TOML_KEY_BY_NAME = {
     "g-output-format": "format",
     "g-output-chunks-per-arrow-file": "chunks-per-arrow-file",
     "g-output-arrow-compression": "arrow-compression",
+    "g-output-parquet-compression": "parquet-compression",
     "g-telemetry": "telemetry",
 }
 
@@ -1088,6 +1100,7 @@ PYTHON_ALIASES_BY_NAME = {
     "g-output-run-directory": ("output_run_directory",),
     "g-writer-threads": ("output_writer_thread_count",),
     "g-writer-queue-depth": ("output_writer_queue_depth",),
+    "g-output-parquet-compression": ("parquet_compression",),
     "g-resume": ("resume",),
     "g-resume-mode": ("resume_mode",),
     "g-finalize-parquet": ("finalize_parquet",),

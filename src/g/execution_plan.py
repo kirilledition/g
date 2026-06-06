@@ -68,8 +68,9 @@ class OutputPlan:
         resume_mode: Resume validation mode.
         writer_threads: Number of output writer threads.
         writer_queue_depth: Output writer queue depth.
-        chunks_per_arrow_file: Number of chunks grouped into one Arrow file.
+        chunks_per_arrow_file: Number of engine chunks grouped into one output file.
         arrow_compression: Arrow IPC compression codec.
+        parquet_compression: Parquet dataset part compression codec.
 
     """
 
@@ -83,6 +84,7 @@ class OutputPlan:
     writer_queue_depth: int
     chunks_per_arrow_file: int
     arrow_compression: types.ArrowCompression
+    parquet_compression: types.ParquetCompression
 
 
 @dataclass(frozen=True)
@@ -263,14 +265,14 @@ def build_output_plan(
         output_prefix=output_prefix,
         output_run_root=output_run_root,
         output_format=regenie_config.g_output.format,
-        finalize_parquet=regenie_config.g_output.format == types.OutputFormat.PARQUET
-        or regenie_config.g_output.finalize_parquet,
+        finalize_parquet=regenie_config.g_output.finalize_parquet,
         resume=regenie_config.g_output.resume,
         resume_mode=regenie_config.g_output.resume_mode,
         writer_threads=regenie_config.g_output.writer_threads,
         writer_queue_depth=regenie_config.g_output.writer_queue_depth,
         chunks_per_arrow_file=regenie_config.g_output.chunks_per_arrow_file,
         arrow_compression=regenie_config.g_output.arrow_compression,
+        parquet_compression=regenie_config.g_output.parquet_compression,
     )
 
 
@@ -308,6 +310,7 @@ def build_phenotype_run_plan(
     prepared_output_run = output.prepare_output_run(
         output_root=output_plan.output_run_root / output_directory_name,
         association_mode=association_mode,
+        output_format=output_plan.output_format,
         resume=output_plan.resume,
         resume_mode=output_plan.resume_mode,
     )

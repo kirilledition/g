@@ -126,6 +126,7 @@ class GOutputToml(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True
     writer_queue_depth: int | msgspec.UnsetType = msgspec.UNSET
     chunks_per_arrow_file: int | msgspec.UnsetType = msgspec.UNSET
     arrow_compression: str | msgspec.UnsetType = msgspec.UNSET
+    parquet_compression: str | msgspec.UnsetType = msgspec.UNSET
     resume: bool | msgspec.UnsetType = msgspec.UNSET
     resume_mode: str | msgspec.UnsetType = msgspec.UNSET
     finalize_parquet: bool | msgspec.UnsetType = msgspec.UNSET

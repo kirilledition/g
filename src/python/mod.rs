@@ -810,12 +810,8 @@ impl MultiRegeniePredictionSource {
         sample_key_mode: String,
     ) -> PyResult<Vec<Self>> {
         let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-        let aligned_sample_data_groups = grouped_aligned_sample_data
-            .data
-            .groups
-            .iter()
-            .map(|group| &group.aligned_sample_data)
-            .collect::<Vec<_>>();
+        let aligned_sample_data_groups =
+            grouped_aligned_sample_data.data.groups.iter().map(|group| &group.aligned_sample_data).collect::<Vec<_>>();
         let sources = NativeMultiPredictionSource::load_grouped(
             Path::new(&prediction_list_path),
             &aligned_sample_data_groups,

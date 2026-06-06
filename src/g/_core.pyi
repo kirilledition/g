@@ -177,9 +177,11 @@ class OutputWriterSession:
         association_mode: str,
         writer_thread_count: int,
         writer_queue_depth: int,
+        output_format: str,
         finalize_parquet: bool,
         chunks_per_arrow_file: int,
         arrow_compression: str,
+        parquet_compression: str,
         collect_stage_timings: bool,
     ) -> None: ...
     def write_regenie2_native_chunk(
@@ -213,6 +215,7 @@ def finalize_output_run_chunks(
     run_directory: str,
     chunks_directory: str,
     association_mode: str,
+    output_format: str,
 ) -> str: ...
 def configure_bgen_decode_tile_variant_count(tile_variant_count: int) -> None: ...
 def configure_rayon_global_thread_pool(thread_count: int) -> None: ...

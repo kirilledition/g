@@ -9,6 +9,7 @@ use std::time::Instant;
 use arrow::array::{ArrayRef, RecordBatch};
 use arrow::ipc::reader::FileReader as ArrowFileReader;
 use parquet::arrow::ArrowWriter;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
@@ -16,7 +17,7 @@ use parquet::schema::types::ColumnPath;
 
 use crate::output::manifest;
 use crate::output::schema;
-use crate::output::writer::OutputWriterError;
+use crate::output::writer::{OutputFileFormat, OutputWriterError};
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 
@@ -47,9 +48,10 @@ pub fn finalize_output_run_chunks(
     run_directory: &Path,
     chunks_directory: &Path,
     association_mode: &str,
+    output_format: OutputFileFormat,
 ) -> Result<PathBuf, OutputWriterError> {
     let final_parquet_path = run_directory.join("final.parquet");
-    write_final_parquet_from_chunk_files(chunks_directory, &final_parquet_path, association_mode)?;
+    write_final_parquet_from_chunk_files(chunks_directory, &final_parquet_path, association_mode, output_format)?;
     Ok(final_parquet_path)
 }
 
@@ -57,14 +59,22 @@ pub(crate) fn write_final_parquet_from_chunk_files(
     chunks_directory: &Path,
     final_parquet_path: &Path,
     association_mode: &str,
+    output_format: OutputFileFormat,
 ) -> Result<(), OutputWriterError> {
-    write_final_parquet_from_chunk_files_with_timing(chunks_directory, final_parquet_path, association_mode).map(|_| ())
+    write_final_parquet_from_chunk_files_with_timing(
+        chunks_directory,
+        final_parquet_path,
+        association_mode,
+        output_format,
+    )
+    .map(|_| ())
 }
 
 pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
     chunks_directory: &Path,
     final_parquet_path: &Path,
     association_mode: &str,
+    output_format: OutputFileFormat,
 ) -> Result<RegenieStep2FinalizationTiming, OutputWriterError> {
     let total_start_time = Instant::now();
     if association_mode != "regenie2_linear" && association_mode != "regenie2_binary" {
@@ -74,7 +84,7 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
     }
 
     let list_chunk_files_start_time = Instant::now();
-    let chunk_file_paths = sorted_arrow_chunk_file_paths(chunks_directory)?;
+    let chunk_file_paths = sorted_output_chunk_file_paths(chunks_directory, output_format)?;
     let list_chunk_files_seconds = list_chunk_files_start_time.elapsed().as_secs_f64();
 
     let parquet_writer_properties_start_time = Instant::now();
@@ -104,19 +114,13 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
     for chunk_file_path in chunk_file_paths {
         arrow_file_bytes = arrow_file_bytes
             .saturating_add(std::fs::metadata(&chunk_file_path).map_err(OutputWriterError::runtime)?.len());
-        let arrow_file_open_start_time = Instant::now();
-        let input_file = File::open(&chunk_file_path).map_err(OutputWriterError::runtime)?;
-        let current_arrow_file_open_seconds = arrow_file_open_start_time.elapsed().as_secs_f64();
-        arrow_file_open_seconds += current_arrow_file_open_seconds;
-        read_arrow_seconds += current_arrow_file_open_seconds;
-
-        let arrow_reader_init_start_time = Instant::now();
-        let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
-        let current_arrow_reader_init_seconds = arrow_reader_init_start_time.elapsed().as_secs_f64();
-        arrow_reader_init_seconds += current_arrow_reader_init_seconds;
-        read_arrow_seconds += current_arrow_reader_init_seconds;
-
-        for maybe_batch in file_reader {
+        for maybe_batch in read_output_chunk_file_batches(
+            &chunk_file_path,
+            output_format,
+            &mut arrow_file_open_seconds,
+            &mut arrow_reader_init_seconds,
+            &mut read_arrow_seconds,
+        )? {
             let read_batch_start_time = Instant::now();
             let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
             let current_arrow_batch_read_seconds = read_batch_start_time.elapsed().as_secs_f64();
@@ -172,14 +176,54 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
     })
 }
 
-fn sorted_arrow_chunk_file_paths(chunks_directory: &Path) -> Result<Vec<PathBuf>, OutputWriterError> {
+fn sorted_output_chunk_file_paths(
+    chunks_directory: &Path,
+    output_format: OutputFileFormat,
+) -> Result<Vec<PathBuf>, OutputWriterError> {
     let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
         .map_err(OutputWriterError::runtime)?
         .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
-        .filter(|chunk_file_path| chunk_file_path.extension().is_some_and(|extension| extension == "arrow"))
+        .filter(|chunk_file_path| {
+            chunk_file_path.extension().is_some_and(|extension| match output_format {
+                OutputFileFormat::Arrow => extension == "arrow",
+                OutputFileFormat::Parquet => extension == "parquet",
+            })
+        })
         .collect::<Vec<_>>();
     chunk_file_paths.sort();
     Ok(chunk_file_paths)
+}
+
+fn read_output_chunk_file_batches(
+    chunk_file_path: &Path,
+    output_format: OutputFileFormat,
+    arrow_file_open_seconds: &mut f64,
+    arrow_reader_init_seconds: &mut f64,
+    read_arrow_seconds: &mut f64,
+) -> Result<Box<dyn Iterator<Item = Result<RecordBatch, arrow::error::ArrowError>>>, OutputWriterError> {
+    let arrow_file_open_start_time = Instant::now();
+    let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
+    let current_arrow_file_open_seconds = arrow_file_open_start_time.elapsed().as_secs_f64();
+    *arrow_file_open_seconds += current_arrow_file_open_seconds;
+    *read_arrow_seconds += current_arrow_file_open_seconds;
+
+    let arrow_reader_init_start_time = Instant::now();
+    let batch_reader: Box<dyn Iterator<Item = Result<RecordBatch, arrow::error::ArrowError>>> = match output_format {
+        OutputFileFormat::Arrow => {
+            Box::new(ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?)
+        }
+        OutputFileFormat::Parquet => {
+            let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(input_file)
+                .map_err(OutputWriterError::runtime)?
+                .build()
+                .map_err(OutputWriterError::runtime)?;
+            Box::new(parquet_reader)
+        }
+    };
+    let current_arrow_reader_init_seconds = arrow_reader_init_start_time.elapsed().as_secs_f64();
+    *arrow_reader_init_seconds += current_arrow_reader_init_seconds;
+    *read_arrow_seconds += current_arrow_reader_init_seconds;
+    Ok(batch_reader)
 }
 
 fn build_regenie_step2_parquet_writer_properties() -> WriterProperties {
@@ -243,6 +287,8 @@ mod tests {
     use arrow::array::StringArray;
     use arrow::datatypes::{DataType, Field, Schema};
 
+    use crate::output::writer::OutputFileFormat;
+
     use super::*;
 
     fn create_test_directory() -> PathBuf {
@@ -258,11 +304,15 @@ mod tests {
         let chunks_directory = create_test_directory();
         let final_parquet_path = chunks_directory.join("final.parquet");
 
-        let error =
-            write_final_parquet_from_chunk_files_with_timing(&chunks_directory, &final_parquet_path, "unsupported")
-                .err()
-                .expect("unsupported association mode should fail")
-                .to_string();
+        let error = write_final_parquet_from_chunk_files_with_timing(
+            &chunks_directory,
+            &final_parquet_path,
+            "unsupported",
+            OutputFileFormat::Arrow,
+        )
+        .err()
+        .expect("unsupported association mode should fail")
+        .to_string();
         assert!(error.contains("Unsupported association mode"));
 
         std::fs::remove_dir_all(chunks_directory).expect("test directory should be removed");

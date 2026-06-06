@@ -39,6 +39,7 @@ def run_regenie2_linear_bgen_pipeline(
     writer_queue_depth: int = output.PACKAGED_WRITER_QUEUE_DEPTH,
     chunks_per_arrow_file: int = output.PACKAGED_CHUNKS_PER_ARROW_FILE,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+    parquet_compression: types.ParquetCompression = output.PACKAGED_PARQUET_COMPRESSION,
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     bgen_decode_tile_variant_count: int = output.PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT,
@@ -138,6 +139,7 @@ def run_regenie2_linear_bgen_pipeline(
         writer_queue_depth=writer_queue_depth,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
+        parquet_compression=parquet_compression,
     )
     initialized_output_run = output.initialize_output_run(
         output_run_paths=output_run_paths,
@@ -154,8 +156,10 @@ def run_regenie2_linear_bgen_pipeline(
         writer_thread_count=writer_thread_count,
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
+        output_format=output_format,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
+        parquet_compression=parquet_compression,
         collect_stage_timings=stage_timing_recorder is not None,
     )
     timing.record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
@@ -240,6 +244,7 @@ def run_regenie2_binary_bgen_pipeline(
     writer_queue_depth: int = output.PACKAGED_WRITER_QUEUE_DEPTH,
     chunks_per_arrow_file: int = output.PACKAGED_CHUNKS_PER_ARROW_FILE,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+    parquet_compression: types.ParquetCompression = output.PACKAGED_PARQUET_COMPRESSION,
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     bgen_decode_tile_variant_count: int = output.PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT,
@@ -346,6 +351,7 @@ def run_regenie2_binary_bgen_pipeline(
         writer_queue_depth=writer_queue_depth,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
+        parquet_compression=parquet_compression,
     )
     initialized_output_run = output.initialize_output_run(
         output_run_paths=output_run_paths,
@@ -362,8 +368,10 @@ def run_regenie2_binary_bgen_pipeline(
         writer_thread_count=writer_thread_count,
         writer_queue_depth=writer_queue_depth,
         finalize_parquet=finalize_parquet,
+        output_format=output_format,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
+        parquet_compression=parquet_compression,
         collect_stage_timings=stage_timing_recorder is not None,
     )
     timing.record_stage_duration(stage_timing_recorder, "output_writer_preparation", writer_start_time)
@@ -471,6 +479,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     writer_queue_depth: int = output.PACKAGED_WRITER_QUEUE_DEPTH,
     chunks_per_arrow_file: int = output.PACKAGED_CHUNKS_PER_ARROW_FILE,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+    parquet_compression: types.ParquetCompression = output.PACKAGED_PARQUET_COMPRESSION,
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     bgen_decode_tile_variant_count: int = output.PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT,
@@ -504,6 +513,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
         writer_queue_depth=writer_queue_depth,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
+        parquet_compression=parquet_compression,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
         bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
@@ -543,6 +553,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     writer_queue_depth: int = output.PACKAGED_WRITER_QUEUE_DEPTH,
     chunks_per_arrow_file: int = output.PACKAGED_CHUNKS_PER_ARROW_FILE,
     arrow_compression: types.ArrowCompression = types.ArrowCompression.ZSTD,
+    parquet_compression: types.ParquetCompression = output.PACKAGED_PARQUET_COMPRESSION,
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     bgen_decode_tile_variant_count: int = output.PACKAGED_BGEN_DECODE_TILE_VARIANT_COUNT,
@@ -582,6 +593,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
         writer_queue_depth=writer_queue_depth,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
+        parquet_compression=parquet_compression,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
         bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
@@ -621,6 +633,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     writer_queue_depth: int,
     chunks_per_arrow_file: int,
     arrow_compression: types.ArrowCompression,
+    parquet_compression: types.ParquetCompression,
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     bgen_decode_tile_variant_count: int,
@@ -659,6 +672,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
             writer_queue_depth=writer_queue_depth,
             chunks_per_arrow_file=chunks_per_arrow_file,
             arrow_compression=arrow_compression,
+            parquet_compression=parquet_compression,
             trusted_no_missing_diploid=trusted_no_missing_diploid,
             trusted_bgen_validation_mode=trusted_bgen_validation_mode,
             bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
@@ -761,6 +775,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         writer_queue_depth=writer_queue_depth,
         chunks_per_arrow_file=chunks_per_arrow_file,
         arrow_compression=arrow_compression,
+        parquet_compression=parquet_compression,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
         bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
@@ -800,6 +815,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     writer_queue_depth: int,
     chunks_per_arrow_file: int,
     arrow_compression: types.ArrowCompression,
+    parquet_compression: types.ParquetCompression,
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     bgen_decode_tile_variant_count: int,
@@ -892,6 +908,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             writer_queue_depth=writer_queue_depth,
             chunks_per_arrow_file=chunks_per_arrow_file,
             arrow_compression=arrow_compression,
+            parquet_compression=parquet_compression,
             trusted_no_missing_diploid=trusted_no_missing_diploid,
             trusted_bgen_validation_mode=trusted_bgen_validation_mode,
             bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
@@ -936,6 +953,7 @@ def run_prepared_multi_phenotype_bgen_group(
     writer_queue_depth: int,
     chunks_per_arrow_file: int,
     arrow_compression: types.ArrowCompression,
+    parquet_compression: types.ParquetCompression,
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     bgen_decode_tile_variant_count: int,
@@ -990,6 +1008,7 @@ def run_prepared_multi_phenotype_bgen_group(
             writer_queue_depth=writer_queue_depth,
             chunks_per_arrow_file=chunks_per_arrow_file,
             arrow_compression=arrow_compression,
+            parquet_compression=parquet_compression,
         )
         for phenotype_name in phenotype_names
     )
@@ -1020,8 +1039,10 @@ def run_prepared_multi_phenotype_bgen_group(
             writer_thread_count=writer_thread_count,
             writer_queue_depth=writer_queue_depth,
             finalize_parquet=finalize_parquet,
+            output_format=output_format,
             chunks_per_arrow_file=chunks_per_arrow_file,
             arrow_compression=arrow_compression,
+            parquet_compression=parquet_compression,
             collect_stage_timings=stage_timing_recorder is not None,
         )
         for output_run_paths in output_run_paths_by_phenotype

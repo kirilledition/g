@@ -11,6 +11,8 @@ const RUN_MANIFEST_FILE_NAME: &str = "run_manifest.json";
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RunManifestChunkCommit {
     pub(crate) chunk_identifier: i64,
+    pub(crate) output_format: String,
+    pub(crate) compression: String,
     pub(crate) variant_start_index: i64,
     pub(crate) variant_stop_index: i64,
     pub(crate) row_count: usize,
@@ -41,6 +43,8 @@ pub(crate) fn record_run_manifest_chunk_commits(
             if committed_chunk_identifiers.insert(chunk_identifier) {
                 committed_chunks.push(json!({
                     "chunk_identifier": chunk_commit.chunk_identifier,
+                    "output_format": chunk_commit.output_format,
+                    "compression": chunk_commit.compression,
                     "variant_start_index": chunk_commit.variant_start_index,
                     "variant_stop_index": chunk_commit.variant_stop_index,
                     "row_count": chunk_commit.row_count,
@@ -135,6 +139,8 @@ mod tests {
     fn build_chunk_commit(chunk_identifier: i64) -> RunManifestChunkCommit {
         RunManifestChunkCommit {
             chunk_identifier,
+            output_format: "arrow".to_string(),
+            compression: "none".to_string(),
             variant_start_index: chunk_identifier,
             variant_stop_index: chunk_identifier + 2,
             row_count: 2,

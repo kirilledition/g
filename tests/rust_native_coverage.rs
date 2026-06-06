@@ -713,8 +713,10 @@ fn output_session_finishes_records_manifest_and_supports_strict_resume_validatio
         "regenie2_linear".to_string(),
         1,
         2,
+        "arrow",
         false,
         2,
+        "none".to_string(),
         "none".to_string(),
         true,
     )
@@ -836,9 +838,11 @@ fn output_session_finalizes_and_marks_interrupted_runs() {
         "regenie2_binary".to_string(),
         1,
         1,
+        "arrow",
         true,
         1,
         "zstd".to_string(),
+        "none".to_string(),
         false,
     )
     .expect("session should open");
@@ -858,8 +862,10 @@ fn output_session_finalizes_and_marks_interrupted_runs() {
         "regenie2_linear".to_string(),
         1,
         1,
+        "arrow",
         false,
         1,
+        "none".to_string(),
         "none".to_string(),
         false,
     )
@@ -884,8 +890,10 @@ fn output_session_rejects_invalid_configuration_and_chunk_shapes() {
         "regenie2_linear".to_string(),
         0,
         1,
+        "arrow",
         false,
         1,
+        "none".to_string(),
         "none".to_string(),
         false,
     ) else {
@@ -898,8 +906,10 @@ fn output_session_rejects_invalid_configuration_and_chunk_shapes() {
         "regenie2_linear".to_string(),
         1,
         1,
+        "arrow",
         false,
         0,
+        "none".to_string(),
         "none".to_string(),
         false,
     ) else {
@@ -913,8 +923,10 @@ fn output_session_rejects_invalid_configuration_and_chunk_shapes() {
         "unsupported".to_string(),
         1,
         1,
+        "arrow",
         false,
         1,
+        "none".to_string(),
         "none".to_string(),
         false,
     )
@@ -933,8 +945,10 @@ fn output_session_rejects_invalid_configuration_and_chunk_shapes() {
         "regenie2_linear".to_string(),
         1,
         1,
+        "arrow",
         false,
         1,
+        "none".to_string(),
         "none".to_string(),
         false,
     )
@@ -956,8 +970,10 @@ fn output_session_rejects_invalid_configuration_and_chunk_shapes() {
         "regenie2_binary".to_string(),
         1,
         1,
+        "arrow",
         false,
         1,
+        "none".to_string(),
         "none".to_string(),
         false,
     )
@@ -996,8 +1012,10 @@ fn output_session_rejects_invalid_configuration_and_chunk_shapes() {
         "regenie2_linear".to_string(),
         1,
         1,
+        "arrow",
         false,
         1,
+        "none".to_string(),
         "none".to_string(),
         false,
     )
@@ -1028,9 +1046,11 @@ fn output_session_rejects_invalid_configuration_and_chunk_shapes() {
         "regenie2_linear".to_string(),
         1,
         1,
+        "arrow",
         false,
         1,
         "unsupported-compression".to_string(),
+        "none".to_string(),
         false,
     )
     .expect("worker error session should open");

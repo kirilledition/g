@@ -48,10 +48,8 @@ impl NativeTelemetrySession {
     }
 
     pub fn emit_json_line(&self, json_line: &str) -> PyResult<()> {
-        let mut writer_guard = self
-            .writer
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
+        let mut writer_guard =
+            self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
         let Some(writer) = writer_guard.as_mut() else {
             return Ok(());
         };
@@ -63,15 +61,11 @@ impl NativeTelemetrySession {
     }
 
     pub fn finish(&self) -> PyResult<()> {
-        let mut writer_guard = self
-            .writer
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
+        let mut writer_guard =
+            self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
         let _dropped_writer = writer_guard.take();
-        let mut guard = self
-            .guard
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("Telemetry guard mutex was poisoned."))?;
+        let mut guard =
+            self.guard.lock().map_err(|_| PyRuntimeError::new_err("Telemetry guard mutex was poisoned."))?;
         let _dropped_guard = guard.take();
         clear_shared_telemetry_writer(&self.path)
     }

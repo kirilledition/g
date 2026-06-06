@@ -259,6 +259,9 @@ class GOutputConfig:
     arrow_compression: types.ArrowCompression = dataclasses.field(
         default_factory=lambda: types.ArrowCompression(default_string_option("g-output-arrow-compression"))
     )
+    parquet_compression: types.ParquetCompression = dataclasses.field(
+        default_factory=lambda: types.ParquetCompression(default_string_option("g-output-parquet-compression"))
+    )
     resume: bool = dataclasses.field(default_factory=lambda: default_bool_option("g-resume"))
     resume_mode: types.ResumeMode = dataclasses.field(
         default_factory=lambda: types.ResumeMode(default_string_option("g-resume-mode"))
@@ -972,6 +975,7 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             "writer-queue-depth": config.g_output.writer_queue_depth,
             "chunks-per-arrow-file": config.g_output.chunks_per_arrow_file,
             "arrow-compression": config.g_output.arrow_compression.value,
+            "parquet-compression": config.g_output.parquet_compression.value,
             "resume": config.g_output.resume,
             "resume-mode": config.g_output.resume_mode.value,
             "finalize-parquet": config.g_output.finalize_parquet,

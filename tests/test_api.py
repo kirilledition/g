@@ -142,6 +142,9 @@ def test_execution_plan_uses_safe_phenotype_output_directories() -> None:
         Path("results/output.g/trait_0002_a_b"),
         Path("results/output.g/trait_0003_tmp_outside"),
     )
+    assert all(
+        call.kwargs["output_format"] == types.OutputFormat.PARQUET for call in mock_prepare_output_run.call_args_list
+    )
 
 
 def test_build_binary_kernel_config_maps_compute_options() -> None:
@@ -223,7 +226,7 @@ def test_normalize_binary_correction_config_maps_approximate_firth() -> None:
 def test_regenie_callable_dispatches_linear_pipeline() -> None:
     run_paths = OutputRunPaths(
         run_directory=Path("results/output.g/trait.regenie2_linear.run"),
-        chunks_directory=Path("results/output.g/trait.regenie2_linear.run/chunks"),
+        chunks_directory=Path("results/output.g/trait.regenie2_linear.run/parts"),
     )
     with (
         patch("g.runner.configure_runtime_before_jax_import") as mock_configure_runtime_before_jax_import,
@@ -235,11 +238,12 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
         patch("g.runner.extend_run_manifest") as mock_extend_run_manifest,
         patch("g.interface.config.write_toml") as mock_write_toml,
     ):
-        mock_pipeline.return_value = Path("results/output.g/trait.regenie2_linear.run/final.parquet")
+        mock_pipeline.return_value = None
         artifacts = api.regenie(build_minimal_config())
 
     assert artifacts.output_run_directory == Path("results/output.g/trait.regenie2_linear.run")
-    assert artifacts.final_parquet == Path("results/output.g/trait.regenie2_linear.run/final.parquet")
+    assert artifacts.final_dataset == Path("results/output.g/trait.regenie2_linear.run/parts")
+    assert artifacts.final_parquet is None
     assert artifacts.effective_config == Path("results/output.g/trait.regenie2_linear.run/effective_config.toml")
     mock_configure_runtime_before_jax_import.assert_called_once()
     assert mock_configure_runtime_before_jax_import.call_args.args[0].device == types.Device.CPU
@@ -251,6 +255,8 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     assert mock_pipeline.call_args.kwargs["alignment_config"].sample_key_mode == types.SampleKeyMode.IID
     assert mock_pipeline.call_args.kwargs["chunks_per_arrow_file"] == 16
     assert mock_pipeline.call_args.kwargs["arrow_compression"] == types.ArrowCompression.ZSTD
+    assert mock_pipeline.call_args.kwargs["parquet_compression"] == types.ParquetCompression.NONE
+    assert mock_pipeline.call_args.kwargs["finalize_parquet"] is False
     mock_extend_run_manifest.assert_called_once()
     mock_write_toml.assert_called_once()
 
@@ -997,4 +1003,5 @@ def test_extend_run_manifest_adds_command_metadata(tmp_path: Path) -> None:
     assert manifest["command"]["interface"] == "g regenie"
     assert manifest["command"]["phenotype"] == "trait"
     assert manifest["bgen"] == {"path": "/inputs/dataset.bgen", "size": 1, "mtime_ns": 2}
+    assert manifest["runtime"]["parquet_compression"] == "none"
     assert "input_fingerprints" not in manifest

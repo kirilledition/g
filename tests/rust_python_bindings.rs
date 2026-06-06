@@ -429,8 +429,10 @@ writer = _core.OutputWriterSession(
     "regenie2_linear",
     1,
     1,
+    "arrow",
     False,
     1,
+    "none",
     "none",
     True,
 )
@@ -443,7 +445,7 @@ with open(os.path.join(run_directory, "run_manifest.json"), encoding="utf-8") as
 assert _core.validate_strict_manifest_chunks(chunks_directory, manifest_json) == [0, 2]
 repaired_commits = _core.repair_strict_manifest_chunk_commits(chunks_directory, manifest_json)
 assert '"chunk_identifier":0' in repaired_commits
-assert _core.finalize_output_run_chunks(run_directory, chunks_directory, "regenie2_linear").endswith("final.parquet")
+assert _core.finalize_output_run_chunks(run_directory, chunks_directory, "regenie2_linear", "arrow").endswith("final.parquet")
 
 multi_run_directories = [
     os.path.join(os.path.dirname(run_directory), "multi-a"),
@@ -462,8 +464,10 @@ for multi_run_directory in multi_run_directories:
             "regenie2_binary",
             1,
             1,
+            "arrow",
             False,
             1,
+            "none",
             "none",
             False,
         )
@@ -531,8 +535,10 @@ interrupted_writer = _core.OutputWriterSession(
     "regenie2_linear",
     1,
     1,
+    "arrow",
     False,
     1,
+    "none",
     "none",
     False,
 )
@@ -549,15 +555,17 @@ abort_writer = _core.OutputWriterSession(
     "regenie2_linear",
     1,
     1,
+    "arrow",
     False,
     1,
+    "none",
     "none",
     False,
 )
 abort_writer.abort()
 
 try:
-    _core.OutputWriterSession(run_directory, chunks_directory, "regenie2_linear", 0, 1, False, 1, "none", False)
+    _core.OutputWriterSession(run_directory, chunks_directory, "regenie2_linear", 0, 1, "arrow", False, 1, "none", "none", False)
     raise AssertionError("invalid writer thread count should fail")
 except ValueError:
     pass
