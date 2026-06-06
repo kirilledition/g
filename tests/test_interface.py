@@ -613,6 +613,24 @@ def test_quantitative_trait_ignores_none_binary_only_python_options() -> None:
     assert "pThresh" not in regenie_config.explicit_options
 
 
+def test_trait_flags_are_mutually_exclusive_within_one_layer() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options["bt"] = True
+
+    with pytest.raises(ValueError, match="--qt and --bt are mutually exclusive"):
+        config.RegenieConfig.from_options(raw_options)
+
+
+def test_python_trait_type_alias_selects_binary_trait() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options.pop("qt")
+    raw_options.update({"trait_type": "binary", "firth": True, "approx": True})
+
+    regenie_config = config.RegenieConfig.from_options(raw_options)
+
+    assert regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
+
+
 def test_quantitative_trait_accepts_defaulted_binary_threshold() -> None:
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
 

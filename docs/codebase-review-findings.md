@@ -39,6 +39,7 @@ Completed in this branch:
 - Replaced unsupported exact Firth/SPA runtime compute `NotImplementedError` branches with explicit validation.
 - Added bounded dosage-worker stop/join handling for native callback shutdown.
 - Added a Rust characterization test for the current INFO score missingness denominator.
+- Synchronized the branch with main's msgspec-based configuration rewrite at `400c82f4`.
 
 Verification in this branch:
 
@@ -78,6 +79,13 @@ Verification in this branch:
 - `uv run ty check src/g/engine/callbacks.py` - passed after bounded dosage-worker shutdown cleanup.
 - `rustfmt --check src/genotype/preprocess.rs` - passed after INFO score missingness contract characterization.
 - `env LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --lib genotype::preprocess` - 6 passed after INFO score missingness contract characterization.
+- `uv run pytest tests/test_interface.py -q` - 61 passed after synchronizing with main.
+- `uv run pytest tests/test_api.py tests/test_interface.py -q` - 88 passed after synchronizing with main.
+- `uv run pytest tests/test_regenie2_pipeline.py -q` - 58 passed after synchronizing with main.
+- `uv run pytest tests/test_regenie2_binary.py -q` - 43 passed, 1 skipped after synchronizing with main.
+- `uv run ruff check src/g tests/test_api.py tests/test_interface.py tests/test_regenie2_pipeline.py tests/test_regenie2_binary.py` - passed after synchronizing with main.
+- `uv run ty check src/g` - passed after synchronizing with main.
+- `env LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --lib genotype::preprocess` - 6 passed after synchronizing with main.
 
 Implementation learnings:
 
@@ -96,6 +104,7 @@ Implementation learnings:
 - Exact Firth and SPA remain config-rejected modes. Direct binary compute now treats them as unsupported runtime input rather than unfinished implementation branches.
 - Native callback `finish()` now drains the dosage worker with the same bounded stop/join pattern used by the result worker. `abort()` still stays best-effort, but it now attempts bounded sentinel delivery instead of ignoring full queues immediately.
 - Current Rust INFO score behavior uses the observed genotype count in the expected variance denominator, even though imputed dosage square sums account for all selected samples. This is now covered as a characterization test.
+- Main's msgspec runtime config conversion supersedes the older manual conversion helpers. The cleanup branch now keeps that path and only preserves the still-relevant explicit-option and validation tests.
 
 ## Suggested Work Order
 

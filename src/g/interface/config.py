@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 import os
 import typing
 from dataclasses import dataclass
 from pathlib import Path
 
 import msgspec
+import msgspec.inspect
 
 from g import types
 from g.interface import config_layers, defaults, options, toml_schema
@@ -20,6 +22,9 @@ def load_default_option_dictionary() -> dict[str, typing.Any]:
 
 
 QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "spa", "pThresh")
+INPUT_RUNTIME_FIELD_NAMES = frozenset({"bgen", "sample", "pheno_file", "covar_file", "pred"})
+TRAIT_RUNTIME_FIELD_NAMES = frozenset({"step", "bsize", "threads"})
+G_COMPUTE_FIELD_RENAMES = {"null_logistic_nonconvergence": "null_logistic_nonconvergence_policy"}
 
 
 def packaged_default_option(option_name: str) -> typing.Any:
@@ -326,28 +331,11 @@ def split_name_list(raw_names: str | typing.Iterable[str] | None) -> tuple[str, 
     return tuple(stripped_name for name in raw_names if (stripped_name := str(name).strip()))
 
 
-def path_or_none(raw_value: typing.Any) -> Path | None:
-    """Convert an optional path-like value."""
-    if raw_value is None:
-        return None
-    return Path(str(raw_value))
-
-
 def optional_string(raw_value: typing.Any) -> str | None:
     """Convert an optional string value."""
     if raw_value is not None:
         return str(raw_value)
     return None
-
-
-def bool_or_false(raw_value: typing.Any) -> bool:
-    """Convert TOML or Python option booleans."""
-    return bool(raw_value) if raw_value is not None else False
-
-
-def bool_or_default(raw_value: typing.Any, *, default: bool) -> bool:
-    """Convert an optional boolean using a caller-provided default."""
-    return bool(raw_value) if raw_value is not None else default
 
 
 def normalize_trait_type(*, qt: bool | None, bt: bool | None) -> types.RegenieTraitType:
@@ -378,11 +366,48 @@ def from_toml_config_layers(
     merged_toml_config = base_config
     explicit_option_names: set[str] = set()
     for explicit_layer in explicit_layers:
+        reject_layer_trait_flag_conflict(explicit_layer.toml_config)
         merged_toml_config = config_layers.overlay_toml_configs(merged_toml_config, explicit_layer.toml_config)
+        merged_toml_config = apply_trait_flag_layer_precedence(merged_toml_config, explicit_layer.toml_config)
         explicit_option_names.update(explicit_layer.explicit_options)
     return from_toml_config(
         toml_config=merged_toml_config,
         explicit_options=frozenset(explicit_option_names),
+    )
+
+
+def reject_layer_trait_flag_conflict(toml_config: toml_schema.TomlConfig) -> None:
+    """Reject one config layer that explicitly enables both trait flags."""
+    trait_section = toml_config.trait
+    if trait_section is msgspec.UNSET:
+        return
+    if trait_section.qt is True and trait_section.bt is True:
+        message = "--qt and --bt are mutually exclusive."
+        raise ValueError(message)
+
+
+def apply_trait_flag_layer_precedence(
+    merged_config: toml_schema.TomlConfig,
+    override_config: toml_schema.TomlConfig,
+) -> toml_schema.TomlConfig:
+    """Translate explicit trait flag selections across config layers."""
+    override_trait_section = override_config.trait
+    merged_trait_section = merged_config.trait
+    if override_trait_section is msgspec.UNSET or merged_trait_section is msgspec.UNSET:
+        return merged_config
+
+    trait_updates: dict[str, typing.Any] = {}
+    if override_trait_section.qt is True:
+        trait_updates["bt"] = False
+    if override_trait_section.bt is True:
+        trait_updates["qt"] = False
+    if not trait_updates:
+        return merged_config
+
+    updated_trait_section = config_layers.replace_struct_values(merged_trait_section, trait_updates)
+    return typing.cast(
+        "toml_schema.TomlConfig",
+        config_layers.replace_struct_values(merged_config, {"trait": updated_trait_section}),
     )
 
 
@@ -408,6 +433,7 @@ def from_toml_config(
     )
     reject_unsupported_options(normalized_options)
     validate_unknown_options(normalized_options)
+    reject_missing_resolved_default_options(normalized_options)
     pheno_columns = resolve_exclusive_column_values(
         repeated_value=input_section.pheno_col,
         list_value=input_section.pheno_col_list,
@@ -420,248 +446,82 @@ def from_toml_config(
         repeated_key="covarCol",
         list_key="covarColList",
     )
-    config = RegenieConfig(
-        input=InputConfig(
-            bgen=path_or_none(optional_toml_value(input_section.bgen)),
-            sample=path_or_none(optional_toml_value(input_section.sample)),
-            pheno_file=path_or_none(optional_toml_value(input_section.pheno_file)),
-            pheno_columns=pheno_columns,
-            covar_file=path_or_none(optional_toml_value(input_section.covar_file)),
-            covar_columns=covar_columns,
-            pred=path_or_none(optional_toml_value(input_section.pred)),
-        ),
-        trait=TraitConfig(
-            step=required_toml_value(trait_section.step, "step"),
-            trait_type=trait_type,
-            bsize=required_toml_value(trait_section.bsize, "bsize"),
-            threads=optional_toml_value(trait_section.threads),
-        ),
-        binary=BinaryConfig(
-            firth=required_toml_value(binary_section.firth, "firth"),
-            approx=required_toml_value(binary_section.approx, "approx"),
-            spa=bool_or_false(optional_toml_value(binary_section.spa)),
-            p_threshold=required_toml_value(binary_section.p_threshold, "pThresh"),
-            firth_se=required_toml_value(binary_section.firth_se, "firth-se"),
-        ),
-        g_compute=GComputeConfig(
-            device=types.Device(required_toml_value(g_compute_section.device, "g-device")),
-            staging_depth=required_toml_value(g_compute_section.staging_depth, "g-staging-depth"),
-            variant_limit=optional_toml_value(g_compute_section.variant_limit),
-            trusted_no_missing_diploid=required_toml_value(
-                g_compute_section.trusted_no_missing_diploid,
-                "g-trusted-no-missing-diploid",
-            ),
-            trusted_bgen_validation_mode=types.TrustedBgenValidationMode(
-                required_toml_value(
-                    g_compute_section.trusted_bgen_validation_mode,
-                    "g-trusted-bgen-validation-mode",
-                )
-            ),
-            sample_key_mode=types.SampleKeyMode(
-                required_toml_value(g_compute_section.sample_key_mode, "g-sample-key-mode")
-            ),
-            multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode(
-                required_toml_value(
-                    g_compute_section.multi_phenotype_sample_mode,
-                    "g-multi-phenotype-sample-mode",
-                )
-            ),
-            firth_batch_size=required_toml_value(g_compute_section.firth_batch_size, "g-firth-batch-size"),
-            firth_candidate_capacity=required_toml_value(
-                g_compute_section.firth_candidate_capacity,
-                "g-firth-candidate-capacity",
-            ),
-            binary_null_maximum_iterations=required_toml_value(
-                g_compute_section.binary_null_maximum_iterations,
-                "g-binary-null-maximum-iterations",
-            ),
-            binary_null_coefficient_tolerance=required_toml_value(
-                g_compute_section.binary_null_coefficient_tolerance,
-                "g-binary-null-coefficient-tolerance",
-            ),
-            null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy(
-                required_toml_value(
-                    g_compute_section.null_logistic_nonconvergence,
-                    "g-null-logistic-nonconvergence",
-                )
-            ),
-            binary_minimum_probability=required_toml_value(
-                g_compute_section.binary_minimum_probability,
-                "g-binary-minimum-probability",
-            ),
-            binary_minimum_variance=required_toml_value(
-                g_compute_section.binary_minimum_variance,
-                "g-binary-minimum-variance",
-            ),
-            binary_relative_variance_tolerance=required_toml_value(
-                g_compute_section.binary_relative_variance_tolerance,
-                "g-binary-relative-variance-tolerance",
-            ),
-            firth_maximum_iterations=required_toml_value(
-                g_compute_section.firth_maximum_iterations,
-                "g-firth-maximum-iterations",
-            ),
-            firth_gradient_tolerance=required_toml_value(
-                g_compute_section.firth_gradient_tolerance,
-                "g-firth-gradient-tolerance",
-            ),
-            firth_coefficient_tolerance=required_toml_value(
-                g_compute_section.firth_coefficient_tolerance,
-                "g-firth-coefficient-tolerance",
-            ),
-            firth_likelihood_tolerance=required_toml_value(
-                g_compute_section.firth_likelihood_tolerance,
-                "g-firth-likelihood-tolerance",
-            ),
-            firth_maximum_step_size=required_toml_value(
-                g_compute_section.firth_maximum_step_size,
-                "g-firth-maximum-step-size",
-            ),
-            firth_pseudo_maximum_iterations=required_toml_value(
-                g_compute_section.firth_pseudo_maximum_iterations,
-                "g-firth-pseudo-maximum-iterations",
-            ),
-            firth_pseudo_inner_maximum_iterations=required_toml_value(
-                g_compute_section.firth_pseudo_inner_maximum_iterations,
-                "g-firth-pseudo-inner-maximum-iterations",
-            ),
-            firth_newton_raphson_zero_start_iterations=required_toml_value(
-                g_compute_section.firth_newton_raphson_zero_start_iterations,
-                "g-firth-newton-raphson-zero-start-iterations",
-            ),
-            firth_line_search_maximum_attempts=required_toml_value(
-                g_compute_section.firth_line_search_maximum_attempts,
-                "g-firth-line-search-maximum-attempts",
-            ),
-            firth_step_halving_maximum_attempts=required_toml_value(
-                g_compute_section.firth_step_halving_maximum_attempts,
-                "g-firth-step-halving-maximum-attempts",
-            ),
-            firth_initial_response_scale=required_toml_value(
-                g_compute_section.firth_initial_response_scale,
-                "g-firth-initial-response-scale",
-            ),
-            firth_sparse_carrier_dosage_threshold=required_toml_value(
-                g_compute_section.firth_sparse_carrier_dosage_threshold,
-                "g-firth-sparse-carrier-dosage-threshold",
-            ),
-            firth_step_halving_scale=required_toml_value(
-                g_compute_section.firth_step_halving_scale,
-                "g-firth-step-halving-scale",
-            ),
-            null_firth_maximum_iterations=required_toml_value(
-                g_compute_section.null_firth_maximum_iterations,
-                "g-null-firth-maximum-iterations",
-            ),
-            null_firth_gradient_tolerance=required_toml_value(
-                g_compute_section.null_firth_gradient_tolerance,
-                "g-null-firth-gradient-tolerance",
-            ),
-            null_firth_maximum_step_size=required_toml_value(
-                g_compute_section.null_firth_maximum_step_size,
-                "g-null-firth-maximum-step-size",
-            ),
-            null_firth_fallback_iteration_multiplier=required_toml_value(
-                g_compute_section.null_firth_fallback_iteration_multiplier,
-                "g-null-firth-fallback-iteration-multiplier",
-            ),
-            null_firth_fallback_step_divisor=required_toml_value(
-                g_compute_section.null_firth_fallback_step_divisor,
-                "g-null-firth-fallback-step-divisor",
-            ),
-            null_firth_line_search_maximum_attempts=required_toml_value(
-                g_compute_section.null_firth_line_search_maximum_attempts,
-                "g-null-firth-line-search-maximum-attempts",
-            ),
-            null_firth_step_halving_scale=required_toml_value(
-                g_compute_section.null_firth_step_halving_scale,
-                "g-null-firth-step-halving-scale",
-            ),
-            use_block_firth_math=required_toml_value(
-                g_compute_section.use_block_firth_math,
-                "g-use-block-firth-math",
-            ),
-            bgen_decode_tile_variant_count=required_toml_value(
-                g_compute_section.bgen_decode_tile_variant_count,
-                "g-bgen-decode-tile-variant-count",
-            ),
-            gpu_genotype_format=types.GpuGenotypeFormat(
-                required_toml_value(g_compute_section.gpu_genotype_format, "g-gpu-genotype-format")
-            ),
-            score_dtype=types.FloatingPointDtype(required_toml_value(g_compute_section.score_dtype, "g-score-dtype")),
-            firth_dtype=types.FloatingPointDtype(required_toml_value(g_compute_section.firth_dtype, "g-firth-dtype")),
-            jax_cache_dir=path_or_none(optional_toml_value(g_compute_section.jax_cache_dir)),
-            jax_matmul_precision=optional_jax_matmul_precision(
-                optional_toml_value(g_compute_section.jax_matmul_precision)
-            ),
-            jax_persistent_cache=required_toml_value(
-                g_compute_section.jax_persistent_cache,
-                "g-jax-persistent-cache",
-            ),
-            jax_persistent_cache_min_entry_size_bytes=required_toml_value(
-                g_compute_section.jax_persistent_cache_min_entry_size_bytes,
-                "g-jax-persistent-cache-min-entry-size-bytes",
-            ),
-            jax_persistent_cache_min_compile_time_seconds=required_toml_value(
-                g_compute_section.jax_persistent_cache_min_compile_time_seconds,
-                "g-jax-persistent-cache-min-compile-time-seconds",
-            ),
-            jax_xla_autotune_cache=required_toml_value(
-                g_compute_section.jax_xla_autotune_cache,
-                "g-jax-xla-autotune-cache",
-            ),
-            jax_transfer_guard=required_toml_value(g_compute_section.jax_transfer_guard, "g-jax-transfer-guard"),
-        ),
-        g_output=GOutputConfig(
-            out=path_or_none(optional_toml_value(output_section.out)),
-            format=types.OutputFormat(required_toml_value(g_output_section.format, "g-output-format")),
-            output_run_directory=path_or_none(optional_toml_value(g_output_section.output_run_directory)),
-            writer_threads=required_toml_value(g_output_section.writer_threads, "g-writer-threads"),
-            writer_queue_depth=required_toml_value(g_output_section.writer_queue_depth, "g-writer-queue-depth"),
-            chunks_per_arrow_file=required_toml_value(
-                g_output_section.chunks_per_arrow_file,
-                "g-output-chunks-per-arrow-file",
-            ),
-            arrow_compression=types.ArrowCompression(
-                required_toml_value(g_output_section.arrow_compression, "g-output-arrow-compression")
-            ),
-            resume=required_toml_value(g_output_section.resume, "g-resume"),
-            resume_mode=types.ResumeMode(required_toml_value(g_output_section.resume_mode, "g-resume-mode")),
-            finalize_parquet=required_toml_value(g_output_section.finalize_parquet, "g-finalize-parquet"),
-        ),
-        g_diagnostics=GDiagnosticsConfig(
-            telemetry=types.TelemetryMode(required_toml_value(g_diagnostics_section.telemetry, "g-telemetry")),
-            log_dir=path_or_none(optional_toml_value(g_diagnostics_section.log_dir)),
-            stage_timings_json=path_or_none(optional_toml_value(g_diagnostics_section.stage_timings_json)),
-            log_filter=required_toml_value(g_diagnostics_section.log_filter, "g-log-filter"),
-            log_file=path_or_none(optional_toml_value(g_diagnostics_section.log_file)),
-            log_stderr=required_toml_value(g_diagnostics_section.log_stderr, "g-log-stderr"),
-            progress_interval_seconds=required_toml_value(
-                g_diagnostics_section.progress_interval_seconds,
-                "g-progress-interval-seconds",
-            ),
-            progress_interval_chunks=required_toml_value(
-                g_diagnostics_section.progress_interval_chunks,
-                "g-progress-interval-chunks",
-            ),
-            profile_summary_json=path_or_none(optional_toml_value(g_diagnostics_section.profile_summary_json)),
-            trace_file=path_or_none(optional_toml_value(g_diagnostics_section.trace_file)),
-            trace_filter=required_toml_value(g_diagnostics_section.trace_filter, "g-trace-filter"),
-            log_queue_size=required_toml_value(g_diagnostics_section.log_queue_size, "g-log-queue-size"),
-            log_lossy=required_toml_value(g_diagnostics_section.log_lossy, "g-log-lossy"),
-            include_source_location=required_toml_value(
-                g_diagnostics_section.include_source_location,
-                "g-include-source-location",
-            ),
-            include_span_events=required_toml_value(
-                g_diagnostics_section.include_span_events,
-                "g-include-span-events",
-            ),
-        ),
-        explicit_options=explicit_options,
+    input_values = toml_struct_runtime_mapping(input_section, include_fields=INPUT_RUNTIME_FIELD_NAMES)
+    input_values["pheno_columns"] = pheno_columns
+    input_values["covar_columns"] = covar_columns
+    trait_values = toml_struct_runtime_mapping(trait_section, include_fields=TRAIT_RUNTIME_FIELD_NAMES)
+    trait_values["trait_type"] = trait_type
+    g_output_values = toml_struct_runtime_mapping(output_section)
+    g_output_values.update(toml_struct_runtime_mapping(g_output_section))
+    config = convert_runtime_config(
+        {
+            "input": input_values,
+            "trait": trait_values,
+            "binary": toml_struct_runtime_mapping(binary_section),
+            "g_compute": toml_struct_runtime_mapping(g_compute_section, field_renames=G_COMPUTE_FIELD_RENAMES),
+            "g_output": g_output_values,
+            "g_diagnostics": toml_struct_runtime_mapping(g_diagnostics_section),
+            "explicit_options": explicit_options,
+        },
+        RegenieConfig,
+        section_name="root",
     )
     validate_config(config)
     return config
+
+
+def toml_struct_runtime_mapping(
+    toml_section: msgspec.Struct,
+    *,
+    include_fields: frozenset[str] | None = None,
+    field_renames: typing.Mapping[str, str] | None = None,
+) -> dict[str, typing.Any]:
+    """Convert one TOML struct section to runtime field names."""
+    section_values: dict[str, typing.Any] = {}
+    for field_name in toml_struct_field_names(type(toml_section)):
+        if include_fields is not None and field_name not in include_fields:
+            continue
+        field_value = getattr(toml_section, field_name)
+        if field_value is msgspec.UNSET:
+            continue
+        runtime_field_name = field_name
+        if field_renames is not None:
+            runtime_field_name = field_renames.get(field_name, field_name)
+        section_values[runtime_field_name] = field_value
+    return section_values
+
+
+@functools.cache
+def toml_struct_field_names(struct_type: type[msgspec.Struct]) -> tuple[str, ...]:
+    """Return field names for one TOML msgspec struct type."""
+    struct_information = typing.cast("msgspec.inspect.StructType", msgspec.inspect.type_info(struct_type))
+    return tuple(field_information.name for field_information in struct_information.fields)
+
+
+def convert_runtime_config[ConfigT](
+    section_values: typing.Mapping[str, typing.Any],
+    config_type: type[ConfigT],
+    *,
+    section_name: str,
+) -> ConfigT:
+    """Convert resolved TOML values into a runtime config dataclass."""
+    try:
+        return msgspec.convert(
+            section_values,
+            type=config_type,
+            strict=True,
+            dec_hook=decode_runtime_value,
+        )
+    except msgspec.ValidationError as error:
+        message = f"Invalid resolved {section_name} config: {error}"
+        raise ValueError(message) from error
+
+
+def decode_runtime_value(target_type: type[typing.Any], value: typing.Any) -> typing.Any:
+    """Decode custom runtime field types for msgspec conversion."""
+    if target_type is Path:
+        return Path(str(value))
+    raise NotImplementedError
 
 
 def section_or_default[TomlStructT: msgspec.Struct](
@@ -672,14 +532,6 @@ def section_or_default[TomlStructT: msgspec.Struct](
     if section is msgspec.UNSET:
         return section_type()
     return section
-
-
-def required_toml_value[TomlValueT](raw_value: TomlValueT | msgspec.UnsetType, option_name: str) -> TomlValueT:
-    """Return a required resolved TOML value or fail loudly."""
-    if raw_value is msgspec.UNSET:
-        message = f"Default config is missing required default option {option_name!r}."
-        raise ValueError(message)
-    return raw_value
 
 
 def optional_toml_value[TomlValueT](raw_value: TomlValueT | msgspec.UnsetType) -> TomlValueT | None:
@@ -711,13 +563,6 @@ def resolve_exclusive_column_values(
         message = f"Use either --{repeated_key} or --{list_key}, not both."
         raise ValueError(message)
     return repeated_columns or list_columns
-
-
-def optional_jax_matmul_precision(raw_value: typing.Any) -> types.JaxMatmulPrecision | None:
-    """Convert optional JAX matmul precision."""
-    if raw_value is None:
-        return None
-    return types.JaxMatmulPrecision(str(raw_value))
 
 
 def normalize_option_dictionary(raw_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
@@ -753,17 +598,24 @@ def reject_unsupported_options(normalized_options: typing.Mapping[str, typing.An
 
 def validate_unknown_options(normalized_options: typing.Mapping[str, typing.Any]) -> None:
     """Reject unknown Python, CLI, or TOML options."""
-    known_options = (
-        options.supported_option_names()
-        | options.unsupported_option_names()
-        | {
-            "trait_type",
-        }
-    )
+    known_options = options.supported_option_names() | options.unsupported_option_names() | {"trait_type"}
     for option_name in normalized_options:
         if option_name not in known_options:
             message = f"Unknown g regenie option: {option_name}"
             raise ValueError(message)
+
+
+def reject_missing_resolved_default_options(normalized_options: typing.Mapping[str, typing.Any]) -> None:
+    """Reject resolved configs that lost packaged value defaults."""
+    missing_option_names = tuple(
+        option_spec.name
+        for option_spec in options.OPTION_SPECS
+        if option_spec.default_policy == options.DefaultPolicy.VALUE and option_spec.name not in normalized_options
+    )
+    if not missing_option_names:
+        return
+    message = f"Default config is missing required default option {missing_option_names[0]!r}."
+    raise ValueError(message)
 
 
 def reject_quantitative_binary_only_options(
