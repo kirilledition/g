@@ -38,7 +38,7 @@ def build_kernel_config(
     maximum_iterations: int = 25,
     use_block_math: bool = False,
 ) -> regenie2_binary_config.BinaryKernelConfig:
-    default_kernel_config = execution_plan.build_binary_kernel_config(interface_config.GComputeConfig())
+    default_kernel_config = execution_plan.build_binary_kernel_config(interface_config.load_packaged_config().g_compute)
     return dataclasses.replace(
         default_kernel_config,
         approximate_firth=dataclasses.replace(

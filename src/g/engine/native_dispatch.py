@@ -35,6 +35,12 @@ class MultiRegeniePredictionSourceProtocol(typing.Protocol):
         ...
 
 
+class BgenDeliveryRunInputProtocol(typing.Protocol):
+    """Sample index input accepted by native BGEN chunk delivery."""
+
+    sample_indices: npt.NDArray[np.int64]
+
+
 @dataclass(frozen=True)
 class NativeBgenRunInput:
     """Sample-aligned inputs retained in native form for BGEN REGENIE step 2.
@@ -392,6 +398,24 @@ def finish_writer_session(
     return typing.cast("str | None", final_parquet_path)
 
 
+def finish_writer_sessions(
+    *,
+    writer_sessions: tuple[typing.Any, ...],
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+) -> tuple[Path | None, ...]:
+    """Finish writer sessions and optionally finalize Parquet output."""
+    writer_finish_start_time = time.perf_counter()
+    logger.debug("Finishing output writer(s) and optional Parquet finalization.")
+    final_parquet_paths: list[Path | None] = []
+    for writer_session in writer_sessions:
+        final_parquet_path = typing.cast("str | None", writer_session.finish())
+        final_parquet_paths.append(None if final_parquet_path is None else Path(final_parquet_path))
+    timing.record_stage_duration(
+        stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
+    )
+    return tuple(final_parquet_paths)
+
+
 def finish_writer_session_interrupted(
     *,
     writer_session: typing.Any,
@@ -402,6 +426,20 @@ def finish_writer_session_interrupted(
     writer_finish_start_time = time.perf_counter()
     logger.info("Flushing interrupted output writer after %s.", shutdown_request.signal_name)
     writer_session.finish_interrupted(shutdown_request.signal_name)
+    timing.record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)
+
+
+def finish_writer_sessions_interrupted(
+    *,
+    writer_sessions: tuple[typing.Any, ...],
+    shutdown_request: shutdown.GracefulShutdownRequested,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+) -> None:
+    """Flush interrupted writer sessions without final Parquet output."""
+    writer_finish_start_time = time.perf_counter()
+    logger.info("Flushing interrupted output writer(s) after %s.", shutdown_request.signal_name)
+    for writer_session in writer_sessions:
+        writer_session.finish_interrupted(shutdown_request.signal_name)
     timing.record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)
 
 
@@ -419,6 +457,89 @@ def abort_writer_session(writer_session: typing.Any) -> None:
         writer_session.abort()
 
 
+def abort_writer_sessions(writer_sessions: tuple[typing.Any, ...]) -> None:
+    """Abort writer sessions."""
+    for writer_session in writer_sessions:
+        abort_writer_session(writer_session)
+
+
+def run_bgen_engine_with_writer_sessions(
+    *,
+    engine: _core.Regenie2RunEngine,
+    run_input: BgenDeliveryRunInputProtocol,
+    committed_chunk_identifiers: set[int] | None,
+    writer_sessions: tuple[typing.Any, ...],
+    callback: object,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    variant_major_packed8_probability_pairs: bool = False,
+    pipeline_label: str = "Native BGEN",
+    stage_timing_snapshot_writer: typing.Callable[
+        [timing.StageTimingRecorder | None, Path | None], None
+    ] = timing.write_stage_timing_snapshot,
+) -> tuple[Path | None, ...]:
+    """Run native BGEN chunk delivery and close all output writers."""
+    callback_finished = False
+    try:
+        if stage_timing_recorder is not None:
+            engine.reset_profile()
+        engine_delivery_start_time = time.perf_counter()
+        committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
+        logger.debug(
+            "Starting %s delivery: committed_chunk_count=%s variant_major_packed8_probability_pairs=%s.",
+            pipeline_label,
+            len(committed_chunk_identifier_list),
+            variant_major_packed8_probability_pairs,
+        )
+        if variant_major_packed8_probability_pairs:
+            processed_chunk_count = engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+                run_input.sample_indices,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
+        else:
+            processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
+                run_input.sample_indices,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
+        timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
+        logger.debug("%s delivery finished: processed_chunk_count=%s.", pipeline_label, processed_chunk_count)
+        if stage_timing_recorder is not None:
+            stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
+        finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
+        callback_finished = True
+        final_parquet_paths = finish_writer_sessions(
+            writer_sessions=writer_sessions,
+            stage_timing_recorder=stage_timing_recorder,
+        )
+    except shutdown.GracefulShutdownRequested as shutdown_request:
+        logger.info("%s delivery interrupted by %s.", pipeline_label, shutdown_request.signal_name)
+        try:
+            if not callback_finished:
+                finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
+            finish_writer_sessions_interrupted(
+                writer_sessions=writer_sessions,
+                shutdown_request=shutdown_request,
+                stage_timing_recorder=stage_timing_recorder,
+            )
+        except BaseException:
+            abort_callback(callback)
+            abort_writer_sessions(writer_sessions)
+            stage_timing_snapshot_writer(stage_timing_recorder, None)
+            raise
+        stage_timing_snapshot_writer(stage_timing_recorder, None)
+        raise
+    except BaseException:
+        logger.exception("%s delivery failed.", pipeline_label)
+        abort_callback(callback)
+        abort_writer_sessions(writer_sessions)
+        stage_timing_snapshot_writer(stage_timing_recorder, None)
+        raise
+    stage_timing_snapshot_writer(stage_timing_recorder, None)
+    logger.info("%s pipeline finished.", pipeline_label)
+    return final_parquet_paths
+
+
 def run_bgen_engine_with_callback(
     *,
     engine: _core.Regenie2RunEngine,
@@ -433,65 +554,14 @@ def run_bgen_engine_with_callback(
     ] = timing.write_stage_timing_snapshot,
 ) -> Path | None:
     """Run native BGEN chunk delivery and close the output writer."""
-    callback_finished = False
-    try:
-        if stage_timing_recorder is not None:
-            engine.reset_profile()
-        engine_delivery_start_time = time.perf_counter()
-        sample_indices = run_input.sample_indices
-        committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
-        logger.debug(
-            "Starting native BGEN delivery: committed_chunk_count=%s variant_major_packed8_probability_pairs=%s.",
-            len(committed_chunk_identifier_list),
-            variant_major_packed8_probability_pairs,
-        )
-        if variant_major_packed8_probability_pairs:
-            processed_chunk_count = engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
-                sample_indices,
-                callback,
-                committed_chunk_identifiers=committed_chunk_identifier_list,
-            )
-        else:
-            processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
-                sample_indices,
-                callback,
-                committed_chunk_identifiers=committed_chunk_identifier_list,
-            )
-        timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
-        logger.debug("Native BGEN delivery finished: processed_chunk_count=%s.", processed_chunk_count)
-        if stage_timing_recorder is not None:
-            stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
-        finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
-        callback_finished = True
-        final_parquet_path = finish_writer_session(
-            writer_session=writer_session,
-            stage_timing_recorder=stage_timing_recorder,
-        )
-    except shutdown.GracefulShutdownRequested as shutdown_request:
-        logger.info("Native BGEN delivery interrupted by %s.", shutdown_request.signal_name)
-        try:
-            if not callback_finished:
-                finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
-            finish_writer_session_interrupted(
-                writer_session=writer_session,
-                shutdown_request=shutdown_request,
-                stage_timing_recorder=stage_timing_recorder,
-            )
-        except BaseException:
-            abort_callback(callback)
-            abort_writer_session(writer_session)
-            stage_timing_snapshot_writer(stage_timing_recorder, None)
-            raise
-        stage_timing_snapshot_writer(stage_timing_recorder, None)
-        raise
-    except BaseException:
-        logger.exception("Native BGEN delivery failed.")
-        abort_callback(callback)
-        abort_writer_session(writer_session)
-        stage_timing_snapshot_writer(stage_timing_recorder, None)
-        raise
-    stage_timing_snapshot_writer(stage_timing_recorder, None)
-    logger.info("Native BGEN pipeline finished.")
-    if final_parquet_path is None:
-        return None
-    return Path(final_parquet_path)
+    final_parquet_paths = run_bgen_engine_with_writer_sessions(
+        engine=engine,
+        run_input=run_input,
+        committed_chunk_identifiers=committed_chunk_identifiers,
+        writer_sessions=(writer_session,),
+        callback=callback,
+        stage_timing_recorder=stage_timing_recorder,
+        variant_major_packed8_probability_pairs=variant_major_packed8_probability_pairs,
+        stage_timing_snapshot_writer=stage_timing_snapshot_writer,
+    )
+    return final_parquet_paths[0]

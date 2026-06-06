@@ -22,7 +22,7 @@ from g.types import Device
 
 def build_compute_config() -> config.GComputeConfig:
     """Build explicit JAX runtime policy for tests."""
-    return config.GComputeConfig()
+    return config.load_packaged_config().g_compute
 
 
 def test_resolve_jax_cache_uses_explicit_config_path(monkeypatch: pytest.MonkeyPatch) -> None:

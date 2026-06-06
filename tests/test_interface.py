@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,26 @@ def build_valid_quantitative_options() -> dict[str, object]:
         "pred": "predictions.list",
         "out": "results/output",
     }
+
+
+def build_input_config(**overrides: object) -> config.InputConfig:
+    """Build packaged input config with test overrides."""
+    return dataclasses.replace(config.load_packaged_config().input, **overrides)
+
+
+def build_trait_config(**overrides: object) -> config.TraitConfig:
+    """Build packaged trait config with test overrides."""
+    return dataclasses.replace(config.load_packaged_config().trait, **overrides)
+
+
+def build_binary_config(**overrides: object) -> config.BinaryConfig:
+    """Build packaged binary config with test overrides."""
+    return dataclasses.replace(config.load_packaged_config().binary, **overrides)
+
+
+def build_output_config(**overrides: object) -> config.GOutputConfig:
+    """Build packaged output config with test overrides."""
+    return dataclasses.replace(config.load_packaged_config().g_output, **overrides)
 
 
 def test_all_option_specs_are_accepted_by_python_options() -> None:
@@ -242,7 +263,7 @@ def test_no_configurable_default_constants_reappear_in_source() -> None:
 
 
 def test_logging_diagnostics_default_to_info_stderr() -> None:
-    diagnostics_config = config.GDiagnosticsConfig()
+    diagnostics_config = config.load_packaged_config().g_diagnostics
 
     assert diagnostics_config.telemetry == types.TelemetryMode.PROGRESS
     assert diagnostics_config.log_dir is None
@@ -259,12 +280,29 @@ def test_logging_diagnostics_default_to_info_stderr() -> None:
     assert diagnostics_config.include_span_events is False
 
 
+@pytest.mark.parametrize(
+    "config_type",
+    [
+        config.InputConfig,
+        config.TraitConfig,
+        config.BinaryConfig,
+        config.GComputeConfig,
+        config.GOutputConfig,
+        config.GDiagnosticsConfig,
+        config.RegenieConfig,
+    ],
+)
+def test_runtime_config_dataclasses_require_resolved_values(config_type: type[object]) -> None:
+    with pytest.raises(TypeError):
+        config_type()
+
+
 def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
-    runtime_defaults = defaults.load_packaged_runtime_defaults()
+    packaged_config = config.load_packaged_config()
 
-    assert config.load_default_option_dictionary()["trait"]["bsize"] == runtime_defaults.trait.bsize
-    assert regenie_config.trait.bsize == runtime_defaults.trait.bsize
+    assert config.load_default_option_dictionary()["trait"]["bsize"] == packaged_config.trait.bsize
+    assert regenie_config.trait.bsize == packaged_config.trait.bsize
     assert regenie_config.g_compute.device == types.Device.CPU
     assert regenie_config.g_compute.null_logistic_nonconvergence_policy == types.NullLogisticNonconvergencePolicy.FAIL
     assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT32
@@ -272,7 +310,7 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE
     assert regenie_config.g_compute.jax_persistent_cache is True
     assert regenie_config.g_output.format == types.OutputFormat.PARQUET
-    assert regenie_config.g_diagnostics.log_filter == runtime_defaults.g_diagnostics.log_filter
+    assert regenie_config.g_diagnostics.log_filter == packaged_config.g_diagnostics.log_filter
     assert "pThresh" not in regenie_config.explicit_options
     assert "firth" not in regenie_config.explicit_options
 
@@ -583,7 +621,7 @@ def test_repeated_and_list_columns_are_mutually_exclusive() -> None:
         ("approx", True),
         ("firth-se", True),
         ("spa", True),
-        ("pThresh", defaults.load_packaged_runtime_defaults().binary.p_threshold),
+        ("pThresh", config.load_packaged_config().binary.p_threshold),
     ],
 )
 def test_quantitative_trait_rejects_explicit_binary_only_options(option_name: str, option_value: object) -> None:
@@ -637,7 +675,7 @@ def test_python_trait_type_alias_selects_binary_trait() -> None:
 def test_quantitative_trait_accepts_defaulted_binary_threshold() -> None:
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
 
-    assert regenie_config.binary.p_threshold == defaults.load_packaged_runtime_defaults().binary.p_threshold
+    assert regenie_config.binary.p_threshold == config.load_packaged_config().binary.p_threshold
 
 
 def test_output_tuning_defaults_come_from_packaged_default_config() -> None:
@@ -652,16 +690,21 @@ def test_output_tuning_defaults_come_from_packaged_default_config() -> None:
 
 
 def test_quantitative_execution_plan_rejects_direct_binary_only_config() -> None:
-    regenie_config = config.RegenieConfig(
-        input=config.InputConfig(
+    packaged_config = config.load_packaged_config()
+    regenie_config = dataclasses.replace(
+        packaged_config,
+        input=build_input_config(
             bgen=Path("dataset.bgen"),
+            sample=None,
             pheno_file=Path("phenotype.tsv"),
             pheno_columns=("trait",),
+            covar_file=None,
+            covar_columns=(),
             pred=Path("predictions.list"),
         ),
-        trait=config.TraitConfig(trait_type=types.RegenieTraitType.QUANTITATIVE),
-        binary=config.BinaryConfig(firth=True, approx=True, p_threshold=0.01),
-        g_output=config.GOutputConfig(out=Path("results/output")),
+        trait=build_trait_config(trait_type=types.RegenieTraitType.QUANTITATIVE),
+        binary=build_binary_config(firth=True, approx=True, p_threshold=0.01),
+        g_output=build_output_config(out=Path("results/output")),
     )
 
     with pytest.raises(ValueError, match="--firth, --approx, --pThresh can only be used with --bt"):
@@ -746,8 +789,10 @@ def test_format_toml_value_serializes_lists_as_toml_arrays() -> None:
 
 
 def test_toml_serialization_emits_multi_column_and_binary_sections() -> None:
-    regenie_config = config.RegenieConfig(
-        input=config.InputConfig(
+    packaged_config = config.load_packaged_config()
+    regenie_config = dataclasses.replace(
+        packaged_config,
+        input=build_input_config(
             bgen=Path("dataset.bgen"),
             sample=Path("dataset.sample"),
             pheno_file=Path("phenotype.tsv"),
@@ -756,9 +801,9 @@ def test_toml_serialization_emits_multi_column_and_binary_sections() -> None:
             covar_columns=("age", "sex"),
             pred=Path("predictions.list"),
         ),
-        trait=config.TraitConfig(trait_type=types.RegenieTraitType.BINARY),
-        binary=config.BinaryConfig(firth=True, approx=True, firth_se=True, spa=False, p_threshold=0.01),
-        g_output=config.GOutputConfig(out=Path("results/output")),
+        trait=build_trait_config(trait_type=types.RegenieTraitType.BINARY),
+        binary=build_binary_config(firth=True, approx=True, firth_se=True, spa=False, p_threshold=0.01),
+        g_output=build_output_config(out=Path("results/output")),
     )
 
     config_text = regenie_config.to_toml()

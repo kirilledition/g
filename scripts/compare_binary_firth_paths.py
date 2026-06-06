@@ -247,7 +247,7 @@ def compare_binary_paths(
     absolute_tolerance: float = 1.0e-5,
 ) -> BinaryPathComparison:
     """Compare production sample-major and variant-major binary paths."""
-    kernel_config = execution_plan.build_binary_kernel_config(interface_config.GComputeConfig())
+    kernel_config = execution_plan.build_binary_kernel_config(interface_config.load_packaged_config().g_compute)
     chromosome_state = prepare_chromosome_state(inputs, correction_plan, kernel_config)
     production_score_test_result = regenie2_binary.compute_regenie2_binary_score_test_chunk_from_chromosome_state(
         chromosome_state,

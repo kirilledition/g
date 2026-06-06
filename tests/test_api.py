@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 import sys
 import textwrap
@@ -11,7 +12,7 @@ import pytest
 import g
 import g.engine.telemetry as telemetry_module
 from g import api, execution_plan, runner, types
-from g.interface import config, defaults
+from g.interface import config
 from g.io import output
 from g.io.output import OutputRunPaths, PreparedOutputRun
 
@@ -31,6 +32,26 @@ def build_minimal_config() -> config.RegenieConfig:
             "g-output-format": "parquet",
         }
     )
+
+
+def build_compute_config(**overrides: object) -> config.GComputeConfig:
+    """Build packaged compute config with test overrides."""
+    return dataclasses.replace(config.load_packaged_config().g_compute, **overrides)
+
+
+def build_trait_config(**overrides: object) -> config.TraitConfig:
+    """Build packaged trait config with test overrides."""
+    return dataclasses.replace(config.load_packaged_config().trait, **overrides)
+
+
+def build_binary_config(**overrides: object) -> config.BinaryConfig:
+    """Build packaged binary config with test overrides."""
+    return dataclasses.replace(config.load_packaged_config().binary, **overrides)
+
+
+def build_diagnostics_config(**overrides: object) -> config.GDiagnosticsConfig:
+    """Build packaged diagnostics config with test overrides."""
+    return dataclasses.replace(config.load_packaged_config().g_diagnostics, **overrides)
 
 
 def test_public_package_exposes_only_new_regenie_interface() -> None:
@@ -149,7 +170,7 @@ def test_execution_plan_uses_safe_phenotype_output_directories() -> None:
 
 def test_build_binary_kernel_config_maps_compute_options() -> None:
     kernel_config = execution_plan.build_binary_kernel_config(
-        config.GComputeConfig(
+        build_compute_config(
             firth_batch_size=7,
             firth_candidate_capacity=11,
             binary_null_maximum_iterations=13,
@@ -213,7 +234,7 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
 
 def test_normalize_binary_correction_config_maps_approximate_firth() -> None:
     plan = execution_plan.normalize_binary_correction_config(
-        config.BinaryConfig(firth=True, approx=True, p_threshold=0.01)
+        build_binary_config(firth=True, approx=True, p_threshold=0.01)
     )
 
     assert plan == types.BinaryCorrectionPlan(
@@ -354,7 +375,7 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
         def initialize_logging(self, **kwargs: object) -> None:
             calls.append(kwargs)
 
-    diagnostics_config = config.GDiagnosticsConfig(
+    diagnostics_config = build_diagnostics_config(
         log_filter="g=debug",
         log_file=tmp_path / "logs" / "g.jsonl",
         log_stderr=False,
@@ -394,7 +415,7 @@ def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> Non
             return True
 
     stream_file = tmp_path / "logs" / "events.jsonl"
-    diagnostics_config = config.GDiagnosticsConfig(log_file=stream_file)
+    diagnostics_config = build_diagnostics_config(log_file=stream_file)
     telemetry_paths = telemetry_module.TelemetryPaths(
         log_dir=tmp_path / "logs",
         stream_file=stream_file,
@@ -422,7 +443,7 @@ def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Pa
             return True
 
     stream_file = tmp_path / "logs" / "events.jsonl"
-    diagnostics_config = config.GDiagnosticsConfig(trace_file=stream_file)
+    diagnostics_config = build_diagnostics_config(trace_file=stream_file)
     telemetry_paths = telemetry_module.TelemetryPaths(
         log_dir=tmp_path / "logs",
         stream_file=stream_file,
@@ -450,14 +471,14 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
         log_filter="info",
         log_file=tmp_path / "logs" / "first.jsonl",
         log_stderr=True,
-        log_queue_size=defaults.load_packaged_runtime_defaults().g_diagnostics.log_queue_size,
+        log_queue_size=config.load_packaged_config().g_diagnostics.log_queue_size,
         log_lossy=True,
         include_source_location=False,
         include_span_events=False,
         trace_file=None,
-        trace_filter=defaults.load_packaged_runtime_defaults().g_diagnostics.trace_filter,
+        trace_filter=config.load_packaged_config().g_diagnostics.trace_filter,
     )
-    diagnostics_config = config.GDiagnosticsConfig(log_file=tmp_path / "logs" / "second.jsonl")
+    diagnostics_config = build_diagnostics_config(log_file=tmp_path / "logs" / "second.jsonl")
 
     with (
         patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", configured_policy),
@@ -482,8 +503,8 @@ def test_configure_runtime_sets_native_knobs_and_threads() -> None:
         patch("g.runner.importlib.import_module", return_value=FakeCoreModule()) as mock_import_module,
     ):
         runner.configure_runtime(
-            config.GComputeConfig(bgen_decode_tile_variant_count=32),
-            config.TraitConfig(threads=4),
+            build_compute_config(bgen_decode_tile_variant_count=32),
+            build_trait_config(threads=4),
         )
 
     mock_import_module.assert_called_once_with("g._core")
@@ -505,8 +526,8 @@ def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None
         patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
     ):
         runner.configure_runtime(
-            config.GComputeConfig(bgen_decode_tile_variant_count=32),
-            config.TraitConfig(threads=4),
+            build_compute_config(bgen_decode_tile_variant_count=32),
+            build_trait_config(threads=4),
         )
 
     assert calls == [("tile", 32)]
@@ -528,8 +549,8 @@ def test_configure_runtime_warns_on_incompatible_rayon_thread_reconfiguration(ca
         caplog.at_level("WARNING", logger="g.runner"),
     ):
         runner.configure_runtime(
-            config.GComputeConfig(bgen_decode_tile_variant_count=32),
-            config.TraitConfig(threads=8),
+            build_compute_config(bgen_decode_tile_variant_count=32),
+            build_trait_config(threads=8),
         )
 
     assert calls == [("tile", 32)]
@@ -554,8 +575,8 @@ def test_configure_runtime_warns_when_native_rayon_configuration_fails(caplog: p
         caplog.at_level("WARNING", logger="g.runner"),
     ):
         runner.configure_runtime(
-            config.GComputeConfig(bgen_decode_tile_variant_count=32),
-            config.TraitConfig(threads=4),
+            build_compute_config(bgen_decode_tile_variant_count=32),
+            build_trait_config(threads=4),
         )
 
     assert calls == [("tile", 32), ("threads", 4)]
@@ -590,7 +611,7 @@ def test_runtime_bootstrap_sets_jax_platform_before_setup_import() -> None:
         patch("g.runner.CONFIGURED_JAX_RUNTIME_POLICY", None),
         patch("g.runner.importlib.import_module", side_effect=import_module),
     ):
-        runner.configure_runtime_before_jax_import(config.GComputeConfig(device=types.Device.GPU))
+        runner.configure_runtime_before_jax_import(build_compute_config(device=types.Device.GPU))
 
     assert call_order == ["import:jax", "jax_platforms:cuda", "import:g.jax_setup", "setup"]
 

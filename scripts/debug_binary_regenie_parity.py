@@ -598,7 +598,7 @@ def capture_g_records(arguments: argparse.Namespace, selector: VariantSelector) 
         p_threshold=float(arguments.p_threshold),
         firth_se=False,
     )
-    kernel_config = execution_plan.build_binary_kernel_config(interface_config.GComputeConfig())
+    kernel_config = execution_plan.build_binary_kernel_config(interface_config.load_packaged_config().g_compute)
     callback = BinaryVariantDebugCaptureCallback(
         run_input=run_input,
         prediction_source=prediction_source,

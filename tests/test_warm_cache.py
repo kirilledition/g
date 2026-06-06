@@ -21,7 +21,7 @@ if typing.TYPE_CHECKING:
 
 def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
     """Build the packaged-default kernel config for tests."""
-    return execution_plan.build_binary_kernel_config(interface_config.GComputeConfig())
+    return execution_plan.build_binary_kernel_config(interface_config.load_packaged_config().g_compute)
 
 
 @dataclasses.dataclass(frozen=True)

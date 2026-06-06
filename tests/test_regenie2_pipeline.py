@@ -26,7 +26,7 @@ from g.io import output, source
 
 def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
     """Build the packaged-default kernel config for tests."""
-    return execution_plan.build_binary_kernel_config(interface_config.GComputeConfig())
+    return execution_plan.build_binary_kernel_config(interface_config.load_packaged_config().g_compute)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -44,8 +44,9 @@ class PipelineRuntimeOptions:
 
 def build_default_pipeline_runtime_options() -> PipelineRuntimeOptions:
     """Build default runtime options through the public config boundary."""
-    compute_config = interface_config.GComputeConfig()
-    output_config = interface_config.GOutputConfig()
+    packaged_config = interface_config.load_packaged_config()
+    compute_config = packaged_config.g_compute
+    output_config = packaged_config.g_output
     return PipelineRuntimeOptions(
         writer_thread_count=output_config.writer_threads,
         writer_queue_depth=output_config.writer_queue_depth,
