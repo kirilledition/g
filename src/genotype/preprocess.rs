@@ -536,6 +536,20 @@ mod tests {
     }
 
     #[test]
+    fn summarize_variant_major_info_score_uses_observed_count_with_missing_values() {
+        let dosage_values = vec![0.0, 1.0, f32::NAN, f32::NAN];
+
+        let stats = summarize_variant_major_dosage_matrix(&dosage_values, 4, 1).expect("stats should compute");
+
+        assert_eq!(stats.observation_count, vec![2]);
+        assert!(stats.has_missing_values);
+        assert_eq!(stats.imputed_dosage_square_sum, vec![1.5]);
+        let info_score = stats.info_score[0].expect("partly observed variant should have an INFO score");
+        assert!((info_score - (2.0 / 3.0)).abs() <= 1.0e-6);
+        assert!((info_score - (1.0 / 3.0)).abs() > 1.0e-6);
+    }
+
+    #[test]
     fn build_chunk_stats_rejects_sample_count_outside_i32_range() {
         let selected_sample_count = usize::try_from(i32::MAX).expect("i32 max should fit usize") + 1;
 

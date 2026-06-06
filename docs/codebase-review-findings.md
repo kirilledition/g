@@ -38,6 +38,7 @@ Completed in this branch:
 - Made the native callback runner compute hooks an explicit abstract base-class contract.
 - Replaced unsupported exact Firth/SPA runtime compute `NotImplementedError` branches with explicit validation.
 - Added bounded dosage-worker stop/join handling for native callback shutdown.
+- Added a Rust characterization test for the current INFO score missingness denominator.
 
 Verification in this branch:
 
@@ -75,6 +76,8 @@ Verification in this branch:
 - `uv run ruff format --check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py` - passed after bounded dosage-worker shutdown cleanup.
 - `uv run ruff check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py` - passed after bounded dosage-worker shutdown cleanup.
 - `uv run ty check src/g/engine/callbacks.py` - passed after bounded dosage-worker shutdown cleanup.
+- `rustfmt --check src/genotype/preprocess.rs` - passed after INFO score missingness contract characterization.
+- `env LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --lib genotype::preprocess` - 6 passed after INFO score missingness contract characterization.
 
 Implementation learnings:
 
@@ -92,6 +95,7 @@ Implementation learnings:
 - `abc.ABC` catches missing callback compute hooks before worker threads can start, but splitting thread startup out of `NativeBgenCallbackRunner.__init__()` remains a larger lifecycle refactor.
 - Exact Firth and SPA remain config-rejected modes. Direct binary compute now treats them as unsupported runtime input rather than unfinished implementation branches.
 - Native callback `finish()` now drains the dosage worker with the same bounded stop/join pattern used by the result worker. `abort()` still stays best-effort, but it now attempts bounded sentinel delivery instead of ignoring full queues immediately.
+- Current Rust INFO score behavior uses the observed genotype count in the expected variance denominator, even though imputed dosage square sums account for all selected samples. This is now covered as a characterization test.
 
 ## Suggested Work Order
 
@@ -125,7 +129,7 @@ This branch will take the remaining review findings in order of implementation e
    Medium, changes lower-level behavior and tests currently assert failures.
 9. Done: Native callback bounded shutdown.
    Medium, important but concurrency-sensitive.
-10. INFO score missingness contract test.
+10. Done: INFO score missingness contract test.
     Medium, safe as characterization-only; formula changes need a statistical decision.
 
 ## Findings
@@ -445,11 +449,13 @@ Recommendation: keep the hot loops, but refactor the surrounding orchestration i
 
 ### P2. INFO score denominator needs an explicit statistical contract
 
-Rust preprocessing computes an imputed dosage square sum using missing-count imputation:
+Status: characterized in `codebase-review-cleanups`. A Rust unit test now locks the current behavior: INFO uses the observed-count denominator when missing genotypes are present. No statistical formula change was made.
+
+Original finding: Rust preprocessing computed an imputed dosage square sum using missing-count imputation:
 
 - `src/genotype/preprocess.rs:348-352`
 
-But INFO score uses an expected variance denominator based on observed count:
+But INFO score used an expected variance denominator based on observed count:
 
 - `src/genotype/preprocess.rs:353-358`
 
