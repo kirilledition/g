@@ -270,6 +270,10 @@ Recommendation: replace these with explicit invariant helpers that raise `Runtim
 
 ### P2. Pipeline lifecycle code is duplicated and diverging
 
+Status: addressed in `refactor/regenie2-lifecycle-runner`. Single-trait linear/binary runs now build a shared typed lifecycle context and use one single-trait runner for engine open, alignment telemetry, manifest initialization, writer creation, prediction loading, preflight, callback construction, engine delivery, and finalization. Complete-case and grouped multi-phenotype runs reuse the same context, manifest, writer, telemetry, preflight, and native delivery helpers while preserving per-trait committed chunk sets and the complete-case intersection used for engine resume skipping.
+
+Remaining risk: the public pipeline entry points still forward many CLI/API options by design, and callback worker threads still start in callback constructors. That callback lifecycle remains a separate refactor.
+
 The single linear and single binary pipelines repeat the same structure:
 
 - `src/g/engine/regenie2_pipeline.py:27-225`
