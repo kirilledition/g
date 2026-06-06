@@ -1,8 +1,9 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use memmap2::{Mmap, MmapOptions};
@@ -12,15 +13,15 @@ use crate::genotype::common::{ChunkStats, GenotypeError, GenotypeReaderCore, Var
 use crate::genotype::preprocess;
 
 use super::decode::{
+    DosageTileDecodeResult, ThreadScratch, VariantMajorTileDecodeResult, VariantMajorTileStatsMut,
     decode_tile_variant_count, decode_variant_dosage_tile_into_row_major_matrix, decode_variant_major_dosage_tile,
-    read_exact_bytes, read_u32_at, u32_to_usize, DosageTileDecodeResult, ThreadScratch, VariantMajorTileDecodeResult,
-    VariantMajorTileStatsMut,
+    read_exact_bytes, read_u32_at, u32_to_usize,
 };
-use super::error::{convert_bgen_error_to_genotype_error, BgenError};
+use super::error::{BgenError, convert_bgen_error_to_genotype_error};
 use super::format::CompressionType;
 use super::metadata::VariantRecord;
-use super::profile::{elapsed_nanoseconds, ReaderProfileSnapshot, ReaderProfiling, ThreadLocalProfileSnapshot};
-use super::sample_selection::{build_sample_selection, SampleSelection};
+use super::profile::{ReaderProfileSnapshot, ReaderProfiling, ThreadLocalProfileSnapshot, elapsed_nanoseconds};
+use super::sample_selection::{SampleSelection, build_sample_selection};
 use super::{index, metadata, trusted};
 
 #[derive(Debug)]
@@ -126,6 +127,57 @@ impl VariantMajorStatsBuffers {
             selected_sample_count,
         )
         .map_err(|error| BgenError::Range(error.to_string()))
+    }
+}
+
+struct RowMajorDosageBuffer {
+    pointer: Option<NonNull<f32>>,
+    value_count: usize,
+}
+
+impl RowMajorDosageBuffer {
+    /// Builds a typed view over a caller-owned row-major dosage buffer.
+    ///
+    /// # Safety
+    ///
+    /// `output_pointer_address` must point to writable storage for `value_count`
+    /// f32 values. Values must be initialized before any borrowed slice is read.
+    /// The caller must guarantee exclusive access for the lifetime of slices
+    /// borrowed from this helper.
+    unsafe fn from_pointer_address(
+        output_pointer_address: usize,
+        value_count: usize,
+        buffer_context: &'static str,
+    ) -> Result<Self, BgenError> {
+        if value_count == 0 {
+            return Ok(Self { pointer: None, value_count });
+        }
+
+        let value_alignment = std::mem::align_of::<f32>();
+        if !output_pointer_address.is_multiple_of(value_alignment) {
+            return Err(BgenError::Range(format!(
+                "{buffer_context} output pointer is not aligned to {value_alignment} bytes.",
+            )));
+        }
+        let pointer = NonNull::new(output_pointer_address as *mut f32)
+            .ok_or_else(|| BgenError::Range(format!("{buffer_context} output pointer is null.")))?;
+        Ok(Self { pointer: Some(pointer), value_count })
+    }
+
+    fn pointer_address(&self) -> usize {
+        self.pointer.map_or_else(|| NonNull::<f32>::dangling().as_ptr() as usize, |pointer| pointer.as_ptr() as usize)
+    }
+
+    fn values_mut(&mut self) -> &mut [f32] {
+        let Some(pointer) = self.pointer else {
+            return &mut [];
+        };
+        unsafe {
+            // The constructor safety contract ties this non-null, aligned pointer to
+            // writable storage spanning `value_count` f32 values, with exclusive access
+            // while the returned mutable slice is alive.
+            std::slice::from_raw_parts_mut(pointer.as_ptr(), self.value_count)
+        }
     }
 }
 
@@ -378,17 +430,26 @@ impl BgenReaderCore {
         let selected_sample_count = output_value_count.checked_div(selected_variant_count).ok_or_else(|| {
             BgenError::Range("Unable to resolve sample count for preprocessed BGEN dosage matrix.".to_string())
         })?;
+        let mut output_buffer = unsafe {
+            RowMajorDosageBuffer::from_pointer_address(
+                output_pointer_address,
+                output_value_count,
+                "row-major BGEN dosage",
+            )?
+        };
         self.read_dosage_f32_into_address_with_selection(
             &sample_selection,
             variant_start,
             variant_stop,
-            output_pointer_address,
+            output_buffer.pointer_address(),
             output_value_count,
         )?;
-        let output_slice =
-            unsafe { std::slice::from_raw_parts_mut(output_pointer_address as *mut f32, output_value_count) };
-        preprocess::preprocess_row_major_dosage_matrix(output_slice, selected_sample_count, selected_variant_count)
-            .map_err(|error| BgenError::Range(error.to_string()))
+        preprocess::preprocess_row_major_dosage_matrix(
+            output_buffer.values_mut(),
+            selected_sample_count,
+            selected_variant_count,
+        )
+        .map_err(|error| BgenError::Range(error.to_string()))
     }
 
     pub fn read_preprocessed_variant_major_dosage_f32_into_address_prepared(
@@ -940,6 +1001,30 @@ mod tests {
         let mut bytes = minimal_bgen_header_bytes(1, 3, 2 << 2);
         bytes.extend_from_slice(&payload);
         fs::write(path, bytes).expect("BGEN test fixture should be written");
+    }
+
+    #[test]
+    fn row_major_dosage_buffer_validates_pointer_boundaries() {
+        let mut empty_buffer = unsafe {
+            RowMajorDosageBuffer::from_pointer_address(0, 0, "test row-major")
+                .expect("empty buffers should not require a raw pointer")
+        };
+        assert_eq!(empty_buffer.pointer_address(), std::ptr::NonNull::<f32>::dangling().as_ptr() as usize);
+        assert!(empty_buffer.values_mut().is_empty());
+
+        let null_result = unsafe { RowMajorDosageBuffer::from_pointer_address(0, 1, "test row-major") };
+        assert!(matches!(null_result, Err(error) if error.to_string().contains("output pointer is null")));
+
+        let misaligned_result = unsafe { RowMajorDosageBuffer::from_pointer_address(1, 1, "test row-major") };
+        assert!(matches!(misaligned_result, Err(error) if error.to_string().contains("output pointer is not aligned")));
+
+        let mut values = [1.0_f32, 2.0_f32];
+        let mut buffer = unsafe {
+            RowMajorDosageBuffer::from_pointer_address(values.as_mut_ptr() as usize, values.len(), "test row-major")
+                .expect("aligned non-null buffer should build")
+        };
+        buffer.values_mut()[0] = 3.0;
+        assert_eq!(values, [3.0, 2.0]);
     }
 
     #[test]
