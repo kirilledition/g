@@ -4,10 +4,12 @@ Date: 2026-06-06
 Base worktree: `cleanup/review-easy-nonconfig`
 
 This note expands the Firth-related findings in `docs/codebase-review-findings.md`.
-It focuses on two performance items:
+It focuses on three performance items:
 
 - removing the Firth candidate-count host synchronization;
 - batching multi-binary approximate Firth instead of dispatching one trait at a time.
+- extending the binary benchmark harness so Firth batching and capacity choices
+  are measured across trait counts.
 
 No GPU benchmark was run while writing this plan.
 
@@ -31,12 +33,33 @@ single-trait correction path, and stacks the Python list of per-trait results.
 Packed8 multi-binary approximate Firth decodes the packed chunk once, then uses
 the same per-trait correction path.
 
+## Coordination Status
+
+`main` still has the host-synchronizing single-trait Firth dispatch path. An active
+worktree at `~/Projects/g-worktrees/firth-device-capacity-dispatch` is working
+on Task 2 and currently modifies:
+
+- `src/g/compute/regenie2_binary/candidates.py`;
+- `src/g/compute/regenie2_binary/variant_major_correction.py`;
+- `tests/test_regenie2_binary.py`;
+- `tests/test_regenie2_pipeline.py`.
+
+That branch is following the device-side bounded/overflow design below: remove
+`count_firth_candidates_on_host`, dispatch zero/bounded/overflow branches with
+`jax.lax.cond`, and rename the diagnostic timing bucket to
+`firth_candidate_dispatch_plan`. Treat Task 2 as assigned and in flight until it
+has a commit, passing tests, and no runtime references to
+`count_firth_candidates_on_host` or `firth_candidate_count_host_sync`.
+
 ## Recommended Priority
 
 1. Add preparatory correctness tests for the current Firth behavior.
 2. Remove the single-trait host sync with device-side bounded/overflow dispatch.
-3. Batch multi-binary approximate Firth over flattened trait-variant candidate lanes.
-4. Run GPU benchmarks and decide whether the old per-trait path should remain as
+3. Batch multi-binary approximate Firth over flattened trait-variant candidate
+   lanes and reuse one batched multi-score result.
+4. Extend benchmark coverage for multi-binary Firth trait counts, candidate
+   capacities, and Firth batch sizes.
+5. Run GPU benchmarks and decide whether the old per-trait path should remain as
    a temporary fallback.
 
 The host-sync work should go first. It is smaller, has a clear correctness
@@ -90,6 +113,9 @@ uv run ty check src/g tests/test_regenie2_binary.py tests/test_regenie2_pipeline
 Recommended implementation: replace host capacity selection with a jitted
 device-side bounded/overflow branch.
 
+Current owner: `opt/firth-device-capacity-dispatch`. Do not duplicate this work
+from a separate branch unless that worktree is abandoned.
+
 Shape contract:
 
 - compute `candidate_mask` and `fallback_count` on device;
@@ -106,8 +132,8 @@ Implementation outline:
   `overflow_candidate_capacity`;
 - use `jax.lax.cond` for zero, bounded, and overflow branches;
 - remove `count_firth_candidates_on_host` from the runtime path;
-- remove or rename the `firth_candidate_count_host_sync` timing label, because
-  there should no longer be a host-blocking count stage.
+- rename the `firth_candidate_count_host_sync` timing label to a non-blocking
+  dispatch-planning label such as `firth_candidate_dispatch_plan`.
 
 Expected files:
 
@@ -132,9 +158,28 @@ Correctness risks:
   executable;
 - telemetry tests expecting the old host-sync label.
 
-## Task 3: Batch Multi-Binary Approximate Firth
+Acceptance checks:
+
+- `rg count_firth_candidates_on_host src/g tests` finds no runtime use and no
+  active test expectation for host dispatch;
+- `rg firth_candidate_count_host_sync src/g tests` finds no active timing
+  expectation;
+- zero-candidate, bounded-capacity, and overflow-capacity paths return matching
+  result PyTrees and dtypes;
+- stage-timing tests expect `firth_candidate_dispatch_plan`;
+- `uv run pytest tests/test_regenie2_binary.py tests/test_regenie2_pipeline.py -q`
+  and `uv run ty check src/g tests/test_regenie2_binary.py tests/test_regenie2_pipeline.py`
+  pass.
+
+## Task 3: Batch Multi-Binary Approximate Firth And Reuse One Score Result
 
 Recommended implementation: flatten trait-variant candidates into one lane axis.
+
+The current corrected multi-binary path should be replaced, not just wrapped:
+`regenie2_binary/api.py` builds one single-trait chromosome state per trait,
+reruns the single-trait score path, and stacks the Python list of corrected
+results. The optimized path should compute the multi-trait score result once and
+apply correction only to the selected trait-variant lanes.
 
 New candidate shape contract:
 
@@ -148,6 +193,8 @@ New candidate shape contract:
 
 Implementation outline:
 
+- add a multi-shaped empty Firth diagnostics helper for
+  `Regenie2MultiBinaryScoreChunkResult`;
 - add `apply_device_candidate_corrections_multi_firth_variant_major`;
 - change the multi-binary approximate Firth path to compute one batched multi
   score result first, expand it with multi-shaped empty Firth diagnostics, and
@@ -158,7 +205,9 @@ Implementation outline:
   null offsets, null coefficients, covariate weights, and initial coefficients;
 - add a multi-result merge helper that scatters by `(trait_index, variant_index)`
   and preserves current beta sign restoration, `firth_se`, invalid candidate
-  handling, and diagnostic columns.
+  handling, and diagnostic columns;
+- remove production reliance on `compute_one_trait(...)` and
+  `stack_binary_chunk_results(...)` for multi-binary approximate Firth.
 
 Expected files:
 
@@ -192,12 +241,29 @@ Correctness risks:
 - packed8 approximate Firth must continue to match decoded dosage semantics,
   including native `dosage_sum` and `observation_count` use in the score phase;
 - full overflow capacity can become `traits * variants`, so memory must be
-  measured before removing the old path entirely.
+  measured before removing the old path entirely;
+- `firth_candidate.batch_size` controls candidate lanes, not traits; avoid
+  accidentally reducing active traits when the lane count is not divisible by
+  trait count.
+
+Acceptance checks:
+
+- multi-binary approximate Firth equals stacked single-trait results for
+  different per-trait candidate masks;
+- the multi-Firth corrected path invokes `compute_multi_binary_score_test_chunk_variant_major`
+  once per chunk and does not run one single-trait score kernel per trait;
+- packed8 multi-binary approximate Firth matches decoded variant-major dosage;
+- sparse candidate masks remain variant-only modifiers and never create new
+  Firth candidates;
+- null Firth or null logistic failure in one trait does not poison other traits.
 
 ## Parallelization
 
-Task 1 can be done by one agent immediately. Task 2 and Task 3 can be done by
-separate agents only after agreeing on the dispatch and capacity contract:
+Task 1 prep coverage has mostly landed on `main`; keep its remaining null-failure
+isolation gap visible during Task 3. Task 2 is assigned to
+`opt/firth-device-capacity-dispatch`. Task 3 should start from the Task 2
+dispatch API once it is committed, unless the Task 3 owner explicitly vendors a
+temporary adapter and removes it before integration.
 
 - no runtime path may call `count_firth_candidates_on_host`;
 - capacity selection is device-side bounded/overflow dispatch;
@@ -232,10 +298,10 @@ just slurm-benchmark-regenie2-binary-hot-gpu
 For multi-binary batching, extend the benchmark workload before making a final
 performance call:
 
-- 2, 4, and 8 binary traits;
+- 1, 2, 4, and 8 binary traits;
 - variant-major dosage and packed8 inputs;
 - low fallback density and high fallback density;
-- multiple `--g-firth-batch-size` values;
+- multiple `--g-firth-batch-size` and `--g-firth-candidate-capacity` values;
 - stage timing JSON enabled.
 
 Primary metrics:
@@ -243,12 +309,19 @@ Primary metrics:
 - total wall time;
 - `jax_compute`;
 - number and total duration of any remaining Firth candidate host-sync timing;
+- total duration of `firth_candidate_dispatch_plan` after Task 2 lands;
 - binary chunk diagnostics: score candidates, Firth candidates, failures,
   correction branches;
+- corrected-path score dispatch count if available from logs or a temporary
+  benchmark-only counter;
 - peak memory if available from the job environment.
 
 Recommended benchmark extension:
 
 - add `--pheno-col-list` / multi-trait support to `scripts/benchmark_regenie2_binary_hot.py`;
+- alternatively add `--binary-trait-count` that generates synthetic binary trait
+  columns and matching LOCO prediction-list entries from the existing fixture;
 - expose `--firth-candidate-capacity` so bounded/overflow behavior can be
   profiled directly.
+- include the selected trait count, path mode, Firth batch size, candidate
+  capacity, stage timing path, and binary chunk summary in the JSON report.
