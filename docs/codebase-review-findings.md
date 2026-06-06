@@ -154,8 +154,11 @@ residualization, lane-specific null state, and multi-result merge. Packed8
 multi-binary approximate Firth still decodes to variant-major dosage before
 entering the same multi correction path.
 
-Remaining risk: GPU compile time, peak memory, and runtime should be measured
-before making a final performance call. Full overflow capacity is now
+Focused GPU validation passed on `landau`: the default full binary-hot benchmark
+and a targeted two-trait variant-major plus packed8 smoke both completed with
+`firth_candidate_dispatch_plan` timings and no host-sync timing. Remaining
+performance risk is limited to larger 1/2/4/8-trait tuning sweeps if future
+optimization decisions need more data. Full overflow capacity is
 `trait_count * variant_count`, and both bounded and overflow branches are part
 of the jitted dispatcher.
 
@@ -174,9 +177,9 @@ stage records only non-blocking host planning.
 Why this matters: approximate Firth chunks no longer force the host to observe
 the candidate count before launching correction.
 
-Remaining risk: both bounded and overflow correction branches are part of the
-compiled dispatcher, so GPU compile time and memory should be measured for the
-single-trait and multi-binary Firth paths.
+Focused GPU validation covered the compiled dispatcher for the default
+single-trait path and a targeted two-trait multi-binary path. Larger sweeps can
+still measure peak memory and compile behavior before deeper tuning work.
 
 Detailed follow-up plan: `docs/firth-optimization-plan.md`.
 

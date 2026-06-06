@@ -212,10 +212,10 @@ Capacity contract:
 
 Remaining performance risks:
 
-- full overflow capacity can become `traits * variants`, so memory must be
-  measured before removing the old path entirely;
-- both bounded and overflow branches are part of one jitted dispatcher, so GPU
-  compile time and memory should be measured.
+- full overflow capacity can become `traits * variants`, so larger trait-count
+  sweeps may still be useful before deeper tuning work;
+- both bounded and overflow branches are part of one jitted dispatcher, so peak
+  memory and compile behavior should be watched in larger GPU runs.
 
 Acceptance checks:
 
@@ -311,7 +311,7 @@ Primary metrics:
 
 Implemented benchmark extension:
 
-- added synthetic multi-binary trait generation for reproducible trait-count sweeps;
+- added multi-binary trait-count sweeps over supplied phenotype columns;
 - exposed Firth candidate capacity and batch size sweeps;
 - included selected trait count, storage mode, fallback density, Firth batch
   size, candidate capacity, stage timing path, and binary chunk summary in the
