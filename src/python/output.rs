@@ -22,10 +22,53 @@ use crate::output::{
 use super::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata};
 
 struct PythonArrayAllocation {
-    _owner: Py<PyAny>,
+    _python_array_owner: Py<PyAny>,
 }
 
 impl std::panic::RefUnwindSafe for PythonArrayAllocation {}
+
+struct PythonOwnedArrowValues<T>
+where
+    T: ArrowNativeType,
+{
+    values_pointer: NonNull<T>,
+    value_count: usize,
+    byte_length: usize,
+    allocation: Arc<PythonArrayAllocation>,
+}
+
+impl<T> PythonOwnedArrowValues<T>
+where
+    T: ArrowNativeType,
+{
+    fn try_new(array_owner: Py<PyAny>, values: &[T]) -> PyResult<Self> {
+        let values_pointer = NonNull::new(values.as_ptr().cast_mut())
+            .ok_or_else(|| PyRuntimeError::new_err("NumPy result array has a null data pointer."))?;
+        Ok(Self {
+            values_pointer,
+            value_count: values.len(),
+            byte_length: std::mem::size_of_val(values),
+            allocation: Arc::new(PythonArrayAllocation { _python_array_owner: array_owner }),
+        })
+    }
+
+    fn into_arrow_array<ArrowType>(self) -> ArrayRef
+    where
+        ArrowType: ArrowPrimitiveType<Native = T>,
+    {
+        let value_count = self.value_count;
+        let buffer = self.into_arrow_buffer();
+        Arc::new(PrimitiveArray::<ArrowType>::new(ScalarBuffer::new(buffer, 0, value_count), None))
+    }
+
+    fn into_arrow_buffer(self) -> Buffer {
+        let pointer = self.values_pointer.cast::<u8>();
+        // SAFETY: `pointer` and `byte_length` come from a contiguous typed slice
+        // borrowed from a NumPy result array. `allocation` owns that Python array,
+        // so Arrow cannot outlive the memory backing the slice.
+        unsafe { Buffer::from_custom_allocation(pointer, self.byte_length, self.allocation) }
+    }
+}
 
 #[pyclass]
 pub(crate) struct OutputWriterSession {
@@ -342,11 +385,47 @@ where
     T: ArrowNativeType + Element,
     ArrowType: ArrowPrimitiveType<Native = T>,
 {
-    let byte_length = std::mem::size_of_val(values);
-    let pointer = NonNull::new(values.as_ptr().cast_mut().cast::<u8>())
-        .ok_or_else(|| PyRuntimeError::new_err("NumPy result array has a null data pointer."))?;
-    let buffer = unsafe {
-        Buffer::from_custom_allocation(pointer, byte_length, Arc::new(PythonArrayAllocation { _owner: array_owner }))
-    };
-    Ok(Arc::new(PrimitiveArray::<ArrowType>::new(ScalarBuffer::new(buffer, 0, values.len()), None)))
+    Ok(PythonOwnedArrowValues::<T>::try_new(array_owner, values)?.into_arrow_array::<ArrowType>())
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow::array::Array;
+
+    use super::{Float32Type, Python, PythonOwnedArrowValues};
+
+    #[test]
+    fn python_owned_arrow_values_builds_array_without_copying_values() {
+        Python::initialize();
+        Python::attach(|py| {
+            let values = [1.25_f32, 2.5, 3.75];
+            let arrow_values =
+                PythonOwnedArrowValues::<f32>::try_new(py.None(), values.as_slice()).expect("values should be valid");
+            assert_eq!(arrow_values.values_pointer.as_ptr(), values.as_ptr().cast_mut());
+            assert_eq!(arrow_values.value_count, values.len());
+            assert_eq!(arrow_values.byte_length, std::mem::size_of_val(values.as_slice()));
+
+            let array = arrow_values.into_arrow_array::<Float32Type>();
+            assert_eq!(array.len(), values.len());
+            let typed_array = array
+                .as_any()
+                .downcast_ref::<arrow::array::Float32Array>()
+                .expect("array should preserve the f32 Arrow type");
+            let observed_values =
+                (0..typed_array.len()).map(|value_index| typed_array.value(value_index)).collect::<Vec<_>>();
+            assert_eq!(observed_values, values.to_vec());
+        });
+    }
+
+    #[test]
+    fn python_owned_arrow_values_allows_empty_arrays() {
+        Python::initialize();
+        Python::attach(|py| {
+            let values: [f32; 0] = [];
+            let array = PythonOwnedArrowValues::<f32>::try_new(py.None(), values.as_slice())
+                .expect("empty values should still have a valid slice pointer")
+                .into_arrow_array::<Float32Type>();
+            assert_eq!(array.len(), 0);
+        });
+    }
 }
