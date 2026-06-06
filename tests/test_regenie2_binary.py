@@ -635,36 +635,50 @@ def test_firth_candidate_capacity_plan_caps_capacity_at_variant_count() -> None:
     assert capacity_plan.overflow_candidate_capacity == 3
 
 
-def test_firth_candidate_host_dispatch_selects_bounded_or_overflow_capacity() -> None:
-    fallback_mask = jnp.asarray([True, False, True, True, False], dtype=jnp.bool_)
+def test_firth_candidate_device_dispatch_plan_keeps_bounded_and_overflow_capacity() -> None:
     capacity_plan = regenie2_binary_candidate_planning.build_firth_candidate_capacity_plan(
         variant_count=5,
         preferred_candidate_capacity=2,
     )
 
-    fallback_count = regenie2_binary_candidate_planning.count_firth_candidates_on_host(fallback_mask)
-    candidate_capacity = regenie2_binary_candidate_planning.select_firth_candidate_capacity(
-        fallback_count=fallback_count,
-        capacity_plan=capacity_plan,
-    )
-
-    assert fallback_count == 3
-    assert candidate_capacity == 5
-    assert (
-        regenie2_binary_candidate_planning.select_firth_candidate_capacity(
-            fallback_count=2,
-            capacity_plan=capacity_plan,
-        )
-        == 2
-    )
+    assert capacity_plan.bounded_candidate_capacity == 2
+    assert capacity_plan.overflow_candidate_capacity == 5
 
 
-def test_firth_candidate_host_sync_records_profile_stage() -> None:
+def test_firth_candidate_device_dispatch_records_profile_stage() -> None:
     recorded_stages: list[tuple[str, float]] = []
 
     def record_stage_duration(stage_name: str, start_time: float) -> None:
         recorded_stages.append((stage_name, start_time))
 
+    _, chromosome_state = build_chromosome_state()
+    unusable_chromosome_state = dataclasses.replace(
+        chromosome_state,
+        covariate_matrix=jnp.full_like(chromosome_state.covariate_matrix, jnp.nan),
+        phenotype_vector=jnp.full_like(chromosome_state.phenotype_vector, jnp.nan),
+        null_logistic_coefficients=jnp.full_like(chromosome_state.null_logistic_coefficients, jnp.nan),
+        null_firth_offset=jnp.full_like(chromosome_state.null_firth_offset, jnp.nan),
+        score_residual=jnp.full_like(chromosome_state.score_residual, jnp.nan),
+        loco_offset=jnp.full_like(chromosome_state.loco_offset, jnp.nan),
+        square_root_weight=jnp.full_like(chromosome_state.square_root_weight, jnp.nan),
+        bernoulli_weight=jnp.full_like(chromosome_state.bernoulli_weight, jnp.nan),
+        weighted_genotype_projection_matrix=jnp.full_like(
+            chromosome_state.weighted_genotype_projection_matrix,
+            jnp.nan,
+        ),
+        score_projection_matrix=jnp.full_like(chromosome_state.score_projection_matrix, jnp.nan),
+        score_residual_sum=jnp.full_like(chromosome_state.score_residual_sum, jnp.nan),
+        bernoulli_weight_sum=jnp.full_like(chromosome_state.bernoulli_weight_sum, jnp.nan),
+        score_projection_sum=jnp.full_like(chromosome_state.score_projection_sum, jnp.nan),
+        null_firth_penalized_log_likelihood=jnp.full_like(
+            chromosome_state.null_firth_penalized_log_likelihood,
+            jnp.nan,
+        ),
+        null_firth_iteration_count=jnp.full_like(chromosome_state.null_firth_iteration_count, 999),
+        null_firth_convergence_reason_code=jnp.full_like(chromosome_state.null_firth_convergence_reason_code, 999),
+        null_logistic_iteration_count=jnp.full_like(chromosome_state.null_logistic_iteration_count, 999),
+        null_logistic_converged=jnp.zeros((), dtype=jnp.bool_),
+    )
     score_result = regenie2_binary_result.Regenie2BinaryScoreChunkResult(
         beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
         standard_error=jnp.asarray([0.4, 0.5, 0.6], dtype=jnp.float32),
@@ -682,8 +696,8 @@ def test_firth_candidate_host_sync_records_profile_stage() -> None:
     )
 
     result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_variant_major(
-        chromosome_state=typing.cast("regenie2_binary_state.Regenie2BinaryChromosomeState", object()),
-        genotype_matrix_by_variant=jnp.ones((3, 2), dtype=jnp.float32),
+        chromosome_state=unusable_chromosome_state,
+        genotype_matrix_by_variant=jnp.ones((3, chromosome_state.phenotype_vector.shape[0]), dtype=jnp.float32),
         result=score_result,
         correction_plan=APPROXIMATE_FIRTH_PLAN,
         kernel_config=build_default_binary_kernel_config(),
@@ -691,7 +705,7 @@ def test_firth_candidate_host_sync_records_profile_stage() -> None:
     )
 
     result = require_binary_chunk_result(result)
-    assert [stage_name for stage_name, _ in recorded_stages] == ["firth_candidate_count_host_sync"]
+    assert [stage_name for stage_name, _ in recorded_stages] == ["firth_candidate_dispatch_plan"]
     assert isinstance(recorded_stages[0][1], float)
     np.testing.assert_allclose(np.asarray(result.beta), np.asarray(score_result.beta))
     np.testing.assert_allclose(np.asarray(result.standard_error), np.asarray(score_result.standard_error))

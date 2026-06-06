@@ -1439,8 +1439,8 @@ def test_binary_variant_major_callback_uses_direct_variant_major_firth_compute()
         "typing.Callable[[str, float], None]",
         mock_compute.call_args.kwargs["stage_duration_recorder"],
     )
-    stage_duration_recorder("firth_candidate_count_host_sync", 0.0)
-    assert stage_timing_recorder.snapshot().stage_counts["firth_candidate_count_host_sync"] == 1
+    stage_duration_recorder("firth_candidate_dispatch_plan", 0.0)
+    assert stage_timing_recorder.snapshot().stage_counts["firth_candidate_dispatch_plan"] == 1
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
@@ -2174,8 +2174,8 @@ def test_multi_binary_variant_major_callback_forwards_non_default_kernel_config(
         "typing.Callable[[str, float], None]",
         mock_compute.call_args.kwargs["stage_duration_recorder"],
     )
-    stage_duration_recorder("firth_candidate_count_host_sync", 0.0)
-    assert stage_timing_recorder.snapshot().stage_counts["firth_candidate_count_host_sync"] == 1
+    stage_duration_recorder("firth_candidate_dispatch_plan", 0.0)
+    assert stage_timing_recorder.snapshot().stage_counts["firth_candidate_dispatch_plan"] == 1
     assert tuple(len(writer_session.native_chunks) for writer_session in writer_sessions) == (1, 1)
 
 

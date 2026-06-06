@@ -31,6 +31,15 @@ are summarized near the end instead of kept as historical work logs.
   Python-owned Arrow buffer cleanup.
 - `. scripts/server_env.sh && cargo test --lib python::output`: 2 passed after
   Python-owned Arrow buffer cleanup.
+- `uv run pytest tests/test_regenie2_binary.py -q`: 44 passed, 1 skipped after
+  device-side Firth capacity dispatch.
+- `uv run pytest tests/test_regenie2_pipeline.py::test_binary_variant_major_callback_uses_direct_variant_major_firth_compute tests/test_regenie2_pipeline.py::test_multi_binary_variant_major_callback_forwards_non_default_kernel_config -q`:
+  2 passed after device-side Firth capacity dispatch telemetry updates.
+- `uv run ty check src/g tests/test_regenie2_binary.py`: passed after
+  device-side Firth capacity dispatch.
+- `uv run ruff check src/g/compute/regenie2_binary tests/test_regenie2_binary.py --output-format=concise`:
+  passed after device-side Firth capacity dispatch.
+- `git diff --check`: passed after device-side Firth capacity dispatch.
 
 I also fetched `origin` and confirmed the reviewed base matched `origin/main` before the
 cleanup integration. I did not run GPU benchmarks or the full test suite on the head node.
@@ -118,23 +127,24 @@ packed8 parity gaps.
 
 ### P2. Firth candidate capacity selection syncs to host
 
-Status: preparatory correctness coverage is in place. The host-sync implementation work is
-now unblocked, but the runtime still performs the host count.
+Status: addressed in `opt/firth-device-capacity-dispatch`.
 
-`apply_device_candidate_corrections_firth_variant_major` builds `candidate_mask` on device
-at `src/g/compute/regenie2_binary/variant_major_correction.py:95`, then calls
-`count_firth_candidates_on_host` at `src/g/compute/regenie2_binary/variant_major_correction.py:97`.
-The timing label explicitly records `firth_candidate_count_host_sync` at
-`src/g/compute/regenie2_binary/variant_major_correction.py:99`.
+`apply_device_candidate_corrections_firth_variant_major` now builds only static
+chunk-capacity bounds on the host. Runtime `candidate_mask` and `fallback_count`
+stay on device, and the jitted dispatcher uses `jax.lax.cond` to choose the
+zero-candidate, bounded-capacity, or full-chunk overflow branch. The obsolete
+`count_firth_candidates_on_host` helper and `firth_candidate_count_host_sync`
+timing label were removed; the replacement `firth_candidate_dispatch_plan`
+stage records only non-blocking host planning.
 
-Why this matters: every chunk with approximate Firth enabled can introduce a host/device
-synchronization point before correction. That is often more expensive than the count itself.
+Why this matters: approximate Firth chunks no longer force the host to observe
+the candidate count before launching correction.
 
-Suggested direction: use a fixed bounded capacity, a JAX-side count with a compiled branch,
-or an overflow strategy that avoids forcing the host to observe every chunk before launching
-the correction.
+Remaining risk: both bounded and overflow correction branches are part of the
+compiled dispatcher, so GPU compile time and memory should be measured before
+building the multi-binary batching work on top of this primitive.
 
-Detailed implementation plan: `docs/firth-optimization-plan.md`.
+Detailed follow-up plan: `docs/firth-optimization-plan.md`.
 
 ### P2. Multi-phenotype resume recomputes partially committed chunks
 
@@ -326,13 +336,14 @@ work:
   pointer validation, buffer sizing, and the retained-owner safety contract.
 - Preparatory Firth correctness tests now cover zero-candidate diagnostics and distinct
   per-trait multi-binary approximate Firth candidate masks.
+- Single-trait approximate Firth now uses device-side zero, bounded, and overflow
+  capacity dispatch instead of a host candidate-count synchronization.
 
 ## Suggested Implementation Order
 
-1. Remove the Firth candidate-count host sync with device-side bounded/overflow dispatch.
-2. Continue remaining Rust unsafe boundary helper consolidation in small independent
+1. Continue remaining Rust unsafe boundary helper consolidation in small independent
    patches, especially lower-level generic decode output slices.
-3. Redesign multi-binary approximate Firth batching over flattened trait-variant lanes.
-4. Decide whether to preserve archive snapshots on a dedicated branch/tag and remove them
+2. Redesign multi-binary approximate Firth batching over flattened trait-variant lanes.
+3. Decide whether to preserve archive snapshots on a dedicated branch/tag and remove them
    from active `main`; this requires explicit approval before any deletion.
-5. Revisit public output dtype only if users need float64 result files.
+4. Revisit public output dtype only if users need float64 result files.

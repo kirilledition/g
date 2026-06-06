@@ -6,21 +6,23 @@ Base worktree: `cleanup/review-easy-nonconfig`
 This note expands the Firth-related findings in `docs/codebase-review-findings.md`.
 It focuses on two performance items:
 
-- removing the Firth candidate-count host synchronization;
+- removing the Firth candidate-count host synchronization, addressed in
+  `opt/firth-device-capacity-dispatch`;
 - batching multi-binary approximate Firth instead of dispatching one trait at a time.
 
 No GPU benchmark was run while writing this plan.
 
 ## Current State
 
-Single-trait approximate Firth is device-side after a static candidate capacity is
-chosen. `apply_device_candidate_corrections_firth_variant_major` builds a device
-`candidate_mask`, then calls `count_firth_candidates_on_host`, which performs a
-device sum followed by `jax.device_get`. The host count chooses either the
-preferred bounded capacity or full-chunk overflow capacity, and it also skips the
-Firth correction path when there are zero candidates.
+Single-trait approximate Firth is device-side after static chunk-capacity bounds
+are built from the chunk shape. `apply_device_candidate_corrections_firth_variant_major`
+records a non-blocking `firth_candidate_dispatch_plan` timing stage, then calls a
+jitted dispatcher. The dispatcher builds `candidate_mask` and `fallback_count` on
+device and uses `jax.lax.cond` to return empty Firth diagnostics for zero
+candidates, use bounded capacity for normal chunks, or use full chunk capacity
+for overflow chunks.
 
-The host sync exists because `build_device_firth_batch_plan` uses
+The old host sync existed because `build_device_firth_batch_plan` uses
 `jnp.nonzero(..., size=candidate_capacity)`, fixed padding, reshapes, and a fixed
 scan length. Those shapes require a Python/static `candidate_capacity`.
 
@@ -33,16 +35,16 @@ the same per-trait correction path.
 
 ## Recommended Priority
 
-1. Add preparatory correctness tests for the current Firth behavior.
-2. Remove the single-trait host sync with device-side bounded/overflow dispatch.
+1. Done: add preparatory correctness tests for the current Firth behavior.
+2. Done in `opt/firth-device-capacity-dispatch`: remove the single-trait host
+   sync with device-side bounded/overflow dispatch.
 3. Batch multi-binary approximate Firth over flattened trait-variant candidate lanes.
 4. Run GPU benchmarks and decide whether the old per-trait path should remain as
    a temporary fallback.
 
-The host-sync work should go first. It is smaller, has a clear correctness
-contract, and gives the multi-binary batching work a dispatch primitive to reuse.
-Multi-binary batching can proceed independently if needed, but it must not
-reintroduce per-trait host counts.
+The completed single-trait dispatcher is the primitive the multi-binary batching
+work should reuse. Multi-binary batching can proceed independently if needed, but
+it must not reintroduce per-trait host counts.
 
 ## Task 1: Preparatory Tests
 
@@ -87,6 +89,8 @@ uv run ty check src/g tests/test_regenie2_binary.py tests/test_regenie2_pipeline
 
 ## Task 2: Remove Candidate Count Host Sync
 
+Status: implemented in `opt/firth-device-capacity-dispatch`.
+
 Recommended implementation: replace host capacity selection with a jitted
 device-side bounded/overflow branch.
 
@@ -98,16 +102,16 @@ Shape contract:
 - use full chunk capacity when `fallback_count > bounded_candidate_capacity`;
 - both branches return the same `Regenie2BinaryChunkResult` shape.
 
-Implementation outline:
+Implementation status:
 
-- move the current fixed-capacity body into a non-public helper that can be
-  called from branch functions;
-- add a jitted dispatcher that takes static `bounded_candidate_capacity` and
-  `overflow_candidate_capacity`;
-- use `jax.lax.cond` for zero, bounded, and overflow branches;
-- remove `count_firth_candidates_on_host` from the runtime path;
-- remove or rename the `firth_candidate_count_host_sync` timing label, because
-  there should no longer be a host-blocking count stage.
+- the fixed-capacity body is in `apply_firth_variant_major_fixed_capacity_corrections`;
+- `apply_device_candidate_corrections_firth_variant_major_with_device_dispatch`
+  takes static `bounded_candidate_capacity` and `overflow_candidate_capacity`;
+- `jax.lax.cond` handles zero, bounded, and overflow branches;
+- `count_firth_candidates_on_host` and host capacity selection helpers were
+  removed from the runtime path;
+- `firth_candidate_count_host_sync` was replaced with the non-blocking
+  `firth_candidate_dispatch_plan` timing label.
 
 Expected files:
 
@@ -123,14 +127,13 @@ Higher-risk alternative: bounded-first correction with a later overflow repair
 pass. This can be fast when overflows are rare, but it complicates result
 contracts and can easily produce partial corrected output if mishandled.
 
-Correctness risks:
+Remaining correctness and performance risks:
 
 - silent candidate truncation if bounded capacity is used when
   `fallback_count > bounded_candidate_capacity`;
 - branch output PyTree or dtype mismatches inside `jax.lax.cond`;
 - larger compilation cost because bounded and overflow branches are in one
-  executable;
-- telemetry tests expecting the old host-sync label.
+  executable.
 
 ## Task 3: Batch Multi-Binary Approximate Firth
 
