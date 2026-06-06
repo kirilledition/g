@@ -1096,6 +1096,32 @@ def test_binary_hot_child_process_command_contains_binary_controls(tmp_path: Pat
     assert "JAX_PLATFORMS" not in child_command.environment_overrides
 
 
+def test_binary_hot_output_metrics_aggregate_multi_phenotype_artifacts(tmp_path: Path) -> None:
+    first_run_directory = tmp_path / "first.run"
+    second_run_directory = tmp_path / "second.run"
+    first_chunk_directory = first_run_directory / "chunks"
+    second_chunk_directory = second_run_directory / "chunks"
+    first_chunk_directory.mkdir(parents=True)
+    second_chunk_directory.mkdir(parents=True)
+    pl.DataFrame({"INFO": [0.9, None], "BETA": [0.1, 0.2]}).write_ipc(first_chunk_directory / "chunk_000.arrow")
+    pl.DataFrame({"INFO": [0.7], "BETA": [0.3]}).write_ipc(second_chunk_directory / "chunk_000.arrow")
+
+    output_metrics = binary_hot_benchmark.measure_output_metrics(
+        binary_hot_benchmark.api.RunArtifacts(
+            phenotype_artifacts=(
+                binary_hot_benchmark.api.RunArtifacts(output_run_directory=first_run_directory),
+                binary_hot_benchmark.api.RunArtifacts(output_run_directory=second_run_directory),
+            )
+        )
+    )
+
+    assert output_metrics.output_run_directory is None
+    assert output_metrics.output_row_count == 3
+    assert output_metrics.info_non_null_count == 2
+    assert output_metrics.chunk_file_count == 2
+    assert output_metrics.chunk_bytes > 0
+
+
 def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
     arguments = binary_hot_benchmark.build_argument_parser().parse_args(
         [

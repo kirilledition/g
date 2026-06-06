@@ -929,8 +929,39 @@ def count_chunk_rows_and_info(chunk_file_paths: list[Path]) -> dict[str, int] | 
     return {"row_count": row_count, "info_non_null_count": info_non_null_count}
 
 
+def sum_optional_integer_metrics(values: typing.Iterable[int | None]) -> int | None:
+    """Sum present integer metrics, preserving None when every input is absent."""
+    total = 0
+    has_value = False
+    for value in values:
+        if value is None:
+            continue
+        total += value
+        has_value = True
+    if not has_value:
+        return None
+    return total
+
+
+def combine_phenotype_output_metrics(metrics: list[OutputMetrics]) -> OutputMetrics:
+    """Aggregate per-phenotype output metrics for multi-trait benchmark runs."""
+    return OutputMetrics(
+        output_run_directory=None,
+        final_parquet=None,
+        output_row_count=sum_optional_integer_metrics(metric.output_row_count for metric in metrics),
+        info_non_null_count=sum_optional_integer_metrics(metric.info_non_null_count for metric in metrics),
+        chunk_file_count=sum(metric.chunk_file_count for metric in metrics),
+        chunk_bytes=sum(metric.chunk_bytes for metric in metrics),
+        final_parquet_bytes=sum_optional_integer_metrics(metric.final_parquet_bytes for metric in metrics),
+    )
+
+
 def measure_output_metrics(artifacts: api.RunArtifacts) -> OutputMetrics:
     """Measure emitted chunk and final output artifacts."""
+    if artifacts.phenotype_artifacts:
+        return combine_phenotype_output_metrics(
+            [measure_output_metrics(phenotype_artifact) for phenotype_artifact in artifacts.phenotype_artifacts]
+        )
     output_run_directory = artifacts.output_run_directory
     final_parquet_path = artifacts.final_parquet
     chunk_file_paths = (
