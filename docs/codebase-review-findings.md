@@ -152,19 +152,19 @@ use the same dispatch path or explicitly call `start()` before queuing work.
 
 ### P2. Native unsafe pointer writes are spread across several wrappers
 
-Status: first bounded Rust patch landed in `cleanup/review-easy-nonconfig`. The trusted
-no-missing variant-major dosage and packed8 paths now use a local `VariantMajorOutputMatrix`
-helper to validate non-null output pointers, centralize row-offset overflow checks, and
-reconstitute typed mutable row slices in one place. The hot decode loops still write through
-ordinary slices and do not add per-element abstraction overhead.
+Status: partially addressed. The first bounded Rust patch landed in
+`cleanup/review-easy-nonconfig`: trusted no-missing variant-major dosage and packed8 paths
+now use a local `VariantMajorOutputMatrix` helper to validate non-null output pointers,
+centralize row-offset overflow checks, and reconstitute typed mutable row slices in one
+place. The row-major BGEN preprocessing path now uses a local `RowMajorDosageBuffer`
+helper in `src/genotype/bgen/reader.rs` to validate null/alignment boundaries and
+centralize typed slice reconstruction before preprocessing. The hot decode loops still
+write through ordinary slices and do not add per-element abstraction overhead.
 
-The BGEN reader validates buffer lengths and then reconstitutes Python-owned memory with
-raw pointers, for example `src/genotype/bgen/reader.rs:298` to
-`src/genotype/bgen/reader.rs:300`. Trusted decode workers write variant rows through raw
-pointer-derived slices at `src/genotype/bgen/trusted.rs:336`,
-`src/genotype/bgen/trusted.rs:480`, `src/genotype/bgen/trusted.rs:503`, and
-`src/genotype/bgen/trusted.rs:536`. Output uses a Python-owned Arrow buffer wrapper at
-`src/python/output.rs:348`.
+Trusted decode workers still write variant rows through raw pointer-derived slices at
+`src/genotype/bgen/trusted.rs:336`, `src/genotype/bgen/trusted.rs:480`,
+`src/genotype/bgen/trusted.rs:503`, and `src/genotype/bgen/trusted.rs:536`. Output uses a
+Python-owned Arrow buffer wrapper at `src/python/output.rs:348`.
 
 This is expected at the Python/Rust zero-copy boundary, and the surrounding code has useful
 shape checks. The risk is that the safety contract is implicit and duplicated: buffer
@@ -172,9 +172,8 @@ lifetime, alignment, exclusivity, and row partitioning assumptions are spread ac
 multiple call sites.
 
 Suggested direction: continue centralizing the unsafe boundary behind small helper types.
-Next candidates are the generic BGEN row-major preprocessing slice in
-`src/genotype/bgen/reader.rs`, lower-level generic decode output slices, and the Python-owned
-Arrow buffer wrapper in `src/python/output.rs`.
+Next candidates are lower-level generic decode output slices and the Python-owned Arrow
+buffer wrapper in `src/python/output.rs`.
 
 ### P2. BGEN decode orchestration functions are too large to audit comfortably
 
