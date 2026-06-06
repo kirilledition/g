@@ -509,6 +509,7 @@ class ManualCallbackRunner(callbacks.NativeBgenCallbackRunner):
         self.result_worker_error = None
         self.sample_major_metadata: list[object] = []
         self.variant_major_metadata: list[object] = []
+        self.packed_metadata: list[object] = []
 
     def compute_preprocessed_chunk(
         self,
@@ -529,6 +530,16 @@ class ManualCallbackRunner(callbacks.NativeBgenCallbackRunner):
     ) -> None:
         del genotype_matrix_by_variant, chunk_stats
         self.variant_major_metadata.append(variant_metadata)
+
+    def compute_preprocessed_variant_major_packed8_chunk(
+        self,
+        *,
+        variant_metadata: object,
+        packed_probability_pairs_by_variant: object,
+        chunk_stats: object,
+    ) -> None:
+        del packed_probability_pairs_by_variant, chunk_stats
+        self.packed_metadata.append(variant_metadata)
 
 
 def test_native_callback_runner_records_chromosome_progress_transitions() -> None:
@@ -677,22 +688,18 @@ def test_native_callback_runner_surfaces_worker_and_writer_errors() -> None:
 
 
 def test_base_native_callback_runner_compute_methods_are_abstract() -> None:
-    callback = ManualCallbackRunner()
+    class IncompleteCallbackRunner(callbacks.NativeBgenCallbackRunner):
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
 
-    with pytest.raises(NotImplementedError):
-        callbacks.NativeBgenCallbackRunner.compute_preprocessed_chunk(
-            callback,
-            variant_metadata=typing.cast("typing.Any", SimpleNamespace()),
-            genotype_matrix=np.ones((2, 2), dtype=np.float32),
-            chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
-        )
-    with pytest.raises(NotImplementedError):
-        callbacks.NativeBgenCallbackRunner.compute_preprocessed_variant_major_chunk(
-            callback,
-            variant_metadata=typing.cast("typing.Any", SimpleNamespace()),
-            genotype_matrix_by_variant=np.ones((2, 2), dtype=np.float32),
-            chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
-        )
+    with pytest.raises(TypeError, match="abstract"):
+        IncompleteCallbackRunner(worker_name="incomplete-callback")
 
 
 def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> None:
@@ -703,7 +710,7 @@ def test_stop_result_worker_returns_when_failed_worker_leaves_full_queue() -> No
     stop_event = threading.Event()
     result_worker_thread = threading.Thread(target=stop_event.wait, name="failed-result-worker")
     result_worker_thread.start()
-    callback = object.__new__(callbacks.NativeBgenCallbackRunner)
+    callback = object.__new__(ManualCallbackRunner)
     callback.result_queue = result_queue
     callback.result_worker_error = RuntimeError("writer failed")
     callback.result_worker_thread = result_worker_thread
@@ -725,7 +732,7 @@ def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
     stop_event = threading.Event()
     result_worker_thread = threading.Thread(target=stop_event.wait, name="blocked-result-worker")
     result_worker_thread.start()
-    callback = object.__new__(callbacks.NativeBgenCallbackRunner)
+    callback = object.__new__(ManualCallbackRunner)
     callback.result_queue = result_queue
     callback.result_worker_error = None
     callback.result_worker_thread = result_worker_thread
@@ -745,7 +752,7 @@ def test_join_result_worker_raises_when_worker_does_not_stop() -> None:
     stop_event = threading.Event()
     result_worker_thread = threading.Thread(target=stop_event.wait, name="stuck-result-worker")
     result_worker_thread.start()
-    callback = object.__new__(callbacks.NativeBgenCallbackRunner)
+    callback = object.__new__(ManualCallbackRunner)
     callback.result_worker_thread = result_worker_thread
 
     try:
@@ -760,8 +767,36 @@ def test_join_result_worker_raises_when_worker_does_not_stop() -> None:
 
 
 def test_native_bgen_callback_runner_rejects_nonpositive_staging_depth() -> None:
+    class ConcreteCallbackRunner(callbacks.NativeBgenCallbackRunner):
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix_by_variant, chunk_stats
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+
     with pytest.raises(ValueError, match="staging_depth must be positive"):
-        callbacks.NativeBgenCallbackRunner(worker_name="invalid-staging-depth", staging_depth=0)
+        ConcreteCallbackRunner(worker_name="invalid-staging-depth", staging_depth=0)
 
 
 def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -> None:

@@ -35,6 +35,7 @@ Completed in this branch:
 - Replaced Rust preprocessing sample-count saturation with an explicit range error.
 - Hardened native host genotype buffer pool accounting across shape/dtype replacement.
 - Removed old Python-owned grouped-alignment helpers from the production pipeline module.
+- Made the native callback runner compute hooks an explicit abstract base-class contract.
 
 Verification in this branch:
 
@@ -60,6 +61,10 @@ Verification in this branch:
 - `uv run ruff format --check src/g/engine/regenie2_pipeline.py tests/test_regenie2_pipeline.py` - passed after grouped-alignment helper cleanup.
 - `uv run ruff check src/g/engine/regenie2_pipeline.py tests/test_regenie2_pipeline.py` - passed after grouped-alignment helper cleanup.
 - `uv run ty check src/g/engine/regenie2_pipeline.py` - passed after grouped-alignment helper cleanup.
+- `uv run pytest tests/test_regenie2_pipeline.py -q` - 55 passed after callback ABC cleanup.
+- `uv run ruff format --check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py` - passed after callback ABC cleanup.
+- `uv run ruff check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py` - passed after callback ABC cleanup.
+- `uv run ty check src/g/engine/callbacks.py` - passed after callback ABC cleanup.
 
 Implementation learnings:
 
@@ -74,6 +79,7 @@ Implementation learnings:
 - The native stats schema is still `i32` for count-like fields. Failing at the shared stats builder is the narrowest fix until the schema moves to wider counters.
 - Host genotype buffers need ownership tracking, not just queue membership, because result work items can carry any NumPy array-shaped value through the same release path in tests and fallback paths.
 - The active grouped per-phenotype path already uses native grouped alignment; the removed Python-owned grouping code was only a test fixture builder.
+- `abc.ABC` catches missing callback compute hooks before worker threads can start, but splitting thread startup out of `NativeBgenCallbackRunner.__init__()` remains a larger lifecycle refactor.
 
 ## Suggested Work Order
 
@@ -101,7 +107,7 @@ This branch will take the remaining review findings in order of implementation e
    Medium, mostly local but concurrency-sensitive.
 6. Done: Old Python grouped-alignment helpers.
    Medium, production-dead but test refactoring is needed.
-7. Callback runner abstract contract.
+7. Done: Callback runner abstract contract.
    Medium, lifecycle-sensitive.
 8. Unsupported exact Firth and SPA compute branches.
    Medium, changes lower-level behavior and tests currently assert failures.
@@ -367,7 +373,9 @@ Recommendation: decide whether this conservative behavior is acceptable. If resu
 
 ### P2. Callback runner abstract contract is implicit and threads start in the constructor
 
-`NativeBgenCallbackRunner` defines methods that raise `NotImplementedError` but is not an `abc.ABC`:
+Status: partly done in `codebase-review-cleanups`. `NativeBgenCallbackRunner` is now an `abc.ABC` and its compute hooks are abstract, so incomplete subclasses fail at instantiation. The constructor still starts worker threads; splitting startup into a concrete worker object remains open.
+
+Original finding: `NativeBgenCallbackRunner` defined methods that raised `NotImplementedError` but was not an `abc.ABC`:
 
 - `src/g/engine/callbacks.py:341-429`
 

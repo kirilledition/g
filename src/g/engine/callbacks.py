@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import abc
 import contextlib
 import logging
 import queue
@@ -353,7 +354,7 @@ def require_current_chromosome_state[ChromosomeStateType](
     raise RuntimeError(message)
 
 
-class NativeBgenCallbackRunner:
+class NativeBgenCallbackRunner(abc.ABC):
     """Reusable callback lifecycle for native BGEN chunk delivery."""
 
     def __init__(
@@ -414,6 +415,7 @@ class NativeBgenCallbackRunner:
             return None
         return self.record_stage_duration
 
+    @abc.abstractmethod
     def compute_preprocessed_chunk(
         self,
         *,
@@ -424,6 +426,7 @@ class NativeBgenCallbackRunner:
         """Compute one Rust-preprocessed chunk and write it."""
         raise NotImplementedError
 
+    @abc.abstractmethod
     def compute_preprocessed_variant_major_chunk(
         self,
         *,
@@ -434,6 +437,7 @@ class NativeBgenCallbackRunner:
         """Compute one Rust-preprocessed variant-major chunk and write it."""
         raise NotImplementedError
 
+    @abc.abstractmethod
     def compute_preprocessed_variant_major_packed8_chunk(
         self,
         *,
@@ -1208,6 +1212,17 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             self.release_result_in_flight_slot()
             raise
 
+    def compute_preprocessed_variant_major_packed8_chunk(
+        self,
+        *,
+        variant_metadata: _core.VariantMetadata,
+        packed_probability_pairs_by_variant: jax.Array | npt.NDArray[np.uint8],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Reject packed8 chunks for multi-trait linear callbacks."""
+        del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+        raise NotImplementedError("Packed8 multi-trait linear callbacks are not supported.")
+
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
         """Prepare cached multi-linear chromosome state for the metadata chromosome."""
         chromosome = get_metadata_chromosome(variant_metadata)
@@ -1745,6 +1760,17 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 self.release_dosage_buffer(host_dosage_buffer)
             self.release_result_in_flight_slot()
             raise
+
+    def compute_preprocessed_variant_major_packed8_chunk(
+        self,
+        *,
+        variant_metadata: _core.VariantMetadata,
+        packed_probability_pairs_by_variant: jax.Array | npt.NDArray[np.uint8],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Reject packed8 chunks for multi-trait binary callbacks."""
+        del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+        raise NotImplementedError("Packed8 multi-trait binary callbacks are not supported.")
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
         """Prepare cached multi-binary chromosome state for the metadata chromosome."""
