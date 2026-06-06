@@ -55,6 +55,31 @@ Implementation learnings:
 6. Optimize multi-binary approximate Firth and resume behavior after correctness/lifecycle work.
 7. Deal with repository hygiene around the tracked archive.
 
+## Easy Fix Ranking
+
+This branch will take the remaining review findings in order of implementation ease and non-destructiveness. Completed config cleanups are excluded from this ranking.
+
+1. Runtime callback `assert` invariants.
+   Easy, highly non-destructive: replace optimized-away assertions with explicit `RuntimeError` checks.
+2. Rayon thread configuration feedback.
+   Easy, non-destructive if warning-only: stop silently ignoring incompatible repeated thread settings.
+3. Packed8 multi-dispatch contract.
+   Easy, highly non-destructive: make the current config rejection explicit in tests/docs so future packed8 work does not miss the multi path.
+4. Rust sample-count saturation.
+   Easy-medium, non-destructive for realistic data: replace silent `i32::MAX` saturation with explicit error behavior.
+5. Buffer pool accounting drift.
+   Medium, mostly local but concurrency-sensitive.
+6. Old Python grouped-alignment helpers.
+   Medium, production-dead but test refactoring is needed.
+7. Callback runner abstract contract.
+   Medium, lifecycle-sensitive.
+8. Unsupported exact Firth and SPA compute branches.
+   Medium, changes lower-level behavior and tests currently assert failures.
+9. Native callback bounded shutdown.
+   Medium, important but concurrency-sensitive.
+10. INFO score missingness contract test.
+    Medium, safe as characterization-only; formula changes need a statistical decision.
+
 ## Findings
 
 ### P1. Python API treats `None` options as explicit user options
