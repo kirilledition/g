@@ -57,28 +57,21 @@ plumb selected input dtypes where parity requires them.
 
 ### P2. Pipeline lifecycle code is duplicated across too many entry points
 
-The main pipeline file now contains separate single linear, single binary, shared
-multi-phenotype, grouped per-phenotype, prepared-group, and multi-callback runners:
+Status: addressed in `refactor/regenie2-lifecycle-runner`.
 
-- `src/g/engine/regenie2_pipeline.py:32`
-- `src/g/engine/regenie2_pipeline.py:237`
-- `src/g/engine/regenie2_pipeline.py:630`
-- `src/g/engine/regenie2_pipeline.py:821`
-- `src/g/engine/regenie2_pipeline.py:965`
-- `src/g/engine/regenie2_pipeline.py:1169`
+The pipeline now builds a shared typed lifecycle context and writer settings, then reuses
+helpers for manifest initialization, writer creation, preflight, telemetry, callback drain,
+engine delivery, interrupted finish, abort, and finalization. Single linear/binary,
+complete-case multi-phenotype, and grouped per-phenotype paths share this lifecycle while
+keeping association-specific compute in the callback classes.
 
-These paths repeat output initialization, writer creation, preflight, telemetry, callback
-construction, engine delivery, shutdown, and manifest handling. The recent packed8 and
-config-default cleanup moved more options into explicit runtime arguments, which is cleaner
-but increases the amount of state that has to stay synchronized across every path.
+The refactor preserves the current multi-phenotype resume contract: native engine delivery
+skips only chunks committed by every phenotype, and each writer/callback still receives its
+own committed chunk set.
 
-Why this matters: this is the biggest architecture risk in the Python engine layer. New
-flags such as output format, packed8, dtype policy, resume mode, and timing can easily be
-wired into one path but missed in another.
-
-Suggested direction: extract a typed run context and shared lifecycle runner. Keep
-association-specific parts behind small strategy objects or callbacks, but make output,
-telemetry, resume, and engine-delivery policy one implementation.
+Remaining risk: public entry points still forward a large set of CLI/API options by design,
+and callback worker threads still start in callback constructors. Splitting callback
+construction from thread startup remains a separate lifecycle cleanup.
 
 ### P2. Multi-binary approximate Firth is not batched
 
@@ -312,7 +305,6 @@ work:
 5. Document and test the INFO score denominator contract.
 6. Add a targeted multi-phenotype resume test for partial committed chunk sets.
 7. Split callback start from construction.
-8. Refactor pipeline lifecycle duplication around a shared typed run context.
-9. Centralize Rust unsafe buffer boundary helpers.
-10. Benchmark and then redesign multi-binary approximate Firth batching.
-11. Decide the public dtype/output precision contract.
+8. Centralize Rust unsafe buffer boundary helpers.
+9. Benchmark and then redesign multi-binary approximate Firth batching.
+10. Decide the public dtype/output precision contract.
