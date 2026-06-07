@@ -61,6 +61,13 @@ class FallbackDensityScenario(enum.StrEnum):
     HIGH = "high"
 
 
+class StageTimingMode(enum.StrEnum):
+    """Stage timing collection mode for benchmark trials."""
+
+    EXACT = "exact"
+    OFF = "off"
+
+
 @dataclasses.dataclass(frozen=True)
 class BenchmarkConfiguration:
     """Shared configuration for a binary REGENIE benchmark run."""
@@ -89,6 +96,7 @@ class BenchmarkConfiguration:
     high_fallback_p_threshold: float
     variant_limit: int | None
     expected_variant_count: int | None
+    stage_timing_mode: StageTimingMode
     python_executable: str
     jax_cache_directory: Path
 
@@ -151,7 +159,7 @@ class TrialResult:
     finalize_parquet: bool
     same_process_group: str | None
     wall_time_seconds: float
-    stage_timing_path: str
+    stage_timing_path: str | None
     output_metrics: OutputMetrics
 
 
@@ -452,6 +460,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Expected full input variant count recorded in benchmark metadata.",
     )
     parser.add_argument(
+        "--stage-timing-mode",
+        choices=[stage_timing_mode.value for stage_timing_mode in StageTimingMode],
+        default=StageTimingMode.EXACT.value,
+        help="Use exact synchronized stage timings, or disable them for production-throughput timing.",
+    )
+    parser.add_argument(
         "--include-cold-process",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -546,6 +560,7 @@ def build_configuration(arguments: argparse.Namespace) -> BenchmarkConfiguration
         expected_variant_count=(
             int(arguments.expected_variant_count) if arguments.expected_variant_count is not None else None
         ),
+        stage_timing_mode=StageTimingMode(str(arguments.stage_timing_mode)),
         python_executable=str(arguments.python_executable),
         jax_cache_directory=jax_cache_directory,
     )
@@ -637,6 +652,7 @@ def configuration_to_json_dict(configuration: BenchmarkConfiguration) -> dict[st
         "high_fallback_p_threshold": configuration.high_fallback_p_threshold,
         "variant_limit": configuration.variant_limit,
         "expected_variant_count": configuration.expected_variant_count,
+        "stage_timing_mode": configuration.stage_timing_mode.value,
         "python_executable": configuration.python_executable,
         "jax_cache_directory": str(configuration.jax_cache_directory),
     }
@@ -710,6 +726,7 @@ def configuration_from_json_dict(payload: dict[str, typing.Any]) -> BenchmarkCon
         expected_variant_count=(
             int(payload["expected_variant_count"]) if payload.get("expected_variant_count") is not None else None
         ),
+        stage_timing_mode=StageTimingMode(str(payload.get("stage_timing_mode", StageTimingMode.EXACT.value))),
         python_executable=str(payload["python_executable"]),
         jax_cache_directory=Path(str(payload["jax_cache_directory"])),
     )
@@ -831,7 +848,9 @@ def trial_result_from_json_dict(payload: dict[str, typing.Any]) -> TrialResult:
         finalize_parquet=bool(payload["finalize_parquet"]),
         same_process_group=(str(payload["same_process_group"]) if payload["same_process_group"] is not None else None),
         wall_time_seconds=float(payload["wall_time_seconds"]),
-        stage_timing_path=str(payload["stage_timing_path"]),
+        stage_timing_path=(
+            str(payload["stage_timing_path"]) if payload.get("stage_timing_path") is not None else None
+        ),
         output_metrics=output_metrics_from_json_dict(payload["output_metrics"]),
     )
 
@@ -1034,10 +1053,11 @@ def run_api_trial(
     configuration: BenchmarkConfiguration,
     benchmark_case: BenchmarkCase,
     trial_spec: TrialSpec,
-    stage_timing_path: Path,
+    stage_timing_path: Path | None,
 ) -> TrialResult:
     """Run one in-process API trial and measure wall time plus artifacts."""
-    stage_timing_path.parent.mkdir(parents=True, exist_ok=True)
+    if stage_timing_path is not None:
+        stage_timing_path.parent.mkdir(parents=True, exist_ok=True)
     output_root = configuration.output_directory / "outputs" / benchmark_case.name / trial_spec.name
     environment_overrides = build_trial_environment(configuration, stage_timing_path)
     with temporary_environment(environment_overrides):
@@ -1058,7 +1078,7 @@ def run_api_trial(
         finalize_parquet=trial_spec.finalize_parquet,
         same_process_group=trial_spec.same_process_group,
         wall_time_seconds=wall_time_seconds,
-        stage_timing_path=str(stage_timing_path),
+        stage_timing_path=str(stage_timing_path) if stage_timing_path is not None else None,
         output_metrics=measure_output_metrics(artifacts),
     )
 
@@ -1068,7 +1088,7 @@ def build_fresh_process_command(
     configuration: BenchmarkConfiguration,
     benchmark_case: BenchmarkCase,
     trial_spec: TrialSpec,
-    stage_timing_path: Path,
+    stage_timing_path: Path | None,
 ) -> ChildProcessCommand:
     """Build a fresh Python process command for one trial."""
     child_code = textwrap.dedent(
@@ -1081,11 +1101,12 @@ def build_fresh_process_command(
         configuration = benchmark.configuration_from_json_dict(json.loads({configuration_payload!r}))
         benchmark_case = benchmark.benchmark_case_from_json_dict(json.loads({benchmark_case_payload!r}))
         trial_spec = benchmark.trial_spec_from_json_dict(json.loads({trial_payload!r}))
+        stage_timing_path_value = {stage_timing_path_payload!r}
         result = benchmark.run_api_trial(
             configuration=configuration,
             benchmark_case=benchmark_case,
             trial_spec=trial_spec,
-            stage_timing_path=Path({stage_timing_path!r}),
+            stage_timing_path=Path(stage_timing_path_value) if stage_timing_path_value is not None else None,
         )
         print(json.dumps(benchmark.trial_result_to_json_dict(result), sort_keys=True))
         """
@@ -1093,7 +1114,7 @@ def build_fresh_process_command(
         configuration_payload=json.dumps(configuration_to_json_dict(configuration), sort_keys=True),
         benchmark_case_payload=json.dumps(benchmark_case_to_json_dict(benchmark_case), sort_keys=True),
         trial_payload=json.dumps(trial_spec_to_json_dict(trial_spec), sort_keys=True),
-        stage_timing_path=str(stage_timing_path),
+        stage_timing_path_payload=str(stage_timing_path) if stage_timing_path is not None else None,
     )
     return ChildProcessCommand(
         command_arguments=[configuration.python_executable, "-c", child_code],
@@ -1106,7 +1127,7 @@ def run_fresh_process_trial(
     configuration: BenchmarkConfiguration,
     benchmark_case: BenchmarkCase,
     trial_spec: TrialSpec,
-    stage_timing_path: Path,
+    stage_timing_path: Path | None,
 ) -> TrialResult:
     """Run one trial in a fresh Python process."""
     child_process_command = build_fresh_process_command(
@@ -1236,9 +1257,11 @@ def run_benchmark(configuration: BenchmarkConfiguration, trial_specs: list[Trial
     trial_results: list[TrialResult] = []
     for benchmark_case in build_benchmark_cases(configuration):
         for trial_spec in trial_specs:
-            stage_timing_path = (
-                configuration.output_directory / "stage_timings" / benchmark_case.name / f"{trial_spec.name}.json"
-            )
+            stage_timing_path = None
+            if configuration.stage_timing_mode == StageTimingMode.EXACT:
+                stage_timing_path = (
+                    configuration.output_directory / "stage_timings" / benchmark_case.name / f"{trial_spec.name}.json"
+                )
             if trial_spec.fresh_process:
                 trial_result = run_fresh_process_trial(
                     configuration=configuration,

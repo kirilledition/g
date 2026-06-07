@@ -819,8 +819,8 @@ def test_firth_candidate_capacity_plan_uses_bounded_capacity_until_overflow() ->
         preferred_candidate_capacity=4,
     )
 
-    assert capacity_plan.tiny_candidate_capacity == 7
-    assert capacity_plan.small_candidate_capacity == 7
+    assert capacity_plan.tiny_candidate_capacity == 4
+    assert capacity_plan.small_candidate_capacity == 4
     assert capacity_plan.bounded_candidate_capacity == 4
     assert capacity_plan.overflow_candidate_capacity == 7
 
@@ -844,8 +844,8 @@ def test_multi_firth_candidate_capacity_plan_uses_flattened_trait_variant_lanes(
         preferred_candidate_capacity=2,
     )
 
-    assert capacity_plan.tiny_candidate_capacity == 15
-    assert capacity_plan.small_candidate_capacity == 15
+    assert capacity_plan.tiny_candidate_capacity == 6
+    assert capacity_plan.small_candidate_capacity == 6
     assert capacity_plan.bounded_candidate_capacity == 6
     assert capacity_plan.overflow_candidate_capacity == 15
 
@@ -869,8 +869,8 @@ def test_firth_candidate_device_dispatch_plan_keeps_bounded_and_overflow_capacit
         preferred_candidate_capacity=2,
     )
 
-    assert capacity_plan.tiny_candidate_capacity == 5
-    assert capacity_plan.small_candidate_capacity == 5
+    assert capacity_plan.tiny_candidate_capacity == 2
+    assert capacity_plan.small_candidate_capacity == 2
     assert capacity_plan.bounded_candidate_capacity == 2
     assert capacity_plan.overflow_candidate_capacity == 5
 
