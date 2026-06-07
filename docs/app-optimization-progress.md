@@ -24,7 +24,7 @@ This tracks the implementation campaign for
 - Wave 2 native boundaries and startup overhead: partial; F-006, F-010,
   F-007, F-008, F-016, F-021, F-022, and F-041 are complete.
 - Wave 3 JAX numerics and Firth performance: partial; F-011, F-012, F-013,
-  F-014, F-015, F-033, F-034, and F-035 are complete.
+  F-014, F-015, F-032, F-033, F-034, and F-035 are complete.
 - Wave 4 writer/output throughput: partial; F-018, F-019, F-020, F-030,
   F-038, and F-039 are complete.
 - Wave 5 Rust decode and larger architecture: partial; F-017, F-025, F-036,
@@ -112,6 +112,10 @@ This tracks the implementation campaign for
 - Split single-trait Firth overflow candidate correction into separate
   variant-major and packed8 overflow executables. Common tiny/small/bounded
   dispatch no longer compiles the overflow branch.
+- Implemented full multi-binary score-plus-correction JIT entrypoints for
+  variant-major and packed8 chunks when the configured candidate capacity covers
+  every flattened trait-variant lane. Overflow-capable chunks intentionally keep
+  the F-033 two-step route so rare overflow stays out of the common executable.
 
 ## Validation
 
@@ -156,10 +160,15 @@ This tracks the implementation campaign for
 - F-033 scoped checks:
   `uv run ruff check ...`, `uv run ruff format --check ...`, and
   `uv run ty check ...` passed for the touched binary compute and test files.
+- F-032 focused validation:
+  `uv run pytest tests/test_regenie2_binary.py -q -k "full_entrypoint_when_overflow_is_impossible or multi_trait_approximate_firth_uses_one_multi_score_dispatch"`
+  passed with 3 tests.
+- F-032 scoped checks:
+  `uv run ruff check ...`, `uv run ruff format --check ...`, and
+  `uv run ty check ...` passed for the touched binary API and test files.
 
 ## Remaining larger work
 
-- Pipeline architecture and batching: F-032.
 - Rust decode and allocation reuse: F-025, F-036, F-037, F-040 are implemented
   and integrated; deeper reusable stats-buffer ownership remains a future
   design item because returned chunk stats can outlive the next reader call.
@@ -209,3 +218,7 @@ This tracks the implementation campaign for
 - F-033: single-trait variant-major and packed8 Firth correction wrappers route
   overflow candidate counts to dedicated overflow executables before entering
   the common tiny/small/bounded JIT dispatcher.
+- F-032: multi-trait variant-major and packed8 Firth chunks can use a full
+  score-plus-correction JIT entrypoint when the static candidate-capacity plan
+  proves overflow impossible; overflow-capable chunks keep the F-033 split
+  dispatch path.
