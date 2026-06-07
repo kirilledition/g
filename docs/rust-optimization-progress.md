@@ -181,3 +181,62 @@ Selected 16,384-variant mean times:
 | trusted packed8 contiguous half sample | 14.570 |
 | trusted packed8 strided half sample | 19.032 |
 | non-trusted strided half sample dosage | 18.046 |
+
+## Final Measurements
+
+Final comparisons use current `main` at `13e3e768` as the baseline and
+`integration/rust-optimization` at `5071b94d` as the optimized build. Both
+worktrees were installed with:
+
+```bash
+uv sync --python 3.14 --group dev --group gpu
+RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf --uv
+```
+
+The GPU app benchmark was run on `landau` with `--variant-limit 4096`,
+`--storage-modes variant_major,packed8`, and same-process warm/hot trials. The
+unmodified current-main benchmark failed at 16,384, 4,096, and 1,000 variants
+because the native callback worker did not stop within its hard-coded 60 second
+join timeout during the first GPU/JAX trial. For measurement only, both
+baseline and optimized runs monkey-patched the worker join timeout to 300
+seconds in the benchmark process. No repository code was changed for that
+timeout.
+
+Hot same-process GPU timings:
+
+| Workload | Baseline s | Optimized s | Change | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| variant-major, no final Parquet | 0.390899 | 0.393628 | -0.70% | 0.993x |
+| packed8, no final Parquet | 0.372658 | 0.361093 | +3.10% | 1.032x |
+| variant-major, finalized Parquet | 0.405032 | 0.398537 | +1.60% | 1.016x |
+| packed8, finalized Parquet | 0.384665 | 0.364883 | +5.14% | 1.054x |
+
+Warm same-process GPU timings, which include first GPU compilation and setup in
+that process:
+
+| Workload | Baseline s | Optimized s | Change | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| variant-major, no final Parquet | 75.717838 | 73.949554 | +2.34% | 1.024x |
+| packed8, no final Parquet | 0.670004 | 0.686461 | -2.46% | 0.976x |
+| variant-major, finalized Parquet | 74.753473 | 73.618429 | +1.52% | 1.015x |
+| packed8, finalized Parquet | 0.711633 | 0.667577 | +6.19% | 1.066x |
+
+The Python BGEN reader harness was also run on `cantor` with
+`--chunk-sizes 16384`, `--variant-limit 16384`, `--repeat-count 5`,
+`--trusted-no-missing-diploid-modes true`,
+`--path-modes variant_major_buffered,variant_major_packed8_buffered`, and
+`--sample-selection-modes full,contiguous_half,strided_half`. It preserved
+checksums across dosage and packed8 paths, but the measured medians were all
+about 3.6 to 3.8 seconds and moved by only -0.5% to -0.7% in the optimized
+build. That harness is dominated by Python/process/reader setup overhead at
+this workload size, so it is not a useful micro-signal for the fused Rust
+packed8 copy+summary path.
+
+Benchmark artifacts are in `data/profiles/`:
+
+- `rust_opt_binary_hot_baseline_4096_timeout300.json`
+- `rust_opt_binary_hot_optimized_4096_timeout300.json`
+- `rust_opt_binary_hot_baseline_4096_finalized_timeout300.json`
+- `rust_opt_binary_hot_optimized_4096_finalized_timeout300.json`
+- `rust_opt_bgen_reader_baseline.json`
+- `rust_opt_bgen_reader_optimized.json`
