@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
 
@@ -110,6 +110,14 @@ pub struct PredictionSource {
 pub struct MultiPredictionSource {
     phenotype_names: Vec<String>,
     chromosome_predictions_by_trait: Vec<HashMap<String, Arc<[f32]>>>,
+    chromosome_prediction_matrix_cache: Mutex<HashMap<String, CachedChromosomePredictionMatrix>>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedChromosomePredictionMatrix {
+    trait_count: usize,
+    sample_count: usize,
+    prediction_values: Arc<[f32]>,
 }
 
 impl LocoPredictionCache {
@@ -268,21 +276,43 @@ impl MultiPredictionSource {
             )?;
             chromosome_predictions_by_trait.push(aligned_predictions);
         }
-        Ok(Self { phenotype_names: phenotype_names.to_vec(), chromosome_predictions_by_trait })
+        Ok(Self {
+            phenotype_names: phenotype_names.to_vec(),
+            chromosome_predictions_by_trait,
+            chromosome_prediction_matrix_cache: Mutex::new(HashMap::new()),
+        })
     }
 
     pub fn chromosome_prediction_matrix(&self, chromosome: &str) -> Result<(usize, usize, Vec<f32>), PredictionError> {
         let normalized_chromosome = normalize_chromosome(chromosome);
+        if let Some(cached_matrix) = self.lock_chromosome_prediction_matrix_cache().get(&normalized_chromosome).cloned()
+        {
+            return Ok((
+                cached_matrix.trait_count,
+                cached_matrix.sample_count,
+                cached_matrix.prediction_values.to_vec(),
+            ));
+        }
+        let cached_matrix = self.build_chromosome_prediction_matrix(&normalized_chromosome, chromosome)?;
+        self.lock_chromosome_prediction_matrix_cache().insert(normalized_chromosome, cached_matrix.clone());
+        Ok((cached_matrix.trait_count, cached_matrix.sample_count, cached_matrix.prediction_values.to_vec()))
+    }
+
+    fn build_chromosome_prediction_matrix(
+        &self,
+        normalized_chromosome: &str,
+        requested_chromosome: &str,
+    ) -> Result<CachedChromosomePredictionMatrix, PredictionError> {
         let trait_count = self.phenotype_names.len();
         let mut prediction_matrix_values = Vec::new();
         let mut sample_count = None;
         for chromosome_predictions in &self.chromosome_predictions_by_trait {
-            let Some(prediction_values) = chromosome_predictions.get(&normalized_chromosome) else {
+            let Some(prediction_values) = chromosome_predictions.get(normalized_chromosome) else {
                 let mut available_chromosomes: Vec<String> = chromosome_predictions.keys().cloned().collect();
                 available_chromosomes.sort();
                 return Err(PredictionError::MissingChromosome {
-                    chromosome: chromosome.to_string(),
-                    normalized_chromosome,
+                    chromosome: requested_chromosome.to_string(),
+                    normalized_chromosome: normalized_chromosome.to_string(),
                     available_chromosomes,
                 });
             };
@@ -300,7 +330,22 @@ impl MultiPredictionSource {
             }
             prediction_matrix_values.extend_from_slice(prediction_values.as_ref());
         }
-        Ok((trait_count, sample_count.unwrap_or(0), prediction_matrix_values))
+        Ok(CachedChromosomePredictionMatrix {
+            trait_count,
+            sample_count: sample_count.unwrap_or(0),
+            prediction_values: prediction_matrix_values.into(),
+        })
+    }
+
+    fn lock_chromosome_prediction_matrix_cache(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, CachedChromosomePredictionMatrix>> {
+        self.chromosome_prediction_matrix_cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[cfg(test)]
+    fn cached_chromosome_prediction_matrix_count(&self) -> usize {
+        self.lock_chromosome_prediction_matrix_cache().len()
     }
 }
 
@@ -668,8 +713,8 @@ mod tests {
     use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use crate::sample::SampleKeyMode;
 
@@ -789,6 +834,12 @@ mod tests {
         assert_eq!(trait_count, 2);
         assert_eq!(sample_count, 2);
         assert_eq!(prediction_values, vec![1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(source.cached_chromosome_prediction_matrix_count(), 1);
+
+        let (_, _, cached_prediction_values) =
+            source.chromosome_prediction_matrix("22").expect("cached chr22 prediction matrix should be available");
+        assert_eq!(cached_prediction_values, prediction_values);
+        assert_eq!(source.cached_chromosome_prediction_matrix_count(), 1);
     }
 
     #[test]
@@ -887,6 +938,7 @@ mod tests {
                 HashMap::from([("22".to_string(), Arc::<[f32]>::from(vec![1.0, 2.0]))]),
                 HashMap::from([("22".to_string(), Arc::<[f32]>::from(vec![3.0]))]),
             ],
+            chromosome_prediction_matrix_cache: Mutex::new(HashMap::new()),
         };
         let matrix_error =
             source.chromosome_prediction_matrix("chr22").expect_err("inconsistent trait sample counts should fail");

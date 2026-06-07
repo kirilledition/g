@@ -79,7 +79,6 @@ This tracks the implementation campaign for
 - Packed8 and Firth compute rewrites: F-011, F-012, F-034.
 - Score-kernel/state setup rewrites: F-035.
 - Rust decode and allocation reuse: F-025, F-036, F-037, F-040.
-- LOCO buffer-sharing optimization: F-027 is partial.
 - Scientific parity projects: F-029.
 
 ## Integration branch updates
@@ -97,5 +96,6 @@ This tracks the implementation campaign for
   native aligned-sample object instead of being cloned into the runtime
   dataclass during construction.
 - F-027: identity-aligned LOCO prediction vectors now reuse shared immutable
-  buffers, and multi-trait chromosome prediction matrix construction
-  preallocates its final matrix. Repeated matrix caching remains open.
+  buffers. Multi-trait chromosome prediction matrix construction preallocates
+  its final matrix and caches assembled chromosome matrices for repeated
+  requests.
