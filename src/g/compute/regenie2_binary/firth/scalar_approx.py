@@ -558,6 +558,126 @@ def fit_scalar_newton_raphson_firth(
     )
 
 
+def build_single_variant_regenie_approximate_firth_result(
+    *,
+    skip_firth: jax.Array,
+    null_failed: jax.Array,
+    sparse_correction: jax.Array,
+    pseudo_result: regenie2_binary_firth_types.ScalarFirthAttemptResult,
+    zero_start_result: regenie2_binary_firth_types.ScalarFirthAttemptResult,
+    warm_start_result: regenie2_binary_firth_types.ScalarFirthAttemptResult,
+    run_zero_start: jax.Array,
+    run_warm_start: jax.Array,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Build the public scalar approximate-Firth result from attempted stages."""
+    scalar_dtype = pseudo_result.beta.dtype
+    use_zero_start = run_zero_start & zero_start_result.valid
+    use_warm_start = (~pseudo_result.valid) & (~use_zero_start) & warm_start_result.valid
+    selected_beta = jnp.where(
+        pseudo_result.valid,
+        pseudo_result.beta,
+        jnp.where(use_zero_start, zero_start_result.beta, warm_start_result.beta),
+    )
+    selected_standard_error = jnp.where(
+        pseudo_result.valid,
+        pseudo_result.standard_error,
+        jnp.where(use_zero_start, zero_start_result.standard_error, warm_start_result.standard_error),
+    )
+    selected_chi_squared = jnp.where(
+        pseudo_result.valid,
+        pseudo_result.chi_squared,
+        jnp.where(use_zero_start, zero_start_result.chi_squared, warm_start_result.chi_squared),
+    )
+    selected_log10_p_value = jnp.where(
+        pseudo_result.valid,
+        pseudo_result.log10_p_value,
+        jnp.where(use_zero_start, zero_start_result.log10_p_value, warm_start_result.log10_p_value),
+    )
+    selected_deviance = jnp.where(
+        pseudo_result.valid,
+        pseudo_result.penalized_deviance,
+        jnp.where(use_zero_start, zero_start_result.penalized_deviance, warm_start_result.penalized_deviance),
+    )
+    selected_reason_code = jnp.where(
+        pseudo_result.valid,
+        regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
+        jnp.where(
+            use_zero_start,
+            regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
+            jnp.where(
+                use_warm_start,
+                regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
+                warm_start_result.failure_reason_code,
+            ),
+        ),
+    ).astype(jnp.int32)
+    valid_mask = (~skip_firth) & (~null_failed) & (pseudo_result.valid | use_zero_start | use_warm_start)
+    selected_reason_code = jnp.where(
+        null_failed,
+        regenie2_binary_firth_types.FirthConvergenceReason.NULL_FAILURE.value,
+        selected_reason_code,
+    )
+    failure_code = regenie2_binary_firth_types.map_firth_reason_code_to_failure_code(selected_reason_code)
+    correction_code = jnp.where(
+        valid_mask & pseudo_result.valid,
+        types.FirthCorrectionCode.PSEUDO_FIRTH.value,
+        jnp.where(
+            valid_mask & use_zero_start,
+            types.FirthCorrectionCode.NEWTON_RAPHSON_ZERO_START.value,
+            jnp.where(
+                valid_mask & use_warm_start,
+                types.FirthCorrectionCode.NEWTON_RAPHSON_WARM_START.value,
+                types.FirthCorrectionCode.NONE.value,
+            ),
+        ),
+    ).astype(jnp.int32)
+    return regenie2_binary_firth_types.FirthVariantResult(
+        beta=jnp.where(skip_firth, jnp.nan, selected_beta),
+        standard_error=jnp.where(skip_firth, jnp.nan, selected_standard_error),
+        chi_squared=jnp.where(skip_firth, jnp.nan, selected_chi_squared),
+        log10_p_value=jnp.asarray(jnp.where(skip_firth, jnp.nan, selected_log10_p_value), dtype=scalar_dtype),
+        penalized_log_likelihood=jnp.where(skip_firth, jnp.nan, -0.5 * selected_deviance),
+        converged_mask=valid_mask,
+        valid_mask=valid_mask,
+        iteration_count=jnp.where(
+            skip_firth,
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.where(
+                null_failed,
+                jnp.asarray(0, dtype=jnp.int32),
+                pseudo_result.iteration_count,
+            )
+            + jnp.where(run_zero_start, zero_start_result.iteration_count, jnp.asarray(0, dtype=jnp.int32))
+            + jnp.where(run_warm_start, warm_start_result.iteration_count, jnp.asarray(0, dtype=jnp.int32)),
+        ),
+        failure_code=jnp.where(skip_firth | valid_mask, types.FirthFailureCode.NONE.value, failure_code).astype(
+            jnp.int32
+        ),
+        convergence_reason_code=jnp.where(
+            skip_firth,
+            regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
+            selected_reason_code,
+        ),
+        correction_code=jnp.where(skip_firth, types.FirthCorrectionCode.NONE.value, correction_code),
+        sparse_correction_mask=(~skip_firth) & sparse_correction,
+        pseudo_firth_iteration_count=jnp.where(
+            skip_firth,
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.where(null_failed, jnp.asarray(0, dtype=jnp.int32), pseudo_result.iteration_count),
+        ),
+        nr_zero_start_iteration_count=jnp.where(
+            (~skip_firth) & run_zero_start,
+            zero_start_result.iteration_count,
+            jnp.asarray(0, dtype=jnp.int32),
+        ),
+        nr_warm_start_iteration_count=jnp.where(
+            (~skip_firth) & run_warm_start,
+            warm_start_result.iteration_count,
+            jnp.asarray(0, dtype=jnp.int32),
+        ),
+    )
+
+
 def fit_single_variant_regenie_approximate_firth(
     *,
     phenotype_vector: jax.Array,
@@ -709,18 +829,6 @@ def fit_single_variant_regenie_approximate_firth_with_active_samples(
         )
 
     solver_active = (~skip_firth) & (~null_failed)
-    pseudo_result = jax.lax.cond(
-        solver_active,
-        run_pseudo_attempt,
-        build_skipped_attempt,
-        operand=None,
-    )
-    run_zero_start = (
-        solver_active
-        & (~pseudo_result.valid)
-        & sparse_correction
-        & (jnp.abs(warm_start_beta) > jnp.asarray(0.0, dtype=scalar_dtype))
-    )
 
     def run_zero_start_attempt(_: None) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
         return fit_scalar_newton_raphson_firth(
@@ -738,14 +846,6 @@ def fit_single_variant_regenie_approximate_firth_with_active_samples(
             kernel_config=kernel_config,
         )
 
-    zero_start_result = jax.lax.cond(
-        run_zero_start,
-        run_zero_start_attempt,
-        build_skipped_attempt,
-        operand=None,
-    )
-    run_warm_start = solver_active & (~pseudo_result.valid) & (~(run_zero_start & zero_start_result.valid))
-
     def run_warm_start_attempt(_: None) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
         return fit_scalar_newton_raphson_firth(
             deviance_null=deviance_null,
@@ -762,114 +862,114 @@ def fit_single_variant_regenie_approximate_firth_with_active_samples(
             kernel_config=kernel_config,
         )
 
-    warm_start_result = jax.lax.cond(
-        run_warm_start,
-        run_warm_start_attempt,
-        build_skipped_attempt,
-        operand=None,
-    )
-    use_zero_start = run_zero_start & zero_start_result.valid
-    use_warm_start = (~pseudo_result.valid) & (~use_zero_start) & warm_start_result.valid
-    selected_beta = jnp.where(
-        pseudo_result.valid,
-        pseudo_result.beta,
-        jnp.where(use_zero_start, zero_start_result.beta, warm_start_result.beta),
-    )
-    selected_standard_error = jnp.where(
-        pseudo_result.valid,
-        pseudo_result.standard_error,
-        jnp.where(use_zero_start, zero_start_result.standard_error, warm_start_result.standard_error),
-    )
-    selected_chi_squared = jnp.where(
-        pseudo_result.valid,
-        pseudo_result.chi_squared,
-        jnp.where(use_zero_start, zero_start_result.chi_squared, warm_start_result.chi_squared),
-    )
-    selected_log10_p_value = jnp.where(
-        pseudo_result.valid,
-        pseudo_result.log10_p_value,
-        jnp.where(use_zero_start, zero_start_result.log10_p_value, warm_start_result.log10_p_value),
-    )
-    selected_deviance = jnp.where(
-        pseudo_result.valid,
-        pseudo_result.penalized_deviance,
-        jnp.where(use_zero_start, zero_start_result.penalized_deviance, warm_start_result.penalized_deviance),
-    )
-    selected_reason_code = jnp.where(
-        pseudo_result.valid,
-        regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
-        jnp.where(
-            use_zero_start,
-            regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
-            jnp.where(
-                use_warm_start,
-                regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
-                warm_start_result.failure_reason_code,
-            ),
-        ),
-    ).astype(jnp.int32)
-    valid_mask = (~skip_firth) & (~null_failed) & (pseudo_result.valid | use_zero_start | use_warm_start)
-    selected_reason_code = jnp.where(
-        null_failed,
-        regenie2_binary_firth_types.FirthConvergenceReason.NULL_FAILURE.value,
-        selected_reason_code,
-    )
-    failure_code = regenie2_binary_firth_types.map_firth_reason_code_to_failure_code(selected_reason_code)
-    correction_code = jnp.where(
-        valid_mask & pseudo_result.valid,
-        types.FirthCorrectionCode.PSEUDO_FIRTH.value,
-        jnp.where(
-            valid_mask & use_zero_start,
-            types.FirthCorrectionCode.NEWTON_RAPHSON_ZERO_START.value,
-            jnp.where(
-                valid_mask & use_warm_start,
-                types.FirthCorrectionCode.NEWTON_RAPHSON_WARM_START.value,
-                types.FirthCorrectionCode.NONE.value,
-            ),
-        ),
-    ).astype(jnp.int32)
-    return regenie2_binary_firth_types.FirthVariantResult(
-        beta=jnp.where(skip_firth, jnp.nan, selected_beta),
-        standard_error=jnp.where(skip_firth, jnp.nan, selected_standard_error),
-        chi_squared=jnp.where(skip_firth, jnp.nan, selected_chi_squared),
-        log10_p_value=jnp.asarray(jnp.where(skip_firth, jnp.nan, selected_log10_p_value), dtype=scalar_dtype),
-        penalized_log_likelihood=jnp.where(skip_firth, jnp.nan, -0.5 * selected_deviance),
-        converged_mask=valid_mask,
-        valid_mask=valid_mask,
-        iteration_count=jnp.where(
-            skip_firth,
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.where(
-                null_failed,
-                jnp.asarray(0, dtype=jnp.int32),
-                pseudo_result.iteration_count,
+    def build_attempt_result(
+        *,
+        pseudo_result: regenie2_binary_firth_types.ScalarFirthAttemptResult,
+        zero_start_result: regenie2_binary_firth_types.ScalarFirthAttemptResult,
+        warm_start_result: regenie2_binary_firth_types.ScalarFirthAttemptResult,
+        run_zero_start: jax.Array,
+        run_warm_start: jax.Array,
+    ) -> regenie2_binary_firth_types.FirthVariantResult:
+        return build_single_variant_regenie_approximate_firth_result(
+            skip_firth=skip_firth,
+            null_failed=null_failed,
+            sparse_correction=sparse_correction,
+            pseudo_result=pseudo_result,
+            zero_start_result=zero_start_result,
+            warm_start_result=warm_start_result,
+            run_zero_start=run_zero_start,
+            run_warm_start=run_warm_start,
+        )
+
+    def build_inactive_solver_result(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
+        skipped_result = build_skipped_attempt(None)
+        false_scalar = jnp.asarray(0, dtype=jnp.bool_)
+        return build_attempt_result(
+            pseudo_result=skipped_result,
+            zero_start_result=skipped_result,
+            warm_start_result=skipped_result,
+            run_zero_start=false_scalar,
+            run_warm_start=false_scalar,
+        )
+
+    def build_pseudo_result(
+        pseudo_result: regenie2_binary_firth_types.ScalarFirthAttemptResult,
+    ) -> regenie2_binary_firth_types.FirthVariantResult:
+        skipped_result = build_skipped_attempt(None)
+        false_scalar = jnp.asarray(0, dtype=jnp.bool_)
+        return build_attempt_result(
+            pseudo_result=pseudo_result,
+            zero_start_result=skipped_result,
+            warm_start_result=skipped_result,
+            run_zero_start=false_scalar,
+            run_warm_start=false_scalar,
+        )
+
+    def run_fallback_cascade(
+        pseudo_result: regenie2_binary_firth_types.ScalarFirthAttemptResult,
+    ) -> regenie2_binary_firth_types.FirthVariantResult:
+        run_zero_start = sparse_correction & (jnp.abs(warm_start_beta) > jnp.asarray(0.0, dtype=scalar_dtype))
+
+        def run_warm_start_without_zero(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
+            skipped_result = build_skipped_attempt(None)
+            warm_start_result = run_warm_start_attempt(None)
+            return build_attempt_result(
+                pseudo_result=pseudo_result,
+                zero_start_result=skipped_result,
+                warm_start_result=warm_start_result,
+                run_zero_start=jnp.asarray(0, dtype=jnp.bool_),
+                run_warm_start=jnp.asarray(1, dtype=jnp.bool_),
             )
-            + jnp.where(run_zero_start, zero_start_result.iteration_count, jnp.asarray(0, dtype=jnp.int32))
-            + jnp.where(run_warm_start, warm_start_result.iteration_count, jnp.asarray(0, dtype=jnp.int32)),
-        ),
-        failure_code=jnp.where(skip_firth | valid_mask, types.FirthFailureCode.NONE.value, failure_code).astype(
-            jnp.int32
-        ),
-        convergence_reason_code=jnp.where(
-            skip_firth,
-            regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-            selected_reason_code,
-        ),
-        correction_code=jnp.where(skip_firth, types.FirthCorrectionCode.NONE.value, correction_code),
-        sparse_correction_mask=(~skip_firth) & sparse_correction,
-        pseudo_firth_iteration_count=jnp.where(
-            skip_firth,
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.where(null_failed, jnp.asarray(0, dtype=jnp.int32), pseudo_result.iteration_count),
-        ),
-        nr_zero_start_iteration_count=jnp.where(
-            (~skip_firth) & run_zero_start,
-            zero_start_result.iteration_count,
-            jnp.asarray(0, dtype=jnp.int32),
-        ),
-        nr_warm_start_iteration_count=jnp.where(
-            (~skip_firth) & run_warm_start,
-            warm_start_result.iteration_count,
-            jnp.asarray(0, dtype=jnp.int32),
-        ),
+
+        def run_zero_start_then_maybe_warm(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
+            zero_start_result = run_zero_start_attempt(None)
+
+            def build_zero_start_result(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
+                skipped_result = build_skipped_attempt(None)
+                return build_attempt_result(
+                    pseudo_result=pseudo_result,
+                    zero_start_result=zero_start_result,
+                    warm_start_result=skipped_result,
+                    run_zero_start=jnp.asarray(1, dtype=jnp.bool_),
+                    run_warm_start=jnp.asarray(0, dtype=jnp.bool_),
+                )
+
+            def run_warm_start_after_zero_failure(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
+                warm_start_result = run_warm_start_attempt(None)
+                return build_attempt_result(
+                    pseudo_result=pseudo_result,
+                    zero_start_result=zero_start_result,
+                    warm_start_result=warm_start_result,
+                    run_zero_start=jnp.asarray(1, dtype=jnp.bool_),
+                    run_warm_start=jnp.asarray(1, dtype=jnp.bool_),
+                )
+
+            return jax.lax.cond(
+                zero_start_result.valid,
+                build_zero_start_result,
+                run_warm_start_after_zero_failure,
+                operand=None,
+            )
+
+        return jax.lax.cond(
+            run_zero_start,
+            run_zero_start_then_maybe_warm,
+            run_warm_start_without_zero,
+            operand=None,
+        )
+
+    def run_active_solver(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
+        pseudo_result = run_pseudo_attempt(None)
+        return jax.lax.cond(
+            pseudo_result.valid,
+            build_pseudo_result,
+            run_fallback_cascade,
+            operand=pseudo_result,
+        )
+
+    return jax.lax.cond(
+        solver_active,
+        run_active_solver,
+        build_inactive_solver_result,
+        operand=None,
     )
