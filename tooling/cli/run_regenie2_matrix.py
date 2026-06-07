@@ -255,9 +255,7 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> MatrixArguments
     previous_manifest_path = tooling_hydra_arguments.path_or_none(tool_values.get("previous_manifest_path"))
     if previous_manifest_path is not None:
         previous_manifest_path = tooling_paths.resolve_repo_relative_path(previous_manifest_path, REPOSITORY_ROOT)
-    runner_prefix = tuple(
-        str(value) for value in typing.cast("list[typing.Any]", tool_values.get("runner_prefix", []))
-    )
+    runner_prefix = tuple(str(value) for value in typing.cast("list[typing.Any]", tool_values.get("runner_prefix", [])))
     return MatrixArguments(
         data_directory=data_directory,
         bgen_path=resolve_data_path(data_directory, tool_values["bgen"]),
@@ -290,16 +288,12 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> MatrixArguments
         gpu_jax_persistent_cache=bool(tool_values["gpu_jax_persistent_cache"]),
         jax_cache_directory=jax_cache_directory,
         jax_persistent_cache_min_entry_size_bytes=int(tool_values["jax_persistent_cache_min_entry_size_bytes"]),
-        jax_persistent_cache_min_compile_time_seconds=int(
-            tool_values["jax_persistent_cache_min_compile_time_seconds"]
-        ),
+        jax_persistent_cache_min_compile_time_seconds=int(tool_values["jax_persistent_cache_min_compile_time_seconds"]),
         jax_xla_autotune_cache=bool(tool_values["jax_xla_autotune_cache"]),
         binary_firth=bool(tool_values["binary_firth"]),
         binary_approx=bool(tool_values["binary_approx"]),
         binary_p_threshold=float(tool_values["binary_p_threshold"]),
-        binary_firth_batch_size=tooling_hydra_arguments.integer_or_none(
-            tool_values.get("binary_firth_batch_size")
-        ),
+        binary_firth_batch_size=tooling_hydra_arguments.integer_or_none(tool_values.get("binary_firth_batch_size")),
         binary_firth_candidate_capacity=tooling_hydra_arguments.integer_or_none(
             tool_values.get("binary_firth_candidate_capacity")
         ),
@@ -521,9 +515,7 @@ def build_run_specs(arguments: MatrixArguments) -> list[RunSpec]:
                 event_log_path=log_directory / "events.jsonl",
                 environment_overrides=environment_overrides,
             )
-            run_specs.append(
-                dataclasses.replace(run_spec, command_arguments=build_run_command(arguments, run_spec))
-            )
+            run_specs.append(dataclasses.replace(run_spec, command_arguments=build_run_command(arguments, run_spec)))
     return run_specs
 
 
@@ -736,9 +728,7 @@ def run_result_from_json_dict(payload: dict[str, typing.Any]) -> RunResult:
         mode=ExecutionMode(str(payload["mode"])),
         status=RunStatus(str(payload["status"])),
         return_code=(int(payload["return_code"]) if payload["return_code"] is not None else None),
-        wall_time_seconds=(
-            float(payload["wall_time_seconds"]) if payload["wall_time_seconds"] is not None else None
-        ),
+        wall_time_seconds=(float(payload["wall_time_seconds"]) if payload["wall_time_seconds"] is not None else None),
         command_arguments=[str(value) for value in payload.get("command_arguments", [])],
         output_prefix=str(payload["output_prefix"]),
         output_run_directory=str(payload["output_run_directory"]),
@@ -751,9 +741,7 @@ def run_result_from_json_dict(payload: dict[str, typing.Any]) -> RunResult:
         ),
         output_file_count=(int(payload["output_file_count"]) if payload["output_file_count"] is not None else None),
         output_total_bytes=(int(payload["output_total_bytes"]) if payload["output_total_bytes"] is not None else None),
-        final_parquet_path=(
-            str(payload["final_parquet_path"]) if payload["final_parquet_path"] is not None else None
-        ),
+        final_parquet_path=(str(payload["final_parquet_path"]) if payload["final_parquet_path"] is not None else None),
         final_parquet_bytes=(
             int(payload["final_parquet_bytes"]) if payload["final_parquet_bytes"] is not None else None
         ),
@@ -822,9 +810,7 @@ def compare_run_results(
         previous_metrics = numeric_result_metrics(previous_result)
         for metric, current_value in numeric_result_metrics(current_result).items():
             previous_value = previous_metrics.get(metric)
-            delta = (
-                current_value - previous_value if current_value is not None and previous_value is not None else None
-            )
+            delta = current_value - previous_value if current_value is not None and previous_value is not None else None
             ratio = None
             if current_value is not None and previous_value is not None and previous_value != 0.0:
                 ratio = current_value / previous_value

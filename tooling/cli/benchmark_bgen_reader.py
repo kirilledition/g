@@ -397,9 +397,7 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArgume
         path_modes=tooling_hydra_arguments.comma_join(tool_values["path_modes"]),
         sample_selection_mode=str(tool_values["sample_selection_mode"]),
         sample_selection_modes=tooling_hydra_arguments.comma_join(tool_values["sample_selection_modes"]),
-        decode_tile_variant_count=tooling_hydra_arguments.integer_or_none(
-            tool_values.get("decode_tile_variant_count")
-        ),
+        decode_tile_variant_count=tooling_hydra_arguments.integer_or_none(tool_values.get("decode_tile_variant_count")),
         decode_tile_variant_counts=tooling_hydra_arguments.comma_join(tool_values["decode_tile_variant_counts"]),
         rayon_thread_count=tooling_hydra_arguments.integer_or_none(tool_values.get("rayon_thread_count")),
         rayon_thread_counts=tooling_hydra_arguments.comma_join(tool_values["rayon_thread_counts"]),

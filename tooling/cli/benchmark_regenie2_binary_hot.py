@@ -1215,18 +1215,14 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArgume
         firth_batch_sizes=(
             tooling_hydra_arguments.comma_join(firth_batch_sizes) if firth_batch_sizes is not None else None
         ),
-        firth_candidate_capacity=tooling_hydra_arguments.integer_or_none(
-            tool_values.get("firth_candidate_capacity")
-        ),
+        firth_candidate_capacity=tooling_hydra_arguments.integer_or_none(tool_values.get("firth_candidate_capacity")),
         firth_candidate_capacities=(
             tooling_hydra_arguments.comma_join(firth_candidate_capacities)
             if firth_candidate_capacities is not None
             else None
         ),
         storage_modes=tooling_hydra_arguments.comma_join(tool_values["storage_modes"]),
-        fallback_density_scenarios=tooling_hydra_arguments.comma_join(
-            tool_values["fallback_density_scenarios"]
-        ),
+        fallback_density_scenarios=tooling_hydra_arguments.comma_join(tool_values["fallback_density_scenarios"]),
         default_fallback_p_threshold=float(tool_values["default_fallback_p_threshold"]),
         low_fallback_p_threshold=float(tool_values["low_fallback_p_threshold"]),
         high_fallback_p_threshold=float(tool_values["high_fallback_p_threshold"]),

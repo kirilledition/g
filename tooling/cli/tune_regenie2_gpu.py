@@ -713,9 +713,7 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> TuningArguments
         top_finalists=int(tool_values["top_finalists"]),
         chunk_sizes=tooling_hydra_arguments.comma_join(tool_values["chunk_sizes"]),
         staging_depths=tooling_hydra_arguments.comma_join(tool_values["staging_depths"]),
-        output_writer_thread_counts=tooling_hydra_arguments.comma_join(
-            tool_values["output_writer_thread_counts"]
-        ),
+        output_writer_thread_counts=tooling_hydra_arguments.comma_join(tool_values["output_writer_thread_counts"]),
         writer_queue_depth_multipliers=tooling_hydra_arguments.comma_join(
             tool_values["writer_queue_depth_multipliers"]
         ),

@@ -287,8 +287,8 @@ class LinearVariantDebugCaptureCallback:
         self.prediction_source = prediction_source
         self.selector = selector
         self.regenie_state = regenie2_linear.prepare_regenie2_linear_state(
-            self.run_input.covariate_matrix,
-            self.run_input.phenotype_vector,
+            jnp.asarray(self.run_input.covariate_matrix, dtype=jnp.float32),
+            jnp.asarray(self.run_input.phenotype_vector, dtype=jnp.float32),
         )
         self.chromosome_states: dict[str, regenie2_linear_state.Regenie2LinearChromosomeState] = {}
         self.records: list[VariantDebugRecord] = []

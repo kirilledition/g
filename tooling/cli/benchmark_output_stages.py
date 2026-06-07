@@ -788,9 +788,7 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArgume
         writer_queue_depth_multipliers=tooling_hydra_arguments.comma_join(
             tool_values["writer_queue_depth_multipliers"]
         ),
-        chunks_per_arrow_file_values=tooling_hydra_arguments.comma_join(
-            tool_values["chunks_per_arrow_file_values"]
-        ),
+        chunks_per_arrow_file_values=tooling_hydra_arguments.comma_join(tool_values["chunks_per_arrow_file_values"]),
         arrow_compressions=tooling_hydra_arguments.comma_join(tool_values["arrow_compressions"]),
         json_summary_path=tooling_hydra_arguments.path_or_none(tool_values.get("json_summary_path")),
         markdown_summary_path=tooling_hydra_arguments.path_or_none(tool_values.get("markdown_summary_path")),

@@ -1565,9 +1565,7 @@ def run_deep_profiles(
         if arguments.enable_jax_trace or arguments.enable_jax_memory_profile:
             trace_directory = profile_directory / f"{winner_key}_jax_trace" if arguments.enable_jax_trace else None
             memory_profile_path = (
-                profile_directory / f"{winner_key}_device_memory.prof"
-                if arguments.enable_jax_memory_profile
-                else None
+                profile_directory / f"{winner_key}_device_memory.prof" if arguments.enable_jax_memory_profile else None
             )
             logger.info("Running JAX profiler capture for %s", winner_key)
             profile_result = run_g_trial(
@@ -1768,9 +1766,7 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileArgument
         rust_benchmarks=tooling_hydra_arguments.comma_join(tool_values["rust_benchmarks"]),
         chunk_sizes=tooling_hydra_arguments.comma_join(tool_values["chunk_sizes"]),
         staging_depths=tooling_hydra_arguments.comma_join(tool_values["staging_depths"]),
-        output_writer_thread_counts=tooling_hydra_arguments.comma_join(
-            tool_values["output_writer_thread_counts"]
-        ),
+        output_writer_thread_counts=tooling_hydra_arguments.comma_join(tool_values["output_writer_thread_counts"]),
         writer_queue_depth_multipliers=tooling_hydra_arguments.comma_join(
             tool_values["writer_queue_depth_multipliers"]
         ),
@@ -1915,9 +1911,7 @@ def run_tool(arguments: ProfileArguments) -> None:
         baseline_paths.regenie_prediction_list_path,
         baseline_paths.regenie_qt_prediction_list_path,
     ]
-    missing_prediction_list_paths = [
-        path for path in prediction_list_paths if path is not None and not path.exists()
-    ]
+    missing_prediction_list_paths = [path for path in prediction_list_paths if path is not None and not path.exists()]
     regenie_executable: str | None = None
     setup_results: list[TrialResult] = []
     if arguments.include_regenie_baseline:
