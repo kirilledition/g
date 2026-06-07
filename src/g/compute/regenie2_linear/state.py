@@ -38,6 +38,7 @@ class Regenie2LinearChromosomeState:
         whitened_covariate_transpose: Cholesky-whitened covariate transpose.
         adjusted_residual: Phenotype residual after covariate residualization and LOCO subtraction.
         adjusted_residual_projection_coordinates: Projection of adjusted residual onto whitened covariates.
+        score_left_hand_matrix: Stacked left-hand matrix multiplied by genotype chunks.
         adjusted_residual_sum_squares: Sum of squares after removing the covariate projection.
         degrees_of_freedom: Null-model residual degrees of freedom.
 
@@ -46,6 +47,7 @@ class Regenie2LinearChromosomeState:
     whitened_covariate_transpose: jax.Array
     adjusted_residual: jax.Array
     adjusted_residual_projection_coordinates: jax.Array
+    score_left_hand_matrix: jax.Array
     adjusted_residual_sum_squares: jax.Array
     degrees_of_freedom: jax.Array
 
@@ -76,6 +78,7 @@ class Regenie2MultiLinearChromosomeState:
         whitened_covariate_transpose: Cholesky-whitened covariate transpose.
         adjusted_residual_matrix: Trait-major residuals after covariate residualization and LOCO subtraction.
         adjusted_residual_projection_coordinate_matrix: Per-trait projection onto whitened covariates.
+        score_left_hand_matrix: Stacked left-hand matrix multiplied by genotype chunks.
         adjusted_residual_sum_squares: Per-trait sums of squares after removing covariate projections.
         degrees_of_freedom: Null-model residual degrees of freedom.
 
@@ -84,6 +87,7 @@ class Regenie2MultiLinearChromosomeState:
     whitened_covariate_transpose: jax.Array
     adjusted_residual_matrix: jax.Array
     adjusted_residual_projection_coordinate_matrix: jax.Array
+    score_left_hand_matrix: jax.Array
     adjusted_residual_sum_squares: jax.Array
     degrees_of_freedom: jax.Array
 
@@ -156,6 +160,13 @@ def build_single_linear_chromosome_state_from_multi(
         whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
         adjusted_residual=adjusted_residual,
         adjusted_residual_projection_coordinates=adjusted_residual_projection_coordinates,
+        score_left_hand_matrix=jnp.concatenate(
+            [
+                chromosome_state.whitened_covariate_transpose,
+                adjusted_residual[None, :],
+            ],
+            axis=0,
+        ),
         adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares[0],
         degrees_of_freedom=chromosome_state.degrees_of_freedom,
     )
@@ -183,10 +194,18 @@ def build_multi_linear_chromosome_state(
         raw_adjusted_residual_sum_squares - adjusted_residual_projection_sum_squares,
         0.0,
     )
+    score_left_hand_matrix = jnp.concatenate(
+        [
+            state.whitened_covariate_transpose,
+            adjusted_residual_matrix,
+        ],
+        axis=0,
+    )
     return Regenie2MultiLinearChromosomeState(
         whitened_covariate_transpose=state.whitened_covariate_transpose,
         adjusted_residual_matrix=adjusted_residual_matrix,
         adjusted_residual_projection_coordinate_matrix=adjusted_residual_projection_coordinate_matrix,
+        score_left_hand_matrix=score_left_hand_matrix,
         adjusted_residual_sum_squares=adjusted_residual_sum_squares,
         degrees_of_freedom=state.degrees_of_freedom,
     )

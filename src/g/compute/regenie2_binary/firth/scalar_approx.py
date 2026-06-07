@@ -674,51 +674,99 @@ def fit_single_variant_regenie_approximate_firth_with_active_samples(
     )
     newton_maximum_iterations = kernel_config.approximate_firth.maximum_iterations // 2
     maximum_step_size = jnp.asarray(kernel_config.approximate_firth.maximum_step_size, dtype=scalar_dtype)
-    pseudo_result = fit_scalar_pseudo_firth(
-        deviance_null=deviance_null,
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=non_active_deviance,
-        initial_beta=warm_start_beta,
-        maximum_iterations=pseudo_maximum_iterations,
-        tolerance=tolerance,
-        inner_maximum_iterations=kernel_config.approximate_firth.pseudo_inner_maximum_iterations,
-        maximum_step_size=maximum_step_size,
-        kernel_config=kernel_config,
+
+    def build_skipped_attempt(_: None) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
+        return regenie2_binary_firth_types.ScalarFirthAttemptResult(
+            beta=jnp.asarray(jnp.nan, dtype=scalar_dtype),
+            standard_error=jnp.asarray(jnp.nan, dtype=scalar_dtype),
+            chi_squared=jnp.asarray(jnp.nan, dtype=scalar_dtype),
+            log10_p_value=jnp.asarray(jnp.nan, dtype=scalar_dtype),
+            penalized_deviance=jnp.asarray(jnp.nan, dtype=scalar_dtype),
+            genotype_information=jnp.asarray(jnp.nan, dtype=scalar_dtype),
+            converged=jnp.asarray(0, dtype=jnp.bool_),
+            valid=jnp.asarray(0, dtype=jnp.bool_),
+            iteration_count=jnp.asarray(0, dtype=jnp.int32),
+            failure_reason_code=jnp.asarray(
+                regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
+                dtype=jnp.int32,
+            ),
+        )
+
+    def run_pseudo_attempt(_: None) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
+        return fit_scalar_pseudo_firth(
+            deviance_null=deviance_null,
+            phenotype_vector=phenotype_vector,
+            genotype_vector=genotype_vector,
+            offset_vector=offset_vector,
+            active_sample_mask=active_sample_mask,
+            non_active_deviance=non_active_deviance,
+            initial_beta=warm_start_beta,
+            maximum_iterations=pseudo_maximum_iterations,
+            tolerance=tolerance,
+            inner_maximum_iterations=kernel_config.approximate_firth.pseudo_inner_maximum_iterations,
+            maximum_step_size=maximum_step_size,
+            kernel_config=kernel_config,
+        )
+
+    solver_active = (~skip_firth) & (~null_failed)
+    pseudo_result = jax.lax.cond(
+        solver_active,
+        run_pseudo_attempt,
+        build_skipped_attempt,
+        operand=None,
     )
     run_zero_start = (
-        (~pseudo_result.valid) & sparse_correction & (jnp.abs(warm_start_beta) > jnp.asarray(0.0, dtype=scalar_dtype))
+        solver_active
+        & (~pseudo_result.valid)
+        & sparse_correction
+        & (jnp.abs(warm_start_beta) > jnp.asarray(0.0, dtype=scalar_dtype))
     )
-    zero_start_result = fit_scalar_newton_raphson_firth(
-        deviance_null=deviance_null,
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=non_active_deviance,
-        initial_beta=jnp.asarray(0.0, dtype=scalar_dtype),
-        maximum_iterations=kernel_config.approximate_firth.newton_raphson_zero_start_iterations,
-        tolerance=tolerance,
-        maximum_step_size=maximum_step_size,
-        line_search_maximum_attempts=kernel_config.approximate_firth.line_search_maximum_attempts,
-        kernel_config=kernel_config,
+
+    def run_zero_start_attempt(_: None) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
+        return fit_scalar_newton_raphson_firth(
+            deviance_null=deviance_null,
+            phenotype_vector=phenotype_vector,
+            genotype_vector=genotype_vector,
+            offset_vector=offset_vector,
+            active_sample_mask=active_sample_mask,
+            non_active_deviance=non_active_deviance,
+            initial_beta=jnp.asarray(0.0, dtype=scalar_dtype),
+            maximum_iterations=kernel_config.approximate_firth.newton_raphson_zero_start_iterations,
+            tolerance=tolerance,
+            maximum_step_size=maximum_step_size,
+            line_search_maximum_attempts=kernel_config.approximate_firth.line_search_maximum_attempts,
+            kernel_config=kernel_config,
+        )
+
+    zero_start_result = jax.lax.cond(
+        run_zero_start,
+        run_zero_start_attempt,
+        build_skipped_attempt,
+        operand=None,
     )
-    run_warm_start = (~pseudo_result.valid) & (~(run_zero_start & zero_start_result.valid))
-    warm_start_result = fit_scalar_newton_raphson_firth(
-        deviance_null=deviance_null,
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=non_active_deviance,
-        initial_beta=warm_start_beta,
-        maximum_iterations=newton_maximum_iterations,
-        tolerance=tolerance,
-        maximum_step_size=maximum_step_size,
-        line_search_maximum_attempts=kernel_config.approximate_firth.line_search_maximum_attempts,
-        kernel_config=kernel_config,
+    run_warm_start = solver_active & (~pseudo_result.valid) & (~(run_zero_start & zero_start_result.valid))
+
+    def run_warm_start_attempt(_: None) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
+        return fit_scalar_newton_raphson_firth(
+            deviance_null=deviance_null,
+            phenotype_vector=phenotype_vector,
+            genotype_vector=genotype_vector,
+            offset_vector=offset_vector,
+            active_sample_mask=active_sample_mask,
+            non_active_deviance=non_active_deviance,
+            initial_beta=warm_start_beta,
+            maximum_iterations=newton_maximum_iterations,
+            tolerance=tolerance,
+            maximum_step_size=maximum_step_size,
+            line_search_maximum_attempts=kernel_config.approximate_firth.line_search_maximum_attempts,
+            kernel_config=kernel_config,
+        )
+
+    warm_start_result = jax.lax.cond(
+        run_warm_start,
+        run_warm_start_attempt,
+        build_skipped_attempt,
+        operand=None,
     )
     use_zero_start = run_zero_start & zero_start_result.valid
     use_warm_start = (~pseudo_result.valid) & (~use_zero_start) & warm_start_result.valid

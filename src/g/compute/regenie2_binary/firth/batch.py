@@ -10,7 +10,6 @@ import jax.numpy as jnp
 
 from g.compute.common import genotype as compute_genotype
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
-from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
@@ -251,19 +250,11 @@ def prepare_firth_candidate_batch(
         heuristic_firth_mask=candidate_inputs.heuristic_firth_mask,
         kernel_config=kernel_config,
     )
-    scalar_null_offset_vector = jnp.asarray(chromosome_state.null_firth_offset, dtype=jnp.float64)
-    scalar_phenotype_vector = jnp.asarray(chromosome_state.phenotype_vector, dtype=jnp.float64)
-    null_probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(scalar_null_offset_vector)
-    full_null_deviance = regenie2_binary_logistic.compute_logistic_deviance(
-        scalar_phenotype_vector,
-        null_probability_vector,
-        jnp.ones_like(scalar_phenotype_vector, dtype=jnp.bool_),
-    )
     return PreparedFirthCandidateBatch(
         batch_plan=batch_plan,
         candidate_inputs=candidate_inputs,
         initial_coefficients=initial_coefficients,
-        full_null_deviance=full_null_deviance,
+        full_null_deviance=chromosome_state.full_null_deviance,
     )
 
 
@@ -372,25 +363,11 @@ def prepare_multi_firth_candidate_batch(
         kernel_config=kernel_config,
     )
 
-    def compute_trait_null_deviance(phenotype_vector: jax.Array, null_firth_offset: jax.Array) -> jax.Array:
-        scalar_offset_vector = jnp.asarray(null_firth_offset, dtype=jnp.float64)
-        scalar_phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
-        null_probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(scalar_offset_vector)
-        return regenie2_binary_logistic.compute_logistic_deviance(
-            scalar_phenotype_vector,
-            null_probability_vector,
-            jnp.ones_like(scalar_phenotype_vector, dtype=jnp.bool_),
-        )
-
-    full_null_deviance_by_trait = jax.vmap(compute_trait_null_deviance)(
-        chromosome_state.phenotype_matrix,
-        chromosome_state.null_firth_offset_matrix,
-    )
     return PreparedMultiFirthCandidateBatch(
         batch_plan=batch_plan,
         candidate_inputs=candidate_inputs,
         initial_coefficients=initial_coefficients,
-        full_null_deviance=jnp.take(full_null_deviance_by_trait, candidate_inputs.flat_trait_indices, axis=0),
+        full_null_deviance=jnp.take(chromosome_state.full_null_deviance, candidate_inputs.flat_trait_indices, axis=0),
     )
 
 
@@ -842,6 +819,7 @@ def compute_firth_variantwise_fixed_batches(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Compute single-trait Firth fits with compact sparse lanes when eligible."""
+
     def compute_without_sparse_compaction() -> regenie2_binary_firth_types.FirthVariantResult:
         return compute_firth_variantwise_fixed_batches_without_sparse_compaction(
             covariate_matrix=covariate_matrix,
@@ -868,8 +846,8 @@ def compute_firth_variantwise_fixed_batches(
             raw_genotype_matrix_by_variant > kernel_config.approximate_firth.sparse_carrier_dosage_threshold
         )
         carrier_count = jnp.sum(carrier_sample_mask, axis=1, dtype=jnp.int32)
-        compact_sparse_lane_mask = active_mask & sparse_correction_mask & (
-            carrier_count <= SPARSE_FIRTH_CARRIER_CAPACITY
+        compact_sparse_lane_mask = (
+            active_mask & sparse_correction_mask & (carrier_count <= SPARSE_FIRTH_CARRIER_CAPACITY)
         )
 
         def compute_split_path(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
@@ -1000,6 +978,7 @@ def compute_firth_multi_variantwise_fixed_batches(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Compute multi-trait Firth fits with compact sparse lanes when eligible."""
+
     def compute_without_sparse_compaction() -> regenie2_binary_firth_types.FirthVariantResult:
         return compute_firth_multi_variantwise_fixed_batches_without_sparse_compaction(
             covariate_matrix=covariate_matrix,
@@ -1026,8 +1005,8 @@ def compute_firth_multi_variantwise_fixed_batches(
             raw_genotype_matrix_by_variant > kernel_config.approximate_firth.sparse_carrier_dosage_threshold
         )
         carrier_count = jnp.sum(carrier_sample_mask, axis=1, dtype=jnp.int32)
-        compact_sparse_lane_mask = active_mask & sparse_correction_mask & (
-            carrier_count <= SPARSE_FIRTH_CARRIER_CAPACITY
+        compact_sparse_lane_mask = (
+            active_mask & sparse_correction_mask & (carrier_count <= SPARSE_FIRTH_CARRIER_CAPACITY)
         )
 
         def compute_split_path(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
