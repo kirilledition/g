@@ -1024,7 +1024,8 @@ mod tests {
                 .expect("aligned non-null buffer should build")
         };
         buffer.values_mut()[0] = 3.0;
-        assert_eq!(values, [3.0, 2.0]);
+        assert!((values[0] - 3.0).abs() <= f32::EPSILON);
+        assert!((values[1] - 2.0).abs() <= f32::EPSILON);
     }
 
     #[test]
