@@ -28,8 +28,11 @@ def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelC
 class FakeEngine:
     variant_count: int
     chromosomes: tuple[str, ...] = ("22",)
+    boundary_indices: tuple[int, ...] | None = None
 
     def chromosome_boundary_indices(self) -> list[int]:
+        if self.boundary_indices is not None:
+            return list(self.boundary_indices)
         return [0, self.variant_count]
 
     def variant_metadata_slice(
@@ -125,17 +128,20 @@ def install_native_dispatch_fakes(
     )
 
 
-def test_build_warm_cache_shapes_plans_full_and_tail_chunks() -> None:
+def test_build_warm_cache_shapes_plans_all_unique_production_chunks() -> None:
     shapes = warm_cache.build_warm_cache_shapes(
-        engine=cast_fake_engine(FakeEngine(variant_count=105)),
+        engine=cast_fake_engine(FakeEngine(variant_count=155, boundary_indices=(0, 45, 120, 155))),
         chunk_size=50,
         variant_limit=None,
         sample_count=2504,
     )
 
     assert shapes == (
-        warm_cache.WarmCacheShape(sample_count=2504, variant_count=50),
+        warm_cache.WarmCacheShape(sample_count=2504, variant_count=45),
         warm_cache.WarmCacheShape(sample_count=2504, variant_count=5),
+        warm_cache.WarmCacheShape(sample_count=2504, variant_count=50),
+        warm_cache.WarmCacheShape(sample_count=2504, variant_count=20),
+        warm_cache.WarmCacheShape(sample_count=2504, variant_count=30),
     )
 
 
@@ -208,6 +214,7 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
     install_native_dispatch_fakes(monkeypatch, engine=engine, run_input=run_input)
     observed_shapes: list[tuple[int, int]] = []
     ready_values: list[FakeReadyValue] = []
+    observed_score_dtypes: list[types.FloatingPointDtype] = []
 
     monkeypatch.setattr(warm_cache.regenie2_linear, "prepare_regenie2_linear_state", lambda **_: object())
     monkeypatch.setattr(
@@ -223,8 +230,10 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
         genotype_dosage_sum: jax.Array,
         genotype_observation_count: jax.Array,
         genotype_imputed_dosage_square_sum: jax.Array,
+        score_dtype: types.FloatingPointDtype,
     ) -> FakeChunkResult:
         del chromosome_state
+        observed_score_dtypes.append(score_dtype)
         observed_shapes.append(typing.cast("tuple[int, int]", genotype_matrix_by_variant.shape))
         expected_column = np.asarray([-1.0, 0.0, 1.0, -1.0, 0.0, 1.0], dtype=np.float32)
         np.testing.assert_allclose(np.asarray(genotype_matrix_by_variant)[0], expected_column)
@@ -258,13 +267,33 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
         covariate_names=None,
         chunk_size=50,
         variant_limit=None,
+        score_dtype=types.FloatingPointDtype.FLOAT64,
     )
 
     assert observed_shapes == [(50, 6), (5, 6)]
+    assert observed_score_dtypes == [types.FloatingPointDtype.FLOAT64, types.FloatingPointDtype.FLOAT64]
     assert tuple(value.shape for value in ready_values) == ((50,), (5,))
     assert report.warmed_shapes == (
         warm_cache.WarmCacheShape(sample_count=6, variant_count=50),
         warm_cache.WarmCacheShape(sample_count=6, variant_count=5),
+    )
+    assert report.warmed_signatures == (
+        warm_cache.WarmCacheSignature(
+            shape=warm_cache.WarmCacheShape(sample_count=6, variant_count=50),
+            association_mode=types.AssociationMode.REGENIE2_LINEAR,
+            genotype_format=types.GpuGenotypeFormat.DOSAGE,
+            genotype_path=warm_cache.WarmCacheGenotypePath.LINEAR_DOSAGE,
+            trait_count=1,
+            score_dtype=types.FloatingPointDtype.FLOAT64,
+        ),
+        warm_cache.WarmCacheSignature(
+            shape=warm_cache.WarmCacheShape(sample_count=6, variant_count=5),
+            association_mode=types.AssociationMode.REGENIE2_LINEAR,
+            genotype_format=types.GpuGenotypeFormat.DOSAGE,
+            genotype_path=warm_cache.WarmCacheGenotypePath.LINEAR_DOSAGE,
+            trait_count=1,
+            score_dtype=types.FloatingPointDtype.FLOAT64,
+        ),
     )
 
 
@@ -274,7 +303,11 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
     engine = FakeEngine(variant_count=55)
     run_input = build_fake_run_input(is_binary_trait=True)
     install_native_dispatch_fakes(monkeypatch, engine=engine, run_input=run_input)
-    correction_plan = types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE)
+    correction_plan = types.BinaryCorrectionPlan(
+        method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+        p_threshold=0.01,
+        firth_se=True,
+    )
     default_kernel_config = build_default_binary_kernel_config()
     kernel_config = dataclasses.replace(
         default_kernel_config,
@@ -285,6 +318,7 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
     )
     observed_shapes: list[tuple[int, int]] = []
     observed_kernel_configs: list[regenie2_binary_config.BinaryKernelConfig] = []
+    observed_score_dtypes: list[types.FloatingPointDtype] = []
 
     monkeypatch.setattr(warm_cache.regenie2_binary, "prepare_regenie2_binary_state", lambda **_: object())
     monkeypatch.setattr(
@@ -301,10 +335,12 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
         kernel_config: regenie2_binary_config.BinaryKernelConfig,
         dosage_sum: jax.Array,
         observation_count: jax.Array,
+        score_dtype: types.FloatingPointDtype,
     ) -> FakeChunkResult:
         del chromosome_state, correction_plan
         observed_shapes.append(typing.cast("tuple[int, int]", genotype_matrix_by_variant.shape))
         observed_kernel_configs.append(kernel_config)
+        observed_score_dtypes.append(score_dtype)
         np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant)[0], np.asarray([0, 2, 0, 2, 0, 2]))
         np.testing.assert_array_equal(np.asarray(dosage_sum), np.full(genotype_matrix_by_variant.shape[0], 6.0))
         np.testing.assert_array_equal(
@@ -331,13 +367,43 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
         variant_limit=None,
         correction_plan=correction_plan,
         kernel_config=kernel_config,
+        score_dtype=types.FloatingPointDtype.FLOAT64,
     )
 
     assert observed_shapes == [(50, 6), (5, 6)]
     assert observed_kernel_configs == [kernel_config, kernel_config]
+    assert observed_score_dtypes == [types.FloatingPointDtype.FLOAT64, types.FloatingPointDtype.FLOAT64]
     assert report.warmed_shapes == (
         warm_cache.WarmCacheShape(sample_count=6, variant_count=50),
         warm_cache.WarmCacheShape(sample_count=6, variant_count=5),
+    )
+    assert report.warmed_signatures == (
+        warm_cache.WarmCacheSignature(
+            shape=warm_cache.WarmCacheShape(sample_count=6, variant_count=50),
+            association_mode=types.AssociationMode.REGENIE2_BINARY,
+            genotype_format=types.GpuGenotypeFormat.DOSAGE,
+            genotype_path=warm_cache.WarmCacheGenotypePath.BINARY_DOSAGE_CORRECTION,
+            trait_count=1,
+            score_dtype=types.FloatingPointDtype.FLOAT64,
+            correction_method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+            correction_p_threshold=0.01,
+            correction_firth_se=True,
+            firth_candidate_batch_size=4,
+            firth_candidate_capacity=kernel_config.firth_candidate.candidate_capacity,
+        ),
+        warm_cache.WarmCacheSignature(
+            shape=warm_cache.WarmCacheShape(sample_count=6, variant_count=5),
+            association_mode=types.AssociationMode.REGENIE2_BINARY,
+            genotype_format=types.GpuGenotypeFormat.DOSAGE,
+            genotype_path=warm_cache.WarmCacheGenotypePath.BINARY_DOSAGE_CORRECTION,
+            trait_count=1,
+            score_dtype=types.FloatingPointDtype.FLOAT64,
+            correction_method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+            correction_p_threshold=0.01,
+            correction_firth_se=True,
+            firth_candidate_batch_size=4,
+            firth_candidate_capacity=kernel_config.firth_candidate.candidate_capacity,
+        ),
     )
 
 
@@ -366,8 +432,9 @@ def test_warm_regenie2_binary_packed8_cache_executes_donating_score_entrypoint(
         kernel_config: regenie2_binary_config.BinaryKernelConfig,
         dosage_sum: jax.Array,
         observation_count: jax.Array,
+        score_dtype: types.FloatingPointDtype,
     ) -> FakeChunkResult:
-        del chromosome_state, correction_plan, kernel_config
+        del chromosome_state, correction_plan, kernel_config, score_dtype
         observed_packed_shapes.append(typing.cast("tuple[int, int, int]", packed_probability_pairs_by_variant.shape))
         np.testing.assert_array_equal(
             np.asarray(packed_probability_pairs_by_variant)[0],
@@ -412,3 +479,18 @@ def test_warm_regenie2_binary_packed8_cache_executes_donating_score_entrypoint(
 
     assert observed_packed_shapes == [(50, 6, 2)]
     assert report.warmed_shapes == (warm_cache.WarmCacheShape(sample_count=6, variant_count=50),)
+    assert report.warmed_signatures == (
+        warm_cache.WarmCacheSignature(
+            shape=warm_cache.WarmCacheShape(sample_count=6, variant_count=50),
+            association_mode=types.AssociationMode.REGENIE2_BINARY,
+            genotype_format=types.GpuGenotypeFormat.PACKED8,
+            genotype_path=warm_cache.WarmCacheGenotypePath.BINARY_PACKED8_SCORE,
+            trait_count=1,
+            score_dtype=types.FloatingPointDtype.FLOAT32,
+            correction_method=types.BinaryFallbackMethod.SCORE_ONLY,
+            correction_p_threshold=0.05,
+            correction_firth_se=False,
+            firth_candidate_batch_size=None,
+            firth_candidate_capacity=None,
+        ),
+    )

@@ -29,7 +29,8 @@ This tracks the implementation campaign for
   F-038, and F-039 are complete.
 - Wave 5 Rust decode and larger architecture: partial; F-025, F-036,
   F-037, and F-040 are integrated.
-- Wave 6 warmup and performance proof: pending.
+- Wave 6 warmup and performance proof: partial; F-009 and F-028 are
+  integrated.
 
 ## Current implementation notes
 
@@ -77,6 +78,17 @@ This tracks the implementation campaign for
 - Implemented shared backing storage for generated `dosage_sum` and
   `allele_count` chunk stats while preserving both field names at the Rust and
   Python binding boundary.
+- In `appopt-hotloop-warmup`, added chunk-scoped stage timing records for
+  native Rust-to-Python delivery callback time, Python callback worker time,
+  host-to-device transfers, JAX compute dispatch/synchronization time,
+  device-to-host materialization, and output write time. True Rust decode-only
+  per-chunk timing still requires native per-chunk profile export; the Python
+  branch records the observable delivery callback boundary.
+- In `appopt-hotloop-warmup`, warm-cache enumeration now uses every unique
+  production chunk shape in plan order instead of truncating to two sizes, and
+  `WarmCacheReport` records warmed signatures with genotype format, trait
+  count, correction method, Firth capacity settings, score dtype, and
+  dosage/packed8 entrypoint path.
 
 ## Validation
 
@@ -96,7 +108,7 @@ This tracks the implementation campaign for
 
 ## Remaining larger work
 
-- Pipeline architecture and batching: F-009, F-017, F-028, F-032, F-033.
+- Pipeline architecture and batching: F-017, F-032, F-033.
 - Packed8 and Firth compute rewrites: F-011, F-012, F-034.
 - Score-kernel/state setup rewrites: F-035.
 - Rust decode and allocation reuse: F-025, F-036, F-037, F-040 are implemented
@@ -122,3 +134,10 @@ This tracks the implementation campaign for
   buffers. Multi-trait chromosome prediction matrix construction preallocates
   its final matrix and caches assembled chromosome matrices for repeated
   requests.
+- F-009: chunk-scoped stage timing now records native delivery callback,
+  Python worker, host-to-device transfer, JAX compute dispatch/synchronization,
+  device-to-host materialization, and output write time.
+- F-028: warm-cache enumeration now covers every unique production chunk shape
+  in plan order, and `WarmCacheReport` records warmed signatures with genotype
+  format, trait count, correction method, Firth capacity settings, score dtype,
+  and dosage/packed8 entrypoint path.
