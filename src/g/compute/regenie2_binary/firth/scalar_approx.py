@@ -578,7 +578,6 @@ def fit_single_variant_regenie_approximate_firth(
     scalar_dtype = offset_vector.dtype
     phenotype_vector = jnp.asarray(phenotype_vector, dtype=scalar_dtype)
     genotype_vector = jnp.asarray(genotype_vector, dtype=scalar_dtype)
-    warm_start_beta = jnp.asarray(warm_start_beta, dtype=scalar_dtype)
     all_sample_mask = jnp.ones_like(phenotype_vector, dtype=jnp.bool_)
     active_sample_mask = jnp.where(sparse_correction, carrier_sample_mask, all_sample_mask)
     null_probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(offset_vector)
@@ -589,6 +588,84 @@ def fit_single_variant_regenie_approximate_firth(
         phenotype_vector, null_probability_vector, active_sample_mask
     )
     non_active_deviance = jnp.where(sparse_correction, full_null_deviance - active_null_deviance, 0.0)
+    return fit_single_variant_regenie_approximate_firth_with_active_samples(
+        phenotype_vector=phenotype_vector,
+        genotype_vector=genotype_vector,
+        offset_vector=offset_vector,
+        active_sample_mask=active_sample_mask,
+        full_null_deviance=full_null_deviance,
+        non_active_deviance=non_active_deviance,
+        sparse_correction=sparse_correction,
+        warm_start_beta=warm_start_beta,
+        skip_firth=skip_firth,
+        null_failed=null_failed,
+        kernel_config=kernel_config,
+    )
+
+
+def fit_single_variant_regenie_approximate_firth_compact_carriers(
+    *,
+    phenotype_vector: jax.Array,
+    genotype_vector: jax.Array,
+    offset_vector: jax.Array,
+    active_carrier_slot_mask: jax.Array,
+    full_null_deviance: jax.Array,
+    warm_start_beta: jax.Array,
+    skip_firth: jax.Array,
+    null_failed: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Fit one sparse approximate-Firth lane over fixed-capacity carrier slots."""
+    scalar_dtype = offset_vector.dtype
+    phenotype_vector = jnp.asarray(phenotype_vector, dtype=scalar_dtype)
+    genotype_vector = jnp.asarray(genotype_vector, dtype=scalar_dtype)
+    offset_vector = jnp.asarray(offset_vector, dtype=scalar_dtype)
+    null_probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(offset_vector)
+    active_null_deviance = regenie2_binary_logistic.compute_logistic_deviance(
+        phenotype_vector,
+        null_probability_vector,
+        active_carrier_slot_mask,
+    )
+    return fit_single_variant_regenie_approximate_firth_with_active_samples(
+        phenotype_vector=phenotype_vector,
+        genotype_vector=genotype_vector,
+        offset_vector=offset_vector,
+        active_sample_mask=active_carrier_slot_mask,
+        full_null_deviance=jnp.asarray(full_null_deviance, dtype=scalar_dtype),
+        non_active_deviance=jnp.asarray(full_null_deviance, dtype=scalar_dtype) - active_null_deviance,
+        sparse_correction=jnp.ones((), dtype=jnp.bool_),
+        warm_start_beta=warm_start_beta,
+        skip_firth=skip_firth,
+        null_failed=null_failed,
+        kernel_config=kernel_config,
+    )
+
+
+def fit_single_variant_regenie_approximate_firth_with_active_samples(
+    *,
+    phenotype_vector: jax.Array,
+    genotype_vector: jax.Array,
+    offset_vector: jax.Array,
+    active_sample_mask: jax.Array,
+    full_null_deviance: jax.Array,
+    non_active_deviance: jax.Array,
+    sparse_correction: jax.Array,
+    warm_start_beta: jax.Array,
+    skip_firth: jax.Array,
+    null_failed: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Fit one approximate-Firth candidate over caller-selected active samples."""
+    scalar_dtype = offset_vector.dtype
+    phenotype_vector = jnp.asarray(phenotype_vector, dtype=scalar_dtype)
+    genotype_vector = jnp.asarray(genotype_vector, dtype=scalar_dtype)
+    offset_vector = jnp.asarray(offset_vector, dtype=scalar_dtype)
+    active_sample_mask = jnp.asarray(active_sample_mask, dtype=jnp.bool_)
+    full_null_deviance = jnp.asarray(full_null_deviance, dtype=scalar_dtype)
+    non_active_deviance = jnp.asarray(non_active_deviance, dtype=scalar_dtype)
+    warm_start_beta = jnp.asarray(warm_start_beta, dtype=scalar_dtype)
+    sparse_correction = jnp.asarray(sparse_correction, dtype=jnp.bool_)
+    null_probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(offset_vector)
     null_weight_vector = null_probability_vector * (1.0 - null_probability_vector)
     null_genotype_information = jnp.sum(
         jnp.where(active_sample_mask, genotype_vector * genotype_vector * null_weight_vector, 0.0)

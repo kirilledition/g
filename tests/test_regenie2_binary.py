@@ -21,6 +21,7 @@ from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary import variant_major_correction as regenie2_binary_variant_major_correction
+from g.compute.regenie2_binary.firth import batch as regenie2_binary_firth_batch
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import line_search as regenie2_binary_firth_line_search
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
@@ -721,6 +722,43 @@ def assert_multi_binary_chunk_results_match(
     )
 
 
+def assert_firth_variant_results_match(
+    actual_result: regenie2_binary_firth_types.FirthVariantResult,
+    expected_result: regenie2_binary_firth_types.FirthVariantResult,
+) -> None:
+    """Assert that two flat Firth candidate-result containers match."""
+    np.testing.assert_allclose(np.asarray(actual_result.beta), np.asarray(expected_result.beta), equal_nan=True)
+    np.testing.assert_allclose(
+        np.asarray(actual_result.standard_error),
+        np.asarray(expected_result.standard_error),
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        np.asarray(actual_result.chi_squared),
+        np.asarray(expected_result.chi_squared),
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        np.asarray(actual_result.log10_p_value),
+        np.asarray(expected_result.log10_p_value),
+        equal_nan=True,
+    )
+    np.testing.assert_array_equal(np.asarray(actual_result.valid_mask), np.asarray(expected_result.valid_mask))
+    np.testing.assert_array_equal(
+        np.asarray(actual_result.converged_mask),
+        np.asarray(expected_result.converged_mask),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(actual_result.sparse_correction_mask),
+        np.asarray(expected_result.sparse_correction_mask),
+    )
+    np.testing.assert_array_equal(np.asarray(actual_result.failure_code), np.asarray(expected_result.failure_code))
+    np.testing.assert_array_equal(
+        np.asarray(actual_result.correction_code),
+        np.asarray(expected_result.correction_code),
+    )
+
+
 def assert_all_result_statistics_nan(
     result: regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult,
 ) -> None:
@@ -781,6 +819,8 @@ def test_firth_candidate_capacity_plan_uses_bounded_capacity_until_overflow() ->
         preferred_candidate_capacity=4,
     )
 
+    assert capacity_plan.tiny_candidate_capacity == 7
+    assert capacity_plan.small_candidate_capacity == 7
     assert capacity_plan.bounded_candidate_capacity == 4
     assert capacity_plan.overflow_candidate_capacity == 7
 
@@ -791,6 +831,8 @@ def test_firth_candidate_capacity_plan_caps_capacity_at_variant_count() -> None:
         preferred_candidate_capacity=8,
     )
 
+    assert capacity_plan.tiny_candidate_capacity == 3
+    assert capacity_plan.small_candidate_capacity == 3
     assert capacity_plan.bounded_candidate_capacity == 3
     assert capacity_plan.overflow_candidate_capacity == 3
 
@@ -802,6 +844,8 @@ def test_multi_firth_candidate_capacity_plan_uses_flattened_trait_variant_lanes(
         preferred_candidate_capacity=2,
     )
 
+    assert capacity_plan.tiny_candidate_capacity == 15
+    assert capacity_plan.small_candidate_capacity == 15
     assert capacity_plan.bounded_candidate_capacity == 6
     assert capacity_plan.overflow_candidate_capacity == 15
 
@@ -813,6 +857,8 @@ def test_multi_firth_candidate_capacity_plan_caps_at_flattened_lane_count() -> N
         preferred_candidate_capacity=8,
     )
 
+    assert capacity_plan.tiny_candidate_capacity == 15
+    assert capacity_plan.small_candidate_capacity == 15
     assert capacity_plan.bounded_candidate_capacity == 15
     assert capacity_plan.overflow_candidate_capacity == 15
 
@@ -823,8 +869,35 @@ def test_firth_candidate_device_dispatch_plan_keeps_bounded_and_overflow_capacit
         preferred_candidate_capacity=2,
     )
 
+    assert capacity_plan.tiny_candidate_capacity == 5
+    assert capacity_plan.small_candidate_capacity == 5
     assert capacity_plan.bounded_candidate_capacity == 2
     assert capacity_plan.overflow_candidate_capacity == 5
+
+
+def test_firth_candidate_capacity_plan_exposes_tiny_and_small_tiers() -> None:
+    capacity_plan = regenie2_binary_candidate_planning.build_firth_candidate_capacity_plan(
+        variant_count=1_000,
+        preferred_candidate_capacity=512,
+    )
+
+    assert capacity_plan.tiny_candidate_capacity == 64
+    assert capacity_plan.small_candidate_capacity == 256
+    assert capacity_plan.bounded_candidate_capacity == 512
+    assert capacity_plan.overflow_candidate_capacity == 1_000
+
+
+def test_multi_firth_candidate_capacity_plan_scales_tiers_by_trait_count() -> None:
+    capacity_plan = regenie2_binary_candidate_planning.build_multi_firth_candidate_capacity_plan(
+        trait_count=3,
+        variant_count=1_000,
+        preferred_candidate_capacity=512,
+    )
+
+    assert capacity_plan.tiny_candidate_capacity == 192
+    assert capacity_plan.small_candidate_capacity == 768
+    assert capacity_plan.bounded_candidate_capacity == 1_536
+    assert capacity_plan.overflow_candidate_capacity == 3_000
 
 
 def test_firth_candidate_device_dispatch_records_profile_stage() -> None:
@@ -994,6 +1067,7 @@ def test_group_firth_candidate_batch_inputs_places_heuristic_lanes_after_regular
         genotype_flip_mask=jnp.asarray([True, False, True, False], dtype=jnp.bool_),
         sparse_correction_mask=jnp.asarray([False, True, False, False], dtype=jnp.bool_),
         heuristic_firth_mask=jnp.asarray([True, False, True, False], dtype=jnp.bool_),
+        order_candidates=True,
     )
 
     np.testing.assert_array_equal(np.asarray(ordered_inputs.flat_fallback_indices), [11, 10, 12, 0])
@@ -1009,6 +1083,42 @@ def test_group_firth_candidate_batch_inputs_places_heuristic_lanes_after_regular
     )
     np.testing.assert_array_equal(np.asarray(ordered_inputs.genotype_flip_mask), [False, True, True, False])
     np.testing.assert_array_equal(np.asarray(ordered_inputs.sparse_correction_mask), [True, False, False, False])
+
+
+def test_group_firth_candidate_batch_inputs_can_skip_tiny_tier_ordering() -> None:
+    ordered_inputs = regenie2_binary_candidate_planning.group_firth_candidate_batch_inputs(
+        flat_fallback_indices=jnp.asarray([10, 11, 12, 0], dtype=jnp.int32),
+        flat_active_mask=jnp.asarray([True, True, True, False], dtype=jnp.bool_),
+        genotype_matrix_by_variant=jnp.asarray(
+            [
+                [10.0, 10.0],
+                [11.0, 11.0],
+                [12.0, 12.0],
+                [0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        ),
+        raw_genotype_matrix_by_variant=jnp.asarray(
+            [
+                [100.0, 100.0],
+                [110.0, 110.0],
+                [120.0, 120.0],
+                [0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        ),
+        genotype_flip_mask=jnp.asarray([True, False, True, False], dtype=jnp.bool_),
+        sparse_correction_mask=jnp.asarray([False, True, False, False], dtype=jnp.bool_),
+        heuristic_firth_mask=jnp.asarray([True, False, True, False], dtype=jnp.bool_),
+        order_candidates=False,
+    )
+
+    np.testing.assert_array_equal(np.asarray(ordered_inputs.flat_fallback_indices), [10, 11, 12, 0])
+    np.testing.assert_array_equal(np.asarray(ordered_inputs.heuristic_firth_mask), [True, False, True, False])
+    np.testing.assert_array_equal(
+        np.asarray(ordered_inputs.genotype_matrix_by_variant),
+        [[10.0, 10.0], [11.0, 11.0], [12.0, 12.0], [0.0, 0.0]],
+    )
 
 
 def test_score_only_plan_produces_no_fallback_candidates() -> None:
@@ -2098,6 +2208,134 @@ def test_sparse_candidate_mask_does_not_expand_score_candidates() -> None:
 
     assert int(np.asarray(sparse_result.extra_code[0])) == types.BinaryExtraCode.SCORE.value
     assert int(np.asarray(sparse_result.firth_iteration_count[0])) == 0
+
+
+def test_compact_sparse_single_firth_matches_dense_sparse_batch_path() -> None:
+    fixture = build_variant_major_parity_fixture()
+    chromosome_state = build_variant_major_parity_chromosome_state(fixture, APPROXIMATE_FIRTH_PLAN)
+    genotype_matrix_by_variant = jnp.transpose(fixture.genotype_matrix)[:1]
+    prepared_batch = regenie2_binary_firth_batch.prepare_firth_candidate_batch(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        candidate_mask=jnp.asarray([True], dtype=jnp.bool_),
+        score_beta=jnp.zeros((1,), dtype=jnp.float32),
+        sparse_candidate_mask=jnp.asarray([True], dtype=jnp.bool_),
+        candidate_capacity=1,
+        firth_batch_size=1,
+        order_candidates=False,
+        kernel_config=build_default_binary_kernel_config(),
+    )
+
+    dense_result = regenie2_binary_firth_batch.compute_firth_variantwise_fixed_batches_without_sparse_compaction(
+        covariate_matrix=chromosome_state.covariate_matrix,
+        null_logistic_coefficients=chromosome_state.null_logistic_coefficients,
+        null_firth_offset=chromosome_state.null_firth_offset,
+        phenotype_vector=chromosome_state.phenotype_vector,
+        genotype_matrix_by_variant=prepared_batch.candidate_inputs.genotype_matrix_by_variant,
+        raw_genotype_matrix_by_variant=prepared_batch.candidate_inputs.raw_genotype_matrix_by_variant,
+        loco_offset=chromosome_state.loco_offset,
+        initial_coefficients=prepared_batch.initial_coefficients,
+        active_mask=prepared_batch.candidate_inputs.flat_active_mask,
+        sparse_correction_mask=prepared_batch.candidate_inputs.sparse_correction_mask,
+        fallback_count=jnp.asarray(1, dtype=jnp.int32),
+        firth_batch_size=1,
+        null_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood,
+        kernel_config=build_default_binary_kernel_config(),
+    )
+    compact_result = regenie2_binary_firth_batch.compute_firth_variantwise_fixed_batches(
+        covariate_matrix=chromosome_state.covariate_matrix,
+        null_logistic_coefficients=chromosome_state.null_logistic_coefficients,
+        null_firth_offset=chromosome_state.null_firth_offset,
+        phenotype_vector=chromosome_state.phenotype_vector,
+        genotype_matrix_by_variant=prepared_batch.candidate_inputs.genotype_matrix_by_variant,
+        raw_genotype_matrix_by_variant=prepared_batch.candidate_inputs.raw_genotype_matrix_by_variant,
+        loco_offset=chromosome_state.loco_offset,
+        initial_coefficients=prepared_batch.initial_coefficients,
+        active_mask=prepared_batch.candidate_inputs.flat_active_mask,
+        sparse_correction_mask=prepared_batch.candidate_inputs.sparse_correction_mask,
+        fallback_count=jnp.asarray(1, dtype=jnp.int32),
+        firth_batch_size=1,
+        null_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood,
+        full_null_deviance=prepared_batch.full_null_deviance,
+        kernel_config=build_default_binary_kernel_config(),
+    )
+
+    assert bool(np.asarray(compact_result.sparse_correction_mask[0]))
+    assert_firth_variant_results_match(compact_result, dense_result)
+
+
+def test_compact_sparse_multi_firth_matches_dense_sparse_batch_path() -> None:
+    fixture = build_multi_binary_variant_major_fixture()
+    correction_plan = types.BinaryCorrectionPlan(
+        method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+        p_threshold=0.50,
+        firth_se=True,
+    )
+    multi_state = regenie2_binary.prepare_regenie2_multi_binary_state(
+        fixture.covariate_matrix,
+        fixture.phenotype_matrix,
+    )
+    chromosome_state = regenie2_binary.prepare_regenie2_multi_binary_chromosome_state(
+        multi_state,
+        fixture.loco_offset_matrix,
+        correction_plan,
+        build_default_binary_kernel_config(),
+    )
+    candidate_mask = jnp.asarray(
+        [
+            [True, False, False, False, False],
+            [False, True, False, False, False],
+        ],
+        dtype=jnp.bool_,
+    )
+    prepared_batch = regenie2_binary_firth_batch.prepare_multi_firth_candidate_batch(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=fixture.genotype_matrix_by_variant,
+        candidate_mask=candidate_mask,
+        score_beta=jnp.zeros(candidate_mask.shape, dtype=jnp.float32),
+        sparse_candidate_mask=fixture.sparse_candidate_mask,
+        candidate_capacity=2,
+        firth_batch_size=1,
+        order_candidates=False,
+        kernel_config=build_default_binary_kernel_config(),
+    )
+
+    dense_result = regenie2_binary_firth_batch.compute_firth_multi_variantwise_fixed_batches_without_sparse_compaction(
+        covariate_matrix=chromosome_state.covariate_matrix,
+        null_logistic_coefficients=prepared_batch.candidate_inputs.null_logistic_coefficients,
+        null_firth_offset_matrix=prepared_batch.candidate_inputs.null_firth_offset_matrix,
+        phenotype_matrix=prepared_batch.candidate_inputs.phenotype_matrix,
+        genotype_matrix_by_variant=prepared_batch.candidate_inputs.genotype_matrix_by_variant,
+        raw_genotype_matrix_by_variant=prepared_batch.candidate_inputs.raw_genotype_matrix_by_variant,
+        loco_offset_matrix=prepared_batch.candidate_inputs.loco_offset_matrix,
+        initial_coefficients=prepared_batch.initial_coefficients,
+        active_mask=prepared_batch.candidate_inputs.flat_active_mask,
+        sparse_correction_mask=prepared_batch.candidate_inputs.sparse_correction_mask,
+        fallback_count=jnp.asarray(2, dtype=jnp.int32),
+        firth_batch_size=1,
+        null_penalized_log_likelihood=prepared_batch.candidate_inputs.null_firth_penalized_log_likelihood,
+        kernel_config=build_default_binary_kernel_config(),
+    )
+    compact_result = regenie2_binary_firth_batch.compute_firth_multi_variantwise_fixed_batches(
+        covariate_matrix=chromosome_state.covariate_matrix,
+        null_logistic_coefficients=prepared_batch.candidate_inputs.null_logistic_coefficients,
+        null_firth_offset_matrix=prepared_batch.candidate_inputs.null_firth_offset_matrix,
+        phenotype_matrix=prepared_batch.candidate_inputs.phenotype_matrix,
+        genotype_matrix_by_variant=prepared_batch.candidate_inputs.genotype_matrix_by_variant,
+        raw_genotype_matrix_by_variant=prepared_batch.candidate_inputs.raw_genotype_matrix_by_variant,
+        loco_offset_matrix=prepared_batch.candidate_inputs.loco_offset_matrix,
+        initial_coefficients=prepared_batch.initial_coefficients,
+        active_mask=prepared_batch.candidate_inputs.flat_active_mask,
+        sparse_correction_mask=prepared_batch.candidate_inputs.sparse_correction_mask,
+        fallback_count=jnp.asarray(2, dtype=jnp.int32),
+        firth_batch_size=1,
+        null_penalized_log_likelihood=prepared_batch.candidate_inputs.null_firth_penalized_log_likelihood,
+        full_null_deviance=prepared_batch.full_null_deviance,
+        kernel_config=build_default_binary_kernel_config(),
+    )
+
+    np.testing.assert_array_equal(np.asarray(compact_result.sparse_correction_mask[:2]), [True, True])
+    assert_firth_variant_results_match(compact_result, dense_result)
 
 
 def test_firth_candidate_capacity_overflow_matches_full_chunk_fallback() -> None:

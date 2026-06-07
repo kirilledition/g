@@ -10,6 +10,9 @@ import jax.numpy as jnp
 from g.compute.common import genotype as compute_genotype
 from g.compute.regenie2_binary import config as regenie2_binary_config
 
+TINY_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT = 64
+SMALL_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT = 256
+
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
@@ -94,14 +97,18 @@ class MultiFirthCandidateBatchInputs:
 
 @dataclass(frozen=True)
 class FirthCandidateCapacityPlan:
-    """Static candidate capacities for normal and overflow Firth correction paths.
+    """Static candidate capacities for tiered Firth correction paths.
 
     Attributes:
+        tiny_candidate_capacity: Fixed capacity for very small candidate counts.
+        small_candidate_capacity: Fixed capacity for small candidate counts.
         bounded_candidate_capacity: Preferred fixed candidate capacity, capped by the current chunk size.
         overflow_candidate_capacity: Full chunk capacity used when candidate count exceeds the bounded capacity.
 
     """
 
+    tiny_candidate_capacity: int
+    small_candidate_capacity: int
     bounded_candidate_capacity: int
     overflow_candidate_capacity: int
 
@@ -110,6 +117,7 @@ def build_firth_candidate_capacity_plan(
     *,
     variant_count: int,
     preferred_candidate_capacity: int,
+    trait_count: int = 1,
 ) -> FirthCandidateCapacityPlan:
     """Build static capacities for device Firth candidate dispatch."""
     if variant_count <= 0:
@@ -118,7 +126,14 @@ def build_firth_candidate_capacity_plan(
     if preferred_candidate_capacity <= 0:
         message = "Preferred Firth candidate capacity must be positive."
         raise ValueError(message)
+    if trait_count <= 0:
+        message = "Trait count must be positive."
+        raise ValueError(message)
+    tiny_candidate_capacity = TINY_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT * trait_count
+    small_candidate_capacity = SMALL_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT * trait_count
     return FirthCandidateCapacityPlan(
+        tiny_candidate_capacity=min(tiny_candidate_capacity, variant_count),
+        small_candidate_capacity=min(small_candidate_capacity, variant_count),
         bounded_candidate_capacity=min(preferred_candidate_capacity, variant_count),
         overflow_candidate_capacity=variant_count,
     )
@@ -137,6 +152,7 @@ def build_multi_firth_candidate_capacity_plan(
     return build_firth_candidate_capacity_plan(
         variant_count=trait_count * variant_count,
         preferred_candidate_capacity=preferred_candidate_capacity * trait_count,
+        trait_count=trait_count,
     )
 
 
@@ -221,6 +237,35 @@ def build_device_multi_firth_batch_plan(
     )
 
 
+def build_firth_candidate_bucket_order(
+    *,
+    flat_active_mask: jax.Array,
+    heuristic_firth_mask: jax.Array,
+) -> jax.Array:
+    """Build a stable regular, heuristic, inactive lane order without a full sort."""
+    candidate_count = flat_active_mask.shape[0]
+    regular_active_mask = flat_active_mask & (~heuristic_firth_mask)
+    heuristic_active_mask = flat_active_mask & heuristic_firth_mask
+    inactive_mask = ~flat_active_mask
+    regular_indices = jnp.nonzero(regular_active_mask, size=candidate_count, fill_value=0)[0]
+    heuristic_indices = jnp.nonzero(heuristic_active_mask, size=candidate_count, fill_value=0)[0]
+    inactive_indices = jnp.nonzero(inactive_mask, size=candidate_count, fill_value=0)[0]
+    regular_count = jnp.sum(regular_active_mask, dtype=jnp.int32)
+    heuristic_count = jnp.sum(heuristic_active_mask, dtype=jnp.int32)
+    output_positions = jnp.arange(candidate_count, dtype=jnp.int32)
+    heuristic_positions = output_positions - regular_count
+    inactive_positions = output_positions - regular_count - heuristic_count
+    return jnp.where(
+        output_positions < regular_count,
+        jnp.take(regular_indices, output_positions, axis=0),
+        jnp.where(
+            output_positions < regular_count + heuristic_count,
+            jnp.take(heuristic_indices, heuristic_positions, axis=0),
+            jnp.take(inactive_indices, inactive_positions, axis=0),
+        ),
+    )
+
+
 def group_firth_candidate_batch_inputs(
     *,
     flat_fallback_indices: jax.Array,
@@ -230,11 +275,23 @@ def group_firth_candidate_batch_inputs(
     genotype_flip_mask: jax.Array,
     sparse_correction_mask: jax.Array,
     heuristic_firth_mask: jax.Array,
+    order_candidates: bool,
 ) -> FirthCandidateBatchInputs:
     """Group likely long-running Firth lanes together before fixed-size batching."""
-    inactive_sort_key = jnp.asarray(2, dtype=jnp.int32)
-    sort_key = jnp.where(flat_active_mask, heuristic_firth_mask.astype(jnp.int32), inactive_sort_key)
-    sort_order = jnp.argsort(sort_key, stable=True)
+    if not order_candidates:
+        return FirthCandidateBatchInputs(
+            flat_fallback_indices=flat_fallback_indices,
+            flat_active_mask=flat_active_mask,
+            genotype_matrix_by_variant=genotype_matrix_by_variant,
+            raw_genotype_matrix_by_variant=raw_genotype_matrix_by_variant,
+            genotype_flip_mask=genotype_flip_mask,
+            sparse_correction_mask=sparse_correction_mask,
+            heuristic_firth_mask=heuristic_firth_mask,
+        )
+    sort_order = build_firth_candidate_bucket_order(
+        flat_active_mask=flat_active_mask,
+        heuristic_firth_mask=heuristic_firth_mask,
+    )
     return FirthCandidateBatchInputs(
         flat_fallback_indices=jnp.take(flat_fallback_indices, sort_order, axis=0),
         flat_active_mask=jnp.take(flat_active_mask, sort_order, axis=0),
@@ -262,11 +319,30 @@ def group_multi_firth_candidate_batch_inputs(
     null_firth_offset_matrix: jax.Array,
     loco_offset_matrix: jax.Array,
     null_firth_penalized_log_likelihood: jax.Array,
+    order_candidates: bool,
 ) -> MultiFirthCandidateBatchInputs:
     """Group likely long-running multi-trait Firth lanes before fixed-size batching."""
-    inactive_sort_key = jnp.asarray(2, dtype=jnp.int32)
-    sort_key = jnp.where(flat_active_mask, heuristic_firth_mask.astype(jnp.int32), inactive_sort_key)
-    sort_order = jnp.argsort(sort_key, stable=True)
+    if not order_candidates:
+        return MultiFirthCandidateBatchInputs(
+            flat_fallback_indices=flat_fallback_indices,
+            flat_trait_indices=flat_trait_indices,
+            flat_variant_indices=flat_variant_indices,
+            flat_active_mask=flat_active_mask,
+            genotype_matrix_by_variant=genotype_matrix_by_variant,
+            raw_genotype_matrix_by_variant=raw_genotype_matrix_by_variant,
+            genotype_flip_mask=genotype_flip_mask,
+            sparse_correction_mask=sparse_correction_mask,
+            heuristic_firth_mask=heuristic_firth_mask,
+            phenotype_matrix=phenotype_matrix,
+            null_logistic_coefficients=null_logistic_coefficients,
+            null_firth_offset_matrix=null_firth_offset_matrix,
+            loco_offset_matrix=loco_offset_matrix,
+            null_firth_penalized_log_likelihood=null_firth_penalized_log_likelihood,
+        )
+    sort_order = build_firth_candidate_bucket_order(
+        flat_active_mask=flat_active_mask,
+        heuristic_firth_mask=heuristic_firth_mask,
+    )
     return MultiFirthCandidateBatchInputs(
         flat_fallback_indices=jnp.take(flat_fallback_indices, sort_order, axis=0),
         flat_trait_indices=jnp.take(flat_trait_indices, sort_order, axis=0),
