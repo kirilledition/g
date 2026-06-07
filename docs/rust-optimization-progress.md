@@ -38,9 +38,9 @@ all accepted branches land.
 ```bash
 RUSTFLAGS="-C target-cpu=native" cargo bench --bench bgen_read -- --save-baseline rust-opt-main --sample-size 10 --measurement-time 3 --warm-up-time 1
 RUSTFLAGS="-C target-cpu=native" cargo bench --bench preprocess -- --save-baseline rust-opt-main --sample-size 10 --measurement-time 3 --warm-up-time 1
-uv run --no-sync python -m tooling.cli.benchmark_bgen_reader --chunk-sizes 1024,2048,4096,8192,16384 --variant-limit 16384 --repeat-count 7 --trusted-no-missing-diploid-modes false,true --path-modes variant_major_buffered,variant_major_packed8_buffered --sample-selection-modes full,contiguous_half,strided_half --json-summary-path data/profiles/rust_opt_bgen_reader_baseline.json
-uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot --device gpu --variant-limit 16384 --json-summary-path data/profiles/rust_opt_binary_hot_baseline.json
-uv run --no-sync python -m tooling.cli.benchmark_output_stages --device gpu --trials 3 --variant-limit 16384 --json-summary-path data/profiles/rust_opt_output_stages_baseline.json --markdown-summary-path data/profiles/rust_opt_output_stages_baseline.md
+uv run --no-sync python -m tooling.cli.benchmark_bgen_reader sweep.chunk_sizes=[1024,2048,4096,8192,16384] workload.variant_limit=16384 workload.repeat_count=7 sweep.trusted_no_missing_diploid_modes=[false,true] sweep.path_modes=[variant_major_buffered,variant_major_packed8_buffered] sweep.sample_selection_modes=[full,contiguous_half,strided_half] telemetry.json_summary_path=data/profiles/rust_opt_bgen_reader_baseline.json
+uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot machine=landau_gpu tool.variant_limit=16384 telemetry.json_summary_path=data/profiles/rust_opt_binary_hot_baseline.json
+uv run --no-sync python -m tooling.cli.benchmark_output_stages machine=landau_gpu tool.trials=3 tool.variant_limit=16384 telemetry.json_summary_path=data/profiles/rust_opt_output_stages_baseline.json telemetry.markdown_summary_path=data/profiles/rust_opt_output_stages_baseline.md
 ```
 
 On the shared server, run heavy CPU work through a CPU worker node and GPU app
@@ -133,7 +133,7 @@ benchmarks through `just slurm-gpu-run`.
   - `cargo fmt --all --check`
   - `uv run ruff check tooling/cli/benchmark_bgen_reader.py`
   - `uv run ruff format --check tooling/cli/benchmark_bgen_reader.py`
-  - smoke: `GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data uv run --no-sync python -m tooling.cli.benchmark_bgen_reader --chunk-sizes 16 --variant-limit 16 --repeat-count 1 --path-modes variant_major_buffered --sample-selection-modes full,strided_half --json-summary-path data/profiles/rust_opt_bgen_reader_smoke.json --markdown-summary-path data/profiles/rust_opt_bgen_reader_smoke.md`
+  - smoke: `GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data uv run --no-sync python -m tooling.cli.benchmark_bgen_reader sweep.chunk_sizes=[16] workload.variant_limit=16 workload.repeat_count=1 sweep.path_modes=[variant_major_buffered] sweep.sample_selection_modes=[full,strided_half] telemetry.json_summary_path=data/profiles/rust_opt_bgen_reader_smoke.json telemetry.markdown_summary_path=data/profiles/rust_opt_bgen_reader_smoke.md`
 - Verified the trusted packed8 slice:
   - `cargo test --lib genotype::bgen`
   - `cargo clippy --lib -- -D warnings`
@@ -237,10 +237,10 @@ flat: packed8 finalized hot at 16,384 variants changed from 0.498806 seconds to
 0.498847 seconds.
 
 The Python BGEN reader harness was also run on `cantor` with
-`--chunk-sizes 16384`, `--variant-limit 16384`, `--repeat-count 5`,
-`--trusted-no-missing-diploid-modes true`,
-`--path-modes variant_major_buffered,variant_major_packed8_buffered`, and
-`--sample-selection-modes full,contiguous_half,strided_half`. It preserved
+`sweep.chunk_sizes=[16384]`, `workload.variant_limit=16384`,
+`workload.repeat_count=5`, `sweep.trusted_no_missing_diploid_modes=[true]`,
+`sweep.path_modes=[variant_major_buffered,variant_major_packed8_buffered]`, and
+`sweep.sample_selection_modes=[full,contiguous_half,strided_half]`. It preserved
 checksums across dosage and packed8 paths, but the measured medians were all
 about 3.6 to 3.8 seconds and moved by only -0.5% to -0.7% in the optimized
 build. That harness is dominated by Python/process/reader setup overhead at

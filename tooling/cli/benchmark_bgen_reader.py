@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import argparse
+import dataclasses
 import json
 import os
 import subprocess
@@ -12,13 +12,20 @@ import time
 import typing
 from pathlib import Path
 
+import hydra
 import numpy as np
 
+import tooling.configuration as tooling_configuration
 from g import _core
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
 from tooling.regenie import bgen_reader as regenie_bgen_reader
+
+if typing.TYPE_CHECKING:
+    import omegaconf
 
 DEFAULT_DATA_DIRECTORY = tooling_paths.configured_data_directory()
 
@@ -28,6 +35,52 @@ SampleSelectionMode = regenie_bgen_reader.SampleSelectionMode
 PathResult = regenie_bgen_reader.PathResult
 BenchmarkCaseReport = regenie_bgen_reader.BenchmarkCaseReport
 BenchmarkSweepReport = regenie_bgen_reader.BenchmarkSweepReport
+
+
+@dataclasses.dataclass(frozen=True)
+class BenchmarkArguments:
+    """Resolved BGEN reader benchmark parameters.
+
+    Attributes:
+        bgen: Input BGEN path.
+        sample: Optional sample file path.
+        chunk_size: Single chunk size for case execution.
+        chunk_sizes: Comma-separated chunk-size sweep values.
+        variant_limit: Variant cap for each case.
+        repeat_count: Measured repeat count.
+        path_modes: Comma-separated native path modes.
+        sample_selection_mode: Single sample-selection mode for case execution.
+        sample_selection_modes: Comma-separated sample-selection sweep values.
+        decode_tile_variant_count: Single native decode tile size for case metadata.
+        decode_tile_variant_counts: Comma-separated decode tile sweep values.
+        rayon_thread_count: Single Rayon thread count for case metadata.
+        rayon_thread_counts: Comma-separated Rayon thread-count sweep values.
+        trusted_no_missing_diploid: Whether this case uses the trusted decode path.
+        trusted_no_missing_diploid_modes: Comma-separated trusted-mode sweep values.
+        emit_case_json: Whether to emit only one case as JSON.
+        json_summary_path: Optional JSON summary path.
+        markdown_summary_path: Optional Markdown summary path.
+
+    """
+
+    bgen: Path
+    sample: Path | None
+    chunk_size: int
+    chunk_sizes: str
+    variant_limit: int
+    repeat_count: int
+    path_modes: str
+    sample_selection_mode: str
+    sample_selection_modes: str
+    decode_tile_variant_count: int | None
+    decode_tile_variant_counts: str
+    rayon_thread_count: int | None
+    rayon_thread_counts: str
+    trusted_no_missing_diploid: bool
+    trusted_no_missing_diploid_modes: str
+    emit_case_json: bool
+    json_summary_path: Path | None
+    markdown_summary_path: Path | None
 
 
 class ChecksumCallback:
@@ -84,30 +137,6 @@ class ChecksumCallback:
         self.free_packed8_buffers.append(probability_pairs_by_variant)
 
 
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Build command-line arguments for the native BGEN benchmark."""
-    argument_parser = argparse.ArgumentParser(description="Benchmark native BGEN chunk delivery paths.")
-    argument_parser.add_argument("--bgen", type=Path, default=DEFAULT_DATA_DIRECTORY / "1kg_chr22_full.bgen")
-    argument_parser.add_argument("--sample", type=Path, default=DEFAULT_DATA_DIRECTORY / "1kg_chr22_full.sample")
-    argument_parser.add_argument("--chunk-size", type=int, default=8192)
-    argument_parser.add_argument("--chunk-sizes", default="8192")
-    argument_parser.add_argument("--variant-limit", type=int, default=16384)
-    argument_parser.add_argument("--repeat-count", type=int, default=5)
-    argument_parser.add_argument("--path-modes", default="variant_major_buffered")
-    argument_parser.add_argument("--sample-selection-mode", default=SampleSelectionMode.FULL.value)
-    argument_parser.add_argument("--sample-selection-modes", default="")
-    argument_parser.add_argument("--decode-tile-variant-count", type=int)
-    argument_parser.add_argument("--decode-tile-variant-counts", default="")
-    argument_parser.add_argument("--rayon-thread-count", type=int)
-    argument_parser.add_argument("--rayon-thread-counts", default="")
-    argument_parser.add_argument("--trusted-no-missing-diploid", action="store_true")
-    argument_parser.add_argument("--trusted-no-missing-diploid-modes", default="")
-    argument_parser.add_argument("--emit-case-json", action="store_true")
-    argument_parser.add_argument("--json-summary-path", type=Path)
-    argument_parser.add_argument("--markdown-summary-path", type=Path)
-    return argument_parser
-
-
 def parse_optional_int_list(raw_values: str) -> list[int | None]:
     """Parse a comma-separated integer list with an optional empty sentinel."""
     return tooling_sweeps.parse_optional_integer_list(raw_values)
@@ -140,7 +169,7 @@ def supported_path_modes(
     return regenie_bgen_reader.supported_path_modes(path_modes, trusted_no_missing_diploid=trusted_no_missing_diploid)
 
 
-def run_native_delivery(arguments: argparse.Namespace, path_mode: BenchmarkPathMode, variant_limit: int) -> float:
+def run_native_delivery(arguments: BenchmarkArguments, path_mode: BenchmarkPathMode, variant_limit: int) -> float:
     """Run one native delivery path and return its checksum."""
     engine = _core.Regenie2RunEngine(
         str(arguments.bgen),
@@ -182,7 +211,7 @@ def time_operation(
     )
 
 
-def build_case_report(arguments: argparse.Namespace) -> BenchmarkCaseReport:
+def build_case_report(arguments: BenchmarkArguments) -> BenchmarkCaseReport:
     """Run one benchmark case in-process."""
     path_modes = supported_path_modes(
         parse_path_modes(arguments.path_modes),
@@ -235,7 +264,7 @@ def build_case_report(arguments: argparse.Namespace) -> BenchmarkCaseReport:
 
 
 def run_case_subprocess(
-    arguments: argparse.Namespace,
+    arguments: BenchmarkArguments,
     chunk_size: int,
     decode_tile_variant_count: int | None,
     rayon_thread_count: int | None,
@@ -244,35 +273,31 @@ def run_case_subprocess(
     sample_selection_mode: SampleSelectionMode,
 ) -> BenchmarkCaseReport:
     """Run one benchmark case in a fresh process with low-level env knobs."""
-    command = [
-        sys.executable,
-        "-m",
-        "tooling.cli.benchmark_bgen_reader",
-        "--bgen",
-        str(arguments.bgen),
-        "--chunk-size",
-        str(chunk_size),
-        "--variant-limit",
-        str(arguments.variant_limit),
-        "--repeat-count",
-        str(arguments.repeat_count),
-        "--path-modes",
-        arguments.path_modes,
-        "--sample-selection-mode",
-        sample_selection_mode.value,
-        "--emit-case-json",
-    ]
-    if arguments.sample is not None:
-        command.extend(["--sample", str(arguments.sample)])
-    if trusted_no_missing_diploid:
-        command.append("--trusted-no-missing-diploid")
+    command = [sys.executable, "-m", "tooling.cli.benchmark_bgen_reader"]
+    command.extend(
+        tooling_hydra_arguments.build_overrides(
+            {
+                "tool.bgen": str(arguments.bgen),
+                "tool.sample": str(arguments.sample) if arguments.sample is not None else None,
+                "tool.chunk_size": chunk_size,
+                "tool.variant_limit": arguments.variant_limit,
+                "tool.repeat_count": arguments.repeat_count,
+                "tool.path_modes": arguments.path_modes,
+                "tool.sample_selection_mode": sample_selection_mode.value,
+                "tool.trusted_no_missing_diploid": trusted_no_missing_diploid,
+                "tool.emit_case_json": True,
+                "tool.json_summary_path": None,
+                "tool.markdown_summary_path": None,
+            }
+        )
+    )
     environment = os.environ.copy()
     if decode_tile_variant_count is not None:
         environment["G_BGEN_DECODE_TILE_VARIANT_COUNT"] = str(decode_tile_variant_count)
-        command.extend(["--decode-tile-variant-count", str(decode_tile_variant_count)])
+        command.append(f"tool.decode_tile_variant_count={decode_tile_variant_count}")
     if rayon_thread_count is not None:
         environment["RAYON_NUM_THREADS"] = str(rayon_thread_count)
-        command.extend(["--rayon-thread-count", str(rayon_thread_count)])
+        command.append(f"tool.rayon_thread_count={rayon_thread_count}")
     try:
         result = subprocess.run(command, check=True, capture_output=True, text=True, env=environment)
     except subprocess.CalledProcessError as error:
@@ -300,7 +325,7 @@ def run_case_subprocess(
     )
 
 
-def build_sweep_report(arguments: argparse.Namespace) -> BenchmarkSweepReport:
+def build_sweep_report(arguments: BenchmarkArguments) -> BenchmarkSweepReport:
     """Run all requested native BGEN benchmark cases."""
     chunk_sizes = parse_optional_int_list(arguments.chunk_sizes) or [arguments.chunk_size]
     decode_tile_variant_counts = parse_optional_int_list(arguments.decode_tile_variant_counts) or [
@@ -359,9 +384,43 @@ def write_text_report(path: Path, report: BenchmarkSweepReport) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main() -> None:
-    """Run the benchmark CLI."""
-    arguments = build_argument_parser().parse_args()
+def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArguments:
+    """Build benchmark parameters from a composed Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return BenchmarkArguments(
+        bgen=Path(str(tool_values["bgen"])),
+        sample=tooling_hydra_arguments.path_or_none(tool_values.get("sample")),
+        chunk_size=int(tool_values["chunk_size"]),
+        chunk_sizes=tooling_hydra_arguments.comma_join(tool_values["chunk_sizes"]),
+        variant_limit=int(tool_values["variant_limit"]),
+        repeat_count=int(tool_values["repeat_count"]),
+        path_modes=tooling_hydra_arguments.comma_join(tool_values["path_modes"]),
+        sample_selection_mode=str(tool_values["sample_selection_mode"]),
+        sample_selection_modes=tooling_hydra_arguments.comma_join(tool_values["sample_selection_modes"]),
+        decode_tile_variant_count=tooling_hydra_arguments.integer_or_none(
+            tool_values.get("decode_tile_variant_count")
+        ),
+        decode_tile_variant_counts=tooling_hydra_arguments.comma_join(tool_values["decode_tile_variant_counts"]),
+        rayon_thread_count=tooling_hydra_arguments.integer_or_none(tool_values.get("rayon_thread_count")),
+        rayon_thread_counts=tooling_hydra_arguments.comma_join(tool_values["rayon_thread_counts"]),
+        trusted_no_missing_diploid=bool(tool_values["trusted_no_missing_diploid"]),
+        trusted_no_missing_diploid_modes=tooling_hydra_arguments.comma_join(
+            tool_values["trusted_no_missing_diploid_modes"]
+        ),
+        emit_case_json=bool(tool_values["emit_case_json"]),
+        json_summary_path=tooling_hydra_arguments.path_or_none(tool_values.get("json_summary_path")),
+        markdown_summary_path=tooling_hydra_arguments.path_or_none(tool_values.get("markdown_summary_path")),
+    )
+
+
+def build_arguments_from_overrides(overrides: typing.Sequence[str] | None = None) -> BenchmarkArguments:
+    """Compose the BGEN reader config and return resolved parameters."""
+    config = tooling_configuration.compose_config(config_name="benchmark_bgen_reader", overrides=overrides)
+    return build_arguments_from_config(config)
+
+
+def run_tool(arguments: BenchmarkArguments) -> None:
+    """Run the benchmark with resolved parameters."""
     if arguments.emit_case_json:
         print(tooling_reports.to_json_text(build_case_report(arguments)).strip())
         return
@@ -373,6 +432,18 @@ def main() -> None:
     if arguments.markdown_summary_path is not None:
         write_text_report(arguments.markdown_summary_path, report)
     print(report_json)
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="benchmark_bgen_reader")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run the benchmark CLI through Hydra."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run the benchmark CLI."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

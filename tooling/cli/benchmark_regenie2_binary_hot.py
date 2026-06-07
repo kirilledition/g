@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import contextlib
 import dataclasses
 import enum
@@ -16,13 +15,20 @@ import time
 import typing
 from pathlib import Path
 
+import hydra
 import polars as pl
 
+import tooling.configuration as tooling_configuration
 from g import api, types
 from g.interface import config
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
+
+if typing.TYPE_CHECKING:
+    import omegaconf
 
 DEFAULT_DATA_DIRECTORY = tooling_paths.configured_data_directory()
 DEFAULT_OUTPUT_PARENT = Path("data/profiles")
@@ -102,6 +108,82 @@ class BenchmarkConfiguration:
     stage_timing_mode: StageTimingMode
     python_executable: str
     jax_cache_directory: Path
+
+
+@dataclasses.dataclass(frozen=True)
+class BenchmarkArguments:
+    """Resolved binary-hot benchmark parameters.
+
+    Attributes:
+        data_dir: Input data directory.
+        bgen: BGEN path, absolute or relative to ``data_dir``.
+        sample: Sample path, absolute or relative to ``data_dir``.
+        phenotype_file: Phenotype path, absolute or relative to ``data_dir``.
+        prediction_list: Step 1 prediction list, absolute or relative to ``data_dir``.
+        output_dir: Optional benchmark output directory.
+        device: Runtime device.
+        chunk_size: REGENIE bsize value.
+        staging_depth: Native staging depth.
+        output_writer_thread_count: Background writer thread count.
+        output_writer_queue_depth: Background writer queue depth.
+        trusted_no_missing_diploid: Whether to use the trusted BGEN decode path.
+        assume_trusted_validated: Whether trusted-path validation may be skipped.
+        phenotype_columns: Comma-separated binary phenotype columns.
+        binary_trait_counts: Optional comma-separated trait-count sweep.
+        firth_batch_size: Optional single Firth batch size.
+        firth_batch_sizes: Optional comma-separated Firth batch-size sweep.
+        firth_candidate_capacity: Optional single Firth candidate capacity.
+        firth_candidate_capacities: Optional comma-separated candidate-capacity sweep.
+        storage_modes: Comma-separated genotype storage modes.
+        fallback_density_scenarios: Comma-separated fallback-density scenarios.
+        default_fallback_p_threshold: Default fallback p-value threshold.
+        low_fallback_p_threshold: Low-density fallback p-value threshold.
+        high_fallback_p_threshold: High-density fallback p-value threshold.
+        variant_limit: Optional variant cap.
+        expected_variant_count: Optional full-input variant count.
+        stage_timing_mode: Stage timing collection mode.
+        include_cold_process: Whether to run the cold fresh-process trial.
+        include_finalized_hot: Whether to run finalized same-process hot trials.
+        include_no_final_hot: Whether to run no-final same-process hot trials.
+        python_executable: Python executable for fresh trials.
+        jax_cache_dir: Optional JAX cache directory.
+        json_summary_path: Optional explicit summary path.
+
+    """
+
+    data_dir: Path
+    bgen: Path
+    sample: Path
+    phenotype_file: Path
+    prediction_list: Path
+    output_dir: Path | None
+    device: str
+    chunk_size: int
+    staging_depth: int
+    output_writer_thread_count: int
+    output_writer_queue_depth: int
+    trusted_no_missing_diploid: bool
+    assume_trusted_validated: bool
+    phenotype_columns: str
+    binary_trait_counts: str | None
+    firth_batch_size: int | None
+    firth_batch_sizes: str | None
+    firth_candidate_capacity: int | None
+    firth_candidate_capacities: str | None
+    storage_modes: str
+    fallback_density_scenarios: str
+    default_fallback_p_threshold: float
+    low_fallback_p_threshold: float
+    high_fallback_p_threshold: float
+    variant_limit: int | None
+    expected_variant_count: int | None
+    stage_timing_mode: str
+    include_cold_process: bool
+    include_finalized_hot: bool
+    include_no_final_hot: bool
+    python_executable: str
+    jax_cache_dir: Path | None
+    json_summary_path: Path | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -321,171 +403,13 @@ def build_benchmark_cases(configuration: BenchmarkConfiguration) -> list[Benchma
     return benchmark_cases
 
 
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser."""
-    packaged_configuration = config.load_packaged_config()
-    parser = argparse.ArgumentParser(
-        description=(
-            "Benchmark binary REGENIE step 2 while separating cold process, same-process hot, "
-            "chunk-only, and finalized-Parquet timings."
-        )
-    )
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIRECTORY, help="Input data directory.")
-    parser.add_argument(
-        "--bgen",
-        type=Path,
-        default=DEFAULT_BGEN_FILE,
-        help="BGEN file path. Relative paths resolve under --data-dir.",
-    )
-    parser.add_argument(
-        "--sample",
-        type=Path,
-        default=DEFAULT_SAMPLE_FILE,
-        help="Sample file path. Relative paths resolve under --data-dir.",
-    )
-    parser.add_argument(
-        "--phenotype-file",
-        type=Path,
-        default=DEFAULT_PHENOTYPE_FILE,
-        help="Phenotype file path. Relative paths resolve under --data-dir.",
-    )
-    parser.add_argument(
-        "--prediction-list",
-        type=Path,
-        default=DEFAULT_PREDICTION_LIST,
-        help="REGENIE step 1 prediction list. Relative paths resolve under --data-dir.",
-    )
-    parser.add_argument("--output-dir", type=Path, help="Benchmark output directory.")
-    parser.add_argument("--device", default=types.Device.GPU.value, choices=[device.value for device in types.Device])
-    parser.add_argument(
-        "--chunk-size",
-        type=int,
-        default=packaged_configuration.trait.bsize,
-        help="Variants per chunk.",
-    )
-    parser.add_argument(
-        "--staging-depth",
-        "--prefetch-chunks",
-        type=int,
-        default=1,
-        help="Native callback staging depth.",
-    )
-    parser.add_argument("--output-writer-thread-count", type=int, default=8, help="Background writer threads.")
-    parser.add_argument("--output-writer-queue-depth", type=int, default=8, help="Background writer queue depth.")
-    parser.add_argument(
-        "--trusted-no-missing-diploid",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Use the trusted no-missing diploid BGEN decode path.",
-    )
-    parser.add_argument(
-        "--assume-trusted-validated",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Skip repeated trusted-path validation when the input has already been checked.",
-    )
-    parser.add_argument(
-        "--phenotype-columns",
-        default=",".join(DEFAULT_PHENOTYPE_COLUMNS),
-        help="Comma-separated binary phenotype columns available for trait-count sweeps.",
-    )
-    parser.add_argument(
-        "--binary-trait-counts",
-        help=(
-            "Comma-separated binary trait counts. Each case uses the first N --phenotype-columns. "
-            "Defaults to all provided phenotype columns."
-        ),
-    )
-    parser.add_argument(
-        "--firth-batch-size",
-        type=int,
-        help="Single binary Firth candidate batch size. Use --firth-batch-sizes for sweeps.",
-    )
-    parser.add_argument(
-        "--firth-batch-sizes",
-        help="Comma-separated binary Firth candidate batch size sweep.",
-    )
-    parser.add_argument(
-        "--firth-candidate-capacity",
-        type=int,
-        help="Single Firth candidate capacity. Use --firth-candidate-capacities for sweeps.",
-    )
-    parser.add_argument(
-        "--firth-candidate-capacities",
-        help="Comma-separated Firth candidate capacity sweep.",
-    )
-    parser.add_argument(
-        "--storage-modes",
-        default=BenchmarkStorageMode.VARIANT_MAJOR.value,
-        help="Comma-separated storage modes: variant_major, dosage, packed8.",
-    )
-    parser.add_argument(
-        "--fallback-density-scenarios",
-        default=FallbackDensityScenario.DEFAULT.value,
-        help="Comma-separated fallback-density scenarios: default, low, high.",
-    )
-    parser.add_argument(
-        "--default-fallback-p-threshold",
-        type=float,
-        default=packaged_configuration.binary.p_threshold,
-        help="Approximate-Firth pThresh for the default fallback-density scenario.",
-    )
-    parser.add_argument(
-        "--low-fallback-p-threshold",
-        type=float,
-        default=DEFAULT_LOW_FALLBACK_P_THRESHOLD,
-        help="Approximate-Firth pThresh for the low fallback-density scenario.",
-    )
-    parser.add_argument(
-        "--high-fallback-p-threshold",
-        type=float,
-        default=DEFAULT_HIGH_FALLBACK_P_THRESHOLD,
-        help="Approximate-Firth pThresh for the high fallback-density scenario.",
-    )
-    parser.add_argument("--variant-limit", type=int, help="Optional variant cap for smoke runs.")
-    parser.add_argument(
-        "--expected-variant-count",
-        type=int,
-        default=DEFAULT_VARIANT_COUNT,
-        help="Expected full input variant count recorded in benchmark metadata.",
-    )
-    parser.add_argument(
-        "--stage-timing-mode",
-        choices=[stage_timing_mode.value for stage_timing_mode in StageTimingMode],
-        default=StageTimingMode.EXACT.value,
-        help="Use exact synchronized stage timings, or disable them for production-throughput timing.",
-    )
-    parser.add_argument(
-        "--include-cold-process",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Include one fresh Python process finalized trial.",
-    )
-    parser.add_argument(
-        "--include-finalized-hot",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Include same-process warm/hot trials with Parquet finalization.",
-    )
-    parser.add_argument(
-        "--include-no-final-hot",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Include same-process warm/hot trials that stop after Arrow chunk writes.",
-    )
-    parser.add_argument("--python-executable", default=sys.executable, help="Python executable for fresh trials.")
-    parser.add_argument("--jax-cache-dir", type=Path, help="Explicit JAX compilation cache directory.")
-    parser.add_argument("--json-summary-path", type=Path, help="Optional explicit summary JSON path.")
-    return parser
-
-
 def default_output_directory() -> Path:
     """Build a timestamped default output directory."""
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     return DEFAULT_OUTPUT_PARENT / f"regenie2_binary_hot_{timestamp}"
 
 
-def build_configuration(arguments: argparse.Namespace) -> BenchmarkConfiguration:
+def build_configuration(arguments: BenchmarkArguments) -> BenchmarkConfiguration:
     """Build a benchmark configuration from parsed CLI arguments."""
     packaged_configuration = config.load_packaged_config()
     output_directory = arguments.output_dir or default_output_directory()
@@ -1262,10 +1186,70 @@ def run_benchmark(configuration: BenchmarkConfiguration, trial_specs: list[Trial
     return trial_results
 
 
-def main() -> None:
+def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArguments:
+    """Build benchmark parameters from a composed Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    python_executable = tool_values.get("python_executable")
+    binary_trait_counts = tool_values.get("binary_trait_counts")
+    firth_batch_sizes = tool_values.get("firth_batch_sizes")
+    firth_candidate_capacities = tool_values.get("firth_candidate_capacities")
+    return BenchmarkArguments(
+        data_dir=Path(str(tool_values["data_dir"])),
+        bgen=Path(str(tool_values["bgen"])),
+        sample=Path(str(tool_values["sample"])),
+        phenotype_file=Path(str(tool_values["phenotype_file"])),
+        prediction_list=Path(str(tool_values["prediction_list"])),
+        output_dir=tooling_hydra_arguments.path_or_none(tool_values.get("output_dir")),
+        device=str(tool_values["device"]),
+        chunk_size=int(tool_values["chunk_size"]),
+        staging_depth=int(tool_values["staging_depth"]),
+        output_writer_thread_count=int(tool_values["output_writer_thread_count"]),
+        output_writer_queue_depth=int(tool_values["output_writer_queue_depth"]),
+        trusted_no_missing_diploid=bool(tool_values["trusted_no_missing_diploid"]),
+        assume_trusted_validated=bool(tool_values["assume_trusted_validated"]),
+        phenotype_columns=tooling_hydra_arguments.comma_join(tool_values["phenotype_columns"]),
+        binary_trait_counts=(
+            tooling_hydra_arguments.comma_join(binary_trait_counts) if binary_trait_counts is not None else None
+        ),
+        firth_batch_size=tooling_hydra_arguments.integer_or_none(tool_values.get("firth_batch_size")),
+        firth_batch_sizes=(
+            tooling_hydra_arguments.comma_join(firth_batch_sizes) if firth_batch_sizes is not None else None
+        ),
+        firth_candidate_capacity=tooling_hydra_arguments.integer_or_none(
+            tool_values.get("firth_candidate_capacity")
+        ),
+        firth_candidate_capacities=(
+            tooling_hydra_arguments.comma_join(firth_candidate_capacities)
+            if firth_candidate_capacities is not None
+            else None
+        ),
+        storage_modes=tooling_hydra_arguments.comma_join(tool_values["storage_modes"]),
+        fallback_density_scenarios=tooling_hydra_arguments.comma_join(
+            tool_values["fallback_density_scenarios"]
+        ),
+        default_fallback_p_threshold=float(tool_values["default_fallback_p_threshold"]),
+        low_fallback_p_threshold=float(tool_values["low_fallback_p_threshold"]),
+        high_fallback_p_threshold=float(tool_values["high_fallback_p_threshold"]),
+        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
+        expected_variant_count=tooling_hydra_arguments.integer_or_none(tool_values.get("expected_variant_count")),
+        stage_timing_mode=str(tool_values["stage_timing_mode"]),
+        include_cold_process=bool(tool_values["include_cold_process"]),
+        include_finalized_hot=bool(tool_values["include_finalized_hot"]),
+        include_no_final_hot=bool(tool_values["include_no_final_hot"]),
+        python_executable=sys.executable if python_executable is None else str(python_executable),
+        jax_cache_dir=tooling_hydra_arguments.path_or_none(tool_values.get("jax_cache_dir")),
+        json_summary_path=tooling_hydra_arguments.path_or_none(tool_values.get("json_summary_path")),
+    )
+
+
+def build_arguments_from_overrides(overrides: typing.Sequence[str] | None = None) -> BenchmarkArguments:
+    """Compose the binary-hot config and return resolved parameters."""
+    config = tooling_configuration.compose_config(config_name="benchmark_regenie2_binary_hot", overrides=overrides)
+    return build_arguments_from_config(config)
+
+
+def run_tool(arguments: BenchmarkArguments) -> None:
     """Run the binary hot benchmark."""
-    argument_parser = build_argument_parser()
-    arguments = argument_parser.parse_args()
     configuration = build_configuration(arguments)
     trial_specs = build_trial_specs(
         include_cold_process=bool(arguments.include_cold_process),
@@ -1284,6 +1268,18 @@ def main() -> None:
     summary_path = arguments.json_summary_path or (configuration.output_directory / "regenie2_binary_hot_summary.json")
     write_summary(summary_path, summary)
     print(f"Wrote summary: {summary_path}")
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="benchmark_regenie2_binary_hot")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run the binary hot benchmark through Hydra."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run the binary hot benchmark."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

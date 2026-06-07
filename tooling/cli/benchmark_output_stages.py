@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
 import json
 import os
@@ -12,12 +11,19 @@ import time
 import typing
 from pathlib import Path
 
+import hydra
 import polars as pl
 
+import tooling.configuration as tooling_configuration
 from g import api, types
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
 from tooling.common import sweeps as tooling_sweeps
+
+if typing.TYPE_CHECKING:
+    import omegaconf
 
 DEFAULT_DATA_DIRECTORY = tooling_paths.configured_data_directory()
 DEFAULT_OUTPUT_DIRECTORY = Path("data/benchmarks/output_stages")
@@ -35,6 +41,50 @@ RUST_OUTPUT_FINALIZATION_TOTAL_METRIC = "rust_output_finalization_total"
 BRIDGE_RESIDUAL_METRIC = "bridge_residual"
 MEASURED_OUTPUT_PATH_METRIC = "measured_output_path"
 MEBIBYTE = 1024.0 * 1024.0
+
+
+@dataclasses.dataclass(frozen=True)
+class BenchmarkArguments:
+    """Resolved output-stage benchmark parameters.
+
+    Attributes:
+        data_dir: Input data directory.
+        output_dir: Benchmark output directory.
+        device: Runtime device.
+        small_bsize: Small bsize value.
+        large_bsize: Large bsize value.
+        extra_bsizes: Comma-separated extra bsize values.
+        many_phenotype_count: Trait count for many-phenotype cases.
+        variant_limit: Optional variant cap.
+        trials: Measured trials per case.
+        writer_thread_counts: Comma-separated writer thread-count values.
+        writer_queue_depth_multipliers: Comma-separated queue-depth multipliers.
+        chunks_per_arrow_file_values: Comma-separated chunk grouping values.
+        arrow_compressions: Comma-separated Arrow compression codecs.
+        json_summary_path: Optional JSON summary path.
+        markdown_summary_path: Optional Markdown summary path.
+        enable_jax_trace: Whether to capture representative JAX traces.
+        jax_trace_case_limit: Maximum traced case count.
+
+    """
+
+    data_dir: Path
+    output_dir: Path
+    device: str
+    small_bsize: int
+    large_bsize: int
+    extra_bsizes: str
+    many_phenotype_count: int
+    variant_limit: int | None
+    trials: int
+    writer_thread_counts: str
+    writer_queue_depth_multipliers: str
+    chunks_per_arrow_file_values: str
+    arrow_compressions: str
+    json_summary_path: Path | None
+    markdown_summary_path: Path | None
+    enable_jax_trace: bool
+    jax_trace_case_limit: int
 
 
 @dataclasses.dataclass(frozen=True)
@@ -143,54 +193,6 @@ class TrialResult:
     handoff_timing: OutputHandoffTimingMetrics
     rust_output_metrics: dict[str, float] = dataclasses.field(default_factory=dict)
     jax_trace_directory: str | None = None
-
-
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser."""
-    parser = argparse.ArgumentParser(description="Benchmark g output-stage timings.")
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIRECTORY, help="Input data directory.")
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIRECTORY, help="Benchmark output directory.")
-    parser.add_argument("--device", default=types.Device.GPU.value, choices=[device.value for device in types.Device])
-    parser.add_argument("--small-bsize", type=int, default=1024, help="Small REGENIE bsize to benchmark.")
-    parser.add_argument("--large-bsize", type=int, default=8192, help="Large REGENIE bsize to benchmark.")
-    parser.add_argument(
-        "--extra-bsizes",
-        default="16384",
-        help="Comma-separated additional REGENIE bsize values to benchmark.",
-    )
-    parser.add_argument("--many-phenotype-count", type=int, default=8, help="Trait count for many-phenotype runs.")
-    parser.add_argument("--variant-limit", type=int, help="Optional variant cap for smoke runs.")
-    parser.add_argument("--trials", type=int, default=1, help="Measured trial count per case.")
-    parser.add_argument("--writer-thread-counts", default="1,2,4,8,12", help="Comma-separated writer thread counts.")
-    parser.add_argument(
-        "--writer-queue-depth-multipliers",
-        default="1,2,4",
-        help="Comma-separated queue-depth multipliers applied to writer thread count.",
-    )
-    parser.add_argument(
-        "--chunks-per-arrow-file-values",
-        default="4,16,64",
-        help="Comma-separated chunks-per-Arrow-file values.",
-    )
-    parser.add_argument(
-        "--arrow-compressions",
-        default="zstd,none",
-        help="Comma-separated Arrow IPC compression codecs.",
-    )
-    parser.add_argument("--json-summary-path", type=Path, help="Optional explicit summary JSON path.")
-    parser.add_argument("--markdown-summary-path", type=Path, help="Optional explicit summary Markdown path.")
-    parser.add_argument(
-        "--enable-jax-trace",
-        action="store_true",
-        help="Capture JAX profiler traces for representative trials.",
-    )
-    parser.add_argument(
-        "--jax-trace-case-limit",
-        type=int,
-        default=1,
-        help="Maximum number of benchmark cases to trace when JAX tracing is enabled.",
-    )
-    return parser
 
 
 def parse_positive_int_list(text: str) -> tuple[int, ...]:
@@ -769,10 +771,42 @@ def build_markdown_summary(summary: dict[str, typing.Any]) -> str:
     return "\n".join(lines)
 
 
-def main() -> None:
+def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArguments:
+    """Build benchmark parameters from a composed Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return BenchmarkArguments(
+        data_dir=Path(str(tool_values["data_dir"])),
+        output_dir=Path(str(tool_values["output_dir"])),
+        device=str(tool_values["device"]),
+        small_bsize=int(tool_values["small_bsize"]),
+        large_bsize=int(tool_values["large_bsize"]),
+        extra_bsizes=tooling_hydra_arguments.comma_join(tool_values["extra_bsizes"]),
+        many_phenotype_count=int(tool_values["many_phenotype_count"]),
+        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
+        trials=int(tool_values["trials"]),
+        writer_thread_counts=tooling_hydra_arguments.comma_join(tool_values["writer_thread_counts"]),
+        writer_queue_depth_multipliers=tooling_hydra_arguments.comma_join(
+            tool_values["writer_queue_depth_multipliers"]
+        ),
+        chunks_per_arrow_file_values=tooling_hydra_arguments.comma_join(
+            tool_values["chunks_per_arrow_file_values"]
+        ),
+        arrow_compressions=tooling_hydra_arguments.comma_join(tool_values["arrow_compressions"]),
+        json_summary_path=tooling_hydra_arguments.path_or_none(tool_values.get("json_summary_path")),
+        markdown_summary_path=tooling_hydra_arguments.path_or_none(tool_values.get("markdown_summary_path")),
+        enable_jax_trace=bool(tool_values["enable_jax_trace"]),
+        jax_trace_case_limit=int(tool_values["jax_trace_case_limit"]),
+    )
+
+
+def build_arguments_from_overrides(overrides: typing.Sequence[str] | None = None) -> BenchmarkArguments:
+    """Compose the output-stage config and return resolved parameters."""
+    config = tooling_configuration.compose_config(config_name="benchmark_output_stages", overrides=overrides)
+    return build_arguments_from_config(config)
+
+
+def run_tool(arguments: BenchmarkArguments) -> None:
     """Run the output-stage benchmark matrix."""
-    argument_parser = build_argument_parser()
-    arguments = argument_parser.parse_args()
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
     device = types.Device(arguments.device)
     benchmark_cases = build_benchmark_cases(
@@ -810,6 +844,18 @@ def main() -> None:
     print(json.dumps(summary, indent=2, sort_keys=True))
     print(f"Wrote summary: {summary_path}")
     print(f"Wrote Markdown summary: {markdown_summary_path}")
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="benchmark_output_stages")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run the output-stage benchmark through Hydra."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run the output-stage benchmark matrix."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
 import hashlib
 import json
+import logging
 import os
+import shlex
 import shutil
 import statistics
 import subprocess
@@ -18,17 +19,119 @@ import typing
 from datetime import UTC, datetime
 from pathlib import Path
 
+import hydra
+
 import scripts.benchmark as baseline_benchmark
 import scripts.benchmark_regenie_comparison as comparison_benchmark
 import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
+import tooling.configuration as tooling_configuration
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+from tooling.common import logging as tooling_logging
 from tooling.common import paths as tooling_paths
 
+if typing.TYPE_CHECKING:
+    import omegaconf
+
+logger = logging.getLogger(__name__)
 REPOSITORY_ROOT = tooling_paths.find_repository_root(Path(__file__))
 DEFAULT_OUTPUT_PARENT = Path("data/profiles")
 DEFAULT_VARIANT_COUNT = 418_943
 JAX_XLA_AUTOTUNE_CACHE = "xla_gpu_per_fusion_autotune_cache_dir"
 ENABLE_XLA_AUTOTUNE_CACHE = os.environ.get("G_PROFILE_ENABLE_XLA_AUTOTUNE_CACHE") == "1"
 GPU_JAX_CACHE_PARENT_DEFAULT = "/tmp/g-jax-profile-cache"
+
+
+@dataclasses.dataclass(frozen=True)
+class ProfileArguments:
+    """Resolved deep profile campaign parameters.
+
+    Attributes:
+        chromosome_label: Chromosome label used in reports and logs.
+        data_directory: Directory containing benchmark inputs.
+        baseline_directory: Directory containing baseline step 1 prediction lists.
+        bed_prefix: PLINK BED prefix used by original REGENIE step 1 setup.
+        bgen_path: BGEN path used by step 2 runs.
+        sample_path: Sample path used by step 2 runs.
+        continuous_phenotype_path: Quantitative phenotype table path.
+        binary_phenotype_path: Binary phenotype table path.
+        covariate_path: Covariate table path.
+        regenie_prediction_list_path: Binary step 1 prediction list.
+        regenie_qt_prediction_list_path: Quantitative step 1 prediction list.
+        output_dir: Optional explicit output directory.
+        output_parent: Parent directory for timestamped output directories.
+        variant_limit: Optional variant cap for smoke runs.
+        dry_run: Whether to write a profile plan without running workloads.
+        include_regenie_baseline: Whether headline trials include original REGENIE.
+        smoke: Whether to use the reduced smoke campaign.
+        skip_deep_profiles: Whether to skip sampling and trace profiles.
+        enable_jax_trace: Whether deep profiles capture JAX profiler traces.
+        enable_jax_memory_profile: Whether deep profiles capture JAX memory profiles.
+        enable_python_cprofile: Whether deep profiles capture cProfile output.
+        enable_py_spy: Whether deep profiles capture py-spy speedscope output when available.
+        enable_linux_perf: Whether deep profiles capture Linux perf native stack data when available.
+        enable_rust_criterion: Whether deep profiles run Rust Criterion benches.
+        rust_benchmarks: Comma-separated Rust Criterion benchmark names.
+        chunk_sizes: Comma-separated step 2 chunk-size values.
+        staging_depths: Comma-separated staging-depth values.
+        output_writer_thread_counts: Comma-separated writer thread-count values.
+        writer_queue_depth_multipliers: Comma-separated queue-depth multipliers.
+        firth_batch_sizes: Comma-separated binary Firth batch sizes.
+        bgen_decode_tile_variant_counts: Comma-separated BGEN decode tile sizes.
+        rayon_thread_counts: Comma-separated Rayon thread-count values.
+        bgen_benchmark_chunk_size: Chunk size for BGEN pre-sweep cases.
+        top_bgen_candidates: Number of BGEN candidates kept.
+        top_finalists: Number of finalists kept.
+        tuning_warmups: Warmup count for tuning trials.
+        tuning_trials: Measured count for tuning trials.
+        finalist_warmups: Warmup count for finalist trials.
+        finalist_trials: Measured count for finalist trials.
+        headline_warmups: Warmup count for headline trials.
+        headline_trials: Measured count for headline trials.
+
+    """
+
+    chromosome_label: str
+    data_directory: Path
+    baseline_directory: Path
+    bed_prefix: Path
+    bgen_path: Path
+    sample_path: Path
+    continuous_phenotype_path: Path
+    binary_phenotype_path: Path
+    covariate_path: Path
+    regenie_prediction_list_path: Path
+    regenie_qt_prediction_list_path: Path
+    output_dir: Path | None
+    output_parent: Path
+    variant_limit: int | None
+    dry_run: bool
+    include_regenie_baseline: bool
+    smoke: bool
+    skip_deep_profiles: bool
+    enable_jax_trace: bool
+    enable_jax_memory_profile: bool
+    enable_python_cprofile: bool
+    enable_py_spy: bool
+    enable_linux_perf: bool
+    enable_rust_criterion: bool
+    rust_benchmarks: str
+    chunk_sizes: str
+    staging_depths: str
+    output_writer_thread_counts: str
+    writer_queue_depth_multipliers: str
+    firth_batch_sizes: str
+    bgen_decode_tile_variant_counts: str
+    rayon_thread_counts: str
+    bgen_benchmark_chunk_size: int
+    top_bgen_candidates: int
+    top_finalists: int
+    tuning_warmups: int
+    tuning_trials: int
+    finalist_warmups: int
+    finalist_trials: int
+    headline_warmups: int
+    headline_trials: int
 
 
 @dataclasses.dataclass(frozen=True)
@@ -99,30 +202,55 @@ class AggregateResult:
     trials: list[TrialResult]
 
 
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser."""
-    parser = argparse.ArgumentParser(description="Profile REGENIE step 2 deeply on landau.")
-    parser.add_argument("--output-dir", type=Path, help="Explicit output directory.")
-    parser.add_argument("--variant-limit", type=int, help="Optional variant cap for smoke runs.")
-    parser.add_argument("--smoke", action="store_true", help="Use a fast smoke configuration.")
-    parser.add_argument("--skip-deep-profiles", action="store_true", help="Skip perf/py-spy/cProfile/JAX trace runs.")
-    parser.add_argument("--chunk-sizes", default="2048,4096,8192,16384")
-    parser.add_argument("--staging-depths", "--prefetch-chunks", default="1,2")
-    parser.add_argument("--output-writer-thread-counts", default="1,2,4,8")
-    parser.add_argument("--writer-queue-depth-multipliers", default="1,2")
-    parser.add_argument("--firth-batch-sizes", default="512,1024,2048")
-    parser.add_argument("--bgen-decode-tile-variant-counts", default="32,64,128,256")
-    parser.add_argument("--rayon-thread-counts", default="1,2,4,8")
-    parser.add_argument("--bgen-benchmark-chunk-size", type=int, default=8192)
-    parser.add_argument("--top-bgen-candidates", type=int, default=3)
-    parser.add_argument("--top-finalists", type=int, default=3)
-    parser.add_argument("--tuning-warmups", type=int, default=1)
-    parser.add_argument("--tuning-trials", type=int, default=3)
-    parser.add_argument("--finalist-warmups", type=int, default=2)
-    parser.add_argument("--finalist-trials", type=int, default=7)
-    parser.add_argument("--headline-warmups", type=int, default=1)
-    parser.add_argument("--headline-trials", type=int, default=7)
-    return parser
+@dataclasses.dataclass(frozen=True)
+class ProfilePlan:
+    """Dry-run profile campaign plan.
+
+    Attributes:
+        chromosome_label: Chromosome label selected by Hydra.
+        output_directory: Planned output directory.
+        required_inputs: Input paths and step 1 prediction paths used by real runs.
+        profiler_modes: Profiler modes requested by config.
+        rust_benchmark_commands: Rust Criterion benchmark commands.
+        notes: Human-readable plan notes.
+
+    """
+
+    chromosome_label: str
+    output_directory: str
+    required_inputs: list[str]
+    profiler_modes: dict[str, bool]
+    rust_benchmark_commands: list[list[str]]
+    notes: list[str]
+
+
+def resolve_repo_path(value: typing.Any) -> Path:
+    """Resolve a path relative to the repository root."""
+    return tooling_paths.resolve_repo_relative_path(Path(str(value)), REPOSITORY_ROOT)
+
+
+def resolve_data_path(data_directory: Path, value: typing.Any) -> Path:
+    """Resolve one input path relative to the data directory."""
+    return tooling_paths.resolve_data_path(data_directory, Path(str(value)))
+
+
+def build_baseline_paths(arguments: ProfileArguments) -> baseline_benchmark.BaselinePaths:
+    """Build baseline paths from Hydra-resolved profile arguments."""
+    return baseline_benchmark.BaselinePaths(
+        data_directory=arguments.data_directory,
+        baseline_directory=arguments.baseline_directory,
+        bed_prefix=arguments.bed_prefix,
+        bgen_path=arguments.bgen_path,
+        sample_path=arguments.sample_path,
+        continuous_phenotype_path=arguments.continuous_phenotype_path,
+        binary_phenotype_path=arguments.binary_phenotype_path,
+        covariate_path=arguments.covariate_path,
+        hail_directory=arguments.data_directory / "hail",
+        hail_matrix_table_path=arguments.data_directory / "hail" / f"{arguments.bed_prefix.name}.mt",
+        hail_suite_report_path=arguments.baseline_directory / "hail_suite_report.json",
+        regenie_prediction_list_path=arguments.regenie_prediction_list_path,
+        regenie_qt_prediction_list_path=arguments.regenie_qt_prediction_list_path,
+    )
 
 
 def parse_int_list(raw_values: str) -> tuple[int, ...]:
@@ -134,12 +262,21 @@ def parse_int_list(raw_values: str) -> tuple[int, ...]:
     return parsed_values
 
 
-def build_output_directory(arguments: argparse.Namespace) -> Path:
+def parse_string_list(raw_values: str) -> tuple[str, ...]:
+    """Parse a comma-separated list of strings."""
+    parsed_values = tuple(value.strip() for value in raw_values.split(",") if value.strip())
+    if not parsed_values:
+        message = "At least one string value is required."
+        raise ValueError(message)
+    return parsed_values
+
+
+def build_output_directory(arguments: ProfileArguments) -> Path:
     """Resolve the campaign output directory."""
     if arguments.output_dir is not None:
         return arguments.output_dir
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return DEFAULT_OUTPUT_PARENT / f"landau_deep_{timestamp}"
+    return arguments.output_parent / f"landau_deep_{arguments.chromosome_label}_{timestamp}"
 
 
 def command_output(
@@ -406,11 +543,36 @@ def build_g_step2_child_command(
         """
         import json
         import time
+        from pathlib import Path
 
         import jax
         import polars as pl
 
         from g import api, types
+
+        def count_artifact_rows(artifacts):
+            artifact_values = artifacts.phenotype_artifacts or (artifacts,)
+            output_paths = []
+            output_row_count = 0
+            for artifact in artifact_values:
+                if artifact.final_parquet is not None:
+                    output_paths.append(str(artifact.final_parquet))
+                    output_row_count += pl.scan_parquet(artifact.final_parquet).select(pl.len()).collect().item()
+                    continue
+                if artifact.output_run_directory is None:
+                    continue
+                output_run_directory = Path(artifact.output_run_directory)
+                parquet_paths = sorted((output_run_directory / "parts").glob("*.parquet"))
+                arrow_paths = sorted((output_run_directory / "chunks").glob("*.arrow"))
+                for parquet_path in parquet_paths:
+                    output_paths.append(str(parquet_path))
+                    output_row_count += pl.scan_parquet(parquet_path).select(pl.len()).collect().item()
+                for arrow_path in arrow_paths:
+                    output_paths.append(str(arrow_path))
+                    output_row_count += pl.scan_ipc(arrow_path).select(pl.len()).collect().item()
+            if not output_paths:
+                raise RuntimeError("No readable output artifacts were produced.")
+            return output_row_count, output_paths
 
         trace_directory = {trace_directory!r}
         memory_profile_path = {memory_profile_path!r}
@@ -445,14 +607,15 @@ def build_g_step2_child_command(
                 **{binary_options_expression},
             }})
             wall_time_seconds = time.perf_counter() - start_time
-            output_row_count = pl.scan_parquet(artifacts.final_parquet).select(pl.len()).collect().item()
+            output_row_count, output_paths = count_artifact_rows(artifacts)
             probe_array = jax.device_put(0)
             probe_device = next(iter(probe_array.devices()))
             if memory_profile_path is not None:
                 jax.profiler.save_device_memory_profile(memory_profile_path)
             print(json.dumps({{
                 "wall_time_seconds": wall_time_seconds,
-                "output_path": str(artifacts.final_parquet),
+                "output_path": output_paths[0],
+                "output_paths": output_paths,
                 "output_row_count": int(output_row_count),
                 "jax_devices": [str(device) for device in jax.devices()],
                 "jax_probe_device": str(probe_device),
@@ -506,6 +669,8 @@ def run_logged_command(
     stderr_log_path = log_directory / f"{name}.stderr.log"
     environment = dict(os.environ)
     environment.update(environment_overrides)
+    logger.info("Starting %s profiler/workload command", name)
+    logger.debug("Command for %s: %s", name, shlex.join(command_arguments))
     start_time = time.perf_counter()
     completed_process = subprocess.run(
         command_arguments,
@@ -521,6 +686,12 @@ def run_logged_command(
     notes = None
     if completed_process.returncode != 0:
         notes = completed_process.stderr.strip() or completed_process.stdout.strip()
+    logger.info(
+        "Finished %s with status=%s in %.3fs",
+        name,
+        status,
+        wall_time_seconds,
+    )
     return TrialResult(
         name=name,
         implementation=implementation,
@@ -533,6 +704,38 @@ def run_logged_command(
         stderr_log_path=str(stderr_log_path),
         command_arguments=command_arguments,
         environment_overrides=environment_overrides,
+        notes=notes,
+    )
+
+
+def skipped_profile_result(
+    *,
+    name: str,
+    implementation: str,
+    trait_type: str,
+    device: str,
+    log_directory: Path,
+    notes: str,
+) -> TrialResult:
+    """Build a skipped profiler result and persist the skip reason."""
+    log_directory.mkdir(parents=True, exist_ok=True)
+    stdout_log_path = log_directory / f"{name}.stdout.log"
+    stderr_log_path = log_directory / f"{name}.stderr.log"
+    stdout_log_path.write_text("", encoding="utf-8")
+    stderr_log_path.write_text(notes + "\n", encoding="utf-8")
+    logger.info("Skipping %s: %s", name, notes)
+    return TrialResult(
+        name=name,
+        implementation=implementation,
+        trait_type=trait_type,
+        device=device,
+        status="skipped",
+        wall_time_seconds=None,
+        output_row_count=None,
+        stdout_log_path=str(stdout_log_path),
+        stderr_log_path=str(stderr_log_path),
+        command_arguments=[],
+        environment_overrides={},
         notes=notes,
     )
 
@@ -807,33 +1010,36 @@ def summarize_bgen_case(case_report: typing.Any) -> BgenCandidateSummary:
 
 def run_bgen_sweep(
     *,
-    arguments: argparse.Namespace,
+    arguments: ProfileArguments,
     baseline_paths: typing.Any,
     output_directory: Path,
 ) -> tuple[BgenCandidateSummary, ...]:
     """Run BGEN reader sweeps over decode tile size and Rayon threads."""
-    parser = benchmark_bgen_reader.build_argument_parser()
     summaries: list[BgenCandidateSummary] = []
     variant_limit = arguments.variant_limit or 16_384
     sweep_directory = output_directory / "bgen_sweep"
     sweep_directory.mkdir(parents=True, exist_ok=True)
     for decode_tile_variant_count in parse_int_list(arguments.bgen_decode_tile_variant_counts):
         for rayon_thread_count in parse_int_list(arguments.rayon_thread_counts):
-            benchmark_arguments = parser.parse_args(
-                [
-                    "--bgen",
-                    str(baseline_paths.bgen_path),
-                    "--sample",
-                    str(baseline_paths.sample_path),
-                    "--chunk-size",
-                    str(arguments.bgen_benchmark_chunk_size),
-                    "--variant-limit",
-                    str(variant_limit),
-                    "--repeat-count",
-                    str(arguments.tuning_trials),
-                    "--path-modes",
-                    benchmark_bgen_reader.BenchmarkPathMode.VARIANT_MAJOR_BUFFERED.value,
-                ]
+            benchmark_arguments = benchmark_bgen_reader.BenchmarkArguments(
+                bgen=baseline_paths.bgen_path,
+                sample=baseline_paths.sample_path,
+                chunk_size=arguments.bgen_benchmark_chunk_size,
+                chunk_sizes=str(arguments.bgen_benchmark_chunk_size),
+                variant_limit=variant_limit,
+                repeat_count=arguments.tuning_trials,
+                path_modes=benchmark_bgen_reader.BenchmarkPathMode.VARIANT_MAJOR_BUFFERED.value,
+                sample_selection_mode=benchmark_bgen_reader.SampleSelectionMode.FULL.value,
+                sample_selection_modes="",
+                decode_tile_variant_count=decode_tile_variant_count,
+                decode_tile_variant_counts="",
+                rayon_thread_count=rayon_thread_count,
+                rayon_thread_counts="",
+                trusted_no_missing_diploid=False,
+                trusted_no_missing_diploid_modes="",
+                emit_case_json=True,
+                json_summary_path=None,
+                markdown_summary_path=None,
             )
             case_report = benchmark_bgen_reader.run_case_subprocess(
                 benchmark_arguments,
@@ -854,7 +1060,7 @@ def run_bgen_sweep(
 
 def run_candidate_tuning(
     *,
-    arguments: argparse.Namespace,
+    arguments: ProfileArguments,
     baseline_paths: typing.Any,
     bgen_summaries: tuple[BgenCandidateSummary, ...],
     output_directory: Path,
@@ -953,28 +1159,32 @@ def recover_candidate_from_trial(trial_result: TrialResult, candidates: tuple[St
 
 def run_headline_trials(
     *,
-    arguments: argparse.Namespace,
+    arguments: ProfileArguments,
     baseline_paths: typing.Any,
-    regenie_executable: str,
+    regenie_executable: str | None,
     winners: dict[str, AggregateResult],
     output_directory: Path,
     cache_directory: Path,
 ) -> list[AggregateResult]:
     """Run headline original REGENIE and winning g configurations."""
     headline_results: list[AggregateResult] = []
-    for trait_type in ("quantitative", "binary"):
-        headline_results.append(
-            run_repeated_regenie_trials(
-                name=f"headline_regenie_{trait_type}",
-                trait_type=trait_type,
-                regenie_executable=regenie_executable,
-                baseline_paths=baseline_paths,
-                output_directory=output_directory / "headline_runs",
-                log_directory=output_directory / "logs",
-                warmup_count=arguments.headline_warmups,
-                trial_count=arguments.headline_trials,
+    if arguments.include_regenie_baseline:
+        if regenie_executable is None:
+            message = "Original REGENIE baseline was requested, but no executable was resolved."
+            raise RuntimeError(message)
+        for trait_type in ("quantitative", "binary"):
+            headline_results.append(
+                run_repeated_regenie_trials(
+                    name=f"headline_regenie_{trait_type}",
+                    trait_type=trait_type,
+                    regenie_executable=regenie_executable,
+                    baseline_paths=baseline_paths,
+                    output_directory=output_directory / "headline_runs",
+                    log_directory=output_directory / "logs",
+                    warmup_count=arguments.headline_warmups,
+                    trial_count=arguments.headline_trials,
+                )
             )
-        )
     for winner_key, winner in sorted(winners.items()):
         if not winner.trials:
             continue
@@ -1326,67 +1536,71 @@ def format_optional_float(value: float | None) -> str:
 
 def run_deep_profiles(
     *,
+    arguments: ProfileArguments,
     baseline_paths: typing.Any,
     winners: dict[str, AggregateResult],
     output_directory: Path,
     cache_directory: Path,
-    variant_limit: int | None,
 ) -> dict[str, typing.Any]:
     """Run optional profiler commands for representative g winners."""
     profile_directory = output_directory / "deep_profiles"
     profile_directory.mkdir(parents=True, exist_ok=True)
     results: dict[str, typing.Any] = {
-        "criterion_bgen": command_output(
-            ["cargo", "bench", "--bench", "bgen_read"],
-            environment_overrides={"RUSTFLAGS": "-C target-cpu=native"},
-        ),
+        "rust_criterion": [],
         "sampling_profiles": [],
     }
+    if arguments.enable_rust_criterion:
+        for benchmark_name in parse_string_list(arguments.rust_benchmarks):
+            logger.info("Running Rust Criterion benchmark %s", benchmark_name)
+            results["rust_criterion"].append(
+                command_output(
+                    ["cargo", "bench", "--bench", benchmark_name],
+                    environment_overrides={"RUSTFLAGS": "-C target-cpu=native"},
+                )
+            )
     for winner_key, winner in sorted(winners.items()):
         if not winner.trials:
             continue
         candidate = candidate_from_aggregate_name(winner_key, winner)
-        trace_directory = profile_directory / f"{winner_key}_jax_trace"
-        memory_profile_path = profile_directory / f"{winner_key}_device_memory.prof"
-        profile_result = run_g_trial(
-            name=f"profile_{winner_key}_jax",
+        if arguments.enable_jax_trace or arguments.enable_jax_memory_profile:
+            trace_directory = profile_directory / f"{winner_key}_jax_trace" if arguments.enable_jax_trace else None
+            memory_profile_path = (
+                profile_directory / f"{winner_key}_device_memory.prof"
+                if arguments.enable_jax_memory_profile
+                else None
+            )
+            logger.info("Running JAX profiler capture for %s", winner_key)
+            profile_result = run_g_trial(
+                name=f"profile_{winner_key}_jax",
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                output_directory=profile_directory,
+                log_directory=output_directory / "logs",
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+                emit_stage_timings=True,
+                trace_directory=trace_directory,
+                memory_profile_path=memory_profile_path,
+            )
+            results["sampling_profiles"].append(dataclasses.asdict(profile_result))
+        base_profile_command_arguments = build_g_step2_child_command(
             baseline_paths=baseline_paths,
             candidate=candidate,
-            output_directory=profile_directory,
-            log_directory=output_directory / "logs",
+            output_prefix=profile_directory / f"profile_{winner_key}_profiler",
+            variant_limit=arguments.variant_limit,
             cache_directory=cache_directory,
-            variant_limit=variant_limit,
-            emit_stage_timings=True,
-            trace_directory=trace_directory,
-            memory_profile_path=memory_profile_path,
+            stage_timing_path=profile_directory / f"{winner_key}_profiler_stage_timings.json",
         )
-        results["sampling_profiles"].append(dataclasses.asdict(profile_result))
-        if shutil.which("py-spy") is not None:
-            speedscope_path = profile_directory / f"{winner_key}.speedscope.json"
-            command_arguments = [
-                "py-spy",
-                "record",
-                "--format",
-                "speedscope",
-                "--output",
-                str(speedscope_path),
-                "--",
-                *profile_result.command_arguments,
-            ]
-            sampling_result = run_logged_command(
-                name=f"profile_{winner_key}_py_spy",
-                implementation="py-spy",
-                trait_type=candidate.trait_type,
-                device=candidate.device,
-                command_arguments=command_arguments,
-                environment_overrides=profile_result.environment_overrides,
-                log_directory=output_directory / "logs",
-            )
-            results["sampling_profiles"].append(dataclasses.asdict(sampling_result))
-        else:
+        base_profile_environment = build_g_trial_environment(
+            candidate=candidate,
+            cache_directory=cache_directory,
+            stage_timing_path=profile_directory / f"{winner_key}_profiler_stage_timings.json",
+        )
+        if arguments.enable_python_cprofile:
             cprofile_script_path = profile_directory / f"{winner_key}_cprofile_child.py"
             cprofile_output_path = profile_directory / f"{winner_key}.cprofile"
-            cprofile_script_path.write_text(profile_result.command_arguments[2], encoding="utf-8")
+            cprofile_text_path = profile_directory / f"{winner_key}.cprofile.txt"
+            cprofile_script_path.write_text(base_profile_command_arguments[2], encoding="utf-8")
             cprofile_result = run_logged_command(
                 name=f"profile_{winner_key}_cprofile",
                 implementation="cProfile",
@@ -1400,11 +1614,59 @@ def run_deep_profiles(
                     str(cprofile_output_path),
                     str(cprofile_script_path),
                 ],
-                environment_overrides=profile_result.environment_overrides,
+                environment_overrides=base_profile_environment,
                 log_directory=output_directory / "logs",
             )
             results["sampling_profiles"].append(dataclasses.asdict(cprofile_result))
-        if shutil.which("perf") is not None:
+            if cprofile_result.status == "success":
+                cprofile_text_result = command_output(
+                    [
+                        sys.executable,
+                        "-c",
+                        (
+                            "import pstats, sys; "
+                            "pstats.Stats(sys.argv[1]).strip_dirs().sort_stats('cumtime').print_stats(80)"
+                        ),
+                        str(cprofile_output_path),
+                    ]
+                )
+                cprofile_text_path.write_text(cprofile_text_result["stdout"], encoding="utf-8")
+        if arguments.enable_py_spy and shutil.which("py-spy") is not None:
+            speedscope_path = profile_directory / f"{winner_key}.speedscope.json"
+            command_arguments = [
+                "py-spy",
+                "record",
+                "--format",
+                "speedscope",
+                "--output",
+                str(speedscope_path),
+                "--",
+                *base_profile_command_arguments,
+            ]
+            sampling_result = run_logged_command(
+                name=f"profile_{winner_key}_py_spy",
+                implementation="py-spy",
+                trait_type=candidate.trait_type,
+                device=candidate.device,
+                command_arguments=command_arguments,
+                environment_overrides=base_profile_environment,
+                log_directory=output_directory / "logs",
+            )
+            results["sampling_profiles"].append(dataclasses.asdict(sampling_result))
+        elif arguments.enable_py_spy:
+            results["sampling_profiles"].append(
+                dataclasses.asdict(
+                    skipped_profile_result(
+                        name=f"profile_{winner_key}_py_spy",
+                        implementation="py-spy",
+                        trait_type=candidate.trait_type,
+                        device=candidate.device,
+                        log_directory=output_directory / "logs",
+                        notes="py-spy executable is not available on PATH.",
+                    )
+                )
+            )
+        if arguments.enable_linux_perf and shutil.which("perf") is not None:
             perf_path = profile_directory / f"{winner_key}.perf.data"
             command_arguments = [
                 "perf",
@@ -1413,7 +1675,7 @@ def run_deep_profiles(
                 "-o",
                 str(perf_path),
                 "--",
-                *profile_result.command_arguments,
+                *base_profile_command_arguments,
             ]
             perf_result = run_logged_command(
                 name=f"profile_{winner_key}_perf",
@@ -1421,63 +1683,268 @@ def run_deep_profiles(
                 trait_type=candidate.trait_type,
                 device=candidate.device,
                 command_arguments=command_arguments,
-                environment_overrides=profile_result.environment_overrides,
+                environment_overrides=base_profile_environment,
                 log_directory=output_directory / "logs",
             )
             results["sampling_profiles"].append(dataclasses.asdict(perf_result))
+        elif arguments.enable_linux_perf:
+            results["sampling_profiles"].append(
+                dataclasses.asdict(
+                    skipped_profile_result(
+                        name=f"profile_{winner_key}_perf",
+                        implementation="perf",
+                        trait_type=candidate.trait_type,
+                        device=candidate.device,
+                        log_directory=output_directory / "logs",
+                        notes="perf executable is not available on PATH.",
+                    )
+                )
+            )
     return results
 
 
-def apply_smoke_overrides(arguments: argparse.Namespace) -> None:
+def apply_smoke_overrides(arguments: ProfileArguments) -> ProfileArguments:
     """Reduce the campaign size for a landau smoke profile."""
     if not arguments.smoke:
-        return
-    if arguments.variant_limit is None:
-        arguments.variant_limit = 1000
-    arguments.chunk_sizes = "2048"
-    arguments.staging_depths = "1"
-    arguments.output_writer_thread_counts = "1"
-    arguments.writer_queue_depth_multipliers = "1"
-    arguments.firth_batch_sizes = "32"
-    arguments.bgen_decode_tile_variant_counts = "64"
-    arguments.rayon_thread_counts = "1"
-    arguments.top_bgen_candidates = 1
-    arguments.top_finalists = 1
-    arguments.tuning_warmups = 0
-    arguments.tuning_trials = 1
-    arguments.finalist_warmups = 0
-    arguments.finalist_trials = 1
-    arguments.headline_warmups = 0
-    arguments.headline_trials = 1
+        return arguments
+    return dataclasses.replace(
+        arguments,
+        variant_limit=1000 if arguments.variant_limit is None else arguments.variant_limit,
+        chunk_sizes="2048",
+        staging_depths="1",
+        output_writer_thread_counts="1",
+        writer_queue_depth_multipliers="1",
+        firth_batch_sizes="32",
+        bgen_decode_tile_variant_counts="64",
+        rayon_thread_counts="1",
+        top_bgen_candidates=1,
+        top_finalists=1,
+        tuning_warmups=0,
+        tuning_trials=1,
+        finalist_warmups=0,
+        finalist_trials=1,
+        headline_warmups=0,
+        headline_trials=1,
+    )
 
 
-def main() -> None:
+def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileArguments:
+    """Build profile parameters from a composed Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    data_directory = resolve_repo_path(tool_values["data_dir"])
+    output_parent = resolve_repo_path(tool_values.get("output_parent", DEFAULT_OUTPUT_PARENT))
+    explicit_output_directory = tooling_hydra_arguments.path_or_none(tool_values.get("output_dir"))
+    if explicit_output_directory is not None:
+        explicit_output_directory = tooling_paths.resolve_repo_relative_path(
+            explicit_output_directory,
+            REPOSITORY_ROOT,
+        )
+        output_parent = explicit_output_directory.parent
+    return ProfileArguments(
+        chromosome_label=str(tool_values["chromosome_label"]),
+        data_directory=data_directory,
+        baseline_directory=resolve_data_path(data_directory, tool_values["baseline_dir"]),
+        bed_prefix=resolve_data_path(data_directory, tool_values["bed_prefix"]),
+        bgen_path=resolve_data_path(data_directory, tool_values["bgen"]),
+        sample_path=resolve_data_path(data_directory, tool_values["sample"]),
+        continuous_phenotype_path=resolve_data_path(data_directory, tool_values["linear_phenotype_file"]),
+        binary_phenotype_path=resolve_data_path(data_directory, tool_values["binary_phenotype_file"]),
+        covariate_path=resolve_data_path(data_directory, tool_values["covariate_file"]),
+        regenie_prediction_list_path=resolve_data_path(data_directory, tool_values["binary_prediction_list"]),
+        regenie_qt_prediction_list_path=resolve_data_path(data_directory, tool_values["linear_prediction_list"]),
+        output_dir=explicit_output_directory,
+        output_parent=output_parent,
+        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
+        dry_run=bool(tool_values["dry_run"]),
+        include_regenie_baseline=bool(tool_values["include_regenie_baseline"]),
+        smoke=bool(tool_values["smoke"]),
+        skip_deep_profiles=bool(tool_values["skip_deep_profiles"]),
+        enable_jax_trace=bool(tool_values["enable_jax_trace"]),
+        enable_jax_memory_profile=bool(tool_values["enable_jax_memory_profile"]),
+        enable_python_cprofile=bool(tool_values["enable_python_cprofile"]),
+        enable_py_spy=bool(tool_values["enable_py_spy"]),
+        enable_linux_perf=bool(tool_values["enable_linux_perf"]),
+        enable_rust_criterion=bool(tool_values["enable_rust_criterion"]),
+        rust_benchmarks=tooling_hydra_arguments.comma_join(tool_values["rust_benchmarks"]),
+        chunk_sizes=tooling_hydra_arguments.comma_join(tool_values["chunk_sizes"]),
+        staging_depths=tooling_hydra_arguments.comma_join(tool_values["staging_depths"]),
+        output_writer_thread_counts=tooling_hydra_arguments.comma_join(
+            tool_values["output_writer_thread_counts"]
+        ),
+        writer_queue_depth_multipliers=tooling_hydra_arguments.comma_join(
+            tool_values["writer_queue_depth_multipliers"]
+        ),
+        firth_batch_sizes=tooling_hydra_arguments.comma_join(tool_values["firth_batch_sizes"]),
+        bgen_decode_tile_variant_counts=tooling_hydra_arguments.comma_join(
+            tool_values["bgen_decode_tile_variant_counts"]
+        ),
+        rayon_thread_counts=tooling_hydra_arguments.comma_join(tool_values["rayon_thread_counts"]),
+        bgen_benchmark_chunk_size=int(tool_values["bgen_benchmark_chunk_size"]),
+        top_bgen_candidates=int(tool_values["top_bgen_candidates"]),
+        top_finalists=int(tool_values["top_finalists"]),
+        tuning_warmups=int(tool_values["tuning_warmups"]),
+        tuning_trials=int(tool_values["tuning_trials"]),
+        finalist_warmups=int(tool_values["finalist_warmups"]),
+        finalist_trials=int(tool_values["finalist_trials"]),
+        headline_warmups=int(tool_values["headline_warmups"]),
+        headline_trials=int(tool_values["headline_trials"]),
+    )
+
+
+def build_arguments_from_overrides(overrides: typing.Sequence[str] | None = None) -> ProfileArguments:
+    """Compose the deep-profile config and return resolved parameters."""
+    config = tooling_configuration.compose_config(config_name="profile_regenie2_deep", overrides=overrides)
+    return build_arguments_from_config(config)
+
+
+def required_profile_input_paths(baseline_paths: baseline_benchmark.BaselinePaths) -> list[Path]:
+    """Return input and prediction paths used by real profile runs."""
+    return [
+        baseline_paths.bed_prefix.with_suffix(".bed"),
+        baseline_paths.bed_prefix.with_suffix(".bim"),
+        baseline_paths.bed_prefix.with_suffix(".fam"),
+        baseline_paths.bgen_path,
+        baseline_paths.sample_path,
+        baseline_paths.continuous_phenotype_path,
+        baseline_paths.binary_phenotype_path,
+        baseline_paths.covariate_path,
+        baseline_paths.regenie_prediction_list_path,
+        typing.cast("Path", baseline_paths.regenie_qt_prediction_list_path),
+    ]
+
+
+def build_profile_plan(
+    *,
+    arguments: ProfileArguments,
+    baseline_paths: baseline_benchmark.BaselinePaths,
+    output_directory: Path,
+) -> ProfilePlan:
+    """Build a dry-run plan for the full profile campaign."""
+    rust_benchmark_commands: list[list[str]] = []
+    if arguments.enable_rust_criterion:
+        rust_benchmark_commands = [
+            ["cargo", "bench", "--bench", benchmark_name]
+            for benchmark_name in parse_string_list(arguments.rust_benchmarks)
+        ]
+    profiler_modes = {
+        "regenie_baseline": arguments.include_regenie_baseline,
+        "jax_trace": arguments.enable_jax_trace,
+        "jax_memory_profile": arguments.enable_jax_memory_profile,
+        "python_cprofile": arguments.enable_python_cprofile,
+        "py_spy": arguments.enable_py_spy,
+        "linux_perf": arguments.enable_linux_perf,
+        "rust_criterion": arguments.enable_rust_criterion,
+    }
+    notes = [
+        "Dry run only: no workloads, profilers, or setup commands were executed.",
+        "Real runs generate summary.json, summary.md, preflight.json, subprocess logs, stage timings, "
+        "and deep_profiles artifacts.",
+    ]
+    if arguments.skip_deep_profiles:
+        notes.append("Deep profiler captures are disabled by tool.skip_deep_profiles=true.")
+    if not arguments.include_regenie_baseline:
+        notes.append("Original REGENIE headline trials are disabled by tool.include_regenie_baseline=false.")
+    return ProfilePlan(
+        chromosome_label=arguments.chromosome_label,
+        output_directory=str(output_directory),
+        required_inputs=[str(path) for path in required_profile_input_paths(baseline_paths)],
+        profiler_modes=profiler_modes,
+        rust_benchmark_commands=rust_benchmark_commands,
+        notes=notes,
+    )
+
+
+def write_profile_plan(plan: ProfilePlan, output_directory: Path) -> None:
+    """Persist dry-run profile plan artifacts."""
+    (output_directory / "profile_plan.json").write_text(
+        json.dumps(dataclasses.asdict(plan), indent=2) + "\n",
+        encoding="utf-8",
+    )
+    lines = [
+        "# Full App Profile Plan",
+        "",
+        f"- Chromosome: `{plan.chromosome_label}`",
+        f"- Output directory: `{plan.output_directory}`",
+        "",
+        "## Profiler Modes",
+        "",
+    ]
+    for mode_name, enabled in plan.profiler_modes.items():
+        lines.append(f"- `{mode_name}`: `{str(enabled).lower()}`")
+    lines.extend(["", "## Inputs And Step 1 Prediction Lists", ""])
+    for input_path in plan.required_inputs:
+        lines.append(f"- `{input_path}`")
+    lines.extend(["", "## Rust Benchmark Commands", ""])
+    if plan.rust_benchmark_commands:
+        for command_arguments in plan.rust_benchmark_commands:
+            lines.append(f"- `{shlex.join(command_arguments)}`")
+    else:
+        lines.append("- Rust Criterion profiling is disabled.")
+    lines.extend(["", "## Notes", ""])
+    for note in plan.notes:
+        lines.append(f"- {note}")
+    (output_directory / "profile_plan.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def run_tool(arguments: ProfileArguments) -> None:
     """Run the landau deep profiling campaign."""
-    arguments = build_argument_parser().parse_args()
-    apply_smoke_overrides(arguments)
+    arguments = apply_smoke_overrides(arguments)
     output_directory = build_output_directory(arguments)
     output_directory.mkdir(parents=True, exist_ok=True)
     log_directory = output_directory / "logs"
     log_directory.mkdir(parents=True, exist_ok=True)
     cache_directory = output_directory / "jax_cache"
     cache_directory.mkdir(parents=True, exist_ok=True)
+    tooling_logging.configure_tool_logging(output_directory / "tooling.log")
 
-    baseline_paths = baseline_benchmark.build_baseline_paths()
+    logger.info("Starting %s deep profile campaign", arguments.chromosome_label)
+    logger.info("Writing profile artifacts under %s", output_directory)
+    baseline_paths = build_baseline_paths(arguments)
+    if arguments.dry_run:
+        profile_plan = build_profile_plan(
+            arguments=arguments,
+            baseline_paths=baseline_paths,
+            output_directory=output_directory,
+        )
+        write_profile_plan(profile_plan, output_directory)
+        logger.info("Wrote dry-run profile plan under %s", output_directory)
+        return
+    logger.info("Validating profile inputs")
     baseline_benchmark.validate_input_files(baseline_paths)
-    regenie_executable = baseline_benchmark.resolve_required_executable("REGENIE_BIN", "regenie")
-    setup_results = ensure_prediction_lists(
-        baseline_paths=baseline_paths,
-        regenie_executable=regenie_executable,
-        log_directory=log_directory,
-    )
+    prediction_list_paths = [
+        baseline_paths.regenie_prediction_list_path,
+        baseline_paths.regenie_qt_prediction_list_path,
+    ]
+    missing_prediction_list_paths = [
+        path for path in prediction_list_paths if path is not None and not path.exists()
+    ]
+    regenie_executable: str | None = None
+    setup_results: list[TrialResult] = []
+    if arguments.include_regenie_baseline:
+        regenie_executable = baseline_benchmark.resolve_required_executable("REGENIE_BIN", "regenie")
+        logger.info("Ensuring REGENIE step 1 prediction lists")
+        setup_results = ensure_prediction_lists(
+            baseline_paths=baseline_paths,
+            regenie_executable=regenie_executable,
+            log_directory=log_directory,
+        )
+    elif missing_prediction_list_paths:
+        formatted_paths = "\n".join(str(path) for path in missing_prediction_list_paths)
+        message = f"Step 1 prediction lists are required when REGENIE setup is disabled:\n{formatted_paths}"
+        raise FileNotFoundError(message)
+    else:
+        logger.info("Using existing REGENIE step 1 prediction lists")
+    logger.info("Collecting preflight metadata")
     preflight_metadata = collect_environment_metadata(baseline_paths)
     (output_directory / "preflight.json").write_text(json.dumps(preflight_metadata, indent=2) + "\n", encoding="utf-8")
 
+    logger.info("Running BGEN reader pre-sweep")
     bgen_summaries = run_bgen_sweep(
         arguments=arguments,
         baseline_paths=baseline_paths,
         output_directory=output_directory,
     )
+    logger.info("Running candidate tuning")
     winners = run_candidate_tuning(
         arguments=arguments,
         baseline_paths=baseline_paths,
@@ -1485,6 +1952,7 @@ def main() -> None:
         output_directory=output_directory,
         cache_directory=cache_directory,
     )
+    logger.info("Running headline trials")
     headline_results = run_headline_trials(
         arguments=arguments,
         baseline_paths=baseline_paths,
@@ -1495,13 +1963,16 @@ def main() -> None:
     )
     deep_profile_results: dict[str, typing.Any] = {}
     if not arguments.skip_deep_profiles:
+        logger.info("Running full profiler bundle")
         deep_profile_results = run_deep_profiles(
+            arguments=arguments,
             baseline_paths=baseline_paths,
             winners=winners,
             output_directory=output_directory,
             cache_directory=cache_directory,
-            variant_limit=arguments.variant_limit,
         )
+    else:
+        logger.info("Skipping full profiler bundle")
     comparisons = build_runtime_comparisons(headline_results)
     stage_totals = collect_stage_totals(headline_results)
     stage_comparison_rows = build_stage_comparison_rows(headline_results)
@@ -1529,7 +2000,19 @@ def main() -> None:
         ),
         encoding="utf-8",
     )
-    print(f"Wrote deep profile artifacts under {output_directory}")
+    logger.info("Wrote deep profile artifacts under %s", output_directory)
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="profile_regenie2_deep")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run the deep profiling campaign through Hydra."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run the landau deep profiling campaign."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

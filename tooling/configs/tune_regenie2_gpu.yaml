@@ -1,0 +1,53 @@
+defaults:
+  - dataset: local_1kg
+  - machine: landau_gpu
+  - workload: regenie2_binary_hot
+  - telemetry: local
+  - sweep: regenie2_binary_hot_default
+  - _self_
+
+tool:
+  trait_selection: both
+  output_dir: data/benchmarks/regenie2_gpu_tuning
+  variant_limit: null
+  warmup_trials: 1
+  trials: 3
+  finalist_extra_trials: 5
+  top_bgen_candidates: 3
+  top_compute_candidates: 3
+  top_finalists: 3
+  chunk_sizes:
+    - 2048
+    - 4096
+    - 8192
+    - 16384
+  staging_depths:
+    - 1
+    - 2
+  output_writer_thread_counts:
+    - 1
+    - 2
+    - 4
+    - 8
+  writer_queue_depth_multipliers:
+    - 1
+    - 2
+  firth_batch_sizes:
+    - 512
+    - 1024
+    - 2048
+  bgen_benchmark_chunk_size: 8192
+  bgen_decode_tile_variant_counts:
+    - 32
+    - 64
+    - 128
+    - 256
+  rayon_thread_counts:
+    - 1
+    - 2
+    - 4
+    - 8
+
+hydra:
+  job:
+    chdir: false

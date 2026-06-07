@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
 import enum
 import json
@@ -12,13 +11,22 @@ import statistics
 import subprocess
 import sys
 import textwrap
+import typing
 from pathlib import Path
+
+import hydra
 
 import scripts.benchmark as baseline_benchmark
 import scripts.benchmark_regenie_comparison as benchmark_regenie_comparison
 import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
+import tooling.configuration as tooling_configuration
 from g import types
 from g.interface import config as interface_config
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+
+if typing.TYPE_CHECKING:
+    import omegaconf
 
 DEFAULT_OUTPUT_DIRECTORY = Path("data/benchmarks/regenie2_gpu_tuning")
 DEFAULT_BGEN_PRE_SWEEP_CHUNK_SIZE = 8192
@@ -31,6 +39,50 @@ class TraitSelection(enum.StrEnum):
     QUANTITATIVE = "quantitative"
     BINARY = "binary"
     BOTH = "both"
+
+
+@dataclasses.dataclass(frozen=True)
+class TuningArguments:
+    """Resolved GPU tuning workflow parameters.
+
+    Attributes:
+        trait_selection: Trait mode selection.
+        output_dir: Tuning output directory.
+        variant_limit: Optional variant cap.
+        warmup_trials: Warmup trials for candidate evaluation.
+        trials: Measured trials for candidate evaluation.
+        finalist_extra_trials: Additional measured finalist trials.
+        top_bgen_candidates: Number of BGEN candidates kept.
+        top_compute_candidates: Number of compute candidates kept.
+        top_finalists: Number of finalists kept.
+        chunk_sizes: Comma-separated step 2 chunk sizes.
+        staging_depths: Comma-separated staging depths.
+        output_writer_thread_counts: Comma-separated writer thread counts.
+        writer_queue_depth_multipliers: Comma-separated queue-depth multipliers.
+        firth_batch_sizes: Comma-separated binary Firth batch sizes.
+        bgen_benchmark_chunk_size: Chunk size for BGEN pre-sweep cases.
+        bgen_decode_tile_variant_counts: Comma-separated BGEN decode tile sizes.
+        rayon_thread_counts: Comma-separated Rayon thread-count values.
+
+    """
+
+    trait_selection: str
+    output_dir: Path
+    variant_limit: int | None
+    warmup_trials: int
+    trials: int
+    finalist_extra_trials: int
+    top_bgen_candidates: int
+    top_compute_candidates: int
+    top_finalists: int
+    chunk_sizes: str
+    staging_depths: str
+    output_writer_thread_counts: str
+    writer_queue_depth_multipliers: str
+    firth_batch_sizes: str
+    bgen_benchmark_chunk_size: int
+    bgen_decode_tile_variant_counts: str
+    rayon_thread_counts: str
 
 
 @dataclasses.dataclass(frozen=True)
@@ -113,38 +165,6 @@ class TuningReport:
     binary_summary: ModeTuningSummary | None
 
 
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Build the tuner CLI."""
-    argument_parser = argparse.ArgumentParser(description="Tune GPU REGENIE step 2 and BGEN reader knobs.")
-    argument_parser.add_argument(
-        "--trait-selection",
-        choices=tuple(trait_selection.value for trait_selection in TraitSelection),
-        default=TraitSelection.BOTH.value,
-        help="Which GPU REGENIE trait mode to tune.",
-    )
-    argument_parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIRECTORY)
-    argument_parser.add_argument(
-        "--variant-limit",
-        type=int,
-        help="Optional variant cap for faster exploratory sweeps.",
-    )
-    argument_parser.add_argument("--warmup-trials", type=int, default=1)
-    argument_parser.add_argument("--trials", type=int, default=3)
-    argument_parser.add_argument("--finalist-extra-trials", type=int, default=5)
-    argument_parser.add_argument("--top-bgen-candidates", type=int, default=3)
-    argument_parser.add_argument("--top-compute-candidates", type=int, default=3)
-    argument_parser.add_argument("--top-finalists", type=int, default=3)
-    argument_parser.add_argument("--chunk-sizes", default="2048,4096,8192,16384")
-    argument_parser.add_argument("--staging-depths", "--prefetch-chunks", default="1,2")
-    argument_parser.add_argument("--output-writer-thread-counts", default="1,2,4,8")
-    argument_parser.add_argument("--writer-queue-depth-multipliers", default="1,2")
-    argument_parser.add_argument("--firth-batch-sizes", default="512,1024,2048")
-    argument_parser.add_argument("--bgen-benchmark-chunk-size", type=int, default=DEFAULT_BGEN_PRE_SWEEP_CHUNK_SIZE)
-    argument_parser.add_argument("--bgen-decode-tile-variant-counts", default="32,64,128,256")
-    argument_parser.add_argument("--rayon-thread-counts", default="1,2,4,8")
-    return argument_parser
-
-
 def parse_required_int_list(raw_values: str) -> tuple[int, ...]:
     """Parse a comma-separated integer list."""
     parsed_values = benchmark_bgen_reader.parse_optional_int_list(raw_values)
@@ -167,7 +187,7 @@ def build_queue_depth_values(
     return tuple(sorted(queue_depth_values))
 
 
-def build_bgen_sweep_candidates(arguments: argparse.Namespace) -> tuple[BgenCandidate, ...]:
+def build_bgen_sweep_candidates(arguments: TuningArguments) -> tuple[BgenCandidate, ...]:
     """Build the initial low-level BGEN benchmark grid."""
     decode_tile_variant_counts = benchmark_bgen_reader.parse_optional_int_list(
         arguments.bgen_decode_tile_variant_counts
@@ -512,32 +532,32 @@ def summarize_bgen_candidate(
 
 
 def run_bgen_pre_sweep(
-    arguments: argparse.Namespace,
+    arguments: TuningArguments,
     baseline_paths: baseline_benchmark.BaselinePaths,
 ) -> tuple[BgenCandidateSummary, ...]:
     """Run the reusable-buffer BGEN pre-sweep and rank candidates by median wall time."""
-    parser = benchmark_bgen_reader.build_argument_parser()
     candidate_summaries: list[BgenCandidateSummary] = []
     for candidate in build_bgen_sweep_candidates(arguments):
-        candidate_argument_list = [
-            "--bgen",
-            str(baseline_paths.bgen_path),
-            "--sample",
-            str(baseline_paths.sample_path),
-            "--chunk-size",
-            str(candidate.benchmark_chunk_size),
-            "--variant-limit",
-            str(arguments.variant_limit or 16384),
-            "--repeat-count",
-            str(arguments.trials),
-            "--path-modes",
-            DEFAULT_BGEN_PATH_MODE.value,
-        ]
-        if candidate.decode_tile_variant_count is not None:
-            candidate_argument_list.extend(["--decode-tile-variant-count", str(candidate.decode_tile_variant_count)])
-        if candidate.rayon_thread_count is not None:
-            candidate_argument_list.extend(["--rayon-thread-count", str(candidate.rayon_thread_count)])
-        benchmark_arguments = parser.parse_args(candidate_argument_list)
+        benchmark_arguments = benchmark_bgen_reader.BenchmarkArguments(
+            bgen=baseline_paths.bgen_path,
+            sample=baseline_paths.sample_path,
+            chunk_size=candidate.benchmark_chunk_size,
+            chunk_sizes=str(candidate.benchmark_chunk_size),
+            variant_limit=arguments.variant_limit or 16_384,
+            repeat_count=arguments.trials,
+            path_modes=DEFAULT_BGEN_PATH_MODE.value,
+            sample_selection_mode=benchmark_bgen_reader.SampleSelectionMode.FULL.value,
+            sample_selection_modes="",
+            decode_tile_variant_count=candidate.decode_tile_variant_count,
+            decode_tile_variant_counts="",
+            rayon_thread_count=candidate.rayon_thread_count,
+            rayon_thread_counts="",
+            trusted_no_missing_diploid=False,
+            trusted_no_missing_diploid_modes="",
+            emit_case_json=True,
+            json_summary_path=None,
+            markdown_summary_path=None,
+        )
         candidate_summaries.append(
             summarize_bgen_candidate(
                 benchmark_bgen_reader.run_case_subprocess(
@@ -592,7 +612,7 @@ def run_regenie_baseline_step2(
 def tune_trait_mode(
     *,
     trait_type: types.RegenieTraitType,
-    arguments: argparse.Namespace,
+    arguments: TuningArguments,
     baseline_paths: baseline_benchmark.BaselinePaths,
     bgen_candidate_summaries: tuple[BgenCandidateSummary, ...],
 ) -> ModeTuningSummary:
@@ -678,9 +698,44 @@ def write_text_summary(
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main() -> None:
+def build_arguments_from_config(config: omegaconf.DictConfig) -> TuningArguments:
+    """Build tuning parameters from a composed Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return TuningArguments(
+        trait_selection=str(tool_values["trait_selection"]),
+        output_dir=Path(str(tool_values["output_dir"])),
+        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
+        warmup_trials=int(tool_values["warmup_trials"]),
+        trials=int(tool_values["trials"]),
+        finalist_extra_trials=int(tool_values["finalist_extra_trials"]),
+        top_bgen_candidates=int(tool_values["top_bgen_candidates"]),
+        top_compute_candidates=int(tool_values["top_compute_candidates"]),
+        top_finalists=int(tool_values["top_finalists"]),
+        chunk_sizes=tooling_hydra_arguments.comma_join(tool_values["chunk_sizes"]),
+        staging_depths=tooling_hydra_arguments.comma_join(tool_values["staging_depths"]),
+        output_writer_thread_counts=tooling_hydra_arguments.comma_join(
+            tool_values["output_writer_thread_counts"]
+        ),
+        writer_queue_depth_multipliers=tooling_hydra_arguments.comma_join(
+            tool_values["writer_queue_depth_multipliers"]
+        ),
+        firth_batch_sizes=tooling_hydra_arguments.comma_join(tool_values["firth_batch_sizes"]),
+        bgen_benchmark_chunk_size=int(tool_values["bgen_benchmark_chunk_size"]),
+        bgen_decode_tile_variant_counts=tooling_hydra_arguments.comma_join(
+            tool_values["bgen_decode_tile_variant_counts"]
+        ),
+        rayon_thread_counts=tooling_hydra_arguments.comma_join(tool_values["rayon_thread_counts"]),
+    )
+
+
+def build_arguments_from_overrides(overrides: typing.Sequence[str] | None = None) -> TuningArguments:
+    """Compose the GPU tuning config and return resolved parameters."""
+    config = tooling_configuration.compose_config(config_name="tune_regenie2_gpu", overrides=overrides)
+    return build_arguments_from_config(config)
+
+
+def run_tool(arguments: TuningArguments) -> None:
     """Run the full sequential tuning workflow."""
-    arguments = build_argument_parser().parse_args()
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
     baseline_paths = baseline_benchmark.build_baseline_paths()
     bgen_candidate_summaries = run_bgen_pre_sweep(arguments, baseline_paths)
@@ -713,6 +768,18 @@ def main() -> None:
     text_report_path = arguments.output_dir / "tuning_summary.txt"
     write_text_summary(text_report_path, tuning_report)
     print(json.dumps(dataclasses.asdict(tuning_report), indent=2))
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="tune_regenie2_gpu")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run the GPU tuning workflow through Hydra."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run the full sequential tuning workflow."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

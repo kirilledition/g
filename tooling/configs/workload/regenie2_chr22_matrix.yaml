@@ -1,4 +1,4 @@
-name: regenie2_binary_hot
+name: regenie2_chr22_matrix
 chunk_size: 16384
 variant_limit: null
 repeat_count: 1

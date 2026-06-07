@@ -335,47 +335,47 @@ Score/default packed8 gate:
 
 ```bash
 uv run python -m tooling.cli.benchmark_regenie2_binary_hot \
-  --bgen 1kg_chr10_full.bgen \
-  --sample 1kg_chr10_full.sample \
-  --prediction-list baselines_chr10/regenie_step1_pred.list \
-  --storage-modes packed8 \
-  --fallback-density-scenarios default \
-  --stage-timing-mode exact \
-  --variant-limit 50000 \
-  --no-include-cold-process \
-  --no-include-finalized-hot
+  tool.bgen=1kg_chr10_full.bgen \
+  tool.sample=1kg_chr10_full.sample \
+  tool.prediction_list=baselines_chr10/regenie_step1_pred.list \
+  sweep.storage_modes=[packed8] \
+  sweep.fallback_density_scenarios=[default] \
+  telemetry.stage_timing_mode=exact \
+  tool.variant_limit=50000 \
+  tool.include_cold_process=false \
+  tool.include_finalized_hot=false
 ```
 
 High-Firth packed8 gate:
 
 ```bash
 uv run python -m tooling.cli.benchmark_regenie2_binary_hot \
-  --bgen 1kg_chr10_full.bgen \
-  --sample 1kg_chr10_full.sample \
-  --phenotype-file profiles/firth_tuning_inputs/pheno_bin_two_traits.txt \
-  --prediction-list profiles/firth_tuning_inputs/regenie_step1_chr10_two_traits_pred.list \
-  --phenotype-columns phenotype_binary,phenotype_binary_flip \
-  --binary-trait-counts 2 \
-  --storage-modes packed8 \
-  --fallback-density-scenarios high \
-  --firth-batch-sizes 1024 \
-  --firth-candidate-capacities 2048 \
-  --stage-timing-mode exact \
-  --variant-limit 50000 \
-  --no-include-cold-process \
-  --no-include-finalized-hot
+  tool.bgen=1kg_chr10_full.bgen \
+  tool.sample=1kg_chr10_full.sample \
+  tool.phenotype_file=profiles/firth_tuning_inputs/pheno_bin_two_traits.txt \
+  tool.prediction_list=profiles/firth_tuning_inputs/regenie_step1_chr10_two_traits_pred.list \
+  tool.phenotype_columns=[phenotype_binary,phenotype_binary_flip] \
+  tool.binary_trait_counts=[2] \
+  sweep.storage_modes=[packed8] \
+  sweep.fallback_density_scenarios=[high] \
+  tool.firth_batch_sizes=[1024] \
+  tool.firth_candidate_capacities=[2048] \
+  telemetry.stage_timing_mode=exact \
+  tool.variant_limit=50000 \
+  tool.include_cold_process=false \
+  tool.include_finalized_hot=false
 ```
 
 Production-throughput confirmation:
 
 ```bash
 uv run python -m tooling.cli.benchmark_regenie2_binary_hot \
-  --storage-modes variant_major,packed8 \
-  --fallback-density-scenarios default,high \
-  --stage-timing-mode off \
-  --variant-limit 50000 \
-  --no-include-cold-process \
-  --no-include-finalized-hot
+  sweep.storage_modes=[variant_major,packed8] \
+  sweep.fallback_density_scenarios=[default,high] \
+  telemetry.stage_timing_mode=off \
+  tool.variant_limit=50000 \
+  tool.include_cold_process=false \
+  tool.include_finalized_hot=false
 ```
 
 ## Implementation Plan When Approved
