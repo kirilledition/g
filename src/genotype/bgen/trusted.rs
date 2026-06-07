@@ -25,6 +25,137 @@ pub(super) fn all_samples_present_diploid(sample_ploidy_and_missingness: &[u8]) 
     simd::all_samples_present_diploid_simd_or_scalar(sample_ploidy_and_missingness)
 }
 
+#[derive(Clone, Copy)]
+enum TrustedEightBitParseContext {
+    Validation,
+    VariantMajorDosage,
+    VariantMajorPackedProbabilityPairs,
+}
+
+struct TrustedUnphasedEightBitBlock<'a> {
+    packed_probability_bytes: &'a [u8],
+}
+
+fn trusted_ploidy_bounds_error_message(
+    parse_context: TrustedEightBitParseContext,
+    variant_identifier: &str,
+    minimum_ploidy: u8,
+    maximum_ploidy: u8,
+) -> String {
+    match parse_context {
+        TrustedEightBitParseContext::Validation => format!(
+            "Variant '{variant_identifier}' is not compatible with trusted_no_missing_diploid because ploidy bounds are [{minimum_ploidy}, {maximum_ploidy}] instead of [2, 2].",
+        ),
+        TrustedEightBitParseContext::VariantMajorDosage => format!(
+            "Variant '{variant_identifier}' uses ploidy bounds [{minimum_ploidy}, {maximum_ploidy}], but variant-major trusted reads require diploid variants.",
+        ),
+        TrustedEightBitParseContext::VariantMajorPackedProbabilityPairs => format!(
+            "Variant '{variant_identifier}' uses ploidy bounds [{minimum_ploidy}, {maximum_ploidy}], but packed8 trusted reads require diploid variants.",
+        ),
+    }
+}
+
+fn trusted_missingness_error_message(parse_context: TrustedEightBitParseContext, variant_identifier: &str) -> String {
+    match parse_context {
+        TrustedEightBitParseContext::Validation => format!(
+            "Variant '{variant_identifier}' is not compatible with trusted_no_missing_diploid because at least one sample is missing or non-diploid.",
+        ),
+        TrustedEightBitParseContext::VariantMajorDosage => format!(
+            "Variant '{variant_identifier}' contains missing or non-diploid samples, but variant-major trusted reads require every sample to be present diploid.",
+        ),
+        TrustedEightBitParseContext::VariantMajorPackedProbabilityPairs => format!(
+            "Variant '{variant_identifier}' contains missing or non-diploid samples, but packed8 trusted reads require every sample to be present diploid.",
+        ),
+    }
+}
+
+fn validate_trusted_phase_and_bit_count(
+    parse_context: TrustedEightBitParseContext,
+    variant_identifier: &str,
+    phased_flag: u8,
+    probability_bit_count: u8,
+) -> Result<(), BgenError> {
+    match parse_context {
+        TrustedEightBitParseContext::Validation => {
+            if phased_flag != 0 {
+                return Err(BgenError::UnsupportedFormat(format!(
+                    "Variant '{variant_identifier}' is not compatible with trusted_no_missing_diploid because it is phased.",
+                )));
+            }
+            if probability_bit_count != 8 {
+                return Err(BgenError::UnsupportedFormat(format!(
+                    "Variant '{variant_identifier}' is not compatible with trusted_no_missing_diploid because it uses {probability_bit_count} bits per probability instead of 8.",
+                )));
+            }
+        }
+        TrustedEightBitParseContext::VariantMajorDosage
+        | TrustedEightBitParseContext::VariantMajorPackedProbabilityPairs => {
+            if phased_flag != 0 || probability_bit_count != 8 {
+                return Err(BgenError::UnsupportedFormat(format!(
+                    "Variant '{variant_identifier}' is not an unphased 8-bit BGEN variant.",
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_trusted_unphased_eight_bit_probability_block<'a>(
+    probability_block: &'a [u8],
+    sample_count: usize,
+    variant_record: &VariantRecord,
+    parse_context: TrustedEightBitParseContext,
+) -> Result<TrustedUnphasedEightBitBlock<'a>, BgenError> {
+    let variant_identifier = variant_record.resolved_variant_identifier.as_str();
+    let mut cursor = 0;
+    let stored_sample_count = u32_to_usize(read_u32_at(probability_block, cursor)?)?;
+    cursor += 4;
+    if stored_sample_count != sample_count {
+        return Err(BgenError::InvalidFormat(format!(
+            "Variant '{variant_identifier}' stores {stored_sample_count} samples in its probability block, but the file header reports {sample_count}.",
+        )));
+    }
+
+    let allele_count = read_u16_at(probability_block, cursor)?;
+    cursor += 2;
+    if allele_count != 2 {
+        return Err(BgenError::UnsupportedFormat(format!("Variant '{variant_identifier}' is not biallelic.")));
+    }
+
+    let minimum_ploidy = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    let maximum_ploidy = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    if minimum_ploidy != 2 || maximum_ploidy != 2 {
+        return Err(BgenError::UnsupportedFormat(trusted_ploidy_bounds_error_message(
+            parse_context,
+            variant_identifier,
+            minimum_ploidy,
+            maximum_ploidy,
+        )));
+    }
+
+    let sample_ploidy_and_missingness = read_exact_bytes(probability_block, cursor, sample_count)?;
+    cursor += sample_count;
+    if !all_samples_present_diploid(sample_ploidy_and_missingness) {
+        return Err(BgenError::UnsupportedFormat(trusted_missingness_error_message(parse_context, variant_identifier)));
+    }
+
+    let phased_flag = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    let probability_bit_count = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    validate_trusted_phase_and_bit_count(parse_context, variant_identifier, phased_flag, probability_bit_count)?;
+
+    let expected_probability_byte_count = sample_count.checked_mul(2).ok_or_else(|| {
+        BgenError::InvalidFormat("Integer overflow while decoding 8-bit BGEN probabilities.".to_string())
+    })?;
+    let packed_probability_bytes = read_exact_bytes(probability_block, cursor, expected_probability_byte_count)?;
+
+    Ok(TrustedUnphasedEightBitBlock { packed_probability_bytes })
+}
+
 pub(super) fn validate_variant_compatible_with_trusted_no_missing_diploid(
     mmap: &[u8],
     compression_type: CompressionType,
@@ -42,61 +173,12 @@ pub(super) fn validate_variant_compatible_with_trusted_no_missing_diploid(
         false,
     )?;
 
-    let mut cursor = 0;
-    let stored_sample_count = u32_to_usize(read_u32_at(probability_block, cursor)?)?;
-    cursor += 4;
-    if stored_sample_count != sample_count {
-        return Err(BgenError::InvalidFormat(format!(
-            "Variant '{}' stores {stored_sample_count} samples in its probability block, but the file header reports {sample_count}.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    let allele_count = read_u16_at(probability_block, cursor)?;
-    cursor += 2;
-    if allele_count != 2 {
-        return Err(BgenError::UnsupportedFormat(format!(
-            "Variant '{}' is not compatible with trusted_no_missing_diploid because it is not biallelic.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    let minimum_ploidy = read_u8_at(probability_block, cursor)?;
-    cursor += 1;
-    let maximum_ploidy = read_u8_at(probability_block, cursor)?;
-    cursor += 1;
-    if minimum_ploidy != 2 || maximum_ploidy != 2 {
-        return Err(BgenError::UnsupportedFormat(format!(
-            "Variant '{}' is not compatible with trusted_no_missing_diploid because ploidy bounds are [{minimum_ploidy}, {maximum_ploidy}] instead of [2, 2].",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    let sample_ploidy_and_missingness = read_exact_bytes(probability_block, cursor, sample_count)?;
-    cursor += sample_count;
-    if !all_samples_present_diploid(sample_ploidy_and_missingness) {
-        return Err(BgenError::UnsupportedFormat(format!(
-            "Variant '{}' is not compatible with trusted_no_missing_diploid because at least one sample is missing or non-diploid.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    let phased_flag = read_u8_at(probability_block, cursor)?;
-    cursor += 1;
-    if phased_flag != 0 {
-        return Err(BgenError::UnsupportedFormat(format!(
-            "Variant '{}' is not compatible with trusted_no_missing_diploid because it is phased.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    let probability_bit_count = read_u8_at(probability_block, cursor)?;
-    if probability_bit_count != 8 {
-        return Err(BgenError::UnsupportedFormat(format!(
-            "Variant '{}' is not compatible with trusted_no_missing_diploid because it uses {probability_bit_count} bits per probability instead of 8.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
+    parse_trusted_unphased_eight_bit_probability_block(
+        probability_block,
+        sample_count,
+        variant_record,
+        TrustedEightBitParseContext::Validation,
+    )?;
 
     Ok(())
 }
@@ -215,50 +297,6 @@ pub(super) fn decode_trusted_variant_major_packed8_probability_pair_tile(
     Ok(VariantMajorTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, has_missing_values: false })
 }
 
-#[derive(Debug, Default)]
-struct PackedProbabilitySummary {
-    dosage_sum: f32,
-    dosage_square_sum: f32,
-    zero_count: i32,
-    nonzero_count: i32,
-    homozygous_reference_count: i32,
-    heterozygous_count: i32,
-    homozygous_alternate_count: i32,
-}
-
-impl PackedProbabilitySummary {
-    fn add_probability_pair(&mut self, probability_pair: [u8; 2], dosage_lookup: &[f32]) {
-        let dosage_value = dosage_lookup[packed_eight_bit_probability_index(probability_pair)];
-        self.dosage_sum += dosage_value;
-        self.dosage_square_sum += dosage_value * dosage_value;
-        preprocess::increment_dosage_summary_counts(
-            dosage_value,
-            &mut self.zero_count,
-            &mut self.nonzero_count,
-            &mut self.homozygous_reference_count,
-            &mut self.heterozygous_count,
-            &mut self.homozygous_alternate_count,
-        );
-    }
-}
-
-fn summarize_packed_probability_bytes(
-    probability_bytes: &[u8],
-    dosage_lookup: &[f32],
-) -> Result<PackedProbabilitySummary, BgenError> {
-    let mut probability_byte_chunks = probability_bytes.chunks_exact(2);
-    let mut summary = PackedProbabilitySummary::default();
-    for probability_pair_bytes in &mut probability_byte_chunks {
-        summary.add_probability_pair([probability_pair_bytes[0], probability_pair_bytes[1]], dosage_lookup);
-    }
-    if !probability_byte_chunks.remainder().is_empty() {
-        return Err(BgenError::InvalidFormat(
-            "Packed 8-bit BGEN probability-pair slices must contain two bytes per sample.".to_string(),
-        ));
-    }
-    Ok(summary)
-}
-
 #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
 fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pairs(
@@ -283,54 +321,13 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
         profiling_enabled,
     )?;
 
-    let mut cursor = 0;
-    let stored_sample_count = u32_to_usize(read_u32_at(probability_block, cursor)?)?;
-    cursor += 4;
-    if stored_sample_count != sample_count {
-        return Err(BgenError::InvalidFormat(format!(
-            "Variant '{}' stores {stored_sample_count} samples in its probability block, but the file header reports {sample_count}.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    let allele_count = read_u16_at(probability_block, cursor)?;
-    cursor += 2;
-    if allele_count != 2 {
-        return Err(BgenError::UnsupportedFormat(format!(
-            "Variant '{}' is not biallelic.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    let minimum_ploidy = read_u8_at(probability_block, cursor)?;
-    cursor += 1;
-    let maximum_ploidy = read_u8_at(probability_block, cursor)?;
-    cursor += 1;
-    if minimum_ploidy != 2 || maximum_ploidy != 2 {
-        return Err(BgenError::UnsupportedFormat(format!(
-            "Variant '{}' uses ploidy bounds [{minimum_ploidy}, {maximum_ploidy}], but packed8 trusted reads require diploid variants.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    read_exact_bytes(probability_block, cursor, sample_count)?;
-    cursor += sample_count;
-
-    let phased_flag = read_u8_at(probability_block, cursor)?;
-    cursor += 1;
-    let probability_bit_count = read_u8_at(probability_block, cursor)?;
-    cursor += 1;
-    if phased_flag != 0 || probability_bit_count != 8 {
-        return Err(BgenError::UnsupportedFormat(format!(
-            "Variant '{}' is not an unphased 8-bit BGEN variant.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    let expected_probability_byte_count = sample_count.checked_mul(2).ok_or_else(|| {
-        BgenError::InvalidFormat("Integer overflow while decoding 8-bit BGEN probabilities.".to_string())
-    })?;
-    let packed_probability_bytes = read_exact_bytes(probability_block, cursor, expected_probability_byte_count)?;
+    let trusted_block = parse_trusted_unphased_eight_bit_probability_block(
+        probability_block,
+        sample_count,
+        variant_record,
+        TrustedEightBitParseContext::VariantMajorPackedProbabilityPairs,
+    )?;
+    let packed_probability_bytes = trusted_block.packed_probability_bytes;
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let output_write_start_time = profiling_enabled.then(Instant::now);
     let selected_probability_byte_count = selected_sample_count.checked_mul(2).ok_or_else(|| {
@@ -344,21 +341,24 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
         )?
     };
     let output_row = output_matrix.row_mut(variant_index)?;
-    let dosage_lookup = unphased_eight_bit_dosage_lookup();
-    let mut summary = PackedProbabilitySummary::default();
 
-    if sample_selection.is_identity {
-        output_row.copy_from_slice(packed_probability_bytes);
-        summary = summarize_packed_probability_bytes(packed_probability_bytes, dosage_lookup)?;
+    let decode_summary = if sample_selection.is_identity {
+        simd::copy_unphased_eight_bit_probability_pairs_and_summarize_simd_or_scalar(
+            packed_probability_bytes,
+            output_row,
+        )
     } else if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start {
         let probability_offset = contiguous_file_index_start.checked_mul(2).ok_or_else(|| {
             BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
         })?;
         let selected_probability_bytes =
             read_exact_bytes(packed_probability_bytes, probability_offset, selected_probability_byte_count)?;
-        output_row.copy_from_slice(selected_probability_bytes);
-        summary = summarize_packed_probability_bytes(selected_probability_bytes, dosage_lookup)?;
+        simd::copy_unphased_eight_bit_probability_pairs_and_summarize_simd_or_scalar(
+            selected_probability_bytes,
+            output_row,
+        )
     } else {
+        let mut raw_integer_summary = simd::EightBitRawIntegerSummary::default();
         for (selected_index, file_sample_index) in sample_selection.selected_file_indices.iter().copied().enumerate() {
             let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
                 BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
@@ -369,9 +369,10 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
             })?;
             output_row[output_offset] = probability_pair[0];
             output_row[output_offset + 1] = probability_pair[1];
-            summary.add_probability_pair(probability_pair, dosage_lookup);
+            raw_integer_summary.record_probability_pair(probability_pair);
         }
-    }
+        raw_integer_summary.into_decode_summary()
+    };
     if let Some(output_write_start_time) = output_write_start_time {
         thread_local_profile_snapshot.output_write_ns += elapsed_nanoseconds(output_write_start_time);
         thread_local_profile_snapshot.output_write_count += 1;
@@ -385,15 +386,15 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
     thread_local_profile_snapshot.variant_decode_count += 1;
     Ok(VariantDecodeResult {
         profile_snapshot: thread_local_profile_snapshot,
-        selected_dosage_total: summary.dosage_sum,
-        selected_dosage_square_total: summary.dosage_square_sum,
-        selected_observation_count: selected_sample_count_to_i32(selected_sample_count)?,
+        selected_dosage_total: decode_summary.selected_dosage_total,
+        selected_dosage_square_total: decode_summary.selected_dosage_square_total,
+        selected_observation_count: decode_summary.selected_observation_count,
         has_missing_values: false,
-        zero_count: summary.zero_count,
-        nonzero_count: summary.nonzero_count,
-        homozygous_reference_count: summary.homozygous_reference_count,
-        heterozygous_count: summary.heterozygous_count,
-        homozygous_alternate_count: summary.homozygous_alternate_count,
+        zero_count: decode_summary.zero_count,
+        nonzero_count: decode_summary.nonzero_count,
+        homozygous_reference_count: decode_summary.homozygous_reference_count,
+        heterozygous_count: decode_summary.heterozygous_count,
+        homozygous_alternate_count: decode_summary.homozygous_alternate_count,
     })
 }
 
@@ -421,54 +422,13 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         profiling_enabled,
     )?;
 
-    let mut cursor = 0;
-    let stored_sample_count = u32_to_usize(read_u32_at(probability_block, cursor)?)?;
-    cursor += 4;
-    if stored_sample_count != sample_count {
-        return Err(BgenError::InvalidFormat(format!(
-            "Variant '{}' stores {stored_sample_count} samples in its probability block, but the file header reports {sample_count}.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    let allele_count = read_u16_at(probability_block, cursor)?;
-    cursor += 2;
-    if allele_count != 2 {
-        return Err(BgenError::UnsupportedFormat(format!(
-            "Variant '{}' is not biallelic.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    let minimum_ploidy = read_u8_at(probability_block, cursor)?;
-    cursor += 1;
-    let maximum_ploidy = read_u8_at(probability_block, cursor)?;
-    cursor += 1;
-    if minimum_ploidy != 2 || maximum_ploidy != 2 {
-        return Err(BgenError::UnsupportedFormat(format!(
-            "Variant '{}' uses ploidy bounds [{minimum_ploidy}, {maximum_ploidy}], but variant-major trusted reads require diploid variants.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    read_exact_bytes(probability_block, cursor, sample_count)?;
-    cursor += sample_count;
-
-    let phased_flag = read_u8_at(probability_block, cursor)?;
-    cursor += 1;
-    let probability_bit_count = read_u8_at(probability_block, cursor)?;
-    cursor += 1;
-    if phased_flag != 0 || probability_bit_count != 8 {
-        return Err(BgenError::UnsupportedFormat(format!(
-            "Variant '{}' is not an unphased 8-bit BGEN variant.",
-            variant_record.resolved_variant_identifier,
-        )));
-    }
-
-    let expected_probability_byte_count = sample_count.checked_mul(2).ok_or_else(|| {
-        BgenError::InvalidFormat("Integer overflow while decoding 8-bit BGEN probabilities.".to_string())
-    })?;
-    let packed_probability_bytes = read_exact_bytes(probability_block, cursor, expected_probability_byte_count)?;
+    let trusted_block = parse_trusted_unphased_eight_bit_probability_block(
+        probability_block,
+        sample_count,
+        variant_record,
+        TrustedEightBitParseContext::VariantMajorDosage,
+    )?;
+    let packed_probability_bytes = trusted_block.packed_probability_bytes;
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let output_write_start_time = profiling_enabled.then(Instant::now);
     let mut output_matrix = unsafe {
@@ -931,6 +891,102 @@ mod tests {
                 < f32::EPSILON
         );
         assert!((noncontiguous_output[1] - dosage_lookup[0]).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn trusted_packed8_variant_major_decode_covers_identity_and_contiguous_selected_samples() {
+        let probability_bytes = [0_u8, 0, 255, 0, 0, 255, 128, 0];
+        let block = trusted_probability_block(4, 2, 2, 2, &[2, 2, 2, 2], 0, 8, &probability_bytes);
+        let variant_records = [variant_record(0, block.len(), "trusted-packed8")];
+
+        let identity_selection = build_sample_selection(4, &[0, 1, 2, 3]).expect("identity selection should build");
+        let mut identity_output = vec![0_u8; probability_bytes.len()];
+        let mut thread_scratch = ThreadScratch::default();
+        let mut dosage_sum = vec![0.0_f32; 1];
+        let mut dosage_square_sum = vec![0.0_f32; 1];
+        let mut observation_count = vec![0_i32; 1];
+        let mut zero_count = vec![0_i32; 1];
+        let mut nonzero_count = vec![0_i32; 1];
+        let mut homozygous_reference_count = vec![0_i32; 1];
+        let mut heterozygous_count = vec![0_i32; 1];
+        let mut homozygous_alternate_count = vec![0_i32; 1];
+        let mut identity_stats = VariantMajorTileStatsMut {
+            dosage_sum: &mut dosage_sum,
+            dosage_square_sum: &mut dosage_square_sum,
+            observation_count: &mut observation_count,
+            zero_count: &mut zero_count,
+            nonzero_count: &mut nonzero_count,
+            homozygous_reference_count: &mut homozygous_reference_count,
+            heterozygous_count: &mut heterozygous_count,
+            homozygous_alternate_count: &mut homozygous_alternate_count,
+        };
+        decode_trusted_variant_major_packed8_probability_pair_tile(
+            &block,
+            CompressionType::None,
+            4,
+            &identity_selection,
+            &variant_records,
+            identity_output.as_mut_ptr() as usize,
+            4,
+            0,
+            true,
+            &mut identity_stats,
+            &mut thread_scratch,
+        )
+        .expect("trusted packed8 identity decode should succeed");
+
+        assert_eq!(identity_output, probability_bytes);
+        assert_eq!(observation_count, vec![4]);
+        assert_eq!(zero_count, vec![1]);
+        assert_eq!(nonzero_count, vec![3]);
+        assert_eq!(homozygous_reference_count, vec![1]);
+        assert_eq!(heterozygous_count, vec![2]);
+        assert_eq!(homozygous_alternate_count, vec![1]);
+
+        let contiguous_selection = build_sample_selection(4, &[1, 2]).expect("contiguous selection should build");
+        let mut contiguous_output = vec![0_u8; 4];
+        let mut dosage_sum = vec![0.0_f32; 1];
+        let mut dosage_square_sum = vec![0.0_f32; 1];
+        let mut observation_count = vec![0_i32; 1];
+        let mut zero_count = vec![0_i32; 1];
+        let mut nonzero_count = vec![0_i32; 1];
+        let mut homozygous_reference_count = vec![0_i32; 1];
+        let mut heterozygous_count = vec![0_i32; 1];
+        let mut homozygous_alternate_count = vec![0_i32; 1];
+        let mut contiguous_stats = VariantMajorTileStatsMut {
+            dosage_sum: &mut dosage_sum,
+            dosage_square_sum: &mut dosage_square_sum,
+            observation_count: &mut observation_count,
+            zero_count: &mut zero_count,
+            nonzero_count: &mut nonzero_count,
+            homozygous_reference_count: &mut homozygous_reference_count,
+            heterozygous_count: &mut heterozygous_count,
+            homozygous_alternate_count: &mut homozygous_alternate_count,
+        };
+        decode_trusted_variant_major_packed8_probability_pair_tile(
+            &block,
+            CompressionType::None,
+            4,
+            &contiguous_selection,
+            &variant_records,
+            contiguous_output.as_mut_ptr() as usize,
+            2,
+            0,
+            true,
+            &mut contiguous_stats,
+            &mut thread_scratch,
+        )
+        .expect("trusted packed8 contiguous decode should succeed");
+
+        assert_eq!(contiguous_output, vec![255, 0, 0, 255]);
+        assert_eq!(observation_count, vec![2]);
+        assert_eq!(zero_count, vec![1]);
+        assert_eq!(nonzero_count, vec![1]);
+        assert_eq!(homozygous_reference_count, vec![1]);
+        assert_eq!(heterozygous_count, vec![1]);
+        assert_eq!(homozygous_alternate_count, vec![0]);
+        assert!((dosage_sum[0] - 1.0).abs() < f32::EPSILON);
+        assert!((dosage_square_sum[0] - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]

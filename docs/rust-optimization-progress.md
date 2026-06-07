@@ -24,10 +24,11 @@ used to explain where the speedup came from.
 
 | Branch | Worktree | Scope | Status |
 | --- | --- | --- | --- |
-| `opt/rust-opt-benchmarks-progress` | `rust-opt-benchmarks-progress` | Benchmark gaps and progress log | In progress |
-| `opt/rust-opt-trusted-packed8` | `rust-opt-trusted-packed8` | Trusted BGEN parser reuse, packed8 fused summary, SIMD | In progress |
-| `opt/rust-opt-output-transfer` | `rust-opt-output-transfer` | Native output streaming, cached arrays, reduced Python transfer | In progress |
-| `opt/rust-opt-decode-profile` | `rust-opt-decode-profile` | Profiling fast path, rolling bit reader, row-major experiments | In progress |
+| `opt/rust-opt-benchmarks-progress` | `rust-opt-benchmarks-progress` | Benchmark gaps and progress log | Integrated |
+| `opt/rust-opt-trusted-packed8` | `rust-opt-trusted-packed8` | Trusted BGEN parser reuse, packed8 fused summary, SIMD | Integrating |
+| `opt/rust-opt-output-transfer` | `rust-opt-output-transfer` | Native output streaming, cached arrays, reduced Python transfer | Pending integration |
+| `opt/rust-opt-decode-profile` | `rust-opt-decode-profile` | Profiling fast path, rolling bit reader, row-major experiments | Pending integration |
+| `opt/rust-opt-setup-reuse` | `rust-opt-setup-reuse` | Setup path parsing, sample alignment, LOCO prediction reuse | Pending integration |
 
 ## Baseline Commands
 
@@ -56,6 +57,14 @@ benchmarks through `just slurm-gpu-run`.
 - Git worktrees do not contain the git-ignored `data/` directory, so Rust and
   Python benchmark harnesses now honor `GWAS_ENGINE_DATA_DIR` for shared input
   data.
+- The trusted f32 dosage path already used raw integer accumulation, so packed8
+  stats can share the same summary representation and match the existing f32
+  tolerances.
+- Identity and contiguous packed8 selections previously copied bytes and then
+  scanned the same byte slice again for stats; this is the clearest packed8
+  optimization point.
+- Non-contiguous packed8 selection cannot use the same vectorized copy path
+  without gather-style work, but it can still avoid lookup-table f32 stats.
 
 ## Completed So Far
 
@@ -69,11 +78,23 @@ benchmarks through `just slurm-gpu-run`.
 - Extended `scripts/benchmark_bgen_reader.py` with packed8 path mode,
   sample-selection sweeps, median timing, JSON/Markdown report paths, and
   clearer subprocess error reporting.
-- Verified:
+- Added a shared trusted unphased 8-bit no-missing diploid probability-block
+  parser and reused it from validation, f32 dosage decode, and packed8 decode.
+- Added scalar and AVX2 packed8 copy-and-summary helpers that copy probability
+  pairs and accumulate raw integer dosage stats in one pass.
+- Switched trusted packed8 identity and contiguous selections from
+  copy-then-rescan to fused copy+summary.
+- Switched trusted packed8 non-contiguous selections from lookup-table f32
+  summary to raw integer summary while gathering selected pairs.
+- Verified the benchmark/progress slice:
   - `cargo fmt --all --check`
   - `uv run ruff check scripts/benchmark_bgen_reader.py`
   - `uv run ruff format --check scripts/benchmark_bgen_reader.py`
   - smoke: `GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data uv run --no-sync python scripts/benchmark_bgen_reader.py --chunk-sizes 16 --variant-limit 16 --repeat-count 1 --path-modes variant_major_buffered --sample-selection-modes full,strided_half --json-summary-path data/profiles/rust_opt_bgen_reader_smoke.json --markdown-summary-path data/profiles/rust_opt_bgen_reader_smoke.md`
+- Verified the trusted packed8 slice:
+  - `cargo test --lib genotype::bgen`
+  - `cargo clippy --lib -- -D warnings`
+  - `cargo test --test rust_native_coverage trusted`
 
 ## Baseline Measurements
 
