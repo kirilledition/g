@@ -28,7 +28,8 @@ This tracks the implementation campaign for
 - Wave 4 writer/output throughput: partial; F-018, F-030, and F-039 are
   complete.
 - Wave 5 Rust decode and larger architecture: pending.
-- Wave 6 warmup and performance proof: pending.
+- Wave 6 warmup and performance proof: partial; F-009 and F-028 are covered
+  by branch `appopt-hotloop-warmup`.
 
 ## Current implementation notes
 
@@ -55,6 +56,17 @@ This tracks the implementation campaign for
   float64 shifted sum-of-squares, and production routing of those linear
   numerical settings.
 - Implemented lazy null-Firth fallback execution with staged `jax.lax.cond`.
+- In `appopt-hotloop-warmup`, added chunk-scoped stage timing records for
+  native Rust-to-Python delivery callback time, Python callback worker time,
+  host-to-device transfers, JAX compute dispatch/synchronization time,
+  device-to-host materialization, and output write time. True Rust decode-only
+  per-chunk timing still requires native per-chunk profile export; the Python
+  branch records the observable delivery callback boundary.
+- In `appopt-hotloop-warmup`, warm-cache enumeration now uses every unique
+  production chunk shape in plan order instead of truncating to two sizes, and
+  `WarmCacheReport` records warmed signatures with genotype format, trait
+  count, correction method, Firth capacity settings, score dtype, and
+  dosage/packed8 entrypoint path.
 
 ## Validation
 
@@ -74,8 +86,8 @@ This tracks the implementation campaign for
 
 ## Remaining larger work
 
-- Pipeline architecture and batching: F-009, F-017, F-019, F-020, F-028,
-  F-032, F-033, F-038.
+- Pipeline architecture and batching: F-017, F-019, F-020, F-032, F-033,
+  F-038.
 - Packed8 and Firth compute rewrites: F-011, F-012, F-034.
 - Score-kernel/state setup rewrites: F-035.
 - Rust decode and allocation reuse: F-025, F-036, F-037, F-040.

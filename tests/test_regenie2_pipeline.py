@@ -226,6 +226,36 @@ def test_write_regenie2_native_chunk_downcasts_float64_statistics_before_writing
     np.testing.assert_array_equal(written_chunk["extra_code"], extra_code)
 
 
+def test_write_regenie2_native_chunk_records_per_chunk_output_timing() -> None:
+    writer_session = FakeWriterSession()
+    stage_timing_recorder = timing.StageTimingRecorder()
+    metadata = build_native_metadata()
+
+    callbacks.write_regenie2_native_chunk_with_optional_timing(
+        writer_session=writer_session,
+        metadata=metadata,
+        chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        extra_code=None,
+        stage_timing_recorder=stage_timing_recorder,
+    )
+
+    snapshot = stage_timing_recorder.snapshot()
+    chunk_stage_names = tuple(chunk_timing.stage_name for chunk_timing in snapshot.chunk_stage_timings)
+    assert chunk_stage_names == (
+        "device_to_host_materialization",
+        "output_write",
+        "single_trait_output_write",
+    )
+    assert all(
+        chunk_timing.chunk_identifier == metadata.variant_start_index for chunk_timing in snapshot.chunk_stage_timings
+    )
+    assert all(chunk_timing.variant_count == 2 for chunk_timing in snapshot.chunk_stage_timings)
+
+
 def test_write_regenie2_multi_native_chunk_skips_committed_traits_and_slices_extra_code() -> None:
     writer_sessions = (FakeWriterSession(), FakeWriterSession())
     metadata = build_native_metadata()
@@ -973,8 +1003,71 @@ def test_native_callback_runner_defers_worker_start_until_explicit_start() -> No
     assert not callback.result_worker_thread.is_alive()
 
 
+def test_native_callback_runner_records_native_delivery_timing_for_enqueued_chunk() -> None:
+    stage_timing_recorder = timing.StageTimingRecorder()
+
+    class TimedCallbackRunner(callbacks.NativeBgenCallbackRunner):
+        def __init__(self) -> None:
+            super().__init__(
+                worker_name="timed-manual-callback",
+                stage_timing_recorder=stage_timing_recorder,
+            )
+            self.metadata: list[object] = []
+
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del genotype_matrix, chunk_stats
+            self.metadata.append(variant_metadata)
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix_by_variant, chunk_stats
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+
+    callback = TimedCallbackRunner()
+    metadata = build_native_metadata()
+    try:
+        callback.compute_preprocessed_dosage_chunk(
+            metadata=metadata,
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=typing.cast("typing.Any", SimpleNamespace()),
+        )
+        callback.finish()
+    finally:
+        callback.abort()
+
+    assert callback.metadata == [metadata]
+    snapshot = stage_timing_recorder.snapshot()
+    assert snapshot.stage_counts["native_delivery"] == 1
+    assert snapshot.stage_counts["python_callback"] == 1
+    assert {chunk_timing.stage_name for chunk_timing in snapshot.chunk_stage_timings} >= {
+        "native_delivery",
+        "python_callback",
+    }
+
+
 def test_native_callback_runner_consumes_both_dosage_layouts() -> None:
     callback = ManualCallbackRunner()
+    stage_timing_recorder = timing.StageTimingRecorder()
+    callback.stage_timing_recorder = stage_timing_recorder
     metadata = build_native_metadata()
     chunk_stats = typing.cast("typing.Any", SimpleNamespace())
 
@@ -1000,6 +1093,12 @@ def test_native_callback_runner_consumes_both_dosage_layouts() -> None:
     assert callback.sample_major_metadata == [metadata]
     assert callback.processed_chunk_count == 2
     assert callback.worker_error is None
+    snapshot = stage_timing_recorder.snapshot()
+    assert tuple(chunk_timing.stage_name for chunk_timing in snapshot.chunk_stage_timings) == (
+        "python_callback",
+        "python_callback",
+    )
+    assert snapshot.stage_counts["python_callback"] == 2
 
 
 def test_native_callback_runner_records_worker_errors_from_consumer() -> None:
