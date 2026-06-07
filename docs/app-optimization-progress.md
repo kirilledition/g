@@ -23,8 +23,8 @@ This tracks the implementation campaign for
   F-003, F-004, F-005, F-023, F-024, F-026, F-031.
 - Wave 2 native boundaries and startup overhead: partial; F-006, F-010,
   F-007, F-008, F-016, F-021, F-022, and F-041 are complete.
-- Wave 3 JAX numerics and Firth performance: partial; F-013, F-014, and
-  F-015 are complete.
+- Wave 3 JAX numerics and Firth performance: partial; F-011, F-013, F-014,
+  and F-015 are complete.
 - Wave 4 writer/output throughput: partial; F-018, F-019, F-020, F-030,
   F-038, and F-039 are complete.
 - Wave 5 Rust decode and larger architecture: partial; F-017, F-025, F-036,
@@ -94,6 +94,11 @@ This tracks the implementation campaign for
   cheaper than repeated per-group passes. The old per-group path remains the
   fallback for packed8, untrusted missingness, single groups, and disjoint
   groups where the union sample count is not cheaper.
+- Implemented packed8-specific approximate-Firth candidate correction dispatch.
+  Packed8 score/Firth runs now keep score-test work in the packed8 entrypoint,
+  reuse native dosage/observation stats for flip decisions, and decode only the
+  fixed-capacity Firth candidate rows for correction lanes instead of handing a
+  full dense decoded chunk into the correction path.
 
 ## Validation
 
@@ -110,11 +115,16 @@ This tracks the implementation campaign for
 - `uv run ty check src tests` passed.
 - `cargo fmt --check` passed.
 - `git diff --check` passed.
+- `uv run pytest tests/test_regenie2_binary.py tests/test_regenie2_binary_scalar_firth.py tests/test_regenie2_binary_firth_null.py -q`
+  passed after F-011: 70 tests, 1 skipped, 1 existing JAX donation warning.
+- Scoped `uv run ty check ...`, `uv run ruff check ...`,
+  `uv run ruff format --check ...`, and `git diff --check` passed for the F-011
+  packed8 compute files.
 
 ## Remaining larger work
 
 - Pipeline architecture and batching: F-032, F-033.
-- Packed8 and Firth compute rewrites: F-011, F-012, F-034.
+- Packed8 and Firth compute rewrites: F-012, F-034.
 - Score-kernel/state setup rewrites: F-035.
 - Rust decode and allocation reuse: F-025, F-036, F-037, F-040 are implemented
   and integrated; deeper reusable stats-buffer ownership remains a future
@@ -151,3 +161,7 @@ This tracks the implementation campaign for
   group callbacks. This path is selected only for trusted no-missing dosage
   delivery when `union_sample_count < sum(group_sample_count)`; otherwise the
   previous per-group delivery path is preserved.
+- F-011: packed8 binary approximate-Firth now routes through packed8 correction
+  entrypoints. Candidate correction batches gather packed rows, decode only
+  candidate lanes, and reuse supplied native `dosage_sum`/`observation_count`
+  for REGENIE allele-flip decisions.

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+from g import types as g_types
 from g.compute.common import genotype as compute_genotype
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
@@ -176,34 +177,34 @@ def residualize_and_scale_multi_genotypes_for_approximate_firth(
     return weighted_residual_matrix_by_variant / square_root_weight
 
 
-def prepare_firth_candidate_batch(
+def take_candidate_stat_vector(stat_vector: jax.Array | None, candidate_indices: jax.Array) -> jax.Array | None:
+    """Gather an optional per-variant native statistic for candidate lanes."""
+    if stat_vector is None:
+        return None
+    return jnp.take(jnp.asarray(stat_vector), candidate_indices, axis=0)
+
+
+def prepare_firth_candidate_batch_from_candidate_genotypes(
     *,
     chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
-    genotype_matrix_by_variant: jax.Array,
-    candidate_mask: jax.Array,
+    batch_plan: regenie2_binary_candidate_planning.FirthBatchPlan,
+    flat_fallback_indices: jax.Array,
+    flat_active_mask: jax.Array,
+    candidate_genotype_matrix_by_variant: jax.Array,
     score_beta: jax.Array,
     sparse_candidate_mask: jax.Array | None,
-    candidate_capacity: int,
-    firth_batch_size: int,
     order_candidates: bool,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    candidate_dosage_sum: jax.Array | None = None,
+    candidate_observation_count: jax.Array | None = None,
 ) -> PreparedFirthCandidateBatch:
-    """Prepare ordered fixed-capacity candidate lanes for Firth correction."""
-    genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
-    batch_plan = regenie2_binary_candidate_planning.build_device_firth_batch_plan(
-        candidate_mask,
-        candidate_capacity,
-        firth_batch_size,
-    )
-    flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
-    flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
-    candidate_genotype_matrix_by_variant = jnp.take(
-        genotype_matrix_by_variant_float32,
-        flat_fallback_indices,
-        axis=0,
-    )
+    """Prepare ordered fixed-capacity candidate lanes from decoded candidate genotypes."""
     raw_candidate_genotype_matrix_by_variant = candidate_genotype_matrix_by_variant
-    genotype_flip_result = compute_genotype.build_regenie_flipped_genotypes(raw_candidate_genotype_matrix_by_variant)
+    genotype_flip_result = compute_genotype.build_regenie_flipped_genotypes(
+        raw_candidate_genotype_matrix_by_variant,
+        dosage_sum=candidate_dosage_sum,
+        observation_count=candidate_observation_count,
+    )
     if kernel_config.approximate_firth.use_block_math:
         firth_raw_candidate_genotype_matrix_by_variant = raw_candidate_genotype_matrix_by_variant
         flat_genotype_flip_mask = jnp.zeros_like(flat_active_mask)
@@ -258,9 +259,9 @@ def prepare_firth_candidate_batch(
     )
 
 
-def prepare_multi_firth_candidate_batch(
+def prepare_firth_candidate_batch(
     *,
-    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     candidate_mask: jax.Array,
     score_beta: jax.Array,
@@ -269,26 +270,112 @@ def prepare_multi_firth_candidate_batch(
     firth_batch_size: int,
     order_candidates: bool,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> PreparedMultiFirthCandidateBatch:
-    """Prepare ordered fixed-capacity multi-trait candidate lanes for Firth correction."""
+    dosage_sum: jax.Array | None = None,
+    observation_count: jax.Array | None = None,
+) -> PreparedFirthCandidateBatch:
+    """Prepare ordered fixed-capacity candidate lanes for Firth correction."""
     genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
-    variant_count = genotype_matrix_by_variant.shape[0]
-    batch_plan = regenie2_binary_candidate_planning.build_device_multi_firth_batch_plan(
+    batch_plan = regenie2_binary_candidate_planning.build_device_firth_batch_plan(
         candidate_mask,
         candidate_capacity,
         firth_batch_size,
     )
     flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
     flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
-    flat_trait_indices = flat_fallback_indices // variant_count
-    flat_variant_indices = flat_fallback_indices % variant_count
     candidate_genotype_matrix_by_variant = jnp.take(
         genotype_matrix_by_variant_float32,
-        flat_variant_indices,
+        flat_fallback_indices,
         axis=0,
     )
+    candidate_dosage_sum = take_candidate_stat_vector(dosage_sum, flat_fallback_indices)
+    candidate_observation_count = take_candidate_stat_vector(observation_count, flat_fallback_indices)
+    return prepare_firth_candidate_batch_from_candidate_genotypes(
+        chromosome_state=chromosome_state,
+        batch_plan=batch_plan,
+        flat_fallback_indices=flat_fallback_indices,
+        flat_active_mask=flat_active_mask,
+        candidate_genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
+        score_beta=score_beta,
+        sparse_candidate_mask=sparse_candidate_mask,
+        order_candidates=order_candidates,
+        kernel_config=kernel_config,
+        candidate_dosage_sum=candidate_dosage_sum,
+        candidate_observation_count=candidate_observation_count,
+    )
+
+
+def prepare_firth_candidate_batch_from_packed8(
+    *,
+    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
+    packed_probability_pairs_by_variant: jax.Array,
+    candidate_mask: jax.Array,
+    score_beta: jax.Array,
+    sparse_candidate_mask: jax.Array | None,
+    candidate_capacity: int,
+    firth_batch_size: int,
+    order_candidates: bool,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    dosage_sum: jax.Array | None = None,
+    observation_count: jax.Array | None = None,
+    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+) -> PreparedFirthCandidateBatch:
+    """Prepare Firth candidate lanes by decoding only selected packed8 rows."""
+    batch_plan = regenie2_binary_candidate_planning.build_device_firth_batch_plan(
+        candidate_mask,
+        candidate_capacity,
+        firth_batch_size,
+    )
+    flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
+    flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
+    packed_candidate_probability_pairs_by_variant = jnp.take(
+        packed_probability_pairs_by_variant,
+        flat_fallback_indices,
+        axis=0,
+    )
+    candidate_genotype_matrix_by_variant = compute_genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
+        packed_candidate_probability_pairs_by_variant,
+        score_dtype,
+    )
+    candidate_dosage_sum = take_candidate_stat_vector(dosage_sum, flat_fallback_indices)
+    candidate_observation_count = take_candidate_stat_vector(observation_count, flat_fallback_indices)
+    return prepare_firth_candidate_batch_from_candidate_genotypes(
+        chromosome_state=chromosome_state,
+        batch_plan=batch_plan,
+        flat_fallback_indices=flat_fallback_indices,
+        flat_active_mask=flat_active_mask,
+        candidate_genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
+        score_beta=score_beta,
+        sparse_candidate_mask=sparse_candidate_mask,
+        order_candidates=order_candidates,
+        kernel_config=kernel_config,
+        candidate_dosage_sum=candidate_dosage_sum,
+        candidate_observation_count=candidate_observation_count,
+    )
+
+
+def prepare_multi_firth_candidate_batch_from_candidate_genotypes(
+    *,
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
+    batch_plan: regenie2_binary_candidate_planning.FirthBatchPlan,
+    flat_fallback_indices: jax.Array,
+    flat_active_mask: jax.Array,
+    flat_trait_indices: jax.Array,
+    flat_variant_indices: jax.Array,
+    candidate_genotype_matrix_by_variant: jax.Array,
+    score_beta: jax.Array,
+    sparse_candidate_mask: jax.Array | None,
+    order_candidates: bool,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    candidate_dosage_sum: jax.Array | None = None,
+    candidate_observation_count: jax.Array | None = None,
+) -> PreparedMultiFirthCandidateBatch:
+    """Prepare ordered multi-trait candidate lanes from decoded candidate genotypes."""
     raw_candidate_genotype_matrix_by_variant = candidate_genotype_matrix_by_variant
-    genotype_flip_result = compute_genotype.build_regenie_flipped_genotypes(raw_candidate_genotype_matrix_by_variant)
+    genotype_flip_result = compute_genotype.build_regenie_flipped_genotypes(
+        raw_candidate_genotype_matrix_by_variant,
+        dosage_sum=candidate_dosage_sum,
+        observation_count=candidate_observation_count,
+    )
     if kernel_config.approximate_firth.use_block_math:
         firth_raw_candidate_genotype_matrix_by_variant = raw_candidate_genotype_matrix_by_variant
         flat_genotype_flip_mask = jnp.zeros_like(flat_active_mask)
@@ -368,6 +455,110 @@ def prepare_multi_firth_candidate_batch(
         candidate_inputs=candidate_inputs,
         initial_coefficients=initial_coefficients,
         full_null_deviance=jnp.take(chromosome_state.full_null_deviance, candidate_inputs.flat_trait_indices, axis=0),
+    )
+
+
+def prepare_multi_firth_candidate_batch(
+    *,
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
+    genotype_matrix_by_variant: jax.Array,
+    candidate_mask: jax.Array,
+    score_beta: jax.Array,
+    sparse_candidate_mask: jax.Array | None,
+    candidate_capacity: int,
+    firth_batch_size: int,
+    order_candidates: bool,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    dosage_sum: jax.Array | None = None,
+    observation_count: jax.Array | None = None,
+) -> PreparedMultiFirthCandidateBatch:
+    """Prepare ordered fixed-capacity multi-trait candidate lanes for Firth correction."""
+    genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
+    variant_count = genotype_matrix_by_variant.shape[0]
+    batch_plan = regenie2_binary_candidate_planning.build_device_multi_firth_batch_plan(
+        candidate_mask,
+        candidate_capacity,
+        firth_batch_size,
+    )
+    flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
+    flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
+    flat_trait_indices = flat_fallback_indices // variant_count
+    flat_variant_indices = flat_fallback_indices % variant_count
+    candidate_genotype_matrix_by_variant = jnp.take(
+        genotype_matrix_by_variant_float32,
+        flat_variant_indices,
+        axis=0,
+    )
+    candidate_dosage_sum = take_candidate_stat_vector(dosage_sum, flat_variant_indices)
+    candidate_observation_count = take_candidate_stat_vector(observation_count, flat_variant_indices)
+    return prepare_multi_firth_candidate_batch_from_candidate_genotypes(
+        chromosome_state=chromosome_state,
+        batch_plan=batch_plan,
+        flat_fallback_indices=flat_fallback_indices,
+        flat_active_mask=flat_active_mask,
+        flat_trait_indices=flat_trait_indices,
+        flat_variant_indices=flat_variant_indices,
+        candidate_genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
+        score_beta=score_beta,
+        sparse_candidate_mask=sparse_candidate_mask,
+        order_candidates=order_candidates,
+        kernel_config=kernel_config,
+        candidate_dosage_sum=candidate_dosage_sum,
+        candidate_observation_count=candidate_observation_count,
+    )
+
+
+def prepare_multi_firth_candidate_batch_from_packed8(
+    *,
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
+    packed_probability_pairs_by_variant: jax.Array,
+    candidate_mask: jax.Array,
+    score_beta: jax.Array,
+    sparse_candidate_mask: jax.Array | None,
+    candidate_capacity: int,
+    firth_batch_size: int,
+    order_candidates: bool,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    dosage_sum: jax.Array | None = None,
+    observation_count: jax.Array | None = None,
+    score_dtype: g_types.FloatingPointDtype = g_types.FloatingPointDtype.FLOAT32,
+) -> PreparedMultiFirthCandidateBatch:
+    """Prepare multi-trait Firth candidate lanes by decoding only selected packed8 rows."""
+    variant_count = packed_probability_pairs_by_variant.shape[0]
+    batch_plan = regenie2_binary_candidate_planning.build_device_multi_firth_batch_plan(
+        candidate_mask,
+        candidate_capacity,
+        firth_batch_size,
+    )
+    flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
+    flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
+    flat_trait_indices = flat_fallback_indices // variant_count
+    flat_variant_indices = flat_fallback_indices % variant_count
+    packed_candidate_probability_pairs_by_variant = jnp.take(
+        packed_probability_pairs_by_variant,
+        flat_variant_indices,
+        axis=0,
+    )
+    candidate_genotype_matrix_by_variant = compute_genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
+        packed_candidate_probability_pairs_by_variant,
+        score_dtype,
+    )
+    candidate_dosage_sum = take_candidate_stat_vector(dosage_sum, flat_variant_indices)
+    candidate_observation_count = take_candidate_stat_vector(observation_count, flat_variant_indices)
+    return prepare_multi_firth_candidate_batch_from_candidate_genotypes(
+        chromosome_state=chromosome_state,
+        batch_plan=batch_plan,
+        flat_fallback_indices=flat_fallback_indices,
+        flat_active_mask=flat_active_mask,
+        flat_trait_indices=flat_trait_indices,
+        flat_variant_indices=flat_variant_indices,
+        candidate_genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
+        score_beta=score_beta,
+        sparse_candidate_mask=sparse_candidate_mask,
+        order_candidates=order_candidates,
+        kernel_config=kernel_config,
+        candidate_dosage_sum=candidate_dosage_sum,
+        candidate_observation_count=candidate_observation_count,
     )
 
 

@@ -2729,6 +2729,54 @@ def test_packed8_approximate_firth_binary_chunk_matches_variant_major_dosage() -
     assert_binary_chunk_results_match(variant_major_result, packed_result)
 
 
+def test_packed8_firth_candidate_batch_decodes_only_candidate_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    fixture = build_packed8_binary_fixture()
+    correction_plan = types.BinaryCorrectionPlan(
+        method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+        p_threshold=0.99,
+        firth_se=True,
+    )
+    chromosome_state = build_variant_major_parity_chromosome_state(fixture, correction_plan)
+    genotype_matrix_by_variant = jnp.transpose(fixture.genotype_matrix)
+    packed_probability_pairs_by_variant = encode_integer_dosage_matrix_to_packed8_probability_pairs(
+        np.asarray(genotype_matrix_by_variant, dtype=np.float32)
+    )
+    dosage_sum = jnp.sum(genotype_matrix_by_variant, axis=1)
+    observation_count = jnp.full((genotype_matrix_by_variant.shape[0],), genotype_matrix_by_variant.shape[1])
+    decode_shapes: list[tuple[int, ...]] = []
+    original_decode = common_genotype.decode_packed8_probability_pairs_to_variant_major_dosage
+
+    def record_decode(
+        packed_candidate_probability_pairs_by_variant: jax.Array,
+        score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    ) -> jax.Array:
+        decode_shapes.append(tuple(packed_candidate_probability_pairs_by_variant.shape))
+        return original_decode(packed_candidate_probability_pairs_by_variant, score_dtype)
+
+    monkeypatch.setattr(
+        regenie2_binary_firth_batch.compute_genotype,
+        "decode_packed8_probability_pairs_to_variant_major_dosage",
+        record_decode,
+    )
+
+    prepared_batch = regenie2_binary_firth_batch.prepare_firth_candidate_batch_from_packed8(
+        chromosome_state=chromosome_state,
+        packed_probability_pairs_by_variant=jnp.asarray(packed_probability_pairs_by_variant),
+        candidate_mask=jnp.asarray([True, False, True], dtype=jnp.bool_),
+        score_beta=jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32),
+        sparse_candidate_mask=fixture.sparse_candidate_mask,
+        candidate_capacity=2,
+        firth_batch_size=2,
+        order_candidates=False,
+        kernel_config=build_default_binary_kernel_config(),
+        dosage_sum=dosage_sum,
+        observation_count=observation_count,
+    )
+
+    assert decode_shapes == [(2, genotype_matrix_by_variant.shape[1], 2)]
+    np.testing.assert_array_equal(np.asarray(prepared_batch.candidate_inputs.flat_fallback_indices), [0, 2])
+
+
 def test_packed8_multi_trait_approximate_firth_matches_variant_major_dosage() -> None:
     fixture = build_packed8_binary_fixture()
     phenotype_matrix = jnp.stack([fixture.phenotype_vector, 1.0 - fixture.phenotype_vector], axis=0)
