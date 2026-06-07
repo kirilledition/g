@@ -184,42 +184,57 @@ Selected 16,384-variant mean times:
 
 ## Final Measurements
 
-Final comparisons use current `main` at `13e3e768` as the baseline and
-`integration/rust-optimization` at `5071b94d` as the optimized build. Both
-worktrees were installed with:
+Final comparisons use current-main code at `fb9139e6` as the baseline and
+`integration/rust-optimization` at `66e080b2` as the optimized build. `main`
+advanced to `21d7029e` after the benchmark with docs-only changes, so the
+measured code baseline is still current for runtime behavior. Both worktrees
+were installed with:
 
 ```bash
 uv sync --python 3.14 --group dev --group gpu
 RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf --uv
 ```
 
-The GPU app benchmark was run on `landau` with `--variant-limit 4096`,
-`--storage-modes variant_major,packed8`, and same-process warm/hot trials. The
-unmodified current-main benchmark failed at 16,384, 4,096, and 1,000 variants
-because the native callback worker did not stop within its hard-coded 60 second
-join timeout during the first GPU/JAX trial. For measurement only, both
-baseline and optimized runs monkey-patched the worker join timeout to 300
-seconds in the benchmark process. No repository code was changed for that
-timeout.
+The GPU app benchmark was run on `landau` with same-process warm/hot trials.
+Current `main` includes the extended callback worker join handling, so the
+final runs did not need the earlier benchmark-only timeout monkey patch.
 
-Hot same-process GPU timings:
+Hot same-process GPU timings at 4,096 variants:
 
 | Workload | Baseline s | Optimized s | Change | Speedup |
 | --- | ---: | ---: | ---: | ---: |
-| variant-major, no final Parquet | 0.390899 | 0.393628 | -0.70% | 0.993x |
-| packed8, no final Parquet | 0.372658 | 0.361093 | +3.10% | 1.032x |
-| variant-major, finalized Parquet | 0.405032 | 0.398537 | +1.60% | 1.016x |
-| packed8, finalized Parquet | 0.384665 | 0.364883 | +5.14% | 1.054x |
+| variant-major, no final Parquet | 0.393307 | 0.409953 | -4.23% | 0.959x |
+| packed8, no final Parquet | 0.370362 | 0.395376 | -6.75% | 0.937x |
+| variant-major, finalized Parquet | 0.403648 | 0.411899 | -2.04% | 0.980x |
+| packed8, finalized Parquet | 0.385484 | 0.386658 | -0.30% | 0.997x |
 
-Warm same-process GPU timings, which include first GPU compilation and setup in
-that process:
+Warm same-process GPU timings at 4,096 variants, which include first GPU
+compilation and setup in that process:
 
 | Workload | Baseline s | Optimized s | Change | Speedup |
 | --- | ---: | ---: | ---: | ---: |
-| variant-major, no final Parquet | 75.717838 | 73.949554 | +2.34% | 1.024x |
-| packed8, no final Parquet | 0.670004 | 0.686461 | -2.46% | 0.976x |
-| variant-major, finalized Parquet | 74.753473 | 73.618429 | +1.52% | 1.015x |
-| packed8, finalized Parquet | 0.711633 | 0.667577 | +6.19% | 1.066x |
+| variant-major, no final Parquet | 81.847150 | 79.782940 | +2.52% | 1.026x |
+| packed8, no final Parquet | 0.678127 | 0.695899 | -2.62% | 0.975x |
+| variant-major, finalized Parquet | 78.252997 | 79.519404 | -1.62% | 0.984x |
+| packed8, finalized Parquet | 0.700245 | 0.705254 | -0.72% | 0.993x |
+
+Because the 4,096-variant hot timings are sub-second and noisy, packed8 was
+also measured at 16,384 variants:
+
+| Workload | Baseline s | Optimized s | Change | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| packed8, no final Parquet hot | 0.483280 | 0.500616 | -3.59% | 0.965x |
+| packed8, finalized Parquet hot | 0.498806 | 0.498847 | -0.01% | 1.000x |
+| packed8, no final Parquet warm | 78.458851 | 79.531746 | -1.37% | 0.987x |
+| packed8, finalized Parquet warm | 78.922604 | 79.508245 | -0.74% | 0.993x |
+
+The measured application impact is therefore not a speedup on the current
+baseline. The implemented Rust changes are functionally correct, but the
+current GPU app workloads are dominated by JAX/worker/output orchestration, and
+the packed8 Rust decode savings do not overcome the added overhead in the
+end-to-end benchmark. The most favorable current measurement is effectively
+flat: packed8 finalized hot at 16,384 variants changed from 0.498806 seconds to
+0.498847 seconds.
 
 The Python BGEN reader harness was also run on `cantor` with
 `--chunk-sizes 16384`, `--variant-limit 16384`, `--repeat-count 5`,
@@ -234,9 +249,13 @@ packed8 copy+summary path.
 
 Benchmark artifacts are in `data/profiles/`:
 
-- `rust_opt_binary_hot_baseline_4096_timeout300.json`
-- `rust_opt_binary_hot_optimized_4096_timeout300.json`
-- `rust_opt_binary_hot_baseline_4096_finalized_timeout300.json`
-- `rust_opt_binary_hot_optimized_4096_finalized_timeout300.json`
+- `rust_opt_binary_hot_baseline_4096_current.json`
+- `rust_opt_binary_hot_optimized_4096_current.json`
+- `rust_opt_binary_hot_baseline_4096_current_finalized.json`
+- `rust_opt_binary_hot_optimized_4096_current_finalized.json`
+- `rust_opt_binary_hot_baseline_16384_packed8_current.json`
+- `rust_opt_binary_hot_optimized_16384_packed8_current.json`
+- `rust_opt_binary_hot_baseline_16384_packed8_current_finalized.json`
+- `rust_opt_binary_hot_optimized_16384_packed8_current_finalized.json`
 - `rust_opt_bgen_reader_baseline.json`
 - `rust_opt_bgen_reader_optimized.json`
