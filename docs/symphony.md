@@ -101,6 +101,78 @@ agents should make one bounded check or submission attempt, update the
 `## Codex Workpad` with the missing item and human action needed, add or keep
 the `blocked` label, and stop instead of polling indefinitely.
 
+## Symphony-Ready Issues
+
+Not every backlog issue needs to be ready for unattended Symphony work. Add the
+`symphony` label only when the issue is bounded enough for an agent to start
+without another planning pass.
+
+Use this compact Linear description shape for human-created Symphony tasks:
+
+```text
+Background:
+<Why this matters, current signal, and relevant links.>
+
+Scope:
+<Exactly what should change.>
+
+Acceptance criteria:
+- <Concrete expected outcome.>
+
+Validation:
+- <Specific local, SLURM, benchmark, docs, or CI command/evidence.>
+
+Non-goals:
+- <What this issue should not touch.>
+
+## Agent Learnings
+- No durable learnings yet.
+```
+
+Keep each section short: one paragraph or a few bullets is usually enough.
+Put exact commands, required data paths, expected artifacts, and any
+resource-heavy routing labels in `Validation`. Use `Non-goals` to exclude
+neighboring refactors, labels, data preparation, or performance work that should
+not be bundled into the task.
+
+Agents preserve the original description and update only `## Agent Learnings`
+when they discover durable facts such as root causes, important implementation
+constraints, validation discoveries, performance findings, data/GPU caveats, or
+follow-up context. Detailed logs, transient command output, and checklists stay
+in the `## Codex Workpad` comment.
+
+When finishing an issue, agents record completion evidence in the workpad and
+Linear links: the pushed task branch, the final commit SHA integrated into
+`origin/main`, and a concise validation summary.
+
+Example draft issue:
+
+```text
+Background:
+The rendered Symphony runtime workflow should match the documented issue
+contract so generated and human-created tasks carry the same handoff fields.
+
+Scope:
+Document the issue handoff fields and update the runtime workflow prompt to use
+the same structure for generated follow-ups.
+
+Acceptance criteria:
+- Human-created Symphony tasks have a compact recommended description shape.
+- Generated follow-ups use the same handoff fields.
+- Agents preserve and update `## Agent Learnings`.
+
+Validation:
+- Review docs/symphony.md and WORKFLOW.md for matching section names.
+- just docs-build
+
+Non-goals:
+- Do not require every backlog issue to be Symphony-ready.
+- Do not add labels automatically.
+
+## Agent Learnings
+- No durable learnings yet.
+```
+
 Create a Linear personal API key in Linear settings. Store secrets and local
 project values outside git:
 
@@ -159,6 +231,9 @@ Validation:
 
 Non-goals:
 - <What this issue should not touch.>
+
+## Agent Learnings
+- No durable learnings yet.
 ```
 
 Generated implementation issues are labeled `generated` and, when they are ready

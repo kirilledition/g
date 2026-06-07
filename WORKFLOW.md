@@ -189,10 +189,44 @@ Keep it current with:
 - acceptance criteria
 - validation checklist
 - reproduction or baseline signal before code changes
-- final commit, main integration, and validation summary
+- branch, final commit SHA, main integration, and validation summary
 - blockers, if any
 
 Do not post extra completion comments if the workpad can be edited.
+
+## Issue Handoff Contract
+
+Treat a Symphony-ready issue description as the compact handoff contract for
+unattended work. Human-created Symphony tasks and generated follow-ups should use
+the same practical shape:
+
+```text
+Background:
+<Why this matters, current signal, and relevant links.>
+
+Scope:
+<Exactly what should change.>
+
+Acceptance criteria:
+- <Concrete expected outcome.>
+
+Validation:
+- <Specific local, SLURM, benchmark, docs, or CI command/evidence.>
+
+Non-goals:
+- <What this issue should not touch.>
+
+## Agent Learnings
+- No durable learnings yet.
+```
+
+Do not require every backlog issue to use this shape. Use it when an issue is
+labeled `symphony`, or when creating a follow-up that should be ready for a
+future agent. Keep each section compact enough to read directly in Linear.
+
+Record final completion evidence in the workpad and Linear links, including the
+pushed task branch, the final commit SHA integrated into `origin/main`, and the
+validation summary.
 
 ## Durable Learnings
 
@@ -240,6 +274,9 @@ Validation:
 
 Non-goals:
 - <What this issue should not touch.>
+
+## Agent Learnings
+- No durable learnings yet.
 ```
 
 ## Execution Checklist
