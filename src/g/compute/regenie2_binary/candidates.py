@@ -129,12 +129,13 @@ def build_firth_candidate_capacity_plan(
     if trait_count <= 0:
         message = "Trait count must be positive."
         raise ValueError(message)
-    tiny_candidate_capacity = TINY_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT * trait_count
-    small_candidate_capacity = SMALL_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT * trait_count
+    bounded_candidate_capacity = min(preferred_candidate_capacity, variant_count)
+    small_candidate_capacity = min(SMALL_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT * trait_count, bounded_candidate_capacity)
+    tiny_candidate_capacity = min(TINY_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT * trait_count, small_candidate_capacity)
     return FirthCandidateCapacityPlan(
-        tiny_candidate_capacity=min(tiny_candidate_capacity, variant_count),
-        small_candidate_capacity=min(small_candidate_capacity, variant_count),
-        bounded_candidate_capacity=min(preferred_candidate_capacity, variant_count),
+        tiny_candidate_capacity=tiny_candidate_capacity,
+        small_candidate_capacity=small_candidate_capacity,
+        bounded_candidate_capacity=bounded_candidate_capacity,
         overflow_candidate_capacity=variant_count,
     )
 
