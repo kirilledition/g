@@ -14,7 +14,7 @@ hydra:
 
 This preserves the current repository-relative behavior of benchmark commands. Dataset paths still honor `GWAS_ENGINE_DATA_DIR`.
 
-During the migration, legacy script filenames remain as compatibility wrappers under `scripts/`. New Justfile recipes prefer module execution, for example:
+The migrated benchmark and profiling commands are invoked through module execution. There is no compatibility-wrapper layer under `scripts/` for these entrypoints. Justfile recipes call the modules directly, for example:
 
 ```bash
 uv run --no-sync python -m tooling.cli.benchmark_bgen_reader

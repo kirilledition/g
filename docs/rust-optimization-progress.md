@@ -38,9 +38,9 @@ all accepted branches land.
 ```bash
 RUSTFLAGS="-C target-cpu=native" cargo bench --bench bgen_read -- --save-baseline rust-opt-main --sample-size 10 --measurement-time 3 --warm-up-time 1
 RUSTFLAGS="-C target-cpu=native" cargo bench --bench preprocess -- --save-baseline rust-opt-main --sample-size 10 --measurement-time 3 --warm-up-time 1
-uv run --no-sync python scripts/benchmark_bgen_reader.py --chunk-sizes 1024,2048,4096,8192,16384 --variant-limit 16384 --repeat-count 7 --trusted-no-missing-diploid-modes false,true --path-modes variant_major_buffered,variant_major_packed8_buffered --sample-selection-modes full,contiguous_half,strided_half --json-summary-path data/profiles/rust_opt_bgen_reader_baseline.json
-uv run --no-sync python scripts/benchmark_regenie2_binary_hot.py --device gpu --variant-limit 16384 --json-summary-path data/profiles/rust_opt_binary_hot_baseline.json
-uv run --no-sync python scripts/benchmark_output_stages.py --device gpu --trials 3 --variant-limit 16384 --json-summary-path data/profiles/rust_opt_output_stages_baseline.json --markdown-summary-path data/profiles/rust_opt_output_stages_baseline.md
+uv run --no-sync python -m tooling.cli.benchmark_bgen_reader --chunk-sizes 1024,2048,4096,8192,16384 --variant-limit 16384 --repeat-count 7 --trusted-no-missing-diploid-modes false,true --path-modes variant_major_buffered,variant_major_packed8_buffered --sample-selection-modes full,contiguous_half,strided_half --json-summary-path data/profiles/rust_opt_bgen_reader_baseline.json
+uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot --device gpu --variant-limit 16384 --json-summary-path data/profiles/rust_opt_binary_hot_baseline.json
+uv run --no-sync python -m tooling.cli.benchmark_output_stages --device gpu --trials 3 --variant-limit 16384 --json-summary-path data/profiles/rust_opt_output_stages_baseline.json --markdown-summary-path data/profiles/rust_opt_output_stages_baseline.md
 ```
 
 On the shared server, run heavy CPU work through a CPU worker node and GPU app
@@ -51,7 +51,7 @@ benchmarks through `just slurm-gpu-run`.
 - `benches/bgen_read.rs` previously covered trusted dosage identity and
   contiguous selection, but not packed8 probability-pair delivery or
   non-contiguous selection.
-- `scripts/benchmark_bgen_reader.py` previously timed only variant-major dosage
+- `tooling/cli/benchmark_bgen_reader.py` previously timed only variant-major dosage
   delivery. It needs packed8 and sample-selection sweeps to validate the most
   likely decode optimizations.
 - Git worktrees do not contain the git-ignored `data/` directory, so Rust and
@@ -96,7 +96,7 @@ benchmarks through `just slurm-gpu-run`.
 - Updated the Rust BGEN Criterion bench to read
   `GWAS_ENGINE_DATA_DIR/1kg_chr22_full.bgen` when the environment variable is
   set, instead of silently skipping in implementation worktrees.
-- Extended `scripts/benchmark_bgen_reader.py` with packed8 path mode,
+- Extended `tooling/cli/benchmark_bgen_reader.py` with packed8 path mode,
   sample-selection sweeps, median timing, JSON/Markdown report paths, and
   clearer subprocess error reporting.
 - Added a shared trusted unphased 8-bit no-missing diploid probability-block
@@ -131,9 +131,9 @@ benchmarks through `just slurm-gpu-run`.
   and LOCO header/data parsing.
 - Verified the benchmark/progress slice:
   - `cargo fmt --all --check`
-  - `uv run ruff check scripts/benchmark_bgen_reader.py`
-  - `uv run ruff format --check scripts/benchmark_bgen_reader.py`
-  - smoke: `GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data uv run --no-sync python scripts/benchmark_bgen_reader.py --chunk-sizes 16 --variant-limit 16 --repeat-count 1 --path-modes variant_major_buffered --sample-selection-modes full,strided_half --json-summary-path data/profiles/rust_opt_bgen_reader_smoke.json --markdown-summary-path data/profiles/rust_opt_bgen_reader_smoke.md`
+  - `uv run ruff check tooling/cli/benchmark_bgen_reader.py`
+  - `uv run ruff format --check tooling/cli/benchmark_bgen_reader.py`
+  - smoke: `GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data uv run --no-sync python -m tooling.cli.benchmark_bgen_reader --chunk-sizes 16 --variant-limit 16 --repeat-count 1 --path-modes variant_major_buffered --sample-selection-modes full,strided_half --json-summary-path data/profiles/rust_opt_bgen_reader_smoke.json --markdown-summary-path data/profiles/rust_opt_bgen_reader_smoke.md`
 - Verified the trusted packed8 slice:
   - `cargo test --lib genotype::bgen`
   - `cargo clippy --lib -- -D warnings`

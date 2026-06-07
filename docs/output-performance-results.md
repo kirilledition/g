@@ -24,6 +24,6 @@ Parquet mode because the current path writes Arrow chunks, reopens them, reads t
 Parquet. A wide multi-trait output layout is the next candidate if repeated per-trait metadata and
 file work dominate refreshed profiles.
 
-Use `scripts/benchmark_output_stages.py` to refresh the evidence on current `main`. The script now
+Use `python -m tooling.cli.benchmark_output_stages` to refresh the evidence on current `main`. The module now
 emits detailed Rust writer/finalization substage timings, byte counters, throughput summaries,
 ranked bottlenecks, and optional JAX profiler traces.

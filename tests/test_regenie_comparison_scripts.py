@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import sys
 import typing
@@ -8,58 +7,23 @@ from pathlib import Path
 
 import polars as pl
 
+import scripts.benchmark as baseline_benchmark
+import scripts.benchmark_regenie2_linear_fresh_process as fresh_process_benchmark
+import scripts.benchmark_regenie_comparison as comparison_benchmark
+import scripts.compare_binary_firth_paths as binary_firth_parity
+import scripts.debug_binary_regenie_parity as binary_regenie_debug
+import scripts.debug_linear_regenie_parity as linear_regenie_debug
+import scripts.profile_regenie_comparison as comparison_profile
+import tooling.cli.benchmark_bgen_reader as bgen_reader_benchmark
+import tooling.cli.benchmark_output_stages as output_stage_benchmark
+import tooling.cli.benchmark_regenie2_binary_hot as binary_hot_benchmark
+import tooling.cli.profile_regenie2_deep as deep_profile
+import tooling.cli.tune_regenie2_gpu as tuning_benchmark
+
 if typing.TYPE_CHECKING:
     import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
-SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIRECTORY))
-
-
-def load_script_module(module_name: str, relative_path: str):
-    module_path = REPOSITORY_ROOT / relative_path
-    module_spec = importlib.util.spec_from_file_location(module_name, module_path)
-    assert module_spec is not None
-    assert module_spec.loader is not None
-    module = importlib.util.module_from_spec(module_spec)
-    sys.modules[module_name] = module
-    module_spec.loader.exec_module(module)
-    return module
-
-
-baseline_benchmark = load_script_module("baseline_benchmark_script", "scripts/benchmark.py")
-bgen_reader_benchmark = load_script_module("bgen_reader_benchmark_script", "scripts/benchmark_bgen_reader.py")
-comparison_benchmark = load_script_module("comparison_benchmark_script", "scripts/benchmark_regenie_comparison.py")
-comparison_profile = load_script_module("comparison_profile_script", "scripts/profile_regenie_comparison.py")
-deep_profile = load_script_module("deep_profile_script", "scripts/profile_regenie2_deep.py")
-fresh_process_benchmark = load_script_module(
-    "fresh_process_benchmark_script",
-    "scripts/benchmark_regenie2_linear_fresh_process.py",
-)
-binary_hot_benchmark = load_script_module(
-    "binary_hot_benchmark_script",
-    "scripts/benchmark_regenie2_binary_hot.py",
-)
-output_stage_benchmark = load_script_module(
-    "output_stage_benchmark_script",
-    "scripts/benchmark_output_stages.py",
-)
-binary_firth_parity = load_script_module(
-    "binary_firth_parity_script",
-    "scripts/compare_binary_firth_paths.py",
-)
-binary_regenie_debug = load_script_module(
-    "binary_regenie_debug_script",
-    "scripts/debug_binary_regenie_parity.py",
-)
-linear_regenie_debug = load_script_module(
-    "linear_regenie_debug_script",
-    "scripts/debug_linear_regenie_parity.py",
-)
-tuning_benchmark = load_script_module(
-    "tuning_benchmark_script",
-    "scripts/tune_regenie2_gpu.py",
-)
 
 
 def test_regenie_command_builders_shape() -> None:

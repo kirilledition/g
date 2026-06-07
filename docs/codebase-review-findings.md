@@ -40,9 +40,9 @@ are summarized near the end instead of kept as historical work logs.
 - `git diff --check`: passed after device-side Firth capacity dispatch.
 - `uv run pytest tests/test_regenie_comparison_scripts.py -q -k 'binary_hot'`: 4 passed
   after binary hot benchmark sweep expansion.
-- `uv run ruff check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
+- `uv run ruff check tooling/cli/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
   passed after binary hot benchmark sweep expansion.
-- `uv run ty check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`:
+- `uv run ty check tooling/cli/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`:
   passed after binary hot benchmark sweep expansion.
 - `cargo fmt --check`: passed after BGEN decode output boundary cleanup.
 - `. scripts/server_env.sh && cargo test --lib genotype::bgen`: 27 passed after
@@ -61,15 +61,15 @@ are summarized near the end instead of kept as historical work logs.
   after the binary hot benchmark telemetry fix.
 - `uv run pytest tests/test_regenie_comparison_scripts.py -q -k 'binary_hot'`: 5 passed
   after multi-trait benchmark output metric aggregation.
-- `uv run ruff check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
+- `uv run ruff check tooling/cli/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
   passed after the binary hot benchmark telemetry and metric aggregation fixes.
-- `uv run ty check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`:
+- `uv run ty check tooling/cli/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`:
   passed after the binary hot benchmark telemetry and metric aggregation fixes.
 - `uv run pytest tests/test_regenie_comparison_scripts.py -q -k 'binary_hot'`: 6 passed
   after binary hot benchmark genotype input selection.
-- `uv run ruff check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
+- `uv run ruff check tooling/cli/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
   passed after binary hot benchmark genotype input selection.
-- `uv run ty check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`:
+- `uv run ty check tooling/cli/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`:
   passed after binary hot benchmark genotype input selection.
 - `git diff --check`: passed after binary hot benchmark genotype input selection.
 - `XDG_RUNTIME_DIR=/tmp TMPDIR=/tmp just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke`:
@@ -126,9 +126,9 @@ are summarized near the end instead of kept as historical work logs.
   Firth default batch/capacity retuning.
 - `uv run pytest tests/test_regenie2_binary.py -q -k 'firth_candidate_capacity_uses_default or firth_candidate_capacity_overflow_matches_full_chunk_fallback'`:
   2 passed, 50 deselected after Firth default batch/capacity retuning.
-- `uv run ruff check scripts/tune_regenie2_gpu.py scripts/profile_regenie2_deep.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
+- `uv run ruff check tooling/cli/tune_regenie2_gpu.py tooling/cli/profile_regenie2_deep.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
   passed after Firth default batch/capacity retuning.
-- `uv run ty check scripts/tune_regenie2_gpu.py scripts/profile_regenie2_deep.py tests/test_regenie_comparison_scripts.py`:
+- `uv run ty check tooling/cli/tune_regenie2_gpu.py tooling/cli/profile_regenie2_deep.py tests/test_regenie_comparison_scripts.py`:
   passed after Firth default batch/capacity retuning.
 - `git diff --check`: passed after Firth default batch/capacity retuning.
 - `XDG_RUNTIME_DIR=/tmp TMPDIR=/tmp just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke`:
@@ -145,11 +145,11 @@ are summarized near the end instead of kept as historical work logs.
 - `uv run pytest tests/test_regenie2_pipeline.py -q -k 'worker or timing or binary_chunk_diagnostics_are_detailed_only_for_exact_timing'`:
   14 passed after graceful callback worker join timeout extension.
 - `uv run ty check src/g/compute/regenie2_binary tests/test_regenie2_binary.py`,
-  `uv run ty check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`,
+  `uv run ty check tooling/cli/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`,
   and `uv run ty check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py`:
   passed for the final compute optimization scopes.
 - `uv run ruff check src/g/compute/regenie2_binary tests/test_regenie2_binary.py --output-format=concise`,
-  `uv run ruff check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`,
+  `uv run ruff check tooling/cli/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`,
   and `uv run ruff check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py --output-format=concise`:
   passed for the final compute optimization scopes.
 - `git diff --check`: passed after each final compute optimization scope.

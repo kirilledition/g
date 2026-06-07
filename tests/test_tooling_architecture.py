@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import importlib
 import json
 import typing
 from pathlib import Path
 
+import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
 import tooling.configuration as tooling_configuration
 import tooling.regenie.arguments as regenie_arguments
 import tooling.regenie.bgen_reader as regenie_bgen_reader
@@ -130,9 +130,6 @@ def test_sweep_and_bgen_mode_parsing() -> None:
     ]
 
 
-def test_script_wrappers_expose_migrated_entrypoints() -> None:
-    wrapper_module = importlib.import_module("scripts.benchmark_bgen_reader")
-    tooling_module = importlib.import_module("tooling.cli.benchmark_bgen_reader")
-
-    assert wrapper_module.build_argument_parser is tooling_module.build_argument_parser
-    assert wrapper_module.BenchmarkPathMode is tooling_module.BenchmarkPathMode
+def test_tooling_entrypoint_exposes_cli_surface() -> None:
+    assert benchmark_bgen_reader.build_argument_parser is not None
+    assert benchmark_bgen_reader.BenchmarkPathMode is regenie_bgen_reader.BenchmarkPathMode

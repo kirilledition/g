@@ -334,7 +334,7 @@ the current cluster queue, but the benchmark surface should stay the same.
 Score/default packed8 gate:
 
 ```bash
-uv run python scripts/benchmark_regenie2_binary_hot.py \
+uv run python -m tooling.cli.benchmark_regenie2_binary_hot \
   --bgen 1kg_chr10_full.bgen \
   --sample 1kg_chr10_full.sample \
   --prediction-list baselines_chr10/regenie_step1_pred.list \
@@ -349,7 +349,7 @@ uv run python scripts/benchmark_regenie2_binary_hot.py \
 High-Firth packed8 gate:
 
 ```bash
-uv run python scripts/benchmark_regenie2_binary_hot.py \
+uv run python -m tooling.cli.benchmark_regenie2_binary_hot \
   --bgen 1kg_chr10_full.bgen \
   --sample 1kg_chr10_full.sample \
   --phenotype-file profiles/firth_tuning_inputs/pheno_bin_two_traits.txt \
@@ -369,7 +369,7 @@ uv run python scripts/benchmark_regenie2_binary_hot.py \
 Production-throughput confirmation:
 
 ```bash
-uv run python scripts/benchmark_regenie2_binary_hot.py \
+uv run python -m tooling.cli.benchmark_regenie2_binary_hot \
   --storage-modes variant_major,packed8 \
   --fallback-density-scenarios default,high \
   --stage-timing-mode off \
