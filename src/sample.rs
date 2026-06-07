@@ -85,17 +85,11 @@ pub struct MultiAlignmentInputs {
     pub sample_key_mode: SampleKeyMode,
 }
 
-#[derive(Clone, Debug)]
-struct SelectedTabularColumn {
-    column_index: usize,
-    selected_value_index: usize,
-}
-
 struct TabularColumnSelection {
     family_identifier_value_index: Option<usize>,
     individual_identifier_value_index: usize,
     data_value_indices: Vec<usize>,
-    selected_columns: Vec<SelectedTabularColumn>,
+    value_column_indices: Vec<usize>,
 }
 
 struct SampleFileReader<R: BufRead> {
@@ -636,34 +630,35 @@ impl TabularColumnSelection {
         individual_identifier_column_index: usize,
         data_column_indices: &[usize],
     ) -> Self {
-        let mut selected_columns = Vec::with_capacity(data_column_indices.len() + 2);
+        let mut value_column_indices = Vec::with_capacity(data_column_indices.len() + 2);
         let family_identifier_value_index = family_identifier_column_index
-            .map(|column_index| push_selected_column(&mut selected_columns, column_index));
+            .map(|column_index| push_selected_column(&mut value_column_indices, column_index));
         let individual_identifier_value_index =
-            push_selected_column(&mut selected_columns, individual_identifier_column_index);
+            push_selected_column(&mut value_column_indices, individual_identifier_column_index);
         let data_value_indices = data_column_indices
             .iter()
-            .map(|column_index| push_selected_column(&mut selected_columns, *column_index))
+            .map(|column_index| push_selected_column(&mut value_column_indices, *column_index))
             .collect();
-        selected_columns.sort_by_key(|selected_column| selected_column.column_index);
-        Self { family_identifier_value_index, individual_identifier_value_index, data_value_indices, selected_columns }
-    }
-}
-
-fn push_selected_column(selected_columns: &mut Vec<SelectedTabularColumn>, column_index: usize) -> usize {
-    let selected_value_index = selected_columns.len();
-    selected_columns.push(SelectedTabularColumn { column_index, selected_value_index });
-    selected_value_index
-}
-
-fn select_tabular_record_values<'a>(record: &'a csv::StringRecord, selection: &TabularColumnSelection) -> Vec<&'a str> {
-    let mut selected_values = vec![""; selection.selected_columns.len()];
-    for selected_column in &selection.selected_columns {
-        if let Some(field_value) = record.get(selected_column.column_index) {
-            selected_values[selected_column.selected_value_index] = field_value;
+        Self {
+            family_identifier_value_index,
+            individual_identifier_value_index,
+            data_value_indices,
+            value_column_indices,
         }
     }
-    selected_values
+
+    fn record_value<'record>(&self, record: &'record csv::StringRecord, selected_value_index: usize) -> &'record str {
+        self.value_column_indices
+            .get(selected_value_index)
+            .and_then(|column_index| record.get(*column_index))
+            .unwrap_or("")
+    }
+}
+
+fn push_selected_column(value_column_indices: &mut Vec<usize>, column_index: usize) -> usize {
+    let selected_value_index = value_column_indices.len();
+    value_column_indices.push(column_index);
+    selected_value_index
 }
 
 fn is_tabular_null_value(value: &str) -> bool {
@@ -737,13 +732,13 @@ fn read_single_phenotype_table(
     let mut phenotype_values = vec![0.0; sample_count];
     let mut phenotype_mask = vec![false; sample_count];
     while let Some(record) = reader.read_next_record()? {
-        let selected_values = select_tabular_record_values(&record, &selection);
-        let individual_identifier = selected_values[selection.individual_identifier_value_index];
+        let individual_identifier = selection.record_value(&record, selection.individual_identifier_value_index);
         if individual_identifier.is_empty() {
             continue;
         }
-        let family_identifier =
-            selection.family_identifier_value_index.map_or("", |value_index| selected_values[value_index]);
+        let family_identifier = selection
+            .family_identifier_value_index
+            .map_or("", |value_index| selection.record_value(&record, value_index));
         let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
         if !observed_sample_keys.insert(sample_key.clone()) {
             return Err(duplicate_table_sample_key_error(
@@ -753,7 +748,7 @@ fn read_single_phenotype_table(
                 individual_identifier,
             ));
         }
-        let phenotype_value = selected_values[selection.data_value_indices[0]];
+        let phenotype_value = selection.record_value(&record, selection.data_value_indices[0]);
         if is_tabular_null_value(phenotype_value) {
             continue;
         }
@@ -793,13 +788,13 @@ fn read_multi_phenotype_table(
     let mut phenotype_values = vec![0.0; phenotype_count * sample_count];
     let mut phenotype_masks = vec![false; phenotype_count * sample_count];
     while let Some(record) = reader.read_next_record()? {
-        let selected_values = select_tabular_record_values(&record, &selection);
-        let individual_identifier = selected_values[selection.individual_identifier_value_index];
+        let individual_identifier = selection.record_value(&record, selection.individual_identifier_value_index);
         if individual_identifier.is_empty() {
             continue;
         }
-        let family_identifier =
-            selection.family_identifier_value_index.map_or("", |value_index| selected_values[value_index]);
+        let family_identifier = selection
+            .family_identifier_value_index
+            .map_or("", |value_index| selection.record_value(&record, value_index));
         let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
         if !observed_sample_keys.insert(sample_key.clone()) {
             return Err(duplicate_table_sample_key_error(
@@ -813,7 +808,7 @@ fn read_multi_phenotype_table(
             continue;
         };
         for (phenotype_index, phenotype_name) in phenotype_names.iter().enumerate() {
-            let phenotype_value = selected_values[selection.data_value_indices[phenotype_index]];
+            let phenotype_value = selection.record_value(&record, selection.data_value_indices[phenotype_index]);
             if is_tabular_null_value(phenotype_value) {
                 continue;
             }
@@ -887,13 +882,13 @@ fn read_covariate_table(
     let mut covariate_values = vec![0.0; sample_count * selected_covariate_count];
     let mut covariate_mask = vec![false; sample_count];
     while let Some(record) = reader.read_next_record()? {
-        let selected_values = select_tabular_record_values(&record, &selection);
-        let individual_identifier = selected_values[selection.individual_identifier_value_index];
+        let individual_identifier = selection.record_value(&record, selection.individual_identifier_value_index);
         if individual_identifier.is_empty() {
             continue;
         }
-        let family_identifier =
-            selection.family_identifier_value_index.map_or("", |value_index| selected_values[value_index]);
+        let family_identifier = selection
+            .family_identifier_value_index
+            .map_or("", |value_index| selection.record_value(&record, value_index));
         let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
         if !observed_sample_keys.insert(sample_key.clone()) {
             return Err(duplicate_table_sample_key_error(
@@ -911,7 +906,7 @@ fn read_covariate_table(
         }
         let mut row_has_missing_covariates = false;
         for covariate_index in 0..selected_covariate_count {
-            let covariate_value = selected_values[selection.data_value_indices[covariate_index]];
+            let covariate_value = selection.record_value(&record, selection.data_value_indices[covariate_index]);
             if is_tabular_null_value(covariate_value) {
                 row_has_missing_covariates = true;
                 break;
@@ -1032,10 +1027,17 @@ fn build_grouped_aligned_sample_data(
     let mut group_indices_by_sample_indices: HashMap<Vec<usize>, usize> = HashMap::new();
     let mut group_sample_array_indices: Vec<Vec<usize>> = Vec::new();
     let mut phenotype_indices_by_group: Vec<Vec<usize>> = Vec::new();
+    let sorted_sample_array_indices = sorted_sample_array_indices_by_sample_index(&inputs.sample_indices);
+    let mut complete_sample_array_indices = Vec::with_capacity(inputs.sample_indices.len());
 
     for phenotype_index in 0..phenotype_table.phenotype_count {
-        let complete_sample_array_indices =
-            complete_grouped_trait_sample_array_indices(inputs, phenotype_table, covariate_table, phenotype_index);
+        collect_complete_grouped_trait_sample_array_indices(
+            &sorted_sample_array_indices,
+            phenotype_table,
+            covariate_table,
+            phenotype_index,
+            &mut complete_sample_array_indices,
+        );
         if complete_sample_array_indices.is_empty() {
             return Err(format!(
                 "No aligned samples remain after joining phenotype '{}' and covariate tables.",
@@ -1046,9 +1048,11 @@ fn build_grouped_aligned_sample_data(
             Some(existing_group_index) => *existing_group_index,
             None => {
                 let new_group_index = group_sample_array_indices.len();
-                group_indices_by_sample_indices.insert(complete_sample_array_indices.clone(), new_group_index);
-                group_sample_array_indices.push(complete_sample_array_indices);
+                let stored_sample_array_indices = std::mem::take(&mut complete_sample_array_indices);
+                group_indices_by_sample_indices.insert(stored_sample_array_indices.clone(), new_group_index);
+                group_sample_array_indices.push(stored_sample_array_indices);
                 phenotype_indices_by_group.push(Vec::new());
+                complete_sample_array_indices = Vec::with_capacity(inputs.sample_indices.len());
                 new_group_index
             }
         };
@@ -1127,13 +1131,12 @@ fn complete_single_sample_array_indices(
     phenotype_table: &SinglePhenotypeTable,
     covariate_table: &CovariateTable,
 ) -> Vec<usize> {
-    let mut complete_sample_array_indices: Vec<usize> = (0..inputs.sample_indices.len())
+    sorted_sample_array_indices_by_sample_index(&inputs.sample_indices)
+        .into_iter()
         .filter(|sample_array_index| {
             phenotype_table.phenotype_mask[*sample_array_index] && covariate_table.covariate_mask[*sample_array_index]
         })
-        .collect();
-    complete_sample_array_indices.sort_by_key(|sample_array_index| inputs.sample_indices[*sample_array_index]);
-    complete_sample_array_indices
+        .collect()
 }
 
 fn complete_multi_sample_array_indices(
@@ -1141,30 +1144,33 @@ fn complete_multi_sample_array_indices(
     phenotype_table: &MultiPhenotypeTable,
     covariate_table: &CovariateTable,
 ) -> Vec<usize> {
-    let mut complete_sample_array_indices: Vec<usize> = (0..inputs.sample_indices.len())
+    sorted_sample_array_indices_by_sample_index(&inputs.sample_indices)
+        .into_iter()
         .filter(|sample_array_index| {
             is_complete_multi_phenotype_sample(phenotype_table, *sample_array_index)
                 && covariate_table.covariate_mask[*sample_array_index]
         })
-        .collect();
-    complete_sample_array_indices.sort_by_key(|sample_array_index| inputs.sample_indices[*sample_array_index]);
-    complete_sample_array_indices
+        .collect()
 }
 
-fn complete_grouped_trait_sample_array_indices(
-    inputs: &MultiAlignmentInputs,
+fn sorted_sample_array_indices_by_sample_index(sample_indices: &[i64]) -> Vec<usize> {
+    let mut sorted_sample_array_indices: Vec<usize> = (0..sample_indices.len()).collect();
+    sorted_sample_array_indices.sort_by_key(|sample_array_index| sample_indices[*sample_array_index]);
+    sorted_sample_array_indices
+}
+
+fn collect_complete_grouped_trait_sample_array_indices(
+    sorted_sample_array_indices: &[usize],
     phenotype_table: &MultiPhenotypeTable,
     covariate_table: &CovariateTable,
     phenotype_index: usize,
-) -> Vec<usize> {
-    let mut complete_sample_array_indices: Vec<usize> = (0..inputs.sample_indices.len())
-        .filter(|sample_array_index| {
-            let phenotype_mask_index = phenotype_index * phenotype_table.sample_count + sample_array_index;
-            phenotype_table.phenotype_masks[phenotype_mask_index] && covariate_table.covariate_mask[*sample_array_index]
-        })
-        .collect();
-    complete_sample_array_indices.sort_by_key(|sample_array_index| inputs.sample_indices[*sample_array_index]);
-    complete_sample_array_indices
+    complete_sample_array_indices: &mut Vec<usize>,
+) {
+    complete_sample_array_indices.clear();
+    complete_sample_array_indices.extend(sorted_sample_array_indices.iter().copied().filter(|sample_array_index| {
+        let phenotype_mask_index = phenotype_index * phenotype_table.sample_count + sample_array_index;
+        phenotype_table.phenotype_masks[phenotype_mask_index] && covariate_table.covariate_mask[*sample_array_index]
+    }));
 }
 
 fn is_complete_multi_phenotype_sample(phenotype_table: &MultiPhenotypeTable, sample_array_index: usize) -> bool {

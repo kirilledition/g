@@ -27,8 +27,8 @@ used to explain where the speedup came from.
 | `opt/rust-opt-benchmarks-progress` | `rust-opt-benchmarks-progress` | Benchmark gaps and progress log | Integrated |
 | `opt/rust-opt-trusted-packed8` | `rust-opt-trusted-packed8` | Trusted BGEN parser reuse, packed8 fused summary, SIMD | Integrated |
 | `opt/rust-opt-decode-profile` | `rust-opt-decode-profile` | Profiling fast path, rolling bit reader, row-major experiments | Integrated |
-| `opt/rust-opt-output-transfer` | `rust-opt-output-transfer` | Native output streaming, cached arrays, reduced Python transfer | Integrating |
-| `opt/rust-opt-setup-reuse` | `rust-opt-setup-reuse` | Setup path parsing, sample alignment, LOCO prediction reuse | Pending integration |
+| `opt/rust-opt-output-transfer` | `rust-opt-output-transfer` | Native output streaming, cached arrays, reduced Python transfer | Integrated |
+| `opt/rust-opt-setup-reuse` | `rust-opt-setup-reuse` | Setup path parsing, sample alignment, LOCO prediction reuse | Integrated |
 
 ## Baseline Commands
 
@@ -79,6 +79,13 @@ benchmarks through `just slurm-gpu-run`.
   Arrow buffers without copying. The higher-value output improvement was
   sharing immutable native chunk arrays and streaming batches instead of
   accumulating them.
+- Grouped LOCO loading was doing repeated setup work when prediction-list
+  entries referenced the same LOCO file. Keeping parsed predictions in a
+  grouped-load cache avoids those duplicate parses without changing the public
+  API.
+- Sample table parsing still needs owned sample keys for duplicate detection.
+  This pass removed the simpler per-record selected-field vector allocation
+  instead of changing key representation.
 
 ## Completed So Far
 
@@ -115,6 +122,13 @@ benchmarks through `just slurm-gpu-run`.
   `Vec<RecordBatch>` peak.
 - Added a fast ordered-schema finalization path and restricted chunk discovery
   to writer-produced `chunk_*.arrow` and `part_*.parquet` files.
+- Removed per-record selected-value `Vec<&str>` allocation from phenotype and
+  covariate table parsing.
+- Reused sorted sample array indices across grouped multi-trait alignment.
+- Added LOCO prediction and per-target alignment caches for repeated
+  prediction-list paths during multi-trait and grouped loading.
+- Removed small whitespace-split temporary vectors from prediction-list parsing
+  and LOCO header/data parsing.
 - Verified the benchmark/progress slice:
   - `cargo fmt --all --check`
   - `uv run ruff check scripts/benchmark_bgen_reader.py`
@@ -140,6 +154,13 @@ benchmarks through `just slurm-gpu-run`.
   - `cargo test --test rust_native_coverage output_session`
   - `cargo test --test rust_python_bindings registered_python_module_exercises_core_bindings`
   - `uv run pytest tests/test_io_output.py -q`
+  - `cargo clippy --lib -- -D warnings`
+- Verified the setup reuse slice:
+  - `cargo fmt --all --check`
+  - `cargo test sample::tests`
+  - `cargo test regenie::tests`
+  - `cargo test sample_alignment_public_apis_cover_table_and_input_errors`
+  - `cargo test prediction_sources_cover_file_header_alignment_and_matrix_errors`
   - `cargo clippy --lib -- -D warnings`
 
 ## Baseline Measurements
