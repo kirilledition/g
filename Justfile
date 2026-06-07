@@ -160,50 +160,16 @@ symphony-doctor:
       . "${symphony_env_file}"
       set +a
     fi
-
-    missing=0
-    required_commands=(git gh codex just uv srun mise)
-    for command_name in "${required_commands[@]}"; do
-      if ! command -v "${command_name}" >/dev/null 2>&1; then
-        echo "Missing required command: ${command_name}" >&2
-        missing=1
-      fi
-    done
-
-    if [[ -z "${LINEAR_API_KEY:-}" ]]; then
-      echo "Missing LINEAR_API_KEY. Add it to ${symphony_env_file}." >&2
-      missing=1
-    fi
-    if [[ -z "${LINEAR_PROJECT_SLUG:-}" ]]; then
-      echo "Missing LINEAR_PROJECT_SLUG. Add it to ${symphony_env_file}." >&2
-      missing=1
-    fi
-    if [[ ! -d "{{symphony_elixir_dir}}" ]]; then
-      echo "Missing Symphony checkout: {{symphony_elixir_dir}}" >&2
-      missing=1
-    elif [[ ! -x "{{symphony_elixir_dir}}/bin/symphony" ]]; then
-      echo "Missing built Symphony binary: {{symphony_elixir_dir}}/bin/symphony" >&2
-      missing=1
-    fi
-    if [[ ! -d "{{symphony_worktree_root}}" ]]; then
-      echo "Missing Symphony worktree root: {{symphony_worktree_root}}" >&2
-      missing=1
-    elif [[ ! -w "{{symphony_worktree_root}}" ]]; then
-      echo "Symphony worktree root is not writable: {{symphony_worktree_root}}" >&2
-      missing=1
-    fi
-
-    gh auth status >/dev/null
-    codex app-server --help >/dev/null
-    if command -v mise >/dev/null 2>&1; then
-      (cd "{{symphony_elixir_dir}}" 2>/dev/null && mise exec -- elixir --version >/dev/null) || missing=1
-      (cd "{{symphony_elixir_dir}}" 2>/dev/null && mise exec -- mix --version >/dev/null) || missing=1
-    fi
-
-    if [[ "${missing}" -ne 0 ]]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+      echo "FAIL python3 command: not found on PATH" >&2
+      echo "  Remediation: Install Python 3 or load the server development environment." >&2
       exit 1
     fi
-    echo "Symphony prerequisites look usable."
+    python3 scripts/symphony_doctor.py \
+      --repository-root "${PWD}" \
+      --symphony-env-file "${symphony_env_file}" \
+      --symphony-elixir-dir "{{symphony_elixir_dir}}" \
+      --symphony-worktree-root "{{symphony_worktree_root}}"
 
 # Serve the Zensical documentation site locally
 docs-serve:

@@ -146,10 +146,14 @@ also accept the same overrides when run directly with `uv run --no-sync python
 
 ### `symphony-doctor`
 
-- Inputs: `git`, `gh`, `codex`, `just`, `uv`, `srun`, `mise`, Linear
-  credentials from `SYMPHONY_ENV_FILE` or `~/.config/g-symphony/env`, and a
-  built Symphony checkout.
-- Output: prerequisite checks for unattended Symphony/Linear task execution.
+- Inputs: `git`, `gh`, `codex`, `just`, `uv`, SLURM client commands, `mise`,
+  Linear credentials from `SYMPHONY_ENV_FILE` or `~/.config/g-symphony/env`, a
+  Codex Linear MCP config, a reachable Linear project slug, a reachable GitHub
+  `origin`, a writable Symphony worktree root, and a built Symphony checkout.
+- Output: a redacted pass/fail report for unattended Symphony/Linear task
+  execution. The report validates Linear API auth, Linear MCP auth, Codex MCP
+  config readability, Git/GitHub reachability, `uv`, SLURM command availability,
+  and the Symphony checkout without printing tokens or starting agents.
 - Use when: validating the repo-specific Symphony setup before starting the
   daemon.
 

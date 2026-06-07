@@ -149,6 +149,15 @@ mkdir -p /tmp/g-runtime-$(id -u)
 JUST_TEMPDIR=/tmp/g-runtime-$(id -u) just symphony-doctor
 ```
 
+The doctor prints a redacted pass/fail report and exits non-zero if any local
+runtime prerequisite is missing. It checks Linear API auth, the configured
+Linear project slug, Codex Linear MCP config/auth, Git and GitHub remote
+reachability, worktree root writability, `uv`, SLURM client commands, the
+Symphony checkout, and the Elixir toolchain. Failure rows include remediation
+steps and token-like values are redacted from all output. The command is safe to
+run on the login node; it does not start Symphony agents, submit SLURM jobs, or
+run benchmarks.
+
 Start the daemon:
 
 ```bash
