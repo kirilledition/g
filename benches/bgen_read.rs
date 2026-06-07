@@ -8,8 +8,7 @@ const CHUNK_SIZES: [usize; 5] = [1024, 2048, 4096, 8192, 16384];
 
 fn benchmark_bgen_path() -> PathBuf {
     std::env::var_os("GWAS_ENGINE_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("data"))
+        .map_or_else(|| PathBuf::from("data"), PathBuf::from)
         .join("1kg_chr22_full.bgen")
 }
 

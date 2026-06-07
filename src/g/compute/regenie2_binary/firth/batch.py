@@ -842,6 +842,7 @@ def compute_firth_variantwise_fixed_batches(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Compute single-trait Firth fits with compact sparse lanes when eligible."""
+
     def compute_without_sparse_compaction() -> regenie2_binary_firth_types.FirthVariantResult:
         return compute_firth_variantwise_fixed_batches_without_sparse_compaction(
             covariate_matrix=covariate_matrix,
@@ -868,8 +869,8 @@ def compute_firth_variantwise_fixed_batches(
             raw_genotype_matrix_by_variant > kernel_config.approximate_firth.sparse_carrier_dosage_threshold
         )
         carrier_count = jnp.sum(carrier_sample_mask, axis=1, dtype=jnp.int32)
-        compact_sparse_lane_mask = active_mask & sparse_correction_mask & (
-            carrier_count <= SPARSE_FIRTH_CARRIER_CAPACITY
+        compact_sparse_lane_mask = (
+            active_mask & sparse_correction_mask & (carrier_count <= SPARSE_FIRTH_CARRIER_CAPACITY)
         )
 
         def compute_split_path(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
@@ -1000,6 +1001,7 @@ def compute_firth_multi_variantwise_fixed_batches(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Compute multi-trait Firth fits with compact sparse lanes when eligible."""
+
     def compute_without_sparse_compaction() -> regenie2_binary_firth_types.FirthVariantResult:
         return compute_firth_multi_variantwise_fixed_batches_without_sparse_compaction(
             covariate_matrix=covariate_matrix,
@@ -1026,8 +1028,8 @@ def compute_firth_multi_variantwise_fixed_batches(
             raw_genotype_matrix_by_variant > kernel_config.approximate_firth.sparse_carrier_dosage_threshold
         )
         carrier_count = jnp.sum(carrier_sample_mask, axis=1, dtype=jnp.int32)
-        compact_sparse_lane_mask = active_mask & sparse_correction_mask & (
-            carrier_count <= SPARSE_FIRTH_CARRIER_CAPACITY
+        compact_sparse_lane_mask = (
+            active_mask & sparse_correction_mask & (carrier_count <= SPARSE_FIRTH_CARRIER_CAPACITY)
         )
 
         def compute_split_path(_: None) -> regenie2_binary_firth_types.FirthVariantResult:

@@ -1119,9 +1119,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 packed_probability_pairs_by_variant=packed_device_array,
                 genotype_dosage_sum=jax.device_put(linear_chunk_stats_arrays.dosage_sum),
                 genotype_observation_count=jax.device_put(linear_chunk_stats_arrays.observation_count),
-                genotype_imputed_dosage_square_sum=jax.device_put(
-                    linear_chunk_stats_arrays.imputed_dosage_square_sum
-                ),
+                genotype_imputed_dosage_square_sum=jax.device_put(linear_chunk_stats_arrays.imputed_dosage_square_sum),
                 score_dtype=self.score_dtype,
             )
             block_compute_result_for_timing(
@@ -1378,9 +1376,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix_by_variant=genotype_device_array,
                 genotype_dosage_sum=jax.device_put(linear_chunk_stats_arrays.dosage_sum),
                 genotype_observation_count=jax.device_put(linear_chunk_stats_arrays.observation_count),
-                genotype_imputed_dosage_square_sum=jax.device_put(
-                    linear_chunk_stats_arrays.imputed_dosage_square_sum
-                ),
+                genotype_imputed_dosage_square_sum=jax.device_put(linear_chunk_stats_arrays.imputed_dosage_square_sum),
                 score_dtype=self.score_dtype,
             )
             block_compute_result_for_timing(
@@ -1428,9 +1424,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 packed_probability_pairs_by_variant=packed_device_array,
                 genotype_dosage_sum=jax.device_put(linear_chunk_stats_arrays.dosage_sum),
                 genotype_observation_count=jax.device_put(linear_chunk_stats_arrays.observation_count),
-                genotype_imputed_dosage_square_sum=jax.device_put(
-                    linear_chunk_stats_arrays.imputed_dosage_square_sum
-                ),
+                genotype_imputed_dosage_square_sum=jax.device_put(linear_chunk_stats_arrays.imputed_dosage_square_sum),
                 score_dtype=self.score_dtype,
             )
             block_compute_result_for_timing(
