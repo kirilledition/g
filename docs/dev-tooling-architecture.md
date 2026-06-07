@@ -1,0 +1,29 @@
+# Development Tooling Architecture
+
+Development-only benchmark and profiling entrypoints live in the top-level `tooling/` package. This package is intentionally not listed in `tool.maturin.python-packages` and is not exposed through `[project.scripts]`, so packaged consumers continue to receive only `src/g` and the existing `g` entrypoints.
+
+Hydra is used only for saved development configurations, benchmark campaigns, machine profiles, telemetry defaults, and sweep profiles. Production REGENIE configuration remains in `src/g` and continues to use the TOML-backed `RegenieConfig` and `ExecutionPlan` flow.
+
+The base tooling config is `tooling/configs/config.yaml`. It sets:
+
+```yaml
+hydra:
+  job:
+    chdir: false
+```
+
+This preserves the current repository-relative behavior of benchmark commands. Dataset paths still honor `GWAS_ENGINE_DATA_DIR`.
+
+During the migration, legacy script filenames remain as compatibility wrappers under `scripts/`. New Justfile recipes prefer module execution, for example:
+
+```bash
+uv run --no-sync python -m tooling.cli.benchmark_bgen_reader
+```
+
+The Codex task farm remains under `scripts/codex_task_farm.py`; it is automation tooling rather than GWAS benchmark tooling and should be split separately if needed.
+
+Optional GPU smoke validation should run through SLURM rather than on the head node:
+
+```bash
+just slurm-gpu-run uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot --device gpu --variant-limit 1000 --no-include-cold-process --no-include-finalized-hot
+```

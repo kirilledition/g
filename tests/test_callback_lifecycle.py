@@ -134,7 +134,7 @@ def test_native_dispatch_starts_callback_before_engine_delivery() -> None:
 
     native_dispatch.run_bgen_engine_with_callback(
         engine=typing.cast("typing.Any", engine),
-        run_input=RunInput(),
+        run_input=typing.cast("native_dispatch.NativeBgenRunInput", RunInput()),
         committed_chunk_identifiers={2},
         writer_session=WriterSession(),
         callback=callback,

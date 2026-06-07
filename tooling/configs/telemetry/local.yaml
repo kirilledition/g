@@ -1,0 +1,4 @@
+output_parent: data/profiles
+json_summary_path: null
+markdown_summary_path: null
+stage_timing_mode: exact

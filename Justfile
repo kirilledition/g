@@ -255,7 +255,7 @@ probe-jax:
 
 # Benchmark BGEN float32 read paths
 benchmark-bgen-reader: install-perf-extension
-    {{server_env}} && uv run --no-sync python scripts/benchmark_bgen_reader.py
+    {{server_env}} && uv run --no-sync python -m tooling.cli.benchmark_bgen_reader
 
 # Benchmark REGENIE step 2 in fresh Python processes
 benchmark-regenie2-linear-fresh-gpu: install-perf-extension
@@ -267,15 +267,15 @@ benchmark-regenie2-linear-fresh-gpu-parquet: install-perf-extension
 
 # Benchmark binary REGENIE step 2 with cold, same-process hot, chunk-only, and finalized timings
 benchmark-regenie2-binary-hot-gpu: install-perf-extension
-    {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_binary_hot.py --device gpu
+    {{server_env}} && uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot --device gpu
 
 # Benchmark output-stage timings across finalization, phenotype count, and bsize
 benchmark-output-stages-gpu: install-perf-extension
-    {{server_env}} && uv run --no-sync python scripts/benchmark_output_stages.py --device gpu
+    {{server_env}} && uv run --no-sync python -m tooling.cli.benchmark_output_stages --device gpu
 
 # Smoke test binary REGENIE step 2 benchmark harness on a small variant slice
 benchmark-regenie2-binary-hot-gpu-smoke: install-perf-extension
-    {{server_env}} && uv run --no-sync python scripts/benchmark_regenie2_binary_hot.py --device gpu --variant-limit 1000 --no-include-cold-process --no-include-finalized-hot
+    {{server_env}} && uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot --device gpu --variant-limit 1000 --no-include-cold-process --no-include-finalized-hot
 
 # Submit binary hot benchmark to the configured GPU node
 slurm-benchmark-regenie2-binary-hot-gpu:
@@ -283,7 +283,7 @@ slurm-benchmark-regenie2-binary-hot-gpu:
 
 # Sequentially tune GPU REGENIE step 2 and active BGEN reader knobs
 tune-regenie2-gpu: install-perf-extension
-    {{server_env}} && uv run --no-sync python scripts/tune_regenie2_gpu.py
+    {{server_env}} && uv run --no-sync python -m tooling.cli.tune_regenie2_gpu
 
 # Run Rust Criterion benchmarks with native performance flags
 benchmark-rust:
@@ -302,11 +302,11 @@ profile-regenie-comparison: profile-regenie-comparison-cpu
 
 # Run the deep REGENIE step 2 profiling harness on the current host
 profile-regenie2-deep: setup-data install-perf-extension
-    {{server_env}} && uv run --no-sync python scripts/profile_regenie2_deep.py
+    {{server_env}} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep
 
 # Smoke test the deep REGENIE step 2 profiling harness on the current host
 profile-regenie2-deep-smoke: setup-data install-perf-extension
-    {{server_env}} && uv run --no-sync python scripts/profile_regenie2_deep.py --smoke --skip-deep-profiles
+    {{server_env}} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --smoke --skip-deep-profiles
 
 # Submit one long landau SLURM job for the deep REGENIE step 2 profiling harness
 profile-regenie2-deep-landau:
@@ -330,7 +330,7 @@ profile-regenie2-deep-landau:
       read -r -a extra_arguments <<< "{{slurm_extra_arguments}}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
-    exec srun "${slurm_arguments[@]}" bash -lc '. scripts/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python scripts/profile_regenie2_deep.py'
+    exec srun "${slurm_arguments[@]}" bash -lc '. scripts/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep'
 
 # Format code
 format:
@@ -344,7 +344,7 @@ lint:
 
 # Type check Python code
 typecheck:
-    {{server_env}} && uv run ty check src tests scripts
+    {{server_env}} && uv run ty check src tests scripts tooling
 
 # Run all checks (format, lint, typecheck)
 check: format lint typecheck
@@ -359,7 +359,7 @@ lint-local:
 
 # Type check Python in uv/maturin-only environments
 typecheck-local:
-    uv run ty check src tests scripts
+    uv run ty check src tests scripts tooling
 
 # Focused no-Nix smoke tests that also rebuild the native extension through maturin
 test-local-focused:
@@ -380,7 +380,7 @@ ci-lint:
 # Run CI type checks without installing the project package
 ci-typecheck:
     {{server_env}} && uv sync --group dev --frozen --no-install-project
-    {{server_env}} && uv run --no-sync ty check src tests scripts
+    {{server_env}} && uv run --no-sync ty check src tests scripts tooling
 
 # Run CI tests that exclude heavy data- and parity-dependent suites
 ci-test:

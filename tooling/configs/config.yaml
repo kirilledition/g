@@ -1,0 +1,11 @@
+defaults:
+  - dataset: local_1kg
+  - machine: local
+  - workload: bgen_reader
+  - telemetry: local
+  - sweep: bgen_reader_default
+  - _self_
+
+hydra:
+  job:
+    chdir: false

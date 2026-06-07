@@ -1,0 +1,5 @@
+name: landau_gpu
+device: gpu
+slurm_node: landau
+cpus_per_task: 8
+memory: 64G

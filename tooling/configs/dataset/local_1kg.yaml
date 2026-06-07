@@ -1,0 +1,7 @@
+data_directory: data
+bgen_file: 1kg_chr22_full.bgen
+sample_file: 1kg_chr22_full.sample
+phenotype_file: pheno_bin.txt
+prediction_list: baselines/regenie_step1_pred.list
+phenotype_columns:
+  - phenotype_binary

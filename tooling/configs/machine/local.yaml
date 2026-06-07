@@ -1,0 +1,5 @@
+name: local
+device: cpu
+slurm_node: null
+cpus_per_task: null
+memory: null

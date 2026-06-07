@@ -1,0 +1,7 @@
+name: regenie2_binary_hot
+chunk_size: 1000
+variant_limit: null
+repeat_count: 1
+staging_depth: 1
+output_writer_thread_count: 8
+output_writer_queue_depth: 8
