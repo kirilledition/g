@@ -60,27 +60,14 @@ agent:
   max_turns: 20
   max_retry_backoff_ms: 300000
 codex:
-  command: codex --config shell_environment_policy.inherit=all app-server
+  command: codex --config shell_environment_policy.inherit=all --config web_search=live app-server
   approval_policy: never
-  thread_sandbox: workspace-write
+  thread_sandbox: danger-full-access
   turn_timeout_ms: 14400000
   read_timeout_ms: 5000
   stall_timeout_ms: 900000
   turn_sandbox_policy:
-    type: workspaceWrite
-    writableRoots:
-      - /mnt/beegfs/kirill/Projects/g-worktrees/symphony
-      - /mnt/beegfs/kirill/Projects/g/.git
-      - /mnt/beegfs/kirill/Projects/g/data
-      - /mnt/beegfs/kirill/Projects/g/results
-      - /tmp
-      - /home/kirill/.cache
-      - /home/kirill/.cargo
-    readOnlyAccess:
-      type: fullAccess
-    networkAccess: true
-    excludeTmpdirEnvVar: false
-    excludeSlashTmp: false
+    type: dangerFullAccess
 observability:
   dashboard_enabled: true
   refresh_ms: 1000
@@ -110,6 +97,7 @@ No description provided.
 
 - Prefer this machine for implementation, data access, CPU validation, GPU validation, and SLURM jobs.
 - GitHub Actions and Codex cloud are allowed as supplemental signals, but local evidence is authoritative for data-heavy and GPU-dependent work.
+- This workflow intentionally runs Codex with full local sandbox access on this trusted machine so agents can write Git worktree metadata, use MCP tools, access the web, and integrate branches without human staging.
 - Do not stream or watch CI status indefinitely. Use bounded, one-shot status checks; if remote checks are still pending after a short check, record the pending jobs in Linear and stop.
 - Do not create GitHub pull requests for normal Symphony work. After validation, publish the task branch for history, then integrate directly by pushing the validated branch head to `origin/main`.
 - Work only in the Symphony-provided worktree.

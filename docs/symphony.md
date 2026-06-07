@@ -10,6 +10,10 @@ The intended posture is local-first hybrid:
   validation, and SLURM jobs.
 - GitHub Actions and Codex cloud are allowed as supplemental signals.
 - Local validation is authoritative for data-heavy and GPU-dependent work.
+- Symphony runs Codex with full local sandbox access for this trusted repo so
+  agents can stage, commit, push branches, update Git worktree metadata, use MCP
+  tools, and use live web access without approval prompts. Do not reuse this
+  workflow unchanged for untrusted repositories.
 - Symphony runs up to three issue agents concurrently by default, with `Merging`
   capped at one concurrent agent.
 - Normal Symphony tasks do not require GitHub pull requests. Agents push their
@@ -156,6 +160,9 @@ The run recipe passes Symphony's required engineering-preview acknowledgement
 flag. The daemon launches unattended Codex sessions; reduce
 `agent.max_concurrent_agents` in `WORKFLOW.md` if local resources become
 contended.
+
+Restart the daemon after changing `WORKFLOW.md`; running agents keep the sandbox
+policy they were launched with.
 
 The dashboard is served at:
 
