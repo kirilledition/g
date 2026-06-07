@@ -77,8 +77,14 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
             sample_count=genotype_matrix_by_variant.shape[1],
             score_dtype=score_dtype,
         )
-    covariate_projection_coordinates = whitened_covariate_transpose @ normalized_genotype_matrix_by_variant.T
-    raw_covariance_with_phenotype = adjusted_residual_matrix @ normalized_genotype_matrix_by_variant.T
+    covariate_count = whitened_covariate_transpose.shape[0]
+    stacked_left_hand_matrix = jnp.concatenate(
+        [whitened_covariate_transpose, adjusted_residual_matrix],
+        axis=0,
+    )
+    stacked_projection_product = stacked_left_hand_matrix @ normalized_genotype_matrix_by_variant.T
+    covariate_projection_coordinates = stacked_projection_product[:covariate_count, :]
+    raw_covariance_with_phenotype = stacked_projection_product[covariate_count:, :]
     covariance_with_phenotype = raw_covariance_with_phenotype - (
         adjusted_residual_projection_coordinate_matrix @ covariate_projection_coordinates
     )
