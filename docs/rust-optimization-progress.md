@@ -25,9 +25,9 @@ used to explain where the speedup came from.
 | Branch | Worktree | Scope | Status |
 | --- | --- | --- | --- |
 | `opt/rust-opt-benchmarks-progress` | `rust-opt-benchmarks-progress` | Benchmark gaps and progress log | Integrated |
-| `opt/rust-opt-trusted-packed8` | `rust-opt-trusted-packed8` | Trusted BGEN parser reuse, packed8 fused summary, SIMD | Integrating |
+| `opt/rust-opt-trusted-packed8` | `rust-opt-trusted-packed8` | Trusted BGEN parser reuse, packed8 fused summary, SIMD | Integrated |
+| `opt/rust-opt-decode-profile` | `rust-opt-decode-profile` | Profiling fast path, rolling bit reader, row-major experiments | Integrating |
 | `opt/rust-opt-output-transfer` | `rust-opt-output-transfer` | Native output streaming, cached arrays, reduced Python transfer | Pending integration |
-| `opt/rust-opt-decode-profile` | `rust-opt-decode-profile` | Profiling fast path, rolling bit reader, row-major experiments | Pending integration |
 | `opt/rust-opt-setup-reuse` | `rust-opt-setup-reuse` | Setup path parsing, sample alignment, LOCO prediction reuse | Pending integration |
 
 ## Baseline Commands
@@ -65,6 +65,13 @@ benchmarks through `just slurm-gpu-run`.
   optimization point.
 - Non-contiguous packed8 selection cannot use the same vectorized copy path
   without gather-style work, but it can still avoid lookup-table f32 stats.
+- The existing profiling flag already avoids `Instant::now`, but decode still
+  did local counter increments and snapshot merges that were discarded later
+  when profiling was disabled.
+- Row-major direct write is simple mechanically because the reader already
+  passes the final pointer and selected variant window into the decode layer,
+  but it carries risk from strided writes and partial caller-buffer writes on
+  error. It stays behind an opt-in benchmark flag.
 
 ## Completed So Far
 
@@ -86,6 +93,13 @@ benchmarks through `just slurm-gpu-run`.
   copy-then-rescan to fused copy+summary.
 - Switched trusted packed8 non-contiguous selections from lookup-table f32
   summary to raw integer summary while gathering selected pairs.
+- Added profiling-disabled fast paths around BGEN tile profile snapshots,
+  per-variant tile decode counts, variant-major profile helpers, and probability
+  block byte counters.
+- Replaced `PackedProbabilityReader` byte-window rebuilds with a rolling
+  little-endian bit buffer.
+- Added an opt-in row-major direct-write prototype and Criterion groups for
+  `bgen_row_major_tile_copy` and `bgen_row_major_direct_write`.
 - Verified the benchmark/progress slice:
   - `cargo fmt --all --check`
   - `uv run ruff check scripts/benchmark_bgen_reader.py`
@@ -95,6 +109,13 @@ benchmarks through `just slurm-gpu-run`.
   - `cargo test --lib genotype::bgen`
   - `cargo clippy --lib -- -D warnings`
   - `cargo test --test rust_native_coverage trusted`
+- Verified the decode/profile slice:
+  - `cargo fmt --all --check`
+  - `cargo check`
+  - `cargo test genotype::bgen::decode`
+  - `cargo clippy --lib -- -D warnings -W clippy::pedantic`
+  - `cargo bench --bench bgen_read --no-run`
+  - `git diff --name-only main...HEAD -- src/g/compute` produced no output
 
 ## Baseline Measurements
 

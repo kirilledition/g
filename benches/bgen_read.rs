@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-use _core::genotype::bgen::BgenReaderCore;
+use _core::genotype::bgen::{BgenReaderCore, set_bgen_row_major_direct_write_enabled};
 
 const CHUNK_SIZES: [usize; 5] = [1024, 2048, 4096, 8192, 16384];
 
@@ -111,6 +111,42 @@ fn benchmark_preprocessed_variant_major_packed8_read(
     variant_group.finish();
 }
 
+fn benchmark_row_major_direct_write_mode(
+    criterion: &mut Criterion,
+    reader: &BgenReaderCore,
+    group_name: &str,
+    direct_write_enabled: bool,
+) {
+    set_bgen_row_major_direct_write_enabled(direct_write_enabled);
+    let mut variant_group = criterion.benchmark_group(group_name);
+    for chunk_size in CHUNK_SIZES {
+        let selected_variant_count = chunk_size.min(reader.variant_count());
+        let mut output_buffer = vec![0.0_f32; reader.sample_count() * selected_variant_count];
+        variant_group.throughput(Throughput::Elements(
+            u64::try_from(selected_variant_count).expect("variant count should fit u64"),
+        ));
+        variant_group.bench_with_input(
+            BenchmarkId::from_parameter(chunk_size),
+            &selected_variant_count,
+            |benchmark, selected_variant_count| {
+                benchmark.iter(|| {
+                    reader
+                        .read_dosage_f32_into_address_prepared(
+                            0,
+                            *selected_variant_count,
+                            output_buffer.as_mut_ptr() as usize,
+                            output_buffer.len(),
+                        )
+                        .expect("prepared native Rust row-major BGEN read should succeed");
+                });
+            },
+        );
+    }
+    variant_group.finish();
+    set_bgen_row_major_direct_write_enabled(false);
+}
+
+#[allow(clippy::too_many_lines)]
 fn benchmark_native_bgen_read(criterion: &mut Criterion) {
     let bgen_path = benchmark_bgen_path();
     if !bgen_path.exists() {
@@ -186,6 +222,10 @@ fn benchmark_native_bgen_read(criterion: &mut Criterion) {
         "bgen_preprocessed_variant_major_trusted_disabled",
         reader.sample_count(),
     );
+
+    prepare_full_sample_selection(&reader);
+    benchmark_row_major_direct_write_mode(criterion, &reader, "bgen_row_major_tile_copy", false);
+    benchmark_row_major_direct_write_mode(criterion, &reader, "bgen_row_major_direct_write", true);
 
     let contiguous_subset_sample_count = reader.sample_count() / 2;
     prepare_contiguous_prefix_sample_selection(&reader, contiguous_subset_sample_count);

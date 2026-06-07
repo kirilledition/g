@@ -24,7 +24,7 @@ pub struct ReaderProfileSnapshot {
     pub metadata_slice_count: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ThreadLocalProfileSnapshot {
     pub(crate) compressed_block_fetch_ns: u64,
     pub(crate) compressed_block_fetch_count: u64,
@@ -41,6 +41,26 @@ pub(crate) struct ThreadLocalProfileSnapshot {
     pub(crate) output_byte_count: u64,
     pub(crate) decode_tile_count: u64,
     pub(crate) selected_sample_count: u64,
+}
+
+impl ThreadLocalProfileSnapshot {
+    pub(crate) fn merge_from(&mut self, other: &Self) {
+        self.compressed_block_fetch_ns += other.compressed_block_fetch_ns;
+        self.compressed_block_fetch_count += other.compressed_block_fetch_count;
+        self.compressed_byte_count += other.compressed_byte_count;
+        self.decompression_ns += other.decompression_ns;
+        self.decompression_count += other.decompression_count;
+        self.uncompressed_byte_count += other.uncompressed_byte_count;
+        self.zlib_stream_count += other.zlib_stream_count;
+        self.probability_decode_ns += other.probability_decode_ns;
+        self.probability_decode_count += other.probability_decode_count;
+        self.variant_decode_count += other.variant_decode_count;
+        self.output_write_ns += other.output_write_ns;
+        self.output_write_count += other.output_write_count;
+        self.output_byte_count += other.output_byte_count;
+        self.decode_tile_count += other.decode_tile_count;
+        self.selected_sample_count += other.selected_sample_count;
+    }
 }
 
 #[derive(Debug, Default)]
