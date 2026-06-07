@@ -36,7 +36,7 @@ def test_resolve_telemetry_paths_defaults_to_output_run_logs() -> None:
     assert telemetry_paths.stage_timings_json is None
 
 
-def test_trace_telemetry_paths_default_profile_outputs() -> None:
+def test_trace_telemetry_paths_default_profile_summary_without_exact_stage_timings() -> None:
     regenie_config = config.RegenieConfig.from_options(
         {
             "step": 2,
@@ -56,7 +56,28 @@ def test_trace_telemetry_paths_default_profile_outputs() -> None:
 
     assert telemetry_paths.stream_file == log_dir / "events.jsonl"
     assert telemetry_paths.profile_summary_json == log_dir / "profile.summary.json"
-    assert telemetry_paths.stage_timings_json == log_dir / "stage-timings.json"
+    assert telemetry_paths.stage_timings_json is None
+
+
+def test_explicit_stage_timings_path_enables_exact_stage_output() -> None:
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": "results/output",
+            "g-telemetry": "profile",
+            "g-log-dir": "telemetry",
+            "g-stage-timings-json": "exact/stage-timings.json",
+        }
+    )
+
+    telemetry_paths = telemetry.resolve_telemetry_paths(regenie_config)
+
+    assert telemetry_paths.stage_timings_json == regenie_config.g_diagnostics.stage_timings_json
 
 
 def test_telemetry_stream_uses_log_file_or_trace_file_alias() -> None:

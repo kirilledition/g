@@ -8,6 +8,7 @@ use numpy::{
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use crate::genotype::bgen::{BgenError, ReaderProfileSnapshot, set_bgen_decode_tile_variant_count};
 use crate::genotype::common::{
@@ -127,6 +128,29 @@ impl ChunkStats {
     #[getter]
     fn is_rare_sparse_firth_candidate<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
         self.stats.is_rare_sparse_firth_candidate.clone().into_pyarray(py)
+    }
+
+    #[pyo3(signature = (*, include_imputed_dosage_square_sum = true, include_sparse_firth_candidate = true))]
+    fn compute_arrays<'py>(
+        &self,
+        py: Python<'py>,
+        include_imputed_dosage_square_sum: bool,
+        include_sparse_firth_candidate: bool,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let compute_arrays = PyDict::new(py);
+        compute_arrays.set_item("dosage_sum", self.stats.dosage_sum.clone().into_pyarray(py))?;
+        compute_arrays.set_item("observation_count", self.stats.observation_count.clone().into_pyarray(py))?;
+        if include_imputed_dosage_square_sum {
+            compute_arrays
+                .set_item("imputed_dosage_square_sum", self.stats.imputed_dosage_square_sum.clone().into_pyarray(py))?;
+        }
+        if include_sparse_firth_candidate {
+            compute_arrays.set_item(
+                "is_rare_sparse_firth_candidate",
+                self.stats.is_rare_sparse_firth_candidate.clone().into_pyarray(py),
+            )?;
+        }
+        Ok(compute_arrays)
     }
 }
 

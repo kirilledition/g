@@ -360,7 +360,7 @@ def create_pipeline_writer_sessions(
             chunks_per_arrow_file=context.writer_settings.chunks_per_arrow_file,
             arrow_compression=context.writer_settings.arrow_compression,
             parquet_compression=context.writer_settings.parquet_compression,
-            collect_stage_timings=context.stage_timing_recorder is not None,
+            collect_stage_timings=timing.should_collect_exact_stage_timings(context.stage_timing_recorder),
         )
         for output_run_paths in output_run_paths_by_trait
     )

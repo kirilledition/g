@@ -257,6 +257,100 @@ def test_write_regenie2_multi_native_chunk_skips_committed_traits_and_slices_ext
     np.testing.assert_array_equal(written_chunk["beta"], np.asarray([0.1, 0.2], dtype=np.float32))
 
 
+def test_chunk_stats_helpers_use_bundled_compute_arrays_with_path_specific_fields() -> None:
+    linear_chunk_stats = BundledChunkStats()
+    binary_chunk_stats = BundledChunkStats()
+
+    linear_arrays = callbacks.get_linear_chunk_stats_arrays(typing.cast("typing.Any", linear_chunk_stats))
+    binary_arrays = callbacks.get_binary_chunk_stats_arrays(
+        typing.cast("typing.Any", binary_chunk_stats),
+        include_sparse_firth_candidate=True,
+    )
+
+    np.testing.assert_array_equal(linear_arrays.dosage_sum, np.asarray([3.0, 7.0], dtype=np.float32))
+    np.testing.assert_array_equal(linear_arrays.observation_count, np.asarray([2, 2], dtype=np.int32))
+    np.testing.assert_array_equal(linear_arrays.imputed_dosage_square_sum, np.asarray([5.0, 13.0], dtype=np.float32))
+    np.testing.assert_array_equal(binary_arrays.dosage_sum, np.asarray([3.0, 7.0], dtype=np.float32))
+    np.testing.assert_array_equal(binary_arrays.observation_count, np.asarray([2, 2], dtype=np.int32))
+    np.testing.assert_array_equal(binary_arrays.sparse_candidate_mask, np.asarray([True, False], dtype=np.bool_))
+    assert linear_chunk_stats.requests == [
+        {
+            "include_imputed_dosage_square_sum": True,
+            "include_sparse_firth_candidate": False,
+        }
+    ]
+    assert binary_chunk_stats.requests == [
+        {
+            "include_imputed_dosage_square_sum": False,
+            "include_sparse_firth_candidate": True,
+        }
+    ]
+
+
+def test_binary_chunk_diagnostics_are_detailed_only_for_exact_timing() -> None:
+    result = regenie2_binary_result.Regenie2BinaryScoreChunkResult(
+        beta=jnp.zeros(2, dtype=jnp.float32),
+        standard_error=jnp.ones(2, dtype=jnp.float32),
+        chi_squared=jnp.zeros(2, dtype=jnp.float32),
+        log10_p_value=jnp.zeros(2, dtype=jnp.float32),
+        extra_code=jnp.asarray([types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.FIRTH.value], dtype=jnp.int32),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    aggregate_recorder = timing.StageTimingRecorder()
+    exact_recorder = timing.StageTimingRecorder(exact_stage_timings=True)
+    diagnostics = SimpleNamespace(
+        score_test_candidate_count=2,
+        firth_candidate_count=1,
+        firth_iteration_min=1,
+        firth_iteration_median=1,
+        firth_iteration_max=1,
+        firth_converged_count=1,
+        firth_failed_count=0,
+        firth_numerical_failure_count=0,
+        firth_max_iteration_failure_count=0,
+        firth_invalid_statistic_failure_count=0,
+        firth_step_halving_failure_count=0,
+        pseudo_firth_attempt_count=0,
+        pseudo_firth_success_count=0,
+        nr_zero_start_attempt_count=0,
+        nr_zero_start_success_count=0,
+        nr_warm_start_attempt_count=0,
+        nr_warm_start_success_count=0,
+        sparse_correction_count=0,
+        dense_correction_count=1,
+    )
+
+    with patch("g.compute.regenie2_binary.api.count_binary_chunk_diagnostics", return_value=diagnostics) as mock_count:
+        callbacks.record_binary_chunk_diagnostics(stage_timing_recorder=aggregate_recorder, result=result)
+        callbacks.record_binary_chunk_diagnostics(stage_timing_recorder=exact_recorder, result=result)
+
+    mock_count.assert_called_once_with(result)
+    assert aggregate_recorder.snapshot().binary_chunk_diagnostics == ()
+    assert exact_recorder.snapshot().binary_chunk_diagnostics == (
+        {
+            "score_test_candidate_count": 2,
+            "firth_candidate_count": 1,
+            "firth_iteration_min": 1,
+            "firth_iteration_median": 1.0,
+            "firth_iteration_max": 1,
+            "firth_converged_count": 1,
+            "firth_failed_count": 0,
+            "firth_numerical_failure_count": 0,
+            "firth_max_iteration_failure_count": 0,
+            "firth_invalid_statistic_failure_count": 0,
+            "firth_step_halving_failure_count": 0,
+            "pseudo_firth_attempt_count": 0,
+            "pseudo_firth_success_count": 0,
+            "nr_zero_start_attempt_count": 0,
+            "nr_zero_start_success_count": 0,
+            "nr_warm_start_attempt_count": 0,
+            "nr_warm_start_success_count": 0,
+            "sparse_correction_count": 0,
+            "dense_correction_count": 1,
+        },
+    )
+
+
 class FakeRunEngine:
     instances: typing.ClassVar[list[FakeRunEngine]] = []
 
@@ -544,6 +638,53 @@ class LinearNativeSumChunkStats(ExplodingChunkStats):
     @property
     def imputed_dosage_square_sum(self) -> np.ndarray:
         return np.asarray([5.0, 13.0], dtype=np.float32)
+
+
+class BundledChunkStats(ExplodingChunkStats):
+    def __init__(self) -> None:
+        self.requests: list[dict[str, bool]] = []
+
+    @property
+    def dosage_sum(self) -> np.ndarray:
+        message = "Python should use compute_arrays instead of dosage_sum."
+        raise AssertionError(message)
+
+    @property
+    def observation_count(self) -> np.ndarray:
+        message = "Python should use compute_arrays instead of observation_count."
+        raise AssertionError(message)
+
+    @property
+    def imputed_dosage_square_sum(self) -> np.ndarray:
+        message = "Python should use compute_arrays instead of imputed_dosage_square_sum."
+        raise AssertionError(message)
+
+    @property
+    def is_rare_sparse_firth_candidate(self) -> np.ndarray:
+        message = "Python should use compute_arrays instead of is_rare_sparse_firth_candidate."
+        raise AssertionError(message)
+
+    def compute_arrays(
+        self,
+        *,
+        include_imputed_dosage_square_sum: bool,
+        include_sparse_firth_candidate: bool,
+    ) -> dict[str, np.ndarray]:
+        self.requests.append(
+            {
+                "include_imputed_dosage_square_sum": include_imputed_dosage_square_sum,
+                "include_sparse_firth_candidate": include_sparse_firth_candidate,
+            }
+        )
+        compute_arrays: dict[str, np.ndarray] = {
+            "dosage_sum": np.asarray([3.0, 7.0], dtype=np.float32),
+            "observation_count": np.asarray([2, 2], dtype=np.int32),
+        }
+        if include_imputed_dosage_square_sum:
+            compute_arrays["imputed_dosage_square_sum"] = np.asarray([5.0, 13.0], dtype=np.float32)
+        if include_sparse_firth_candidate:
+            compute_arrays["is_rare_sparse_firth_candidate"] = np.asarray([True, False], dtype=np.bool_)
+        return compute_arrays
 
 
 class ManualCallbackRunner(callbacks.NativeBgenCallbackRunner):
@@ -1150,7 +1291,7 @@ def test_linear_callback_does_not_block_chunk_compute_without_timing() -> None:
     mock_block_until_ready.assert_not_called()
 
 
-def test_linear_callback_blocks_chunk_compute_with_timing() -> None:
+def test_linear_callback_records_aggregate_chunk_timing_without_blocking() -> None:
     writer_session = FakeWriterSession()
     result = regenie2_linear_result.Regenie2LinearChunkResult(
         beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
@@ -1160,6 +1301,47 @@ def test_linear_callback_blocks_chunk_compute_with_timing() -> None:
         valid_mask=jnp.asarray([True, True]),
     )
     stage_timing_recorder = timing.StageTimingRecorder()
+    callback = callbacks.LinearRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=writer_session,
+        stage_timing_recorder=stage_timing_recorder,
+    )
+    callback.current_chromosome = "22"
+    callback.current_chromosome_state = typing.cast(
+        "regenie2_linear_state.Regenie2LinearChromosomeState",
+        "chromosome-state",
+    )
+
+    with (
+        patch(
+            "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state",
+            return_value=result,
+        ),
+        patch("g.engine.callbacks.block_until_ready") as mock_block_until_ready,
+    ):
+        callback.compute_linear_result(
+            variant_metadata=build_native_metadata(),
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+        )
+        callback.finish()
+
+    mock_block_until_ready.assert_not_called()
+    snapshot = stage_timing_recorder.snapshot()
+    assert snapshot.stage_counts["host_to_device_transfer"] == 1
+    assert snapshot.stage_counts["jax_compute"] == 1
+
+
+def test_linear_callback_blocks_chunk_compute_with_exact_timing() -> None:
+    writer_session = FakeWriterSession()
+    result = regenie2_linear_result.Regenie2LinearChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    stage_timing_recorder = timing.StageTimingRecorder(exact_stage_timings=True)
     callback = callbacks.LinearRegenie2PipelineCallback(
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),

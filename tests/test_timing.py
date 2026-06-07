@@ -38,8 +38,15 @@ def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> 
 
 def test_build_stage_timing_recorder_is_opt_in(tmp_path: Path) -> None:
     assert timing.build_stage_timing_recorder(None) is None
-    assert isinstance(timing.build_stage_timing_recorder(None, force=True), timing.StageTimingRecorder)
-    assert isinstance(timing.build_stage_timing_recorder(tmp_path / "timings.json"), timing.StageTimingRecorder)
+    aggregate_recorder = timing.build_stage_timing_recorder(None, force=True)
+    exact_recorder = timing.build_stage_timing_recorder(tmp_path / "timings.json")
+
+    assert isinstance(aggregate_recorder, timing.StageTimingRecorder)
+    assert isinstance(exact_recorder, timing.StageTimingRecorder)
+    assert not aggregate_recorder.exact_stage_timings
+    assert exact_recorder.exact_stage_timings
+    assert not timing.should_collect_exact_stage_timings(aggregate_recorder)
+    assert timing.should_collect_exact_stage_timings(exact_recorder)
 
 
 def test_write_stage_timing_snapshot_noops_without_recorder_or_path(tmp_path: Path) -> None:

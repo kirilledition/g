@@ -12,6 +12,7 @@ import typing
 from dataclasses import dataclass
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
@@ -29,6 +30,38 @@ type HostGenotypeBuffer = npt.NDArray[np.float32] | npt.NDArray[np.uint8]
 
 if typing.TYPE_CHECKING:
     import collections.abc
+
+
+@dataclass(frozen=True)
+class LinearChunkStatsArrays:
+    """Native statistic arrays needed by linear variant-major compute paths.
+
+    Attributes:
+        dosage_sum: Per-variant dosage sums.
+        observation_count: Per-variant non-missing observation counts.
+        imputed_dosage_square_sum: Per-variant imputed dosage square sums.
+
+    """
+
+    dosage_sum: npt.NDArray[np.float32]
+    observation_count: npt.NDArray[np.int32]
+    imputed_dosage_square_sum: npt.NDArray[np.float32]
+
+
+@dataclass(frozen=True)
+class BinaryChunkStatsArrays:
+    """Native statistic arrays needed by binary variant-major compute paths.
+
+    Attributes:
+        dosage_sum: Per-variant dosage sums.
+        observation_count: Per-variant non-missing observation counts.
+        sparse_candidate_mask: Optional per-variant sparse Firth candidate flags.
+
+    """
+
+    dosage_sum: npt.NDArray[np.float32]
+    observation_count: npt.NDArray[np.int32]
+    sparse_candidate_mask: npt.NDArray[np.bool_] | None
 
 
 class NativeBgenWorkerShutdownError(RuntimeError):
@@ -171,8 +204,9 @@ def record_binary_chunk_diagnostics(
     result: regenie2_binary.Regenie2BinaryScoreChunkResult | regenie2_binary.Regenie2BinaryChunkResult,
 ) -> None:
     """Record binary candidate and Firth diagnostics for one chunk."""
-    if stage_timing_recorder is None:
+    if not timing.should_collect_exact_stage_timings(stage_timing_recorder):
         return
+    assert stage_timing_recorder is not None
     diagnostics = jax.device_get(regenie2_binary.count_binary_chunk_diagnostics(result))
     stage_timing_recorder.add_binary_chunk_diagnostics(
         {
@@ -187,6 +221,14 @@ def record_binary_chunk_diagnostics(
             "firth_max_iteration_failure_count": int(diagnostics.firth_max_iteration_failure_count),
             "firth_invalid_statistic_failure_count": int(diagnostics.firth_invalid_statistic_failure_count),
             "firth_step_halving_failure_count": int(diagnostics.firth_step_halving_failure_count),
+            "pseudo_firth_attempt_count": int(diagnostics.pseudo_firth_attempt_count),
+            "pseudo_firth_success_count": int(diagnostics.pseudo_firth_success_count),
+            "nr_zero_start_attempt_count": int(diagnostics.nr_zero_start_attempt_count),
+            "nr_zero_start_success_count": int(diagnostics.nr_zero_start_success_count),
+            "nr_warm_start_attempt_count": int(diagnostics.nr_warm_start_attempt_count),
+            "nr_warm_start_success_count": int(diagnostics.nr_warm_start_success_count),
+            "sparse_correction_count": int(diagnostics.sparse_correction_count),
+            "dense_correction_count": int(diagnostics.dense_correction_count),
         }
     )
 
@@ -198,7 +240,7 @@ def put_genotype_matrix_on_device(
     """Transfer a genotype chunk to the active JAX device with optional timing."""
     start_time = time.perf_counter()
     genotype_device_array = jax.device_put(genotype_matrix)
-    if stage_timing_recorder is not None:
+    if timing.should_collect_exact_stage_timings(stage_timing_recorder):
         block_until_ready(genotype_device_array)
     timing.record_stage_duration(stage_timing_recorder, "host_to_device_transfer", start_time)
     return genotype_device_array
@@ -211,14 +253,87 @@ def block_compute_result_for_timing(
     start_time: float,
 ) -> None:
     """Synchronize chunk compute only when detailed stage timings are enabled."""
-    if stage_timing_recorder is not None:
+    if timing.should_collect_exact_stage_timings(stage_timing_recorder):
         block_until_ready(result_ready_value)
     timing.record_stage_duration(stage_timing_recorder, "jax_compute", start_time)
+
+
+def narrow_public_statistic_array_on_device(array: jax.Array) -> jax.Array:
+    """Narrow public result statistics to the native writer dtype before host transfer."""
+    return jnp.asarray(array, dtype=jnp.float32)
 
 
 def cast_statistic_array_for_native_writer(array: object) -> npt.NDArray[np.float32]:
     """Cast computed statistics to the public native writer schema dtype."""
     return np.asarray(array, dtype=np.float32)
+
+
+def get_chunk_stats_compute_arrays(
+    chunk_stats: _core.ChunkStats,
+    *,
+    include_imputed_dosage_square_sum: bool,
+    include_sparse_firth_candidate: bool,
+) -> typing.Mapping[str, object]:
+    """Return compute-needed native stat arrays through the bundled binding when available."""
+    compute_arrays_method = getattr(chunk_stats, "compute_arrays", None)
+    if callable(compute_arrays_method):
+        return typing.cast(
+            "typing.Mapping[str, object]",
+            compute_arrays_method(
+                include_imputed_dosage_square_sum=include_imputed_dosage_square_sum,
+                include_sparse_firth_candidate=include_sparse_firth_candidate,
+            ),
+        )
+    compute_arrays: dict[str, object] = {
+        "dosage_sum": chunk_stats.dosage_sum,
+        "observation_count": chunk_stats.observation_count,
+    }
+    if include_imputed_dosage_square_sum:
+        compute_arrays["imputed_dosage_square_sum"] = chunk_stats.imputed_dosage_square_sum
+    if include_sparse_firth_candidate:
+        compute_arrays["is_rare_sparse_firth_candidate"] = chunk_stats.is_rare_sparse_firth_candidate
+    return compute_arrays
+
+
+def get_linear_chunk_stats_arrays(chunk_stats: _core.ChunkStats) -> LinearChunkStatsArrays:
+    """Return the native stat arrays needed by linear variant-major compute."""
+    compute_arrays = get_chunk_stats_compute_arrays(
+        chunk_stats,
+        include_imputed_dosage_square_sum=True,
+        include_sparse_firth_candidate=False,
+    )
+    return LinearChunkStatsArrays(
+        dosage_sum=typing.cast("npt.NDArray[np.float32]", compute_arrays["dosage_sum"]),
+        observation_count=typing.cast("npt.NDArray[np.int32]", compute_arrays["observation_count"]),
+        imputed_dosage_square_sum=typing.cast(
+            "npt.NDArray[np.float32]",
+            compute_arrays["imputed_dosage_square_sum"],
+        ),
+    )
+
+
+def get_binary_chunk_stats_arrays(
+    chunk_stats: _core.ChunkStats,
+    *,
+    include_sparse_firth_candidate: bool,
+) -> BinaryChunkStatsArrays:
+    """Return the native stat arrays needed by binary variant-major compute."""
+    compute_arrays = get_chunk_stats_compute_arrays(
+        chunk_stats,
+        include_imputed_dosage_square_sum=False,
+        include_sparse_firth_candidate=include_sparse_firth_candidate,
+    )
+    sparse_candidate_mask: npt.NDArray[np.bool_] | None = None
+    if include_sparse_firth_candidate:
+        sparse_candidate_mask = typing.cast(
+            "npt.NDArray[np.bool_]",
+            compute_arrays["is_rare_sparse_firth_candidate"],
+        )
+    return BinaryChunkStatsArrays(
+        dosage_sum=typing.cast("npt.NDArray[np.float32]", compute_arrays["dosage_sum"]),
+        observation_count=typing.cast("npt.NDArray[np.int32]", compute_arrays["observation_count"]),
+        sparse_candidate_mask=sparse_candidate_mask,
+    )
 
 
 def write_regenie2_native_chunk_with_optional_timing(
@@ -242,10 +357,10 @@ def write_regenie2_native_chunk_with_optional_timing(
     materialization_start_time = time.perf_counter()
     host_values = jax.device_get(
         {
-            "beta": beta,
-            "standard_error": standard_error,
-            "chi_squared": chi_squared,
-            "log10_p_value": log10_p_value,
+            "beta": narrow_public_statistic_array_on_device(beta),
+            "standard_error": narrow_public_statistic_array_on_device(standard_error),
+            "chi_squared": narrow_public_statistic_array_on_device(chi_squared),
+            "log10_p_value": narrow_public_statistic_array_on_device(log10_p_value),
             "extra_code": extra_code,
         }
     )
@@ -282,10 +397,10 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
     materialization_start_time = time.perf_counter()
     host_values = jax.device_get(
         {
-            "beta": beta,
-            "standard_error": standard_error,
-            "chi_squared": chi_squared,
-            "log10_p_value": log10_p_value,
+            "beta": narrow_public_statistic_array_on_device(beta),
+            "standard_error": narrow_public_statistic_array_on_device(standard_error),
+            "chi_squared": narrow_public_statistic_array_on_device(chi_squared),
+            "log10_p_value": narrow_public_statistic_array_on_device(log10_p_value),
             "extra_code": extra_code,
         }
     )
@@ -995,13 +1110,16 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
             )
+            linear_chunk_stats_arrays = get_linear_chunk_stats_arrays(chunk_stats)
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_linear_chunk_packed8_donating_inputs(
                 chromosome_state=chromosome_state,
                 packed_probability_pairs_by_variant=packed_device_array,
-                genotype_dosage_sum=jax.device_put(chunk_stats.dosage_sum),
-                genotype_observation_count=jax.device_put(chunk_stats.observation_count),
-                genotype_imputed_dosage_square_sum=jax.device_put(chunk_stats.imputed_dosage_square_sum),
+                genotype_dosage_sum=jax.device_put(linear_chunk_stats_arrays.dosage_sum),
+                genotype_observation_count=jax.device_put(linear_chunk_stats_arrays.observation_count),
+                genotype_imputed_dosage_square_sum=jax.device_put(
+                    linear_chunk_stats_arrays.imputed_dosage_square_sum
+                ),
                 score_dtype=self.score_dtype,
             )
             block_compute_result_for_timing(
@@ -1061,9 +1179,10 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         )
 
         genotype_device_array = put_genotype_matrix_on_device(genotype_matrix_by_variant, self.stage_timing_recorder)
-        genotype_dosage_sum = jax.device_put(chunk_stats.dosage_sum)
-        genotype_observation_count = jax.device_put(chunk_stats.observation_count)
-        genotype_imputed_dosage_square_sum = jax.device_put(chunk_stats.imputed_dosage_square_sum)
+        linear_chunk_stats_arrays = get_linear_chunk_stats_arrays(chunk_stats)
+        genotype_dosage_sum = jax.device_put(linear_chunk_stats_arrays.dosage_sum)
+        genotype_observation_count = jax.device_put(linear_chunk_stats_arrays.observation_count)
+        genotype_imputed_dosage_square_sum = jax.device_put(linear_chunk_stats_arrays.imputed_dosage_square_sum)
         compute_start_time = time.perf_counter()
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
             chromosome_state=chromosome_state,
@@ -1250,13 +1369,16 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
             )
+            linear_chunk_stats_arrays = get_linear_chunk_stats_arrays(chunk_stats)
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
                 chromosome_state=chromosome_state,
                 genotype_matrix_by_variant=genotype_device_array,
-                genotype_dosage_sum=jax.device_put(chunk_stats.dosage_sum),
-                genotype_observation_count=jax.device_put(chunk_stats.observation_count),
-                genotype_imputed_dosage_square_sum=jax.device_put(chunk_stats.imputed_dosage_square_sum),
+                genotype_dosage_sum=jax.device_put(linear_chunk_stats_arrays.dosage_sum),
+                genotype_observation_count=jax.device_put(linear_chunk_stats_arrays.observation_count),
+                genotype_imputed_dosage_square_sum=jax.device_put(
+                    linear_chunk_stats_arrays.imputed_dosage_square_sum
+                ),
                 score_dtype=self.score_dtype,
             )
             block_compute_result_for_timing(
@@ -1297,13 +1419,16 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
             )
+            linear_chunk_stats_arrays = get_linear_chunk_stats_arrays(chunk_stats)
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_multi_linear_chunk_packed8_donating_inputs(
                 chromosome_state=chromosome_state,
                 packed_probability_pairs_by_variant=packed_device_array,
-                genotype_dosage_sum=jax.device_put(chunk_stats.dosage_sum),
-                genotype_observation_count=jax.device_put(chunk_stats.observation_count),
-                genotype_imputed_dosage_square_sum=jax.device_put(chunk_stats.imputed_dosage_square_sum),
+                genotype_dosage_sum=jax.device_put(linear_chunk_stats_arrays.dosage_sum),
+                genotype_observation_count=jax.device_put(linear_chunk_stats_arrays.observation_count),
+                genotype_imputed_dosage_square_sum=jax.device_put(
+                    linear_chunk_stats_arrays.imputed_dosage_square_sum
+                ),
                 score_dtype=self.score_dtype,
             )
             block_compute_result_for_timing(
@@ -1419,10 +1544,16 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         host_dosage_buffer = self.get_releasable_dosage_buffer(genotype_matrix)
         self.acquire_result_in_flight_slot()
         try:
+            binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
+                chunk_stats,
+                include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
+            )
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else jax.device_put(chunk_stats.is_rare_sparse_firth_candidate)
+                else jax.device_put(
+                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask)
+                )
             )
             result = self.compute_binary_result(
                 variant_metadata=variant_metadata,
@@ -1563,8 +1694,12 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
             )
-            dosage_sum = jax.device_put(chunk_stats.dosage_sum)
-            observation_count = jax.device_put(chunk_stats.observation_count)
+            binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
+                chunk_stats,
+                include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
+            )
+            dosage_sum = jax.device_put(binary_chunk_stats_arrays.dosage_sum)
+            observation_count = jax.device_put(binary_chunk_stats_arrays.observation_count)
             compute_start_time = time.perf_counter()
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
                 compute_score_test = regenie2_binary.compute_binary_score_test_variant_major_donating_inputs
@@ -1582,7 +1717,9 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     chromosome_state=chromosome_state,
                     genotype_matrix_by_variant=genotype_device_array,
                     correction_plan=self.correction_plan,
-                    sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
+                    sparse_candidate_mask=jax.device_put(
+                        typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask)
+                    ),
                     kernel_config=self.kernel_config,
                     score_dtype=self.score_dtype,
                     stage_duration_recorder=self.get_stage_duration_recorder(),
@@ -1629,8 +1766,12 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
             )
-            dosage_sum = jax.device_put(chunk_stats.dosage_sum)
-            observation_count = jax.device_put(chunk_stats.observation_count)
+            binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
+                chunk_stats,
+                include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
+            )
+            dosage_sum = jax.device_put(binary_chunk_stats_arrays.dosage_sum)
+            observation_count = jax.device_put(binary_chunk_stats_arrays.observation_count)
             compute_start_time = time.perf_counter()
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
                 compute_score_test = regenie2_binary.compute_binary_score_test_packed8_donating_inputs
@@ -1648,7 +1789,9 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     chromosome_state=chromosome_state,
                     packed_probability_pairs_by_variant=packed_device_array,
                     correction_plan=self.correction_plan,
-                    sparse_candidate_mask=jax.device_put(chunk_stats.is_rare_sparse_firth_candidate),
+                    sparse_candidate_mask=jax.device_put(
+                        typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask)
+                    ),
                     kernel_config=self.kernel_config,
                     score_dtype=self.score_dtype,
                     stage_duration_recorder=self.get_stage_duration_recorder(),
@@ -1761,10 +1904,16 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             )
             genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
             compute_start_time = time.perf_counter()
+            binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
+                chunk_stats,
+                include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
+            )
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else jax.device_put(chunk_stats.is_rare_sparse_firth_candidate)
+                else jax.device_put(
+                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask)
+                )
             )
             result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
                 chromosome_state=chromosome_state,
@@ -1813,13 +1962,19 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
             )
-            dosage_sum = jax.device_put(chunk_stats.dosage_sum)
-            observation_count = jax.device_put(chunk_stats.observation_count)
+            binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
+                chunk_stats,
+                include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
+            )
+            dosage_sum = jax.device_put(binary_chunk_stats_arrays.dosage_sum)
+            observation_count = jax.device_put(binary_chunk_stats_arrays.observation_count)
             compute_start_time = time.perf_counter()
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else jax.device_put(chunk_stats.is_rare_sparse_firth_candidate)
+                else jax.device_put(
+                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask)
+                )
             )
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
                 compute_score_test = regenie2_binary.compute_multi_binary_score_test_variant_major_donating_inputs
@@ -1882,13 +2037,19 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
             )
-            dosage_sum = jax.device_put(chunk_stats.dosage_sum)
-            observation_count = jax.device_put(chunk_stats.observation_count)
+            binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
+                chunk_stats,
+                include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
+            )
+            dosage_sum = jax.device_put(binary_chunk_stats_arrays.dosage_sum)
+            observation_count = jax.device_put(binary_chunk_stats_arrays.observation_count)
             compute_start_time = time.perf_counter()
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else jax.device_put(chunk_stats.is_rare_sparse_firth_candidate)
+                else jax.device_put(
+                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask)
+                )
             )
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
                 compute_score_test = regenie2_binary.compute_multi_binary_score_test_packed8_donating_inputs

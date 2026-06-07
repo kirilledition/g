@@ -35,6 +35,22 @@ class WarmCacheReport:
     warmed_shapes: tuple[WarmCacheShape, ...]
 
 
+@dataclass(frozen=True)
+class WarmCacheNativeStats:
+    """Synthetic native statistic arrays for production cache warming.
+
+    Attributes:
+        dosage_sum: Per-variant dosage sums.
+        observation_count: Per-variant observation counts.
+        imputed_dosage_square_sum: Per-variant imputed dosage square sums.
+
+    """
+
+    dosage_sum: jax.Array
+    observation_count: jax.Array
+    imputed_dosage_square_sum: jax.Array
+
+
 def build_warm_cache_shapes(
     *,
     engine: _core.Regenie2RunEngine,
@@ -77,6 +93,67 @@ def build_synthetic_genotype_matrix(
     return jnp.tile(genotype_vector[:, None], (1, variant_count))
 
 
+def build_synthetic_integer_genotype_matrix(
+    *,
+    phenotype_vector: jax.Array,
+    variant_count: int,
+) -> jax.Array:
+    """Build exact 0/1/2 dosage inputs for packed8 cache warming."""
+    sample_index = jnp.arange(phenotype_vector.shape[0], dtype=jnp.float32)
+    genotype_vector = jnp.mod(sample_index, 3.0)
+    return jnp.tile(genotype_vector[:, None], (1, variant_count))
+
+
+def build_synthetic_variant_major_genotype_matrix(
+    *,
+    phenotype_vector: jax.Array,
+    variant_count: int,
+    is_binary_trait: bool,
+    exact_integer_dosage: bool = False,
+) -> jax.Array:
+    """Build deterministic variant-major genotype inputs for cache warming."""
+    if exact_integer_dosage:
+        genotype_matrix = build_synthetic_integer_genotype_matrix(
+            phenotype_vector=phenotype_vector,
+            variant_count=variant_count,
+        )
+    else:
+        genotype_matrix = build_synthetic_genotype_matrix(
+            phenotype_vector=phenotype_vector,
+            variant_count=variant_count,
+            is_binary_trait=is_binary_trait,
+        )
+    return genotype_matrix.T
+
+
+def encode_variant_major_dosage_to_packed8_probability_pairs(genotype_matrix_by_variant: jax.Array) -> jax.Array:
+    """Encode exact 0/1/2 variant-major dosage as trusted packed8 probability pairs."""
+    homozygous_reference_probability = jnp.where(
+        genotype_matrix_by_variant == jnp.asarray(0.0, dtype=jnp.float32),
+        jnp.asarray(255, dtype=jnp.uint8),
+        jnp.asarray(0, dtype=jnp.uint8),
+    )
+    heterozygous_probability = jnp.where(
+        genotype_matrix_by_variant == jnp.asarray(1.0, dtype=jnp.float32),
+        jnp.asarray(255, dtype=jnp.uint8),
+        jnp.asarray(0, dtype=jnp.uint8),
+    )
+    return jnp.stack((homozygous_reference_probability, heterozygous_probability), axis=2)
+
+
+def build_synthetic_native_stats(genotype_matrix_by_variant: jax.Array) -> WarmCacheNativeStats:
+    """Build synthetic native stats matching a variant-major dosage matrix."""
+    return WarmCacheNativeStats(
+        dosage_sum=jnp.sum(genotype_matrix_by_variant, axis=1, dtype=jnp.float32),
+        observation_count=jnp.full(
+            (genotype_matrix_by_variant.shape[0],),
+            genotype_matrix_by_variant.shape[1],
+            dtype=jnp.int32,
+        ),
+        imputed_dosage_square_sum=jnp.sum(genotype_matrix_by_variant * genotype_matrix_by_variant, axis=1),
+    )
+
+
 def warm_regenie2_linear_bgen_cache(
     *,
     genotype_source_config: source.GenotypeSourceConfig,
@@ -90,6 +167,7 @@ def warm_regenie2_linear_bgen_cache(
     trusted_no_missing_diploid: bool = False,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
+    gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for quantitative REGENIE step 2."""
     engine = native_dispatch.build_bgen_run_engine(
@@ -131,15 +209,31 @@ def warm_regenie2_linear_bgen_cache(
         sample_count=int(run_input.sample_indices.shape[0]),
     )
     for shape in shapes:
-        genotype_matrix = build_synthetic_genotype_matrix(
+        genotype_matrix_by_variant = build_synthetic_variant_major_genotype_matrix(
             phenotype_vector=run_input.phenotype_vector,
             variant_count=shape.variant_count,
             is_binary_trait=False,
+            exact_integer_dosage=gpu_genotype_format == types.GpuGenotypeFormat.PACKED8,
         )
-        result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
-            chromosome_state=chromosome_state,
-            genotype_matrix=genotype_matrix,
-        )
+        native_stats = build_synthetic_native_stats(genotype_matrix_by_variant)
+        if gpu_genotype_format == types.GpuGenotypeFormat.PACKED8:
+            result = regenie2_linear.compute_linear_chunk_packed8_donating_inputs(
+                chromosome_state=chromosome_state,
+                packed_probability_pairs_by_variant=encode_variant_major_dosage_to_packed8_probability_pairs(
+                    genotype_matrix_by_variant
+                ),
+                genotype_dosage_sum=native_stats.dosage_sum,
+                genotype_observation_count=native_stats.observation_count,
+                genotype_imputed_dosage_square_sum=native_stats.imputed_dosage_square_sum,
+            )
+        else:
+            result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
+                chromosome_state=chromosome_state,
+                genotype_matrix_by_variant=genotype_matrix_by_variant,
+                genotype_dosage_sum=native_stats.dosage_sum,
+                genotype_observation_count=native_stats.observation_count,
+                genotype_imputed_dosage_square_sum=native_stats.imputed_dosage_square_sum,
+            )
         callbacks.block_until_ready(result.log10_p_value)
     return WarmCacheReport(warmed_shapes=shapes)
 
@@ -159,6 +253,7 @@ def warm_regenie2_binary_bgen_cache(
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for binary REGENIE step 2."""
     engine = native_dispatch.build_bgen_run_engine(
@@ -202,17 +297,53 @@ def warm_regenie2_binary_bgen_cache(
         sample_count=int(run_input.sample_indices.shape[0]),
     )
     for shape in shapes:
-        genotype_matrix = build_synthetic_genotype_matrix(
+        genotype_matrix_by_variant = build_synthetic_variant_major_genotype_matrix(
             phenotype_vector=run_input.phenotype_vector,
             variant_count=shape.variant_count,
             is_binary_trait=True,
+            exact_integer_dosage=gpu_genotype_format == types.GpuGenotypeFormat.PACKED8,
         )
-        result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
-            chromosome_state=chromosome_state,
-            genotype_matrix=genotype_matrix,
-            correction_plan=correction_plan,
-            kernel_config=kernel_config,
-        )
+        native_stats = build_synthetic_native_stats(genotype_matrix_by_variant)
+        if gpu_genotype_format == types.GpuGenotypeFormat.PACKED8:
+            packed_probability_pairs_by_variant = encode_variant_major_dosage_to_packed8_probability_pairs(
+                genotype_matrix_by_variant
+            )
+            if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
+                result = regenie2_binary.compute_binary_score_test_packed8_donating_inputs(
+                    chromosome_state=chromosome_state,
+                    packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+                    correction_plan=correction_plan,
+                    kernel_config=kernel_config,
+                    dosage_sum=native_stats.dosage_sum,
+                    observation_count=native_stats.observation_count,
+                )
+            else:
+                result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_packed8(
+                    chromosome_state=chromosome_state,
+                    packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+                    correction_plan=correction_plan,
+                    kernel_config=kernel_config,
+                    dosage_sum=native_stats.dosage_sum,
+                    observation_count=native_stats.observation_count,
+                )
+        elif correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
+            result = regenie2_binary.compute_binary_score_test_variant_major_donating_inputs(
+                chromosome_state=chromosome_state,
+                genotype_matrix_by_variant=genotype_matrix_by_variant,
+                correction_plan=correction_plan,
+                kernel_config=kernel_config,
+                dosage_sum=native_stats.dosage_sum,
+                observation_count=native_stats.observation_count,
+            )
+        else:
+            result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
+                chromosome_state=chromosome_state,
+                genotype_matrix_by_variant=genotype_matrix_by_variant,
+                correction_plan=correction_plan,
+                kernel_config=kernel_config,
+                dosage_sum=native_stats.dosage_sum,
+                observation_count=native_stats.observation_count,
+            )
         callbacks.block_until_ready(result.log10_p_value)
     return WarmCacheReport(warmed_shapes=shapes)
 
