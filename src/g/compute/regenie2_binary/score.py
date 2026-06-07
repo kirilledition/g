@@ -107,13 +107,41 @@ def compute_multi_binary_score_test_chunk_variant_major(
         dosage_sum=dosage_sum,
         observation_count=observation_count,
     )
+    trait_count = chromosome_state.score_residual.shape[0]
+    covariate_count = chromosome_state.score_projection_matrix.shape[1]
+    sample_count = raw_genotype_matrix_by_variant.shape[1]
+    variant_count = raw_genotype_matrix_by_variant.shape[0]
     genotype_flip_mask = genotype_mean > 1.0
     genotype_flip_mask_by_trait_variant = genotype_flip_mask[None, :]
     genotype_matrix_by_variant_squared = raw_genotype_matrix_by_variant * raw_genotype_matrix_by_variant
-    projection_coordinates = jnp.einsum(
-        "vs,tcs->tvc",
-        raw_genotype_matrix_by_variant,
+    flattened_projection_matrix = jnp.reshape(
         chromosome_state.score_projection_matrix,
+        (trait_count * covariate_count, sample_count),
+    )
+    stacked_right_hand_matrix = jnp.concatenate(
+        [
+            flattened_projection_matrix,
+            chromosome_state.bernoulli_weight,
+            chromosome_state.score_residual,
+        ],
+        axis=0,
+    )
+    stacked_product_by_variant = raw_genotype_matrix_by_variant @ stacked_right_hand_matrix.T
+    projection_row_count = trait_count * covariate_count
+    weighted_genotype_sum_start = projection_row_count
+    score_start = weighted_genotype_sum_start + trait_count
+    projection_coordinates = jnp.reshape(
+        stacked_product_by_variant[:, :projection_row_count],
+        (variant_count, trait_count, covariate_count),
+    )
+    projection_coordinates = jnp.transpose(projection_coordinates, (1, 0, 2))
+    weighted_genotype_sum = jnp.transpose(
+        stacked_product_by_variant[:, weighted_genotype_sum_start:score_start],
+        (1, 0),
+    )
+    score = jnp.transpose(
+        stacked_product_by_variant[:, score_start:],
+        (1, 0),
     )
     projection_coordinates = jnp.where(
         genotype_flip_mask_by_trait_variant[:, :, None],
@@ -123,11 +151,6 @@ def compute_multi_binary_score_test_chunk_variant_major(
     weighted_genotype_sum_squares = jnp.einsum(
         "vs,ts->tv",
         genotype_matrix_by_variant_squared,
-        chromosome_state.bernoulli_weight,
-    )
-    weighted_genotype_sum = jnp.einsum(
-        "vs,ts->tv",
-        raw_genotype_matrix_by_variant,
         chromosome_state.bernoulli_weight,
     )
     weighted_genotype_sum_squares = jnp.where(
@@ -143,7 +166,6 @@ def compute_multi_binary_score_test_chunk_variant_major(
     )
     projection_sum_squares = jnp.einsum("tvc,tvc->tv", projection_coordinates, projection_coordinates)
     variance = jnp.maximum(weighted_genotype_sum_squares - projection_sum_squares, 0.0)
-    score = jnp.einsum("vs,ts->tv", raw_genotype_matrix_by_variant, chromosome_state.score_residual)
     score = jnp.where(
         genotype_flip_mask_by_trait_variant,
         genotype.ALLELE_COUNT_MULTIPLIER * chromosome_state.score_residual_sum[:, None] - score,
