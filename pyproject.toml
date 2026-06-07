@@ -117,6 +117,7 @@ banned-from = ["typing"]
 ban-relative-imports = "all"
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 markers = [
     "phase0_data: requires local Phase 0 data or generated baseline artifacts.",
     "phase1_parity: exercises Phase 1 parity and benchmark evaluation flows against external baselines.",

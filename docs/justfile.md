@@ -160,6 +160,23 @@ also accept the same overrides when run directly with `uv run --no-sync python
 - Output: rendered runtime workflow and a foreground Symphony daemon process.
 - Use when: running the Linear-backed unattended agent workflow for this repo.
 
+### `symphony-cleanup *arguments`
+
+- Inputs: git worktree metadata, `SYMPHONY_WORKTREE_ROOT`, and optional Linear
+  credentials from `SYMPHONY_ENV_FILE` or `~/.config/g-symphony/env`.
+- Output: dry-run report of stale Symphony worktree, local branch, and remote
+  branch candidates.
+- Use when: reviewing stale completed or canceled Symphony issue worktrees
+  before deleting anything.
+
+### `symphony-cleanup-apply *arguments`
+
+- Inputs: same as `symphony-cleanup`, plus optional deletion controls such as
+  `--delete-local-branches` or `--delete-remote-branches`.
+- Output: cleanup plan and non-forced git deletion command results.
+- Use when: applying a reviewed cleanup plan. Worktree cleanup uses
+  `git worktree remove` without `--force`; branch cleanup remains opt-in.
+
 ### `doctor-baselines`
 
 - Inputs: `plink`, `plink2`, `regenie`.

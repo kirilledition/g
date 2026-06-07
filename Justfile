@@ -248,6 +248,34 @@ symphony-run:
       --port "{{symphony_port}}" \
       "${runtime_workflow}"
 
+# Dry-run stale Symphony worktree and branch cleanup
+symphony-cleanup *arguments:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
+    if [[ -f "${symphony_env_file}" ]]; then
+      set -a
+      . "${symphony_env_file}"
+      set +a
+    fi
+    export SYMPHONY_WORKTREE_ROOT="{{symphony_worktree_root}}"
+    uv run python -m tooling.cli.symphony_cleanup --repository "$PWD" --worktree-root "{{symphony_worktree_root}}" {{ arguments }}
+
+# Apply stale Symphony worktree cleanup after reviewing symphony-cleanup
+symphony-cleanup-apply *arguments:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
+    if [[ -f "${symphony_env_file}" ]]; then
+      set -a
+      . "${symphony_env_file}"
+      set +a
+    fi
+    export SYMPHONY_WORKTREE_ROOT="{{symphony_worktree_root}}"
+    uv run python -m tooling.cli.symphony_cleanup --repository "$PWD" --worktree-root "{{symphony_worktree_root}}" --apply {{ arguments }}
+
 # Check external baseline tools used by data prep and comparison benchmarks
 doctor-baselines:
     #!/usr/bin/env bash

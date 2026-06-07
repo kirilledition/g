@@ -240,10 +240,43 @@ List active worktrees:
 git worktree list
 ```
 
-Remove a stale Symphony worktree:
+Review stale Symphony worktrees and branches without deleting anything:
 
 ```bash
-git -C /mnt/beegfs/kirill/Projects/g worktree remove --force /mnt/beegfs/kirill/Projects/g-worktrees/symphony/<issue-key>
+just symphony-cleanup
+```
+
+The cleanup dry-run only selects direct child git worktrees under
+`SYMPHONY_WORKTREE_ROOT` and never selects `data/`, `results/`, cache paths,
+nested paths, or paths outside that configured root. When Linear credentials are
+available, the report classifies issue state as active, completed, canceled, or
+unknown. Active and unknown issues are retained by default; completed and
+canceled issues are stale candidates.
+
+After reviewing the dry-run, apply worktree removal with:
+
+```bash
+just symphony-cleanup-apply
+```
+
+The apply command uses non-forced `git worktree remove`, so dirty worktrees or
+worktrees containing real protected `data/`, `results/`, or cache directories are
+not removed. Branch cleanup is separate from worktree cleanup:
+
+```bash
+just symphony-cleanup-apply --delete-local-branches
+just symphony-cleanup-apply --delete-remote-branches
+```
+
+Local branch cleanup uses `git branch -d`; it will refuse unmerged branches.
+Remote branch cleanup is intentionally a separate opt-in because it deletes
+published branch refs. It does not rewrite branch history.
+
+If Linear is unavailable, issue states are reported as unknown. Unknown states
+are not selected unless explicitly requested:
+
+```bash
+just symphony-cleanup --include-unknown
 ```
 
 If the daemon cannot talk to Linear, verify `~/.config/g-symphony/env` and run:
