@@ -113,6 +113,53 @@ No description provided.
 - Only issues tagged `task-generator` may create new `symphony`-dispatchable Linear issues. Other issues may create backlog follow-ups without the `symphony` label.
 - Use the Linear MCP tools for Linear issue reads, writes, searches, comments, labels, and generated tasks. Avoid raw Linear HTTP/API requests unless MCP is unavailable.
 
+## Resource Routing
+
+Classify the issue's resource lane from its title, description, validation
+section, and labels before choosing commands:
+
+- Login-node-safe: docs, small code edits, issue bookkeeping, `just
+  symphony-doctor`, formatting/linting/typechecking, focused non-data tests,
+  `just check-local`, `just test-local`, and dry-run/plan-only commands that do
+  not execute benchmark, data, or GPU workloads. These issues may run in normal
+  parallel Symphony capacity.
+- CPU-heavy: labels such as `cpu`, `benchmark`, `data`, `optimization`, or
+  `simd`, or requests for full test suites, Criterion/Rust benchmarks, data
+  preparation, large matrix/profile jobs, or native performance builds. Do not
+  run these on the gauss login node. Use a CPU compute node through bounded
+  `srun` when local CPU-heavy evidence is required, for example:
+
+  ```bash
+  srun --nodelist=cantor --cpus-per-task=<cores> --mem=<memory> --time=<limit> \
+    bash -lc 'cd <worktree> && <command>'
+  ```
+- GPU-heavy: labels such as `gpu`, validation commands containing
+  `--g-device gpu`, JAX CUDA probes, GPU benchmarks, or GPU profiling. Never run
+  these directly on the login node. Use `landau` and the repo's SLURM wrappers,
+  for example `just slurm-gpu-just <recipe>`, `just
+  slurm-regenie2-binary-gpu-smoke`, `just
+  slurm-benchmark-regenie2-binary-hot-gpu`, or the issue's explicit
+  `just slurm-*` command.
+- Benchmark-heavy: labels such as `benchmark`, `optimization`, or `simd`, or
+  requests for profiling/timing evidence. Prefer dry-run recipes first when
+  available, keep output under `data/`, `results/`, or another ignored path, and
+  run real GPU benchmarks only through SLURM.
+- Data-heavy: labels such as `data`, validation that needs 1KG fixtures,
+  baselines, MatrixTables, or previous benchmark artifacts. Check required input
+  paths before submitting work, for example `just
+  verify-regenie2-binary-gpu-inputs` for binary GPU step 2 tasks.
+
+If the issue asks for resource-heavy validation but the needed data, external
+tools, SLURM allocation, or GPU node is unavailable, do not spin, poll, or retry
+indefinitely. Make one bounded check or submission attempt, then record the
+missing item in the `## Codex Workpad`, add or keep the `blocked` Linear label
+when available, and stop with the exact human action needed.
+
+Use resource-heavy validation only when the issue context makes it necessary.
+For routine CPU-safe implementation, run focused login-node-safe checks and
+leave benchmark/GPU/data activation to the issue labels and explicit validation
+commands.
+
 ## Repository Rules
 
 - Read `AGENTS.md` and `docs/STYLEGUIDE.md` before editing code.
@@ -203,24 +250,26 @@ Non-goals:
 4. Inspect repo state with `git status`, current branch, and `git rev-parse --short HEAD`.
 5. Fetch and merge latest `origin/main` before implementation.
 6. Reproduce or confirm the issue signal where practical.
-7. Implement the smallest coherent change.
-8. Run focused validation first, then broader validation as risk requires.
-9. Prefer these local gates:
+7. Classify the resource lane from labels, title, description, and validation commands.
+8. Implement the smallest coherent change.
+9. Run focused validation first, then broader validation as risk requires.
+10. Prefer these login-node-safe gates for routine work:
    - `just check-local`
    - `just test-local`
    - targeted `uv run pytest ...`
-   - relevant `just slurm-*` GPU smoke or benchmark recipes
-10. For GPU validation, use the existing SLURM recipes instead of direct GPU commands on the login node.
-11. Commit only intended changes.
-12. Push the task branch with upstream tracking so branch history exists on GitHub: `git push -u origin HEAD`.
-13. Move the Linear issue to `Merging` before touching `main`.
-14. Fetch `origin/main`, merge it into the task branch if it has advanced, and resolve conflicts locally.
-15. Re-run validation after any merge or conflict resolution.
-16. Push directly to main from the validated task branch: `git push origin HEAD:main`. If this is rejected because `main` advanced, repeat fetch, merge, validation, and push. If protected-branch policy rejects direct push, record that blocker in Linear.
-17. Attach or link the pushed branch and main commit on the Linear issue; do not create a GitHub PR unless a human explicitly asks for one on that issue.
-18. Avoid `gh run watch`, long polling loops, or commands that print CI status repeatedly into the Codex transcript.
-19. Update the Linear issue description's `## Agent Learnings` section.
-20. Move the issue to `Done` after `origin/main` contains the task branch head and required validation is complete.
+11. For CPU-heavy validation, use a CPU compute node through bounded `srun`; record unavailable compute resources as a Linear blocker.
+12. For GPU validation, use the existing SLURM recipes instead of direct GPU commands on the login node; record unavailable GPU resources as a Linear blocker.
+13. Verify required local data before data-heavy or benchmark submissions; record missing data as a Linear blocker.
+14. Commit only intended changes.
+15. Push the task branch with upstream tracking so branch history exists on GitHub: `git push -u origin HEAD`.
+16. Move the Linear issue to `Merging` before touching `main`.
+17. Fetch `origin/main`, merge it into the task branch if it has advanced, and resolve conflicts locally.
+18. Re-run validation after any merge or conflict resolution.
+19. Push directly to main from the validated task branch: `git push origin HEAD:main`. If this is rejected because `main` advanced, repeat fetch, merge, validation, and push. If protected-branch policy rejects direct push, record that blocker in Linear.
+20. Attach or link the pushed branch and main commit on the Linear issue; do not create a GitHub PR unless a human explicitly asks for one on that issue.
+21. Avoid `gh run watch`, long polling loops, or commands that print CI status repeatedly into the Codex transcript.
+22. Update the Linear issue description's `## Agent Learnings` section.
+23. Move the issue to `Done` after `origin/main` contains the task branch head and required validation is complete.
 
 ## Blockers
 

@@ -16,6 +16,9 @@ The intended posture is local-first hybrid:
   workflow unchanged for untrusted repositories.
 - Symphony runs up to three issue agents concurrently by default, with `Merging`
   capped at one concurrent agent.
+- Resource labels do not dispatch work by themselves; they tell agents which
+  validation lane to use and when to require SLURM, data checks, or bounded
+  blocker reporting.
 - Normal Symphony tasks do not require GitHub pull requests. Agents push their
   task branch for history, then push the validated branch head directly to
   `origin/main`.
@@ -56,6 +59,47 @@ Configure these team issue labels:
 - `optimization`: performance, throughput, memory, or efficiency optimization
   work.
 - `simd`: SIMD or vectorization-specific optimization work.
+
+## Resource-Heavy Activation
+
+Only `symphony` is required for dispatch. Humans activate resource-heavy work by
+adding the relevant routing labels and writing the expected validation command
+or evidence in the issue description:
+
+- Add `gpu` when correctness or performance depends on CUDA/JAX GPU behavior.
+  Include a `just slurm-*` recipe when possible. Agents must use `landau` and
+  the repo's SLURM wrappers instead of running GPU commands on the login node.
+- Add `benchmark` for profiling, timing, Criterion, or comparison evidence.
+  State the benchmark recipe, output location under an ignored path such as
+  `data/` or `results/`, and whether a smoke run or full run is expected.
+- Add `data` when the task requires 1KG fixtures, baselines, MatrixTables, or
+  previous benchmark artifacts. State the expected `GWAS_ENGINE_DATA_DIR` when
+  it is not the default `data`.
+- Add `cpu` when validation is too large for the login node but does not require
+  a GPU. Agents should use a CPU compute node through bounded `srun`, for
+  example `cantor` when available.
+
+Keep ordinary docs, small edits, lint/typecheck, focused tests, and
+`just symphony-doctor` unlabeled beyond `symphony` unless resource-heavy
+validation is actually needed. This keeps normal CPU-safe work parallel while
+making costly work opt in.
+
+When activating resource-heavy work, include enough context for unattended
+execution:
+
+```text
+Labels: symphony, gpu, benchmark, data
+Validation:
+- just verify-regenie2-binary-gpu-inputs
+- GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data just slurm-regenie2-binary-gpu-smoke
+Expected output:
+- data/regenie2_binary_chr22_gpu_smoke.regenie2_binary.run/parts/*.parquet
+```
+
+If required data, external tools, SLURM capacity, or the GPU node is unavailable,
+agents should make one bounded check or submission attempt, update the
+`## Codex Workpad` with the missing item and human action needed, add or keep
+the `blocked` label, and stop instead of polling indefinitely.
 
 Create a Linear personal API key in Linear settings. Store secrets and local
 project values outside git:
@@ -161,6 +205,18 @@ flag. The daemon launches unattended Codex sessions; reduce
 `agent.max_concurrent_agents` in `WORKFLOW.md` if local resources become
 contended.
 
+To review the rendered runtime workflow without starting the daemon, point
+`SYMPHONY_ELIXIR_DIR` at a path that does not exist and set an explicit
+`SYMPHONY_RUNTIME_WORKFLOW`. The recipe writes the temporary workflow before it
+attempts to enter the Symphony checkout:
+
+```bash
+SYMPHONY_RUNTIME_WORKFLOW=/tmp/g-symphony-review.WORKFLOW.md \
+SYMPHONY_ELIXIR_DIR=/tmp/g-symphony-no-server \
+  just symphony-run
+sed -n '1,260p' /tmp/g-symphony-review.WORKFLOW.md
+```
+
 Restart the daemon after changing `WORKFLOW.md`; running agents keep the sandbox
 policy they were launched with.
 
@@ -215,7 +271,23 @@ ignored by git and must not be committed.
 
 ## Validation Policy
 
-Agents should prefer:
+Agents should classify each issue before running validation:
+
+- Login-node-safe work: docs, small code edits, issue bookkeeping, formatting,
+  linting, typechecking, focused non-data tests, `just symphony-doctor`, and
+  dry-run/plan-only commands. These can run on `gauss` and may proceed in normal
+  parallel Symphony capacity.
+- CPU-heavy work: full test suites, data preparation, Criterion/Rust
+  benchmarks, large matrix runs, native performance builds, and CPU profiles.
+  Use a CPU compute node through bounded `srun`; do not run these on the login
+  node.
+- GPU-heavy work: JAX CUDA probes, commands with `--g-device gpu`, GPU smoke
+  tests, GPU benchmarks, and GPU profiles. Use `landau` through `just slurm-*`
+  wrappers.
+- Data-heavy work: first check required data with an existing verification or
+  dry-run recipe. Missing data is a Linear blocker, not a reason to spin.
+
+For routine login-node-safe work, prefer:
 
 ```bash
 just check-local
@@ -230,7 +302,14 @@ just slurm-regenie2-binary-gpu-smoke
 just slurm-benchmark-regenie2-binary-hot-gpu
 ```
 
-Do not run heavy workloads on the login node.
+Benchmark and profiling tasks should prefer smoke or dry-run recipes first, keep
+artifacts under ignored paths, and record pending or unavailable SLURM resources
+in Linear rather than retrying indefinitely.
+
+Merge integration remains serialized by `agent.max_concurrent_agents_by_state`
+for `Merging: 1`. If `origin/main` advances, the merging agent refreshes the
+task branch, reruns the appropriate validation lane, pushes the task branch for
+history, and then pushes the validated head to `origin/main`.
 
 ## Recovery
 
