@@ -232,6 +232,18 @@ def test_build_binary_kernel_config_maps_compute_options() -> None:
     assert kernel_config.approximate_firth.use_block_math is True
 
 
+def test_build_linear_numerical_config_maps_compute_options() -> None:
+    linear_numerical_config = execution_plan.build_linear_numerical_config(
+        build_compute_config(
+            linear_minimum_variance=3.0e-9,
+            linear_relative_variance_tolerance=4.0e-6,
+        )
+    )
+
+    assert linear_numerical_config.minimum_variance == 3.0e-9
+    assert linear_numerical_config.relative_variance_tolerance == 4.0e-6
+
+
 def test_normalize_binary_correction_config_maps_approximate_firth() -> None:
     plan = execution_plan.normalize_binary_correction_config(
         build_binary_config(firth=True, approx=True, p_threshold=0.01)
@@ -533,7 +545,7 @@ def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None
     assert calls == [("tile", 32)]
 
 
-def test_configure_runtime_warns_on_incompatible_rayon_thread_reconfiguration(caplog: pytest.LogCaptureFixture) -> None:
+def test_configure_runtime_rejects_incompatible_rayon_thread_reconfiguration() -> None:
     calls: list[tuple[str, int | str]] = []
 
     class FakeCoreModule:
@@ -546,7 +558,7 @@ def test_configure_runtime_warns_on_incompatible_rayon_thread_reconfiguration(ca
     with (
         patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", 4),
         patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
-        caplog.at_level("WARNING", logger="g.runner"),
+        pytest.raises(RuntimeError, match="already configured with 4 thread\\(s\\)"),
     ):
         runner.configure_runtime(
             build_compute_config(bgen_decode_tile_variant_count=32),
@@ -554,11 +566,9 @@ def test_configure_runtime_warns_on_incompatible_rayon_thread_reconfiguration(ca
         )
 
     assert calls == [("tile", 32)]
-    assert "already configured with 4 thread(s)" in caplog.text
-    assert "ignoring requested --threads=8" in caplog.text
 
 
-def test_configure_runtime_warns_when_native_rayon_configuration_fails(caplog: pytest.LogCaptureFixture) -> None:
+def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
     calls: list[tuple[str, int | str]] = []
 
     class FakeCoreModule:
@@ -572,7 +582,7 @@ def test_configure_runtime_warns_when_native_rayon_configuration_fails(caplog: p
     with (
         patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", None),
         patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
-        caplog.at_level("WARNING", logger="g.runner"),
+        pytest.raises(RuntimeError, match="Unable to configure Rayon global thread pool"),
     ):
         runner.configure_runtime(
             build_compute_config(bgen_decode_tile_variant_count=32),
@@ -580,8 +590,16 @@ def test_configure_runtime_warns_when_native_rayon_configuration_fails(caplog: p
         )
 
     assert calls == [("tile", 32), ("threads", 4)]
-    assert "Unable to configure Rayon global thread pool for --threads=4" in caplog.text
-    assert "global pool already initialized" in caplog.text
+
+
+def test_effective_rayon_thread_count_prefers_configured_thread_count() -> None:
+    with patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", 4):
+        assert runner.effective_rayon_thread_count(8) == 4
+
+
+def test_effective_rayon_thread_count_returns_requested_thread_count_without_configuration() -> None:
+    with patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", None):
+        assert runner.effective_rayon_thread_count(8) == 8
 
 
 def test_runtime_bootstrap_sets_jax_platform_before_setup_import() -> None:

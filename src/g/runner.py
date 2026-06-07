@@ -264,28 +264,32 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> t
 
 
 def configure_rayon_thread_pool(core_module: typing.Any, thread_count: int) -> None:
-    """Configure Rayon global thread count once and warn on incompatible repeats."""
+    """Configure Rayon global thread count once and reject incompatible repeats."""
     global CONFIGURED_RAYON_THREAD_COUNT
     if thread_count == CONFIGURED_RAYON_THREAD_COUNT:
         return
     if CONFIGURED_RAYON_THREAD_COUNT is not None:
-        logger.warning(
-            "Rayon global thread pool is already configured with %s thread(s); ignoring requested --threads=%s.",
-            CONFIGURED_RAYON_THREAD_COUNT,
-            thread_count,
+        message = (
+            "Rayon global thread pool is already configured with "
+            f"{CONFIGURED_RAYON_THREAD_COUNT} thread(s); cannot apply requested --threads={thread_count}."
         )
-        return
+        raise RuntimeError(message)
     try:
         core_module.configure_rayon_global_thread_pool(thread_count)
     except RuntimeError as error:
-        logger.warning(
-            "Unable to configure Rayon global thread pool for --threads=%s; "
-            "continuing with existing Rayon settings: %s",
-            thread_count,
-            error,
+        message = (
+            f"Unable to configure Rayon global thread pool for --threads={thread_count}; "
+            f"existing Rayon settings are unknown: {error}"
         )
-        return
+        raise RuntimeError(message) from error
     CONFIGURED_RAYON_THREAD_COUNT = thread_count
+
+
+def effective_rayon_thread_count(requested_thread_count: int | None) -> int | None:
+    """Return the Rayon thread count known to be effective in this process."""
+    if CONFIGURED_RAYON_THREAD_COUNT is not None:
+        return CONFIGURED_RAYON_THREAD_COUNT
+    return requested_thread_count
 
 
 def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
@@ -540,6 +544,7 @@ def dispatch_one_phenotype_engine_pipeline(
     final_parquet_path = run_regenie2_linear_bgen_pipeline(
         **common_arguments,
         gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
+        linear_numerical_config=plan.kernel_config.linear_numerical_config,
     )
     log_writer_finished(
         telemetry_session=telemetry_session,
@@ -589,7 +594,10 @@ def dispatch_multi_phenotype_engine_pipeline(
         )
     else:
         logger.debug("Dispatching multi-phenotype linear native engine pipeline.")
-        final_parquet_paths = run_regenie2_multi_phenotype_linear_bgen_pipeline(**common_arguments)
+        final_parquet_paths = run_regenie2_multi_phenotype_linear_bgen_pipeline(
+            **common_arguments,
+            linear_numerical_config=plan.kernel_config.linear_numerical_config,
+        )
     if telemetry_session is not None:
         telemetry_session.log_event(
             "writer_finished",

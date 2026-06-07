@@ -124,6 +124,41 @@ def test_scalar_approximate_firth_uses_nr_fallback_after_pseudo_attempt() -> Non
     assert int(np.asarray(result.nr_warm_start_iteration_count)) > 0
 
 
+def test_scalar_newton_line_search_exhaustion_does_not_move_beta() -> None:
+    phenotype_vector = jnp.asarray([0.0, 1.0], dtype=jnp.float32)
+    genotype_vector = jnp.asarray([0.0, 1.0], dtype=jnp.float32)
+    offset_vector = jnp.zeros_like(phenotype_vector)
+    initial_beta = jnp.asarray(0.25, dtype=jnp.float32)
+    initial_components = regenie2_binary_firth_scalar_approx.compute_scalar_firth_components(
+        phenotype_vector=phenotype_vector,
+        genotype_vector=genotype_vector,
+        offset_vector=offset_vector,
+        active_sample_mask=jnp.ones_like(phenotype_vector, dtype=jnp.bool_),
+        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float32),
+        beta=initial_beta,
+        kernel_config=build_default_binary_kernel_config(),
+    )
+
+    result = regenie2_binary_firth_scalar_approx.fit_scalar_newton_raphson_firth(
+        deviance_null=initial_components.penalized_deviance,
+        phenotype_vector=phenotype_vector,
+        genotype_vector=genotype_vector,
+        offset_vector=offset_vector,
+        active_sample_mask=jnp.ones_like(phenotype_vector, dtype=jnp.bool_),
+        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float32),
+        initial_beta=initial_beta,
+        maximum_iterations=1,
+        tolerance=jnp.asarray(1.0e-8, dtype=jnp.float32),
+        maximum_step_size=jnp.asarray(1.0, dtype=jnp.float32),
+        line_search_maximum_attempts=0,
+        kernel_config=build_default_binary_kernel_config(),
+    )
+
+    np.testing.assert_allclose(np.asarray(result.beta), np.asarray(initial_beta), rtol=0.0, atol=0.0)
+    assert not bool(np.asarray(result.valid))
+    assert not bool(np.asarray(result.converged))
+
+
 def test_sparse_carrier_only_flag_is_recorded_for_sparse_candidate() -> None:
     chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
     offset_vector = chromosome_state.null_firth_offset

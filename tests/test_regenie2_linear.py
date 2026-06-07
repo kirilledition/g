@@ -13,6 +13,7 @@ import numpy.typing as npt
 from g import types
 from g.compute.common import genotype, linalg, pvalue
 from g.compute.regenie2_linear import api as regenie2_linear
+from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
 
@@ -553,6 +554,82 @@ class TestComputeRegenie2LinearChunk:
         assert state.phenotype_residual.dtype == jnp.float64
         assert result.beta.dtype == jnp.float64
         assert result.chi_squared.dtype == jnp.float64
+
+    def test_linear_variance_floor_rejects_near_collinear_genotype(self) -> None:
+        """Ensure near-covariate genotype residuals do not pass the variance mask."""
+        sample_count = 64
+        rng = np.random.default_rng(719)
+        covariate_signal = np.linspace(-1.0, 1.0, sample_count, dtype=np.float64)
+        covariate_matrix = np.column_stack([np.ones(sample_count, dtype=np.float64), covariate_signal])
+        raw_noise = rng.normal(size=sample_count)
+        residual_noise = residualize_against_covariates(covariate_matrix, raw_noise)
+        genotype_vector = 1.0 + (0.25 * covariate_signal) + (1.0e-6 * residual_noise)
+        phenotype_vector = rng.normal(size=sample_count)
+        loco_predictions = np.zeros(sample_count, dtype=np.float64)
+
+        state = regenie2_linear.prepare_regenie2_linear_state(
+            covariate_matrix=jnp.asarray(covariate_matrix),
+            phenotype_vector=jnp.asarray(phenotype_vector),
+            score_dtype=types.FloatingPointDtype.FLOAT64,
+        )
+        chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
+            state,
+            jnp.asarray(loco_predictions),
+            score_dtype=types.FloatingPointDtype.FLOAT64,
+        )
+        strict_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
+            chromosome_state=chromosome_state,
+            genotype_matrix_by_variant=jnp.asarray(genotype_vector[None, :]),
+            score_dtype=types.FloatingPointDtype.FLOAT64,
+            linear_minimum_variance=regenie2_linear_config.DEFAULT_LINEAR_MINIMUM_VARIANCE,
+            linear_relative_variance_tolerance=regenie2_linear_config.DEFAULT_LINEAR_RELATIVE_VARIANCE_TOLERANCE,
+        )
+        permissive_result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
+            chromosome_state=chromosome_state,
+            genotype_matrix_by_variant=jnp.asarray(genotype_vector[None, :]),
+            score_dtype=types.FloatingPointDtype.FLOAT64,
+            linear_minimum_variance=1.0e-20,
+            linear_relative_variance_tolerance=1.0e-20,
+        )
+
+        assert not bool(strict_result.valid_mask[0])
+        assert bool(permissive_result.valid_mask[0])
+        assert jnp.isnan(strict_result.chi_squared[0])
+        assert jnp.isfinite(permissive_result.chi_squared[0])
+
+    def test_native_stats_high_frequency_sum_squares_use_stable_arithmetic(self) -> None:
+        """Ensure mostly-homozygous alternate stats avoid float32 cancellation."""
+        sample_count = 2504
+        rng = np.random.default_rng(91)
+        dosage_deficit = rng.uniform(0.001, 0.006, size=sample_count).astype(np.float64)
+        dosage_values = 2.0 - dosage_deficit
+        dosage_sum = np.asarray([np.sum(dosage_values, dtype=np.float64)], dtype=np.float64)
+        observation_count = np.asarray([sample_count], dtype=np.int32)
+        imputed_dosage_square_sum = np.asarray(
+            [np.sum(np.square(dosage_values), dtype=np.float64)],
+            dtype=np.float64,
+        )
+        expected_sum_squares = float(np.sum(np.square(dosage_values - 2.0), dtype=np.float64))
+
+        observed_sum_squares = regenie2_linear_score.compute_normalized_genotype_sum_squares_from_stats(
+            genotype_dosage_sum=jnp.asarray(dosage_sum),
+            genotype_observation_count=jnp.asarray(observation_count),
+            genotype_imputed_dosage_square_sum=jnp.asarray(imputed_dosage_square_sum),
+            sample_count=sample_count,
+            score_dtype=types.FloatingPointDtype.FLOAT32,
+        )
+        naive_dosage_sum = dosage_sum.astype(np.float32)
+        naive_observation_count = observation_count.astype(np.float32)
+        naive_square_sum = imputed_dosage_square_sum.astype(np.float32)
+        naive_mean = naive_dosage_sum / naive_observation_count
+        naive_sum_squares = float(
+            (naive_square_sum - (4.0 * naive_mean * np.float32(sample_count)) + np.float32(4.0 * sample_count))[0]
+        )
+
+        observed_relative_error = abs(float(observed_sum_squares[0]) - expected_sum_squares) / expected_sum_squares
+        naive_relative_error = abs(naive_sum_squares - expected_sum_squares) / expected_sum_squares
+        assert observed_relative_error < 1.0e-5
+        assert naive_relative_error > 1.0e-3
 
     def test_chromosome_state_matches_direct_chunk_api(self) -> None:
         """Ensure chromosome-cached computation matches the compatibility wrapper."""

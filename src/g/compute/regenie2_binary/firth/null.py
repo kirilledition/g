@@ -285,102 +285,100 @@ def fit_covariate_only_firth_null_model(
         line_search_step_halving_scale=kernel_config.null_firth.step_halving_scale,
         check_score_increase=True,
     )
-    second_result = fit_covariate_only_firth_null_model_once(
-        covariate_matrix=covariate_matrix_float64,
-        phenotype_vector=phenotype_vector_float64,
-        loco_offset=loco_offset_float64,
-        initial_coefficients=zero_start_coefficients,
-        maximum_iterations=kernel_config.null_firth.maximum_iterations,
-        maximum_step_size=kernel_config.null_firth.maximum_step_size,
-        tolerance=kernel_config.null_firth.gradient_tolerance,
-        line_search_maximum_attempts=kernel_config.null_firth.line_search_maximum_attempts,
-        line_search_step_halving_scale=kernel_config.null_firth.step_halving_scale,
-        check_score_increase=True,
-    )
     fallback_maximum_iterations = (
         kernel_config.null_firth.maximum_iterations * kernel_config.null_firth.fallback_iteration_multiplier
     )
     fallback_maximum_step_size = (
         kernel_config.null_firth.maximum_step_size / kernel_config.null_firth.fallback_step_divisor
     )
-    third_result = fit_covariate_only_firth_null_model_once(
-        covariate_matrix=covariate_matrix_float64,
-        phenotype_vector=phenotype_vector_float64,
-        loco_offset=loco_offset_float64,
-        initial_coefficients=zero_start_coefficients,
-        maximum_iterations=fallback_maximum_iterations,
-        maximum_step_size=fallback_maximum_step_size,
-        tolerance=kernel_config.null_firth.gradient_tolerance,
-        line_search_maximum_attempts=kernel_config.null_firth.line_search_maximum_attempts,
-        line_search_step_halving_scale=kernel_config.null_firth.step_halving_scale,
-        check_score_increase=True,
-    )
-    fourth_result = fit_covariate_only_firth_null_model_once(
-        covariate_matrix=covariate_matrix_float64,
-        phenotype_vector=phenotype_vector_float64,
-        loco_offset=loco_offset_float64,
-        initial_coefficients=initial_coefficients_float64,
-        maximum_iterations=fallback_maximum_iterations,
-        maximum_step_size=fallback_maximum_step_size,
-        tolerance=kernel_config.null_firth.gradient_tolerance,
-        line_search_maximum_attempts=kernel_config.null_firth.line_search_maximum_attempts,
-        line_search_step_halving_scale=kernel_config.null_firth.step_halving_scale,
-        check_score_increase=False,
-    )
-    use_first_result = first_result.converged
-    use_second_result = (~use_first_result) & second_result.converged
-    use_third_result = (~use_first_result) & (~use_second_result) & third_result.converged
-    selected_coefficients = jnp.where(
-        use_first_result,
-        first_result.coefficients,
-        jnp.where(
-            use_second_result,
-            second_result.coefficients,
-            jnp.where(use_third_result, third_result.coefficients, fourth_result.coefficients),
-        ),
-    )
-    selected_penalized_log_likelihood = jnp.where(
-        use_first_result,
-        first_result.penalized_log_likelihood,
-        jnp.where(
-            use_second_result,
-            second_result.penalized_log_likelihood,
-            jnp.where(
-                use_third_result,
-                third_result.penalized_log_likelihood,
-                fourth_result.penalized_log_likelihood,
-            ),
-        ),
-    )
-    selected_iteration_count = jnp.where(
-        use_first_result,
-        first_result.iteration_count,
-        jnp.where(
-            use_second_result,
-            second_result.iteration_count,
-            jnp.where(use_third_result, third_result.iteration_count, fourth_result.iteration_count),
-        ),
-    )
-    selected_reason_code = jnp.where(
-        use_first_result,
-        first_result.convergence_reason_code,
-        jnp.where(
-            use_second_result,
-            second_result.convergence_reason_code,
-            jnp.where(use_third_result, third_result.convergence_reason_code, fourth_result.convergence_reason_code),
-        ),
-    ).astype(jnp.int32)
-    selected_converged = (
-        first_result.converged | second_result.converged | third_result.converged | fourth_result.converged
+
+    cond_placeholder = jnp.asarray(0, dtype=jnp.int32)
+
+    def select_first_result(unused_operand: jax.Array) -> regenie2_binary_firth_types.NullFirthFitResult:
+        del unused_operand
+        return first_result
+
+    def run_fourth_attempt(unused_operand: jax.Array) -> regenie2_binary_firth_types.NullFirthFitResult:
+        del unused_operand
+        return fit_covariate_only_firth_null_model_once(
+            covariate_matrix=covariate_matrix_float64,
+            phenotype_vector=phenotype_vector_float64,
+            loco_offset=loco_offset_float64,
+            initial_coefficients=initial_coefficients_float64,
+            maximum_iterations=fallback_maximum_iterations,
+            maximum_step_size=fallback_maximum_step_size,
+            tolerance=kernel_config.null_firth.gradient_tolerance,
+            line_search_maximum_attempts=kernel_config.null_firth.line_search_maximum_attempts,
+            line_search_step_halving_scale=kernel_config.null_firth.step_halving_scale,
+            check_score_increase=False,
+        )
+
+    def run_third_or_fourth_attempt(unused_operand: jax.Array) -> regenie2_binary_firth_types.NullFirthFitResult:
+        del unused_operand
+        third_result = fit_covariate_only_firth_null_model_once(
+            covariate_matrix=covariate_matrix_float64,
+            phenotype_vector=phenotype_vector_float64,
+            loco_offset=loco_offset_float64,
+            initial_coefficients=zero_start_coefficients,
+            maximum_iterations=fallback_maximum_iterations,
+            maximum_step_size=fallback_maximum_step_size,
+            tolerance=kernel_config.null_firth.gradient_tolerance,
+            line_search_maximum_attempts=kernel_config.null_firth.line_search_maximum_attempts,
+            line_search_step_halving_scale=kernel_config.null_firth.step_halving_scale,
+            check_score_increase=True,
+        )
+
+        def select_third_result(unused_inner_operand: jax.Array) -> regenie2_binary_firth_types.NullFirthFitResult:
+            del unused_inner_operand
+            return third_result
+
+        return jax.lax.cond(
+            third_result.converged,
+            select_third_result,
+            run_fourth_attempt,
+            cond_placeholder,
+        )
+
+    def run_second_or_later_attempt(unused_operand: jax.Array) -> regenie2_binary_firth_types.NullFirthFitResult:
+        del unused_operand
+        second_result = fit_covariate_only_firth_null_model_once(
+            covariate_matrix=covariate_matrix_float64,
+            phenotype_vector=phenotype_vector_float64,
+            loco_offset=loco_offset_float64,
+            initial_coefficients=zero_start_coefficients,
+            maximum_iterations=kernel_config.null_firth.maximum_iterations,
+            maximum_step_size=kernel_config.null_firth.maximum_step_size,
+            tolerance=kernel_config.null_firth.gradient_tolerance,
+            line_search_maximum_attempts=kernel_config.null_firth.line_search_maximum_attempts,
+            line_search_step_halving_scale=kernel_config.null_firth.step_halving_scale,
+            check_score_increase=True,
+        )
+
+        def select_second_result(unused_inner_operand: jax.Array) -> regenie2_binary_firth_types.NullFirthFitResult:
+            del unused_inner_operand
+            return second_result
+
+        return jax.lax.cond(
+            second_result.converged,
+            select_second_result,
+            run_third_or_fourth_attempt,
+            cond_placeholder,
+        )
+
+    selected_result = jax.lax.cond(
+        first_result.converged,
+        select_first_result,
+        run_second_or_later_attempt,
+        cond_placeholder,
     )
     return regenie2_binary_firth_types.NullFirthFitResult(
-        coefficients=selected_coefficients,
+        coefficients=selected_result.coefficients,
         penalized_log_likelihood=jnp.where(
-            selected_converged,
-            selected_penalized_log_likelihood,
+            selected_result.converged,
+            selected_result.penalized_log_likelihood,
             jnp.asarray(jnp.nan, dtype=jnp.float64),
         ),
-        iteration_count=selected_iteration_count,
-        convergence_reason_code=selected_reason_code,
-        converged=selected_converged,
+        iteration_count=selected_result.iteration_count,
+        convergence_reason_code=selected_result.convergence_reason_code.astype(jnp.int32),
+        converged=selected_result.converged,
     )

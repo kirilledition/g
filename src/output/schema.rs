@@ -1,6 +1,6 @@
 use std::sync::{Arc, OnceLock};
 
-use arrow::array::{Array, ArrayRef, Int32Array, StringArray, new_null_array};
+use arrow::array::{Array, ArrayRef, Int32Array, StringBuilder, new_null_array};
 use arrow::datatypes::{DataType, Field, Schema};
 
 pub(crate) const CHUNK_COMMITS_METADATA_KEY: &str = "g.output.chunk_commits";
@@ -21,22 +21,36 @@ pub(crate) fn build_extra_string_array(extra_code: Option<ArrayRef>, row_count: 
     if extra_code_values.len() != row_count {
         return Err("REGENIE step 2 extra code row count does not match metadata row count.".to_string());
     }
-    let mut extra_strings: Vec<Option<&str>> = Vec::with_capacity(extra_code_values.len());
+    if extra_code_values.null_count() == row_count {
+        return Ok(build_null_extra_string_array(row_count));
+    }
+    let mut has_test_fail = false;
     for row_index in 0..extra_code_values.len() {
         if extra_code_values.is_null(row_index) {
-            extra_strings.push(None);
             continue;
         }
         let extra_code_value = extra_code_values.value(row_index);
         match extra_code_value {
-            0..=2 => extra_strings.push(None),
-            3 => extra_strings.push(Some("TEST_FAIL")),
+            0..=2 => {}
+            3 => has_test_fail = true,
             unsupported_extra_code_value => {
                 return Err(format!("Unsupported REGENIE step 2 extra code: {unsupported_extra_code_value}"));
             }
         }
     }
-    Ok(Arc::new(StringArray::from(extra_strings)))
+    if !has_test_fail {
+        return Ok(build_null_extra_string_array(row_count));
+    }
+
+    let mut extra_string_builder = StringBuilder::with_capacity(row_count, row_count * "TEST_FAIL".len());
+    for row_index in 0..extra_code_values.len() {
+        if !extra_code_values.is_null(row_index) && extra_code_values.value(row_index) == 3 {
+            extra_string_builder.append_value("TEST_FAIL");
+        } else {
+            extra_string_builder.append_null();
+        }
+    }
+    Ok(Arc::new(extra_string_builder.finish()))
 }
 
 pub(crate) fn build_null_extra_string_array(row_count: usize) -> ArrayRef {
@@ -90,7 +104,7 @@ fn build_regenie_step2_final_schema() -> Schema {
 mod tests {
     use std::sync::Arc;
 
-    use arrow::array::{Array, ArrayRef, Float32Array, Int32Array};
+    use arrow::array::{Array, ArrayRef, Float32Array, Int32Array, StringArray};
 
     use super::{build_extra_string_array, get_regenie_step2_chunk_schema, get_regenie_step2_final_schema};
 
@@ -124,6 +138,39 @@ mod tests {
                 .expect_err("wrong extra code type should fail")
                 .contains("int32")
         );
+    }
+
+    #[test]
+    fn extra_string_array_fast_paths_null_and_success_codes() {
+        let all_null_extra =
+            build_extra_string_array(Some(Arc::new(Int32Array::from(vec![None, None])) as ArrayRef), 2)
+                .expect("all-null extra code should map");
+        assert_eq!(all_null_extra.len(), 2);
+        assert_eq!(all_null_extra.null_count(), 2);
+
+        let all_success_extra = build_extra_string_array(
+            Some(Arc::new(Int32Array::from(vec![Some(0), Some(1), Some(2), None])) as ArrayRef),
+            4,
+        )
+        .expect("all-success extra code should map");
+        assert_eq!(all_success_extra.len(), 4);
+        assert_eq!(all_success_extra.null_count(), 4);
+    }
+
+    #[test]
+    fn extra_string_array_only_allocates_labels_when_test_fail_is_present() {
+        let mixed_extra = build_extra_string_array(
+            Some(Arc::new(Int32Array::from(vec![Some(0), Some(3), None, Some(2)])) as ArrayRef),
+            4,
+        )
+        .expect("mixed extra code should map");
+        let mixed_extra_values =
+            mixed_extra.as_any().downcast_ref::<StringArray>().expect("extra should be a string array");
+
+        assert!(mixed_extra_values.is_null(0));
+        assert_eq!(mixed_extra_values.value(1), "TEST_FAIL");
+        assert!(mixed_extra_values.is_null(2));
+        assert!(mixed_extra_values.is_null(3));
     }
 
     #[test]

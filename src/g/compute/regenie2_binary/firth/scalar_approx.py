@@ -458,12 +458,8 @@ def fit_scalar_newton_raphson_firth(
             maximum_attempts=line_search_maximum_attempts,
             kernel_config=kernel_config,
         )
-        accepted_step_size = jnp.where(
-            line_search_state.accepted,
-            line_search_state.step_size,
-            line_search_state.step_size + 1.0e-6,
-        )
-        updated_beta = jnp.where(converged, state.beta, state.beta + accepted_step_size)
+        line_search_failed = (~converged) & (~line_search_state.accepted)
+        updated_beta = jnp.where(converged | line_search_failed, state.beta, line_search_state.beta)
         updated_components = compute_scalar_firth_components(
             phenotype_vector=phenotype_vector,
             genotype_vector=genotype_vector,
@@ -473,7 +469,7 @@ def fit_scalar_newton_raphson_firth(
             beta=updated_beta,
             kernel_config=kernel_config,
         )
-        failed = (~state.failed) & ((~updated_components.valid) | (~line_search_state.valid))
+        failed = (~state.failed) & (line_search_failed | (~updated_components.valid) | (~line_search_state.valid))
         return regenie2_binary_firth_types.ScalarNewtonRaphsonState(
             beta=updated_beta,
             penalized_deviance=jnp.where(converged, state.penalized_deviance, updated_components.penalized_deviance),

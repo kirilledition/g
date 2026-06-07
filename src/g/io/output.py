@@ -69,7 +69,7 @@ def resolve_output_run_paths(
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
 ) -> OutputRunPaths:
     """Derive run paths from an output root and association mode."""
-    run_directory = output_root if output_root.suffix == ".run" else output_root.with_suffix(f".{association_mode}.run")
+    run_directory = output_root if output_root.suffix == ".run" else Path(f"{output_root}.{association_mode}.run")
     output_directory_name = "parts" if output_format == types.OutputFormat.PARQUET else "chunks"
     return OutputRunPaths(run_directory=run_directory, chunks_directory=run_directory / output_directory_name)
 
@@ -412,11 +412,11 @@ def initialize_output_run(
     """Validate/write the manifest header and return accepted committed chunks."""
     committed_chunk_identifiers = frozenset[int]()
     committed_chunks: list[typing.Any] = []
-    manifest = dict(load_run_manifest(output_run_paths) or {})
+    manifest = (
+        dict(existing_manifest) if existing_manifest is not None else dict(load_run_manifest(output_run_paths) or {})
+    )
     if existing_manifest is not None:
         validate_manifest_compatibility(existing_manifest, current_header)
-        if not manifest:
-            manifest = dict(existing_manifest)
         committed_chunks_value = existing_manifest.get("committed_chunks", [])
         if not isinstance(committed_chunks_value, list):
             message = "Run manifest committed_chunks field must be a list."

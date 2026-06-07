@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import typing
@@ -76,6 +77,40 @@ class NativeChunkWritingCallback:
             extra_code=extra_code,
         )
         self.free_buffers.append(genotype_matrix)
+
+
+class NativeChunkCaptureCallback:
+    """Callback that captures the last native chunk handles for writer tests."""
+
+    def __init__(self) -> None:
+        self.metadata: _core.VariantMetadata | None = None
+        self.chunk_stats: _core.ChunkStats | None = None
+        self.free_buffers: list[np.ndarray] = []
+
+    def acquire_variant_major_dosage_buffer(self, variant_count: int, sample_count: int) -> np.ndarray:
+        if self.free_buffers:
+            dosage_buffer = self.free_buffers.pop()
+            if dosage_buffer.shape == (variant_count, sample_count):
+                return dosage_buffer
+        return np.empty((variant_count, sample_count), dtype=np.float32, order="C")
+
+    def compute_preprocessed_variant_major_dosage_chunk(
+        self,
+        metadata: _core.VariantMetadata,
+        genotype_matrix: np.ndarray,
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        self.metadata = metadata
+        self.chunk_stats = chunk_stats
+        self.free_buffers.append(genotype_matrix)
+
+    def require_metadata(self) -> _core.VariantMetadata:
+        assert self.metadata is not None
+        return self.metadata
+
+    def require_chunk_stats(self) -> _core.ChunkStats:
+        assert self.chunk_stats is not None
+        return self.chunk_stats
 
 
 def write_native_chunks(
@@ -209,6 +244,17 @@ def test_resolve_output_run_paths_appends_mode_suffix(tmp_path: Path) -> None:
     assert output_run_paths.run_directory == tmp_path / "results/output.regenie2_linear.run"
     assert output_run_paths.chunks_directory == tmp_path / "results/output.regenie2_linear.run/parts"
 
+    dotted_output_run_paths = output.resolve_output_run_paths(
+        tmp_path / "results/output.v1",
+        AssociationMode.REGENIE2_LINEAR,
+    )
+    assert dotted_output_run_paths.run_directory == tmp_path / "results/output.v1.regenie2_linear.run"
+
+    literal_run_paths = output.resolve_output_run_paths(
+        tmp_path / "results/output.run", AssociationMode.REGENIE2_LINEAR
+    )
+    assert literal_run_paths.run_directory == tmp_path / "results/output.run"
+
     arrow_run_paths = output.resolve_output_run_paths(
         tmp_path / "results/output",
         AssociationMode.REGENIE2_LINEAR,
@@ -284,6 +330,39 @@ def test_initialize_output_run_uses_existing_manifest_when_current_manifest_is_m
     written_manifest = json.loads(output.get_run_manifest_path(output_run_paths).read_text(encoding="utf-8"))
     assert initialized_output_run.committed_chunk_identifiers == frozenset()
     assert written_manifest["schema_version"] == output.RUN_MANIFEST_SCHEMA_VERSION
+    assert written_manifest["committed_chunks"] == []
+
+
+def test_initialize_output_run_uses_prepared_manifest_without_reload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path / "chunks")
+    output_run_paths.chunks_directory.mkdir()
+    existing_manifest = {
+        "schema_version": output.RUN_MANIFEST_SCHEMA_VERSION,
+        "committed_chunks": [],
+        "command": {"interface": "g regenie"},
+    }
+
+    def fail_manifest_reload(output_run_paths: output.OutputRunPaths) -> dict[str, typing.Any] | None:
+        del output_run_paths
+        message = "initialize_output_run reloaded the prepared manifest"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(output, "load_run_manifest", fail_manifest_reload)
+
+    initialized_output_run = output.initialize_output_run(
+        output_run_paths=output_run_paths,
+        existing_manifest=existing_manifest,
+        current_header={"schema_version": output.RUN_MANIFEST_SCHEMA_VERSION},
+        resume=False,
+        resume_mode=types.ResumeMode.FAST,
+    )
+
+    written_manifest = json.loads(output.get_run_manifest_path(output_run_paths).read_text(encoding="utf-8"))
+    assert initialized_output_run.committed_chunk_identifiers == frozenset()
+    assert written_manifest["command"] == {"interface": "g regenie"}
     assert written_manifest["committed_chunks"] == []
 
 
@@ -449,6 +528,143 @@ def test_native_binary_writer_maps_test_fail_extra_code_to_label(tmp_path: Path)
     frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
     assert frame.columns == EXPECTED_CHUNK_COLUMNS
     assert frame.get_column("EXTRA").to_list() == ["TEST_FAIL", "TEST_FAIL", "TEST_FAIL", "TEST_FAIL"]
+
+
+def test_public_native_writer_copies_numpy_arrays_before_enqueue(tmp_path: Path) -> None:
+    capture_callback = NativeChunkCaptureCallback()
+    engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
+    engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), capture_callback)
+    metadata = capture_callback.require_metadata()
+    chunk_stats = capture_callback.require_chunk_stats()
+    row_count = metadata.variant_stop_index - metadata.variant_start_index
+    output_run_paths = output.OutputRunPaths(run_directory=tmp_path, chunks_directory=tmp_path)
+    writer_session = output.create_output_writer_session(
+        output_run_paths,
+        AssociationMode.REGENIE2_BINARY,
+        writer_thread_count=1,
+        writer_queue_depth=1,
+        finalize_parquet=False,
+        output_format=types.OutputFormat.ARROW,
+        chunks_per_arrow_file=16,
+        arrow_compression=types.ArrowCompression.ZSTD,
+        parquet_compression=types.ParquetCompression.NONE,
+    )
+    beta = np.full(row_count, 0.125, dtype=np.float32)
+    standard_error = np.full(row_count, 0.025, dtype=np.float32)
+    chi_squared = np.full(row_count, 8.0, dtype=np.float32)
+    log10_p_value = np.full(row_count, 3.0, dtype=np.float32)
+    extra_code = np.full(row_count, types.BinaryExtraCode.TEST_FAIL.value, dtype=np.int32)
+    try:
+        writer_session.write_regenie2_native_chunk(
+            metadata=metadata,
+            chunk_stats=chunk_stats,
+            beta=beta,
+            standard_error=standard_error,
+            chi_squared=chi_squared,
+            log10_p_value=log10_p_value,
+            extra_code=extra_code,
+        )
+        beta.fill(99.0)
+        standard_error.fill(99.0)
+        chi_squared.fill(99.0)
+        log10_p_value.fill(99.0)
+        extra_code.fill(99)
+        writer_session.finish()
+    except Exception:
+        with contextlib.suppress(Exception):
+            writer_session.abort()
+        raise
+
+    frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(tmp_path)[0])
+    np.testing.assert_allclose(frame.get_column("BETA").to_numpy(), np.full(row_count, 0.125, dtype=np.float32))
+    np.testing.assert_allclose(frame.get_column("SE").to_numpy(), np.full(row_count, 0.025, dtype=np.float32))
+    np.testing.assert_allclose(frame.get_column("CHISQ").to_numpy(), np.full(row_count, 8.0, dtype=np.float32))
+    np.testing.assert_allclose(frame.get_column("LOG10P").to_numpy(), np.full(row_count, 3.0, dtype=np.float32))
+    assert frame.get_column("EXTRA").to_list() == ["TEST_FAIL"] * row_count
+
+
+def test_public_multi_native_writer_copies_numpy_rows_before_enqueue(tmp_path: Path) -> None:
+    capture_callback = NativeChunkCaptureCallback()
+    engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
+    engine.run_bgen_variant_major_dosage_buffered_chunks(np.arange(4, dtype=np.int64), capture_callback)
+    metadata = capture_callback.require_metadata()
+    chunk_stats = capture_callback.require_chunk_stats()
+    row_count = metadata.variant_stop_index - metadata.variant_start_index
+    writer_sessions = []
+    writer_run_paths = [
+        output.OutputRunPaths(tmp_path / "trait-zero", tmp_path / "trait-zero"),
+        output.OutputRunPaths(tmp_path / "trait-one", tmp_path / "trait-one"),
+    ]
+    for output_run_paths in writer_run_paths:
+        output_run_paths.chunks_directory.mkdir()
+        writer_sessions.append(
+            output.create_output_writer_session(
+                output_run_paths,
+                AssociationMode.REGENIE2_BINARY,
+                writer_thread_count=1,
+                writer_queue_depth=1,
+                finalize_parquet=False,
+                output_format=types.OutputFormat.ARROW,
+                chunks_per_arrow_file=16,
+                arrow_compression=types.ArrowCompression.ZSTD,
+                parquet_compression=types.ParquetCompression.NONE,
+            )
+        )
+
+    beta = np.ascontiguousarray(
+        np.stack(
+            [
+                np.full(row_count, 0.25, dtype=np.float32),
+                np.full(row_count, 0.5, dtype=np.float32),
+            ],
+            axis=0,
+        )
+    )
+    standard_error = np.full((2, row_count), 0.05, dtype=np.float32)
+    chi_squared = np.full((2, row_count), 6.0, dtype=np.float32)
+    log10_p_value = np.full((2, row_count), 2.0, dtype=np.float32)
+    extra_code = np.ascontiguousarray(
+        np.stack(
+            [
+                np.full(row_count, types.BinaryExtraCode.TEST_FAIL.value, dtype=np.int32),
+                np.full(row_count, types.BinaryExtraCode.FIRTH.value, dtype=np.int32),
+            ],
+            axis=0,
+        )
+    )
+    try:
+        _core.write_regenie2_multi_native_chunk(
+            writer_sessions=writer_sessions,
+            active_trait_indices=[0, 1],
+            metadata=metadata,
+            chunk_stats=chunk_stats,
+            beta=beta,
+            standard_error=standard_error,
+            chi_squared=chi_squared,
+            log10_p_value=log10_p_value,
+            extra_code=extra_code,
+        )
+        beta.fill(99.0)
+        standard_error.fill(99.0)
+        chi_squared.fill(99.0)
+        log10_p_value.fill(99.0)
+        extra_code.fill(99)
+        for writer_session in writer_sessions:
+            writer_session.finish()
+    except Exception:
+        for writer_session in writer_sessions:
+            with contextlib.suppress(Exception):
+                writer_session.abort()
+        raise
+
+    first_frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(writer_run_paths[0].chunks_directory)[0])
+    second_frame = pl.read_ipc(output.iter_sorted_chunk_file_paths(writer_run_paths[1].chunks_directory)[0])
+    np.testing.assert_allclose(first_frame.get_column("BETA").to_numpy(), np.full(row_count, 0.25, dtype=np.float32))
+    np.testing.assert_allclose(second_frame.get_column("BETA").to_numpy(), np.full(row_count, 0.5, dtype=np.float32))
+    np.testing.assert_allclose(first_frame.get_column("SE").to_numpy(), np.full(row_count, 0.05, dtype=np.float32))
+    np.testing.assert_allclose(second_frame.get_column("SE").to_numpy(), np.full(row_count, 0.05, dtype=np.float32))
+    assert first_frame.get_column("EXTRA").to_list() == ["TEST_FAIL"] * row_count
+    assert second_frame.get_column("EXTRA").to_list() == [None] * row_count
 
 
 def test_initialize_output_run_compatible_resume_preserves_committed_chunks(tmp_path: Path) -> None:

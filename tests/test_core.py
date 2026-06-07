@@ -90,6 +90,14 @@ def test_plan_genotype_chunks_splits_by_boundaries_and_resume_state() -> None:
     ]
 
 
+def test_regenie2_run_engine_required_chromosomes_returns_boundary_labels() -> None:
+    engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), chunk_size=2)
+
+    assert engine.required_chromosomes() == ["1"]
+    assert engine.required_chromosomes(variant_limit=1) == ["1"]
+    assert engine.required_chromosomes(variant_limit=0) == []
+
+
 def test_regenie2_run_engine_buffered_chunks_deliver_preprocessed_variant_major_dosage_chunks() -> None:
     class RecordingCallback:
         def __init__(self) -> None:
@@ -114,6 +122,7 @@ def test_regenie2_run_engine_buffered_chunks_deliver_preprocessed_variant_major_
                     genotype_matrix.shape[1],
                 )
             )
+            assert metadata.chromosome_label == "1"
             assert not np.isnan(genotype_matrix).any()
             np.testing.assert_allclose(chunk_stats.allele_one_frequency, genotype_matrix.mean(axis=1) / 2.0)
             np.testing.assert_array_equal(chunk_stats.observation_count, np.full(genotype_matrix.shape[0], 4))

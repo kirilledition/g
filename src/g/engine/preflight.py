@@ -129,6 +129,9 @@ def collect_required_chromosomes(engine: typing.Any, variant_limit: int | None) 
     if scanned_variant_count <= 0:
         message = "BGEN scan contains no variants."
         raise ValueError(message)
+    native_required_chromosomes = getattr(engine, "required_chromosomes", None)
+    if callable(native_required_chromosomes):
+        return tuple(str(chromosome) for chromosome in native_required_chromosomes(variant_limit))
     chromosome_values, _, _, _, _ = engine.variant_metadata_slice(0, scanned_variant_count)
     required_chromosomes: list[str] = []
     seen_chromosomes: set[str] = set()

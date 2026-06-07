@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -19,6 +19,30 @@ pub(crate) struct RunManifestChunkCommit {
     pub(crate) chunk_file_name: String,
 }
 
+pub(crate) fn read_run_manifest_chunk_commits(run_directory: &Path) -> Result<Vec<RunManifestChunkCommit>, String> {
+    let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
+    let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
+    read_run_manifest_chunk_commits_from_text(&manifest_text)
+}
+
+pub(crate) fn read_run_manifest_chunk_commits_from_text(
+    manifest_json: &str,
+) -> Result<Vec<RunManifestChunkCommit>, String> {
+    let manifest = serde_json::from_str::<Value>(manifest_json).map_err(|error| error.to_string())?;
+    let committed_chunks = manifest
+        .get("committed_chunks")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Run manifest committed_chunks field must be a list.".to_string())?;
+    let mut committed_chunks_by_identifier = BTreeMap::new();
+    for committed_chunk in committed_chunks {
+        insert_or_validate_chunk_commit(
+            &mut committed_chunks_by_identifier,
+            read_run_manifest_chunk_commit(committed_chunk)?,
+        )?;
+    }
+    Ok(committed_chunks_by_identifier.into_values().collect())
+}
+
 pub(crate) fn record_run_manifest_chunk_commits(
     run_directory: &Path,
     chunk_commits: Vec<RunManifestChunkCommit>,
@@ -34,29 +58,86 @@ pub(crate) fn record_run_manifest_chunk_commits(
             .or_insert_with(|| Value::Array(Vec::new()))
             .as_array_mut()
             .ok_or_else(|| "Run manifest committed_chunks field must be a list.".to_string())?;
-        let mut committed_chunk_identifiers = committed_chunks
-            .iter()
-            .filter_map(|committed_chunk| committed_chunk.get("chunk_identifier").and_then(Value::as_i64))
-            .collect::<BTreeSet<_>>();
-        for chunk_commit in chunk_commits {
-            let chunk_identifier = chunk_commit.chunk_identifier;
-            if committed_chunk_identifiers.insert(chunk_identifier) {
-                committed_chunks.push(json!({
-                    "chunk_identifier": chunk_commit.chunk_identifier,
-                    "output_format": chunk_commit.output_format,
-                    "compression": chunk_commit.compression,
-                    "variant_start_index": chunk_commit.variant_start_index,
-                    "variant_stop_index": chunk_commit.variant_stop_index,
-                    "row_count": chunk_commit.row_count,
-                    "chunk_file_name": chunk_commit.chunk_file_name,
-                }));
-            }
+        let mut committed_chunks_by_identifier = BTreeMap::new();
+        for committed_chunk in committed_chunks.iter() {
+            let existing_commit = read_run_manifest_chunk_commit(committed_chunk)?;
+            insert_or_validate_chunk_commit(&mut committed_chunks_by_identifier, existing_commit)?;
         }
-        committed_chunks.sort_by_key(|committed_chunk| {
-            committed_chunk.get("chunk_identifier").and_then(Value::as_i64).unwrap_or_default()
-        });
+        for chunk_commit in chunk_commits {
+            insert_or_validate_chunk_commit(&mut committed_chunks_by_identifier, chunk_commit)?;
+        }
+        *committed_chunks = committed_chunks_by_identifier.values().map(chunk_commit_to_value).collect();
         Ok(())
     })
+}
+
+fn insert_or_validate_chunk_commit(
+    committed_chunks_by_identifier: &mut BTreeMap<i64, RunManifestChunkCommit>,
+    chunk_commit: RunManifestChunkCommit,
+) -> Result<(), String> {
+    match committed_chunks_by_identifier.get(&chunk_commit.chunk_identifier) {
+        Some(existing_commit) if existing_commit != &chunk_commit => {
+            Err(format!("Run manifest has conflicting commit metadata for chunk {}.", chunk_commit.chunk_identifier))
+        }
+        Some(_) => Ok(()),
+        None => {
+            committed_chunks_by_identifier.insert(chunk_commit.chunk_identifier, chunk_commit);
+            Ok(())
+        }
+    }
+}
+
+fn chunk_commit_to_value(chunk_commit: &RunManifestChunkCommit) -> Value {
+    json!({
+        "chunk_identifier": chunk_commit.chunk_identifier,
+        "output_format": chunk_commit.output_format,
+        "compression": chunk_commit.compression,
+        "variant_start_index": chunk_commit.variant_start_index,
+        "variant_stop_index": chunk_commit.variant_stop_index,
+        "row_count": chunk_commit.row_count,
+        "chunk_file_name": chunk_commit.chunk_file_name,
+    })
+}
+
+fn read_run_manifest_chunk_commit(committed_chunk: &Value) -> Result<RunManifestChunkCommit, String> {
+    let chunk_file_name = committed_chunk
+        .get("chunk_file_name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Run manifest committed chunk entry is missing chunk_file_name.".to_string())?;
+    Ok(RunManifestChunkCommit {
+        chunk_identifier: read_manifest_integer(committed_chunk, "chunk_identifier")?,
+        output_format: read_optional_manifest_string(committed_chunk, "output_format")
+            .unwrap_or_else(|| infer_output_format_from_file_name(chunk_file_name).to_string()),
+        compression: read_optional_manifest_string(committed_chunk, "compression")
+            .unwrap_or_else(|| "none".to_string()),
+        variant_start_index: read_manifest_integer(committed_chunk, "variant_start_index")?,
+        variant_stop_index: read_manifest_integer(committed_chunk, "variant_stop_index")?,
+        row_count: read_manifest_usize(committed_chunk, "row_count")?,
+        chunk_file_name: chunk_file_name.to_string(),
+    })
+}
+
+fn read_optional_manifest_string(committed_chunk: &Value, field_name: &str) -> Option<String> {
+    committed_chunk.get(field_name).and_then(Value::as_str).map(str::to_string)
+}
+
+fn infer_output_format_from_file_name(chunk_file_name: &str) -> &'static str {
+    if chunk_file_name.ends_with(".parquet") {
+        return "parquet";
+    }
+    "arrow"
+}
+
+fn read_manifest_integer(committed_chunk: &Value, field_name: &str) -> Result<i64, String> {
+    committed_chunk
+        .get(field_name)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| format!("Run manifest committed chunk entry is missing {field_name}."))
+}
+
+fn read_manifest_usize(committed_chunk: &Value, field_name: &str) -> Result<usize, String> {
+    let value = read_manifest_integer(committed_chunk, field_name)?;
+    usize::try_from(value).map_err(|_| format!("Run manifest committed chunk entry {field_name} must be non-negative."))
 }
 
 pub(crate) fn mark_run_manifest_finalized(
@@ -177,6 +258,44 @@ mod tests {
         assert_eq!(committed_chunk_identifiers, vec![0, 2]);
 
         std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn rejects_conflicting_duplicate_chunk_commit() {
+        let run_directory = create_test_directory();
+        let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
+        std::fs::write(&manifest_path, "{\n  \"committed_chunks\": []\n}\n").expect("manifest should be written");
+        let mut conflicting_commit = build_chunk_commit(2);
+        conflicting_commit.row_count = 3;
+
+        let error = record_run_manifest_chunk_commits(&run_directory, vec![build_chunk_commit(2), conflicting_commit])
+            .expect_err("conflicting duplicate chunk should be rejected");
+
+        assert!(error.contains("conflicting commit metadata for chunk 2"));
+
+        std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn reads_manifest_chunk_commits_from_text() {
+        let manifest = r#"{
+          "committed_chunks": [
+            {
+              "chunk_identifier": 4,
+              "variant_start_index": 4,
+              "variant_stop_index": 6,
+              "row_count": 2,
+              "chunk_file_name": "part_000000000.parquet"
+            }
+          ]
+        }"#;
+
+        let chunk_commits = read_run_manifest_chunk_commits_from_text(manifest).expect("manifest commits should parse");
+
+        assert_eq!(chunk_commits.len(), 1);
+        assert_eq!(chunk_commits[0].chunk_identifier, 4);
+        assert_eq!(chunk_commits[0].output_format, "parquet");
+        assert_eq!(chunk_commits[0].compression, "none");
     }
 
     #[test]

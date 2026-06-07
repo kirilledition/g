@@ -1,13 +1,11 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use std::path::Path;
-use std::ptr::NonNull;
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, PrimitiveArray};
-use arrow::buffer::{Buffer, ScalarBuffer};
 use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Int32Type};
-use numpy::{Element, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
@@ -20,55 +18,6 @@ use crate::output::{
 };
 
 use super::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata};
-
-struct PythonArrayAllocation {
-    _python_array_owner: Py<PyAny>,
-}
-
-impl std::panic::RefUnwindSafe for PythonArrayAllocation {}
-
-struct PythonOwnedArrowValues<T>
-where
-    T: ArrowNativeType,
-{
-    values_pointer: NonNull<T>,
-    value_count: usize,
-    byte_length: usize,
-    allocation: Arc<PythonArrayAllocation>,
-}
-
-impl<T> PythonOwnedArrowValues<T>
-where
-    T: ArrowNativeType,
-{
-    fn try_new(array_owner: Py<PyAny>, values: &[T]) -> PyResult<Self> {
-        let values_pointer = NonNull::new(values.as_ptr().cast_mut())
-            .ok_or_else(|| PyRuntimeError::new_err("NumPy result array has a null data pointer."))?;
-        Ok(Self {
-            values_pointer,
-            value_count: values.len(),
-            byte_length: std::mem::size_of_val(values),
-            allocation: Arc::new(PythonArrayAllocation { _python_array_owner: array_owner }),
-        })
-    }
-
-    fn into_arrow_array<ArrowType>(self) -> ArrayRef
-    where
-        ArrowType: ArrowPrimitiveType<Native = T>,
-    {
-        let value_count = self.value_count;
-        let buffer = self.into_arrow_buffer();
-        Arc::new(PrimitiveArray::<ArrowType>::new(ScalarBuffer::new(buffer, 0, value_count), None))
-    }
-
-    fn into_arrow_buffer(self) -> Buffer {
-        let pointer = self.values_pointer.cast::<u8>();
-        // SAFETY: `pointer` and `byte_length` come from a contiguous typed slice
-        // borrowed from a NumPy result array. `allocation` owns that Python array,
-        // so Arrow cannot outlive the memory backing the slice.
-        unsafe { Buffer::from_custom_allocation(pointer, self.byte_length, self.allocation) }
-    }
-}
 
 #[pyclass]
 pub(crate) struct OutputWriterSession {
@@ -127,16 +76,14 @@ impl OutputWriterSession {
         let chi_squared_slice = chi_squared.as_slice()?;
         let log10_p_value_slice = log10_p_value.as_slice()?;
         let extra_code_slice = extra_code.as_ref().map(|array| array.as_slice()).transpose()?;
-        let beta_array = build_python_owned_arrow_array1::<f32, Float32Type>(&beta, beta_slice)?;
-        let standard_error_array =
-            build_python_owned_arrow_array1::<f32, Float32Type>(&standard_error, standard_error_slice)?;
-        let chi_squared_array = build_python_owned_arrow_array1::<f32, Float32Type>(&chi_squared, chi_squared_slice)?;
-        let log10_p_value_array =
-            build_python_owned_arrow_array1::<f32, Float32Type>(&log10_p_value, log10_p_value_slice)?;
+        let beta_array = build_copied_arrow_array::<f32, Float32Type>(beta_slice);
+        let standard_error_array = build_copied_arrow_array::<f32, Float32Type>(standard_error_slice);
+        let chi_squared_array = build_copied_arrow_array::<f32, Float32Type>(chi_squared_slice);
+        let log10_p_value_array = build_copied_arrow_array::<f32, Float32Type>(log10_p_value_slice);
         let extra_code_array = match (extra_code.as_ref(), extra_code_slice) {
             (None, None) => None,
-            (Some(extra_code_values), Some(extra_code_slice_values)) => {
-                Some(build_python_owned_arrow_array1::<i32, Int32Type>(extra_code_values, extra_code_slice_values)?)
+            (Some(_), Some(extra_code_slice_values)) => {
+                Some(build_copied_arrow_array::<i32, Int32Type>(extra_code_slice_values))
             }
             _ => return Err(PyRuntimeError::new_err("Extra code array state was inconsistent.")),
         };
@@ -236,18 +183,13 @@ pub(crate) fn write_regenie2_multi_native_chunk(
                     .ok_or_else(|| PyValueError::new_err("extra_code row is not contiguous."))?,
             ),
         };
-        let beta_array = build_python_owned_arrow_array2::<f32, Float32Type>(&beta, beta_slice)?;
-        let standard_error_array =
-            build_python_owned_arrow_array2::<f32, Float32Type>(&standard_error, standard_error_slice)?;
-        let chi_squared_array = build_python_owned_arrow_array2::<f32, Float32Type>(&chi_squared, chi_squared_slice)?;
-        let log10_p_value_array =
-            build_python_owned_arrow_array2::<f32, Float32Type>(&log10_p_value, log10_p_value_slice)?;
+        let beta_array = build_copied_arrow_array::<f32, Float32Type>(beta_slice);
+        let standard_error_array = build_copied_arrow_array::<f32, Float32Type>(standard_error_slice);
+        let chi_squared_array = build_copied_arrow_array::<f32, Float32Type>(chi_squared_slice);
+        let log10_p_value_array = build_copied_arrow_array::<f32, Float32Type>(log10_p_value_slice);
         let extra_code_array = match extra_code_slice {
             None => None,
-            Some(extra_code_slice_values) => Some(build_python_owned_arrow_array2::<i32, Int32Type>(
-                extra_code.as_ref().expect("extra code array should exist"),
-                extra_code_slice_values,
-            )?),
+            Some(extra_code_slice_values) => Some(build_copied_arrow_array::<i32, Int32Type>(extra_code_slice_values)),
         };
         writer_sessions[trait_index]
             .inner
@@ -364,68 +306,41 @@ fn validate_trait_major_shape(
     )))
 }
 
-fn build_python_owned_arrow_array1<T, ArrowType>(array: &PyReadonlyArray1<'_, T>, values: &[T]) -> PyResult<ArrayRef>
+fn build_copied_arrow_array<T, ArrowType>(values: &[T]) -> ArrayRef
 where
-    T: ArrowNativeType + Element,
+    T: ArrowNativeType,
     ArrowType: ArrowPrimitiveType<Native = T>,
 {
-    build_python_owned_arrow_array_from_owner::<T, ArrowType>((**array).clone().into_any().unbind(), values)
-}
-
-fn build_python_owned_arrow_array2<T, ArrowType>(array: &PyReadonlyArray2<'_, T>, values: &[T]) -> PyResult<ArrayRef>
-where
-    T: ArrowNativeType + Element,
-    ArrowType: ArrowPrimitiveType<Native = T>,
-{
-    build_python_owned_arrow_array_from_owner::<T, ArrowType>((**array).clone().into_any().unbind(), values)
-}
-
-fn build_python_owned_arrow_array_from_owner<T, ArrowType>(array_owner: Py<PyAny>, values: &[T]) -> PyResult<ArrayRef>
-where
-    T: ArrowNativeType + Element,
-    ArrowType: ArrowPrimitiveType<Native = T>,
-{
-    Ok(PythonOwnedArrowValues::<T>::try_new(array_owner, values)?.into_arrow_array::<ArrowType>())
+    Arc::new(PrimitiveArray::<ArrowType>::from_iter_values(values.iter().copied()))
 }
 
 #[cfg(test)]
 mod tests {
     use arrow::array::Array;
 
-    use super::{Float32Type, Python, PythonOwnedArrowValues};
+    use super::{Float32Type, build_copied_arrow_array};
 
     #[test]
-    fn python_owned_arrow_values_builds_array_without_copying_values() {
-        Python::initialize();
-        Python::attach(|py| {
-            let values = [1.25_f32, 2.5, 3.75];
-            let arrow_values =
-                PythonOwnedArrowValues::<f32>::try_new(py.None(), values.as_slice()).expect("values should be valid");
-            assert_eq!(arrow_values.values_pointer.as_ptr(), values.as_ptr().cast_mut());
-            assert_eq!(arrow_values.value_count, values.len());
-            assert_eq!(arrow_values.byte_length, std::mem::size_of_val(values.as_slice()));
+    fn copied_arrow_array_is_independent_from_source_slice() {
+        let mut values = [1.25_f32, 2.5, 3.75];
+        let array = build_copied_arrow_array::<f32, Float32Type>(values.as_slice());
+        values.fill(99.0);
 
-            let array = arrow_values.into_arrow_array::<Float32Type>();
-            assert_eq!(array.len(), values.len());
-            let typed_array = array
-                .as_any()
-                .downcast_ref::<arrow::array::Float32Array>()
-                .expect("array should preserve the f32 Arrow type");
-            let observed_values =
-                (0..typed_array.len()).map(|value_index| typed_array.value(value_index)).collect::<Vec<_>>();
-            assert_eq!(observed_values, values.to_vec());
-        });
+        assert_eq!(array.len(), 3);
+        let typed_array = array
+            .as_any()
+            .downcast_ref::<arrow::array::Float32Array>()
+            .expect("array should preserve the f32 Arrow type");
+        let observed_values =
+            (0..typed_array.len()).map(|value_index| typed_array.value(value_index)).collect::<Vec<_>>();
+        assert_eq!(observed_values, vec![1.25, 2.5, 3.75]);
     }
 
     #[test]
-    fn python_owned_arrow_values_allows_empty_arrays() {
-        Python::initialize();
-        Python::attach(|py| {
-            let values: [f32; 0] = [];
-            let array = PythonOwnedArrowValues::<f32>::try_new(py.None(), values.as_slice())
-                .expect("empty values should still have a valid slice pointer")
-                .into_arrow_array::<Float32Type>();
-            assert_eq!(array.len(), 0);
-        });
+    fn copied_arrow_array_allows_empty_arrays() {
+        let values: [f32; 0] = [];
+        let array = build_copied_arrow_array::<f32, Float32Type>(values.as_slice());
+
+        assert_eq!(array.len(), 0);
     }
 }

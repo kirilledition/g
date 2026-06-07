@@ -1,6 +1,7 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::needless_pass_by_value)]
 
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -84,7 +85,12 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
     }
 
     let list_chunk_files_start_time = Instant::now();
-    let chunk_file_paths = sorted_output_chunk_file_paths(chunks_directory, output_format)?;
+    let run_directory = final_parquet_path.parent().ok_or_else(|| {
+        OutputWriterError::InvalidInput("Final Parquet path must have a parent run directory.".to_string())
+    })?;
+    let manifest_commits =
+        manifest::read_run_manifest_chunk_commits(run_directory).map_err(OutputWriterError::runtime)?;
+    let chunk_file_paths = manifest_output_chunk_file_paths(chunks_directory, output_format, &manifest_commits)?;
     let list_chunk_files_seconds = list_chunk_files_start_time.elapsed().as_secs_f64();
 
     let parquet_writer_properties_start_time = Instant::now();
@@ -174,6 +180,67 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
         parquet_file_bytes,
         total_seconds: total_start_time.elapsed().as_secs_f64(),
     })
+}
+
+fn manifest_output_chunk_file_paths(
+    chunks_directory: &Path,
+    output_format: OutputFileFormat,
+    manifest_commits: &[manifest::RunManifestChunkCommit],
+) -> Result<Vec<PathBuf>, OutputWriterError> {
+    let expected_output_format = output_format_name(output_format);
+    let manifest_file_names = manifest_commits
+        .iter()
+        .filter(|chunk_commit| chunk_commit.output_format == expected_output_format)
+        .map(|chunk_commit| chunk_commit.chunk_file_name.clone())
+        .collect::<BTreeSet<_>>();
+    reject_unmanifested_output_chunk_files(chunks_directory, output_format, &manifest_file_names)?;
+    let mut observed_file_names = BTreeSet::new();
+    let mut chunk_file_paths = Vec::new();
+    for chunk_commit in manifest_commits {
+        if chunk_commit.output_format != expected_output_format {
+            return Err(OutputWriterError::InvalidInput(format!(
+                "Run manifest chunk {} has output_format={}, expected {expected_output_format}.",
+                chunk_commit.chunk_identifier, chunk_commit.output_format
+            )));
+        }
+        if observed_file_names.insert(chunk_commit.chunk_file_name.clone()) {
+            let chunk_file_path = chunks_directory.join(&chunk_commit.chunk_file_name);
+            if !chunk_file_path.exists() {
+                return Err(OutputWriterError::InvalidInput(format!(
+                    "Run manifest references missing chunk file: {}",
+                    chunk_file_path.display()
+                )));
+            }
+            chunk_file_paths.push(chunk_file_path);
+        }
+    }
+    Ok(chunk_file_paths)
+}
+
+fn reject_unmanifested_output_chunk_files(
+    chunks_directory: &Path,
+    output_format: OutputFileFormat,
+    manifest_file_names: &BTreeSet<String>,
+) -> Result<(), OutputWriterError> {
+    for chunk_file_path in sorted_output_chunk_file_paths(chunks_directory, output_format)? {
+        let Some(file_name) = chunk_file_path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !manifest_file_names.contains(file_name) {
+            return Err(OutputWriterError::InvalidInput(format!(
+                "Output chunk file is not recorded in run manifest: {}",
+                chunk_file_path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn output_format_name(output_format: OutputFileFormat) -> &'static str {
+    match output_format {
+        OutputFileFormat::Arrow => "arrow",
+        OutputFileFormat::Parquet => "parquet",
+    }
 }
 
 fn sorted_output_chunk_file_paths(
@@ -364,6 +431,31 @@ mod tests {
             .expect("chunk files should be listed");
 
         assert_eq!(chunk_file_paths, vec![part_file_path]);
+        std::fs::remove_dir_all(chunks_directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn manifest_chunk_paths_reject_unmanifested_matching_files() {
+        let chunks_directory = create_test_directory();
+        let part_file_path = chunks_directory.join("part_000000000.parquet");
+        let stale_part_file_path = chunks_directory.join("part_000000001.parquet");
+        std::fs::write(&part_file_path, b"part").expect("part marker should be written");
+        std::fs::write(&stale_part_file_path, b"stale").expect("stale marker should be written");
+        let manifest_commits = vec![manifest::RunManifestChunkCommit {
+            chunk_identifier: 0,
+            output_format: "parquet".to_string(),
+            compression: "none".to_string(),
+            variant_start_index: 0,
+            variant_stop_index: 2,
+            row_count: 2,
+            chunk_file_name: "part_000000000.parquet".to_string(),
+        }];
+
+        let error = manifest_output_chunk_file_paths(&chunks_directory, OutputFileFormat::Parquet, &manifest_commits)
+            .expect_err("unmanifested chunk file should fail")
+            .to_string();
+
+        assert!(error.contains("not recorded in run manifest"));
         std::fs::remove_dir_all(chunks_directory).expect("test directory should be removed");
     }
 

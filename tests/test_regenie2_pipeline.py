@@ -17,6 +17,7 @@ from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import state as regenie2_linear_state
 from g.engine import callbacks, native_dispatch, regenie2_pipeline, shutdown, timing
@@ -255,6 +256,98 @@ def test_write_regenie2_multi_native_chunk_skips_committed_traits_and_slices_ext
     written_chunk = writer_sessions[0].native_chunks[0]
     np.testing.assert_array_equal(written_chunk["extra_code"], np.asarray(extra_code[0]))
     np.testing.assert_array_equal(written_chunk["beta"], np.asarray([0.1, 0.2], dtype=np.float32))
+
+
+def test_write_regenie2_multi_native_chunk_materializes_only_active_trait_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer_sessions = (FakeWriterSession(), FakeWriterSession())
+    metadata = build_native_metadata()
+    chunk_stats = typing.cast("typing.Any", SimpleNamespace())
+    materialized_shapes: list[tuple[int, ...] | None] = []
+
+    def recording_device_get(value: object) -> object:
+        device_values = typing.cast("dict[str, object]", value)
+        host_values: dict[str, object] = {}
+        for key, device_value in device_values.items():
+            if device_value is None:
+                materialized_shapes.append(None)
+                host_values[key] = None
+                continue
+            device_array = typing.cast("typing.Any", device_value)
+            materialized_shapes.append(tuple(int(dimension) for dimension in device_array.shape))
+            host_values[key] = np.asarray(device_array)
+        return host_values
+
+    monkeypatch.setattr(callbacks.jax, "device_get", recording_device_get)
+
+    callbacks.write_regenie2_multi_native_chunk_with_optional_timing(
+        writer_sessions=writer_sessions,
+        committed_chunk_identifier_sets=({metadata.variant_start_index}, set()),
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
+        standard_error=jnp.asarray([[1.1, 1.2], [1.3, 1.4]], dtype=jnp.float32),
+        chi_squared=jnp.asarray([[2.1, 2.2], [2.3, 2.4]], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([[3.1, 3.2], [3.3, 3.4]], dtype=jnp.float32),
+        extra_code=jnp.asarray(
+            [
+                [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.FIRTH.value],
+                [types.BinaryExtraCode.TEST_FAIL.value, types.BinaryExtraCode.SCORE.value],
+            ],
+            dtype=jnp.int32,
+        ),
+        stage_timing_recorder=None,
+    )
+
+    assert materialized_shapes == [(1, 2), (1, 2), (1, 2), (1, 2), (1, 2)]
+    assert not writer_sessions[0].native_chunks
+    assert len(writer_sessions[1].native_chunks) == 1
+    written_chunk = writer_sessions[1].native_chunks[0]
+    np.testing.assert_array_equal(written_chunk["beta"], np.asarray([0.3, 0.4], dtype=np.float32))
+    np.testing.assert_array_equal(
+        written_chunk["extra_code"],
+        np.asarray([types.BinaryExtraCode.TEST_FAIL.value, types.BinaryExtraCode.SCORE.value], dtype=np.int32),
+    )
+
+
+def test_write_regenie2_multi_native_chunk_skips_device_get_when_all_traits_committed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer_sessions = (FakeWriterSession(), FakeWriterSession())
+    metadata = build_native_metadata()
+    chunk_stats = typing.cast("typing.Any", SimpleNamespace())
+
+    def fail_device_get(value: object) -> object:
+        del value
+        raise AssertionError("device_get should not run when all trait chunks are committed")
+
+    monkeypatch.setattr(callbacks.jax, "device_get", fail_device_get)
+
+    callbacks.write_regenie2_multi_native_chunk_with_optional_timing(
+        writer_sessions=writer_sessions,
+        committed_chunk_identifier_sets=(
+            {metadata.variant_start_index},
+            {metadata.variant_start_index},
+        ),
+        metadata=metadata,
+        chunk_stats=chunk_stats,
+        beta=jnp.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=jnp.float32),
+        standard_error=jnp.asarray([[1.1, 1.2], [1.3, 1.4]], dtype=jnp.float32),
+        chi_squared=jnp.asarray([[2.1, 2.2], [2.3, 2.4]], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([[3.1, 3.2], [3.3, 3.4]], dtype=jnp.float32),
+        extra_code=jnp.asarray(
+            [
+                [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.FIRTH.value],
+                [types.BinaryExtraCode.TEST_FAIL.value, types.BinaryExtraCode.SCORE.value],
+            ],
+            dtype=jnp.int32,
+        ),
+        stage_timing_recorder=None,
+    )
+
+    assert not writer_sessions[0].native_chunks
+    assert not writer_sessions[1].native_chunks
 
 
 def test_chunk_stats_helpers_use_bundled_compute_arrays_with_path_specific_fields() -> None:
@@ -565,6 +658,17 @@ def build_native_metadata_for_chunk(*, chunk_identifier: int) -> typing.Any:
         allele_one=["A", "C"],
         allele_two=["G", "T"],
     )
+
+
+def test_get_metadata_chromosome_prefers_scalar_label_without_full_column_access() -> None:
+    class ScalarChromosomeMetadata:
+        chromosome_label = "22"
+
+        @property
+        def chromosome(self) -> list[str]:
+            raise AssertionError("chromosome column should not be read when scalar label is available")
+
+    assert callbacks.get_metadata_chromosome(ScalarChromosomeMetadata()) == "22"
 
 
 def build_binary_chromosome_state(*, converged: bool = True) -> SimpleNamespace:
@@ -1164,6 +1268,10 @@ def test_linear_variant_major_callback_passes_native_sums_to_jitted_compute() ->
         run_input=build_native_run_input(),
         prediction_source=FakePredictionSource(),
         writer_session=writer_session,
+        linear_numerical_config=regenie2_linear_config.LinearNumericalConfig(
+            minimum_variance=3.0e-9,
+            relative_variance_tolerance=4.0e-6,
+        ),
     )
     callback.current_chromosome = "22"
     callback.current_chromosome_state = typing.cast(
@@ -1189,6 +1297,8 @@ def test_linear_variant_major_callback_passes_native_sums_to_jitted_compute() ->
         np.asarray(mock_compute.call_args.kwargs["genotype_imputed_dosage_square_sum"]),
         [5.0, 13.0],
     )
+    assert mock_compute.call_args.kwargs["linear_minimum_variance"] == 3.0e-9
+    assert mock_compute.call_args.kwargs["linear_relative_variance_tolerance"] == 4.0e-6
     assert writer_session.native_chunks[0]["chunk_stats"] is chunk_stats
 
 
@@ -1909,6 +2019,10 @@ def test_multi_linear_variant_major_callback_passes_native_genotype_summaries() 
         prediction_source=build_multi_trait_prediction_source(),
         writer_sessions=writer_sessions,
         committed_chunk_identifier_sets=(set(), set()),
+        linear_numerical_config=regenie2_linear_config.LinearNumericalConfig(
+            minimum_variance=5.0e-9,
+            relative_variance_tolerance=6.0e-6,
+        ),
     )
     variant_major_genotype_matrix = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
     chunk_stats = typing.cast("typing.Any", LinearNativeSumChunkStats())
@@ -1934,6 +2048,8 @@ def test_multi_linear_variant_major_callback_passes_native_genotype_summaries() 
         np.asarray(mock_compute.call_args.kwargs["genotype_imputed_dosage_square_sum"]),
         [5.0, 13.0],
     )
+    assert mock_compute.call_args.kwargs["linear_minimum_variance"] == 5.0e-9
+    assert mock_compute.call_args.kwargs["linear_relative_variance_tolerance"] == 6.0e-6
     assert len(writer_sessions[0].native_chunks) == 1
     assert len(writer_sessions[1].native_chunks) == 1
 
@@ -2435,6 +2551,12 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     pipeline_options = build_default_pipeline_runtime_options()
     preparation_order: list[str] = []
 
+    def record_preflight(*args: object, **kwargs: object) -> SimpleNamespace:
+        del args
+        del kwargs
+        preparation_order.append("preflight")
+        return SimpleNamespace(sample_count=2, covariate_count=1, chromosome_count=1)
+
     with (
         patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
@@ -2459,7 +2581,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
         ),
         patch(
             "g.engine.regenie2_pipeline.preflight.run_regenie2_preflight",
-            return_value=SimpleNamespace(sample_count=2, covariate_count=1, chromosome_count=1),
+            side_effect=record_preflight,
         ) as mock_preflight,
         patch(
             "g.compute.regenie2_linear.api.prepare_regenie2_linear_state",
@@ -2491,7 +2613,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
         )
 
     assert final_path == Path("results/final.parquet")
-    assert preparation_order == ["manifest", "writer"]
+    assert preparation_order == ["preflight", "manifest", "writer"]
     assert writer_session.finished is True
     engine = FakeRunEngine.instances[0]
     assert engine.bgen_path == "study.bgen"
@@ -2513,6 +2635,55 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert prediction_source.phenotype_name == "trait"
     assert prediction_source.native_aligned_sample_data is run_input.native_aligned_sample_data
     assert prediction_source.sample_key_mode == "iid"
+
+
+def test_single_trait_preflight_failure_does_not_initialize_output_or_writer(tmp_path: Path) -> None:
+    FakeRunEngine.instances.clear()
+    FakePredictionSource.instances.clear()
+    run_input = build_native_run_input()
+    pipeline_options = build_default_pipeline_runtime_options()
+    output_run_paths = output.OutputRunPaths(tmp_path / "run", tmp_path / "run/chunks")
+
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
+        patch("g.engine.native_dispatch.load_native_bgen_run_input", return_value=run_input),
+        patch(
+            "g.engine.regenie2_pipeline.preflight.run_regenie2_preflight",
+            side_effect=ValueError("invalid preflight"),
+        ) as mock_preflight,
+        patch("g.engine.regenie2_pipeline.output.build_current_run_manifest_header") as mock_manifest_header,
+        patch("g.engine.regenie2_pipeline.output.initialize_output_run") as mock_initialize_output_run,
+        patch("g.engine.regenie2_pipeline.output.create_output_writer_session") as mock_create_writer_session,
+        pytest.raises(ValueError, match="invalid preflight"),
+    ):
+        regenie2_pipeline.run_regenie2_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_name="trait",
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths=output_run_paths,
+            staging_depth=3,
+            existing_manifest=None,
+            resume=False,
+            writer_thread_count=pipeline_options.writer_thread_count,
+            writer_queue_depth=pipeline_options.writer_queue_depth,
+            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
+            parquet_compression=pipeline_options.parquet_compression,
+            bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
+            score_dtype=pipeline_options.score_dtype,
+            firth_dtype=pipeline_options.firth_dtype,
+        )
+
+    mock_preflight.assert_called_once()
+    mock_manifest_header.assert_not_called()
+    mock_initialize_output_run.assert_not_called()
+    mock_create_writer_session.assert_not_called()
+    assert not output.get_run_manifest_path(output_run_paths).exists()
 
 
 def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() -> None:
@@ -2725,6 +2896,12 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     pipeline_options = build_default_pipeline_runtime_options()
     preparation_order: list[str] = []
 
+    def record_preflight(*args: object, **kwargs: object) -> SimpleNamespace:
+        del args
+        del kwargs
+        preparation_order.append("preflight")
+        return SimpleNamespace(sample_count=2, covariate_count=1, chromosome_count=1)
+
     with (
         patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
@@ -2749,7 +2926,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
         ),
         patch(
             "g.engine.regenie2_pipeline.preflight.run_regenie2_preflight",
-            return_value=SimpleNamespace(sample_count=2, covariate_count=1, chromosome_count=1),
+            side_effect=record_preflight,
         ) as mock_preflight,
         patch(
             "g.compute.regenie2_binary.api.prepare_regenie2_binary_state",
@@ -2781,7 +2958,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
         )
 
     assert final_path == Path("results/final.parquet")
-    assert preparation_order == ["manifest", "writer"]
+    assert preparation_order == ["preflight", "manifest", "writer"]
     engine = FakeRunEngine.instances[0]
     assert engine.validation_count == 1
     assert engine.run_method == "variant_major_buffered"
@@ -2923,6 +3100,11 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     initialized_chunk_sets = [frozenset({0, 32}), frozenset({32, 64})]
     pipeline_options = build_default_pipeline_runtime_options()
 
+    def record_preflight(*args: object, **kwargs: object) -> None:
+        del args
+        del kwargs
+        preparation_order.append("preflight")
+
     with (
         patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
@@ -2930,7 +3112,10 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
             "g.engine.native_dispatch.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
         ),
-        patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
+        patch(
+            "g.engine.regenie2_pipeline.run_multi_preflight",
+            side_effect=record_preflight,
+        ) as mock_run_multi_preflight,
         patch(
             "g.engine.regenie2_pipeline.output.create_output_writer_session",
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_sessions.pop(0),
@@ -2982,7 +3167,7 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
         )
 
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
-    assert preparation_order == ["manifest", "manifest", "writer", "writer"]
+    assert preparation_order == ["preflight", "manifest", "manifest", "writer", "writer"]
     assert len(FakeRunEngine.instances) == 1
     engine = FakeRunEngine.instances[0]
     assert engine.run_method == "variant_major_buffered"
@@ -2994,6 +3179,62 @@ def test_multi_linear_pipeline_opens_engine_once_and_skips_only_shared_committed
     assert callback.committed_chunk_identifier_sets == ({0, 32}, {32, 64})
     assert mock_run_multi_preflight.call_args.kwargs["variant_limit"] == 100
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+
+
+def test_multi_preflight_failure_does_not_initialize_outputs_or_writers(tmp_path: Path) -> None:
+    FakeRunEngine.instances.clear()
+    run_input = build_native_multi_run_input()
+    pipeline_options = build_default_pipeline_runtime_options()
+    output_run_paths_by_phenotype = (
+        output.OutputRunPaths(tmp_path / "run/a", tmp_path / "run/a/chunks"),
+        output.OutputRunPaths(tmp_path / "run/b", tmp_path / "run/b/chunks"),
+    )
+
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
+        patch(
+            "g.engine.native_dispatch.build_multi_regenie_prediction_source",
+            return_value=FakePredictionSource(),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.run_multi_preflight", side_effect=ValueError("invalid multi preflight")
+        ) as mock_run_multi_preflight,
+        patch("g.engine.regenie2_pipeline.output.build_current_run_manifest_header") as mock_manifest_header,
+        patch("g.engine.regenie2_pipeline.output.initialize_output_run") as mock_initialize_output_run,
+        patch("g.engine.regenie2_pipeline.output.create_output_writer_session") as mock_create_writer_session,
+        pytest.raises(ValueError, match="invalid multi preflight"),
+    ):
+        regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_names=("trait_a", "trait_b"),
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths_by_phenotype=output_run_paths_by_phenotype,
+            staging_depth=2,
+            existing_manifests_by_phenotype=(None, None),
+            resume=False,
+            trusted_no_missing_diploid=False,
+            writer_thread_count=pipeline_options.writer_thread_count,
+            writer_queue_depth=pipeline_options.writer_queue_depth,
+            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
+            parquet_compression=pipeline_options.parquet_compression,
+            bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
+            score_dtype=pipeline_options.score_dtype,
+            firth_dtype=pipeline_options.firth_dtype,
+            sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+        )
+
+    mock_run_multi_preflight.assert_called_once()
+    mock_manifest_header.assert_not_called()
+    mock_initialize_output_run.assert_not_called()
+    mock_create_writer_session.assert_not_called()
+    assert not output.get_run_manifest_path(output_run_paths_by_phenotype[0]).exists()
+    assert not output.get_run_manifest_path(output_run_paths_by_phenotype[1]).exists()
 
 
 def test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes() -> None:

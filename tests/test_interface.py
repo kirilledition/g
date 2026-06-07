@@ -77,6 +77,8 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-binary-minimum-probability": 1.0e-7,
         "g-binary-minimum-variance": 1.0e-9,
         "g-binary-relative-variance-tolerance": 2.0e-6,
+        "g-linear-minimum-variance": 3.0e-9,
+        "g-linear-relative-variance-tolerance": 4.0e-6,
         "g-firth-maximum-iterations": 30,
         "g-firth-gradient-tolerance": 1.0e-5,
         "g-firth-coefficient-tolerance": 1.0e-5,
@@ -123,6 +125,8 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_compute.binary_minimum_probability == 1.0e-7
     assert regenie_config.g_compute.binary_minimum_variance == 1.0e-9
     assert regenie_config.g_compute.binary_relative_variance_tolerance == 2.0e-6
+    assert regenie_config.g_compute.linear_minimum_variance == 3.0e-9
+    assert regenie_config.g_compute.linear_relative_variance_tolerance == 4.0e-6
     assert regenie_config.g_compute.use_block_firth_math is True
     assert regenie_config.g_compute.bgen_decode_tile_variant_count == 32
     assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE
@@ -305,6 +309,11 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     assert regenie_config.trait.bsize == packaged_config.trait.bsize
     assert regenie_config.g_compute.device == types.Device.CPU
     assert regenie_config.g_compute.null_logistic_nonconvergence_policy == types.NullLogisticNonconvergencePolicy.FAIL
+    assert regenie_config.g_compute.linear_minimum_variance == packaged_config.g_compute.linear_minimum_variance
+    assert (
+        regenie_config.g_compute.linear_relative_variance_tolerance
+        == packaged_config.g_compute.linear_relative_variance_tolerance
+    )
     assert regenie_config.g_compute.score_dtype == types.FloatingPointDtype.FLOAT32
     assert regenie_config.g_compute.firth_dtype == types.FloatingPointDtype.FLOAT64
     assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE
@@ -490,6 +499,11 @@ def test_recognized_unsupported_options_use_specific_errors(option_name: str, er
         ({"bsize": 0}, "--bsize must be positive"),
         ({"threads": 0}, "--threads must be positive"),
         ({"g-variant-limit": 0}, "--g-variant-limit must be positive"),
+        ({"g-linear-minimum-variance": 0.0}, "--g-linear-minimum-variance must be positive"),
+        (
+            {"g-linear-relative-variance-tolerance": 0.0},
+            "--g-linear-relative-variance-tolerance must be positive",
+        ),
         ({"g-writer-threads": 0}, "--g-writer-threads must be positive"),
         ({"g-writer-queue-depth": 0}, "--g-writer-queue-depth must be positive"),
         ({"g-output-chunks-per-arrow-file": 0}, "--g-output-chunks-per-arrow-file must be positive"),
@@ -670,6 +684,24 @@ def test_python_trait_type_alias_selects_binary_trait() -> None:
     regenie_config = config.RegenieConfig.from_options(raw_options)
 
     assert regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
+
+
+def test_python_boolean_string_options_are_parsed_strictly() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options.update({"g-jax-persistent-cache": "false", "g-jax-transfer-guard": "on"})
+
+    regenie_config = config.RegenieConfig.from_options(raw_options)
+
+    assert regenie_config.g_compute.jax_persistent_cache is False
+    assert regenie_config.g_compute.jax_transfer_guard is True
+
+
+def test_python_boolean_string_options_reject_ambiguous_values() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options["g-jax-persistent-cache"] = "maybe"
+
+    with pytest.raises(ValueError, match="Boolean option value must be a bool"):
+        config.RegenieConfig.from_options(raw_options)
 
 
 def test_quantitative_trait_accepts_defaulted_binary_threshold() -> None:

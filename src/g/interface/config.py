@@ -76,6 +76,8 @@ class GComputeConfig:
     binary_minimum_probability: float
     binary_minimum_variance: float
     binary_relative_variance_tolerance: float
+    linear_minimum_variance: float
+    linear_relative_variance_tolerance: float
     firth_maximum_iterations: int
     firth_gradient_tolerance: float
     firth_coefficient_tolerance: float
@@ -398,6 +400,14 @@ def build_runtime_config_from_toml_config(
             binary_relative_variance_tolerance=required_toml_value(
                 g_compute_section.binary_relative_variance_tolerance,
                 "g-binary-relative-variance-tolerance",
+            ),
+            linear_minimum_variance=required_toml_value(
+                g_compute_section.linear_minimum_variance,
+                "g-linear-minimum-variance",
+            ),
+            linear_relative_variance_tolerance=required_toml_value(
+                g_compute_section.linear_relative_variance_tolerance,
+                "g-linear-relative-variance-tolerance",
             ),
             firth_maximum_iterations=required_toml_value(
                 g_compute_section.firth_maximum_iterations,
@@ -749,6 +759,11 @@ def validate_config(config: RegenieConfig) -> None:
         "--g-binary-relative-variance-tolerance",
         config.g_compute.binary_relative_variance_tolerance,
     )
+    validate_positive_float("--g-linear-minimum-variance", config.g_compute.linear_minimum_variance)
+    validate_positive_float(
+        "--g-linear-relative-variance-tolerance",
+        config.g_compute.linear_relative_variance_tolerance,
+    )
     validate_positive_integer("--g-firth-maximum-iterations", config.g_compute.firth_maximum_iterations)
     validate_positive_float("--g-firth-gradient-tolerance", config.g_compute.firth_gradient_tolerance)
     validate_positive_float("--g-firth-coefficient-tolerance", config.g_compute.firth_coefficient_tolerance)
@@ -991,6 +1006,8 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             "binary-minimum-probability": config.g_compute.binary_minimum_probability,
             "binary-minimum-variance": config.g_compute.binary_minimum_variance,
             "binary-relative-variance-tolerance": config.g_compute.binary_relative_variance_tolerance,
+            "linear-minimum-variance": config.g_compute.linear_minimum_variance,
+            "linear-relative-variance-tolerance": config.g_compute.linear_relative_variance_tolerance,
             "firth-maximum-iterations": config.g_compute.firth_maximum_iterations,
             "firth-gradient-tolerance": config.g_compute.firth_gradient_tolerance,
             "firth-coefficient-tolerance": config.g_compute.firth_coefficient_tolerance,

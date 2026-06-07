@@ -351,6 +351,15 @@ impl VariantMetadata {
     }
 
     #[getter]
+    fn chromosome_label(&self) -> PyResult<String> {
+        self.metadata
+            .chromosome
+            .first()
+            .cloned()
+            .ok_or_else(|| PyValueError::new_err("Variant metadata contains no chromosome labels."))
+    }
+
+    #[getter]
     fn variant_identifiers(&self) -> Vec<String> {
         self.metadata.variant_identifier.clone()
     }
@@ -631,6 +640,34 @@ impl Regenie2RunEngine {
             .variant_metadata_slice(variant_start, variant_stop)
             .map(convert_variant_metadata_columns_to_tuple)
             .map_err(convert_bgen_error)
+    }
+
+    #[pyo3(signature = (variant_limit=None))]
+    fn required_chromosomes(&self, variant_limit: Option<usize>) -> PyResult<Vec<String>> {
+        let variant_count = self.engine.reader().variant_count();
+        let scanned_variant_count = variant_limit.map_or(variant_count, |limit| limit.min(variant_count));
+        if scanned_variant_count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut chromosome_labels = Vec::new();
+        for chromosome_boundaries in self.engine.reader().chromosome_boundary_indices().windows(2) {
+            let chromosome_start_index = chromosome_boundaries[0];
+            let chromosome_stop_index = chromosome_boundaries[1].min(scanned_variant_count);
+            if chromosome_start_index >= chromosome_stop_index {
+                continue;
+            }
+            let metadata = self
+                .engine
+                .reader()
+                .variant_metadata_slice(chromosome_start_index, chromosome_start_index + 1)
+                .map_err(convert_bgen_error)?;
+            let chromosome_label = metadata.chromosome.into_iter().next().ok_or_else(|| {
+                PyRuntimeError::new_err("Chromosome boundary metadata contained no chromosome label.")
+            })?;
+            chromosome_labels.push(chromosome_label);
+        }
+        Ok(chromosome_labels)
     }
 
     fn reset_profile(&self) {

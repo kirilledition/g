@@ -83,6 +83,8 @@ class GComputeToml(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=Tru
     binary_minimum_probability: float | msgspec.UnsetType = msgspec.UNSET
     binary_minimum_variance: float | msgspec.UnsetType = msgspec.UNSET
     binary_relative_variance_tolerance: float | msgspec.UnsetType = msgspec.UNSET
+    linear_minimum_variance: float | msgspec.UnsetType = msgspec.UNSET
+    linear_relative_variance_tolerance: float | msgspec.UnsetType = msgspec.UNSET
     firth_maximum_iterations: int | msgspec.UnsetType = msgspec.UNSET
     firth_gradient_tolerance: float | msgspec.UnsetType = msgspec.UNSET
     firth_coefficient_tolerance: float | msgspec.UnsetType = msgspec.UNSET

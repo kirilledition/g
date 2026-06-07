@@ -15,6 +15,7 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g.compute.regenie2_binary import config as regenie2_binary_config
+    from g.compute.regenie2_linear import config as regenie2_linear_config
 
 
 PHENOTYPE_DIRECTORY_SAFE_CHARACTER_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
@@ -38,6 +39,7 @@ class KernelConfig:
         alignment_config: Sample alignment settings consumed by the native dispatcher.
         multi_phenotype_sample_mode: Sample handling for multi-phenotype requests.
         binary_kernel_config: Static binary JAX kernel settings.
+        linear_numerical_config: Static linear JAX numerical settings.
 
     """
 
@@ -53,6 +55,7 @@ class KernelConfig:
     alignment_config: config.GComputeConfig
     multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode
     binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None = None
+    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +212,18 @@ def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie
     )
 
 
+def build_linear_numerical_config(
+    compute_config: config.GComputeConfig,
+) -> regenie2_linear_config.LinearNumericalConfig:
+    """Build immutable linear JAX numerical settings from public compute config."""
+    from g.compute.regenie2_linear import config as regenie2_linear_config
+
+    return regenie2_linear_config.LinearNumericalConfig(
+        minimum_variance=compute_config.linear_minimum_variance,
+        relative_variance_tolerance=compute_config.linear_relative_variance_tolerance,
+    )
+
+
 def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> RegenieExecutionPlan:
     """Build a complete execution plan from a validated public config."""
     config.validate_config(regenie_config)
@@ -293,6 +308,11 @@ def build_kernel_config(regenie_config: config.RegenieConfig) -> KernelConfig:
         binary_kernel_config=(
             build_binary_kernel_config(regenie_config.g_compute)
             if regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
+            else None
+        ),
+        linear_numerical_config=(
+            build_linear_numerical_config(regenie_config.g_compute)
+            if regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
             else None
         ),
     )

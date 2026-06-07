@@ -294,10 +294,29 @@ def coerce_option_value(option_value: typing.Any, option_spec: options.OptionSpe
     if option_spec.type == options.OptionValueType.FLOAT:
         return float(option_value)
     if option_spec.type == options.OptionValueType.BOOLEAN:
-        return bool(option_value)
+        try:
+            return coerce_boolean_value(option_value)
+        except ValueError:
+            if option_spec.support_level == options.SupportLevel.RECOGNIZED_UNSUPPORTED:
+                return True
+            raise
     if isinstance(option_value, list | tuple):
         return [str(item_value) for item_value in option_value]
     return str(option_value)
+
+
+def coerce_boolean_value(option_value: typing.Any) -> bool:
+    """Coerce a Python option value to a strict boolean."""
+    if isinstance(option_value, bool):
+        return option_value
+    if isinstance(option_value, str):
+        normalized_value = option_value.strip().lower()
+        if normalized_value in {"true", "1", "yes", "on"}:
+            return True
+        if normalized_value in {"false", "0", "no", "off"}:
+            return False
+    message = f"Boolean option value must be a bool or explicit boolean string, got {option_value!r}."
+    raise ValueError(message)
 
 
 def coerce_string_list_value(option_value: typing.Any) -> str | list[str]:

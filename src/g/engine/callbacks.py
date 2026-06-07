@@ -20,6 +20,7 @@ from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import api as regenie2_linear
+from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.engine import telemetry, timing
 
 DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS = 60.0
@@ -265,6 +266,19 @@ def narrow_public_statistic_array_on_device(array: jax.Array) -> jax.Array:
     return jnp.asarray(array, dtype=jnp.float32)
 
 
+def select_active_trait_rows_on_device(
+    array: jax.Array,
+    *,
+    active_trait_indices: tuple[int, ...],
+    total_trait_count: int,
+) -> jax.Array:
+    """Return active trait rows without materializing inactive traits on host."""
+    if len(active_trait_indices) == total_trait_count and active_trait_indices == tuple(range(total_trait_count)):
+        return array
+    active_trait_index_array = jnp.asarray(active_trait_indices, dtype=jnp.int32)
+    return jnp.take(array, active_trait_index_array, axis=0)
+
+
 def cast_statistic_array_for_native_writer(array: object) -> npt.NDArray[np.float32]:
     """Cast computed statistics to the public native writer schema dtype."""
     return np.asarray(array, dtype=np.float32)
@@ -396,29 +410,69 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
     stage_timing_recorder: timing.StageTimingRecorder | None,
 ) -> None:
     """Materialize one multi-trait result once and write missing per-trait slices."""
-    materialization_start_time = time.perf_counter()
-    host_values = jax.device_get(
-        {
-            "beta": narrow_public_statistic_array_on_device(beta),
-            "standard_error": narrow_public_statistic_array_on_device(standard_error),
-            "chi_squared": narrow_public_statistic_array_on_device(chi_squared),
-            "log10_p_value": narrow_public_statistic_array_on_device(log10_p_value),
-            "extra_code": extra_code,
-        }
-    )
-    timing.record_stage_duration(stage_timing_recorder, "device_to_host_materialization", materialization_start_time)
-
     chunk_identifier = int(metadata.variant_start_index)
-    write_start_time = time.perf_counter()
     active_trait_indices = tuple(
         trait_index
         for trait_index, _writer_session in enumerate(writer_sessions)
         if chunk_identifier not in committed_chunk_identifier_sets[trait_index]
     )
+    if not active_trait_indices:
+        write_start_time = time.perf_counter()
+        timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
+        timing.record_stage_duration(stage_timing_recorder, "multi_trait_output_write_total", write_start_time)
+        return
+
+    active_writer_sessions = tuple(writer_sessions[trait_index] for trait_index in active_trait_indices)
+    total_trait_count = len(writer_sessions)
+    active_extra_code = None
+    if extra_code is not None:
+        active_extra_code = select_active_trait_rows_on_device(
+            extra_code,
+            active_trait_indices=active_trait_indices,
+            total_trait_count=total_trait_count,
+        )
+
+    materialization_start_time = time.perf_counter()
+    host_values = jax.device_get(
+        {
+            "beta": narrow_public_statistic_array_on_device(
+                select_active_trait_rows_on_device(
+                    beta,
+                    active_trait_indices=active_trait_indices,
+                    total_trait_count=total_trait_count,
+                )
+            ),
+            "standard_error": narrow_public_statistic_array_on_device(
+                select_active_trait_rows_on_device(
+                    standard_error,
+                    active_trait_indices=active_trait_indices,
+                    total_trait_count=total_trait_count,
+                )
+            ),
+            "chi_squared": narrow_public_statistic_array_on_device(
+                select_active_trait_rows_on_device(
+                    chi_squared,
+                    active_trait_indices=active_trait_indices,
+                    total_trait_count=total_trait_count,
+                )
+            ),
+            "log10_p_value": narrow_public_statistic_array_on_device(
+                select_active_trait_rows_on_device(
+                    log10_p_value,
+                    active_trait_indices=active_trait_indices,
+                    total_trait_count=total_trait_count,
+                )
+            ),
+            "extra_code": active_extra_code,
+        }
+    )
+    timing.record_stage_duration(stage_timing_recorder, "device_to_host_materialization", materialization_start_time)
+
+    write_start_time = time.perf_counter()
     if all(isinstance(writer_session, _core.OutputWriterSession) for writer_session in writer_sessions):
         _core.write_regenie2_multi_native_chunk(
-            writer_sessions=list(writer_sessions),
-            active_trait_indices=list(active_trait_indices),
+            writer_sessions=list(active_writer_sessions),
+            active_trait_indices=list(range(len(active_writer_sessions))),
             metadata=metadata,
             chunk_stats=chunk_stats,
             beta=cast_statistic_array_for_native_writer(host_values["beta"]),
@@ -430,20 +484,18 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
         timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
         timing.record_stage_duration(stage_timing_recorder, "multi_trait_output_write_total", write_start_time)
         return
-    for trait_index, writer_session in enumerate(writer_sessions):
-        if trait_index not in active_trait_indices:
-            continue
+    for compact_trait_index, writer_session in enumerate(active_writer_sessions):
         per_trait_write_start_time = time.perf_counter()
         extra_code_slice = None
         if host_values["extra_code"] is not None:
-            extra_code_slice = host_values["extra_code"][trait_index]
+            extra_code_slice = host_values["extra_code"][compact_trait_index]
         writer_session.write_regenie2_native_chunk(
             metadata=metadata,
             chunk_stats=chunk_stats,
-            beta=cast_statistic_array_for_native_writer(host_values["beta"][trait_index]),
-            standard_error=cast_statistic_array_for_native_writer(host_values["standard_error"][trait_index]),
-            chi_squared=cast_statistic_array_for_native_writer(host_values["chi_squared"][trait_index]),
-            log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"][trait_index]),
+            beta=cast_statistic_array_for_native_writer(host_values["beta"][compact_trait_index]),
+            standard_error=cast_statistic_array_for_native_writer(host_values["standard_error"][compact_trait_index]),
+            chi_squared=cast_statistic_array_for_native_writer(host_values["chi_squared"][compact_trait_index]),
+            log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"][compact_trait_index]),
             extra_code=extra_code_slice,
         )
         timing.record_stage_duration(
@@ -455,6 +507,9 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
 
 def get_metadata_chromosome(metadata: typing.Any) -> str:
     """Return the first chromosome label from native or Python metadata."""
+    chromosome_label = getattr(metadata, "chromosome_label", None)
+    if chromosome_label is not None:
+        return str(chromosome_label)
     return str(metadata.chromosome[0])
 
 
@@ -1003,6 +1058,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         writer_session: typing.Any,
         staging_depth: int = 1,
         score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+        linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
     ) -> None:
@@ -1011,6 +1067,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.prediction_source = prediction_source
         self.writer_session = writer_session
         self.score_dtype = score_dtype
+        self.linear_numerical_config = linear_numerical_config or regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG
         self.regenie_state = regenie2_linear.prepare_regenie2_linear_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_vector=run_input.phenotype_vector,
@@ -1119,10 +1176,10 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 packed_probability_pairs_by_variant=packed_device_array,
                 genotype_dosage_sum=jax.device_put(linear_chunk_stats_arrays.dosage_sum),
                 genotype_observation_count=jax.device_put(linear_chunk_stats_arrays.observation_count),
-                genotype_imputed_dosage_square_sum=jax.device_put(
-                    linear_chunk_stats_arrays.imputed_dosage_square_sum
-                ),
+                genotype_imputed_dosage_square_sum=jax.device_put(linear_chunk_stats_arrays.imputed_dosage_square_sum),
                 score_dtype=self.score_dtype,
+                linear_minimum_variance=self.linear_numerical_config.minimum_variance,
+                linear_relative_variance_tolerance=self.linear_numerical_config.relative_variance_tolerance,
             )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
@@ -1193,6 +1250,8 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             genotype_observation_count=genotype_observation_count,
             genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
             score_dtype=self.score_dtype,
+            linear_minimum_variance=self.linear_numerical_config.minimum_variance,
+            linear_relative_variance_tolerance=self.linear_numerical_config.relative_variance_tolerance,
         )
         block_compute_result_for_timing(
             result_ready_value=result.log10_p_value,
@@ -1241,6 +1300,8 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             chromosome_state=chromosome_state,
             genotype_matrix=genotype_device_array,
             score_dtype=self.score_dtype,
+            linear_minimum_variance=self.linear_numerical_config.minimum_variance,
+            linear_relative_variance_tolerance=self.linear_numerical_config.relative_variance_tolerance,
         )
         block_compute_result_for_timing(
             result_ready_value=result.log10_p_value,
@@ -1261,6 +1322,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         committed_chunk_identifier_sets: tuple[set[int], ...],
         staging_depth: int = 1,
         score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+        linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
     ) -> None:
@@ -1270,6 +1332,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.writer_sessions = writer_sessions
         self.committed_chunk_identifier_sets = committed_chunk_identifier_sets
         self.score_dtype = score_dtype
+        self.linear_numerical_config = linear_numerical_config or regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG
         self.regenie_state = regenie2_linear.prepare_regenie2_multi_linear_state(
             covariate_matrix=run_input.covariate_matrix,
             phenotype_matrix=run_input.phenotype_matrix,
@@ -1332,6 +1395,8 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 chromosome_state=chromosome_state,
                 genotype_matrix=genotype_device_array,
                 score_dtype=self.score_dtype,
+                linear_minimum_variance=self.linear_numerical_config.minimum_variance,
+                linear_relative_variance_tolerance=self.linear_numerical_config.relative_variance_tolerance,
             )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
@@ -1378,10 +1443,10 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 genotype_matrix_by_variant=genotype_device_array,
                 genotype_dosage_sum=jax.device_put(linear_chunk_stats_arrays.dosage_sum),
                 genotype_observation_count=jax.device_put(linear_chunk_stats_arrays.observation_count),
-                genotype_imputed_dosage_square_sum=jax.device_put(
-                    linear_chunk_stats_arrays.imputed_dosage_square_sum
-                ),
+                genotype_imputed_dosage_square_sum=jax.device_put(linear_chunk_stats_arrays.imputed_dosage_square_sum),
                 score_dtype=self.score_dtype,
+                linear_minimum_variance=self.linear_numerical_config.minimum_variance,
+                linear_relative_variance_tolerance=self.linear_numerical_config.relative_variance_tolerance,
             )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,
@@ -1428,10 +1493,10 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 packed_probability_pairs_by_variant=packed_device_array,
                 genotype_dosage_sum=jax.device_put(linear_chunk_stats_arrays.dosage_sum),
                 genotype_observation_count=jax.device_put(linear_chunk_stats_arrays.observation_count),
-                genotype_imputed_dosage_square_sum=jax.device_put(
-                    linear_chunk_stats_arrays.imputed_dosage_square_sum
-                ),
+                genotype_imputed_dosage_square_sum=jax.device_put(linear_chunk_stats_arrays.imputed_dosage_square_sum),
                 score_dtype=self.score_dtype,
+                linear_minimum_variance=self.linear_numerical_config.minimum_variance,
+                linear_relative_variance_tolerance=self.linear_numerical_config.relative_variance_tolerance,
             )
             block_compute_result_for_timing(
                 result_ready_value=result.log10_p_value,

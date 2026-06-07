@@ -8,7 +8,23 @@ import jax.numpy as jnp
 from g import types
 from g.compute.common import dtype as compute_dtype
 from g.compute.common import genotype, pvalue
+from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.compute.regenie2_linear import result as regenie2_linear_result
+
+
+def compute_positive_residual_variance_mask(
+    variance: jax.Array,
+    reference_sum_squares: jax.Array,
+    *,
+    minimum_variance: float = regenie2_linear_config.DEFAULT_LINEAR_MINIMUM_VARIANCE,
+    relative_variance_tolerance: float = regenie2_linear_config.DEFAULT_LINEAR_RELATIVE_VARIANCE_TOLERANCE,
+) -> jax.Array:
+    """Return a stable positive residual-variance mask after covariate projection."""
+    variance_floor = jnp.maximum(
+        minimum_variance,
+        reference_sum_squares * relative_variance_tolerance,
+    )
+    return variance > variance_floor
 
 
 def compute_normalized_genotype_sum_squares_from_stats(
@@ -28,10 +44,31 @@ def compute_normalized_genotype_sum_squares_from_stats(
     genotype_mean = dosage_sum_compute / jnp.maximum(observation_count_compute, 1.0)
     imputed_dosage_sum_compute = genotype_mean * sample_count_compute
     genotype_offset = jnp.where(genotype_mean > 1.0, genotype.ALLELE_COUNT_MULTIPLIER, 0.0)
-    return (
+    shifted_sum_squares = (
         imputed_dosage_square_sum_compute
         - 2.0 * genotype_offset * imputed_dosage_sum_compute
         + sample_count_compute * genotype_offset * genotype_offset
+    )
+    if score_dtype == types.FloatingPointDtype.FLOAT64:
+        return shifted_sum_squares
+
+    stable_dtype = jnp.float64
+    dosage_sum_stable = jnp.asarray(genotype_dosage_sum, dtype=stable_dtype)
+    observation_count_stable = jnp.asarray(genotype_observation_count, dtype=stable_dtype)
+    imputed_dosage_square_sum_stable = jnp.asarray(genotype_imputed_dosage_square_sum, dtype=stable_dtype)
+    sample_count_stable = jnp.asarray(sample_count, dtype=stable_dtype)
+    genotype_mean_stable = dosage_sum_stable / jnp.maximum(observation_count_stable, 1.0)
+    imputed_dosage_sum_stable = genotype_mean_stable * sample_count_stable
+    genotype_offset_stable = jnp.asarray(genotype_offset, dtype=stable_dtype)
+    stable_shifted_sum_squares = (
+        imputed_dosage_square_sum_stable
+        - 2.0 * genotype_offset_stable * imputed_dosage_sum_stable
+        + sample_count_stable * genotype_offset_stable * genotype_offset_stable
+    )
+    return jnp.where(
+        genotype_offset > 0.0,
+        jnp.asarray(stable_shifted_sum_squares, dtype=jax_dtype),
+        shifted_sum_squares,
     )
 
 
@@ -47,6 +84,8 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
     genotype_observation_count: jax.Array | None = None,
     genotype_imputed_dosage_square_sum: jax.Array | None = None,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
+    linear_minimum_variance: float = regenie2_linear_config.DEFAULT_LINEAR_MINIMUM_VARIANCE,
+    linear_relative_variance_tolerance: float = regenie2_linear_config.DEFAULT_LINEAR_RELATIVE_VARIANCE_TOLERANCE,
 ) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
     """Compute linear score-test statistics for trait-major residuals and variant-major genotypes."""
     if genotype_dosage_sum is None or genotype_observation_count is None:
@@ -95,7 +134,12 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
         covariate_projection_coordinates,
     )
     genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares_compute - projection_sum_squares, 0.0)
-    positive_genotype_residual_mask = genotype_residual_sum_squares > 0.0
+    positive_genotype_residual_mask = compute_positive_residual_variance_mask(
+        genotype_residual_sum_squares,
+        genotype_sum_squares_compute,
+        minimum_variance=linear_minimum_variance,
+        relative_variance_tolerance=linear_relative_variance_tolerance,
+    )
     genotype_residual_sum_squares_inverse = jnp.where(
         positive_genotype_residual_mask,
         jnp.reciprocal(genotype_residual_sum_squares),

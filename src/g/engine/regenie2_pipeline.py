@@ -11,6 +11,7 @@ from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import api as regenie2_linear
+from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.engine import callbacks, native_dispatch, preflight, telemetry, timing
 from g.io import output, source
 
@@ -29,6 +30,13 @@ def require_binary_kernel_config(
         message = "Binary kernel config is required for binary association."
         raise ValueError(message)
     return kernel_config
+
+
+def require_linear_numerical_config(
+    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
+) -> regenie2_linear_config.LinearNumericalConfig:
+    """Return linear numerical settings, using package defaults for direct pipeline calls."""
+    return linear_numerical_config or regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG
 
 
 @dataclass(frozen=True)
@@ -77,6 +85,7 @@ class Regenie2PipelineContext:
         gpu_genotype_format: Native genotype delivery format.
         correction_plan: Binary correction settings.
         binary_kernel_config: Resolved binary kernel config when binary.
+        linear_numerical_config: Resolved linear numerical config when quantitative.
         writer_settings: Output writer settings.
         stage_timing_recorder: Optional stage timing recorder for this run.
         telemetry_session: Optional telemetry sink.
@@ -101,6 +110,7 @@ class Regenie2PipelineContext:
     gpu_genotype_format: types.GpuGenotypeFormat
     correction_plan: types.BinaryCorrectionPlan
     binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None
+    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None
     writer_settings: OutputWriterSettings
     stage_timing_recorder: timing.StageTimingRecorder | None
     telemetry_session: telemetry.TelemetrySession | None
@@ -187,6 +197,7 @@ def build_regenie2_pipeline_context(
     gpu_genotype_format: types.GpuGenotypeFormat,
     correction_plan: types.BinaryCorrectionPlan,
     binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None,
+    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
     writer_settings: OutputWriterSettings,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     telemetry_session: telemetry.TelemetrySession | None,
@@ -216,6 +227,7 @@ def build_regenie2_pipeline_context(
         gpu_genotype_format=gpu_genotype_format,
         correction_plan=correction_plan,
         binary_kernel_config=binary_kernel_config,
+        linear_numerical_config=linear_numerical_config,
         writer_settings=writer_settings,
         stage_timing_recorder=resolved_stage_timing_recorder,
         telemetry_session=telemetry_session,
@@ -545,6 +557,7 @@ def build_single_trait_callback(
         writer_session=writer_session,
         staging_depth=staging_depth,
         score_dtype=context.score_dtype,
+        linear_numerical_config=require_linear_numerical_config(context.linear_numerical_config),
         stage_timing_recorder=context.stage_timing_recorder,
         telemetry_session=context.telemetry_session,
     )
@@ -577,6 +590,20 @@ def run_single_trait_bgen_pipeline(
         covariate_names=covariate_names,
         pipeline_label=pipeline_label,
     )
+    prediction_source = build_single_trait_prediction_source(
+        context=context,
+        run_input=run_input,
+        phenotype_name=phenotype_name,
+        pipeline_label=pipeline_label,
+    )
+    run_single_trait_preflight(
+        context=context,
+        run_input=run_input,
+        prediction_source=prediction_source,
+        engine=engine,
+        phenotype_name=phenotype_name,
+        pipeline_label=pipeline_label,
+    )
     current_header = build_pipeline_manifest_header(
         context=context,
         phenotype_name=phenotype_name,
@@ -596,20 +623,6 @@ def run_single_trait_bgen_pipeline(
         output_run_paths_by_trait=(output_run_paths,),
     )
     writer_session = writer_sessions.writer_sessions[0]
-    prediction_source = build_single_trait_prediction_source(
-        context=context,
-        run_input=run_input,
-        phenotype_name=phenotype_name,
-        pipeline_label=pipeline_label,
-    )
-    run_single_trait_preflight(
-        context=context,
-        run_input=run_input,
-        prediction_source=prediction_source,
-        engine=engine,
-        phenotype_name=phenotype_name,
-        pipeline_label=pipeline_label,
-    )
     callback = build_single_trait_callback(
         context=context,
         run_input=run_input,
@@ -657,6 +670,7 @@ def run_regenie2_linear_bgen_pipeline(
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
+    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
@@ -691,6 +705,7 @@ def run_regenie2_linear_bgen_pipeline(
         gpu_genotype_format=gpu_genotype_format,
         correction_plan=types.BinaryCorrectionPlan(),
         binary_kernel_config=None,
+        linear_numerical_config=linear_numerical_config,
         writer_settings=writer_settings,
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
@@ -777,6 +792,7 @@ def run_regenie2_binary_bgen_pipeline(
         gpu_genotype_format=gpu_genotype_format,
         correction_plan=correction_plan,
         binary_kernel_config=resolved_kernel_config,
+        linear_numerical_config=None,
         writer_settings=writer_settings,
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
@@ -843,6 +859,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     jax_matmul_precision: types.JaxMatmulPrecision | None = None,
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
+    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     stage_timing_recorder: timing.StageTimingRecorder | None = None,
@@ -882,6 +899,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
         gpu_genotype_format=gpu_genotype_format,
         correction_plan=types.BinaryCorrectionPlan(),
         kernel_config=None,
+        linear_numerical_config=linear_numerical_config,
         null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy.FAIL,
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
@@ -1011,6 +1029,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None,
     sample_mode: types.MultiPhenotypeSampleMode | None,
     association_mode: types.AssociationMode,
+    linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
 ) -> tuple[Path | None, ...]:
     """Shared implementation for multi-phenotype BGEN pipelines."""
     resolved_kernel_config = (
@@ -1045,6 +1064,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         gpu_genotype_format=gpu_genotype_format,
         correction_plan=correction_plan,
         binary_kernel_config=resolved_kernel_config,
+        linear_numerical_config=linear_numerical_config,
         writer_settings=writer_settings,
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
@@ -1210,6 +1230,25 @@ def run_prepared_multi_phenotype_bgen_group(
     output_sample_mode: output.MultiPhenotypeSampleMode,
 ) -> tuple[Path | None, ...]:
     """Run one prepared compatible phenotype group through one BGEN pass."""
+    log_prediction_source_loaded(context=context, phenotype_count=len(run_input.phenotype_names))
+    preflight_start_time = time.perf_counter()
+    logger.debug("Running preflight validation for multi-phenotype pipeline.")
+    run_multi_preflight(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        engine=engine,
+        variant_limit=context.variant_limit,
+        trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
+    )
+    timing.record_stage_duration(context.stage_timing_recorder, "preflight_validation", preflight_start_time)
+    logger.debug("Preflight validation passed for multi-phenotype pipeline.")
+    if context.telemetry_session is not None:
+        context.telemetry_session.log_event(
+            "preflight_completed",
+            association_mode=context.association_mode.value,
+            phenotype_count=len(run_input.phenotype_names),
+            sample_count=int(run_input.sample_indices.shape[0]),
+        )
     current_headers = tuple(
         build_pipeline_manifest_header(
             context=context,
@@ -1234,25 +1273,6 @@ def run_prepared_multi_phenotype_bgen_group(
         output_run_paths_by_trait=output_run_paths_by_phenotype,
     )
     writer_session_tuple = writer_sessions.writer_sessions
-    log_prediction_source_loaded(context=context, phenotype_count=len(run_input.phenotype_names))
-    preflight_start_time = time.perf_counter()
-    logger.debug("Running preflight validation for multi-phenotype pipeline.")
-    run_multi_preflight(
-        run_input=run_input,
-        prediction_source=prediction_source,
-        engine=engine,
-        variant_limit=context.variant_limit,
-        trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
-    )
-    timing.record_stage_duration(context.stage_timing_recorder, "preflight_validation", preflight_start_time)
-    logger.debug("Preflight validation passed for multi-phenotype pipeline.")
-    if context.telemetry_session is not None:
-        context.telemetry_session.log_event(
-            "preflight_completed",
-            association_mode=context.association_mode.value,
-            phenotype_count=len(run_input.phenotype_names),
-            sample_count=int(run_input.sample_indices.shape[0]),
-        )
     if context.is_binary_trait:
         binary_kernel_config = require_binary_kernel_config(context.binary_kernel_config)
         callback = callbacks.MultiBinaryRegenie2PipelineCallback(
@@ -1276,6 +1296,7 @@ def run_prepared_multi_phenotype_bgen_group(
             committed_chunk_identifier_sets=committed_chunk_identifier_sets,
             staging_depth=staging_depth,
             score_dtype=context.score_dtype,
+            linear_numerical_config=require_linear_numerical_config(context.linear_numerical_config),
             stage_timing_recorder=context.stage_timing_recorder,
             telemetry_session=context.telemetry_session,
         )

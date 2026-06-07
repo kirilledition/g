@@ -580,7 +580,7 @@ mod tests {
     use parquet::file::reader::{FileReader as ParquetFileReader, SerializedFileReader};
 
     use crate::genotype::common::{ChunkStats, VariantMetadataColumns};
-    use crate::output::finalization;
+    use crate::output::{finalization, manifest};
 
     use super::*;
 
@@ -829,7 +829,7 @@ mod tests {
         let run_directory = create_test_directory();
         let chunks_directory = run_directory.join("chunks");
         std::fs::create_dir_all(&chunks_directory).expect("chunk directory should be created");
-        write_regenie_step2_chunk_job(
+        let write_result = write_regenie_step2_chunk_job(
             &chunks_directory,
             build_test_batch(vec![build_test_chunk(0, Some(vec![1])), build_test_chunk(1, Some(vec![0]))]),
             OutputFileFormat::Arrow,
@@ -837,6 +837,10 @@ mod tests {
             "none",
         )
         .expect("chunk batch should write");
+        std::fs::write(run_directory.join("run_manifest.json"), r#"{"committed_chunks":[]}"#)
+            .expect("manifest should be written");
+        manifest::record_run_manifest_chunk_commits(&run_directory, write_result.chunk_commits)
+            .expect("manifest commits should record");
 
         let final_parquet_path = run_directory.join("final.parquet");
         finalization::write_final_parquet_from_chunk_files(

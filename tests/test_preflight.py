@@ -14,12 +14,27 @@ class FakeEngine:
         resolved_chromosome_values = ["1"] if chromosome_values is None else chromosome_values
         self.variant_count = len(resolved_chromosome_values)
         self.chromosome_values = resolved_chromosome_values
+        self.required_chromosome_call_arguments: list[int | None] = []
+        self.variant_metadata_slice_call_count = 0
+
+    def required_chromosomes(self, variant_limit: int | None = None) -> list[str]:
+        self.required_chromosome_call_arguments.append(variant_limit)
+        scanned_variant_count = self.variant_count if variant_limit is None else min(self.variant_count, variant_limit)
+        required_chromosomes: list[str] = []
+        seen_chromosomes: set[str] = set()
+        for chromosome_value in self.chromosome_values[:scanned_variant_count]:
+            if chromosome_value in seen_chromosomes:
+                continue
+            seen_chromosomes.add(chromosome_value)
+            required_chromosomes.append(chromosome_value)
+        return required_chromosomes
 
     def variant_metadata_slice(
         self,
         variant_start: int,
         variant_stop: int,
     ) -> tuple[list[str], list[str], list[int], list[str], list[str]]:
+        self.variant_metadata_slice_call_count += 1
         selected_chromosomes = self.chromosome_values[variant_start:variant_stop]
         return (
             selected_chromosomes,
@@ -133,6 +148,16 @@ def test_preflight_variant_limit_ignores_later_chromosomes() -> None:
     )
 
     assert report.chromosome_count == 1
+
+
+def test_collect_required_chromosomes_uses_native_chromosome_api_without_metadata_slice() -> None:
+    engine = FakeEngine(["1", "1", "2", "2"])
+
+    required_chromosomes = preflight.collect_required_chromosomes(engine, 3)
+
+    assert required_chromosomes == ("1", "2")
+    assert engine.required_chromosome_call_arguments == [3]
+    assert engine.variant_metadata_slice_call_count == 0
 
 
 def test_preflight_without_variant_limit_requires_all_chromosomes() -> None:

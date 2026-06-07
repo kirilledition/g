@@ -52,10 +52,14 @@ pub enum PredictionError {
         "Duplicate target IID '{individual_identifier}' found; sample_key_mode='iid' requires unique non-null IID values."
     )]
     DuplicateTargetIid { individual_identifier: String },
+    #[error("Empty target IID found; sample_key_mode='iid' requires non-null IID values.")]
+    EmptyTargetIid,
     #[error(
         "Duplicate LOCO IID '{individual_identifier}' found; sample_key_mode='iid' requires unique non-null IID values."
     )]
     DuplicateLocoIid { individual_identifier: String },
+    #[error("Empty LOCO IID found; sample_key_mode='iid' requires non-null IID values.")]
+    EmptyLocoIid,
     #[error("Target samples not found in LOCO file: {0}")]
     MissingTargetSamples(String),
     #[error(
@@ -109,7 +113,7 @@ pub struct MultiPredictionSource {
 
 impl LocoPredictionCache {
     fn predictions(&mut self, loco_file_path: &Path) -> Result<&LocoPredictions, PredictionError> {
-        let cache_key = loco_file_path.to_path_buf();
+        let cache_key = cache_key_for_loco_path(loco_file_path);
         match self.predictions_by_path.entry(cache_key) {
             std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
             std::collections::hash_map::Entry::Vacant(entry) => {
@@ -134,7 +138,7 @@ impl LocoAlignmentCache {
         target_individual_identifiers: &[String],
         sample_key_mode: SampleKeyMode,
     ) -> Result<&[usize], PredictionError> {
-        let cache_key = loco_file_path.to_path_buf();
+        let cache_key = cache_key_for_loco_path(loco_file_path);
         match self.alignment_indices_by_path.entry(cache_key) {
             std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.into_mut().as_slice()),
             std::collections::hash_map::Entry::Vacant(entry) => {
@@ -373,6 +377,7 @@ fn parse_prediction_list_file(prediction_list_path: &Path) -> Result<Vec<Predict
         return Err(PredictionError::PredictionListNotFound(prediction_list_path.to_path_buf()));
     }
 
+    let prediction_list_directory = prediction_list_path.parent().unwrap_or_else(|| Path::new(""));
     let file = File::open(prediction_list_path)?;
     let mut entries = Vec::new();
     for (line_index, line_result) in BufReader::new(file).lines().enumerate() {
@@ -389,9 +394,15 @@ fn parse_prediction_list_file(prediction_list_path: &Path) -> Result<Vec<Predict
             let field_count = 3 + fields.count();
             return Err(PredictionError::InvalidPredictionListLine { line_number, field_count });
         }
+        let raw_loco_file_path = PathBuf::from(loco_file_path);
+        let resolved_loco_file_path = if raw_loco_file_path.is_absolute() {
+            raw_loco_file_path
+        } else {
+            prediction_list_directory.join(raw_loco_file_path)
+        };
         entries.push(PredictionListEntry {
             phenotype_name: phenotype_name.to_string(),
-            loco_file_path: PathBuf::from(loco_file_path),
+            loco_file_path: resolved_loco_file_path,
         });
     }
 
@@ -399,6 +410,10 @@ fn parse_prediction_list_file(prediction_list_path: &Path) -> Result<Vec<Predict
         return Err(PredictionError::EmptyPredictionList(prediction_list_path.to_path_buf()));
     }
     Ok(entries)
+}
+
+fn cache_key_for_loco_path(loco_file_path: &Path) -> PathBuf {
+    loco_file_path.canonicalize().unwrap_or_else(|_| loco_file_path.to_path_buf())
 }
 
 fn parse_loco_file(loco_file_path: &Path) -> Result<LocoPredictions, PredictionError> {
@@ -535,7 +550,7 @@ fn validate_unique_target_individual_identifiers(
     let mut observed_individual_identifiers = HashMap::with_capacity(target_individual_identifiers.len());
     for individual_identifier in target_individual_identifiers {
         if individual_identifier.is_empty() {
-            continue;
+            return Err(PredictionError::EmptyTargetIid);
         }
         let occurrence_count = observed_individual_identifiers.entry(individual_identifier.as_str()).or_insert(0);
         *occurrence_count += 1;
@@ -550,7 +565,7 @@ fn validate_unique_loco_individual_identifiers(loco_sample_index: &LocoSampleInd
     let mut observed_individual_identifiers = HashMap::with_capacity(loco_sample_index.individual_identifiers.len());
     for individual_identifier in &loco_sample_index.individual_identifiers {
         if individual_identifier.is_empty() {
-            continue;
+            return Err(PredictionError::EmptyLocoIid);
         }
         let occurrence_count = observed_individual_identifiers.entry(individual_identifier.as_str()).or_insert(0);
         *occurrence_count += 1;
@@ -718,6 +733,24 @@ mod tests {
     }
 
     #[test]
+    fn prediction_source_resolves_relative_loco_paths_from_prediction_list_directory() {
+        let fixture = FixtureDirectory::new();
+        fixture.write_file("trait.loco", "FID_IID F1_I1\n22 0.7\n");
+        let prediction_list_path = fixture.write_file("pred.list", "trait trait.loco\n");
+
+        let source = PredictionSource::load(
+            &prediction_list_path,
+            "trait",
+            &strings(&["F1"]),
+            &strings(&["I1"]),
+            SampleKeyMode::FidIid,
+        )
+        .expect("relative LOCO path should resolve from prediction-list directory");
+
+        assert_eq!(source.chromosome_predictions("22").expect("chr22 predictions"), &[0.7]);
+    }
+
+    #[test]
     fn multi_prediction_source_builds_trait_major_prediction_matrix() {
         let fixture = FixtureDirectory::new();
         let first_loco_path = fixture.write_file("first.loco", "FID_IID F1_I1 F2_I2\n22 1.0 2.0\n");
@@ -809,6 +842,29 @@ mod tests {
         )
         .expect_err("duplicate LOCO IIDs should fail in IID mode");
         assert_matches!(duplicate_loco_error, PredictionError::DuplicateLocoIid { .. });
+
+        let empty_target_error = MultiPredictionSource::load(
+            &prediction_list_path,
+            &strings(&["trait"]),
+            &strings(&["F1"]),
+            &strings(&[""]),
+            SampleKeyMode::Iid,
+        )
+        .expect_err("empty target IID should fail in IID mode");
+        assert_matches!(empty_target_error, PredictionError::EmptyTargetIid);
+
+        let empty_loco_path = fixture.write_file("empty-iid.loco", "FID_IID F1_\n22 1.0\n");
+        let empty_loco_list_path =
+            fixture.write_file("empty-iid.list", &format!("trait {}\n", empty_loco_path.display()));
+        let empty_loco_error = MultiPredictionSource::load(
+            &empty_loco_list_path,
+            &strings(&["trait"]),
+            &strings(&["F1"]),
+            &strings(&["I1"]),
+            SampleKeyMode::Iid,
+        )
+        .expect_err("empty LOCO IID should fail in IID mode");
+        assert_matches!(empty_loco_error, PredictionError::EmptyLocoIid);
 
         let source = MultiPredictionSource {
             phenotype_names: strings(&["first", "second"]),
