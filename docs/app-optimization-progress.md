@@ -27,7 +27,7 @@ This tracks the implementation campaign for
   F-015 are complete.
 - Wave 4 writer/output throughput: partial; F-018, F-019, F-020, F-030,
   F-038, and F-039 are complete.
-- Wave 5 Rust decode and larger architecture: partial; F-025, F-036,
+- Wave 5 Rust decode and larger architecture: partial; F-017, F-025, F-036,
   F-037, and F-040 are integrated.
 - Wave 6 warmup and performance proof: partial; F-009 and F-028 are
   integrated.
@@ -89,6 +89,11 @@ This tracks the implementation campaign for
   `WarmCacheReport` records warmed signatures with genotype format, trait
   count, correction method, Firth capacity settings, score dtype, and
   dosage/packed8 entrypoint path.
+- Implemented F-017 union-sample per-phenotype group delivery for trusted
+  no-missing dosage runs when overlapping sample groups make one BGEN pass
+  cheaper than repeated per-group passes. The old per-group path remains the
+  fallback for packed8, untrusted missingness, single groups, and disjoint
+  groups where the union sample count is not cheaper.
 
 ## Validation
 
@@ -108,7 +113,7 @@ This tracks the implementation campaign for
 
 ## Remaining larger work
 
-- Pipeline architecture and batching: F-017, F-032, F-033.
+- Pipeline architecture and batching: F-032, F-033.
 - Packed8 and Firth compute rewrites: F-011, F-012, F-034.
 - Score-kernel/state setup rewrites: F-035.
 - Rust decode and allocation reuse: F-025, F-036, F-037, F-040 are implemented
@@ -141,3 +146,8 @@ This tracks the implementation campaign for
   in plan order, and `WarmCacheReport` records warmed signatures with genotype
   format, trait count, correction method, Firth capacity settings, score dtype,
   and dosage/packed8 entrypoint path.
+- F-017: grouped per-phenotype runs can decode an ordered union sample set once
+  and fan out projected group buffers plus native chunk statistics to existing
+  group callbacks. This path is selected only for trusted no-missing dosage
+  delivery when `union_sample_count < sum(group_sample_count)`; otherwise the
+  previous per-group delivery path is preserved.

@@ -7,6 +7,9 @@ import time
 import typing
 from dataclasses import dataclass
 
+import numpy as np
+import numpy.typing as npt
+
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
@@ -154,6 +157,26 @@ class PipelineWriterSessions:
     """
 
     writer_sessions: tuple[typing.Any, ...]
+
+
+@dataclass(frozen=True)
+class PreparedMultiPhenotypeGroupDelivery:
+    """Prepared compute callback and writers for one compatible phenotype group.
+
+    Attributes:
+        phenotype_indices: Original phenotype indices represented by this group.
+        run_input: Aligned multi-phenotype input for this compatible group.
+        callback: Compute callback for this group.
+        writer_sessions: Output writer sessions in this group's phenotype order.
+        committed_chunk_identifier_sets: Committed chunks in this group's phenotype order.
+
+    """
+
+    phenotype_indices: tuple[int, ...]
+    run_input: native_dispatch.NativeBgenMultiRunInput
+    callback: object
+    writer_sessions: tuple[typing.Any, ...]
+    committed_chunk_identifier_sets: tuple[set[int], ...]
 
 
 def build_output_writer_settings(
@@ -1169,6 +1192,20 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
         phenotype_group_count=len(grouped_run_inputs),
     )
 
+    if should_use_union_grouped_bgen_delivery(context=context, grouped_run_inputs=grouped_run_inputs):
+        return run_prepared_grouped_per_phenotype_union_bgen_pipeline(
+            context=context,
+            engine=engine,
+            grouped_run_inputs=grouped_run_inputs,
+            phenotype_names=phenotype_names,
+            output_run_paths_by_phenotype=output_run_paths_by_phenotype,
+            staging_depth=staging_depth,
+            existing_manifests=existing_manifests,
+            resume=resume,
+            resume_mode=resume_mode,
+            null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+        )
+
     final_parquet_paths_by_index: list[Path | None] = [None] * len(phenotype_names)
     for grouped_run_input in grouped_run_inputs:
         group_indices = grouped_run_input.phenotype_indices
@@ -1194,12 +1231,163 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     return tuple(final_parquet_paths_by_index)
 
 
-def run_prepared_multi_phenotype_bgen_group(
+def build_union_sample_indices(
+    grouped_run_inputs: tuple[native_dispatch.NativeBgenGroupedRunInput, ...],
+) -> npt.NDArray[np.int64]:
+    """Build an ordered union sample selection for compatible phenotype groups."""
+    seen_sample_indices: set[int] = set()
+    union_sample_indices: list[int] = []
+    for grouped_run_input in grouped_run_inputs:
+        for raw_sample_index in grouped_run_input.run_input.sample_indices:
+            sample_index = int(raw_sample_index)
+            if sample_index in seen_sample_indices:
+                continue
+            seen_sample_indices.add(sample_index)
+            union_sample_indices.append(sample_index)
+    return np.asarray(union_sample_indices, dtype=np.int64)
+
+
+def build_group_sample_position_array(
+    *,
+    union_sample_indices: npt.NDArray[np.int64],
+    group_sample_indices: npt.NDArray[np.int64],
+) -> npt.NDArray[np.intp]:
+    """Map one group's sample order to positions in the union decode buffer."""
+    union_position_by_sample_index = {
+        int(sample_index): sample_position for sample_position, sample_index in enumerate(union_sample_indices)
+    }
+    return np.asarray(
+        [union_position_by_sample_index[int(sample_index)] for sample_index in group_sample_indices],
+        dtype=np.intp,
+    )
+
+
+def should_use_union_grouped_bgen_delivery(
+    *,
+    context: Regenie2PipelineContext,
+    grouped_run_inputs: tuple[native_dispatch.NativeBgenGroupedRunInput, ...],
+) -> bool:
+    """Return whether grouped per-phenotype delivery should use one union decode pass."""
+    if len(grouped_run_inputs) <= 1:
+        return False
+    if context.uses_packed8_genotypes:
+        return False
+    if not context.effective_trusted_no_missing_diploid:
+        return False
+    union_sample_count = int(build_union_sample_indices(grouped_run_inputs).shape[0])
+    grouped_sample_count = sum(
+        int(grouped_run_input.run_input.sample_indices.shape[0]) for grouped_run_input in grouped_run_inputs
+    )
+    return union_sample_count < grouped_sample_count
+
+
+def intersect_committed_chunk_identifier_sets(
+    committed_chunk_identifier_sets: tuple[set[int], ...],
+) -> set[int]:
+    """Return chunk identifiers already committed by every output in a delivery."""
+    if not committed_chunk_identifier_sets:
+        return set()
+    return set.intersection(*committed_chunk_identifier_sets)
+
+
+def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
+    *,
+    context: Regenie2PipelineContext,
+    engine: _core.Regenie2RunEngine,
+    grouped_run_inputs: tuple[native_dispatch.NativeBgenGroupedRunInput, ...],
+    phenotype_names: tuple[str, ...],
+    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    staging_depth: int,
+    existing_manifests: tuple[dict[str, typing.Any] | None, ...],
+    resume: bool,
+    resume_mode: types.ResumeMode,
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
+) -> tuple[Path | None, ...]:
+    """Run overlapping per-phenotype groups through one union-sample BGEN delivery."""
+    union_sample_indices = build_union_sample_indices(grouped_run_inputs)
+    logger.info(
+        "Using union per-phenotype BGEN delivery: group_count=%s union_sample_count=%s grouped_sample_count=%s.",
+        len(grouped_run_inputs),
+        int(union_sample_indices.shape[0]),
+        sum(int(grouped_run_input.run_input.sample_indices.shape[0]) for grouped_run_input in grouped_run_inputs),
+    )
+    prepared_deliveries = tuple(
+        prepare_multi_phenotype_bgen_group_delivery(
+            context=context,
+            engine=engine,
+            run_input=grouped_run_input.run_input,
+            prediction_source=grouped_run_input.prediction_source,
+            phenotype_indices=grouped_run_input.phenotype_indices,
+            phenotype_names=grouped_run_input.run_input.phenotype_names,
+            output_run_paths_by_phenotype=tuple(
+                output_run_paths_by_phenotype[phenotype_index]
+                for phenotype_index in grouped_run_input.phenotype_indices
+            ),
+            staging_depth=staging_depth,
+            existing_manifests=tuple(
+                existing_manifests[phenotype_index] for phenotype_index in grouped_run_input.phenotype_indices
+            ),
+            resume=resume,
+            resume_mode=resume_mode,
+            null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+            output_sample_mode=output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+        )
+        for grouped_run_input in grouped_run_inputs
+    )
+    group_fanouts = tuple(
+        callbacks.MultiPhenotypeGroupFanout(
+            callback=prepared_delivery.callback,
+            sample_position_array=build_group_sample_position_array(
+                union_sample_indices=union_sample_indices,
+                group_sample_indices=prepared_delivery.run_input.sample_indices,
+            ),
+        )
+        for prepared_delivery in prepared_deliveries
+    )
+    union_run_input = native_dispatch.NativeBgenUnionRunInput(sample_indices=union_sample_indices)
+    writer_sessions = tuple(
+        writer_session
+        for prepared_delivery in prepared_deliveries
+        for writer_session in prepared_delivery.writer_sessions
+    )
+    committed_chunk_identifier_sets = tuple(
+        committed_chunk_identifier_set
+        for prepared_delivery in prepared_deliveries
+        for committed_chunk_identifier_set in prepared_delivery.committed_chunk_identifier_sets
+    )
+    final_parquet_paths = native_dispatch.run_bgen_engine_with_writer_sessions(
+        engine=engine,
+        run_input=union_run_input,
+        committed_chunk_identifiers=intersect_committed_chunk_identifier_sets(committed_chunk_identifier_sets),
+        writer_sessions=writer_sessions,
+        callback=callbacks.GroupedMultiPhenotypeFanoutCallback(group_fanouts),
+        stage_timing_recorder=context.stage_timing_recorder,
+        variant_major_packed8_probability_pairs=False,
+        pipeline_label="Grouped per-phenotype union native BGEN",
+    )
+    final_parquet_paths_by_index: list[Path | None] = [None] * len(phenotype_names)
+    final_path_offset = 0
+    for prepared_delivery in prepared_deliveries:
+        group_final_paths = final_parquet_paths[
+            final_path_offset : final_path_offset + len(prepared_delivery.phenotype_indices)
+        ]
+        final_path_offset += len(prepared_delivery.phenotype_indices)
+        for phenotype_index, final_parquet_path in zip(
+            prepared_delivery.phenotype_indices,
+            group_final_paths,
+            strict=True,
+        ):
+            final_parquet_paths_by_index[phenotype_index] = final_parquet_path
+    return tuple(final_parquet_paths_by_index)
+
+
+def prepare_multi_phenotype_bgen_group_delivery(
     *,
     context: Regenie2PipelineContext,
     engine: _core.Regenie2RunEngine,
     run_input: native_dispatch.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
+    phenotype_indices: tuple[int, ...] | None,
     phenotype_names: tuple[str, ...],
     output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
     staging_depth: int,
@@ -1208,8 +1396,8 @@ def run_prepared_multi_phenotype_bgen_group(
     resume_mode: types.ResumeMode,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
     output_sample_mode: output.MultiPhenotypeSampleMode,
-) -> tuple[Path | None, ...]:
-    """Run one prepared compatible phenotype group through one BGEN pass."""
+) -> PreparedMultiPhenotypeGroupDelivery:
+    """Prepare one compatible phenotype group for native BGEN delivery."""
     log_prediction_source_loaded(context=context, phenotype_count=len(run_input.phenotype_names))
     preflight_start_time = time.perf_counter()
     logger.debug("Running preflight validation for multi-phenotype pipeline.")
@@ -1280,13 +1468,54 @@ def run_prepared_multi_phenotype_bgen_group(
             stage_timing_recorder=context.stage_timing_recorder,
             telemetry_session=context.telemetry_session,
         )
-    committed_by_every_phenotype = set.intersection(*committed_chunk_identifier_sets)
+    return PreparedMultiPhenotypeGroupDelivery(
+        phenotype_indices=phenotype_indices or tuple(range(len(phenotype_names))),
+        run_input=run_input,
+        callback=callback,
+        writer_sessions=writer_session_tuple,
+        committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+    )
+
+
+def run_prepared_multi_phenotype_bgen_group(
+    *,
+    context: Regenie2PipelineContext,
+    engine: _core.Regenie2RunEngine,
+    run_input: native_dispatch.NativeBgenMultiRunInput,
+    prediction_source: typing.Any,
+    phenotype_names: tuple[str, ...],
+    output_run_paths_by_phenotype: tuple[output.OutputRunPaths, ...],
+    staging_depth: int,
+    existing_manifests: tuple[dict[str, typing.Any] | None, ...],
+    resume: bool,
+    resume_mode: types.ResumeMode,
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
+    output_sample_mode: output.MultiPhenotypeSampleMode,
+) -> tuple[Path | None, ...]:
+    """Run one prepared compatible phenotype group through one BGEN pass."""
+    prepared_delivery = prepare_multi_phenotype_bgen_group_delivery(
+        context=context,
+        engine=engine,
+        run_input=run_input,
+        prediction_source=prediction_source,
+        phenotype_indices=None,
+        phenotype_names=phenotype_names,
+        output_run_paths_by_phenotype=output_run_paths_by_phenotype,
+        staging_depth=staging_depth,
+        existing_manifests=existing_manifests,
+        resume=resume,
+        resume_mode=resume_mode,
+        null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+        output_sample_mode=output_sample_mode,
+    )
     return run_bgen_engine_with_multi_callback(
         engine=engine,
         run_input=run_input,
-        committed_chunk_identifiers=committed_by_every_phenotype,
-        writer_sessions=writer_session_tuple,
-        callback=callback,
+        committed_chunk_identifiers=intersect_committed_chunk_identifier_sets(
+            prepared_delivery.committed_chunk_identifier_sets
+        ),
+        writer_sessions=prepared_delivery.writer_sessions,
+        callback=prepared_delivery.callback,
         stage_timing_recorder=context.stage_timing_recorder,
         writer_finish_thread_count=context.writer_settings.writer_thread_count,
         variant_major_packed8_probability_pairs=context.uses_packed8_genotypes,

@@ -252,6 +252,9 @@ def write_regenie2_multi_native_chunk(
     log10_p_value: npt.NDArray[np.float32],
     extra_code: npt.NDArray[np.int32] | None = None,
 ) -> None: ...
+def summarize_variant_major_dosage_chunk_stats(
+    genotype_matrix_by_variant: npt.NDArray[np.float32],
+) -> ChunkStats: ...
 def finalize_output_run_chunks(
     run_directory: str,
     chunks_directory: str,
