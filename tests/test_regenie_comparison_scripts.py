@@ -914,7 +914,7 @@ def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
 
 
 def test_binary_hot_benchmark_defaults_to_comparable_modes() -> None:
-    arguments = binary_hot_benchmark.build_argument_parser().parse_args([])
+    arguments = binary_hot_benchmark.build_arguments_from_overrides()
     assert arguments.device == "gpu"
     assert arguments.chunk_size == binary_hot_benchmark.config.load_packaged_config().trait.bsize
     assert arguments.output_writer_thread_count == 8
@@ -946,26 +946,17 @@ def test_binary_hot_benchmark_defaults_to_comparable_modes() -> None:
 
 
 def test_binary_hot_benchmark_expands_multi_binary_firth_sweep(tmp_path: Path) -> None:
-    arguments = binary_hot_benchmark.build_argument_parser().parse_args(
+    arguments = binary_hot_benchmark.build_arguments_from_overrides(
         [
-            "--output-dir",
-            str(tmp_path / "profile"),
-            "--phenotype-columns",
-            "trait_one,trait_two,trait_three,trait_four",
-            "--binary-trait-counts",
-            "1,2",
-            "--firth-batch-sizes",
-            "32,64",
-            "--firth-candidate-capacities",
-            "128,512",
-            "--storage-modes",
-            "variant_major,packed8",
-            "--fallback-density-scenarios",
-            "low,high",
-            "--low-fallback-p-threshold",
-            "1e-6",
-            "--high-fallback-p-threshold",
-            "0.5",
+            f"tool.output_dir={tmp_path / 'profile'}",
+            "tool.phenotype_columns=[trait_one,trait_two,trait_three,trait_four]",
+            "tool.binary_trait_counts=[1,2]",
+            "tool.firth_batch_sizes=[32,64]",
+            "tool.firth_candidate_capacities=[128,512]",
+            "tool.storage_modes=[variant_major,packed8]",
+            "tool.fallback_density_scenarios=[low,high]",
+            "tool.low_fallback_p_threshold=1e-6",
+            "tool.high_fallback_p_threshold=0.5",
         ]
     )
 
@@ -1008,14 +999,11 @@ def test_binary_hot_benchmark_expands_multi_binary_firth_sweep(tmp_path: Path) -
 
 
 def test_binary_hot_benchmark_can_disable_exact_stage_timings(tmp_path: Path) -> None:
-    arguments = binary_hot_benchmark.build_argument_parser().parse_args(
+    arguments = binary_hot_benchmark.build_arguments_from_overrides(
         [
-            "--output-dir",
-            str(tmp_path / "profile"),
-            "--stage-timing-mode",
-            "off",
-            "--jax-cache-dir",
-            str(tmp_path / "jax-cache"),
+            f"tool.output_dir={tmp_path / 'profile'}",
+            "tool.stage_timing_mode=off",
+            f"tool.jax_cache_dir={tmp_path / 'jax-cache'}",
         ]
     )
     configuration = binary_hot_benchmark.build_configuration(arguments)
@@ -1075,22 +1063,15 @@ def test_binary_hot_benchmark_can_disable_exact_stage_timings(tmp_path: Path) ->
 
 
 def test_binary_hot_benchmark_accepts_custom_genotype_inputs(tmp_path: Path) -> None:
-    arguments = binary_hot_benchmark.build_argument_parser().parse_args(
+    arguments = binary_hot_benchmark.build_arguments_from_overrides(
         [
-            "--data-dir",
-            str(tmp_path / "data"),
-            "--bgen",
-            "1kg_chr10_full.bgen",
-            "--sample",
-            "1kg_chr10_full.sample",
-            "--prediction-list",
-            "baselines_chr10/regenie_step1_pred.list",
-            "--expected-variant-count",
-            "1200000",
-            "--output-dir",
-            str(tmp_path / "profile"),
-            "--jax-cache-dir",
-            str(tmp_path / "jax-cache"),
+            f"tool.data_dir={tmp_path / 'data'}",
+            "tool.bgen=1kg_chr10_full.bgen",
+            "tool.sample=1kg_chr10_full.sample",
+            "tool.prediction_list=baselines_chr10/regenie_step1_pred.list",
+            "tool.expected_variant_count=1200000",
+            f"tool.output_dir={tmp_path / 'profile'}",
+            f"tool.jax_cache_dir={tmp_path / 'jax-cache'}",
         ]
     )
 
@@ -1108,33 +1089,21 @@ def test_binary_hot_benchmark_accepts_custom_genotype_inputs(tmp_path: Path) -> 
 
 
 def test_binary_hot_child_process_command_contains_binary_controls(tmp_path: Path) -> None:
-    arguments = binary_hot_benchmark.build_argument_parser().parse_args(
+    arguments = binary_hot_benchmark.build_arguments_from_overrides(
         [
-            "--data-dir",
-            "data",
-            "--output-dir",
-            str(tmp_path / "profile"),
-            "--device",
-            "cpu",
-            "--chunk-size",
-            "4096",
-            "--staging-depth",
-            "2",
-            "--output-writer-thread-count",
-            "4",
-            "--output-writer-queue-depth",
-            "8",
-            "--assume-trusted-validated",
-            "--firth-batch-size",
-            "64",
-            "--firth-candidate-capacity",
-            "256",
-            "--variant-limit",
-            "1000",
-            "--python-executable",
-            sys.executable,
-            "--jax-cache-dir",
-            str(tmp_path / "jax-cache"),
+            "tool.data_dir=data",
+            f"tool.output_dir={tmp_path / 'profile'}",
+            "tool.device=cpu",
+            "tool.chunk_size=4096",
+            "tool.staging_depth=2",
+            "tool.output_writer_thread_count=4",
+            "tool.output_writer_queue_depth=8",
+            "tool.assume_trusted_validated=true",
+            "tool.firth_batch_size=64",
+            "tool.firth_candidate_capacity=256",
+            "tool.variant_limit=1000",
+            f"tool.python_executable={sys.executable}",
+            f"tool.jax_cache_dir={tmp_path / 'jax-cache'}",
         ]
     )
     configuration = binary_hot_benchmark.build_configuration(arguments)
@@ -1191,13 +1160,11 @@ def test_binary_hot_output_metrics_aggregate_multi_phenotype_artifacts(tmp_path:
 
 
 def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
-    arguments = binary_hot_benchmark.build_argument_parser().parse_args(
+    arguments = binary_hot_benchmark.build_arguments_from_overrides(
         [
-            "--output-dir",
-            str(tmp_path / "profile"),
-            "--assume-trusted-validated",
-            "--jax-cache-dir",
-            str(tmp_path / "jax-cache"),
+            f"tool.output_dir={tmp_path / 'profile'}",
+            "tool.assume_trusted_validated=true",
+            f"tool.jax_cache_dir={tmp_path / 'jax-cache'}",
         ]
     )
     configuration = binary_hot_benchmark.build_configuration(arguments)
@@ -1346,7 +1313,155 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
     assert '"bsize": 4096' in command_text
     assert '"g-variant-limit": 1000' in command_text
     assert '"firth": True' in command_text
+    assert "count_artifact_rows" in command_text
+    assert "parts" in command_text
     assert "jax_probe_device_platform" in command_text
+
+
+def test_deep_profile_full_bundle_builds_profiler_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline_paths = baseline_benchmark.build_baseline_paths()
+    candidate = deep_profile.Step2Candidate(
+        trait_type="binary",
+        device="gpu",
+        chunk_size=8192,
+        staging_depth=1,
+        output_writer_thread_count=4,
+        output_writer_queue_depth=8,
+        bgen_decode_tile_variant_count=128,
+        rayon_thread_count=2,
+        firth_batch_size=64,
+    )
+    winner_command = deep_profile.build_g_step2_child_command(
+        baseline_paths=baseline_paths,
+        candidate=candidate,
+        output_prefix=tmp_path / "winner",
+        variant_limit=1000,
+    )
+    winner_trial = deep_profile.TrialResult(
+        name="winner",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        status="success",
+        wall_time_seconds=1.0,
+        output_row_count=1000,
+        stdout_log_path="stdout.log",
+        stderr_log_path="stderr.log",
+        command_arguments=winner_command,
+        environment_overrides={},
+    )
+    winner = deep_profile.AggregateResult(
+        name="winner",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        status="success",
+        trial_count=1,
+        warmup_count=0,
+        median_wall_time_seconds=1.0,
+        mean_wall_time_seconds=1.0,
+        min_wall_time_seconds=1.0,
+        max_wall_time_seconds=1.0,
+        standard_deviation_seconds=0.0,
+        rows_per_second=1000.0,
+        trials=[winner_trial],
+    )
+    arguments = deep_profile.build_arguments_from_overrides(
+        [
+            f"tool.output_dir={tmp_path / 'profile'}",
+            "tool.variant_limit=1000",
+        ]
+    )
+    logged_commands: list[tuple[str, list[str]]] = []
+    metadata_commands: list[list[str]] = []
+    jax_profile_names: list[str] = []
+
+    def fake_run_g_trial(**keyword_arguments: typing.Any) -> deep_profile.TrialResult:
+        jax_profile_names.append(str(keyword_arguments["name"]))
+        profile_command = deep_profile.build_g_step2_child_command(
+            baseline_paths=typing.cast("baseline_benchmark.BaselinePaths", keyword_arguments["baseline_paths"]),
+            candidate=typing.cast("deep_profile.Step2Candidate", keyword_arguments["candidate"]),
+            output_prefix=typing.cast("Path", keyword_arguments["output_directory"]) / str(keyword_arguments["name"]),
+            variant_limit=typing.cast("int | None", keyword_arguments["variant_limit"]),
+            cache_directory=typing.cast("Path", keyword_arguments["cache_directory"]),
+            stage_timing_path=typing.cast("Path | None", keyword_arguments.get("stage_timing_path")),
+            trace_directory=typing.cast("Path | None", keyword_arguments.get("trace_directory")),
+            memory_profile_path=typing.cast("Path | None", keyword_arguments.get("memory_profile_path")),
+        )
+        return deep_profile.TrialResult(
+            name=str(keyword_arguments["name"]),
+            implementation="g",
+            trait_type=candidate.trait_type,
+            device=candidate.device,
+            status="success",
+            wall_time_seconds=1.0,
+            output_row_count=1000,
+            stdout_log_path="stdout.log",
+            stderr_log_path="stderr.log",
+            command_arguments=profile_command,
+            environment_overrides={},
+        )
+
+    def fake_run_logged_command(**keyword_arguments: typing.Any) -> deep_profile.TrialResult:
+        logged_commands.append(
+            (
+                str(keyword_arguments["implementation"]),
+                [str(value) for value in typing.cast("list[object]", keyword_arguments["command_arguments"])],
+            )
+        )
+        return deep_profile.TrialResult(
+            name=str(keyword_arguments["name"]),
+            implementation=str(keyword_arguments["implementation"]),
+            trait_type=str(keyword_arguments["trait_type"]),
+            device=str(keyword_arguments["device"]),
+            status="success",
+            wall_time_seconds=1.0,
+            output_row_count=None,
+            stdout_log_path="stdout.log",
+            stderr_log_path="stderr.log",
+            command_arguments=typing.cast("list[str]", keyword_arguments["command_arguments"]),
+            environment_overrides=typing.cast("dict[str, str]", keyword_arguments["environment_overrides"]),
+        )
+
+    def fake_command_output(
+        command_arguments: list[str],
+        environment_overrides: dict[str, str] | None = None,
+    ) -> dict[str, typing.Any]:
+        del environment_overrides
+        metadata_commands.append(command_arguments)
+        return {"command": command_arguments, "returncode": 0, "stdout": "profile\n", "stderr": ""}
+
+    def fake_which(command_name: str) -> str | None:
+        if command_name in {"py-spy", "perf"}:
+            return f"/usr/bin/{command_name}"
+        return None
+
+    monkeypatch.setattr(deep_profile, "run_g_trial", fake_run_g_trial)
+    monkeypatch.setattr(deep_profile, "run_logged_command", fake_run_logged_command)
+    monkeypatch.setattr(deep_profile, "command_output", fake_command_output)
+    monkeypatch.setattr(deep_profile.shutil, "which", fake_which)
+
+    results = deep_profile.run_deep_profiles(
+        arguments=arguments,
+        baseline_paths=baseline_paths,
+        winners={"binary_gpu": winner},
+        output_directory=tmp_path / "profile",
+        cache_directory=tmp_path / "profile" / "jax_cache",
+    )
+
+    implementations = [implementation for implementation, _command in logged_commands]
+    assert jax_profile_names == ["profile_binary_gpu_jax"]
+    assert implementations == ["cProfile", "py-spy", "perf"]
+    assert metadata_commands[:2] == [
+        ["cargo", "bench", "--bench", "bgen_read"],
+        ["cargo", "bench", "--bench", "preprocess"],
+    ]
+    assert any(command[0] == "py-spy" and "--format" in command for _implementation, command in logged_commands)
+    assert any(command[0] == "perf" and "record" in command for _implementation, command in logged_commands)
+    assert len(results["sampling_profiles"]) == 4
 
 
 def test_deep_profile_aggregates_trial_results() -> None:

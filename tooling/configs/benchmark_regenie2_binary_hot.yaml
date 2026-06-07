@@ -1,0 +1,46 @@
+defaults:
+  - dataset: local_1kg
+  - machine: landau_gpu
+  - workload: regenie2_binary_hot
+  - telemetry: local
+  - sweep: regenie2_binary_hot_default
+  - _self_
+
+tool:
+  data_dir: ${dataset.data_directory}
+  bgen: ${dataset.bgen_file}
+  sample: ${dataset.sample_file}
+  phenotype_file: ${dataset.phenotype_file}
+  prediction_list: ${dataset.prediction_list}
+  output_dir: null
+  device: ${machine.device}
+  chunk_size: ${workload.chunk_size}
+  staging_depth: ${workload.staging_depth}
+  output_writer_thread_count: ${workload.output_writer_thread_count}
+  output_writer_queue_depth: ${workload.output_writer_queue_depth}
+  trusted_no_missing_diploid: true
+  assume_trusted_validated: false
+  phenotype_columns: ${dataset.phenotype_columns}
+  binary_trait_counts: null
+  firth_batch_size: null
+  firth_batch_sizes: null
+  firth_candidate_capacity: null
+  firth_candidate_capacities: null
+  storage_modes: ${sweep.storage_modes}
+  fallback_density_scenarios: ${sweep.fallback_density_scenarios}
+  default_fallback_p_threshold: 0.05
+  low_fallback_p_threshold: 1.0e-8
+  high_fallback_p_threshold: 0.999999
+  variant_limit: ${workload.variant_limit}
+  expected_variant_count: 418943
+  stage_timing_mode: ${telemetry.stage_timing_mode}
+  include_cold_process: true
+  include_finalized_hot: true
+  include_no_final_hot: true
+  python_executable: null
+  jax_cache_dir: null
+  json_summary_path: ${telemetry.json_summary_path}
+
+hydra:
+  job:
+    chdir: false

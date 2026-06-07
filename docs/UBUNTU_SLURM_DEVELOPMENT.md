@@ -89,8 +89,8 @@ just slurm-gpu-shell
 Run a one-off command on the GPU node:
 
 ```bash
-just slurm-gpu-run nvidia-smi
-just slurm-gpu-run uv run python scripts/probe_jax_runtime.py
+just slurm-gpu-run 'nvidia-smi'
+just slurm-gpu-run 'uv run python scripts/probe_jax_runtime.py'
 ```
 
 Run existing repo recipes on the GPU node while keeping `just` as the top-level interface:
