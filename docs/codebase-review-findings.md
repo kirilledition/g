@@ -98,12 +98,43 @@ are summarized near the end instead of kept as historical work logs.
   Firth batch sizes 32/64, and candidate capacities 512/1024: passed on
   `landau`; summary path
   `data/profiles/regenie2_binary_hot_20260607T024801Z/regenie2_binary_hot_summary.json`.
+- Two-trait chr10 50k tuning matrix over variant-major/packed8 storage,
+  Firth batch sizes 64/128/256, and candidate capacities
+  1024/2048/4096/8192/16384: passed on `landau`; summary path
+  `data/profiles/firth_large_batch_chr10_20260607/regenie2_binary_hot_summary.json`.
+- Two-trait chr22 50k tuning matrix over variant-major/packed8 storage,
+  Firth batch sizes 64/128/256/512, and candidate capacities
+  1024/2048/4096/8192/16384: passed on `landau`; summary path
+  `data/profiles/firth_large_batch_chr22_20260607/regenie2_binary_hot_summary.json`.
+- Two-trait chr10 50k tuning extension over variant-major/packed8 storage,
+  Firth batch sizes 512/1024/2048, and candidate capacities
+  1024/2048/4096/8192/16384: passed on `landau`; summary path
+  `data/profiles/firth_large_batch_chr10_ext_20260607/regenie2_binary_hot_summary.json`.
+- Two-trait chr22 50k tuning extension over variant-major/packed8 storage,
+  Firth batch sizes 1024/2048, and candidate capacities
+  1024/2048/4096/8192/16384: passed on `landau`; summary path
+  `data/profiles/firth_large_batch_chr22_ext_20260607/regenie2_binary_hot_summary.json`.
 - `git diff --check`: passed after approved archive removal and patched
   REGENIE reference relocation.
 - `uv run ruff check src/g tests --output-format=concise`: passed after
   approved archive removal and patched REGENIE reference relocation.
 - `uv run ty check src/g`: passed after approved archive removal and patched
   REGENIE reference relocation.
+- `uv run pytest tests/test_regenie_comparison_scripts.py -q`: 45 passed after
+  Firth default batch/capacity retuning.
+- `uv run pytest tests/test_interface.py tests/test_api.py -q`: 95 passed after
+  Firth default batch/capacity retuning.
+- `uv run pytest tests/test_regenie2_binary.py -q -k 'firth_candidate_capacity_uses_default or firth_candidate_capacity_overflow_matches_full_chunk_fallback'`:
+  2 passed, 50 deselected after Firth default batch/capacity retuning.
+- `uv run ruff check scripts/tune_regenie2_gpu.py scripts/profile_regenie2_deep.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
+  passed after Firth default batch/capacity retuning.
+- `uv run ty check scripts/tune_regenie2_gpu.py scripts/profile_regenie2_deep.py tests/test_regenie_comparison_scripts.py`:
+  passed after Firth default batch/capacity retuning.
+- `git diff --check`: passed after Firth default batch/capacity retuning.
+- `XDG_RUNTIME_DIR=/tmp TMPDIR=/tmp just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke`:
+  passed on `landau` with default `firth-batch-size = 1024` and
+  `firth-candidate-capacity = 2048`; summary path
+  `data/profiles/regenie2_binary_hot_20260607T035910Z/regenie2_binary_hot_summary.json`.
 
 I also fetched `origin` and confirmed the reviewed base matched `origin/main` before the
 cleanup integration. The GPU smoke, default full binary-hot benchmark, and targeted
@@ -186,14 +217,14 @@ entering the same multi correction path.
 Focused GPU validation passed on `landau`: the default full binary-hot benchmark,
 targeted chr10 and chr22 smoke runs, and two-trait 50k tuning sweeps over
 variant-major/packed8 storage all completed with `firth_candidate_dispatch_plan`
-timings and no host-sync timing. The two-trait chr10/chr22 sweeps support
-keeping the current defaults, `firth-batch-size = 64` and
-`firth-candidate-capacity = 1024`: batch 64 was consistently faster than batch
-32, and capacity 1024 did not regress hot runtime versus 512 while preserving
-headroom for high fallback density. Remaining performance risk is limited to
-larger 4/8-trait tuning sweeps if future optimization decisions need more data.
-Full overflow capacity is `trait_count * variant_count`, and both bounded and
-overflow branches are part of the jitted dispatcher.
+timings and no host-sync timing. Follow-up larger-batch tuning over chr10 and
+chr22 supports retuning the defaults to `firth-batch-size = 1024` and
+`firth-candidate-capacity = 2048`: batch 1024 was fastest on both chromosomes,
+batch 2048 regressed, and candidate capacities above 2048 did not improve hot
+runtime enough to justify the larger fixed shapes. Remaining performance risk is
+limited to larger 4/8-trait tuning sweeps if future optimization decisions need
+more data. Full overflow capacity is `trait_count * variant_count`, and both
+bounded and overflow branches are part of the jitted dispatcher.
 
 ### P2. Firth candidate capacity selection syncs to host
 

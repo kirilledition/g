@@ -126,7 +126,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--staging-depths", "--prefetch-chunks", default="1,2")
     parser.add_argument("--output-writer-thread-counts", default="1,2,4,8")
     parser.add_argument("--writer-queue-depth-multipliers", default="1,2")
-    parser.add_argument("--firth-batch-sizes", default="32,64,128")
+    parser.add_argument("--firth-batch-sizes", default="512,1024,2048")
     parser.add_argument("--bgen-decode-tile-variant-counts", default="32,64,128,256")
     parser.add_argument("--rayon-thread-counts", default="1,2,4,8")
     parser.add_argument("--bgen-benchmark-chunk-size", type=int, default=8192)
@@ -416,7 +416,7 @@ def build_g_step2_child_command(
     bgen_tile_expression = (
         "64" if candidate.bgen_decode_tile_variant_count is None else str(candidate.bgen_decode_tile_variant_count)
     )
-    firth_batch_expression = "64" if candidate.firth_batch_size is None else str(candidate.firth_batch_size)
+    firth_batch_expression = "1024" if candidate.firth_batch_size is None else str(candidate.firth_batch_size)
     rayon_thread_expression = "None" if candidate.rayon_thread_count is None else str(candidate.rayon_thread_count)
     child_code = textwrap.dedent(
         """
@@ -1035,7 +1035,7 @@ def candidate_from_aggregate_name(winner_key: str, aggregate_result: AggregateRe
         output_writer_queue_depth=read_int('"g-writer-queue-depth": ', 4),
         bgen_decode_tile_variant_count=read_int('"g-bgen-decode-tile-variant-count": ', 64),
         rayon_thread_count=read_int('"threads": ', 0) or None,
-        firth_batch_size=read_int('"g-firth-batch-size": ', 64),
+        firth_batch_size=read_int('"g-firth-batch-size": ', 1024),
     )
 
 

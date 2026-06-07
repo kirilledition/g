@@ -164,8 +164,8 @@ Examples:
 --g-trusted-bgen-validation-mode cache_on_miss
 --g-sample-key-mode fid_iid
 --g-multi-phenotype-sample-mode complete-case
---g-firth-batch-size 64
---g-firth-candidate-capacity 1024
+--g-firth-batch-size 1024
+--g-firth-candidate-capacity 2048
 --g-score-dtype float32
 --g-firth-dtype float64
 --g-bgen-decode-tile-variant-count 64
@@ -269,8 +269,8 @@ trusted-no-missing-diploid = true
 trusted-bgen-validation-mode = "cache_on_miss"
 sample-key-mode = "iid"
 multi-phenotype-sample-mode = "per-phenotype"
-firth-batch-size = 64
-firth-candidate-capacity = 1024
+firth-batch-size = 1024
+firth-candidate-capacity = 2048
 score-dtype = "float32"
 firth-dtype = "float64"
 bgen-decode-tile-variant-count = 64

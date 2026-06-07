@@ -159,7 +159,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     argument_parser.add_argument("--staging-depths", "--prefetch-chunks", default="1,2")
     argument_parser.add_argument("--output-writer-thread-counts", default="1,2,4,8")
     argument_parser.add_argument("--writer-queue-depth-multipliers", default="1,2")
-    argument_parser.add_argument("--firth-batch-sizes", default="32,64,128")
+    argument_parser.add_argument("--firth-batch-sizes", default="512,1024,2048")
     argument_parser.add_argument("--bgen-benchmark-chunk-size", type=int, default=DEFAULT_BGEN_PRE_SWEEP_CHUNK_SIZE)
     argument_parser.add_argument("--bgen-decode-tile-variant-counts", default="32,64,128,256")
     argument_parser.add_argument("--rayon-thread-counts", default="1,2,4,8")
@@ -309,7 +309,7 @@ def build_step2_child_command(
     bgen_tile_expression = (
         "64" if candidate.bgen_decode_tile_variant_count is None else str(candidate.bgen_decode_tile_variant_count)
     )
-    firth_batch_expression = "64" if candidate.firth_batch_size is None else str(candidate.firth_batch_size)
+    firth_batch_expression = "1024" if candidate.firth_batch_size is None else str(candidate.firth_batch_size)
     rayon_thread_expression = "None" if candidate.rayon_thread_count is None else str(candidate.rayon_thread_count)
     child_code = textwrap.dedent(
         """

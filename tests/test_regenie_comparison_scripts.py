@@ -974,7 +974,7 @@ def test_binary_hot_benchmark_defaults_to_comparable_modes() -> None:
     assert configuration.sample_path == Path("data/1kg_chr22_full.sample")
     assert configuration.expected_variant_count == binary_hot_benchmark.DEFAULT_VARIANT_COUNT
     assert [benchmark_case.name for benchmark_case in benchmark_cases] == [
-        "traits1_variant_major_default_batch64_capacity1024"
+        "traits1_variant_major_default_batch1024_capacity2048"
     ]
     assert benchmark_cases[0].phenotype_columns == ("phenotype_binary",)
     assert benchmark_cases[0].gpu_genotype_format == binary_hot_benchmark.types.GpuGenotypeFormat.DOSAGE
@@ -1207,7 +1207,7 @@ def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
     assert summary["headline"]["hot_same_process_no_final_seconds"] == 7.25
     assert summary["headline"]["hot_same_process_finalized_seconds"] == 7.85
     assert summary["metadata"]["configuration"]["trusted_no_missing_diploid"] is True
-    assert summary["metadata"]["configuration"]["firth_candidate_capacities"] == [1024]
+    assert summary["metadata"]["configuration"]["firth_candidate_capacities"] == [2048]
     assert summary["headline_by_case"][benchmark_case.name]["hot_same_process_finalized_seconds"] == 7.85
 
 

@@ -50,9 +50,11 @@ statistics back to trait-major `[traits, variants]` arrays.
    multi-score result.
 4. Done in `bench/multi-binary-firth-hot`: extend benchmark coverage for
    multi-binary Firth trait counts, candidate capacities, and Firth batch sizes.
-5. Done for the default full benchmark, targeted two-trait smoke, and bounded
-   chr10/chr22 two-trait 50k tuning sweeps. Run larger 1/2/4/8-trait GPU sweeps
-   only if future tuning decisions need more data.
+5. Done for the default full benchmark, targeted two-trait smoke, bounded
+   chr10/chr22 two-trait 50k tuning sweeps, and larger chr10/chr22 two-trait
+   50k batch/capacity sweeps. The larger sweeps support the current defaults
+   `firth-batch-size = 1024` and `firth-candidate-capacity = 2048`. Run larger
+   1/2/4/8-trait GPU sweeps only if future tuning decisions need more data.
 
 The completed single-trait dispatcher is the primitive the multi-binary batching
 work reuses conceptually. Multi-binary batching did not reintroduce per-trait
@@ -218,10 +220,10 @@ Remaining performance risks:
   sweeps may still be useful before deeper tuning work;
 - both bounded and overflow branches are part of one jitted dispatcher, so peak
   memory and compile behavior should be watched in larger GPU runs.
-- current two-trait chr10/chr22 50k sweeps support keeping the defaults
-  `firth-batch-size = 64` and `firth-candidate-capacity = 1024`: batch 64 was
-  consistently faster than batch 32, and capacity 1024 did not regress hot
-  runtime versus 512 while preserving headroom for high fallback density.
+- current two-trait chr10/chr22 50k sweeps support the defaults
+  `firth-batch-size = 1024` and `firth-candidate-capacity = 2048`: batch 1024
+  was fastest on both chromosomes, batch 2048 regressed, and capacities above
+  2048 did not improve hot runtime enough to justify the larger fixed shapes.
 
 Acceptance checks:
 
