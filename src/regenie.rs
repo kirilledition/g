@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -81,7 +82,7 @@ struct PredictionListEntry {
 #[derive(Debug)]
 struct LocoPredictions {
     sample_index: LocoSampleIndex,
-    chromosome_predictions: HashMap<String, Vec<f32>>,
+    chromosome_predictions: HashMap<String, Arc<[f32]>>,
 }
 
 #[derive(Debug)]
@@ -102,13 +103,13 @@ struct LocoAlignmentCache {
 
 #[derive(Debug)]
 pub struct PredictionSource {
-    chromosome_predictions: HashMap<String, Vec<f32>>,
+    chromosome_predictions: HashMap<String, Arc<[f32]>>,
 }
 
 #[derive(Debug)]
 pub struct MultiPredictionSource {
     phenotype_names: Vec<String>,
-    chromosome_predictions_by_trait: Vec<HashMap<String, Vec<f32>>>,
+    chromosome_predictions_by_trait: Vec<HashMap<String, Arc<[f32]>>>,
 }
 
 impl LocoPredictionCache {
@@ -187,7 +188,7 @@ impl PredictionSource {
 
     pub fn chromosome_predictions(&self, chromosome: &str) -> Result<&[f32], PredictionError> {
         let normalized_chromosome = normalize_chromosome(chromosome);
-        self.chromosome_predictions.get(&normalized_chromosome).map(Vec::as_slice).ok_or_else(|| {
+        self.chromosome_predictions.get(&normalized_chromosome).map(|values| values.as_ref()).ok_or_else(|| {
             let mut available_chromosomes: Vec<String> = self.chromosome_predictions.keys().cloned().collect();
             available_chromosomes.sort();
             PredictionError::MissingChromosome {
@@ -295,8 +296,9 @@ impl MultiPredictionSource {
                 });
             } else if sample_count.is_none() {
                 sample_count = Some(prediction_values.len());
+                prediction_matrix_values.reserve_exact(trait_count * prediction_values.len());
             }
-            prediction_matrix_values.extend(prediction_values);
+            prediction_matrix_values.extend_from_slice(prediction_values.as_ref());
         }
         Ok((trait_count, sample_count.unwrap_or(0), prediction_matrix_values))
     }
@@ -332,7 +334,7 @@ fn load_aligned_chromosome_predictions(
     target_family_identifiers: &[String],
     target_individual_identifiers: &[String],
     sample_key_mode: SampleKeyMode,
-) -> Result<HashMap<String, Vec<f32>>, PredictionError> {
+) -> Result<HashMap<String, Arc<[f32]>>, PredictionError> {
     let loco_predictions = loco_prediction_cache.predictions(&entry.loco_file_path)?;
     let alignment_indices = loco_alignment_cache.alignment_indices(
         &entry.loco_file_path,
@@ -347,7 +349,7 @@ fn load_aligned_chromosome_predictions(
 fn align_chromosome_predictions(
     loco_predictions: &LocoPredictions,
     alignment_indices: &[usize],
-) -> HashMap<String, Vec<f32>> {
+) -> HashMap<String, Arc<[f32]>> {
     loco_predictions
         .chromosome_predictions
         .iter()
@@ -357,11 +359,11 @@ fn align_chromosome_predictions(
         .collect()
 }
 
-fn align_prediction_values(prediction_values: &[f32], alignment_indices: &[usize]) -> Vec<f32> {
+fn align_prediction_values(prediction_values: &Arc<[f32]>, alignment_indices: &[usize]) -> Arc<[f32]> {
     if is_identity_alignment(alignment_indices, prediction_values.len()) {
-        return prediction_values.to_vec();
+        return Arc::clone(prediction_values);
     }
-    alignment_indices.iter().map(|sample_index| prediction_values[*sample_index]).collect()
+    alignment_indices.iter().map(|sample_index| prediction_values[*sample_index]).collect::<Vec<f32>>().into()
 }
 
 fn is_identity_alignment(alignment_indices: &[usize], source_sample_count: usize) -> bool {
@@ -465,7 +467,7 @@ fn parse_loco_file(loco_file_path: &Path) -> Result<LocoPredictions, PredictionE
                 })
             })
             .collect::<Result<Vec<f32>, PredictionError>>()?;
-        chromosome_predictions.insert(chromosome, prediction_values);
+        chromosome_predictions.insert(chromosome, prediction_values.into());
     }
 
     let sample_index = sample_index.ok_or_else(|| PredictionError::MissingLocoHeader(loco_file_path.to_path_buf()))?;
@@ -666,6 +668,7 @@ mod tests {
     use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::sample::SampleKeyMode;
@@ -748,6 +751,18 @@ mod tests {
         .expect("relative LOCO path should resolve from prediction-list directory");
 
         assert_eq!(source.chromosome_predictions("22").expect("chr22 predictions"), &[0.7]);
+    }
+
+    #[test]
+    fn identity_loco_alignment_reuses_prediction_buffer() {
+        let prediction_values: Arc<[f32]> = vec![1.0, 2.0, 3.0].into();
+
+        let identity_aligned_values = super::align_prediction_values(&prediction_values, &[0, 1, 2]);
+        let reordered_values = super::align_prediction_values(&prediction_values, &[2, 0]);
+
+        assert!(Arc::ptr_eq(&prediction_values, &identity_aligned_values));
+        assert!(!Arc::ptr_eq(&prediction_values, &reordered_values));
+        assert_eq!(reordered_values.as_ref(), &[3.0, 1.0]);
     }
 
     #[test]
@@ -869,8 +884,8 @@ mod tests {
         let source = MultiPredictionSource {
             phenotype_names: strings(&["first", "second"]),
             chromosome_predictions_by_trait: vec![
-                HashMap::from([("22".to_string(), vec![1.0, 2.0])]),
-                HashMap::from([("22".to_string(), vec![3.0])]),
+                HashMap::from([("22".to_string(), Arc::<[f32]>::from(vec![1.0, 2.0]))]),
+                HashMap::from([("22".to_string(), Arc::<[f32]>::from(vec![3.0]))]),
             ],
         };
         let matrix_error =

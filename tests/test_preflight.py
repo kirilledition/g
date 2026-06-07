@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -59,10 +58,11 @@ def build_run_input(
     covariate_matrix: np.ndarray | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        phenotype_vector=jnp.asarray(
-            phenotype_vector if phenotype_vector is not None else np.asarray([0.0, 1.0, 0.0], dtype=np.float32)
+        phenotype_vector=np.ascontiguousarray(
+            phenotype_vector if phenotype_vector is not None else np.asarray([0.0, 1.0, 0.0], dtype=np.float32),
+            dtype=np.float32,
         ),
-        covariate_matrix=jnp.asarray(
+        covariate_matrix=np.ascontiguousarray(
             covariate_matrix
             if covariate_matrix is not None
             else np.asarray(
@@ -72,7 +72,42 @@ def build_run_input(
                     [1.0, 2.0],
                 ],
                 dtype=np.float32,
-            )
+            ),
+            dtype=np.float32,
+        ),
+    )
+
+
+def build_multi_run_input(
+    *,
+    phenotype_matrix: np.ndarray | None = None,
+    covariate_matrix: np.ndarray | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        phenotype_matrix=np.ascontiguousarray(
+            phenotype_matrix
+            if phenotype_matrix is not None
+            else np.asarray(
+                [
+                    [0.0, 1.0, 0.0],
+                    [1.0, 0.0, 1.0],
+                ],
+                dtype=np.float32,
+            ),
+            dtype=np.float32,
+        ),
+        covariate_matrix=np.ascontiguousarray(
+            covariate_matrix
+            if covariate_matrix is not None
+            else np.asarray(
+                [
+                    [1.0, 0.0],
+                    [1.0, 1.0],
+                    [1.0, 2.0],
+                ],
+                dtype=np.float32,
+            ),
+            dtype=np.float32,
         ),
     )
 
@@ -90,6 +125,43 @@ def test_preflight_accepts_valid_binary_inputs() -> None:
     assert report.sample_count == 3
     assert report.covariate_count == 2
     assert report.chromosome_count == 1
+
+
+def test_multi_preflight_accepts_valid_trait_major_inputs() -> None:
+    report = preflight.run_regenie2_multi_preflight(
+        run_input=build_multi_run_input(),
+        prediction_source=FakePredictionSource(
+            {
+                "1": np.asarray(
+                    [
+                        [0.1, 0.2, 0.3],
+                        [0.4, 0.5, 0.6],
+                    ],
+                    dtype=np.float32,
+                )
+            }
+        ),
+        engine=FakeEngine(["1", "1"]),
+        variant_limit=None,
+        is_binary_trait=True,
+        trusted_no_missing_diploid=False,
+    )
+
+    assert report.sample_count == 3
+    assert report.covariate_count == 2
+    assert report.chromosome_count == 1
+
+
+def test_multi_preflight_validates_prediction_shape_once_per_chromosome() -> None:
+    with pytest.raises(ValueError, match=r"Prediction matrix shape for chromosome 1 is .* expected"):
+        preflight.run_regenie2_multi_preflight(
+            run_input=build_multi_run_input(),
+            prediction_source=FakePredictionSource({"1": np.zeros((2, 2), dtype=np.float32)}),
+            engine=FakeEngine(["1"]),
+            variant_limit=None,
+            is_binary_trait=False,
+            trusted_no_missing_diploid=False,
+        )
 
 
 def test_preflight_rejects_non_finite_predictions() -> None:

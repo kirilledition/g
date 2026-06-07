@@ -811,26 +811,6 @@ def run_regenie2_binary_bgen_pipeline(
     )
 
 
-@dataclass(frozen=True)
-class MultiTraitPreflightRunInput:
-    """Single-trait view over a multi-trait run input for preflight validation."""
-
-    phenotype_vector: typing.Any
-    covariate_matrix: typing.Any
-
-
-@dataclass(frozen=True)
-class SingleTraitPredictionView:
-    """Single-trait view over a multi-trait prediction source."""
-
-    prediction_source: typing.Any
-    trait_index: int
-
-    def get_chromosome_predictions(self, chromosome: str) -> typing.Any:
-        """Return one trait's aligned LOCO predictions for preflight validation."""
-        return self.prediction_source.get_chromosome_predictions(chromosome)[self.trait_index]
-
-
 def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     *,
     genotype_source_config: source.GenotypeSourceConfig,
@@ -1320,19 +1300,15 @@ def run_multi_preflight(
     variant_limit: int | None,
     trusted_no_missing_diploid: bool,
 ) -> None:
-    """Run existing single-trait preflight checks for every trait in a multi run."""
-    for trait_index in range(len(run_input.phenotype_names)):
-        preflight.run_regenie2_preflight(
-            run_input=MultiTraitPreflightRunInput(
-                phenotype_vector=run_input.phenotype_matrix[trait_index],
-                covariate_matrix=run_input.covariate_matrix,
-            ),
-            prediction_source=SingleTraitPredictionView(prediction_source, trait_index),
-            engine=engine,
-            variant_limit=variant_limit,
-            is_binary_trait=run_input.is_binary_trait,
-            trusted_no_missing_diploid=trusted_no_missing_diploid,
-        )
+    """Run shared batched preflight checks for a multi-trait run."""
+    preflight.run_regenie2_multi_preflight(
+        run_input=run_input,
+        prediction_source=prediction_source,
+        engine=engine,
+        variant_limit=variant_limit,
+        is_binary_trait=run_input.is_binary_trait,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
 
 
 def run_bgen_engine_with_multi_callback(

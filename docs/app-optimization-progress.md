@@ -22,7 +22,7 @@ This tracks the implementation campaign for
 - Wave 1 correctness and benchmark integrity: complete for F-001, F-002,
   F-003, F-004, F-005, F-023, F-024, F-026, F-031.
 - Wave 2 native boundaries and startup overhead: partial; F-006, F-010,
-  F-016, and F-041 are complete.
+  F-007, F-008, F-016, F-021, F-022, and F-041 are complete.
 - Wave 3 JAX numerics and Firth performance: partial; F-013, F-014, and
   F-015 are complete.
 - Wave 4 writer/output throughput: partial; F-018, F-030, and F-039 are
@@ -74,10 +74,28 @@ This tracks the implementation campaign for
 
 ## Remaining larger work
 
-- Pipeline architecture and batching: F-007, F-008, F-009, F-017, F-019,
-  F-020, F-021, F-022, F-028, F-032, F-033, F-038.
+- Pipeline architecture and batching: F-009, F-017, F-019, F-020, F-028,
+  F-032, F-033, F-038.
 - Packed8 and Firth compute rewrites: F-011, F-012, F-034.
 - Score-kernel/state setup rewrites: F-035.
 - Rust decode and allocation reuse: F-025, F-036, F-037, F-040.
-- LOCO buffer-sharing optimization: F-027.
+- LOCO buffer-sharing optimization: F-027 is partial.
 - Scientific parity projects: F-029.
+
+## Integration branch updates
+
+- F-007: multi-trait preflight now validates shared covariates, required
+  chromosomes, binary phenotype coding, and trait-major LOCO prediction
+  matrices once per compatible phenotype group instead of once per trait.
+- F-008: native BGEN run inputs now keep aligned phenotype and covariate arrays
+  as host NumPy arrays through preflight; callbacks explicitly place them on
+  the active JAX device during state preparation.
+- F-021: native chunk delivery can use Rust-owned aligned sample handles, so the
+  hot delivery call no longer has to pass Python `sample_indices` back into
+  Rust. The Python `sample_indices` view remains for shape metadata and tests.
+- F-022: multi-run family and individual identifiers are exposed lazily from the
+  native aligned-sample object instead of being cloned into the runtime
+  dataclass during construction.
+- F-027: identity-aligned LOCO prediction vectors now reuse shared immutable
+  buffers, and multi-trait chromosome prediction matrix construction
+  preallocates its final matrix. Repeated matrix caching remains open.

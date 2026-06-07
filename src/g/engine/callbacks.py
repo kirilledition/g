@@ -30,6 +30,7 @@ GRACEFUL_RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 300.0
 WORKER_ABORT_STOP_TIMEOUT_SECONDS = 1.0
 logger = logging.getLogger(__name__)
 type HostGenotypeBuffer = npt.NDArray[np.float32] | npt.NDArray[np.uint8]
+type HostOrDeviceFloatArray = jax.Array | npt.NDArray[np.float32]
 
 if typing.TYPE_CHECKING:
     import collections.abc
@@ -138,8 +139,15 @@ class Regenie2MultiResultWriteWorkItem:
 class NativeBgenRunInputProtocol(typing.Protocol):
     """Run input fields required by callback compute initialization."""
 
-    phenotype_vector: jax.Array
-    covariate_matrix: jax.Array
+    @property
+    def phenotype_vector(self) -> HostOrDeviceFloatArray:
+        """Return the aligned phenotype vector."""
+        ...
+
+    @property
+    def covariate_matrix(self) -> HostOrDeviceFloatArray:
+        """Return the aligned covariate design matrix."""
+        ...
 
 
 class NativeBgenMultiRunInputProtocol(typing.Protocol):
@@ -147,8 +155,16 @@ class NativeBgenMultiRunInputProtocol(typing.Protocol):
 
     phenotype_names: tuple[str, ...]
     sample_indices: npt.NDArray[np.int64]
-    phenotype_matrix: jax.Array
-    covariate_matrix: jax.Array
+
+    @property
+    def phenotype_matrix(self) -> HostOrDeviceFloatArray:
+        """Return the aligned trait-major phenotype matrix."""
+        ...
+
+    @property
+    def covariate_matrix(self) -> HostOrDeviceFloatArray:
+        """Return the aligned covariate design matrix."""
+        ...
 
 
 class RegeniePredictionSourceProtocol(typing.Protocol):
@@ -172,6 +188,11 @@ def block_until_ready(value: typing.Any) -> None:
     block_until_ready_method = getattr(value, "block_until_ready", None)
     if callable(block_until_ready_method):
         block_until_ready_method()
+
+
+def put_compute_array_on_device(array: HostOrDeviceFloatArray) -> jax.Array:
+    """Place an aligned host/JAX input array on the active JAX device."""
+    return typing.cast("jax.Array", jax.device_put(array))
 
 
 def enforce_null_logistic_nonconvergence_policy(
@@ -1068,9 +1089,11 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.writer_session = writer_session
         self.score_dtype = score_dtype
         self.linear_numerical_config = linear_numerical_config or regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG
+        covariate_matrix = put_compute_array_on_device(run_input.covariate_matrix)
+        phenotype_vector = put_compute_array_on_device(run_input.phenotype_vector)
         self.regenie_state = regenie2_linear.prepare_regenie2_linear_state(
-            covariate_matrix=run_input.covariate_matrix,
-            phenotype_vector=run_input.phenotype_vector,
+            covariate_matrix=covariate_matrix,
+            phenotype_vector=phenotype_vector,
             score_dtype=score_dtype,
         )
         self.current_chromosome: str | None = None
@@ -1333,9 +1356,11 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.committed_chunk_identifier_sets = committed_chunk_identifier_sets
         self.score_dtype = score_dtype
         self.linear_numerical_config = linear_numerical_config or regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG
+        covariate_matrix = put_compute_array_on_device(run_input.covariate_matrix)
+        phenotype_matrix = put_compute_array_on_device(run_input.phenotype_matrix)
         self.regenie_state = regenie2_linear.prepare_regenie2_multi_linear_state(
-            covariate_matrix=run_input.covariate_matrix,
-            phenotype_matrix=run_input.phenotype_matrix,
+            covariate_matrix=covariate_matrix,
+            phenotype_matrix=phenotype_matrix,
             score_dtype=score_dtype,
         )
         self.current_chromosome: str | None = None
@@ -1586,9 +1611,11 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.kernel_config = kernel_config
         self.null_logistic_nonconvergence_policy = null_logistic_nonconvergence_policy
         self.score_dtype = score_dtype
+        covariate_matrix = put_compute_array_on_device(run_input.covariate_matrix)
+        phenotype_vector = put_compute_array_on_device(run_input.phenotype_vector)
         self.regenie_state = regenie2_binary.prepare_regenie2_binary_state(
-            covariate_matrix=run_input.covariate_matrix,
-            phenotype_vector=run_input.phenotype_vector,
+            covariate_matrix=covariate_matrix,
+            phenotype_vector=phenotype_vector,
             score_dtype=score_dtype,
         )
         self.current_chromosome: str | None = None
@@ -1913,9 +1940,11 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         self.kernel_config = kernel_config
         self.null_logistic_nonconvergence_policy = null_logistic_nonconvergence_policy
         self.score_dtype = score_dtype
+        covariate_matrix = put_compute_array_on_device(run_input.covariate_matrix)
+        phenotype_matrix = put_compute_array_on_device(run_input.phenotype_matrix)
         self.regenie_state = regenie2_binary.prepare_regenie2_multi_binary_state(
-            covariate_matrix=run_input.covariate_matrix,
-            phenotype_matrix=run_input.phenotype_matrix,
+            covariate_matrix=covariate_matrix,
+            phenotype_matrix=phenotype_matrix,
             score_dtype=score_dtype,
         )
         self.current_chromosome: str | None = None

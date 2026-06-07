@@ -505,6 +505,30 @@ class FakeRunEngine:
         self.run_call_arguments.append(self.run_arguments)
         return 0
 
+    def run_bgen_variant_major_dosage_buffered_chunks_for_native_aligned_samples(
+        self,
+        aligned_sample_data: object,
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int:
+        return self.run_bgen_variant_major_dosage_buffered_chunks(
+            typing.cast("typing.Any", aligned_sample_data).sample_indices,
+            callback,
+            committed_chunk_identifiers,
+        )
+
+    def run_bgen_variant_major_dosage_buffered_chunks_for_native_multi_aligned_samples(
+        self,
+        aligned_sample_data: object,
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int:
+        return self.run_bgen_variant_major_dosage_buffered_chunks(
+            typing.cast("typing.Any", aligned_sample_data).sample_indices,
+            callback,
+            committed_chunk_identifiers,
+        )
+
     def run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
         self,
         sample_indices: np.ndarray,
@@ -515,6 +539,30 @@ class FakeRunEngine:
         self.run_arguments = (sample_indices, callback, committed_chunk_identifiers)
         self.run_call_arguments.append(self.run_arguments)
         return 0
+
+    def run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_aligned_samples(
+        self,
+        aligned_sample_data: object,
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int:
+        return self.run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+            typing.cast("typing.Any", aligned_sample_data).sample_indices,
+            callback,
+            committed_chunk_identifiers,
+        )
+
+    def run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_multi_aligned_samples(
+        self,
+        aligned_sample_data: object,
+        callback: object,
+        committed_chunk_identifiers: list[int] | None = None,
+    ) -> int:
+        return self.run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+            typing.cast("typing.Any", aligned_sample_data).sample_indices,
+            callback,
+            committed_chunk_identifiers,
+        )
 
 
 class PartialCommitDeliveringRunEngine(FakeRunEngine):
@@ -553,8 +601,8 @@ def build_native_run_input() -> native_dispatch.NativeBgenRunInput:
     return native_dispatch.NativeBgenRunInput(
         native_aligned_sample_data=typing.cast("typing.Any", build_native_aligned_sample_data()),
         sample_indices=np.asarray([1, 0], dtype=np.int64),
-        phenotype_vector=jnp.asarray([0.0, 1.0], dtype=jnp.float32),
-        covariate_matrix=jnp.asarray([[1.0], [1.0]], dtype=jnp.float32),
+        phenotype_vector=np.asarray([0.0, 1.0], dtype=np.float32),
+        covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
         is_binary_trait=False,
     )
 
@@ -579,8 +627,8 @@ def build_native_run_input_with_alignment(
     return native_dispatch.NativeBgenRunInput(
         native_aligned_sample_data=typing.cast("typing.Any", native_aligned_sample_data),
         sample_indices=np.asarray(sample_indices, dtype=np.int64),
-        phenotype_vector=jnp.asarray(phenotype_values, dtype=jnp.float32),
-        covariate_matrix=jnp.asarray(covariate_values, dtype=jnp.float32),
+        phenotype_vector=np.asarray(phenotype_values, dtype=np.float32),
+        covariate_matrix=np.asarray(covariate_values, dtype=np.float32),
         is_binary_trait=False,
     )
 
@@ -611,10 +659,8 @@ def build_grouped_run_input_from_single_trait_inputs(
             native_multi_aligned_sample_data=typing.cast("typing.Any", native_multi_aligned_sample_data),
             phenotype_names=phenotype_names,
             sample_indices=np.ascontiguousarray(native_multi_aligned_sample_data.sample_indices, dtype=np.int64),
-            family_identifiers=native_multi_aligned_sample_data.family_identifiers,
-            individual_identifiers=native_multi_aligned_sample_data.individual_identifiers,
-            phenotype_matrix=jnp.asarray(native_multi_aligned_sample_data.phenotype_matrix, dtype=jnp.float32),
-            covariate_matrix=jnp.asarray(native_multi_aligned_sample_data.covariate_matrix, dtype=jnp.float32),
+            phenotype_matrix=np.asarray(native_multi_aligned_sample_data.phenotype_matrix, dtype=np.float32),
+            covariate_matrix=np.asarray(native_multi_aligned_sample_data.covariate_matrix, dtype=np.float32),
             is_binary_trait=native_multi_aligned_sample_data.is_binary_trait,
         ),
         prediction_source=FakePredictionSource(),
@@ -636,10 +682,8 @@ def build_native_multi_run_input() -> native_dispatch.NativeBgenMultiRunInput:
         native_multi_aligned_sample_data=typing.cast("typing.Any", native_multi_aligned_sample_data),
         phenotype_names=("trait_a", "trait_b"),
         sample_indices=np.asarray([1, 0], dtype=np.int64),
-        family_identifiers=("f2", "f1"),
-        individual_identifiers=("i2", "i1"),
-        phenotype_matrix=jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.float32),
-        covariate_matrix=jnp.asarray([[1.0], [1.0]], dtype=jnp.float32),
+        phenotype_matrix=np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32),
+        covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
         is_binary_trait=False,
     )
 

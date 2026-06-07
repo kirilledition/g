@@ -80,6 +80,73 @@ def run_regenie2_preflight(
     )
 
 
+def run_regenie2_multi_preflight(
+    *,
+    run_input: typing.Any,
+    prediction_source: typing.Any,
+    engine: typing.Any,
+    variant_limit: int | None,
+    is_binary_trait: bool,
+    trusted_no_missing_diploid: bool,
+) -> PreflightReport:
+    """Validate shared and trait-major inputs before multi-trait chunk execution.
+
+    Raises:
+        ValueError: If input data are incompatible with REGENIE step 2 execution.
+
+    """
+    phenotype_matrix = np.asarray(run_input.phenotype_matrix)
+    covariate_matrix = np.asarray(run_input.covariate_matrix)
+    validate_phenotype_matrix(phenotype_matrix)
+    trait_count = int(phenotype_matrix.shape[0])
+    sample_count = int(phenotype_matrix.shape[1])
+    covariate_count = int(covariate_matrix.shape[1]) if covariate_matrix.ndim == 2 else 0
+    validate_finite_array("Phenotype matrix", phenotype_matrix)
+    validate_finite_array("Covariate matrix", covariate_matrix)
+    validate_covariate_matrix(covariate_matrix, sample_count)
+    if is_binary_trait:
+        for trait_index in range(trait_count):
+            validate_binary_phenotype(phenotype_matrix[trait_index])
+
+    required_chromosomes = collect_required_chromosomes(engine, variant_limit)
+    for chromosome in required_chromosomes:
+        prediction_matrix = np.asarray(prediction_source.get_chromosome_predictions(chromosome))
+        if prediction_matrix.shape != (trait_count, sample_count):
+            message = (
+                f"Prediction matrix shape for chromosome {chromosome} is {prediction_matrix.shape}, "
+                f"expected {(trait_count, sample_count)}."
+            )
+            raise ValueError(message)
+        validate_finite_array(f"Prediction matrix for chromosome {chromosome}", prediction_matrix)
+
+    warning_messages = build_preflight_warnings(
+        sample_count=sample_count,
+        covariate_count=covariate_count,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
+    for warning_message in warning_messages:
+        logger.warning("%s", warning_message)
+    return PreflightReport(
+        sample_count=sample_count,
+        covariate_count=covariate_count,
+        chromosome_count=len(required_chromosomes),
+        warning_messages=warning_messages,
+    )
+
+
+def validate_phenotype_matrix(phenotype_matrix: np.ndarray) -> None:
+    """Validate trait-major phenotype matrix shape."""
+    if phenotype_matrix.ndim != 2:
+        message = "Phenotype matrix must be two-dimensional."
+        raise ValueError(message)
+    if phenotype_matrix.shape[0] <= 0:
+        message = "Phenotype matrix must contain at least one trait."
+        raise ValueError(message)
+    if phenotype_matrix.shape[1] <= 0:
+        message = "Phenotype matrix must contain at least one sample."
+        raise ValueError(message)
+
+
 def validate_finite_array(label: str, values: np.ndarray) -> None:
     """Validate that an array contains only finite values."""
     if np.isfinite(values).all():

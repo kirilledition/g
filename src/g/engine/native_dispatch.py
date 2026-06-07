@@ -9,8 +9,6 @@ import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
@@ -36,9 +34,19 @@ class MultiRegeniePredictionSourceProtocol(typing.Protocol):
 
 
 class BgenDeliveryRunInputProtocol(typing.Protocol):
-    """Sample index input accepted by native BGEN chunk delivery."""
+    """Sample selection input accepted by native BGEN chunk delivery."""
 
     sample_indices: npt.NDArray[np.int64]
+
+    @property
+    def native_aligned_sample_data(self) -> _core.NativeAlignedSampleData | None:
+        """Return the native single-trait alignment handle when available."""
+        ...
+
+    @property
+    def native_multi_aligned_sample_data(self) -> _core.NativeMultiAlignedSampleData | None:
+        """Return the native multi-trait alignment handle when available."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -48,17 +56,22 @@ class NativeBgenRunInput:
     Attributes:
         native_aligned_sample_data: Rust-owned aligned sample identifiers and matrices.
         sample_indices: BGEN sample indices for native chunk delivery.
-        phenotype_vector: JAX phenotype vector.
-        covariate_matrix: JAX design matrix.
+        phenotype_vector: Host phenotype vector.
+        covariate_matrix: Host design matrix.
         is_binary_trait: Whether the run is for a binary trait.
 
     """
 
     native_aligned_sample_data: _core.NativeAlignedSampleData
     sample_indices: npt.NDArray[np.int64]
-    phenotype_vector: jax.Array
-    covariate_matrix: jax.Array
+    phenotype_vector: npt.NDArray[np.float32]
+    covariate_matrix: npt.NDArray[np.float32]
     is_binary_trait: bool
+
+    @property
+    def native_multi_aligned_sample_data(self) -> None:
+        """Return no multi-trait native alignment handle for single-trait runs."""
+        return None
 
 
 @dataclass(frozen=True)
@@ -69,10 +82,8 @@ class NativeBgenMultiRunInput:
         native_multi_aligned_sample_data: Rust-owned complete-case aligned multi-phenotype data.
         phenotype_names: Phenotype names in trait-major matrix order.
         sample_indices: BGEN sample indices for native chunk delivery.
-        family_identifiers: Family identifiers for the shared sample set.
-        individual_identifiers: Individual identifiers for the shared sample set.
-        phenotype_matrix: JAX trait-major phenotype matrix.
-        covariate_matrix: JAX shared design matrix.
+        phenotype_matrix: Host trait-major phenotype matrix.
+        covariate_matrix: Host shared design matrix.
         is_binary_trait: Whether the run is for binary traits.
 
     """
@@ -80,11 +91,24 @@ class NativeBgenMultiRunInput:
     native_multi_aligned_sample_data: _core.NativeMultiAlignedSampleData
     phenotype_names: tuple[str, ...]
     sample_indices: npt.NDArray[np.int64]
-    family_identifiers: tuple[str, ...]
-    individual_identifiers: tuple[str, ...]
-    phenotype_matrix: jax.Array
-    covariate_matrix: jax.Array
+    phenotype_matrix: npt.NDArray[np.float32]
+    covariate_matrix: npt.NDArray[np.float32]
     is_binary_trait: bool
+
+    @property
+    def native_aligned_sample_data(self) -> None:
+        """Return no single-trait native alignment handle for multi-trait runs."""
+        return None
+
+    @property
+    def family_identifiers(self) -> tuple[str, ...]:
+        """Expose family identifiers lazily for diagnostics and tests."""
+        return tuple(self.native_multi_aligned_sample_data.family_identifiers)
+
+    @property
+    def individual_identifiers(self) -> tuple[str, ...]:
+        """Expose individual identifiers lazily for diagnostics and tests."""
+        return tuple(self.native_multi_aligned_sample_data.individual_identifiers)
 
 
 @dataclass(frozen=True)
@@ -106,12 +130,12 @@ class NativeBgenGroupedRunInput:
 def build_native_bgen_run_input(
     native_aligned_sample_data: _core.NativeAlignedSampleData,
 ) -> NativeBgenRunInput:
-    """Build Python/JAX views over Rust-owned aligned sample data."""
+    """Build host Python views over Rust-owned aligned sample data."""
     return NativeBgenRunInput(
         native_aligned_sample_data=native_aligned_sample_data,
         sample_indices=np.ascontiguousarray(native_aligned_sample_data.sample_indices, dtype=np.int64),
-        phenotype_vector=jnp.asarray(native_aligned_sample_data.phenotype_vector, dtype=jnp.float32),
-        covariate_matrix=jnp.asarray(native_aligned_sample_data.covariate_matrix, dtype=jnp.float32),
+        phenotype_vector=np.ascontiguousarray(native_aligned_sample_data.phenotype_vector, dtype=np.float32),
+        covariate_matrix=np.ascontiguousarray(native_aligned_sample_data.covariate_matrix, dtype=np.float32),
         is_binary_trait=native_aligned_sample_data.is_binary_trait,
     )
 
@@ -119,15 +143,13 @@ def build_native_bgen_run_input(
 def build_native_bgen_multi_run_input(
     native_multi_aligned_sample_data: _core.NativeMultiAlignedSampleData,
 ) -> NativeBgenMultiRunInput:
-    """Build Python/JAX views over Rust-owned complete-case multi-phenotype data."""
+    """Build host Python views over Rust-owned complete-case multi-phenotype data."""
     return NativeBgenMultiRunInput(
         native_multi_aligned_sample_data=native_multi_aligned_sample_data,
         phenotype_names=tuple(native_multi_aligned_sample_data.phenotype_names),
         sample_indices=np.ascontiguousarray(native_multi_aligned_sample_data.sample_indices, dtype=np.int64),
-        family_identifiers=tuple(native_multi_aligned_sample_data.family_identifiers),
-        individual_identifiers=tuple(native_multi_aligned_sample_data.individual_identifiers),
-        phenotype_matrix=jnp.asarray(native_multi_aligned_sample_data.phenotype_matrix, dtype=jnp.float32),
-        covariate_matrix=jnp.asarray(native_multi_aligned_sample_data.covariate_matrix, dtype=jnp.float32),
+        phenotype_matrix=np.ascontiguousarray(native_multi_aligned_sample_data.phenotype_matrix, dtype=np.float32),
+        covariate_matrix=np.ascontiguousarray(native_multi_aligned_sample_data.covariate_matrix, dtype=np.float32),
         is_binary_trait=native_multi_aligned_sample_data.is_binary_trait,
     )
 
@@ -450,6 +472,76 @@ def finish_writer_sessions_interrupted(
     timing.record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)
 
 
+def run_variant_major_packed8_delivery(
+    *,
+    engine: _core.Regenie2RunEngine,
+    run_input: BgenDeliveryRunInputProtocol,
+    callback: object,
+    committed_chunk_identifier_list: list[int],
+) -> int:
+    """Run packed8 delivery using native sample alignment when available."""
+    native_multi_aligned_sample_data = getattr(run_input, "native_multi_aligned_sample_data", None)
+    if native_multi_aligned_sample_data is not None:
+        return int(
+            engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_multi_aligned_samples(
+                native_multi_aligned_sample_data,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
+        )
+    native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
+    if native_aligned_sample_data is not None:
+        return int(
+            engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_aligned_samples(
+                native_aligned_sample_data,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
+        )
+    return int(
+        engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+            run_input.sample_indices,
+            callback,
+            committed_chunk_identifiers=committed_chunk_identifier_list,
+        )
+    )
+
+
+def run_variant_major_dosage_delivery(
+    *,
+    engine: _core.Regenie2RunEngine,
+    run_input: BgenDeliveryRunInputProtocol,
+    callback: object,
+    committed_chunk_identifier_list: list[int],
+) -> int:
+    """Run dosage delivery using native sample alignment when available."""
+    native_multi_aligned_sample_data = getattr(run_input, "native_multi_aligned_sample_data", None)
+    if native_multi_aligned_sample_data is not None:
+        return int(
+            engine.run_bgen_variant_major_dosage_buffered_chunks_for_native_multi_aligned_samples(
+                native_multi_aligned_sample_data,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
+        )
+    native_aligned_sample_data = getattr(run_input, "native_aligned_sample_data", None)
+    if native_aligned_sample_data is not None:
+        return int(
+            engine.run_bgen_variant_major_dosage_buffered_chunks_for_native_aligned_samples(
+                native_aligned_sample_data,
+                callback,
+                committed_chunk_identifiers=committed_chunk_identifier_list,
+            )
+        )
+    return int(
+        engine.run_bgen_variant_major_dosage_buffered_chunks(
+            run_input.sample_indices,
+            callback,
+            committed_chunk_identifiers=committed_chunk_identifier_list,
+        )
+    )
+
+
 def abort_callback(callback: object) -> None:
     """Request callback worker shutdown when supported."""
     abort_callback_method = getattr(callback, "abort", None)
@@ -499,16 +591,18 @@ def run_bgen_engine_with_writer_sessions(
         )
         start_callback(callback)
         if variant_major_packed8_probability_pairs:
-            processed_chunk_count = engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
-                run_input.sample_indices,
-                callback,
-                committed_chunk_identifiers=committed_chunk_identifier_list,
+            processed_chunk_count = run_variant_major_packed8_delivery(
+                engine=engine,
+                run_input=run_input,
+                callback=callback,
+                committed_chunk_identifier_list=committed_chunk_identifier_list,
             )
         else:
-            processed_chunk_count = engine.run_bgen_variant_major_dosage_buffered_chunks(
-                run_input.sample_indices,
-                callback,
-                committed_chunk_identifiers=committed_chunk_identifier_list,
+            processed_chunk_count = run_variant_major_dosage_delivery(
+                engine=engine,
+                run_input=run_input,
+                callback=callback,
+                committed_chunk_identifier_list=committed_chunk_identifier_list,
             )
         timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
         logger.debug("%s delivery finished: processed_chunk_count=%s.", pipeline_label, processed_chunk_count)

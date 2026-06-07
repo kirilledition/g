@@ -696,19 +696,44 @@ impl Regenie2RunEngine {
         committed_chunk_identifiers: Option<Vec<usize>>,
     ) -> PyResult<usize> {
         let sample_index_values = sample_indices.as_slice()?.to_vec();
-        self.engine.reader().prepare_sample_selection(&sample_index_values).map_err(convert_bgen_error)?;
-
-        let run_result = self.run_prepared_bgen_variant_major_dosage_buffered_chunks(
+        self.run_bgen_variant_major_dosage_buffered_chunks_for_sample_indices(
             py,
             &sample_index_values,
             callback,
             committed_chunk_identifiers,
-        );
-        let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
-        match (run_result, clear_result) {
-            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
-            (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
-        }
+        )
+    }
+
+    #[pyo3(signature = (aligned_sample_data, callback, committed_chunk_identifiers=None))]
+    fn run_bgen_variant_major_dosage_buffered_chunks_for_native_aligned_samples<'py>(
+        &self,
+        py: Python<'py>,
+        aligned_sample_data: PyRef<'py, NativeAlignedSampleData>,
+        callback: &Bound<'py, PyAny>,
+        committed_chunk_identifiers: Option<Vec<usize>>,
+    ) -> PyResult<usize> {
+        self.run_bgen_variant_major_dosage_buffered_chunks_for_sample_indices(
+            py,
+            &aligned_sample_data.data.sample_indices,
+            callback,
+            committed_chunk_identifiers,
+        )
+    }
+
+    #[pyo3(signature = (aligned_sample_data, callback, committed_chunk_identifiers=None))]
+    fn run_bgen_variant_major_dosage_buffered_chunks_for_native_multi_aligned_samples<'py>(
+        &self,
+        py: Python<'py>,
+        aligned_sample_data: PyRef<'py, NativeMultiAlignedSampleData>,
+        callback: &Bound<'py, PyAny>,
+        committed_chunk_identifiers: Option<Vec<usize>>,
+    ) -> PyResult<usize> {
+        self.run_bgen_variant_major_dosage_buffered_chunks_for_sample_indices(
+            py,
+            &aligned_sample_data.data.sample_indices,
+            callback,
+            committed_chunk_identifiers,
+        )
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -721,19 +746,44 @@ impl Regenie2RunEngine {
         committed_chunk_identifiers: Option<Vec<usize>>,
     ) -> PyResult<usize> {
         let sample_index_values = sample_indices.as_slice()?.to_vec();
-        self.engine.reader().prepare_sample_selection(&sample_index_values).map_err(convert_bgen_error)?;
-
-        let run_result = self.run_prepared_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+        self.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_sample_indices(
             py,
             &sample_index_values,
             callback,
             committed_chunk_identifiers,
-        );
-        let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
-        match (run_result, clear_result) {
-            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
-            (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
-        }
+        )
+    }
+
+    #[pyo3(signature = (aligned_sample_data, callback, committed_chunk_identifiers=None))]
+    fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_aligned_samples<'py>(
+        &self,
+        py: Python<'py>,
+        aligned_sample_data: PyRef<'py, NativeAlignedSampleData>,
+        callback: &Bound<'py, PyAny>,
+        committed_chunk_identifiers: Option<Vec<usize>>,
+    ) -> PyResult<usize> {
+        self.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_sample_indices(
+            py,
+            &aligned_sample_data.data.sample_indices,
+            callback,
+            committed_chunk_identifiers,
+        )
+    }
+
+    #[pyo3(signature = (aligned_sample_data, callback, committed_chunk_identifiers=None))]
+    fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_multi_aligned_samples<'py>(
+        &self,
+        py: Python<'py>,
+        aligned_sample_data: PyRef<'py, NativeMultiAlignedSampleData>,
+        callback: &Bound<'py, PyAny>,
+        committed_chunk_identifiers: Option<Vec<usize>>,
+    ) -> PyResult<usize> {
+        self.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_sample_indices(
+            py,
+            &aligned_sample_data.data.sample_indices,
+            callback,
+            committed_chunk_identifiers,
+        )
     }
 }
 
@@ -897,10 +947,54 @@ impl MultiRegeniePredictionSource {
 }
 
 impl Regenie2RunEngine {
-    fn run_prepared_bgen_variant_major_dosage_buffered_chunks<'py>(
+    fn run_bgen_variant_major_dosage_buffered_chunks_for_sample_indices<'py>(
         &self,
         py: Python<'py>,
         sample_index_values: &[i64],
+        callback: &Bound<'py, PyAny>,
+        committed_chunk_identifiers: Option<Vec<usize>>,
+    ) -> PyResult<usize> {
+        self.engine.reader().prepare_sample_selection(sample_index_values).map_err(convert_bgen_error)?;
+
+        let run_result = self.run_prepared_bgen_variant_major_dosage_buffered_chunks(
+            py,
+            sample_index_values.len(),
+            callback,
+            committed_chunk_identifiers,
+        );
+        let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
+        match (run_result, clear_result) {
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+            (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
+        }
+    }
+
+    fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_sample_indices<'py>(
+        &self,
+        py: Python<'py>,
+        sample_index_values: &[i64],
+        callback: &Bound<'py, PyAny>,
+        committed_chunk_identifiers: Option<Vec<usize>>,
+    ) -> PyResult<usize> {
+        self.engine.reader().prepare_sample_selection(sample_index_values).map_err(convert_bgen_error)?;
+
+        let run_result = self.run_prepared_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+            py,
+            sample_index_values.len(),
+            callback,
+            committed_chunk_identifiers,
+        );
+        let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
+        match (run_result, clear_result) {
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+            (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
+        }
+    }
+
+    fn run_prepared_bgen_variant_major_dosage_buffered_chunks<'py>(
+        &self,
+        py: Python<'py>,
+        selected_sample_count: usize,
         callback: &Bound<'py, PyAny>,
         committed_chunk_identifiers: Option<Vec<usize>>,
     ) -> PyResult<usize> {
@@ -909,19 +1003,15 @@ impl Regenie2RunEngine {
         for chunk_spec in &chunk_specs {
             py.check_signals()?;
             let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
-            let output_array_object = callback.call_method1(
-                "acquire_variant_major_dosage_buffer",
-                (selected_variant_count, sample_index_values.len()),
-            )?;
+            let output_array_object = callback
+                .call_method1("acquire_variant_major_dosage_buffer", (selected_variant_count, selected_sample_count))?;
             let stats = {
                 let mut output_array = output_array_object.extract::<PyReadwriteArray2<'_, f32>>()?;
                 let output_shape = output_array.shape();
-                if output_shape != [selected_variant_count, sample_index_values.len()] {
+                if output_shape != [selected_variant_count, selected_sample_count] {
                     return Err(PyValueError::new_err(format!(
                         "Reusable variant-major BGEN dosage buffer shape mismatch: expected ({selected_variant_count}, {}), observed ({}, {}).",
-                        sample_index_values.len(),
-                        output_shape[0],
-                        output_shape[1],
+                        selected_sample_count, output_shape[0], output_shape[1],
                     )));
                 }
                 if !output_array.is_c_contiguous() {
@@ -968,7 +1058,7 @@ impl Regenie2RunEngine {
     fn run_prepared_bgen_variant_major_packed8_probability_pair_buffered_chunks<'py>(
         &self,
         py: Python<'py>,
-        sample_index_values: &[i64],
+        selected_sample_count: usize,
         callback: &Bound<'py, PyAny>,
         committed_chunk_identifiers: Option<Vec<usize>>,
     ) -> PyResult<usize> {
@@ -979,18 +1069,15 @@ impl Regenie2RunEngine {
             let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
             let output_array_object = callback.call_method1(
                 "acquire_variant_major_packed8_probability_pair_buffer",
-                (selected_variant_count, sample_index_values.len()),
+                (selected_variant_count, selected_sample_count),
             )?;
             let stats = {
                 let mut output_array = output_array_object.extract::<PyReadwriteArray3<'_, u8>>()?;
                 let output_shape = output_array.shape();
-                if output_shape != [selected_variant_count, sample_index_values.len(), 2] {
+                if output_shape != [selected_variant_count, selected_sample_count, 2] {
                     return Err(PyValueError::new_err(format!(
                         "Reusable variant-major BGEN packed8 probability-pair buffer shape mismatch: expected ({selected_variant_count}, {}, 2), observed ({}, {}, {}).",
-                        sample_index_values.len(),
-                        output_shape[0],
-                        output_shape[1],
-                        output_shape[2],
+                        selected_sample_count, output_shape[0], output_shape[1], output_shape[2],
                     )));
                 }
                 if !output_array.is_c_contiguous() {
