@@ -1,7 +1,8 @@
 # SIMD Optimization Reference
 
-Date: 2026-05-23
-Host for benchmarks: `cantor`
+Date: 2026-06-08
+Latest benchmark host: `landau`
+Original AVX2 selection host: `cantor`
 
 This document is the authoritative reference for SIMD work tried in the Rust BGEN and preprocessing paths. It merges the
 old planning notes, benchmark results, and follow-up opportunity audit so future work can quickly see what was tested,
@@ -12,7 +13,8 @@ what was kept, and what should not be repeated without new profiling evidence.
 - AVX2 is the only production x86 SIMD target.
 - Scalar fallbacks remain for non-AVX2 platforms.
 - AVX-512 is not a production target. It was tried before this reference was written and was slower than AVX2 for this
-  workload.
+  workload. A fresh `landau` pass on 2026-06-08 found that AVX-512 is available on the target CPU, but wider AVX-512
+  decode/copy prototypes still regressed adjacent reader benchmark groups, so the AVX2-only policy remains.
 - Runtime benchmark switches were removed after selecting the winning implementations.
 - SIMD code should stay isolated in small Rust modules or helpers using `std::arch` and runtime
   `is_x86_feature_detected!("avx2")` checks.
@@ -40,6 +42,52 @@ what was kept, and what should not be repeated without new profiling evidence.
 | Output writing/finalization | Hand-written SIMD | No | Dominated by Arrow/Parquet, allocation, strings, and I/O | Not a SIMD target |
 | Sample alignment/LOCO loading | Hand-written SIMD | No | Dominated by CSV/text parsing, hash maps, and joins | Not a SIMD target |
 | BGEN metadata/index parsing | Hand-written SIMD | No | Control-flow and string-bound | Not a SIMD target |
+
+## 2026-06-08 Landau Review
+
+GLA-7 reopened SIMD review for instruction sets actually present on `landau`. The original implementation at
+`fc0c49a54f82ad9463e29c04fb7507f3f7bd4657` was benchmarked before any source changes. The worktree used
+`RUSTFLAGS="-C target-cpu=native"` and `CARGO_BUILD_JOBS=40`; benchmarks used
+`/mnt/beegfs/kirill/Projects/g/data/1kg_chr22_full.bgen` with the matching `.sample` file.
+
+`landau` CPU metadata from Slurm:
+
+- CPU: Intel Xeon Gold 5220, 2 sockets, 18 cores per socket, 2 threads per core.
+- Rust: `rustc 1.96.0 (ac68faa20 2026-05-25)`, LLVM 22.1.2.
+- SIMD flags include `avx`, `avx2`, `avx512f`, `avx512dq`, `avx512cd`, `avx512bw`, `avx512vl`, and `avx512_vnni`.
+
+Original baseline medians in milliseconds:
+
+| group | 1024 | 2048 | 4096 | 8192 | 16384 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `bgen_preprocessed_variant_major_trusted_disabled` | 2.179 | 1.807 | 3.412 | 5.576 | 10.815 |
+| `bgen_preprocessed_variant_major_trusted_no_missing_diploid` | 2.089 | 1.811 | 3.403 | 5.580 | 10.854 |
+| `bgen_preprocessed_variant_major_packed8_trusted_no_missing_diploid` | 2.173 | 1.793 | 3.310 | 5.315 | 10.274 |
+| `bgen_preprocessed_variant_major_contiguous_subset_trusted_disabled` | 1.957 | 1.719 | 3.166 | 5.037 | 9.866 |
+| `bgen_preprocessed_variant_major_contiguous_subset_trusted_no_missing_diploid` | 1.987 | 1.692 | 3.116 | 4.967 | 10.025 |
+| `bgen_preprocessed_variant_major_strided_subset_trusted_disabled` | 3.507 | 3.428 | 5.053 | 8.685 | 16.472 |
+| `bgen_row_major_tile_copy` | 2.971 | 2.625 | 4.771 | 9.047 | 16.394 |
+| `bgen_row_major_direct_write` | 4.269 | 4.533 | 12.422 | 34.736 | 127.166 |
+
+AVX-512 was prototyped after the baseline using the same node, data, build flags, benchmark filter, sample size, warm-up,
+and measurement time. Negative percentages below mean faster than the original baseline; positive percentages mean
+slower.
+
+| candidate | Improvements observed | Regressions observed | Decision |
+| --- | --- | --- | --- |
+| Broad AVX-512 dispatch for raw 8-bit decode, packed8 copy-summary, and all-present diploid scan | Trusted full-sample and packed8 groups often improved by about 3-6% at larger chunks | `bgen_row_major_direct_write/8192` regressed about 40.7%; `bgen_preprocessed_variant_major_strided_subset_trusted_disabled` regressed about 15.3% at 4096, 5.0% at 8192, and 7.2% at 16384; several trusted strided groups also regressed | Rejected |
+| Narrow AVX-512 dispatch for raw 8-bit decode and packed8 copy-summary only, leaving ploidy scan on AVX2 | `bgen_preprocessed_variant_major_trusted_disabled` improved about 4.2-4.8% at 4096-16384; trusted no-missing improved about 4.4-4.5% at 8192-16384; packed8 trusted improved about 4.1% at 8192 and 2.4% at 16384 | `bgen_row_major_direct_write/8192` still regressed about 22.5%; adjacent trusted strided groups regressed, including trusted dosage strided at 4096 and 16384 and packed8 strided at 1024 | Rejected |
+
+After refreshing the documentation-only final branch to `origin/main` at `5a69b16c`, the same `landau` Criterion command
+was rerun with `--baseline gla7-original` and no AVX-512 production code. That no-code comparison still showed mixed
+small changes and an isolated `bgen_row_major_direct_write/8192` regression of about 23.8%, so that single benchmark
+point should be treated as noisy current-main drift rather than as the sole AVX-512 rejection signal. The AVX-512
+decision rests on the full pattern: no reproducible clean reader-level win across the required groups, plus adjacent
+strided/subset regressions in the candidate runs.
+
+Decision: no production code changed in GLA-7. The available AVX-512 support on `landau` does not justify replacing the
+current AVX2 production paths because the wider kernels do not produce clean reader-level wins without adjacent
+regressions. Keep AVX2 as the only x86 production SIMD target, with scalar fallbacks.
 
 ## Core BGEN Math
 
