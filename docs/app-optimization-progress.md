@@ -23,8 +23,8 @@ This tracks the implementation campaign for
   F-003, F-004, F-005, F-023, F-024, F-026, F-031.
 - Wave 2 native boundaries and startup overhead: partial; F-006, F-010,
   F-007, F-008, F-016, F-021, F-022, and F-041 are complete.
-- Wave 3 JAX numerics and Firth performance: partial; F-011, F-013, F-014,
-  and F-015 are complete.
+- Wave 3 JAX numerics and Firth performance: partial; F-011, F-012, F-013,
+  F-014, F-015, F-033, F-034, and F-035 are complete.
 - Wave 4 writer/output throughput: partial; F-018, F-019, F-020, F-030,
   F-038, and F-039 are complete.
 - Wave 5 Rust decode and larger architecture: partial; F-017, F-025, F-036,
@@ -99,6 +99,19 @@ This tracks the implementation campaign for
   reuse native dosage/observation stats for flip decisions, and decode only the
   fixed-capacity Firth candidate rows for correction lanes instead of handing a
   full dense decoded chunk into the correction path.
+- Implemented lazy scalar approximate-Firth fallback execution with
+  `jax.lax.cond` stages. Pseudo-Firth, zero-start Newton, and warm-start Newton
+  are guarded by solver state instead of being selected only after eager
+  execution.
+- Implemented chromosome-state cached full null deviance for scalar and
+  multi-trait approximate-Firth candidate batches, removing repeated per-chunk
+  null-deviance recomputation.
+- Implemented chromosome-state cached score right-hand matrices for binary and
+  linear score kernels, so per-chunk score functions reuse prepared stacked
+  projection/weight/residual matrices.
+- Split single-trait Firth overflow candidate correction into separate
+  variant-major and packed8 overflow executables. Common tiny/small/bounded
+  dispatch no longer compiles the overflow branch.
 
 ## Validation
 
@@ -134,12 +147,19 @@ This tracks the implementation campaign for
   `. scripts/server_env.sh && cargo test --lib --quiet` passed with 104 tests;
   `. scripts/server_env.sh && cargo test --test rust_python_bindings --quiet`
   passed with 1 test.
+- F-033 focused validation:
+  `uv run pytest tests/test_regenie2_binary.py -q -k "overflow_uses_separate or candidate_capacity_plan or device_dispatch_plan"`
+  passed with 9 tests.
+- F-033 broader validation:
+  `uv run pytest tests/test_regenie2_binary.py tests/test_regenie2_binary_scalar_firth.py tests/test_regenie2_binary_firth_null.py -q`
+  passed with 72 tests, 1 skipped, and 1 existing JAX donation warning.
+- F-033 scoped checks:
+  `uv run ruff check ...`, `uv run ruff format --check ...`, and
+  `uv run ty check ...` passed for the touched binary compute and test files.
 
 ## Remaining larger work
 
-- Pipeline architecture and batching: F-032, F-033.
-- Packed8 and Firth compute rewrites: F-012, F-034.
-- Score-kernel/state setup rewrites: F-035.
+- Pipeline architecture and batching: F-032.
 - Rust decode and allocation reuse: F-025, F-036, F-037, F-040 are implemented
   and integrated; deeper reusable stats-buffer ownership remains a future
   design item because returned chunk stats can outlive the next reader call.
@@ -179,3 +199,13 @@ This tracks the implementation campaign for
   entrypoints. Candidate correction batches gather packed rows, decode only
   candidate lanes, and reuse supplied native `dosage_sum`/`observation_count`
   for REGENIE allele-flip decisions.
+- F-012: scalar approximate-Firth fallback attempts are staged with
+  `jax.lax.cond`; zero-start and warm-start Newton work is only reached when
+  earlier stages fail.
+- F-034: chromosome states carry full null deviance values used by Firth
+  candidate batches, avoiding repeated null-deviance work in chunk preparation.
+- F-035: binary and linear chromosome states carry prebuilt score right-hand
+  matrices used by per-chunk score kernels.
+- F-033: single-trait variant-major and packed8 Firth correction wrappers route
+  overflow candidate counts to dedicated overflow executables before entering
+  the common tiny/small/bounded JIT dispatcher.
