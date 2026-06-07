@@ -196,7 +196,7 @@ impl PredictionSource {
 
     pub fn chromosome_predictions(&self, chromosome: &str) -> Result<&[f32], PredictionError> {
         let normalized_chromosome = normalize_chromosome(chromosome);
-        self.chromosome_predictions.get(&normalized_chromosome).map(|values| values.as_ref()).ok_or_else(|| {
+        self.chromosome_predictions.get(&normalized_chromosome).map(std::convert::AsRef::as_ref).ok_or_else(|| {
             let mut available_chromosomes: Vec<String> = self.chromosome_predictions.keys().cloned().collect();
             available_chromosomes.sort();
             PredictionError::MissingChromosome {

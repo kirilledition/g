@@ -186,10 +186,7 @@ pub(crate) fn write_regenie2_multi_native_chunk(
         let standard_error_array = build_copied_arrow_array::<f32, Float32Type>(standard_error_slice);
         let chi_squared_array = build_copied_arrow_array::<f32, Float32Type>(chi_squared_slice);
         let log10_p_value_array = build_copied_arrow_array::<f32, Float32Type>(log10_p_value_slice);
-        let extra_code_array = match extra_code_slice {
-            None => None,
-            Some(extra_code_slice_values) => Some(build_copied_arrow_array::<i32, Int32Type>(extra_code_slice_values)),
-        };
+        let extra_code_array = extra_code_slice.map(build_copied_arrow_array::<i32, Int32Type>);
         writer_sessions[trait_index]
             .inner
             .write_regenie2_native_chunk_handle_arrays(

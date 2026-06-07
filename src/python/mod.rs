@@ -66,6 +66,7 @@ impl ChunkStats {
 }
 
 #[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
 fn summarize_variant_major_dosage_chunk_stats(
     genotype_matrix_by_variant: PyReadonlyArray2<'_, f32>,
 ) -> PyResult<ChunkStats> {
@@ -732,6 +733,7 @@ impl Regenie2RunEngine {
     }
 
     #[pyo3(signature = (aligned_sample_data, callback, committed_chunk_identifiers=None))]
+    #[allow(clippy::needless_pass_by_value)]
     fn run_bgen_variant_major_dosage_buffered_chunks_for_native_aligned_samples<'py>(
         &self,
         py: Python<'py>,
@@ -748,6 +750,7 @@ impl Regenie2RunEngine {
     }
 
     #[pyo3(signature = (aligned_sample_data, callback, committed_chunk_identifiers=None))]
+    #[allow(clippy::needless_pass_by_value)]
     fn run_bgen_variant_major_dosage_buffered_chunks_for_native_multi_aligned_samples<'py>(
         &self,
         py: Python<'py>,
@@ -782,6 +785,7 @@ impl Regenie2RunEngine {
     }
 
     #[pyo3(signature = (aligned_sample_data, callback, committed_chunk_identifiers=None))]
+    #[allow(clippy::needless_pass_by_value)]
     fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_aligned_samples<'py>(
         &self,
         py: Python<'py>,
@@ -798,6 +802,7 @@ impl Regenie2RunEngine {
     }
 
     #[pyo3(signature = (aligned_sample_data, callback, committed_chunk_identifiers=None))]
+    #[allow(clippy::needless_pass_by_value)]
     fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_multi_aligned_samples<'py>(
         &self,
         py: Python<'py>,

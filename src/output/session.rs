@@ -376,9 +376,6 @@ impl OutputWriterSession {
         let completion_tracker = OutputWriteCompletionTracker::new();
         let coordinator_worker_errors = Arc::clone(&worker_errors);
         let coordinator_stage_timings = Arc::clone(&stage_timings);
-        let coordinator_chunks_per_arrow_file = config.chunks_per_arrow_file;
-        let coordinator_output_format = config.output_format;
-        let coordinator_collect_stage_timings = config.collect_stage_timings;
         let coordinator_config = config.clone();
         let coordinator_writer_pool = Arc::clone(&writer_pool);
         let coordinator_worker_commits = Arc::clone(&worker_commits);
@@ -388,12 +385,9 @@ impl OutputWriterSession {
                 receiver,
                 coordinator_writer_pool,
                 coordinator_config,
-                coordinator_chunks_per_arrow_file,
-                coordinator_output_format,
                 coordinator_worker_errors,
                 coordinator_worker_commits,
                 coordinator_stage_timings,
-                coordinator_collect_stage_timings,
                 coordinator_completion_tracker,
             );
         });
@@ -831,29 +825,24 @@ fn run_output_writer_coordinator(
     receiver: Receiver<OutputCoordinatorJob>,
     writer_pool: Arc<OutputWriterPool>,
     config: OutputWriterConfig,
-    chunks_per_arrow_file: usize,
-    output_format: OutputFileFormat,
     worker_errors: Arc<Mutex<Vec<String>>>,
     worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
     stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
-    collect_stage_timings: bool,
     completion_tracker: OutputWriteCompletionTracker,
 ) {
-    let mut pending_chunks = Vec::with_capacity(chunks_per_arrow_file);
+    let mut pending_chunks = Vec::with_capacity(config.chunks_per_arrow_file);
     while let Ok(job) = receiver.recv() {
         match job {
             OutputCoordinatorJob::RegenieStep2(chunk_job) => {
                 pending_chunks.push(*chunk_job);
-                if pending_chunks.len() >= chunks_per_arrow_file
+                if pending_chunks.len() >= config.chunks_per_arrow_file
                     && flush_pending_regenie_step2_chunks(
                         &writer_pool,
                         &mut pending_chunks,
                         &config,
-                        output_format,
                         &worker_errors,
                         &worker_commits,
                         &stage_timings,
-                        collect_stage_timings,
                         &completion_tracker,
                     )
                     .is_err()
@@ -866,11 +855,9 @@ fn run_output_writer_coordinator(
                     &writer_pool,
                     &mut pending_chunks,
                     &config,
-                    output_format,
                     &worker_errors,
                     &worker_commits,
                     &stage_timings,
-                    collect_stage_timings,
                     &completion_tracker,
                 );
                 break;
@@ -884,21 +871,19 @@ fn flush_pending_regenie_step2_chunks(
     writer_pool: &OutputWriterPool,
     pending_chunks: &mut Vec<RegenieStep2ChunkJob>,
     config: &OutputWriterConfig,
-    output_format: OutputFileFormat,
     worker_errors: &Arc<Mutex<Vec<String>>>,
     worker_commits: &Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
     stage_timings: &Arc<Mutex<OutputStageTimingAccumulator>>,
-    collect_stage_timings: bool,
     completion_tracker: &OutputWriteCompletionTracker,
 ) -> Result<(), ()> {
     if pending_chunks.is_empty() {
         return Ok(());
     }
-    let flush_start_time = start_optional_timing(collect_stage_timings);
+    let flush_start_time = start_optional_timing(config.collect_stage_timings);
     let first_chunk_identifier = pending_chunks.first().map_or(0, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
     let last_chunk_identifier =
         pending_chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
-    let chunk_file_name = build_output_file_name(output_format, first_chunk_identifier, last_chunk_identifier);
+    let chunk_file_name = build_output_file_name(config.output_format, first_chunk_identifier, last_chunk_identifier);
     let write_batch = RegenieStep2ChunkWriteBatch { chunk_file_name, chunks: std::mem::take(pending_chunks) };
     completion_tracker.increment().map_err(|error| {
         push_worker_error(worker_errors, error.to_string());
@@ -936,7 +921,7 @@ fn run_output_writer_worker(receiver: Receiver<OutputWriteJob>) {
     while let Ok(job) = receiver.recv() {
         match job {
             OutputWriteJob::RegenieStep2(output_write_task) => run_output_write_task(*output_write_task),
-        };
+        }
     }
 }
 

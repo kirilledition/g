@@ -137,12 +137,12 @@ struct VariantMajorDecodeAccumulator {
 }
 
 impl VariantMajorDecodeAccumulator {
-    fn merge_tile_result(&mut self, decode_result: VariantMajorTileDecodeResult) {
+    fn merge_tile_result(&mut self, decode_result: &VariantMajorTileDecodeResult) {
         self.profile_snapshot.merge_from(&decode_result.profile_snapshot);
         self.has_missing_values |= decode_result.has_missing_values;
     }
 
-    fn merge_accumulator(mut self, other: Self) -> Self {
+    fn merge_accumulator(mut self, other: &Self) -> Self {
         self.profile_snapshot.merge_from(&other.profile_snapshot);
         self.has_missing_values |= other.has_missing_values;
         self
@@ -650,11 +650,11 @@ impl BgenReaderCore {
                 },
             )
             .try_fold(VariantMajorDecodeAccumulator::default, |mut accumulator, decode_result| {
-                accumulator.merge_tile_result(decode_result?);
+                accumulator.merge_tile_result(&decode_result?);
                 Ok::<VariantMajorDecodeAccumulator, BgenError>(accumulator)
             })
             .try_reduce(VariantMajorDecodeAccumulator::default, |left, right| {
-                Ok::<VariantMajorDecodeAccumulator, BgenError>(left.merge_accumulator(right))
+                Ok::<VariantMajorDecodeAccumulator, BgenError>(left.merge_accumulator(&right))
             })?;
         request.plan.profiling.merge_thread_local_snapshot(&decode_accumulator.profile_snapshot);
         Ok(decode_accumulator.has_missing_values)
@@ -730,11 +730,11 @@ impl BgenReaderCore {
                 },
             )
             .try_fold(VariantMajorDecodeAccumulator::default, |mut accumulator, decode_result| {
-                accumulator.merge_tile_result(decode_result?);
+                accumulator.merge_tile_result(&decode_result?);
                 Ok::<VariantMajorDecodeAccumulator, BgenError>(accumulator)
             })
             .try_reduce(VariantMajorDecodeAccumulator::default, |left, right| {
-                Ok::<VariantMajorDecodeAccumulator, BgenError>(left.merge_accumulator(right))
+                Ok::<VariantMajorDecodeAccumulator, BgenError>(left.merge_accumulator(&right))
             })?;
         request.plan.profiling.merge_thread_local_snapshot(&decode_accumulator.profile_snapshot);
         Ok(())
