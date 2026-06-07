@@ -522,13 +522,21 @@ work:
   timings.
 - Graceful callback worker joins now allow cold no-exact JAX compile/drain
   windows to finish without tripping the short abort timeout.
+- Custom-kernel opportunities were re-reviewed after the compute refactor and
+  documented in `docs/custom-kernel-optimization-plan.md`. Packed8 score
+  reduction fusion remains the safest first kernel experiment; Firth kernels
+  remain viable only after profiler traces show solver reductions or compact
+  sparse carrier work dominate high-Firth runs.
 
 ## Suggested Implementation Order
 
 1. Keep public output statistics float32 unless a future user requirement explicitly asks
    for float64 result files.
-2. Defer packed8/Firth custom CUDA or Pallas kernels until a separate design
-   review chooses the first kernel surface and validation plan.
+2. Defer packed8/Firth custom CUDA or Pallas implementation until
+   `docs/custom-kernel-optimization-plan.md` profiling gates choose the first
+   kernel surface. Current recommendation is Pallas packed8 score reduction
+   fusion first, with Firth reductions only after high-Firth traces justify the
+   numerical risk.
 3. Run a larger 4/8-trait GPU benchmark matrix only if deeper Firth tuning
    decisions need more data; the current two-trait chr10/chr22 evidence supports
    keeping the existing Firth batch/capacity defaults.

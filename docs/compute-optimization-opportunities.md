@@ -379,6 +379,7 @@ lets us compare against JAX output before layering in candidate correction.
 
 Validation: exact/close parity against current JAX for packed8 score-only,
 candidate-mask parity for binary, and Nsight memory-throughput comparison.
+Detailed updated plan: [custom-kernel-optimization-plan.md](custom-kernel-optimization-plan.md).
 
 ### 12. Firth Lane Reductions Are Custom-CUDA Candidates, Not Simple JIT Gaps
 
@@ -403,6 +404,7 @@ This is high risk. It touches numerical convergence, double precision behavior,
 branch divergence, and diagnostics. It should follow only after profiler traces
 show Firth lane reductions dominate and after the score-only packed8/custom
 kernel path proves the integration approach.
+Detailed updated plan: [custom-kernel-optimization-plan.md](custom-kernel-optimization-plan.md).
 
 ## Notes On What Already Looks Reasonable
 
