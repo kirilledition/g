@@ -24,6 +24,8 @@ from g.engine import telemetry, timing
 
 DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS = 60.0
 RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 60.0
+GRACEFUL_DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS = 300.0
+GRACEFUL_RESULT_WORKER_JOIN_TIMEOUT_SECONDS = 300.0
 WORKER_ABORT_STOP_TIMEOUT_SECONDS = 1.0
 logger = logging.getLogger(__name__)
 type HostGenotypeBuffer = npt.NDArray[np.float32] | npt.NDArray[np.uint8]
@@ -788,9 +790,9 @@ class NativeBgenCallbackRunner(abc.ABC):
     def finish(self) -> None:
         """Wait until all queued JAX work has been written."""
         self.stop_dosage_worker()
-        self.join_dosage_worker()
+        self.join_dosage_worker(timeout_seconds=GRACEFUL_DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS)
         self.stop_result_worker()
-        self.join_result_worker()
+        self.join_result_worker(timeout_seconds=GRACEFUL_RESULT_WORKER_JOIN_TIMEOUT_SECONDS)
         self.raise_worker_error_if_present()
         if self.telemetry_session is not None and self.current_progress_chromosome is not None:
             self.telemetry_session.log_event(

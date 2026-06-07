@@ -42,6 +42,72 @@ opportunities are not missing `jit` decorators in the core loops. They are:
 | 9 | Fuse packed8 decode, normalization/flipping, score reductions, and candidate gathers with custom kernels | Hard | High | Highest ceiling, especially packed8 GPU runs |
 | 10 | Consider custom CUDA/Pallas kernels for Firth lane reductions | Hard | High | High ceiling for approximate Firth, but most validation-heavy |
 
+## Implementation Results
+
+Status on 2026-06-07: all non-custom-kernel opportunities from this review have
+been implemented and validated. Custom packed8/Firth kernels remain deliberately
+deferred for separate design review.
+
+Implemented changes:
+
+- exact stage timing is now opt-in for blocking synchronization; production
+  callbacks keep aggregate timing records without forcing per-chunk
+  `block_until_ready` or diagnostic `device_get`;
+- public result statistics are narrowed to float32 on device before host
+  materialization;
+- warm-cache coverage now uses production variant-major and packed8 donating
+  entry points;
+- linear score and binary score paths stack shared genotype matrix products;
+- Firth candidate dispatch now has monotonic tiny/small/bounded/overflow
+  capacities and skips sorting for tiny/small tiers;
+- approximate sparse Firth can run compact fixed-size carrier lanes for rare
+  sparse candidates, with guards that keep dense-only runs on the prior dense
+  path;
+- native chunk stats needed for compute are bundled through one PyO3 call.
+
+Focused validation:
+
+- `uv run pytest tests/test_regenie2_linear.py tests/test_regenie2_binary.py tests/test_timing.py tests/test_telemetry.py tests/test_warm_cache.py tests/test_regenie2_pipeline.py -q`:
+  170 passed, 1 skipped before the final worker-timeout follow-up.
+- `uv run pytest tests/test_regenie2_binary.py -q`: 56 passed, 1 skipped after
+  compact sparse Firth guard changes.
+- `uv run pytest tests/test_regenie_comparison_scripts.py -q -k 'binary_hot'`:
+  7 passed after benchmark timing-mode support.
+- `uv run pytest tests/test_regenie2_pipeline.py -q -k 'worker or timing or binary_chunk_diagnostics_are_detailed_only_for_exact_timing'`:
+  14 passed after graceful worker join timeout extension.
+- `uv run ty check` and `uv run ruff check` passed for each touched scope, and
+  `cargo fmt --check` plus `. scripts/server_env.sh && cargo test --test rust_python_bindings`
+  passed after the timing/output changes.
+
+GPU hot benchmark result, measured on `landau` with one binary trait, 50k
+variants, chr22/chr10, variant-major/packed8 storage, default/high Firth
+fallback density, no final Parquet materialization:
+
+| Dataset | Case | Baseline exact | Optimized exact | Optimized production | Production speedup |
+| --- | --- | ---: | ---: | ---: | ---: |
+| chr22 | variant/default | 0.865716s | 0.865059s | 0.750624s | 1.153x |
+| chr22 | variant/high-Firth | 1.940100s | 1.436061s | 1.309201s | 1.482x |
+| chr22 | packed8/default | 0.769198s | 0.760673s | 0.651605s | 1.180x |
+| chr22 | packed8/high-Firth | 1.867004s | 1.367826s | 1.236620s | 1.510x |
+| chr10 | variant/default | 1.346740s | 1.372751s | 1.174464s | 1.147x |
+| chr10 | variant/high-Firth | 2.422376s | 1.878304s | 1.706274s | 1.420x |
+| chr10 | packed8/default | 1.268596s | 1.221303s | 1.062988s | 1.193x |
+| chr10 | packed8/high-Firth | 2.308150s | 1.787682s | 1.617899s | 1.427x |
+
+Summary JSON paths:
+
+- `data/profiles/compute_opt_baseline_chr22_20260607/regenie2_binary_hot_summary.json`
+- `data/profiles/compute_opt_baseline_chr10_20260607/regenie2_binary_hot_summary.json`
+- `data/profiles/compute_opt_optimized_exact_chr22_20260607/regenie2_binary_hot_summary.json`
+- `data/profiles/compute_opt_optimized_exact_chr10_20260607/regenie2_binary_hot_summary.json`
+- `data/profiles/compute_opt_optimized_off_chr22_20260607/regenie2_binary_hot_summary.json`
+- `data/profiles/compute_opt_optimized_off_chr10_retry_20260607/regenie2_binary_hot_summary.json`
+
+An initial chr10 production-throughput repeat exposed a cold no-exact shutdown
+timeout while the callback worker was still compiling/draining queued JAX work.
+Normal graceful callback joins now use a longer timeout; abort paths keep their
+short timeout.
+
 ## Findings
 
 ### 1. Default Timing And Diagnostics Synchronize Every Chunk
