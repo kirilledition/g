@@ -1,0 +1,68 @@
+# Development
+
+Use `uv` for dependency management and `just` for project commands.
+
+## Setup
+
+```bash
+just bootstrap
+just doctor
+```
+
+For GPU-capable development:
+
+```bash
+just bootstrap-gpu
+just doctor-jax
+```
+
+For server-specific setup, see [Ubuntu SLURM Development](UBUNTU_SLURM_DEVELOPMENT.md). For reduced-toolchain local setup, see [No-Nix Development](NO_NIX_DEVELOPMENT.md).
+
+## Checks
+
+Common checks:
+
+```bash
+just format
+just lint
+just typecheck
+just check
+just test
+```
+
+Reduced-toolchain local checks:
+
+```bash
+just check-local
+just test-local
+just test-local-focused
+```
+
+## Documentation
+
+Serve and build the Zensical site:
+
+```bash
+just docs-serve
+just docs-build
+```
+
+When changing user-facing CLI behavior, configuration, input/output contracts, runtime behavior, performance assumptions, or deployment workflow, update the relevant page under `docs/` in the same branch. Run `just docs-build` before finishing documentation changes.
+
+Generated `site/` output is local build output and is not committed.
+
+## Coding Rules
+
+Follow [Style Guide](STYLEGUIDE.md). Important project rules include:
+
+- full-word variable names;
+- strict type coverage;
+- module-qualified imports by default;
+- dataclasses instead of bare tuples for structured returns;
+- Google-style docstrings without duplicated type information.
+
+## Task and Worktree Notes
+
+Symphony work happens in issue-specific worktrees under `/mnt/beegfs/kirill/Projects/g-worktrees/symphony`. Keep changes scoped to the Linear issue and do not commit `data/`, `results/`, local caches, logs, build artifacts, or generated benchmark outputs.
+
+See [Codex Task Farm](codex-task-farm.md) for the local multi-agent worktree automation.

@@ -23,6 +23,21 @@ The package is designed for reproducible, large-scale association runs where the
 
 `g` is not a replacement for REGENIE Step 1. Use upstream `regenie` to produce Step 1 prediction lists, then use `g` for Step 2 BGEN scans.
 
+## Documentation
+
+The user documentation lives under `docs/` and is built with Zensical. GitHub Pages deployment is defined in `.github/workflows/docs.yml`; the expected published URL is:
+
+```text
+https://kirilledition.github.io/g/
+```
+
+Local documentation commands:
+
+```bash
+just docs-serve
+just docs-build
+```
+
 ---
 
 ## Current status

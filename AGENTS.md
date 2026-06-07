@@ -20,6 +20,13 @@ You are an AI coding assistant working on high-performance GPU-accelerated GWAS 
 * data/: Local git-ignored directory for 1KG variants and simulated phenotypes. **Never commit files in this directory.**  
 * docs/: Project documentation.
 
+## **Documentation Rule**
+
+When changing user-facing CLI behavior, configuration, input/output contracts,
+runtime behavior, performance assumptions, or deployment workflow, update the
+relevant page under docs/ in the same branch. Run `just docs-build` before
+finishing documentation changes.
+
 ## **Coding Standards (Strictly Enforced)**
 
 **You must strictly adhere to the rules defined in [styleguide](docs/STYLEGUIDE.md).** Do not write code without reading it. Key highlights include:

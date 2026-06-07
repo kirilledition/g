@@ -205,6 +205,14 @@ symphony-doctor:
     fi
     echo "Symphony prerequisites look usable."
 
+# Serve the Zensical documentation site locally
+docs-serve:
+    uv run --group docs zensical serve
+
+# Build the Zensical documentation site into site/
+docs-build:
+    uv run --group docs zensical build --clean
+
 # Run Symphony against the repo workflow template
 symphony-run:
     #!/usr/bin/env bash

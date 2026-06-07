@@ -1,0 +1,60 @@
+[project]
+site_name = "g"
+site_description = "GPU-oriented REGENIE Step 2 GWAS engine"
+site_author = "kirill denisov"
+site_url = "https://kirilledition.github.io/g/"
+repo_url = "https://github.com/kirilledition/g"
+repo_name = "kirilledition/g"
+edit_uri = "edit/main/docs/"
+docs_dir = "docs"
+site_dir = "site"
+nav = [
+  { "Home" = "index.md" },
+  { "Getting Started" = [
+    "getting-started.md",
+    "installation.md",
+    "quickstart.md",
+  ] },
+  { "User Guide" = [
+    "cli.md",
+    "configuration.md",
+    "input-output.md",
+    "gpu-and-slurm.md",
+    "troubleshooting.md",
+  ] },
+  { "Project" = [
+    "development.md",
+    "architecture.md",
+  ] },
+  { "Reference / Internal Notes" = [
+    { "Style Guide" = "STYLEGUIDE.md" },
+    { "Ubuntu SLURM Development" = "UBUNTU_SLURM_DEVELOPMENT.md" },
+    { "No-Nix Development" = "NO_NIX_DEVELOPMENT.md" },
+    { "Configuration and CLI Architecture" = "configuration_cli_architecture.md" },
+    { "Linear REGENIE Step 2 Learning" = "linear-regenie-step2-learning.md" },
+    { "Binary REGENIE Step 2 Learning" = "binary-regenie-step2-learning.md" },
+    { "SIMD Optimization Reference" = "simd-optimization-reference.md" },
+    { "Codex Task Farm" = "codex-task-farm.md" },
+  ] },
+]
+
+[project.theme]
+variant = "modern"
+features = [
+  "navigation.sections",
+  "navigation.expand",
+  "navigation.path",
+  "navigation.top",
+  "search.highlight",
+  "content.action.edit",
+  "content.action.view",
+]
+
+[project.plugins.mkdocstrings.handlers.python]
+inventories = ["https://docs.python.org/3/objects.inv"]
+paths = ["src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "google"
+inherited_members = true
+show_source = false
