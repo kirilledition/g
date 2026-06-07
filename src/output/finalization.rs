@@ -128,7 +128,7 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
             read_arrow_seconds += current_arrow_batch_read_seconds;
 
             let project_batch_start_time = Instant::now();
-            let projected_batch = project_chunk_batch_to_final_batch(batch)?;
+            let projected_batch = prepare_chunk_batch_for_final_writer(batch)?;
             project_batch_seconds += project_batch_start_time.elapsed().as_secs_f64();
             output_row_count += projected_batch.num_rows();
 
@@ -183,15 +183,26 @@ fn sorted_output_chunk_file_paths(
     let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
         .map_err(OutputWriterError::runtime)?
         .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
-        .filter(|chunk_file_path| {
-            chunk_file_path.extension().is_some_and(|extension| match output_format {
-                OutputFileFormat::Arrow => extension == "arrow",
-                OutputFileFormat::Parquet => extension == "parquet",
-            })
-        })
+        .filter(|chunk_file_path| is_output_chunk_file_path(chunk_file_path, output_format))
         .collect::<Vec<_>>();
     chunk_file_paths.sort();
     Ok(chunk_file_paths)
+}
+
+fn is_output_chunk_file_path(chunk_file_path: &Path, output_format: OutputFileFormat) -> bool {
+    let Some(file_name) = chunk_file_path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let extension_matches = chunk_file_path.extension().and_then(|extension| extension.to_str()).is_some_and(
+        |extension| match output_format {
+            OutputFileFormat::Arrow => extension.eq_ignore_ascii_case("arrow"),
+            OutputFileFormat::Parquet => extension.eq_ignore_ascii_case("parquet"),
+        },
+    );
+    match output_format {
+        OutputFileFormat::Arrow => file_name.starts_with("chunk_") && extension_matches,
+        OutputFileFormat::Parquet => file_name.starts_with("part_") && extension_matches,
+    }
 }
 
 fn read_output_chunk_file_batches(
@@ -263,6 +274,15 @@ fn append_output_footer_metadata(
     }
 }
 
+fn prepare_chunk_batch_for_final_writer(batch: RecordBatch) -> Result<RecordBatch, OutputWriterError> {
+    let final_schema = schema::get_regenie_step2_final_schema();
+    if batch.schema().fields() == final_schema.fields() {
+        return RecordBatch::try_new(Arc::clone(final_schema), batch.columns().to_vec())
+            .map_err(OutputWriterError::runtime);
+    }
+    project_chunk_batch_to_final_batch(batch)
+}
+
 fn project_chunk_batch_to_final_batch(batch: RecordBatch) -> Result<RecordBatch, OutputWriterError> {
     let final_column_names = [
         "CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1", "A1FREQ", "INFO", "N", "TEST", "BETA", "SE", "CHISQ", "LOG10P",
@@ -284,7 +304,7 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use arrow::array::StringArray;
+    use arrow::array::{ArrayRef, Float32Array, Int32Array, Int64Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
 
     use crate::output::writer::OutputFileFormat;
@@ -328,5 +348,65 @@ mod tests {
             .expect_err("missing final columns should fail projection")
             .to_string();
         assert!(error.contains("project chunk batch"));
+    }
+
+    #[test]
+    fn sorted_chunk_files_ignore_stale_final_parquet_outputs() {
+        let chunks_directory = create_test_directory();
+        let part_file_path = chunks_directory.join("part_000000000.parquet");
+        let final_file_path = chunks_directory.join("final.parquet");
+        let temporary_part_file_path = chunks_directory.join("part_000000001.parquet.tmp");
+        std::fs::write(&part_file_path, b"part").expect("part marker should be written");
+        std::fs::write(final_file_path, b"final").expect("final marker should be written");
+        std::fs::write(temporary_part_file_path, b"temporary").expect("temporary marker should be written");
+
+        let chunk_file_paths = sorted_output_chunk_file_paths(&chunks_directory, OutputFileFormat::Parquet)
+            .expect("chunk files should be listed");
+
+        assert_eq!(chunk_file_paths, vec![part_file_path]);
+        std::fs::remove_dir_all(chunks_directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn finalization_prepares_ordered_final_schema_without_column_projection() {
+        let chromosome_array: ArrayRef = Arc::new(StringArray::from(vec!["22"]));
+        let position_array: ArrayRef = Arc::new(Int64Array::from(vec![100_i64]));
+        let identifier_array: ArrayRef = Arc::new(StringArray::from(vec!["variant0"]));
+        let allele_zero_array: ArrayRef = Arc::new(StringArray::from(vec!["G"]));
+        let allele_one_array: ArrayRef = Arc::new(StringArray::from(vec!["A"]));
+        let allele_frequency_array: ArrayRef = Arc::new(Float32Array::from(vec![0.5_f32]));
+        let info_array: ArrayRef = Arc::new(Float32Array::from(vec![Some(0.9_f32)]));
+        let observation_count_array: ArrayRef = Arc::new(Int32Array::from(vec![100_i32]));
+        let test_array: ArrayRef = Arc::new(StringArray::from(vec!["ADD"]));
+        let beta_array: ArrayRef = Arc::new(Float32Array::from(vec![0.1_f32]));
+        let standard_error_array: ArrayRef = Arc::new(Float32Array::from(vec![0.01_f32]));
+        let chi_squared_array: ArrayRef = Arc::new(Float32Array::from(vec![10.0_f32]));
+        let log10_p_value_array: ArrayRef = Arc::new(Float32Array::from(vec![5.0_f32]));
+        let extra_array: ArrayRef = Arc::new(StringArray::from(vec![None::<&str>]));
+        let columns = vec![
+            chromosome_array,
+            position_array,
+            identifier_array,
+            allele_zero_array,
+            allele_one_array,
+            allele_frequency_array,
+            info_array,
+            observation_count_array,
+            test_array,
+            beta_array,
+            standard_error_array,
+            chi_squared_array,
+            log10_p_value_array,
+            extra_array,
+        ];
+        let batch = RecordBatch::try_new(Arc::clone(schema::get_regenie_step2_final_schema()), columns.clone())
+            .expect("ordered final batch should build");
+
+        let prepared_batch =
+            prepare_chunk_batch_for_final_writer(batch).expect("ordered final batch should be prepared");
+
+        assert_eq!(prepared_batch.schema().fields(), schema::get_regenie_step2_final_schema().fields());
+        assert!(Arc::ptr_eq(prepared_batch.column(0), &columns[0]));
+        assert!(Arc::ptr_eq(prepared_batch.column(13), &columns[13]));
     }
 }

@@ -26,8 +26,8 @@ used to explain where the speedup came from.
 | --- | --- | --- | --- |
 | `opt/rust-opt-benchmarks-progress` | `rust-opt-benchmarks-progress` | Benchmark gaps and progress log | Integrated |
 | `opt/rust-opt-trusted-packed8` | `rust-opt-trusted-packed8` | Trusted BGEN parser reuse, packed8 fused summary, SIMD | Integrated |
-| `opt/rust-opt-decode-profile` | `rust-opt-decode-profile` | Profiling fast path, rolling bit reader, row-major experiments | Integrating |
-| `opt/rust-opt-output-transfer` | `rust-opt-output-transfer` | Native output streaming, cached arrays, reduced Python transfer | Pending integration |
+| `opt/rust-opt-decode-profile` | `rust-opt-decode-profile` | Profiling fast path, rolling bit reader, row-major experiments | Integrated |
+| `opt/rust-opt-output-transfer` | `rust-opt-output-transfer` | Native output streaming, cached arrays, reduced Python transfer | Integrating |
 | `opt/rust-opt-setup-reuse` | `rust-opt-setup-reuse` | Setup path parsing, sample alignment, LOCO prediction reuse | Pending integration |
 
 ## Baseline Commands
@@ -72,6 +72,13 @@ benchmarks through `just slurm-gpu-run`.
   passes the final pointer and selected variant window into the decode layer,
   but it carries risk from strided writes and partial caller-buffer writes on
   error. It stays behind an opt-in benchmark flag.
+- Output chunk and final REGENIE step 2 schemas already share the same public
+  14 columns, so finalization can skip name-based projection when the batch
+  fields already match.
+- The existing Python result-array path already retains NumPy result arrays as
+  Arrow buffers without copying. The higher-value output improvement was
+  sharing immutable native chunk arrays and streaming batches instead of
+  accumulating them.
 
 ## Completed So Far
 
@@ -100,6 +107,14 @@ benchmarks through `just slurm-gpu-run`.
   little-endian bit buffer.
 - Added an opt-in row-major direct-write prototype and Criterion groups for
   `bgen_row_major_tile_copy` and `bgen_row_major_direct_write`.
+- Added a lazy writer-only Arrow array cache to `NativeChunkHandle` for
+  immutable metadata/stat columns shared by cloned handles and multi-trait
+  writer sessions.
+- Refactored grouped Arrow/Parquet chunk writing to open the writer first and
+  write each chunk `RecordBatch` immediately, removing the per-file
+  `Vec<RecordBatch>` peak.
+- Added a fast ordered-schema finalization path and restricted chunk discovery
+  to writer-produced `chunk_*.arrow` and `part_*.parquet` files.
 - Verified the benchmark/progress slice:
   - `cargo fmt --all --check`
   - `uv run ruff check scripts/benchmark_bgen_reader.py`
@@ -116,6 +131,16 @@ benchmarks through `just slurm-gpu-run`.
   - `cargo clippy --lib -- -D warnings -W clippy::pedantic`
   - `cargo bench --bench bgen_read --no-run`
   - `git diff --name-only main...HEAD -- src/g/compute` produced no output
+- Verified the output transfer slice:
+  - `cargo test --lib output::`
+  - `cargo test --lib output::writer`
+  - `cargo test --lib output::finalization`
+  - `cargo test --lib output::session`
+  - `cargo test --lib python::output`
+  - `cargo test --test rust_native_coverage output_session`
+  - `cargo test --test rust_python_bindings registered_python_module_exercises_core_bindings`
+  - `uv run pytest tests/test_io_output.py -q`
+  - `cargo clippy --lib -- -D warnings`
 
 ## Baseline Measurements
 
