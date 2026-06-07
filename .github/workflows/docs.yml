@@ -46,6 +46,8 @@ jobs:
       - name: Configure GitHub Pages
         if: github.event_name == 'push'
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Upload documentation artifact
         if: github.event_name == 'push'
