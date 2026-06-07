@@ -120,6 +120,20 @@ This tracks the implementation campaign for
 - Scoped `uv run ty check ...`, `uv run ruff check ...`,
   `uv run ruff format --check ...`, and `git diff --check` passed for the F-011
   packed8 compute files.
+- Final integrated validation after all branches landed:
+  `uv run ruff check src tests`, `uv run ty check src tests`,
+  `uv run ruff format --check src tests`, `cargo fmt --check`, and
+  `git diff --check` passed.
+- Final integrated tests after all branches landed:
+  `uv run pytest tests/test_interface.py tests/test_io_output.py tests/test_api.py tests/test_preflight.py tests/test_core.py tests/test_regenie2_pipeline.py tests/test_warm_cache.py tests/test_timing.py -q`
+  passed with 310 tests.
+- Final integrated binary/Firth tests after all branches landed:
+  `uv run pytest tests/test_regenie2_binary.py tests/test_regenie2_binary_scalar_firth.py tests/test_regenie2_binary_firth_null.py tests/test_regenie2_linear.py -q`
+  passed with 94 tests, 1 skipped, and 2 existing JAX donation warnings.
+- Final integrated Rust validation after all branches landed:
+  `. scripts/server_env.sh && cargo test --lib --quiet` passed with 104 tests;
+  `. scripts/server_env.sh && cargo test --test rust_python_bindings --quiet`
+  passed with 1 test.
 
 ## Remaining larger work
 
