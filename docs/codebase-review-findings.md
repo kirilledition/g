@@ -135,6 +135,30 @@ are summarized near the end instead of kept as historical work logs.
   passed on `landau` with default `firth-batch-size = 1024` and
   `firth-candidate-capacity = 2048`; summary path
   `data/profiles/regenie2_binary_hot_20260607T035910Z/regenie2_binary_hot_summary.json`.
+- `uv run pytest tests/test_regenie2_linear.py tests/test_regenie2_binary.py tests/test_timing.py tests/test_telemetry.py tests/test_warm_cache.py tests/test_regenie2_pipeline.py -q`:
+  170 passed, 1 skipped after score stacking, timing/output, and compact sparse
+  Firth optimization integration.
+- `uv run pytest tests/test_regenie2_binary.py -q`: 56 passed, 1 skipped after
+  compact sparse Firth review follow-up.
+- `uv run pytest tests/test_regenie_comparison_scripts.py -q -k 'binary_hot'`:
+  7 passed after benchmark stage-timing mode support.
+- `uv run pytest tests/test_regenie2_pipeline.py -q -k 'worker or timing or binary_chunk_diagnostics_are_detailed_only_for_exact_timing'`:
+  14 passed after graceful callback worker join timeout extension.
+- `uv run ty check src/g/compute/regenie2_binary tests/test_regenie2_binary.py`,
+  `uv run ty check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`,
+  and `uv run ty check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py`:
+  passed for the final compute optimization scopes.
+- `uv run ruff check src/g/compute/regenie2_binary tests/test_regenie2_binary.py --output-format=concise`,
+  `uv run ruff check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`,
+  and `uv run ruff check src/g/engine/callbacks.py tests/test_regenie2_pipeline.py --output-format=concise`:
+  passed for the final compute optimization scopes.
+- `git diff --check`: passed after each final compute optimization scope.
+- Optimized chr22/chr10 50k binary-hot GPU benchmarks passed on `landau` for
+  exact and production-throughput timing modes. Summary paths:
+  `data/profiles/compute_opt_optimized_exact_chr22_20260607/regenie2_binary_hot_summary.json`,
+  `data/profiles/compute_opt_optimized_exact_chr10_20260607/regenie2_binary_hot_summary.json`,
+  `data/profiles/compute_opt_optimized_off_chr22_20260607/regenie2_binary_hot_summary.json`,
+  and `data/profiles/compute_opt_optimized_off_chr10_retry_20260607/regenie2_binary_hot_summary.json`.
 
 I also fetched `origin` and confirmed the reviewed base matched `origin/main` before the
 cleanup integration. The GPU smoke, default full binary-hot benchmark, and targeted
@@ -487,11 +511,24 @@ work:
   same benchmark path.
 - Approved archive removal now leaves no tracked files under `archive/**` on
   active `main`; patched REGENIE moved to `reference/regenie-patched`.
+- Non-custom-kernel compute optimization findings are now implemented:
+  production timing no longer synchronizes by default, output statistics narrow
+  on device, warm cache covers production entrypoints, score kernels stack
+  shared genotype products, chunk stats are bundled through PyO3, Firth
+  candidate dispatch has tiny/small tiers, and sparse approximate Firth can use
+  compact carrier lanes.
+- The binary hot benchmark harness can now run with `--stage-timing-mode off`
+  to measure production throughput separately from exact synchronized stage
+  timings.
+- Graceful callback worker joins now allow cold no-exact JAX compile/drain
+  windows to finish without tripping the short abort timeout.
 
 ## Suggested Implementation Order
 
 1. Keep public output statistics float32 unless a future user requirement explicitly asks
    for float64 result files.
-2. Run a larger 4/8-trait GPU benchmark matrix only if deeper Firth tuning
+2. Defer packed8/Firth custom CUDA or Pallas kernels until a separate design
+   review chooses the first kernel surface and validation plan.
+3. Run a larger 4/8-trait GPU benchmark matrix only if deeper Firth tuning
    decisions need more data; the current two-trait chr10/chr22 evidence supports
    keeping the existing Firth batch/capacity defaults.
