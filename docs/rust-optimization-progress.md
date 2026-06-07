@@ -181,3 +181,81 @@ Selected 16,384-variant mean times:
 | trusted packed8 contiguous half sample | 14.570 |
 | trusted packed8 strided half sample | 19.032 |
 | non-trusted strided half sample dosage | 18.046 |
+
+## Final Measurements
+
+Final comparisons use current-main code at `fb9139e6` as the baseline and
+`integration/rust-optimization` at `66e080b2` as the optimized build. `main`
+advanced to `21d7029e` after the benchmark with docs-only changes, so the
+measured code baseline is still current for runtime behavior. Both worktrees
+were installed with:
+
+```bash
+uv sync --python 3.14 --group dev --group gpu
+RUSTFLAGS="-C target-cpu=native" uv run --no-sync maturin develop --profile perf --uv
+```
+
+The GPU app benchmark was run on `landau` with same-process warm/hot trials.
+Current `main` includes the extended callback worker join handling, so the
+final runs did not need the earlier benchmark-only timeout monkey patch.
+
+Hot same-process GPU timings at 4,096 variants:
+
+| Workload | Baseline s | Optimized s | Change | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| variant-major, no final Parquet | 0.393307 | 0.409953 | -4.23% | 0.959x |
+| packed8, no final Parquet | 0.370362 | 0.395376 | -6.75% | 0.937x |
+| variant-major, finalized Parquet | 0.403648 | 0.411899 | -2.04% | 0.980x |
+| packed8, finalized Parquet | 0.385484 | 0.386658 | -0.30% | 0.997x |
+
+Warm same-process GPU timings at 4,096 variants, which include first GPU
+compilation and setup in that process:
+
+| Workload | Baseline s | Optimized s | Change | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| variant-major, no final Parquet | 81.847150 | 79.782940 | +2.52% | 1.026x |
+| packed8, no final Parquet | 0.678127 | 0.695899 | -2.62% | 0.975x |
+| variant-major, finalized Parquet | 78.252997 | 79.519404 | -1.62% | 0.984x |
+| packed8, finalized Parquet | 0.700245 | 0.705254 | -0.72% | 0.993x |
+
+Because the 4,096-variant hot timings are sub-second and noisy, packed8 was
+also measured at 16,384 variants:
+
+| Workload | Baseline s | Optimized s | Change | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| packed8, no final Parquet hot | 0.483280 | 0.500616 | -3.59% | 0.965x |
+| packed8, finalized Parquet hot | 0.498806 | 0.498847 | -0.01% | 1.000x |
+| packed8, no final Parquet warm | 78.458851 | 79.531746 | -1.37% | 0.987x |
+| packed8, finalized Parquet warm | 78.922604 | 79.508245 | -0.74% | 0.993x |
+
+The measured application impact is therefore not a speedup on the current
+baseline. The implemented Rust changes are functionally correct, but the
+current GPU app workloads are dominated by JAX/worker/output orchestration, and
+the packed8 Rust decode savings do not overcome the added overhead in the
+end-to-end benchmark. The most favorable current measurement is effectively
+flat: packed8 finalized hot at 16,384 variants changed from 0.498806 seconds to
+0.498847 seconds.
+
+The Python BGEN reader harness was also run on `cantor` with
+`--chunk-sizes 16384`, `--variant-limit 16384`, `--repeat-count 5`,
+`--trusted-no-missing-diploid-modes true`,
+`--path-modes variant_major_buffered,variant_major_packed8_buffered`, and
+`--sample-selection-modes full,contiguous_half,strided_half`. It preserved
+checksums across dosage and packed8 paths, but the measured medians were all
+about 3.6 to 3.8 seconds and moved by only -0.5% to -0.7% in the optimized
+build. That harness is dominated by Python/process/reader setup overhead at
+this workload size, so it is not a useful micro-signal for the fused Rust
+packed8 copy+summary path.
+
+Benchmark artifacts are in `data/profiles/`:
+
+- `rust_opt_binary_hot_baseline_4096_current.json`
+- `rust_opt_binary_hot_optimized_4096_current.json`
+- `rust_opt_binary_hot_baseline_4096_current_finalized.json`
+- `rust_opt_binary_hot_optimized_4096_current_finalized.json`
+- `rust_opt_binary_hot_baseline_16384_packed8_current.json`
+- `rust_opt_binary_hot_optimized_16384_packed8_current.json`
+- `rust_opt_binary_hot_baseline_16384_packed8_current_finalized.json`
+- `rust_opt_binary_hot_optimized_16384_packed8_current_finalized.json`
+- `rust_opt_bgen_reader_baseline.json`
+- `rust_opt_bgen_reader_optimized.json`
