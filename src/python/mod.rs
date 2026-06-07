@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use numpy::ndarray::{Array1, Array2};
 use numpy::{
-    IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadwriteArray2, PyReadwriteArray3, PyUntypedArrayMethods,
+    IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadwriteArray2, PyReadwriteArray3,
+    PyUntypedArrayMethods,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -15,6 +16,7 @@ use crate::genotype::common::{
     ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunkStats, GenotypeError, VariantMetadataColumns,
 };
 use crate::genotype::planner;
+use crate::genotype::preprocess;
 use crate::pipeline::Regenie2RunEngineCore;
 use crate::regenie::{MultiPredictionSource as NativeMultiPredictionSource, PredictionError, PredictionSource};
 use crate::sample::{
@@ -61,6 +63,26 @@ impl ChunkStats {
     fn new(stats: NativeChunkStats) -> Self {
         Self { stats: Arc::new(stats) }
     }
+}
+
+#[pyfunction]
+fn summarize_variant_major_dosage_chunk_stats(
+    genotype_matrix_by_variant: PyReadonlyArray2<'_, f32>,
+) -> PyResult<ChunkStats> {
+    let genotype_array = genotype_matrix_by_variant.as_array();
+    let genotype_shape = genotype_array.shape();
+    let selected_variant_count = genotype_shape[0];
+    let selected_sample_count = genotype_shape[1];
+    let genotype_values = genotype_array
+        .as_slice()
+        .ok_or_else(|| PyValueError::new_err("Variant-major genotype matrix must be C-contiguous."))?;
+    let chunk_stats = preprocess::summarize_variant_major_dosage_matrix(
+        genotype_values,
+        selected_sample_count,
+        selected_variant_count,
+    )
+    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    Ok(ChunkStats::new(chunk_stats))
 }
 
 #[pymethods]
@@ -1478,6 +1500,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(repair_strict_manifest_chunk_commits, module)?)?;
     module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
+    module.add_function(wrap_pyfunction!(summarize_variant_major_dosage_chunk_stats, module)?)?;
     module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;
     module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import typing
 from dataclasses import dataclass
 
@@ -28,11 +29,55 @@ class WarmCacheShape:
     variant_count: int
 
 
+class WarmCacheGenotypePath(enum.StrEnum):
+    """JAX entrypoint family warmed for one cache signature."""
+
+    LINEAR_DOSAGE = "linear_dosage"
+    LINEAR_PACKED8 = "linear_packed8"
+    BINARY_DOSAGE_SCORE = "binary_dosage_score"
+    BINARY_DOSAGE_CORRECTION = "binary_dosage_correction"
+    BINARY_PACKED8_SCORE = "binary_packed8_score"
+    BINARY_PACKED8_CORRECTION = "binary_packed8_correction"
+
+
+@dataclass(frozen=True)
+class WarmCacheSignature:
+    """One exact production JAX signature warmed for the compilation cache.
+
+    Attributes:
+        shape: Genotype chunk sample and variant counts.
+        association_mode: Association mode warmed by the signature.
+        genotype_format: Host-to-device genotype representation.
+        genotype_path: Concrete JAX entrypoint family.
+        trait_count: Number of traits represented by the warmed state.
+        score_dtype: Score-kernel floating point dtype.
+        correction_method: Binary correction method for binary signatures.
+        correction_p_threshold: Binary correction p-value threshold.
+        correction_firth_se: Whether Firth rows use LRT-derived standard errors.
+        firth_candidate_batch_size: Fixed Firth batch size for binary correction.
+        firth_candidate_capacity: Preferred Firth candidate capacity for binary correction.
+
+    """
+
+    shape: WarmCacheShape
+    association_mode: types.AssociationMode
+    genotype_format: types.GpuGenotypeFormat
+    genotype_path: WarmCacheGenotypePath
+    trait_count: int
+    score_dtype: types.FloatingPointDtype
+    correction_method: types.BinaryFallbackMethod | None = None
+    correction_p_threshold: float | None = None
+    correction_firth_se: bool | None = None
+    firth_candidate_batch_size: int | None = None
+    firth_candidate_capacity: int | None = None
+
+
 @dataclass(frozen=True)
 class WarmCacheReport:
     """Summary of warmed REGENIE step 2 JAX cache entries."""
 
     warmed_shapes: tuple[WarmCacheShape, ...]
+    warmed_signatures: tuple[WarmCacheSignature, ...]
 
 
 @dataclass(frozen=True)
@@ -58,7 +103,7 @@ def build_warm_cache_shapes(
     variant_limit: int | None,
     sample_count: int,
 ) -> tuple[WarmCacheShape, ...]:
-    """Build the full and tail chunk shapes that should be warmed."""
+    """Build unique production chunk shapes that should be warmed."""
     chunk_specs = _core.plan_genotype_chunks(
         engine.variant_count,
         chunk_size,
@@ -66,14 +111,71 @@ def build_warm_cache_shapes(
         variant_limit=variant_limit,
         committed_chunk_identifiers=None,
     )
-    variant_counts = []
+    shapes: list[WarmCacheShape] = []
+    seen_shapes: set[WarmCacheShape] = set()
     for chunk_spec in chunk_specs:
         variant_count = int(chunk_spec.variant_stop_index - chunk_spec.variant_start_index)
-        if variant_count > 0 and variant_count not in variant_counts:
-            variant_counts.append(variant_count)
-    variant_counts.sort(reverse=True)
-    return tuple(
-        WarmCacheShape(sample_count=sample_count, variant_count=variant_count) for variant_count in variant_counts[:2]
+        shape = WarmCacheShape(sample_count=sample_count, variant_count=variant_count)
+        if variant_count > 0 and shape not in seen_shapes:
+            shapes.append(shape)
+            seen_shapes.add(shape)
+    return tuple(shapes)
+
+
+def build_linear_warm_cache_signature(
+    *,
+    shape: WarmCacheShape,
+    gpu_genotype_format: types.GpuGenotypeFormat,
+    score_dtype: types.FloatingPointDtype,
+) -> WarmCacheSignature:
+    """Build the warmed signature report entry for a linear chunk."""
+    genotype_path = (
+        WarmCacheGenotypePath.LINEAR_PACKED8
+        if gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
+        else WarmCacheGenotypePath.LINEAR_DOSAGE
+    )
+    return WarmCacheSignature(
+        shape=shape,
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        genotype_format=gpu_genotype_format,
+        genotype_path=genotype_path,
+        trait_count=1,
+        score_dtype=score_dtype,
+    )
+
+
+def build_binary_warm_cache_signature(
+    *,
+    shape: WarmCacheShape,
+    gpu_genotype_format: types.GpuGenotypeFormat,
+    score_dtype: types.FloatingPointDtype,
+    correction_plan: types.BinaryCorrectionPlan,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+) -> WarmCacheSignature:
+    """Build the warmed signature report entry for a binary chunk."""
+    score_only = correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
+    if gpu_genotype_format == types.GpuGenotypeFormat.PACKED8:
+        genotype_path = (
+            WarmCacheGenotypePath.BINARY_PACKED8_SCORE
+            if score_only
+            else WarmCacheGenotypePath.BINARY_PACKED8_CORRECTION
+        )
+    else:
+        genotype_path = (
+            WarmCacheGenotypePath.BINARY_DOSAGE_SCORE if score_only else WarmCacheGenotypePath.BINARY_DOSAGE_CORRECTION
+        )
+    return WarmCacheSignature(
+        shape=shape,
+        association_mode=types.AssociationMode.REGENIE2_BINARY,
+        genotype_format=gpu_genotype_format,
+        genotype_path=genotype_path,
+        trait_count=1,
+        score_dtype=score_dtype,
+        correction_method=correction_plan.method,
+        correction_p_threshold=correction_plan.p_threshold,
+        correction_firth_se=correction_plan.firth_se,
+        firth_candidate_batch_size=None if score_only else kernel_config.firth_candidate.batch_size,
+        firth_candidate_capacity=None if score_only else kernel_config.firth_candidate.candidate_capacity,
     )
 
 
@@ -168,6 +270,7 @@ def warm_regenie2_linear_bgen_cache(
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode = types.TrustedBgenValidationMode.CACHE_ON_MISS,
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for quantitative REGENIE step 2."""
     engine = native_dispatch.build_bgen_run_engine(
@@ -199,10 +302,12 @@ def warm_regenie2_linear_bgen_cache(
     regenie_state = regenie2_linear.prepare_regenie2_linear_state(
         covariate_matrix=covariate_matrix,
         phenotype_vector=phenotype_vector,
+        score_dtype=score_dtype,
     )
     chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
-        regenie_state,
-        jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
+        state=regenie_state,
+        loco_predictions=jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
+        score_dtype=score_dtype,
     )
     shapes = build_warm_cache_shapes(
         engine=engine,
@@ -227,6 +332,7 @@ def warm_regenie2_linear_bgen_cache(
                 genotype_dosage_sum=native_stats.dosage_sum,
                 genotype_observation_count=native_stats.observation_count,
                 genotype_imputed_dosage_square_sum=native_stats.imputed_dosage_square_sum,
+                score_dtype=score_dtype,
             )
         else:
             result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
@@ -235,9 +341,18 @@ def warm_regenie2_linear_bgen_cache(
                 genotype_dosage_sum=native_stats.dosage_sum,
                 genotype_observation_count=native_stats.observation_count,
                 genotype_imputed_dosage_square_sum=native_stats.imputed_dosage_square_sum,
+                score_dtype=score_dtype,
             )
         callbacks.block_until_ready(result.log10_p_value)
-    return WarmCacheReport(warmed_shapes=shapes)
+    signatures = tuple(
+        build_linear_warm_cache_signature(
+            shape=shape,
+            gpu_genotype_format=gpu_genotype_format,
+            score_dtype=score_dtype,
+        )
+        for shape in shapes
+    )
+    return WarmCacheReport(warmed_shapes=shapes, warmed_signatures=signatures)
 
 
 def warm_regenie2_binary_bgen_cache(
@@ -256,6 +371,7 @@ def warm_regenie2_binary_bgen_cache(
     alignment_config: native_dispatch.SampleAlignmentConfigProtocol | None = None,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
+    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
 ) -> WarmCacheReport:
     """Warm full and tail JAX compilation-cache shapes for binary REGENIE step 2."""
     engine = native_dispatch.build_bgen_run_engine(
@@ -287,12 +403,14 @@ def warm_regenie2_binary_bgen_cache(
     regenie_state = regenie2_binary.prepare_regenie2_binary_state(
         covariate_matrix=covariate_matrix,
         phenotype_vector=phenotype_vector,
+        score_dtype=score_dtype,
     )
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state=regenie_state,
         loco_offset=jax.device_put(prediction_source.get_chromosome_predictions(chromosome)),
         correction_plan=correction_plan,
         kernel_config=kernel_config,
+        score_dtype=score_dtype,
     )
     shapes = build_warm_cache_shapes(
         engine=engine,
@@ -320,6 +438,7 @@ def warm_regenie2_binary_bgen_cache(
                     kernel_config=kernel_config,
                     dosage_sum=native_stats.dosage_sum,
                     observation_count=native_stats.observation_count,
+                    score_dtype=score_dtype,
                 )
             else:
                 result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_packed8(
@@ -329,6 +448,7 @@ def warm_regenie2_binary_bgen_cache(
                     kernel_config=kernel_config,
                     dosage_sum=native_stats.dosage_sum,
                     observation_count=native_stats.observation_count,
+                    score_dtype=score_dtype,
                 )
         elif correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
             result = regenie2_binary.compute_binary_score_test_variant_major_donating_inputs(
@@ -338,6 +458,7 @@ def warm_regenie2_binary_bgen_cache(
                 kernel_config=kernel_config,
                 dosage_sum=native_stats.dosage_sum,
                 observation_count=native_stats.observation_count,
+                score_dtype=score_dtype,
             )
         else:
             result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state_variant_major(
@@ -347,9 +468,20 @@ def warm_regenie2_binary_bgen_cache(
                 kernel_config=kernel_config,
                 dosage_sum=native_stats.dosage_sum,
                 observation_count=native_stats.observation_count,
+                score_dtype=score_dtype,
             )
         callbacks.block_until_ready(result.log10_p_value)
-    return WarmCacheReport(warmed_shapes=shapes)
+    signatures = tuple(
+        build_binary_warm_cache_signature(
+            shape=shape,
+            gpu_genotype_format=gpu_genotype_format,
+            score_dtype=score_dtype,
+            correction_plan=correction_plan,
+            kernel_config=kernel_config,
+        )
+        for shape in shapes
+    )
+    return WarmCacheReport(warmed_shapes=shapes, warmed_signatures=signatures)
 
 
 def first_engine_chromosome(engine: _core.Regenie2RunEngine) -> str:

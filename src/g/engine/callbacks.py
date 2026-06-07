@@ -68,6 +68,20 @@ class BinaryChunkStatsArrays:
     sparse_candidate_mask: npt.NDArray[np.bool_] | None
 
 
+@dataclass(frozen=True)
+class MultiPhenotypeGroupFanout:
+    """One compatible phenotype group fed by a union-sample native decode.
+
+    Attributes:
+        callback: Existing multi-phenotype callback for this compatible group.
+        sample_position_array: Positions of this group's samples within the union decode buffer.
+
+    """
+
+    callback: object
+    sample_position_array: npt.NDArray[np.intp]
+
+
 class NativeBgenWorkerShutdownError(RuntimeError):
     """Raised when a native callback worker does not stop cleanly."""
 
@@ -260,14 +274,39 @@ def record_binary_chunk_diagnostics(
 def put_genotype_matrix_on_device(
     genotype_matrix: jax.Array | HostGenotypeBuffer,
     stage_timing_recorder: timing.StageTimingRecorder | None,
+    chunk_metadata: typing.Any | None = None,
 ) -> jax.Array:
     """Transfer a genotype chunk to the active JAX device with optional timing."""
     start_time = time.perf_counter()
     genotype_device_array = jax.device_put(genotype_matrix)
     if timing.should_collect_exact_stage_timings(stage_timing_recorder):
         block_until_ready(genotype_device_array)
-    timing.record_stage_duration(stage_timing_recorder, "host_to_device_transfer", start_time)
+    record_stage_duration_with_optional_chunk(
+        stage_timing_recorder=stage_timing_recorder,
+        stage_name="host_to_device_transfer",
+        start_time=start_time,
+        chunk_metadata=chunk_metadata,
+    )
     return genotype_device_array
+
+
+def put_chunk_array_on_device(
+    array: jax.Array | npt.NDArray[typing.Any],
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    chunk_metadata: typing.Any,
+) -> jax.Array:
+    """Transfer one chunk-scoped array to the active JAX device with timing."""
+    start_time = time.perf_counter()
+    device_array = jax.device_put(array)
+    if timing.should_collect_exact_stage_timings(stage_timing_recorder):
+        block_until_ready(device_array)
+    record_stage_duration_with_optional_chunk(
+        stage_timing_recorder=stage_timing_recorder,
+        stage_name="host_to_device_transfer",
+        start_time=start_time,
+        chunk_metadata=chunk_metadata,
+    )
+    return device_array
 
 
 def block_compute_result_for_timing(
@@ -275,11 +314,51 @@ def block_compute_result_for_timing(
     result_ready_value: jax.Array,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     start_time: float,
+    chunk_metadata: typing.Any | None = None,
 ) -> None:
     """Synchronize chunk compute only when detailed stage timings are enabled."""
     if timing.should_collect_exact_stage_timings(stage_timing_recorder):
         block_until_ready(result_ready_value)
-    timing.record_stage_duration(stage_timing_recorder, "jax_compute", start_time)
+    record_stage_duration_with_optional_chunk(
+        stage_timing_recorder=stage_timing_recorder,
+        stage_name="jax_compute",
+        start_time=start_time,
+        chunk_metadata=chunk_metadata,
+    )
+
+
+def build_chunk_timing_identity(metadata: typing.Any) -> timing.ChunkTimingIdentity:
+    """Build per-chunk timing identity fields from native metadata."""
+    variant_start_index = int(metadata.variant_start_index)
+    variant_stop_index = int(metadata.variant_stop_index)
+    return timing.ChunkTimingIdentity(
+        chunk_identifier=variant_start_index,
+        chromosome=get_metadata_chromosome(metadata),
+        variant_start_index=variant_start_index,
+        variant_stop_index=variant_stop_index,
+        variant_count=variant_stop_index - variant_start_index,
+    )
+
+
+def record_stage_duration_with_optional_chunk(
+    *,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_name: str,
+    start_time: float,
+    chunk_metadata: typing.Any | None = None,
+) -> None:
+    """Record a stage duration globally and optionally against one chunk."""
+    if stage_timing_recorder is None:
+        return
+    if chunk_metadata is None:
+        timing.record_stage_duration(stage_timing_recorder, stage_name, start_time)
+        return
+    timing.record_chunk_stage_duration(
+        stage_timing_recorder,
+        chunk_identity=build_chunk_timing_identity(chunk_metadata),
+        stage_name=stage_name,
+        start_time=start_time,
+    )
 
 
 def narrow_public_statistic_array_on_device(array: jax.Array) -> jax.Array:
@@ -373,6 +452,15 @@ def get_binary_chunk_stats_arrays(
     )
 
 
+def build_projected_variant_major_dosage_chunk_stats(
+    genotype_matrix_by_variant: npt.NDArray[np.float32],
+) -> _core.ChunkStats:
+    """Build native chunk stats for a projected variant-major dosage buffer."""
+    return _core.summarize_variant_major_dosage_chunk_stats(
+        np.ascontiguousarray(genotype_matrix_by_variant, dtype=np.float32)
+    )
+
+
 def write_regenie2_native_chunk_with_optional_timing(
     *,
     writer_session: typing.Any,
@@ -401,7 +489,12 @@ def write_regenie2_native_chunk_with_optional_timing(
             "extra_code": extra_code,
         }
     )
-    timing.record_stage_duration(stage_timing_recorder, "device_to_host_materialization", materialization_start_time)
+    record_stage_duration_with_optional_chunk(
+        stage_timing_recorder=stage_timing_recorder,
+        stage_name="device_to_host_materialization",
+        start_time=materialization_start_time,
+        chunk_metadata=metadata,
+    )
 
     write_start_time = time.perf_counter()
     writer_session.write_regenie2_native_chunk(
@@ -413,8 +506,18 @@ def write_regenie2_native_chunk_with_optional_timing(
         log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"]),
         extra_code=host_values["extra_code"],
     )
-    timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
-    timing.record_stage_duration(stage_timing_recorder, "single_trait_output_write", write_start_time)
+    record_stage_duration_with_optional_chunk(
+        stage_timing_recorder=stage_timing_recorder,
+        stage_name="output_write",
+        start_time=write_start_time,
+        chunk_metadata=metadata,
+    )
+    record_stage_duration_with_optional_chunk(
+        stage_timing_recorder=stage_timing_recorder,
+        stage_name="single_trait_output_write",
+        start_time=write_start_time,
+        chunk_metadata=metadata,
+    )
 
 
 def write_regenie2_multi_native_chunk_with_optional_timing(
@@ -439,8 +542,18 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
     )
     if not active_trait_indices:
         write_start_time = time.perf_counter()
-        timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
-        timing.record_stage_duration(stage_timing_recorder, "multi_trait_output_write_total", write_start_time)
+        record_stage_duration_with_optional_chunk(
+            stage_timing_recorder=stage_timing_recorder,
+            stage_name="output_write",
+            start_time=write_start_time,
+            chunk_metadata=metadata,
+        )
+        record_stage_duration_with_optional_chunk(
+            stage_timing_recorder=stage_timing_recorder,
+            stage_name="multi_trait_output_write_total",
+            start_time=write_start_time,
+            chunk_metadata=metadata,
+        )
         return
 
     active_writer_sessions = tuple(writer_sessions[trait_index] for trait_index in active_trait_indices)
@@ -487,7 +600,12 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             "extra_code": active_extra_code,
         }
     )
-    timing.record_stage_duration(stage_timing_recorder, "device_to_host_materialization", materialization_start_time)
+    record_stage_duration_with_optional_chunk(
+        stage_timing_recorder=stage_timing_recorder,
+        stage_name="device_to_host_materialization",
+        start_time=materialization_start_time,
+        chunk_metadata=metadata,
+    )
 
     write_start_time = time.perf_counter()
     if all(isinstance(writer_session, _core.OutputWriterSession) for writer_session in writer_sessions):
@@ -502,8 +620,18 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"]),
             extra_code=host_values["extra_code"],
         )
-        timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
-        timing.record_stage_duration(stage_timing_recorder, "multi_trait_output_write_total", write_start_time)
+        record_stage_duration_with_optional_chunk(
+            stage_timing_recorder=stage_timing_recorder,
+            stage_name="output_write",
+            start_time=write_start_time,
+            chunk_metadata=metadata,
+        )
+        record_stage_duration_with_optional_chunk(
+            stage_timing_recorder=stage_timing_recorder,
+            stage_name="multi_trait_output_write_total",
+            start_time=write_start_time,
+            chunk_metadata=metadata,
+        )
         return
     for compact_trait_index, writer_session in enumerate(active_writer_sessions):
         per_trait_write_start_time = time.perf_counter()
@@ -519,11 +647,24 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
             log10_p_value=cast_statistic_array_for_native_writer(host_values["log10_p_value"][compact_trait_index]),
             extra_code=extra_code_slice,
         )
-        timing.record_stage_duration(
-            stage_timing_recorder, "multi_trait_output_write_per_trait", per_trait_write_start_time
+        record_stage_duration_with_optional_chunk(
+            stage_timing_recorder=stage_timing_recorder,
+            stage_name="multi_trait_output_write_per_trait",
+            start_time=per_trait_write_start_time,
+            chunk_metadata=metadata,
         )
-    timing.record_stage_duration(stage_timing_recorder, "output_write", write_start_time)
-    timing.record_stage_duration(stage_timing_recorder, "multi_trait_output_write_total", write_start_time)
+    record_stage_duration_with_optional_chunk(
+        stage_timing_recorder=stage_timing_recorder,
+        stage_name="output_write",
+        start_time=write_start_time,
+        chunk_metadata=metadata,
+    )
+    record_stage_duration_with_optional_chunk(
+        stage_timing_recorder=stage_timing_recorder,
+        stage_name="multi_trait_output_write_total",
+        start_time=write_start_time,
+        chunk_metadata=metadata,
+    )
 
 
 def get_metadata_chromosome(metadata: typing.Any) -> str:
@@ -532,6 +673,103 @@ def get_metadata_chromosome(metadata: typing.Any) -> str:
     if chromosome_label is not None:
         return str(chromosome_label)
     return str(metadata.chromosome[0])
+
+
+class GroupedMultiPhenotypeFanoutCallback:
+    """Fan out one union-sample native decode to compatible phenotype-group callbacks."""
+
+    def __init__(self, group_fanouts: tuple[MultiPhenotypeGroupFanout, ...]) -> None:
+        """Initialize fanout callback state."""
+        if not group_fanouts:
+            message = "At least one phenotype group callback is required for fanout delivery."
+            raise ValueError(message)
+        self.group_fanouts = group_fanouts
+
+    def start(self) -> None:
+        """Start all group callbacks before native chunk delivery."""
+        for group_fanout in self.group_fanouts:
+            start_method = getattr(group_fanout.callback, "start", None)
+            if callable(start_method):
+                start_method()
+
+    def finish(self) -> None:
+        """Drain all group callbacks after native chunk delivery."""
+        first_error: BaseException | None = None
+        for group_fanout in self.group_fanouts:
+            finish_method = getattr(group_fanout.callback, "finish", None)
+            if not callable(finish_method):
+                continue
+            try:
+                finish_method()
+            except BaseException as error:  # noqa: BLE001
+                if first_error is None:
+                    first_error = error
+        if first_error is not None:
+            raise first_error
+
+    def abort(self) -> None:
+        """Abort all group callbacks after a native delivery failure."""
+        for group_fanout in self.group_fanouts:
+            abort_method = getattr(group_fanout.callback, "abort", None)
+            if callable(abort_method):
+                with contextlib.suppress(Exception):
+                    abort_method()
+
+    def acquire_variant_major_dosage_buffer(
+        self,
+        variant_count: int,
+        sample_count: int,
+    ) -> npt.NDArray[np.float32]:
+        """Return a union-sample host dosage buffer for native decode."""
+        return np.empty((variant_count, sample_count), dtype=np.float32, order="C")
+
+    def acquire_variant_major_packed8_probability_pair_buffer(
+        self,
+        variant_count: int,
+        sample_count: int,
+    ) -> npt.NDArray[np.uint8]:
+        """Return a union-sample host packed8 buffer for native decode."""
+        return np.empty((variant_count, sample_count, 2), dtype=np.uint8, order="C")
+
+    def compute_preprocessed_variant_major_dosage_chunk(
+        self,
+        metadata: _core.VariantMetadata,
+        genotype_matrix_by_variant: npt.NDArray[np.float32],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Slice one union-sample dosage chunk and forward it to each group callback."""
+        del chunk_stats
+        variant_count = int(genotype_matrix_by_variant.shape[0])
+        for group_fanout in self.group_fanouts:
+            group_callback = typing.cast("typing.Any", group_fanout.callback)
+            group_sample_count = int(group_fanout.sample_position_array.shape[0])
+            group_genotype_matrix = group_callback.acquire_variant_major_dosage_buffer(
+                variant_count,
+                group_sample_count,
+            )
+            np.take(
+                genotype_matrix_by_variant,
+                group_fanout.sample_position_array,
+                axis=1,
+                out=group_genotype_matrix,
+            )
+            group_chunk_stats = build_projected_variant_major_dosage_chunk_stats(group_genotype_matrix)
+            group_callback.compute_preprocessed_variant_major_dosage_chunk(
+                metadata,
+                group_genotype_matrix,
+                group_chunk_stats,
+            )
+
+    def compute_preprocessed_variant_major_packed8_probability_pair_chunk(
+        self,
+        metadata: _core.VariantMetadata,
+        packed_probability_pairs_by_variant: npt.NDArray[np.uint8],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Reject packed8 fanout until projected packed statistics are available."""
+        del metadata, packed_probability_pairs_by_variant, chunk_stats
+        message = "Union grouped packed8 delivery requires projected packed8 chunk statistics."
+        raise RuntimeError(message)
 
 
 def require_current_chromosome_state[ChromosomeStateType](
@@ -617,6 +855,15 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Record a nested callback stage using this runner's timing recorder."""
         timing.record_stage_duration(self.stage_timing_recorder, stage_name, start_time)
 
+    def record_chunk_stage_duration(self, metadata: typing.Any, stage_name: str, start_time: float) -> None:
+        """Record a nested callback stage for a specific native chunk."""
+        record_stage_duration_with_optional_chunk(
+            stage_timing_recorder=self.stage_timing_recorder,
+            stage_name=stage_name,
+            start_time=start_time,
+            chunk_metadata=metadata,
+        )
+
     def get_stage_duration_recorder(self) -> collections.abc.Callable[[str, float], None] | None:
         """Return an optional nested stage recorder for lower-level compute helpers."""
         if self.stage_timing_recorder is None:
@@ -663,13 +910,17 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed dosage chunk for JAX association."""
-        self.put_dosage_work_item(
-            PreprocessedDosageChunkWorkItem(
-                metadata=metadata,
-                genotype_matrix=genotype_matrix,
-                chunk_stats=chunk_stats,
+        native_delivery_start_time = time.perf_counter()
+        try:
+            self.put_dosage_work_item(
+                PreprocessedDosageChunkWorkItem(
+                    metadata=metadata,
+                    genotype_matrix=genotype_matrix,
+                    chunk_stats=chunk_stats,
+                )
             )
-        )
+        finally:
+            self.record_chunk_stage_duration(metadata, "native_delivery", native_delivery_start_time)
 
     def compute_preprocessed_variant_major_dosage_chunk(
         self,
@@ -678,13 +929,17 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed variant-major dosage chunk for JAX association."""
-        self.put_dosage_work_item(
-            PreprocessedVariantMajorDosageChunkWorkItem(
-                metadata=metadata,
-                genotype_matrix_by_variant=genotype_matrix_by_variant,
-                chunk_stats=chunk_stats,
+        native_delivery_start_time = time.perf_counter()
+        try:
+            self.put_dosage_work_item(
+                PreprocessedVariantMajorDosageChunkWorkItem(
+                    metadata=metadata,
+                    genotype_matrix_by_variant=genotype_matrix_by_variant,
+                    chunk_stats=chunk_stats,
+                )
             )
-        )
+        finally:
+            self.record_chunk_stage_duration(metadata, "native_delivery", native_delivery_start_time)
 
     def compute_preprocessed_variant_major_packed8_probability_pair_chunk(
         self,
@@ -693,13 +948,17 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed packed8 chunk for JAX association."""
-        self.put_dosage_work_item(
-            PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem(
-                metadata=metadata,
-                packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
-                chunk_stats=chunk_stats,
+        native_delivery_start_time = time.perf_counter()
+        try:
+            self.put_dosage_work_item(
+                PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem(
+                    metadata=metadata,
+                    packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+                    chunk_stats=chunk_stats,
+                )
             )
-        )
+        finally:
+            self.record_chunk_stage_duration(metadata, "native_delivery", native_delivery_start_time)
 
     def consume_dosage_chunks(self) -> None:
         """Consume queued dosage chunks and run JAX work in order."""
@@ -708,32 +967,48 @@ class NativeBgenCallbackRunner(abc.ABC):
                 work_item = self.dosage_queue.get()
                 if work_item is None:
                     return
+                python_callback_start_time = time.perf_counter()
                 if isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
-                    self.compute_preprocessed_variant_major_packed8_chunk(
-                        variant_metadata=work_item.metadata,
-                        packed_probability_pairs_by_variant=work_item.packed_probability_pairs_by_variant,
-                        chunk_stats=work_item.chunk_stats,
-                    )
-                    self.processed_chunk_count += 1
-                    self.record_progress(work_item.metadata)
+                    try:
+                        self.compute_preprocessed_variant_major_packed8_chunk(
+                            variant_metadata=work_item.metadata,
+                            packed_probability_pairs_by_variant=work_item.packed_probability_pairs_by_variant,
+                            chunk_stats=work_item.chunk_stats,
+                        )
+                        self.processed_chunk_count += 1
+                        self.record_progress(work_item.metadata)
+                    finally:
+                        self.record_chunk_stage_duration(
+                            work_item.metadata, "python_callback", python_callback_start_time
+                        )
                     continue
                 if isinstance(work_item, PreprocessedVariantMajorDosageChunkWorkItem):
-                    self.compute_preprocessed_variant_major_chunk(
-                        variant_metadata=work_item.metadata,
-                        genotype_matrix_by_variant=work_item.genotype_matrix_by_variant,
-                        chunk_stats=work_item.chunk_stats,
-                    )
-                    self.processed_chunk_count += 1
-                    self.record_progress(work_item.metadata)
+                    try:
+                        self.compute_preprocessed_variant_major_chunk(
+                            variant_metadata=work_item.metadata,
+                            genotype_matrix_by_variant=work_item.genotype_matrix_by_variant,
+                            chunk_stats=work_item.chunk_stats,
+                        )
+                        self.processed_chunk_count += 1
+                        self.record_progress(work_item.metadata)
+                    finally:
+                        self.record_chunk_stage_duration(
+                            work_item.metadata, "python_callback", python_callback_start_time
+                        )
                     continue
                 if isinstance(work_item, PreprocessedDosageChunkWorkItem):
-                    self.compute_preprocessed_chunk(
-                        variant_metadata=work_item.metadata,
-                        genotype_matrix=work_item.genotype_matrix,
-                        chunk_stats=work_item.chunk_stats,
-                    )
-                    self.processed_chunk_count += 1
-                    self.record_progress(work_item.metadata)
+                    try:
+                        self.compute_preprocessed_chunk(
+                            variant_metadata=work_item.metadata,
+                            genotype_matrix=work_item.genotype_matrix,
+                            chunk_stats=work_item.chunk_stats,
+                        )
+                        self.processed_chunk_count += 1
+                        self.record_progress(work_item.metadata)
+                    finally:
+                        self.record_chunk_stage_duration(
+                            work_item.metadata, "python_callback", python_callback_start_time
+                        )
                     continue
         except Exception as error:  # noqa: BLE001
             self.worker_error = error
@@ -1191,15 +1466,31 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             packed_device_array = put_genotype_matrix_on_device(
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
+                variant_metadata,
             )
             linear_chunk_stats_arrays = get_linear_chunk_stats_arrays(chunk_stats)
+            genotype_dosage_sum = put_chunk_array_on_device(
+                linear_chunk_stats_arrays.dosage_sum,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
+            genotype_observation_count = put_chunk_array_on_device(
+                linear_chunk_stats_arrays.observation_count,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
+            genotype_imputed_dosage_square_sum = put_chunk_array_on_device(
+                linear_chunk_stats_arrays.imputed_dosage_square_sum,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_linear_chunk_packed8_donating_inputs(
                 chromosome_state=chromosome_state,
                 packed_probability_pairs_by_variant=packed_device_array,
-                genotype_dosage_sum=jax.device_put(linear_chunk_stats_arrays.dosage_sum),
-                genotype_observation_count=jax.device_put(linear_chunk_stats_arrays.observation_count),
-                genotype_imputed_dosage_square_sum=jax.device_put(linear_chunk_stats_arrays.imputed_dosage_square_sum),
+                genotype_dosage_sum=genotype_dosage_sum,
+                genotype_observation_count=genotype_observation_count,
+                genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
                 score_dtype=self.score_dtype,
                 linear_minimum_variance=self.linear_numerical_config.minimum_variance,
                 linear_relative_variance_tolerance=self.linear_numerical_config.relative_variance_tolerance,
@@ -1208,6 +1499,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
+                chunk_metadata=variant_metadata,
             )
             self.enqueue_linear_result_for_write(
                 variant_metadata=variant_metadata,
@@ -1260,11 +1552,27 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             chromosome=self.current_chromosome,
         )
 
-        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix_by_variant, self.stage_timing_recorder)
+        genotype_device_array = put_genotype_matrix_on_device(
+            genotype_matrix_by_variant,
+            self.stage_timing_recorder,
+            variant_metadata,
+        )
         linear_chunk_stats_arrays = get_linear_chunk_stats_arrays(chunk_stats)
-        genotype_dosage_sum = jax.device_put(linear_chunk_stats_arrays.dosage_sum)
-        genotype_observation_count = jax.device_put(linear_chunk_stats_arrays.observation_count)
-        genotype_imputed_dosage_square_sum = jax.device_put(linear_chunk_stats_arrays.imputed_dosage_square_sum)
+        genotype_dosage_sum = put_chunk_array_on_device(
+            linear_chunk_stats_arrays.dosage_sum,
+            self.stage_timing_recorder,
+            variant_metadata,
+        )
+        genotype_observation_count = put_chunk_array_on_device(
+            linear_chunk_stats_arrays.observation_count,
+            self.stage_timing_recorder,
+            variant_metadata,
+        )
+        genotype_imputed_dosage_square_sum = put_chunk_array_on_device(
+            linear_chunk_stats_arrays.imputed_dosage_square_sum,
+            self.stage_timing_recorder,
+            variant_metadata,
+        )
         compute_start_time = time.perf_counter()
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
             chromosome_state=chromosome_state,
@@ -1280,6 +1588,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             result_ready_value=result.log10_p_value,
             stage_timing_recorder=self.stage_timing_recorder,
             start_time=compute_start_time,
+            chunk_metadata=variant_metadata,
         )
         return result
 
@@ -1317,7 +1626,11 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             chromosome=self.current_chromosome,
         )
 
-        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
+        genotype_device_array = put_genotype_matrix_on_device(
+            genotype_matrix,
+            self.stage_timing_recorder,
+            variant_metadata,
+        )
         compute_start_time = time.perf_counter()
         result = regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
             chromosome_state=chromosome_state,
@@ -1330,6 +1643,7 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             result_ready_value=result.log10_p_value,
             stage_timing_recorder=self.stage_timing_recorder,
             start_time=compute_start_time,
+            chunk_metadata=variant_metadata,
         )
         return result
 
@@ -1414,7 +1728,11 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 self.current_chromosome_state,
                 chromosome=self.current_chromosome,
             )
-            genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
+            genotype_device_array = put_genotype_matrix_on_device(
+                genotype_matrix,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state(
                 chromosome_state=chromosome_state,
@@ -1427,6 +1745,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
+                chunk_metadata=variant_metadata,
             )
             self.enqueue_multi_result_for_write(
                 variant_metadata=variant_metadata,
@@ -1460,15 +1779,31 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             genotype_device_array = put_genotype_matrix_on_device(
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
+                variant_metadata,
             )
             linear_chunk_stats_arrays = get_linear_chunk_stats_arrays(chunk_stats)
+            genotype_dosage_sum = put_chunk_array_on_device(
+                linear_chunk_stats_arrays.dosage_sum,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
+            genotype_observation_count = put_chunk_array_on_device(
+                linear_chunk_stats_arrays.observation_count,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
+            genotype_imputed_dosage_square_sum = put_chunk_array_on_device(
+                linear_chunk_stats_arrays.imputed_dosage_square_sum,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
                 chromosome_state=chromosome_state,
                 genotype_matrix_by_variant=genotype_device_array,
-                genotype_dosage_sum=jax.device_put(linear_chunk_stats_arrays.dosage_sum),
-                genotype_observation_count=jax.device_put(linear_chunk_stats_arrays.observation_count),
-                genotype_imputed_dosage_square_sum=jax.device_put(linear_chunk_stats_arrays.imputed_dosage_square_sum),
+                genotype_dosage_sum=genotype_dosage_sum,
+                genotype_observation_count=genotype_observation_count,
+                genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
                 score_dtype=self.score_dtype,
                 linear_minimum_variance=self.linear_numerical_config.minimum_variance,
                 linear_relative_variance_tolerance=self.linear_numerical_config.relative_variance_tolerance,
@@ -1477,6 +1812,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
+                chunk_metadata=variant_metadata,
             )
             self.enqueue_multi_result_for_write(
                 variant_metadata=variant_metadata,
@@ -1510,15 +1846,31 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
             packed_device_array = put_genotype_matrix_on_device(
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
+                variant_metadata,
             )
             linear_chunk_stats_arrays = get_linear_chunk_stats_arrays(chunk_stats)
+            genotype_dosage_sum = put_chunk_array_on_device(
+                linear_chunk_stats_arrays.dosage_sum,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
+            genotype_observation_count = put_chunk_array_on_device(
+                linear_chunk_stats_arrays.observation_count,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
+            genotype_imputed_dosage_square_sum = put_chunk_array_on_device(
+                linear_chunk_stats_arrays.imputed_dosage_square_sum,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
             compute_start_time = time.perf_counter()
             result = regenie2_linear.compute_multi_linear_chunk_packed8_donating_inputs(
                 chromosome_state=chromosome_state,
                 packed_probability_pairs_by_variant=packed_device_array,
-                genotype_dosage_sum=jax.device_put(linear_chunk_stats_arrays.dosage_sum),
-                genotype_observation_count=jax.device_put(linear_chunk_stats_arrays.observation_count),
-                genotype_imputed_dosage_square_sum=jax.device_put(linear_chunk_stats_arrays.imputed_dosage_square_sum),
+                genotype_dosage_sum=genotype_dosage_sum,
+                genotype_observation_count=genotype_observation_count,
+                genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
                 score_dtype=self.score_dtype,
                 linear_minimum_variance=self.linear_numerical_config.minimum_variance,
                 linear_relative_variance_tolerance=self.linear_numerical_config.relative_variance_tolerance,
@@ -1527,6 +1879,7 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
+                chunk_metadata=variant_metadata,
             )
             self.enqueue_multi_result_for_write(
                 variant_metadata=variant_metadata,
@@ -1645,8 +1998,10 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else jax.device_put(
-                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask)
+                else put_chunk_array_on_device(
+                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
+                    self.stage_timing_recorder,
+                    variant_metadata,
                 )
             )
             result = self.compute_binary_result(
@@ -1748,7 +2103,11 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             chromosome=self.current_chromosome,
         )
 
-        genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
+        genotype_device_array = put_genotype_matrix_on_device(
+            genotype_matrix,
+            self.stage_timing_recorder,
+            variant_metadata,
+        )
         compute_start_time = time.perf_counter()
         result = regenie2_binary.compute_regenie2_binary_chunk_from_chromosome_state(
             chromosome_state=chromosome_state,
@@ -1763,6 +2122,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             result_ready_value=result.log10_p_value,
             stage_timing_recorder=self.stage_timing_recorder,
             start_time=compute_start_time,
+            chunk_metadata=variant_metadata,
         )
         record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
         return result
@@ -1787,13 +2147,31 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             genotype_device_array = put_genotype_matrix_on_device(
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
+                variant_metadata,
             )
             binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
                 chunk_stats,
                 include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
             )
-            dosage_sum = jax.device_put(binary_chunk_stats_arrays.dosage_sum)
-            observation_count = jax.device_put(binary_chunk_stats_arrays.observation_count)
+            dosage_sum = put_chunk_array_on_device(
+                binary_chunk_stats_arrays.dosage_sum,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
+            observation_count = put_chunk_array_on_device(
+                binary_chunk_stats_arrays.observation_count,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
+            sparse_candidate_mask = (
+                None
+                if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
+                else put_chunk_array_on_device(
+                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
+                    self.stage_timing_recorder,
+                    variant_metadata,
+                )
+            )
             compute_start_time = time.perf_counter()
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
                 compute_score_test = regenie2_binary.compute_binary_score_test_variant_major_donating_inputs
@@ -1811,9 +2189,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     chromosome_state=chromosome_state,
                     genotype_matrix_by_variant=genotype_device_array,
                     correction_plan=self.correction_plan,
-                    sparse_candidate_mask=jax.device_put(
-                        typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask)
-                    ),
+                    sparse_candidate_mask=sparse_candidate_mask,
                     kernel_config=self.kernel_config,
                     score_dtype=self.score_dtype,
                     stage_duration_recorder=self.get_stage_duration_recorder(),
@@ -1824,6 +2200,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
+                chunk_metadata=variant_metadata,
             )
             record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
             self.enqueue_binary_result_for_write(
@@ -1859,13 +2236,31 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             packed_device_array = put_genotype_matrix_on_device(
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
+                variant_metadata,
             )
             binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
                 chunk_stats,
                 include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
             )
-            dosage_sum = jax.device_put(binary_chunk_stats_arrays.dosage_sum)
-            observation_count = jax.device_put(binary_chunk_stats_arrays.observation_count)
+            dosage_sum = put_chunk_array_on_device(
+                binary_chunk_stats_arrays.dosage_sum,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
+            observation_count = put_chunk_array_on_device(
+                binary_chunk_stats_arrays.observation_count,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
+            sparse_candidate_mask = (
+                None
+                if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
+                else put_chunk_array_on_device(
+                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
+                    self.stage_timing_recorder,
+                    variant_metadata,
+                )
+            )
             compute_start_time = time.perf_counter()
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
                 compute_score_test = regenie2_binary.compute_binary_score_test_packed8_donating_inputs
@@ -1883,9 +2278,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                     chromosome_state=chromosome_state,
                     packed_probability_pairs_by_variant=packed_device_array,
                     correction_plan=self.correction_plan,
-                    sparse_candidate_mask=jax.device_put(
-                        typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask)
-                    ),
+                    sparse_candidate_mask=sparse_candidate_mask,
                     kernel_config=self.kernel_config,
                     score_dtype=self.score_dtype,
                     stage_duration_recorder=self.get_stage_duration_recorder(),
@@ -1896,6 +2289,7 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
+                chunk_metadata=variant_metadata,
             )
             record_binary_chunk_diagnostics(stage_timing_recorder=self.stage_timing_recorder, result=result)
             self.enqueue_binary_result_for_write(
@@ -1998,8 +2392,11 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 self.current_chromosome_state,
                 chromosome=self.current_chromosome,
             )
-            genotype_device_array = put_genotype_matrix_on_device(genotype_matrix, self.stage_timing_recorder)
-            compute_start_time = time.perf_counter()
+            genotype_device_array = put_genotype_matrix_on_device(
+                genotype_matrix,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
             binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
                 chunk_stats,
                 include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
@@ -2007,10 +2404,13 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else jax.device_put(
-                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask)
+                else put_chunk_array_on_device(
+                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
+                    self.stage_timing_recorder,
+                    variant_metadata,
                 )
             )
+            compute_start_time = time.perf_counter()
             result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state(
                 chromosome_state=chromosome_state,
                 genotype_matrix=genotype_device_array,
@@ -2024,6 +2424,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
+                chunk_metadata=variant_metadata,
             )
             self.enqueue_multi_result_for_write(
                 variant_metadata=variant_metadata,
@@ -2057,21 +2458,32 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             genotype_device_array = put_genotype_matrix_on_device(
                 genotype_matrix_by_variant,
                 self.stage_timing_recorder,
+                variant_metadata,
             )
             binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
                 chunk_stats,
                 include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
             )
-            dosage_sum = jax.device_put(binary_chunk_stats_arrays.dosage_sum)
-            observation_count = jax.device_put(binary_chunk_stats_arrays.observation_count)
-            compute_start_time = time.perf_counter()
+            dosage_sum = put_chunk_array_on_device(
+                binary_chunk_stats_arrays.dosage_sum,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
+            observation_count = put_chunk_array_on_device(
+                binary_chunk_stats_arrays.observation_count,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else jax.device_put(
-                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask)
+                else put_chunk_array_on_device(
+                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
+                    self.stage_timing_recorder,
+                    variant_metadata,
                 )
             )
+            compute_start_time = time.perf_counter()
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
                 compute_score_test = regenie2_binary.compute_multi_binary_score_test_variant_major_donating_inputs
                 result = compute_score_test(
@@ -2099,6 +2511,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
+                chunk_metadata=variant_metadata,
             )
             self.enqueue_multi_result_for_write(
                 variant_metadata=variant_metadata,
@@ -2132,21 +2545,32 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             packed_device_array = put_genotype_matrix_on_device(
                 packed_probability_pairs_by_variant,
                 self.stage_timing_recorder,
+                variant_metadata,
             )
             binary_chunk_stats_arrays = get_binary_chunk_stats_arrays(
                 chunk_stats,
                 include_sparse_firth_candidate=self.correction_plan.method != types.BinaryFallbackMethod.SCORE_ONLY,
             )
-            dosage_sum = jax.device_put(binary_chunk_stats_arrays.dosage_sum)
-            observation_count = jax.device_put(binary_chunk_stats_arrays.observation_count)
-            compute_start_time = time.perf_counter()
+            dosage_sum = put_chunk_array_on_device(
+                binary_chunk_stats_arrays.dosage_sum,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
+            observation_count = put_chunk_array_on_device(
+                binary_chunk_stats_arrays.observation_count,
+                self.stage_timing_recorder,
+                variant_metadata,
+            )
             sparse_candidate_mask = (
                 None
                 if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY
-                else jax.device_put(
-                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask)
+                else put_chunk_array_on_device(
+                    typing.cast("npt.NDArray[np.bool_]", binary_chunk_stats_arrays.sparse_candidate_mask),
+                    self.stage_timing_recorder,
+                    variant_metadata,
                 )
             )
+            compute_start_time = time.perf_counter()
             if self.correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
                 compute_score_test = regenie2_binary.compute_multi_binary_score_test_packed8_donating_inputs
                 result = compute_score_test(
@@ -2174,6 +2598,7 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
                 result_ready_value=result.log10_p_value,
                 stage_timing_recorder=self.stage_timing_recorder,
                 start_time=compute_start_time,
+                chunk_metadata=variant_metadata,
             )
             self.enqueue_multi_result_for_write(
                 variant_metadata=variant_metadata,

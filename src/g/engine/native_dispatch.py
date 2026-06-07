@@ -113,6 +113,28 @@ class NativeBgenMultiRunInput:
 
 
 @dataclass(frozen=True)
+class NativeBgenUnionRunInput:
+    """Union sample selection used to decode one BGEN pass for several phenotype groups.
+
+    Attributes:
+        sample_indices: Ordered union of compatible phenotype-group sample indices.
+
+    """
+
+    sample_indices: npt.NDArray[np.int64]
+
+    @property
+    def native_aligned_sample_data(self) -> None:
+        """Return no single-trait native alignment handle for union delivery."""
+        return None
+
+    @property
+    def native_multi_aligned_sample_data(self) -> None:
+        """Return no multi-trait native alignment handle for union delivery."""
+        return None
+
+
+@dataclass(frozen=True)
 class NativeBgenGroupedRunInput:
     """One native-planned group of compatible per-phenotype run inputs.
 
