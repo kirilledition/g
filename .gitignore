@@ -20,3 +20,5 @@ src/g/_core*.so
 *.ruff_cache
 
 .codex-task-worktrees/
+.symphony/
+.env.symphony

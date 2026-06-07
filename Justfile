@@ -15,6 +15,9 @@ slurm_memory := env_var_or_default('GWAS_ENGINE_SLURM_MEMORY', '64G')
 slurm_gpu_count := env_var_or_default('GWAS_ENGINE_SLURM_GPUS_PER_TASK', '1')
 slurm_extra_arguments := env_var_or_default('GWAS_ENGINE_SLURM_EXTRA_ARGS', '')
 server_env := '. scripts/server_env.sh'
+symphony_elixir_dir := env_var_or_default('SYMPHONY_ELIXIR_DIR', '/mnt/beegfs/kirill/Projects/symphony/elixir')
+symphony_port := env_var_or_default('SYMPHONY_PORT', '4000')
+symphony_worktree_root := env_var_or_default('SYMPHONY_WORKTREE_ROOT', '/mnt/beegfs/kirill/Projects/g-worktrees/symphony')
 
 # --- Data Preparation ---
 
@@ -137,6 +140,97 @@ doctor-server:
     echo "tools_dir={{tools_dir}}"
     echo "uv_cache_dir=${UV_CACHE_DIR}"
     echo "Server development toolchain looks usable on this host."
+
+# Check local Symphony prerequisites without starting the daemon
+symphony-doctor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
+    if [[ -f "${symphony_env_file}" ]]; then
+      set -a
+      . "${symphony_env_file}"
+      set +a
+    fi
+
+    missing=0
+    required_commands=(git gh codex just uv srun mise)
+    for command_name in "${required_commands[@]}"; do
+      if ! command -v "${command_name}" >/dev/null 2>&1; then
+        echo "Missing required command: ${command_name}" >&2
+        missing=1
+      fi
+    done
+
+    if [[ -z "${LINEAR_API_KEY:-}" ]]; then
+      echo "Missing LINEAR_API_KEY. Add it to ${symphony_env_file}." >&2
+      missing=1
+    fi
+    if [[ -z "${LINEAR_PROJECT_SLUG:-}" ]]; then
+      echo "Missing LINEAR_PROJECT_SLUG. Add it to ${symphony_env_file}." >&2
+      missing=1
+    fi
+    if [[ ! -d "{{symphony_elixir_dir}}" ]]; then
+      echo "Missing Symphony checkout: {{symphony_elixir_dir}}" >&2
+      missing=1
+    elif [[ ! -x "{{symphony_elixir_dir}}/bin/symphony" ]]; then
+      echo "Missing built Symphony binary: {{symphony_elixir_dir}}/bin/symphony" >&2
+      missing=1
+    fi
+    if [[ ! -d "{{symphony_worktree_root}}" ]]; then
+      echo "Missing Symphony worktree root: {{symphony_worktree_root}}" >&2
+      missing=1
+    elif [[ ! -w "{{symphony_worktree_root}}" ]]; then
+      echo "Symphony worktree root is not writable: {{symphony_worktree_root}}" >&2
+      missing=1
+    fi
+
+    gh auth status >/dev/null
+    codex app-server --help >/dev/null
+    if command -v mise >/dev/null 2>&1; then
+      (cd "{{symphony_elixir_dir}}" 2>/dev/null && mise exec -- elixir --version >/dev/null) || missing=1
+      (cd "{{symphony_elixir_dir}}" 2>/dev/null && mise exec -- mix --version >/dev/null) || missing=1
+    fi
+
+    if [[ "${missing}" -ne 0 ]]; then
+      exit 1
+    fi
+    echo "Symphony prerequisites look usable."
+
+# Run Symphony against the repo workflow template
+symphony-run:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
+    if [[ -f "${symphony_env_file}" ]]; then
+      set -a
+      . "${symphony_env_file}"
+      set +a
+    fi
+    if [[ -z "${LINEAR_API_KEY:-}" ]]; then
+      echo "Missing LINEAR_API_KEY. Add it to ${symphony_env_file}." >&2
+      exit 1
+    fi
+    if [[ -z "${LINEAR_PROJECT_SLUG:-}" ]]; then
+      echo "Missing LINEAR_PROJECT_SLUG. Add it to ${symphony_env_file}." >&2
+      exit 1
+    fi
+    if [[ ! "${LINEAR_PROJECT_SLUG}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+      echo "LINEAR_PROJECT_SLUG contains unexpected characters." >&2
+      exit 1
+    fi
+
+    mkdir -p "{{symphony_worktree_root}}"
+    runtime_workflow="${SYMPHONY_RUNTIME_WORKFLOW:-/tmp/g-symphony-${USER:-user}.WORKFLOW.md}"
+    escaped_project_slug="$(printf '%s' "${LINEAR_PROJECT_SLUG}" | sed 's/[#&\\]/\\&/g')"
+    sed "s#__LINEAR_PROJECT_SLUG__#${escaped_project_slug}#g" WORKFLOW.md > "${runtime_workflow}"
+
+    cd "{{symphony_elixir_dir}}"
+    exec mise exec -- ./bin/symphony \
+      --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+      --port "{{symphony_port}}" \
+      "${runtime_workflow}"
 
 # Check external baseline tools used by data prep and comparison benchmarks
 doctor-baselines:
