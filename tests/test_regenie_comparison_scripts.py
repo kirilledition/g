@@ -970,6 +970,9 @@ def test_binary_hot_benchmark_defaults_to_comparable_modes() -> None:
     ]
     configuration = binary_hot_benchmark.build_configuration(arguments)
     benchmark_cases = binary_hot_benchmark.build_benchmark_cases(configuration)
+    assert configuration.bgen_path == Path("data/1kg_chr22_full.bgen")
+    assert configuration.sample_path == Path("data/1kg_chr22_full.sample")
+    assert configuration.expected_variant_count == binary_hot_benchmark.DEFAULT_VARIANT_COUNT
     assert [benchmark_case.name for benchmark_case in benchmark_cases] == [
         "traits1_variant_major_default_batch64_capacity1024"
     ]
@@ -1037,6 +1040,39 @@ def test_binary_hot_benchmark_expands_multi_binary_firth_sweep(tmp_path: Path) -
     assert compute_config["g-gpu-genotype-format"] == "packed8"
     assert compute_config["g-telemetry"] == "off"
     assert packed_high_case.firth_p_threshold == 0.5
+
+
+def test_binary_hot_benchmark_accepts_custom_genotype_inputs(tmp_path: Path) -> None:
+    arguments = binary_hot_benchmark.build_argument_parser().parse_args(
+        [
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--bgen",
+            "1kg_chr10_full.bgen",
+            "--sample",
+            "1kg_chr10_full.sample",
+            "--prediction-list",
+            "baselines_chr10/regenie_step1_pred.list",
+            "--expected-variant-count",
+            "1200000",
+            "--output-dir",
+            str(tmp_path / "profile"),
+            "--jax-cache-dir",
+            str(tmp_path / "jax-cache"),
+        ]
+    )
+
+    configuration = binary_hot_benchmark.build_configuration(arguments)
+    serialized_configuration = binary_hot_benchmark.configuration_to_json_dict(configuration)
+    restored_configuration = binary_hot_benchmark.configuration_from_json_dict(serialized_configuration)
+
+    assert configuration.bgen_path == tmp_path / "data" / "1kg_chr10_full.bgen"
+    assert configuration.sample_path == tmp_path / "data" / "1kg_chr10_full.sample"
+    assert configuration.prediction_list == tmp_path / "data" / "baselines_chr10" / "regenie_step1_pred.list"
+    assert configuration.expected_variant_count == 1_200_000
+    assert restored_configuration.bgen_path == configuration.bgen_path
+    assert restored_configuration.sample_path == configuration.sample_path
+    assert restored_configuration.expected_variant_count == configuration.expected_variant_count
 
 
 def test_binary_hot_child_process_command_contains_binary_controls(tmp_path: Path) -> None:

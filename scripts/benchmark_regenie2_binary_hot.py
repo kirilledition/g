@@ -26,6 +26,8 @@ DEFAULT_OUTPUT_PARENT = Path("data/profiles")
 DEFAULT_VARIANT_COUNT = 418_943
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 GPU_JAX_CACHE_PARENT_DEFAULT = "/tmp/g-jax-binary-hot-cache"
+DEFAULT_BGEN_FILE = Path("1kg_chr22_full.bgen")
+DEFAULT_SAMPLE_FILE = Path("1kg_chr22_full.sample")
 DEFAULT_PHENOTYPE_FILE = Path("pheno_bin.txt")
 DEFAULT_PREDICTION_LIST = Path("baselines/regenie_step1_pred.list")
 DEFAULT_PHENOTYPE_COLUMNS = ("phenotype_binary",)
@@ -64,6 +66,8 @@ class BenchmarkConfiguration:
     """Shared configuration for a binary REGENIE benchmark run."""
 
     data_directory: Path
+    bgen_path: Path
+    sample_path: Path
     phenotype_file: Path
     prediction_list: Path
     output_directory: Path
@@ -84,6 +88,7 @@ class BenchmarkConfiguration:
     low_fallback_p_threshold: float
     high_fallback_p_threshold: float
     variant_limit: int | None
+    expected_variant_count: int | None
     python_executable: str
     jax_cache_directory: Path
 
@@ -329,6 +334,18 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIRECTORY, help="Input data directory.")
     parser.add_argument(
+        "--bgen",
+        type=Path,
+        default=DEFAULT_BGEN_FILE,
+        help="BGEN file path. Relative paths resolve under --data-dir.",
+    )
+    parser.add_argument(
+        "--sample",
+        type=Path,
+        default=DEFAULT_SAMPLE_FILE,
+        help="Sample file path. Relative paths resolve under --data-dir.",
+    )
+    parser.add_argument(
         "--phenotype-file",
         type=Path,
         default=DEFAULT_PHENOTYPE_FILE,
@@ -429,6 +446,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--variant-limit", type=int, help="Optional variant cap for smoke runs.")
     parser.add_argument(
+        "--expected-variant-count",
+        type=int,
+        default=DEFAULT_VARIANT_COUNT,
+        help="Expected full input variant count recorded in benchmark metadata.",
+    )
+    parser.add_argument(
         "--include-cold-process",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -498,6 +521,8 @@ def build_configuration(arguments: argparse.Namespace) -> BenchmarkConfiguration
     validate_firth_p_threshold("--high-fallback-p-threshold", high_fallback_p_threshold)
     return BenchmarkConfiguration(
         data_directory=data_directory,
+        bgen_path=resolve_data_path(data_directory, Path(arguments.bgen)),
+        sample_path=resolve_data_path(data_directory, Path(arguments.sample)),
         phenotype_file=resolve_data_path(data_directory, Path(arguments.phenotype_file)),
         prediction_list=resolve_data_path(data_directory, Path(arguments.prediction_list)),
         output_directory=output_directory,
@@ -518,6 +543,9 @@ def build_configuration(arguments: argparse.Namespace) -> BenchmarkConfiguration
         low_fallback_p_threshold=low_fallback_p_threshold,
         high_fallback_p_threshold=high_fallback_p_threshold,
         variant_limit=arguments.variant_limit,
+        expected_variant_count=(
+            int(arguments.expected_variant_count) if arguments.expected_variant_count is not None else None
+        ),
         python_executable=str(arguments.python_executable),
         jax_cache_directory=jax_cache_directory,
     )
@@ -586,6 +614,8 @@ def configuration_to_json_dict(configuration: BenchmarkConfiguration) -> dict[st
     """Convert configuration into a JSON-serializable dictionary."""
     return {
         "data_directory": str(configuration.data_directory),
+        "bgen_path": str(configuration.bgen_path),
+        "sample_path": str(configuration.sample_path),
         "phenotype_file": str(configuration.phenotype_file),
         "prediction_list": str(configuration.prediction_list),
         "output_directory": str(configuration.output_directory),
@@ -606,6 +636,7 @@ def configuration_to_json_dict(configuration: BenchmarkConfiguration) -> dict[st
         "low_fallback_p_threshold": configuration.low_fallback_p_threshold,
         "high_fallback_p_threshold": configuration.high_fallback_p_threshold,
         "variant_limit": configuration.variant_limit,
+        "expected_variant_count": configuration.expected_variant_count,
         "python_executable": configuration.python_executable,
         "jax_cache_directory": str(configuration.jax_cache_directory),
     }
@@ -614,12 +645,23 @@ def configuration_to_json_dict(configuration: BenchmarkConfiguration) -> dict[st
 def configuration_from_json_dict(payload: dict[str, typing.Any]) -> BenchmarkConfiguration:
     """Build configuration from a JSON dictionary."""
     packaged_configuration = config.load_packaged_config()
+    data_directory = Path(str(payload["data_directory"]))
     firth_batch_sizes = payload.get("firth_batch_sizes")
     firth_candidate_capacities = payload.get("firth_candidate_capacities")
     storage_modes = payload.get("storage_modes")
     fallback_density_scenarios = payload.get("fallback_density_scenarios")
     return BenchmarkConfiguration(
-        data_directory=Path(str(payload["data_directory"])),
+        data_directory=data_directory,
+        bgen_path=(
+            Path(str(payload["bgen_path"]))
+            if "bgen_path" in payload
+            else data_directory / DEFAULT_BGEN_FILE
+        ),
+        sample_path=(
+            Path(str(payload["sample_path"]))
+            if "sample_path" in payload
+            else data_directory / DEFAULT_SAMPLE_FILE
+        ),
         phenotype_file=Path(str(payload.get("phenotype_file", DEFAULT_PHENOTYPE_FILE))),
         prediction_list=Path(str(payload.get("prediction_list", DEFAULT_PREDICTION_LIST))),
         output_directory=Path(str(payload["output_directory"])),
@@ -665,6 +707,9 @@ def configuration_from_json_dict(payload: dict[str, typing.Any]) -> BenchmarkCon
         low_fallback_p_threshold=float(payload.get("low_fallback_p_threshold", DEFAULT_LOW_FALLBACK_P_THRESHOLD)),
         high_fallback_p_threshold=float(payload.get("high_fallback_p_threshold", DEFAULT_HIGH_FALLBACK_P_THRESHOLD)),
         variant_limit=(int(payload["variant_limit"]) if payload["variant_limit"] is not None else None),
+        expected_variant_count=(
+            int(payload["expected_variant_count"]) if payload.get("expected_variant_count") is not None else None
+        ),
         python_executable=str(payload["python_executable"]),
         jax_cache_directory=Path(str(payload["jax_cache_directory"])),
     )
@@ -874,8 +919,8 @@ def run_regenie2_api_call(
         {
             "step": 2,
             "bt": True,
-            "bgen": configuration.data_directory / "1kg_chr22_full.bgen",
-            "sample": configuration.data_directory / "1kg_chr22_full.sample",
+            "bgen": configuration.bgen_path,
+            "sample": configuration.sample_path,
             "phenoFile": configuration.phenotype_file,
             **phenotype_options,
             "out": output_root,
@@ -1122,7 +1167,7 @@ def collect_metadata(configuration: BenchmarkConfiguration) -> dict[str, typing.
             benchmark_case_to_json_dict(benchmark_case) for benchmark_case in build_benchmark_cases(configuration)
         ],
         "environment": relevant_environment,
-        "expected_full_variant_count": DEFAULT_VARIANT_COUNT,
+        "expected_full_variant_count": configuration.expected_variant_count,
     }
 
 

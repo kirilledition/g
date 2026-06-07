@@ -65,6 +65,13 @@ are summarized near the end instead of kept as historical work logs.
   passed after the binary hot benchmark telemetry and metric aggregation fixes.
 - `uv run ty check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`:
   passed after the binary hot benchmark telemetry and metric aggregation fixes.
+- `uv run pytest tests/test_regenie_comparison_scripts.py -q -k 'binary_hot'`: 6 passed
+  after binary hot benchmark genotype input selection.
+- `uv run ruff check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py --output-format=concise`:
+  passed after binary hot benchmark genotype input selection.
+- `uv run ty check scripts/benchmark_regenie2_binary_hot.py tests/test_regenie_comparison_scripts.py`:
+  passed after binary hot benchmark genotype input selection.
+- `git diff --check`: passed after binary hot benchmark genotype input selection.
 - `XDG_RUNTIME_DIR=/tmp TMPDIR=/tmp just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke`:
   passed on `landau`; summary path
   `data/profiles/regenie2_binary_hot_20260606T182522Z/regenie2_binary_hot_summary.json`.
@@ -75,6 +82,22 @@ are summarized near the end instead of kept as historical work logs.
   density, `--firth-batch-sizes 32`, and `--firth-candidate-capacities 128`:
   passed on `landau`; summary path
   `data/profiles/regenie2_binary_hot_20260606T184618Z/regenie2_binary_hot_summary.json`.
+- Targeted chr10 single-trait GPU smoke with high fallback density,
+  `--firth-batch-sizes 32`, and `--firth-candidate-capacities 128`: passed on
+  `landau`; summary path
+  `data/profiles/regenie2_binary_hot_20260607T023713Z/regenie2_binary_hot_summary.json`.
+- Targeted chr10 two-trait GPU smoke with high fallback density,
+  `--firth-batch-sizes 32`, and `--firth-candidate-capacities 128`: passed on
+  `landau`; summary path
+  `data/profiles/regenie2_binary_hot_20260607T024054Z/regenie2_binary_hot_summary.json`.
+- Two-trait chr10 50k tuning matrix over variant-major/packed8 storage,
+  Firth batch sizes 32/64, and candidate capacities 512/1024: passed on
+  `landau`; summary path
+  `data/profiles/regenie2_binary_hot_20260607T024241Z/regenie2_binary_hot_summary.json`.
+- Two-trait chr22 50k tuning matrix over variant-major/packed8 storage,
+  Firth batch sizes 32/64, and candidate capacities 512/1024: passed on
+  `landau`; summary path
+  `data/profiles/regenie2_binary_hot_20260607T024801Z/regenie2_binary_hot_summary.json`.
 - `git diff --check`: passed after approved archive removal and patched
   REGENIE reference relocation.
 - `uv run ruff check src/g tests --output-format=concise`: passed after
@@ -160,13 +183,17 @@ residualization, lane-specific null state, and multi-result merge. Packed8
 multi-binary approximate Firth still decodes to variant-major dosage before
 entering the same multi correction path.
 
-Focused GPU validation passed on `landau`: the default full binary-hot benchmark
-and a targeted two-trait variant-major plus packed8 smoke both completed with
-`firth_candidate_dispatch_plan` timings and no host-sync timing. Remaining
-performance risk is limited to larger 1/2/4/8-trait tuning sweeps if future
-optimization decisions need more data. Full overflow capacity is
-`trait_count * variant_count`, and both bounded and overflow branches are part
-of the jitted dispatcher.
+Focused GPU validation passed on `landau`: the default full binary-hot benchmark,
+targeted chr10 and chr22 smoke runs, and two-trait 50k tuning sweeps over
+variant-major/packed8 storage all completed with `firth_candidate_dispatch_plan`
+timings and no host-sync timing. The two-trait chr10/chr22 sweeps support
+keeping the current defaults, `firth-batch-size = 64` and
+`firth-candidate-capacity = 1024`: batch 64 was consistently faster than batch
+32, and capacity 1024 did not regress hot runtime versus 512 while preserving
+headroom for high fallback density. Remaining performance risk is limited to
+larger 4/8-trait tuning sweeps if future optimization decisions need more data.
+Full overflow capacity is `trait_count * variant_count`, and both bounded and
+overflow branches are part of the jitted dispatcher.
 
 ### P2. Firth candidate capacity selection syncs to host
 
@@ -357,8 +384,10 @@ Recommended staged plan:
   failure isolation.
 - The binary hot benchmark harness now supports multi-binary trait-count,
   Firth batch-size, Firth candidate-capacity, storage-mode, and fallback-density
-  sweeps. The SLURM GPU smoke, default full binary-hot benchmark, and targeted
-  two-trait variant-major plus packed8 smoke passed on `landau`.
+  sweeps, and can target alternate BGEN/sample inputs such as chr10. The SLURM
+  GPU smoke, default full binary-hot benchmark, targeted chr10 smoke, targeted
+  two-trait variant-major plus packed8 smoke, and chr10/chr22 two-trait 50k
+  tuning matrices passed on `landau`.
 - Multi-phenotype resume has focused multi-linear and multi-binary partial-commit coverage
   for the current resume-fast-but-not-minimal behavior; future resume-minimization work
   should add optimization-specific tests.
@@ -422,6 +451,9 @@ work:
   per-trial stage timing JSON is still written.
 - The binary hot benchmark harness now aggregates output row, INFO, chunk-count,
   and byte metrics across multi-trait `RunArtifacts`.
+- The binary hot benchmark harness can now select alternate BGEN/sample inputs
+  and expected variant counts, enabling chr10 and chr22 Firth tuning through the
+  same benchmark path.
 - Approved archive removal now leaves no tracked files under `archive/**` on
   active `main`; patched REGENIE moved to `reference/regenie-patched`.
 
@@ -429,5 +461,6 @@ work:
 
 1. Keep public output statistics float32 unless a future user requirement explicitly asks
    for float64 result files.
-2. Run a larger 1/2/4/8-trait GPU benchmark matrix only if deeper Firth tuning
-   decisions need more data.
+2. Run a larger 4/8-trait GPU benchmark matrix only if deeper Firth tuning
+   decisions need more data; the current two-trait chr10/chr22 evidence supports
+   keeping the existing Firth batch/capacity defaults.

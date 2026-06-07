@@ -14,9 +14,10 @@ It focuses on three performance items:
   are measured across trait counts, addressed in `bench/multi-binary-firth-hot`.
 
 SLURM GPU validation has passed for the completed batching work: the default
-smoke benchmark, default full binary-hot benchmark, and a targeted two-trait
-variant-major plus packed8 smoke all ran on `landau`. A larger 1/2/4/8-trait
-matrix remains optional follow-up for deeper tuning.
+smoke benchmark, default full binary-hot benchmark, a targeted two-trait
+variant-major plus packed8 smoke, and two-trait 50k-variant tuning sweeps on
+chr10 and chr22 all ran on `landau`. A larger 1/2/4/8-trait matrix remains
+optional follow-up for deeper tuning.
 
 ## Current State
 
@@ -49,8 +50,9 @@ statistics back to trait-major `[traits, variants]` arrays.
    multi-score result.
 4. Done in `bench/multi-binary-firth-hot`: extend benchmark coverage for
    multi-binary Firth trait counts, candidate capacities, and Firth batch sizes.
-5. Done for the default full benchmark and targeted two-trait smoke: run larger
-   GPU sweeps only if tuning decisions need more data.
+5. Done for the default full benchmark, targeted two-trait smoke, and bounded
+   chr10/chr22 two-trait 50k tuning sweeps. Run larger 1/2/4/8-trait GPU sweeps
+   only if future tuning decisions need more data.
 
 The completed single-trait dispatcher is the primitive the multi-binary batching
 work reuses conceptually. Multi-binary batching did not reintroduce per-trait
@@ -216,6 +218,10 @@ Remaining performance risks:
   sweeps may still be useful before deeper tuning work;
 - both bounded and overflow branches are part of one jitted dispatcher, so peak
   memory and compile behavior should be watched in larger GPU runs.
+- current two-trait chr10/chr22 50k sweeps support keeping the defaults
+  `firth-batch-size = 64` and `firth-candidate-capacity = 1024`: batch 64 was
+  consistently faster than batch 32, and capacity 1024 did not regress hot
+  runtime versus 512 while preserving headroom for high fallback density.
 
 Acceptance checks:
 
@@ -295,7 +301,26 @@ for deeper tuning sweeps:
 - variant-major dosage and packed8 inputs;
 - low fallback density and high fallback density;
 - multiple `--g-firth-batch-size` and `--g-firth-candidate-capacity` values;
+- alternate `--bgen`, `--sample`, and expected variant count inputs, so chr10
+  and chr22 can be tuned with the same harness;
 - stage timing JSON enabled.
+
+Two-trait tuning evidence from 2026-06-07:
+
+| Input | Variants | Storage | Batch | Capacity | Hot seconds |
+| --- | ---: | --- | ---: | ---: | ---: |
+| chr10 | 50,000 | variant-major | 32 | 1024 | 10.31 |
+| chr10 | 50,000 | variant-major | 64 | 1024 | 7.24 |
+| chr10 | 50,000 | packed8 | 32 | 1024 | 10.14 |
+| chr10 | 50,000 | packed8 | 64 | 1024 | 7.15 |
+| chr22 | 50,000 | variant-major | 32 | 1024 | 9.97 |
+| chr22 | 50,000 | variant-major | 64 | 1024 | 6.79 |
+| chr22 | 50,000 | packed8 | 32 | 1024 | 9.87 |
+| chr22 | 50,000 | packed8 | 64 | 1024 | 6.69 |
+
+The same matrices also compared capacity 512. Capacity 512 was close in hot
+runtime but gives less headroom under high fallback density, so the existing
+capacity 1024 default remains the better conservative default.
 
 Primary metrics:
 
