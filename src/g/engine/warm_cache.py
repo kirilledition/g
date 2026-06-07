@@ -194,9 +194,11 @@ def warm_regenie2_linear_bgen_cache(
         alignment_config=alignment_config,
     )
     chromosome = first_engine_chromosome(engine)
+    covariate_matrix = callbacks.put_compute_array_on_device(run_input.covariate_matrix)
+    phenotype_vector = callbacks.put_compute_array_on_device(run_input.phenotype_vector)
     regenie_state = regenie2_linear.prepare_regenie2_linear_state(
-        covariate_matrix=run_input.covariate_matrix,
-        phenotype_vector=run_input.phenotype_vector,
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
     )
     chromosome_state = regenie2_linear.prepare_regenie2_linear_chromosome_state(
         regenie_state,
@@ -210,7 +212,7 @@ def warm_regenie2_linear_bgen_cache(
     )
     for shape in shapes:
         genotype_matrix_by_variant = build_synthetic_variant_major_genotype_matrix(
-            phenotype_vector=run_input.phenotype_vector,
+            phenotype_vector=phenotype_vector,
             variant_count=shape.variant_count,
             is_binary_trait=False,
             exact_integer_dosage=gpu_genotype_format == types.GpuGenotypeFormat.PACKED8,
@@ -280,9 +282,11 @@ def warm_regenie2_binary_bgen_cache(
         alignment_config=alignment_config,
     )
     chromosome = first_engine_chromosome(engine)
+    covariate_matrix = callbacks.put_compute_array_on_device(run_input.covariate_matrix)
+    phenotype_vector = callbacks.put_compute_array_on_device(run_input.phenotype_vector)
     regenie_state = regenie2_binary.prepare_regenie2_binary_state(
-        covariate_matrix=run_input.covariate_matrix,
-        phenotype_vector=run_input.phenotype_vector,
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
     )
     chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
         state=regenie_state,
@@ -298,7 +302,7 @@ def warm_regenie2_binary_bgen_cache(
     )
     for shape in shapes:
         genotype_matrix_by_variant = build_synthetic_variant_major_genotype_matrix(
-            phenotype_vector=run_input.phenotype_vector,
+            phenotype_vector=phenotype_vector,
             variant_count=shape.variant_count,
             is_binary_trait=True,
             exact_integer_dosage=gpu_genotype_format == types.GpuGenotypeFormat.PACKED8,
