@@ -68,6 +68,20 @@ class BinaryChunkStatsArrays:
     sparse_candidate_mask: npt.NDArray[np.bool_] | None
 
 
+@dataclass(frozen=True)
+class MultiPhenotypeGroupFanout:
+    """One compatible phenotype group fed by a union-sample native decode.
+
+    Attributes:
+        callback: Existing multi-phenotype callback for this compatible group.
+        sample_position_array: Positions of this group's samples within the union decode buffer.
+
+    """
+
+    callback: object
+    sample_position_array: npt.NDArray[np.intp]
+
+
 class NativeBgenWorkerShutdownError(RuntimeError):
     """Raised when a native callback worker does not stop cleanly."""
 
@@ -373,6 +387,15 @@ def get_binary_chunk_stats_arrays(
     )
 
 
+def build_projected_variant_major_dosage_chunk_stats(
+    genotype_matrix_by_variant: npt.NDArray[np.float32],
+) -> _core.ChunkStats:
+    """Build native chunk stats for a projected variant-major dosage buffer."""
+    return _core.summarize_variant_major_dosage_chunk_stats(
+        np.ascontiguousarray(genotype_matrix_by_variant, dtype=np.float32)
+    )
+
+
 def write_regenie2_native_chunk_with_optional_timing(
     *,
     writer_session: typing.Any,
@@ -532,6 +555,103 @@ def get_metadata_chromosome(metadata: typing.Any) -> str:
     if chromosome_label is not None:
         return str(chromosome_label)
     return str(metadata.chromosome[0])
+
+
+class GroupedMultiPhenotypeFanoutCallback:
+    """Fan out one union-sample native decode to compatible phenotype-group callbacks."""
+
+    def __init__(self, group_fanouts: tuple[MultiPhenotypeGroupFanout, ...]) -> None:
+        """Initialize fanout callback state."""
+        if not group_fanouts:
+            message = "At least one phenotype group callback is required for fanout delivery."
+            raise ValueError(message)
+        self.group_fanouts = group_fanouts
+
+    def start(self) -> None:
+        """Start all group callbacks before native chunk delivery."""
+        for group_fanout in self.group_fanouts:
+            start_method = getattr(group_fanout.callback, "start", None)
+            if callable(start_method):
+                start_method()
+
+    def finish(self) -> None:
+        """Drain all group callbacks after native chunk delivery."""
+        first_error: BaseException | None = None
+        for group_fanout in self.group_fanouts:
+            finish_method = getattr(group_fanout.callback, "finish", None)
+            if not callable(finish_method):
+                continue
+            try:
+                finish_method()
+            except BaseException as error:  # noqa: BLE001
+                if first_error is None:
+                    first_error = error
+        if first_error is not None:
+            raise first_error
+
+    def abort(self) -> None:
+        """Abort all group callbacks after a native delivery failure."""
+        for group_fanout in self.group_fanouts:
+            abort_method = getattr(group_fanout.callback, "abort", None)
+            if callable(abort_method):
+                with contextlib.suppress(Exception):
+                    abort_method()
+
+    def acquire_variant_major_dosage_buffer(
+        self,
+        variant_count: int,
+        sample_count: int,
+    ) -> npt.NDArray[np.float32]:
+        """Return a union-sample host dosage buffer for native decode."""
+        return np.empty((variant_count, sample_count), dtype=np.float32, order="C")
+
+    def acquire_variant_major_packed8_probability_pair_buffer(
+        self,
+        variant_count: int,
+        sample_count: int,
+    ) -> npt.NDArray[np.uint8]:
+        """Return a union-sample host packed8 buffer for native decode."""
+        return np.empty((variant_count, sample_count, 2), dtype=np.uint8, order="C")
+
+    def compute_preprocessed_variant_major_dosage_chunk(
+        self,
+        metadata: _core.VariantMetadata,
+        genotype_matrix_by_variant: npt.NDArray[np.float32],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Slice one union-sample dosage chunk and forward it to each group callback."""
+        del chunk_stats
+        variant_count = int(genotype_matrix_by_variant.shape[0])
+        for group_fanout in self.group_fanouts:
+            group_callback = typing.cast("typing.Any", group_fanout.callback)
+            group_sample_count = int(group_fanout.sample_position_array.shape[0])
+            group_genotype_matrix = group_callback.acquire_variant_major_dosage_buffer(
+                variant_count,
+                group_sample_count,
+            )
+            np.take(
+                genotype_matrix_by_variant,
+                group_fanout.sample_position_array,
+                axis=1,
+                out=group_genotype_matrix,
+            )
+            group_chunk_stats = build_projected_variant_major_dosage_chunk_stats(group_genotype_matrix)
+            group_callback.compute_preprocessed_variant_major_dosage_chunk(
+                metadata,
+                group_genotype_matrix,
+                group_chunk_stats,
+            )
+
+    def compute_preprocessed_variant_major_packed8_probability_pair_chunk(
+        self,
+        metadata: _core.VariantMetadata,
+        packed_probability_pairs_by_variant: npt.NDArray[np.uint8],
+        chunk_stats: _core.ChunkStats,
+    ) -> None:
+        """Reject packed8 fanout until projected packed statistics are available."""
+        del metadata, packed_probability_pairs_by_variant, chunk_stats
+        message = "Union grouped packed8 delivery requires projected packed8 chunk statistics."
+        raise RuntimeError(message)
 
 
 def require_current_chromosome_state[ChromosomeStateType](

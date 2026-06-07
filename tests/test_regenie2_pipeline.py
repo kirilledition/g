@@ -3862,6 +3862,189 @@ def test_grouped_per_phenotype_pipeline_splits_different_alignments() -> None:
     np.testing.assert_array_equal(engine.run_call_arguments[1][0], np.asarray([0, 1], dtype=np.int64))
 
 
+def test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignments() -> None:
+    FakeRunEngine.instances.clear()
+    writer_sessions = [FakeWriterSession(), FakeWriterSession()]
+    run_inputs = (
+        build_native_run_input_with_alignment(
+            phenotype_name="trait_a",
+            sample_indices=(0, 1, 2),
+            phenotype_values=(0.0, 1.0, 2.0),
+            covariate_values=((1.0, 40.0), (1.0, 50.0), (1.0, 60.0)),
+        ),
+        build_native_run_input_with_alignment(
+            phenotype_name="trait_b",
+            sample_indices=(1, 2, 3),
+            phenotype_values=(3.0, 4.0, 5.0),
+            covariate_values=((1.0, 50.0), (1.0, 60.0), (1.0, 70.0)),
+        ),
+    )
+    grouped_run_inputs = (
+        build_grouped_run_input_from_single_trait_inputs(
+            phenotype_indices=(0,),
+            phenotype_names=("trait_a",),
+            run_inputs=(run_inputs[0],),
+        ),
+        build_grouped_run_input_from_single_trait_inputs(
+            phenotype_indices=(1,),
+            phenotype_names=("trait_b",),
+            run_inputs=(run_inputs[1],),
+        ),
+    )
+    pipeline_options = build_default_pipeline_runtime_options()
+
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch._core.MultiRegeniePredictionSource", FakePredictionSource),
+        patch(
+            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
+        ),
+        patch("g.engine.native_dispatch.load_native_bgen_grouped_run_inputs", return_value=grouped_run_inputs),
+        patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
+        patch(
+            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+        ),
+        patch(
+            "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
+            return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
+        ),
+    ):
+        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_names=("trait_a", "trait_b"),
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths_by_phenotype=(
+                output.OutputRunPaths(Path("run/a"), Path("run/a/chunks")),
+                output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
+            ),
+            trusted_no_missing_diploid=True,
+            writer_thread_count=pipeline_options.writer_thread_count,
+            writer_queue_depth=pipeline_options.writer_queue_depth,
+            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
+            parquet_compression=pipeline_options.parquet_compression,
+            bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
+            score_dtype=pipeline_options.score_dtype,
+            firth_dtype=pipeline_options.firth_dtype,
+            sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        )
+
+    assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+    engine = FakeRunEngine.instances[0]
+    assert engine.validation_count == 1
+    assert len(engine.run_call_arguments) == 1
+    sample_indices, callback, committed_chunk_identifiers = engine.run_call_arguments[0]
+    np.testing.assert_array_equal(sample_indices, np.asarray([0, 1, 2, 3], dtype=np.int64))
+    assert isinstance(callback, callbacks.GroupedMultiPhenotypeFanoutCallback)
+    np.testing.assert_array_equal(callback.group_fanouts[0].sample_position_array, np.asarray([0, 1, 2]))
+    np.testing.assert_array_equal(callback.group_fanouts[1].sample_position_array, np.asarray([1, 2, 3]))
+    assert committed_chunk_identifiers == []
+    assert mock_run_multi_preflight.call_count == 2
+
+
+def test_grouped_per_phenotype_pipeline_keeps_multi_pass_when_union_not_cheaper() -> None:
+    FakeRunEngine.instances.clear()
+    writer_sessions = [FakeWriterSession(), FakeWriterSession()]
+    run_inputs = (
+        build_native_run_input_with_alignment(
+            phenotype_name="trait_a",
+            sample_indices=(0, 1),
+            phenotype_values=(0.0, 1.0),
+            covariate_values=((1.0, 40.0), (1.0, 50.0)),
+        ),
+        build_native_run_input_with_alignment(
+            phenotype_name="trait_b",
+            sample_indices=(2, 3),
+            phenotype_values=(3.0, 4.0),
+            covariate_values=((1.0, 60.0), (1.0, 70.0)),
+        ),
+    )
+    grouped_run_inputs = (
+        build_grouped_run_input_from_single_trait_inputs(
+            phenotype_indices=(0,),
+            phenotype_names=("trait_a",),
+            run_inputs=(run_inputs[0],),
+        ),
+        build_grouped_run_input_from_single_trait_inputs(
+            phenotype_indices=(1,),
+            phenotype_names=("trait_b",),
+            run_inputs=(run_inputs[1],),
+        ),
+    )
+    pipeline_options = build_default_pipeline_runtime_options()
+
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
+        patch("g.engine.native_dispatch._core.MultiRegeniePredictionSource", FakePredictionSource),
+        patch(
+            "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
+            side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
+        ),
+        patch("g.engine.native_dispatch.load_native_bgen_grouped_run_inputs", return_value=grouped_run_inputs),
+        patch("g.engine.regenie2_pipeline.run_multi_preflight"),
+        patch(
+            "g.engine.regenie2_pipeline.output.create_output_writer_session",
+            side_effect=lambda *args, **kwargs: writer_sessions.pop(0),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            side_effect=({"header": "trait_a"}, {"header": "trait_b"}),
+        ),
+        patch(
+            "g.engine.regenie2_pipeline.output.initialize_output_run",
+            return_value=output.InitializedOutputRun(committed_chunk_identifiers=frozenset()),
+        ),
+        patch(
+            "g.compute.regenie2_linear.api.prepare_regenie2_multi_linear_state",
+            return_value=typing.cast("regenie2_linear_state.Regenie2MultiLinearState", "state"),
+        ),
+    ):
+        final_paths = regenie2_pipeline.run_regenie2_multi_phenotype_linear_bgen_pipeline(
+            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            phenotype_path=Path("phenotype.tsv"),
+            phenotype_names=("trait_a", "trait_b"),
+            prediction_list_path=Path("pred.list"),
+            covariate_path=Path("covariates.tsv"),
+            covariate_names=("age",),
+            chunk_size=32,
+            variant_limit=100,
+            output_run_paths_by_phenotype=(
+                output.OutputRunPaths(Path("run/a"), Path("run/a/chunks")),
+                output.OutputRunPaths(Path("run/b"), Path("run/b/chunks")),
+            ),
+            trusted_no_missing_diploid=True,
+            writer_thread_count=pipeline_options.writer_thread_count,
+            writer_queue_depth=pipeline_options.writer_queue_depth,
+            chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
+            parquet_compression=pipeline_options.parquet_compression,
+            bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
+            score_dtype=pipeline_options.score_dtype,
+            firth_dtype=pipeline_options.firth_dtype,
+            sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        )
+
+    assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+    engine = FakeRunEngine.instances[0]
+    assert engine.validation_count == 1
+    assert len(engine.run_call_arguments) == 2
+    np.testing.assert_array_equal(engine.run_call_arguments[0][0], np.asarray([0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(engine.run_call_arguments[1][0], np.asarray([2, 3], dtype=np.int64))
+
+
 def test_multi_binary_complete_case_packed8_preserves_kernel_config_and_manifests() -> None:
     FakeRunEngine.instances.clear()
     writer_sessions = [FakeWriterSession(), FakeWriterSession()]
