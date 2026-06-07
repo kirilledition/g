@@ -12,7 +12,7 @@ repo_rust_directory="${tools_directory}/rust"
 repo_cargo_home="${repo_rust_directory}/cargo"
 repo_rustup_home="${repo_rust_directory}/rustup"
 
-export PATH="${tools_directory}/bin:${repo_cargo_home}/bin:${PATH}"
+export PATH="${tools_directory}/bin:${HOME}/.local/bin:${repo_cargo_home}/bin:${PATH}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/g-uv-cache}"
 export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 if [ -z "${CARGO_HOME:-}" ] && [ -x "${repo_cargo_home}/bin/cargo" ]; then
