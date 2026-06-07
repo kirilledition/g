@@ -6,7 +6,7 @@ This note records the quantitative-trait step 2 parity model used while hardenin
 ## Reference Algorithm
 
 Original REGENIE runs quantitative step 2 through `compute_score_qt()` in
-`archive/direct_association/regenie/src/Step2_Models.cpp`.
+`reference/regenie-patched/src/Step2_Models.cpp`.
 
 For the default dense score-test path, REGENIE:
 

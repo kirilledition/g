@@ -37,15 +37,15 @@ writing.
 
 ## Original REGENIE
 
-In this repository, "original REGENIE" means the archived C++ reference under
-`archive/direct_association/regenie`. The key files and functions are:
+In this repository, "original REGENIE" means the patched C++ reference under
+`reference/regenie-patched`. The key files and functions are:
 
-- `archive/direct_association/regenie/src/Geno.cpp`
+- `reference/regenie-patched/src/Geno.cpp`
   - `flip_geno`: recodes high-frequency tested alleles to the minor allele
     before association testing.
   - `check_sparse_G`: chooses sparse genotype storage from the count of zero
     entries after REGENIE-style coding.
-- `archive/direct_association/regenie/src/Step2_Models.cpp`
+- `reference/regenie-patched/src/Step2_Models.cpp`
   - `compute_score_bt`: binary trait score-test loop.
   - `check_pval_snp`: decides whether a variant needs Firth or SPA correction.
   - `run_firth_correction_snp`: dispatches exact or approximate Firth.
@@ -54,11 +54,11 @@ In this repository, "original REGENIE" means the archived C++ reference under
   - `fit_firth_logistic_snp_fast`: scalar approximate Firth for one variant.
   - `fit_firth_pseudo`: first scalar pseudo-Firth attempt.
   - `fit_firth`: scalar Newton-Raphson fallback for approximate Firth.
-- `archive/direct_association/regenie/src/Step1_Models.cpp`
+- `reference/regenie-patched/src/Step1_Models.cpp`
   - `get_pvec`: logistic probability clipping. REGENIE clips eta at
     `ETAMINTHR=-30` and `ETAMAXTHR=30`, with probability endpoints controlled
     by `numtol_eps`.
-- `archive/direct_association/regenie/src/Regenie.hpp`
+- `reference/regenie-patched/src/Regenie.hpp`
   - Default tolerances and iteration counts, including
     `numtol_eps = 10 * double_epsilon`, `niter_max_firth_null = 1000`, and
     `maxstep_null = 25`.
@@ -786,7 +786,7 @@ emits debug JSON for score-test, sparse, null-model, and scalar Firth internals.
 
 ### Instrument Original REGENIE Temporarily
 
-If local code inspection is not enough, patch the archived REGENIE source in a
+If local code inspection is not enough, patch the reference REGENIE source in a
 disposable worktree and print diagnostics from:
 
 - `fit_approx_firth_null`
@@ -796,8 +796,8 @@ disposable worktree and print diagnostics from:
 - `check_sparse_G`
 - `flip_geno`
 
-Remove all instrumentation before committing `g` changes. The archived source
-is a reference, not part of the product code path.
+Remove all instrumentation before committing `g` changes. The reference source
+is not part of the product code path.
 
 ### Read Stage Timing Diagnostics
 

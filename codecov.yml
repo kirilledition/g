@@ -20,5 +20,5 @@ github_checks:
   annotations: false
 
 ignore:
-  - "archive/**"
+  - "reference/**"
   - "tests/**"

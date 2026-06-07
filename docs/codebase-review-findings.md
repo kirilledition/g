@@ -75,6 +75,12 @@ are summarized near the end instead of kept as historical work logs.
   density, `--firth-batch-sizes 32`, and `--firth-candidate-capacities 128`:
   passed on `landau`; summary path
   `data/profiles/regenie2_binary_hot_20260606T184618Z/regenie2_binary_hot_summary.json`.
+- `git diff --check`: passed after approved archive removal and patched
+  REGENIE reference relocation.
+- `uv run ruff check src/g tests --output-format=concise`: passed after
+  approved archive removal and patched REGENIE reference relocation.
+- `uv run ty check src/g`: passed after approved archive removal and patched
+  REGENIE reference relocation.
 
 I also fetched `origin` and confirmed the reviewed base matched `origin/main` before the
 cleanup integration. The GPU smoke, default full binary-hot benchmark, and targeted
@@ -283,39 +289,60 @@ Suggested direction: only change the formula after comparing against the intende
 REGENIE/BGEN INFO definition. The code now makes the current behavior explicit, but the
 statistical policy remains a product/science decision.
 
-### P3. The repository is still dominated by tracked archive files
+### P3. The repository was dominated by tracked archive files
 
-Status: non-destructive search and documentation hygiene is now applied. The
-root `.ignore` excludes `/archive/` from default `rg`/`fd` searches, and
-`archive/README.md` identifies the tree as historical reference material rather
-than active application code.
+Status: addressed. Non-destructive search and documentation hygiene landed
+first, the old archive was preserved on dedicated Git refs, and the approved
+archive removal is now complete. Active `main` no longer tracks
+`archive/**`. The retained patched REGENIE source moved to
+`reference/regenie-patched` because it is an external parity reference rather
+than historical `g` application code.
 
 Current tracked file counts:
 
-- Total tracked files: 18,428.
-- Tracked files under `archive/**`: 18,240.
+- Total tracked files: 862.
+- Tracked files under `archive/**`: 0.
+- Tracked files under `reference/regenie-patched/**`: 671.
 
 Why this matters: code search, reviews, and agent context gathering all have to filter a
 large historical tree that is not part of the active app. This has already produced noisy
 static searches.
 
-Remaining direction: preservation is done on branch
+Resolution: preservation is done on branch
 `preserve-direct-association-g-code-20260607` and tag
-`archive-direct-association-g-code-20260607`. Removing archived GWAS-engine code
-from active `main` still requires explicit approval. Do not remove or rewrite
-archive history without that approval.
+`archive-direct-association-g-code-20260607`. The approved
+`archive/direct_association/src`, `archive/direct_association/tests`,
+`archive/direct_association/scripts`, and upstream BGEN `release/` snapshot
+now have no tracked files on active `main`. The patched REGENIE source remains
+available at `reference/regenie-patched`. No archive history rewrite was
+performed.
+
+The removed `release/` snapshot was the upstream C++ BGEN reference
+implementation, not active GWAS-engine code. It accounted for 17,551 tracked
+files and about 190 MB on disk; 17,038 of those files were vendored
+`boost_1_86_0`, with additional build artifacts and example BGEN data. Active
+repo code did not reference it. The retained patched REGENIE source expects a
+BGEN library through `BGEN_PATH` when built directly, but it did not point at
+the sibling archive checkout and its Dockerfiles download BGEN themselves.
 
 Recommended staged plan:
 
-1. Done: add a root `.ignore` entry for `/archive/` and an `archive/README.md`
-   that says the archive is historical, not active app code.
+1. Done: initially add a root `.ignore` entry for `/archive/` and an
+   `archive/README.md` that says the archive is historical, not active app
+   code. These were removed after `archive/**` itself was removed from active
+   `main`.
 2. Done: preserve the archive on dedicated Git refs:
    `preserve-direct-association-g-code-20260607` and
    `archive-direct-association-g-code-20260607`.
-3. If removal is approved, remove the archived GWAS-engine code from active
+3. Done: remove the approved archived GWAS-engine code scope from active
    `main` with a normal commit while keeping the patched REGENIE tree intact.
    This preserves history without rewriting every clone.
-4. Avoid destructive `git filter-repo` history rewrites unless clone size becomes a real
+4. Done: remove the unrelated upstream BGEN `release/` snapshot from active
+   `main` after confirming the app does not use it and the retained REGENIE
+   tree does not directly reference that checkout.
+5. Done: move patched REGENIE from `archive/direct_association/regenie` to
+   `reference/regenie-patched` and document its external BGEN dependency.
+6. Avoid destructive `git filter-repo` history rewrites unless clone size becomes a real
    problem and all branch/worktree users coordinate.
 
 ## Test And Benchmark Gaps
@@ -371,8 +398,10 @@ work:
 - Dtype docs now state the current contract: score/Firth dtype options control internal
   compute precision, while public association statistics remain float32.
 - Callback worker startup now has an explicit lifecycle and focused tests.
-- Non-destructive archive hygiene now keeps `/archive/` out of default `rg`/`fd`
-  searches and documents the tree as historical reference material.
+- Non-destructive archive hygiene first kept `/archive/` out of default
+  `rg`/`fd` searches and documented the tree as historical reference material;
+  those temporary markers were removed when the archive tree was removed from
+  active `main`.
 - The row-major BGEN preprocessing boundary now uses `RowMajorDosageBuffer` to centralize
   null/alignment validation and typed mutable slice reconstruction.
 - The Python-owned Arrow output boundary now uses `PythonOwnedArrowValues` to centralize
@@ -393,12 +422,12 @@ work:
   per-trial stage timing JSON is still written.
 - The binary hot benchmark harness now aggregates output row, INFO, chunk-count,
   and byte metrics across multi-trait `RunArtifacts`.
+- Approved archive removal now leaves no tracked files under `archive/**` on
+  active `main`; patched REGENIE moved to `reference/regenie-patched`.
 
 ## Suggested Implementation Order
 
-1. If explicitly approved, remove preserved archived GWAS-engine code from
-   active `main`, while keeping patched REGENIE intact.
-2. Keep public output statistics float32 unless a future user requirement explicitly asks
+1. Keep public output statistics float32 unless a future user requirement explicitly asks
    for float64 result files.
-3. Run a larger 1/2/4/8-trait GPU benchmark matrix only if deeper Firth tuning
+2. Run a larger 1/2/4/8-trait GPU benchmark matrix only if deeper Firth tuning
    decisions need more data.
