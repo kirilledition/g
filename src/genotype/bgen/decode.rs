@@ -1,7 +1,7 @@
 use std::mem::MaybeUninit;
 use std::ptr::NonNull;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use flate2::{Decompress, FlushDecompress, Status};
@@ -18,6 +18,7 @@ const MISSING_SAMPLE_FLAG_MASK: u8 = 0x80;
 const PLOIDY_MASK: u8 = 0x3F;
 const DEFAULT_DECODE_TILE_VARIANT_COUNT: usize = 64;
 static DECODE_TILE_VARIANT_COUNT: AtomicUsize = AtomicUsize::new(DEFAULT_DECODE_TILE_VARIANT_COUNT);
+static ROW_MAJOR_DIRECT_WRITE_ENABLED: AtomicBool = AtomicBool::new(false);
 
 pub(super) struct VariantMajorOutputMatrix<Value> {
     pointer: NonNull<Value>,
@@ -228,6 +229,10 @@ pub fn set_decode_tile_variant_count(tile_variant_count: usize) -> Result<(), Bg
     Ok(())
 }
 
+pub fn set_row_major_direct_write_enabled(enabled: bool) {
+    ROW_MAJOR_DIRECT_WRITE_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
 pub(super) fn unphased_eight_bit_dosage_lookup() -> &'static [f32] {
     static UNPHASED_EIGHT_BIT_DOSAGE_LOOKUP: OnceLock<Vec<f32>> = OnceLock::new();
     UNPHASED_EIGHT_BIT_DOSAGE_LOOKUP.get_or_init(|| {
@@ -296,6 +301,23 @@ pub(super) fn decode_variant_dosage_tile_into_row_major_matrix(
     collect_dosage_totals: bool,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<DosageTileDecodeResult, BgenError> {
+    if row_major_direct_write_enabled(profiling_enabled, sample_selection) {
+        return decode_variant_dosage_tile_direct_into_row_major_matrix(
+            mmap,
+            compression_type,
+            sample_count,
+            sample_selection,
+            variant_record_chunk,
+            output_pointer_address,
+            selected_variant_count,
+            tile_variant_start_index,
+            profiling_enabled,
+            trusted_no_missing_diploid,
+            collect_dosage_totals,
+            thread_scratch,
+        );
+    }
+
     let tile_variant_count = variant_record_chunk.len();
     let tile_value_count = sample_selection
         .selected_sample_count
@@ -327,26 +349,16 @@ pub(super) fn decode_variant_dosage_tile_into_row_major_matrix(
             collect_dosage_totals,
             thread_scratch,
         )?;
-        let variant_profile_snapshot = variant_decode_result.profile_snapshot;
         if collect_dosage_totals {
             selected_dosage_totals[tile_variant_index] = variant_decode_result.selected_dosage_total;
         }
-        thread_local_profile_snapshot.compressed_block_fetch_ns += variant_profile_snapshot.compressed_block_fetch_ns;
-        thread_local_profile_snapshot.compressed_block_fetch_count +=
-            variant_profile_snapshot.compressed_block_fetch_count;
-        thread_local_profile_snapshot.compressed_byte_count += variant_profile_snapshot.compressed_byte_count;
-        thread_local_profile_snapshot.decompression_ns += variant_profile_snapshot.decompression_ns;
-        thread_local_profile_snapshot.decompression_count += variant_profile_snapshot.decompression_count;
-        thread_local_profile_snapshot.uncompressed_byte_count += variant_profile_snapshot.uncompressed_byte_count;
-        thread_local_profile_snapshot.zlib_stream_count += variant_profile_snapshot.zlib_stream_count;
-        thread_local_profile_snapshot.probability_decode_ns += variant_profile_snapshot.probability_decode_ns;
-        thread_local_profile_snapshot.probability_decode_count += variant_profile_snapshot.probability_decode_count;
-        thread_local_profile_snapshot.variant_decode_count += variant_profile_snapshot.variant_decode_count;
-        thread_local_profile_snapshot.output_write_ns += variant_profile_snapshot.output_write_ns;
-        thread_local_profile_snapshot.output_write_count += variant_profile_snapshot.output_write_count;
-        thread_local_profile_snapshot.output_byte_count += variant_profile_snapshot.output_byte_count;
+        if profiling_enabled {
+            thread_local_profile_snapshot.merge_from(&variant_decode_result.profile_snapshot);
+        }
     }
-    thread_local_profile_snapshot.decode_tile_count += 1;
+    if profiling_enabled {
+        thread_local_profile_snapshot.decode_tile_count += 1;
+    }
 
     let copy_tile_start_time = profiling_enabled.then(Instant::now);
     let mut output_matrix = unsafe {
@@ -374,6 +386,59 @@ pub(super) fn decode_variant_dosage_tile_into_row_major_matrix(
     }
 
     Ok(DosageTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_totals })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_variant_dosage_tile_direct_into_row_major_matrix(
+    mmap: &[u8],
+    compression_type: CompressionType,
+    sample_count: usize,
+    sample_selection: &SampleSelection,
+    variant_record_chunk: &[VariantRecord],
+    output_pointer_address: usize,
+    selected_variant_count: usize,
+    tile_variant_start_index: usize,
+    profiling_enabled: bool,
+    trusted_no_missing_diploid: bool,
+    collect_dosage_totals: bool,
+    thread_scratch: &mut ThreadScratch,
+) -> Result<DosageTileDecodeResult, BgenError> {
+    let tile_variant_count = variant_record_chunk.len();
+    let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
+    let mut selected_dosage_totals = if collect_dosage_totals { vec![0.0_f32; tile_variant_count] } else { Vec::new() };
+    for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
+        let variant_decode_result = decode_variant_dosages_into_row_major_matrix(
+            mmap,
+            compression_type,
+            sample_count,
+            sample_selection,
+            variant_record,
+            output_pointer_address,
+            tile_variant_start_index + tile_variant_index,
+            selected_variant_count,
+            profiling_enabled,
+            trusted_no_missing_diploid,
+            collect_dosage_totals,
+            thread_scratch,
+        )?;
+        if collect_dosage_totals {
+            selected_dosage_totals[tile_variant_index] = variant_decode_result.selected_dosage_total;
+        }
+        if profiling_enabled {
+            thread_local_profile_snapshot.merge_from(&variant_decode_result.profile_snapshot);
+        }
+    }
+    if profiling_enabled {
+        thread_local_profile_snapshot.decode_tile_count += 1;
+    }
+
+    Ok(DosageTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, selected_dosage_totals })
+}
+
+fn row_major_direct_write_enabled(profiling_enabled: bool, sample_selection: &SampleSelection) -> bool {
+    !profiling_enabled
+        && ROW_MAJOR_DIRECT_WRITE_ENABLED.load(Ordering::Relaxed)
+        && (sample_selection.is_identity || sample_selection.contiguous_file_index_start.is_some())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -408,7 +473,6 @@ pub(super) fn decode_variant_major_dosage_tile(
             trusted_no_missing_diploid,
             thread_scratch,
         )?;
-        let variant_profile_snapshot = variant_decode_result.profile_snapshot;
         tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.selected_dosage_total;
         tile_stats.dosage_square_sum[tile_variant_index] = variant_decode_result.selected_dosage_square_total;
         tile_stats.observation_count[tile_variant_index] = variant_decode_result.selected_observation_count;
@@ -418,22 +482,13 @@ pub(super) fn decode_variant_major_dosage_tile(
         tile_stats.homozygous_reference_count[tile_variant_index] = variant_decode_result.homozygous_reference_count;
         tile_stats.heterozygous_count[tile_variant_index] = variant_decode_result.heterozygous_count;
         tile_stats.homozygous_alternate_count[tile_variant_index] = variant_decode_result.homozygous_alternate_count;
-        thread_local_profile_snapshot.compressed_block_fetch_ns += variant_profile_snapshot.compressed_block_fetch_ns;
-        thread_local_profile_snapshot.compressed_block_fetch_count +=
-            variant_profile_snapshot.compressed_block_fetch_count;
-        thread_local_profile_snapshot.compressed_byte_count += variant_profile_snapshot.compressed_byte_count;
-        thread_local_profile_snapshot.decompression_ns += variant_profile_snapshot.decompression_ns;
-        thread_local_profile_snapshot.decompression_count += variant_profile_snapshot.decompression_count;
-        thread_local_profile_snapshot.uncompressed_byte_count += variant_profile_snapshot.uncompressed_byte_count;
-        thread_local_profile_snapshot.zlib_stream_count += variant_profile_snapshot.zlib_stream_count;
-        thread_local_profile_snapshot.probability_decode_ns += variant_profile_snapshot.probability_decode_ns;
-        thread_local_profile_snapshot.probability_decode_count += variant_profile_snapshot.probability_decode_count;
-        thread_local_profile_snapshot.variant_decode_count += variant_profile_snapshot.variant_decode_count;
-        thread_local_profile_snapshot.output_write_ns += variant_profile_snapshot.output_write_ns;
-        thread_local_profile_snapshot.output_write_count += variant_profile_snapshot.output_write_count;
-        thread_local_profile_snapshot.output_byte_count += variant_profile_snapshot.output_byte_count;
+        if profiling_enabled {
+            thread_local_profile_snapshot.merge_from(&variant_decode_result.profile_snapshot);
+        }
     }
-    thread_local_profile_snapshot.decode_tile_count += 1;
+    if profiling_enabled {
+        thread_local_profile_snapshot.decode_tile_count += 1;
+    }
     Ok(VariantMajorTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, has_missing_values })
 }
 
@@ -623,7 +678,7 @@ fn decode_variant_dosages_into_row_major_matrix(
             thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
             thread_local_profile_snapshot.probability_decode_count += 1;
         }
-        thread_local_profile_snapshot.variant_decode_count += 1;
+        record_variant_decode_if_enabled(&mut thread_local_profile_snapshot, profiling_enabled);
 
         return Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total));
     }
@@ -701,7 +756,7 @@ fn decode_variant_dosages_into_row_major_matrix(
         thread_local_profile_snapshot.probability_decode_count += 1;
     }
 
-    thread_local_profile_snapshot.variant_decode_count += 1;
+    record_variant_decode_if_enabled(&mut thread_local_profile_snapshot, profiling_enabled);
 
     Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total))
 }
@@ -772,7 +827,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
             thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
             thread_local_profile_snapshot.probability_decode_count += 1;
         }
-        thread_local_profile_snapshot.variant_decode_count += 1;
+        record_variant_decode_if_enabled(&mut thread_local_profile_snapshot, profiling_enabled);
 
         return Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total));
     }
@@ -818,7 +873,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
             thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
             thread_local_profile_snapshot.probability_decode_count += 1;
         }
-        thread_local_profile_snapshot.variant_decode_count += 1;
+        record_variant_decode_if_enabled(&mut thread_local_profile_snapshot, profiling_enabled);
 
         return Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total));
     }
@@ -855,7 +910,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
             thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
             thread_local_profile_snapshot.probability_decode_count += 1;
         }
-        thread_local_profile_snapshot.variant_decode_count += 1;
+        record_variant_decode_if_enabled(&mut thread_local_profile_snapshot, profiling_enabled);
 
         return Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total));
     }
@@ -907,7 +962,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
         thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
         thread_local_profile_snapshot.probability_decode_count += 1;
     }
-    thread_local_profile_snapshot.variant_decode_count += 1;
+    record_variant_decode_if_enabled(&mut thread_local_profile_snapshot, profiling_enabled);
 
     Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total))
 }
@@ -1360,6 +1415,9 @@ fn record_variant_major_decode_profile(
     output_write_start_time: Option<Instant>,
     selected_sample_count: usize,
 ) -> Result<(), BgenError> {
+    if probability_decode_start_time.is_none() && output_write_start_time.is_none() {
+        return Ok(());
+    }
     if let Some(output_write_start_time) = output_write_start_time {
         thread_local_profile_snapshot.output_write_ns += elapsed_nanoseconds(output_write_start_time);
         thread_local_profile_snapshot.output_write_count += 1;
@@ -1376,6 +1434,15 @@ fn record_variant_major_decode_profile(
     }
     thread_local_profile_snapshot.variant_decode_count += 1;
     Ok(())
+}
+
+fn record_variant_decode_if_enabled(
+    thread_local_profile_snapshot: &mut ThreadLocalProfileSnapshot,
+    profiling_enabled: bool,
+) {
+    if profiling_enabled {
+        thread_local_profile_snapshot.variant_decode_count += 1;
+    }
 }
 
 pub(super) fn read_probability_block<'a>(
@@ -1401,8 +1468,10 @@ pub(super) fn read_probability_block<'a>(
                 thread_local_profile_snapshot.compressed_byte_count +=
                     u64::try_from(variant_record.probability_payload_length).unwrap_or(u64::MAX);
             }
-            thread_local_profile_snapshot.uncompressed_byte_count +=
-                u64::try_from(variant_record.declared_uncompressed_block_length).unwrap_or(u64::MAX);
+            if profiling_enabled {
+                thread_local_profile_snapshot.uncompressed_byte_count +=
+                    u64::try_from(variant_record.declared_uncompressed_block_length).unwrap_or(u64::MAX);
+            }
             Ok(block_payload)
         }
         CompressionType::Zlib => {
@@ -1429,9 +1498,11 @@ pub(super) fn read_probability_block<'a>(
                 thread_local_profile_snapshot.decompression_ns += elapsed_nanoseconds(decompression_start_time);
                 thread_local_profile_snapshot.decompression_count += 1;
             }
-            thread_local_profile_snapshot.uncompressed_byte_count +=
-                u64::try_from(variant_record.declared_uncompressed_block_length).unwrap_or(u64::MAX);
-            thread_local_profile_snapshot.zlib_stream_count += 1;
+            if profiling_enabled {
+                thread_local_profile_snapshot.uncompressed_byte_count +=
+                    u64::try_from(variant_record.declared_uncompressed_block_length).unwrap_or(u64::MAX);
+                thread_local_profile_snapshot.zlib_stream_count += 1;
+            }
             Ok(thread_scratch.decompressed_probability_block.as_slice())
         }
     }
@@ -1476,37 +1547,33 @@ fn decompress_zlib_block_into_scratch(
 
 struct PackedProbabilityReader<'a> {
     packed_probability_bytes: &'a [u8],
-    bit_offset: usize,
+    byte_offset: usize,
+    bit_buffer: u64,
+    buffered_bit_count: u8,
 }
 
 impl<'a> PackedProbabilityReader<'a> {
     fn new(packed_probability_bytes: &'a [u8]) -> Self {
-        Self { packed_probability_bytes, bit_offset: 0 }
+        Self { packed_probability_bytes, byte_offset: 0, bit_buffer: 0, buffered_bit_count: 0 }
     }
 
     #[allow(clippy::cast_possible_truncation)]
     fn read_probability(&mut self, bit_count: u8) -> Result<u32, BgenError> {
-        let bit_count_usize = usize::from(bit_count);
-        let byte_offset = self.bit_offset / 8;
-        let bit_index_in_byte = self.bit_offset % 8;
-        let last_required_bit = self.bit_offset + bit_count_usize;
-        let last_required_byte = last_required_bit.div_ceil(8);
-        if last_required_byte > self.packed_probability_bytes.len() {
-            return Err(BgenError::InvalidFormat(
-                "Packed BGEN probability stream ended before all probabilities were decoded.".to_string(),
-            ));
-        }
-
-        let mut window = 0_u64;
-        let bytes_to_copy = (self.packed_probability_bytes.len() - byte_offset).min(8);
-        for copied_byte_index in 0..bytes_to_copy {
-            window |=
-                u64::from(self.packed_probability_bytes[byte_offset + copied_byte_index]) << (copied_byte_index * 8);
+        while self.buffered_bit_count < bit_count {
+            let next_probability_byte = self.packed_probability_bytes.get(self.byte_offset).ok_or_else(|| {
+                BgenError::InvalidFormat(
+                    "Packed BGEN probability stream ended before all probabilities were decoded.".to_string(),
+                )
+            })?;
+            self.bit_buffer |= u64::from(*next_probability_byte) << self.buffered_bit_count;
+            self.buffered_bit_count += 8;
+            self.byte_offset += 1;
         }
 
         let mask = if bit_count == 32 { u64::from(u32::MAX) } else { (1_u64 << bit_count) - 1 };
-        let probability_value = ((window >> bit_index_in_byte) & mask) as u32;
-        self.bit_offset += bit_count_usize;
+        let probability_value = (self.bit_buffer & mask) as u32;
+        self.bit_buffer >>= bit_count;
+        self.buffered_bit_count -= bit_count;
         Ok(probability_value)
     }
 }
@@ -1685,14 +1752,32 @@ mod tests {
     }
 
     #[test]
-    fn packed_probability_reader_reads_across_byte_boundaries_and_reports_truncation() {
+    fn packed_probability_reader_reads_supported_widths_and_reports_truncation() {
+        let test_cases: [(u8, &[u32]); 6] = [
+            (1, &[1, 0, 1, 1, 0, 0, 1, 0, 1]),
+            (2, &[1, 2, 3, 0, 3]),
+            (4, &[0, 15, 8, 7, 1]),
+            (8, &[0, 255, 17]),
+            (16, &[0, 65_535, 0xBEEF]),
+            (32, &[0, u32::MAX, 0x1234_5678]),
+        ];
+
+        for (bit_count, expected_probabilities) in test_cases {
+            let packed_probabilities = pack_probabilities(expected_probabilities, bit_count);
+            let mut reader = PackedProbabilityReader::new(&packed_probabilities);
+            for expected_probability in expected_probabilities {
+                assert_eq!(
+                    reader.read_probability(bit_count).expect("packed probability should decode"),
+                    *expected_probability
+                );
+            }
+        }
+
         let packed_probabilities = pack_probabilities(&[1, 2, 3, 0], 2);
         let mut reader = PackedProbabilityReader::new(&packed_probabilities);
-
-        assert_eq!(reader.read_probability(2).expect("first value"), 1);
-        assert_eq!(reader.read_probability(2).expect("second value"), 2);
-        assert_eq!(reader.read_probability(2).expect("third value"), 3);
-        assert_eq!(reader.read_probability(2).expect("fourth value"), 0);
+        for _ in 0..4 {
+            reader.read_probability(2).expect("byte-aligned probability should decode");
+        }
         assert!(reader.read_probability(2).expect_err("truncated stream").to_string().contains("ended"));
     }
 
@@ -1875,6 +1960,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn tile_decoders_copy_dosages_and_collect_variant_major_stats() {
         let first_block = probability_block(2, &[2, 2], 0, 8, &[255, 0, 0, 255]);
         let second_block = probability_block(2, &[2, 2], 0, 8, &[0, 255, 255, 0]);
@@ -1905,6 +1991,81 @@ mod tests {
         assert_eq!(tile_result.selected_dosage_totals.len(), 2);
         assert_eq!(tile_result.profile_snapshot.decode_tile_count, 1);
         assert!(row_major_output.iter().any(|value| *value > 0.0));
+
+        let mut disabled_profile_output = vec![0.0_f32; 4];
+        let disabled_profile_result = decode_variant_dosage_tile_into_row_major_matrix(
+            &mmap,
+            CompressionType::None,
+            2,
+            &sample_selection,
+            &variant_records,
+            disabled_profile_output.as_mut_ptr() as usize,
+            2,
+            0,
+            false,
+            false,
+            true,
+            &mut thread_scratch,
+        )
+        .expect("row-major tile should decode without profiling");
+        assert_eq!(disabled_profile_result.profile_snapshot, ThreadLocalProfileSnapshot::default());
+        assert_eq!(disabled_profile_result.selected_dosage_totals, tile_result.selected_dosage_totals);
+        assert_eq!(disabled_profile_output, row_major_output);
+
+        let mut direct_output = vec![0.0_f32; 4];
+        let direct_result = decode_variant_dosage_tile_direct_into_row_major_matrix(
+            &mmap,
+            CompressionType::None,
+            2,
+            &sample_selection,
+            &variant_records,
+            direct_output.as_mut_ptr() as usize,
+            2,
+            0,
+            false,
+            false,
+            true,
+            &mut thread_scratch,
+        )
+        .expect("direct row-major tile should decode");
+        assert_eq!(direct_result.profile_snapshot, ThreadLocalProfileSnapshot::default());
+        assert_eq!(direct_result.selected_dosage_totals, tile_result.selected_dosage_totals);
+        assert_eq!(direct_output, row_major_output);
+
+        let contiguous_sample_selection = build_sample_selection(2, &[1]).expect("contiguous subset selection");
+        let mut contiguous_scratch_output = vec![0.0_f32; 2];
+        decode_variant_dosage_tile_into_row_major_matrix(
+            &mmap,
+            CompressionType::None,
+            2,
+            &contiguous_sample_selection,
+            &variant_records,
+            contiguous_scratch_output.as_mut_ptr() as usize,
+            2,
+            0,
+            false,
+            false,
+            false,
+            &mut thread_scratch,
+        )
+        .expect("contiguous row-major tile should decode");
+        let mut contiguous_direct_output = vec![0.0_f32; 2];
+        decode_variant_dosage_tile_direct_into_row_major_matrix(
+            &mmap,
+            CompressionType::None,
+            2,
+            &contiguous_sample_selection,
+            &variant_records,
+            contiguous_direct_output.as_mut_ptr() as usize,
+            2,
+            0,
+            false,
+            false,
+            false,
+            &mut thread_scratch,
+        )
+        .expect("contiguous direct row-major tile should decode");
+        assert_eq!(contiguous_direct_output, contiguous_scratch_output);
 
         let mut dosage_sum = vec![0.0_f32; 2];
         let mut dosage_square_sum = vec![0.0_f32; 2];

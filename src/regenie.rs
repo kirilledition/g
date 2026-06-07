@@ -86,6 +86,16 @@ struct LocoSampleIndex {
     individual_identifiers: Vec<String>,
 }
 
+#[derive(Debug, Default)]
+struct LocoPredictionCache {
+    predictions_by_path: HashMap<PathBuf, LocoPredictions>,
+}
+
+#[derive(Debug, Default)]
+struct LocoAlignmentCache {
+    alignment_indices_by_path: HashMap<PathBuf, Vec<usize>>,
+}
+
 #[derive(Debug)]
 pub struct PredictionSource {
     chromosome_predictions: HashMap<String, Vec<f32>>,
@@ -95,6 +105,53 @@ pub struct PredictionSource {
 pub struct MultiPredictionSource {
     phenotype_names: Vec<String>,
     chromosome_predictions_by_trait: Vec<HashMap<String, Vec<f32>>>,
+}
+
+impl LocoPredictionCache {
+    fn predictions(&mut self, loco_file_path: &Path) -> Result<&LocoPredictions, PredictionError> {
+        let cache_key = loco_file_path.to_path_buf();
+        match self.predictions_by_path.entry(cache_key) {
+            std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let loco_predictions = parse_loco_file(loco_file_path)?;
+                Ok(entry.insert(loco_predictions))
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn cached_file_count(&self) -> usize {
+        self.predictions_by_path.len()
+    }
+}
+
+impl LocoAlignmentCache {
+    fn alignment_indices(
+        &mut self,
+        loco_file_path: &Path,
+        loco_predictions: &LocoPredictions,
+        target_family_identifiers: &[String],
+        target_individual_identifiers: &[String],
+        sample_key_mode: SampleKeyMode,
+    ) -> Result<&[usize], PredictionError> {
+        let cache_key = loco_file_path.to_path_buf();
+        match self.alignment_indices_by_path.entry(cache_key) {
+            std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.into_mut().as_slice()),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                validate_loco_sample_keys(&loco_predictions.sample_index)?;
+                if sample_key_mode == SampleKeyMode::Iid {
+                    validate_unique_loco_individual_identifiers(&loco_predictions.sample_index)?;
+                }
+                let alignment_indices = build_sample_alignment_indices(
+                    &loco_predictions.sample_index,
+                    target_family_identifiers,
+                    target_individual_identifiers,
+                    sample_key_mode,
+                )?;
+                Ok(entry.insert(alignment_indices).as_slice())
+            }
+        }
+    }
 }
 
 impl PredictionSource {
@@ -110,32 +167,17 @@ impl PredictionSource {
             validate_unique_target_individual_identifiers(target_individual_identifiers)?;
         }
         let entries = parse_prediction_list_file(prediction_list_path)?;
-        let Some(entry) = entries.iter().find(|entry| entry.phenotype_name == phenotype_name) else {
-            return Err(PredictionError::MissingPhenotype {
-                phenotype_name: phenotype_name.to_string(),
-                available_phenotypes: entries.iter().map(|entry| entry.phenotype_name.clone()).collect(),
-            });
-        };
-        let loco_predictions = parse_loco_file(&entry.loco_file_path)?;
-        validate_loco_sample_keys(&loco_predictions.sample_index)?;
-        if sample_key_mode == SampleKeyMode::Iid {
-            validate_unique_loco_individual_identifiers(&loco_predictions.sample_index)?;
-        }
-        let alignment_indices = build_sample_alignment_indices(
-            &loco_predictions.sample_index,
+        let entry = find_prediction_list_entry(&entries, phenotype_name)?;
+        let mut loco_prediction_cache = LocoPredictionCache::default();
+        let mut loco_alignment_cache = LocoAlignmentCache::default();
+        let aligned_predictions = load_aligned_chromosome_predictions(
+            entry,
+            &mut loco_prediction_cache,
+            &mut loco_alignment_cache,
             target_family_identifiers,
             target_individual_identifiers,
             sample_key_mode,
         )?;
-        let aligned_predictions = loco_predictions
-            .chromosome_predictions
-            .into_iter()
-            .map(|(chromosome, prediction_values)| {
-                let aligned_prediction_values =
-                    alignment_indices.iter().map(|sample_index| prediction_values[*sample_index]).collect();
-                (chromosome, aligned_prediction_values)
-            })
-            .collect();
         Ok(Self { chromosome_predictions: aligned_predictions })
     }
 
@@ -162,12 +204,14 @@ impl MultiPredictionSource {
         sample_key_mode: SampleKeyMode,
     ) -> Result<Self, PredictionError> {
         let entries = parse_prediction_list_file(prediction_list_path)?;
-        Self::load_from_entries(
+        let mut loco_prediction_cache = LocoPredictionCache::default();
+        Self::load_from_entries_with_cache(
             &entries,
             phenotype_names,
             target_family_identifiers,
             target_individual_identifiers,
             sample_key_mode,
+            &mut loco_prediction_cache,
         )
     }
 
@@ -177,59 +221,46 @@ impl MultiPredictionSource {
         sample_key_mode: SampleKeyMode,
     ) -> Result<Vec<Self>, PredictionError> {
         let entries = parse_prediction_list_file(prediction_list_path)?;
+        let mut loco_prediction_cache = LocoPredictionCache::default();
         aligned_sample_data_groups
             .iter()
             .map(|aligned_sample_data| {
-                Self::load_from_entries(
+                Self::load_from_entries_with_cache(
                     &entries,
                     &aligned_sample_data.phenotype_names,
                     &aligned_sample_data.family_identifiers,
                     &aligned_sample_data.individual_identifiers,
                     sample_key_mode,
+                    &mut loco_prediction_cache,
                 )
             })
             .collect()
     }
 
-    fn load_from_entries(
+    fn load_from_entries_with_cache(
         entries: &[PredictionListEntry],
         phenotype_names: &[String],
         target_family_identifiers: &[String],
         target_individual_identifiers: &[String],
         sample_key_mode: SampleKeyMode,
+        loco_prediction_cache: &mut LocoPredictionCache,
     ) -> Result<Self, PredictionError> {
         validate_target_sample_keys(target_family_identifiers, target_individual_identifiers)?;
         if sample_key_mode == SampleKeyMode::Iid {
             validate_unique_target_individual_identifiers(target_individual_identifiers)?;
         }
         let mut chromosome_predictions_by_trait = Vec::with_capacity(phenotype_names.len());
+        let mut loco_alignment_cache = LocoAlignmentCache::default();
         for phenotype_name in phenotype_names {
-            let Some(entry) = entries.iter().find(|entry| entry.phenotype_name == *phenotype_name) else {
-                return Err(PredictionError::MissingPhenotype {
-                    phenotype_name: phenotype_name.clone(),
-                    available_phenotypes: entries.iter().map(|entry| entry.phenotype_name.clone()).collect(),
-                });
-            };
-            let loco_predictions = parse_loco_file(&entry.loco_file_path)?;
-            validate_loco_sample_keys(&loco_predictions.sample_index)?;
-            if sample_key_mode == SampleKeyMode::Iid {
-                validate_unique_loco_individual_identifiers(&loco_predictions.sample_index)?;
-            }
-            let alignment_indices = build_sample_alignment_indices(
-                &loco_predictions.sample_index,
+            let entry = find_prediction_list_entry(entries, phenotype_name)?;
+            let aligned_predictions = load_aligned_chromosome_predictions(
+                entry,
+                loco_prediction_cache,
+                &mut loco_alignment_cache,
                 target_family_identifiers,
                 target_individual_identifiers,
                 sample_key_mode,
             )?;
-            let aligned_predictions = loco_predictions
-                .chromosome_predictions
-                .into_iter()
-                .map(|(chromosome, prediction_values)| {
-                    let aligned_prediction_values =
-                        alignment_indices.iter().map(|sample_index| prediction_values[*sample_index]).collect();
-                    (chromosome, aligned_prediction_values)
-                })
-                .collect();
             chromosome_predictions_by_trait.push(aligned_predictions);
         }
         Ok(Self { phenotype_names: phenotype_names.to_vec(), chromosome_predictions_by_trait })
@@ -278,6 +309,65 @@ pub fn normalize_chromosome(chromosome: &str) -> String {
     }
 }
 
+fn find_prediction_list_entry<'entry>(
+    entries: &'entry [PredictionListEntry],
+    phenotype_name: &str,
+) -> Result<&'entry PredictionListEntry, PredictionError> {
+    entries.iter().find(|entry| entry.phenotype_name == phenotype_name).ok_or_else(|| {
+        PredictionError::MissingPhenotype {
+            phenotype_name: phenotype_name.to_string(),
+            available_phenotypes: entries.iter().map(|entry| entry.phenotype_name.clone()).collect(),
+        }
+    })
+}
+
+fn load_aligned_chromosome_predictions(
+    entry: &PredictionListEntry,
+    loco_prediction_cache: &mut LocoPredictionCache,
+    loco_alignment_cache: &mut LocoAlignmentCache,
+    target_family_identifiers: &[String],
+    target_individual_identifiers: &[String],
+    sample_key_mode: SampleKeyMode,
+) -> Result<HashMap<String, Vec<f32>>, PredictionError> {
+    let loco_predictions = loco_prediction_cache.predictions(&entry.loco_file_path)?;
+    let alignment_indices = loco_alignment_cache.alignment_indices(
+        &entry.loco_file_path,
+        loco_predictions,
+        target_family_identifiers,
+        target_individual_identifiers,
+        sample_key_mode,
+    )?;
+    Ok(align_chromosome_predictions(loco_predictions, alignment_indices))
+}
+
+fn align_chromosome_predictions(
+    loco_predictions: &LocoPredictions,
+    alignment_indices: &[usize],
+) -> HashMap<String, Vec<f32>> {
+    loco_predictions
+        .chromosome_predictions
+        .iter()
+        .map(|(chromosome, prediction_values)| {
+            (chromosome.clone(), align_prediction_values(prediction_values, alignment_indices))
+        })
+        .collect()
+}
+
+fn align_prediction_values(prediction_values: &[f32], alignment_indices: &[usize]) -> Vec<f32> {
+    if is_identity_alignment(alignment_indices, prediction_values.len()) {
+        return prediction_values.to_vec();
+    }
+    alignment_indices.iter().map(|sample_index| prediction_values[*sample_index]).collect()
+}
+
+fn is_identity_alignment(alignment_indices: &[usize], source_sample_count: usize) -> bool {
+    alignment_indices.len() == source_sample_count
+        && alignment_indices
+            .iter()
+            .enumerate()
+            .all(|(expected_sample_index, sample_index)| expected_sample_index == *sample_index)
+}
+
 fn parse_prediction_list_file(prediction_list_path: &Path) -> Result<Vec<PredictionListEntry>, PredictionError> {
     if !prediction_list_path.exists() {
         return Err(PredictionError::PredictionListNotFound(prediction_list_path.to_path_buf()));
@@ -288,16 +378,20 @@ fn parse_prediction_list_file(prediction_list_path: &Path) -> Result<Vec<Predict
     for (line_index, line_result) in BufReader::new(file).lines().enumerate() {
         let line_number = line_index + 1;
         let line = line_result?;
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.is_empty() {
+        let mut fields = line.split_whitespace();
+        let Some(phenotype_name) = fields.next() else {
             continue;
-        }
-        if fields.len() != 2 {
-            return Err(PredictionError::InvalidPredictionListLine { line_number, field_count: fields.len() });
+        };
+        let Some(loco_file_path) = fields.next() else {
+            return Err(PredictionError::InvalidPredictionListLine { line_number, field_count: 1 });
+        };
+        if fields.next().is_some() {
+            let field_count = 3 + fields.count();
+            return Err(PredictionError::InvalidPredictionListLine { line_number, field_count });
         }
         entries.push(PredictionListEntry {
-            phenotype_name: fields[0].to_string(),
-            loco_file_path: PathBuf::from(fields[1]),
+            phenotype_name: phenotype_name.to_string(),
+            loco_file_path: PathBuf::from(loco_file_path),
         });
     }
 
@@ -326,30 +420,32 @@ fn parse_loco_file(loco_file_path: &Path) -> Result<LocoPredictions, PredictionE
             sample_index = Some(parse_loco_sample_identifiers(stripped_line)?);
             continue;
         }
-        let fields: Vec<&str> = stripped_line.split_whitespace().collect();
-        if fields.len() < 2 {
-            return Err(PredictionError::InvalidLocoDataLine { line_number, field_count: fields.len() });
+        let mut fields = stripped_line.split_whitespace();
+        let Some(chromosome_field) = fields.next() else {
+            return Err(PredictionError::InvalidLocoDataLine { line_number, field_count: 0 });
+        };
+        let prediction_field_count = fields.clone().count();
+        if prediction_field_count == 0 {
+            return Err(PredictionError::InvalidLocoDataLine { line_number, field_count: 1 });
         }
         let sample_index_reference =
             sample_index.as_ref().ok_or_else(|| PredictionError::MissingLocoHeader(loco_file_path.to_path_buf()))?;
-        let prediction_strings = &fields[1..];
-        if prediction_strings.len() != sample_index_reference.family_identifiers.len() {
+        if prediction_field_count != sample_index_reference.family_identifiers.len() {
             return Err(PredictionError::LocoPredictionCountMismatch {
                 line_number,
                 expected_count: sample_index_reference.family_identifiers.len(),
-                observed_count: prediction_strings.len(),
+                observed_count: prediction_field_count,
             });
         }
-        let chromosome = normalize_chromosome(fields[0]);
+        let chromosome = normalize_chromosome(chromosome_field);
         if chromosome_predictions.contains_key(&chromosome) {
             return Err(PredictionError::DuplicateChromosome { chromosome });
         }
-        let prediction_values = prediction_strings
-            .iter()
+        let prediction_values = fields
             .map(|value| {
                 value.parse::<f32>().map_err(|source| PredictionError::InvalidPredictionValue {
                     line_number,
-                    value: (*value).to_string(),
+                    value: value.to_string(),
                     source,
                 })
             })
@@ -365,21 +461,25 @@ fn parse_loco_file(loco_file_path: &Path) -> Result<LocoPredictions, PredictionE
 }
 
 fn parse_loco_sample_identifiers(header_line: &str) -> Result<LocoSampleIndex, PredictionError> {
-    let fields: Vec<&str> = header_line.split_whitespace().collect();
-    if fields.len() < 2 {
+    let mut fields = header_line.split_whitespace();
+    let Some(observed_marker) = fields.next() else {
+        return Err(PredictionError::EmptyLocoHeader);
+    };
+    let sample_identifier_count = fields.clone().count();
+    if sample_identifier_count == 0 {
         return Err(PredictionError::EmptyLocoHeader);
     }
-    if fields[0] != "FID_IID" {
-        return Err(PredictionError::InvalidLocoHeaderMarker { observed_marker: fields[0].to_string() });
+    if observed_marker != "FID_IID" {
+        return Err(PredictionError::InvalidLocoHeaderMarker { observed_marker: observed_marker.to_string() });
     }
 
-    let mut family_identifiers = Vec::with_capacity(fields.len() - 1);
-    let mut individual_identifiers = Vec::with_capacity(fields.len() - 1);
-    for (sample_index, sample_identifier) in fields[1..].iter().enumerate() {
+    let mut family_identifiers = Vec::with_capacity(sample_identifier_count);
+    let mut individual_identifiers = Vec::with_capacity(sample_identifier_count);
+    for (sample_index, sample_identifier) in fields.enumerate() {
         let Some((family_identifier, individual_identifier)) = sample_identifier.split_once('_') else {
             return Err(PredictionError::InvalidLocoSampleIdentifier {
                 sample_index,
-                sample_identifier: (*sample_identifier).to_string(),
+                sample_identifier: sample_identifier.to_string(),
             });
         };
         family_identifiers.push(family_identifier.to_string());
@@ -555,7 +655,10 @@ mod tests {
 
     use crate::sample::SampleKeyMode;
 
-    use super::{MultiPredictionSource, PredictionError, PredictionSource, normalize_chromosome};
+    use super::{
+        LocoPredictionCache, MultiPredictionSource, PredictionError, PredictionListEntry, PredictionSource,
+        normalize_chromosome,
+    };
 
     static NEXT_FIXTURE_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -638,6 +741,47 @@ mod tests {
         assert_eq!(trait_count, 2);
         assert_eq!(sample_count, 2);
         assert_eq!(prediction_values, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn multi_prediction_source_reuses_cached_loco_file_for_repeated_paths() {
+        let fixture = FixtureDirectory::new();
+        let loco_path = fixture.write_file("shared.loco", "FID_IID F1_I1 F2_I2\n22 1.0 2.0\n");
+        let entries = vec![
+            PredictionListEntry { phenotype_name: "first".to_string(), loco_file_path: loco_path.clone() },
+            PredictionListEntry { phenotype_name: "second".to_string(), loco_file_path: loco_path },
+        ];
+        let mut loco_prediction_cache = LocoPredictionCache::default();
+
+        let first_source = MultiPredictionSource::load_from_entries_with_cache(
+            &entries,
+            &strings(&["first", "second"]),
+            &strings(&["F1", "F2"]),
+            &strings(&["I1", "I2"]),
+            SampleKeyMode::FidIid,
+            &mut loco_prediction_cache,
+        )
+        .expect("multi prediction source should load repeated LOCO path");
+
+        let (_, _, prediction_values) =
+            first_source.chromosome_prediction_matrix("22").expect("shared LOCO predictions should align");
+        assert_eq!(prediction_values, vec![1.0, 2.0, 1.0, 2.0]);
+        assert_eq!(loco_prediction_cache.cached_file_count(), 1);
+
+        let second_source = MultiPredictionSource::load_from_entries_with_cache(
+            &entries,
+            &strings(&["second"]),
+            &strings(&["F2"]),
+            &strings(&["I2"]),
+            SampleKeyMode::FidIid,
+            &mut loco_prediction_cache,
+        )
+        .expect("second grouped-style load should reuse cached LOCO path");
+
+        let (_, _, grouped_prediction_values) =
+            second_source.chromosome_prediction_matrix("chr22").expect("subset predictions should align");
+        assert_eq!(grouped_prediction_values, vec![2.0]);
+        assert_eq!(loco_prediction_cache.cached_file_count(), 1);
     }
 
     #[test]

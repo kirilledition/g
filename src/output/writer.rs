@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use arrow::array::{Array, ArrayRef, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray};
+use arrow::array::{Array, ArrayRef, RecordBatch, StringArray};
 use arrow::datatypes::Schema;
 use arrow::ipc::CompressionType;
 use arrow::ipc::writer::{FileWriter, IpcWriteOptions};
@@ -156,38 +156,36 @@ pub(crate) fn write_regenie_step2_chunk_job(
     };
     let chunk_commits = build_run_manifest_chunk_commits(&job, output_format, compression)?;
 
-    let record_batch_build_start_time = Instant::now();
     let schema_metadata_build_start_time = Instant::now();
     let chunk_schema = build_regenie_step2_chunk_file_schema(&chunk_commits)?;
     let mut record_batch_build_timing = RegenieStep2RecordBatchBuildTiming {
         schema_metadata_build_seconds: schema_metadata_build_start_time.elapsed().as_secs_f64(),
         ..RegenieStep2RecordBatchBuildTiming::default()
     };
-    let record_batch_build_result = build_regenie_step2_record_batches(job, Arc::clone(&chunk_schema))?;
-    record_batch_build_timing.add(record_batch_build_result.timing);
-    let record_batch_build_seconds = record_batch_build_start_time.elapsed().as_secs_f64();
-
-    let arrow_file_write_start_time = Instant::now();
-    let arrow_file_write_timing = match output_format {
-        OutputFileFormat::Arrow => write_record_batches_to_arrow_file(
-            &record_batch_build_result.record_batches,
+    let stream_write_result = match output_format {
+        OutputFileFormat::Arrow => write_regenie_step2_chunks_to_arrow_file(
+            job.chunks,
             chunk_schema,
             &temporary_chunk_file_path,
             arrow_compression,
         )?,
-        OutputFileFormat::Parquet => write_record_batches_to_parquet_file(
-            &record_batch_build_result.record_batches,
+        OutputFileFormat::Parquet => write_regenie_step2_chunks_to_parquet_file(
+            job.chunks,
             chunk_schema,
             &temporary_chunk_file_path,
             parquet_compression,
             &chunk_commits,
         )?,
     };
+    record_batch_build_timing.add(stream_write_result.record_batch_build_timing);
+    let record_batch_build_seconds =
+        record_batch_build_timing.schema_metadata_build_seconds + stream_write_result.record_batch_build_seconds;
+    let arrow_file_write_timing = stream_write_result.arrow_file_write_timing;
     let arrow_file_rename_start_time = Instant::now();
     std::fs::rename(&temporary_chunk_file_path, &chunk_file_path).map_err(|error| error.to_string())?;
     let arrow_file_rename_seconds = arrow_file_rename_start_time.elapsed().as_secs_f64();
     let arrow_file_bytes = std::fs::metadata(&chunk_file_path).map_err(|error| error.to_string())?.len();
-    let arrow_file_write_seconds = arrow_file_write_start_time.elapsed().as_secs_f64();
+    let arrow_file_write_seconds = arrow_file_write_timing.total_seconds();
 
     Ok(RegenieStep2ChunkWriteResult {
         chunk_commits,
@@ -289,6 +287,7 @@ pub(crate) fn build_output_file_name(
     }
 }
 
+#[cfg(test)]
 fn build_regenie_step2_record_batches(
     job: RegenieStep2ChunkWriteBatch,
     chunk_schema: Arc<Schema>,
@@ -308,14 +307,22 @@ fn build_regenie_step2_record_batches(
     Ok(RegenieStep2RecordBatchBuildResult { record_batches, timing })
 }
 
+#[cfg(test)]
 struct RegenieStep2RecordBatchBuildResult {
     record_batches: Vec<RecordBatch>,
+    #[allow(dead_code)]
     timing: RegenieStep2RecordBatchBuildTiming,
 }
 
 struct RegenieStep2SingleRecordBatchBuildResult {
     record_batch: RecordBatch,
     timing: RegenieStep2RecordBatchBuildTiming,
+}
+
+struct RegenieStep2ChunkStreamWriteResult {
+    record_batch_build_timing: RegenieStep2RecordBatchBuildTiming,
+    record_batch_build_seconds: f64,
+    arrow_file_write_timing: RegenieStep2ArrowFileWriteTiming,
 }
 
 #[derive(Default)]
@@ -349,20 +356,18 @@ fn build_regenie_step2_record_batch(
 ) -> Result<RegenieStep2SingleRecordBatchBuildResult, String> {
     let row_count = chunk_job.chunk_handle.row_count();
     let metadata_array_build_start_time = Instant::now();
-    let chromosome_array: ArrayRef = Arc::new(StringArray::from(chunk_job.chunk_handle.metadata.chromosome.clone()));
-    let position_array: ArrayRef = Arc::new(Int64Array::from(chunk_job.chunk_handle.metadata.position.clone()));
-    let variant_identifier_array: ArrayRef =
-        Arc::new(StringArray::from(chunk_job.chunk_handle.metadata.variant_identifier.clone()));
-    let allele_two_array: ArrayRef = Arc::new(StringArray::from(chunk_job.chunk_handle.metadata.allele_two.clone()));
-    let allele_one_array: ArrayRef = Arc::new(StringArray::from(chunk_job.chunk_handle.metadata.allele_one.clone()));
+    let cached_writer_arrays = chunk_job.chunk_handle.writer_arrays();
+    let chromosome_array = Arc::clone(&cached_writer_arrays.chromosome);
+    let position_array = Arc::clone(&cached_writer_arrays.position);
+    let variant_identifier_array = Arc::clone(&cached_writer_arrays.variant_identifier);
+    let allele_two_array = Arc::clone(&cached_writer_arrays.allele_two);
+    let allele_one_array = Arc::clone(&cached_writer_arrays.allele_one);
     let metadata_array_build_seconds = metadata_array_build_start_time.elapsed().as_secs_f64();
 
     let statistic_array_build_start_time = Instant::now();
-    let allele_one_frequency_array: ArrayRef =
-        Arc::new(Float32Array::from(chunk_job.chunk_handle.stats.allele_one_frequency.clone()));
-    let info_score_array: ArrayRef = Arc::new(Float32Array::from(chunk_job.chunk_handle.stats.info_score.clone()));
-    let observation_count_array: ArrayRef =
-        Arc::new(Int32Array::from(chunk_job.chunk_handle.stats.observation_count.clone()));
+    let allele_one_frequency_array = Arc::clone(&cached_writer_arrays.allele_one_frequency);
+    let info_score_array = Arc::clone(&cached_writer_arrays.info_score);
+    let observation_count_array = Arc::clone(&cached_writer_arrays.observation_count);
     let statistic_array_build_seconds = statistic_array_build_start_time.elapsed().as_secs_f64();
 
     let test_array_build_start_time = Instant::now();
@@ -427,12 +432,18 @@ struct RegenieStep2ArrowFileWriteTiming {
     writer_finish: f64,
 }
 
-fn write_record_batches_to_arrow_file(
-    record_batches: &[RecordBatch],
+impl RegenieStep2ArrowFileWriteTiming {
+    fn total_seconds(&self) -> f64 {
+        self.file_create + self.writer_init + self.batch_write + self.writer_finish
+    }
+}
+
+fn write_regenie_step2_chunks_to_arrow_file(
+    chunks: Vec<RegenieStep2ChunkJob>,
     chunk_schema: Arc<Schema>,
     chunk_file_path: &Path,
     arrow_compression: &str,
-) -> Result<RegenieStep2ArrowFileWriteTiming, String> {
+) -> Result<RegenieStep2ChunkStreamWriteResult, String> {
     let file_create_start_time = Instant::now();
     let output_file = File::create(chunk_file_path).map_err(|error| error.to_string())?;
     let file_create = file_create_start_time.elapsed().as_secs_f64();
@@ -443,49 +454,85 @@ fn write_record_batches_to_arrow_file(
         .map_err(|error| error.to_string())?;
     let writer_init = writer_init_start_time.elapsed().as_secs_f64();
 
+    let mut record_batch_build_timing = RegenieStep2RecordBatchBuildTiming::default();
+    let mut record_batch_build_seconds = 0.0;
+    let mut array_cache = RegenieStep2RecordBatchArrayCache::default();
     let mut batch_write = 0.0;
-    for record_batch in record_batches {
+    for chunk_job in chunks {
+        let record_batch_build_start_time = Instant::now();
+        let record_batch_build_result =
+            build_regenie_step2_record_batch(chunk_job, Arc::clone(&chunk_schema), &mut array_cache)?;
+        record_batch_build_seconds += record_batch_build_start_time.elapsed().as_secs_f64();
+        record_batch_build_timing.add(record_batch_build_result.timing);
+
         let batch_write_start_time = Instant::now();
-        writer.write(record_batch).map_err(|error| error.to_string())?;
+        writer.write(&record_batch_build_result.record_batch).map_err(|error| error.to_string())?;
         batch_write += batch_write_start_time.elapsed().as_secs_f64();
     }
     let writer_finish_start_time = Instant::now();
     writer.finish().map_err(|error| error.to_string())?;
     let writer_finish = writer_finish_start_time.elapsed().as_secs_f64();
-    Ok(RegenieStep2ArrowFileWriteTiming { file_create, writer_init, batch_write, writer_finish })
+    Ok(RegenieStep2ChunkStreamWriteResult {
+        record_batch_build_timing,
+        record_batch_build_seconds,
+        arrow_file_write_timing: RegenieStep2ArrowFileWriteTiming {
+            file_create,
+            writer_init,
+            batch_write,
+            writer_finish,
+        },
+    })
 }
 
-fn write_record_batches_to_parquet_file(
-    record_batches: &[RecordBatch],
+fn write_regenie_step2_chunks_to_parquet_file(
+    chunks: Vec<RegenieStep2ChunkJob>,
     chunk_schema: Arc<Schema>,
     chunk_file_path: &Path,
     parquet_compression: &str,
     chunk_commits: &[manifest::RunManifestChunkCommit],
-) -> Result<RegenieStep2ArrowFileWriteTiming, String> {
+) -> Result<RegenieStep2ChunkStreamWriteResult, String> {
     let file_create_start_time = Instant::now();
     let output_file = File::create(chunk_file_path).map_err(|error| error.to_string())?;
     let file_create = file_create_start_time.elapsed().as_secs_f64();
 
     let writer_init_start_time = Instant::now();
     let writer_properties = build_regenie_step2_parquet_writer_properties(parquet_compression)?;
-    let mut writer =
-        ArrowWriter::try_new(output_file, chunk_schema, Some(writer_properties)).map_err(|error| error.to_string())?;
+    let mut writer = ArrowWriter::try_new(output_file, Arc::clone(&chunk_schema), Some(writer_properties))
+        .map_err(|error| error.to_string())?;
     writer.append_key_value_metadata(KeyValue {
         key: schema::CHUNK_COMMITS_METADATA_KEY.to_string(),
         value: Some(build_chunk_commit_metadata_text(chunk_commits)?),
     });
     let writer_init = writer_init_start_time.elapsed().as_secs_f64();
 
+    let mut record_batch_build_timing = RegenieStep2RecordBatchBuildTiming::default();
+    let mut record_batch_build_seconds = 0.0;
+    let mut array_cache = RegenieStep2RecordBatchArrayCache::default();
     let mut batch_write = 0.0;
-    for record_batch in record_batches {
+    for chunk_job in chunks {
+        let record_batch_build_start_time = Instant::now();
+        let record_batch_build_result =
+            build_regenie_step2_record_batch(chunk_job, Arc::clone(&chunk_schema), &mut array_cache)?;
+        record_batch_build_seconds += record_batch_build_start_time.elapsed().as_secs_f64();
+        record_batch_build_timing.add(record_batch_build_result.timing);
+
         let batch_write_start_time = Instant::now();
-        writer.write(record_batch).map_err(|error| error.to_string())?;
+        writer.write(&record_batch_build_result.record_batch).map_err(|error| error.to_string())?;
         batch_write += batch_write_start_time.elapsed().as_secs_f64();
     }
     let writer_finish_start_time = Instant::now();
     writer.close().map_err(|error| error.to_string())?;
     let writer_finish = writer_finish_start_time.elapsed().as_secs_f64();
-    Ok(RegenieStep2ArrowFileWriteTiming { file_create, writer_init, batch_write, writer_finish })
+    Ok(RegenieStep2ChunkStreamWriteResult {
+        record_batch_build_timing,
+        record_batch_build_seconds,
+        arrow_file_write_timing: RegenieStep2ArrowFileWriteTiming {
+            file_create,
+            writer_init,
+            batch_write,
+            writer_finish,
+        },
+    })
 }
 
 fn build_regenie_step2_ipc_write_options(arrow_compression: &str) -> Result<IpcWriteOptions, String> {
@@ -527,7 +574,7 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use arrow::array::Array;
+    use arrow::array::{Array, Float32Array, Int32Array};
     use arrow::ipc::reader::FileReader as ArrowFileReader;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet::file::reader::{FileReader as ParquetFileReader, SerializedFileReader};
@@ -569,15 +616,22 @@ mod tests {
         )
     }
 
-    fn build_test_chunk(chunk_identifier: i64, extra_code: Option<Vec<i32>>) -> RegenieStep2ChunkJob {
+    fn build_test_chunk_with_handle(
+        chunk_handle: NativeChunkHandle,
+        extra_code: Option<Vec<i32>>,
+    ) -> RegenieStep2ChunkJob {
         RegenieStep2ChunkJob {
-            chunk_handle: build_test_chunk_handle(chunk_identifier),
+            chunk_handle,
             beta: Arc::new(Float32Array::from(vec![0.1])),
             se: Arc::new(Float32Array::from(vec![0.01])),
             chisq: Arc::new(Float32Array::from(vec![10.0])),
             log10p: Arc::new(Float32Array::from(vec![5.0])),
             extra_code: extra_code.map(|values| Arc::new(Int32Array::from(values)) as ArrayRef),
         }
+    }
+
+    fn build_test_chunk(chunk_identifier: i64, extra_code: Option<Vec<i32>>) -> RegenieStep2ChunkJob {
+        build_test_chunk_with_handle(build_test_chunk_handle(chunk_identifier), extra_code)
     }
 
     fn build_test_batch(chunks: Vec<RegenieStep2ChunkJob>) -> RegenieStep2ChunkWriteBatch {
@@ -650,6 +704,33 @@ mod tests {
 
         assert!(Arc::ptr_eq(first_test_array, second_test_array));
         assert!(Arc::ptr_eq(first_extra_array, second_extra_array));
+    }
+
+    #[test]
+    fn record_batch_build_reuses_cached_chunk_metadata_and_statistic_arrays() {
+        let chunk_handle = build_test_chunk_handle(0);
+        let first_record_batch = build_test_record_batch(build_test_chunk_with_handle(chunk_handle.clone(), None));
+        let second_record_batch = build_test_record_batch(build_test_chunk_with_handle(chunk_handle, None));
+
+        let first_chromosome_array = first_record_batch.column_by_name("CHROM").expect("CHROM column should exist");
+        let second_chromosome_array = second_record_batch.column_by_name("CHROM").expect("CHROM column should exist");
+        let first_position_array = first_record_batch.column_by_name("GENPOS").expect("GENPOS column should exist");
+        let second_position_array = second_record_batch.column_by_name("GENPOS").expect("GENPOS column should exist");
+        let first_identifier_array = first_record_batch.column_by_name("ID").expect("ID column should exist");
+        let second_identifier_array = second_record_batch.column_by_name("ID").expect("ID column should exist");
+        let first_frequency_array = first_record_batch.column_by_name("A1FREQ").expect("A1FREQ column should exist");
+        let second_frequency_array = second_record_batch.column_by_name("A1FREQ").expect("A1FREQ column should exist");
+        let first_info_array = first_record_batch.column_by_name("INFO").expect("INFO column should exist");
+        let second_info_array = second_record_batch.column_by_name("INFO").expect("INFO column should exist");
+        let first_observation_count_array = first_record_batch.column_by_name("N").expect("N column should exist");
+        let second_observation_count_array = second_record_batch.column_by_name("N").expect("N column should exist");
+
+        assert!(Arc::ptr_eq(first_chromosome_array, second_chromosome_array));
+        assert!(Arc::ptr_eq(first_position_array, second_position_array));
+        assert!(Arc::ptr_eq(first_identifier_array, second_identifier_array));
+        assert!(Arc::ptr_eq(first_frequency_array, second_frequency_array));
+        assert!(Arc::ptr_eq(first_info_array, second_info_array));
+        assert!(Arc::ptr_eq(first_observation_count_array, second_observation_count_array));
     }
 
     #[test]

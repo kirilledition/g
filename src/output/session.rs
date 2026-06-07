@@ -1,9 +1,9 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use arrow::array::{ArrayRef, Float32Array, Int32Array};
+use arrow::array::{ArrayRef, Float32Array, Int32Array, Int64Array, StringArray};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use serde_json::json;
 
@@ -22,6 +22,34 @@ pub(crate) struct NativeChunkHandle {
     pub(crate) metadata: Arc<VariantMetadataColumns>,
     pub(crate) stats: Arc<NativeChunkStats>,
     pub(crate) chunk_identifier: i64,
+    writer_arrays: Arc<OnceLock<NativeChunkWriterArrays>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct NativeChunkWriterArrays {
+    pub(crate) chromosome: ArrayRef,
+    pub(crate) position: ArrayRef,
+    pub(crate) variant_identifier: ArrayRef,
+    pub(crate) allele_two: ArrayRef,
+    pub(crate) allele_one: ArrayRef,
+    pub(crate) allele_one_frequency: ArrayRef,
+    pub(crate) info_score: ArrayRef,
+    pub(crate) observation_count: ArrayRef,
+}
+
+impl NativeChunkWriterArrays {
+    fn from_chunk_sources(metadata: &VariantMetadataColumns, stats: &NativeChunkStats) -> Self {
+        Self {
+            chromosome: Arc::new(StringArray::from(metadata.chromosome.clone())),
+            position: Arc::new(Int64Array::from(metadata.position.clone())),
+            variant_identifier: Arc::new(StringArray::from(metadata.variant_identifier.clone())),
+            allele_two: Arc::new(StringArray::from(metadata.allele_two.clone())),
+            allele_one: Arc::new(StringArray::from(metadata.allele_one.clone())),
+            allele_one_frequency: Arc::new(Float32Array::from(stats.allele_one_frequency.clone())),
+            info_score: Arc::new(Float32Array::from(stats.info_score.clone())),
+            observation_count: Arc::new(Int32Array::from(stats.observation_count.clone())),
+        }
+    }
 }
 
 impl NativeChunkHandle {
@@ -30,7 +58,7 @@ impl NativeChunkHandle {
         stats: Arc<NativeChunkStats>,
         chunk_identifier: i64,
     ) -> Self {
-        Self { metadata, stats, chunk_identifier }
+        Self { metadata, stats, chunk_identifier, writer_arrays: Arc::new(OnceLock::new()) }
     }
 
     pub(crate) fn row_count(&self) -> usize {
@@ -50,6 +78,10 @@ impl NativeChunkHandle {
                 "Rust output writer variant stop index does not fit into int64.".to_string(),
             )
         })
+    }
+
+    pub(crate) fn writer_arrays(&self) -> &NativeChunkWriterArrays {
+        self.writer_arrays.get_or_init(|| NativeChunkWriterArrays::from_chunk_sources(&self.metadata, &self.stats))
     }
 }
 

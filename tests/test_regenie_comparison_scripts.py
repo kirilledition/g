@@ -1102,9 +1102,12 @@ def test_binary_hot_benchmark_can_disable_exact_stage_timings(tmp_path: Path) ->
     assert restored_configuration.stage_timing_mode == binary_hot_benchmark.StageTimingMode.OFF
     assert compute_config["g-stage-timings-json"] is None
     assert "stage_timing_path_value = None" in child_command.command_arguments[2]
-    assert binary_hot_benchmark.trial_result_from_json_dict(
-        binary_hot_benchmark.trial_result_to_json_dict(trial_result)
-    ).stage_timing_path is None
+    assert (
+        binary_hot_benchmark.trial_result_from_json_dict(
+            binary_hot_benchmark.trial_result_to_json_dict(trial_result)
+        ).stage_timing_path
+        is None
+    )
 
 
 def test_binary_hot_benchmark_accepts_custom_genotype_inputs(tmp_path: Path) -> None:
