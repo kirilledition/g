@@ -445,6 +445,7 @@ def test_native_writer_writes_parquet_dataset_parts_with_footer_metadata(tmp_pat
 
     part_paths = output.iter_sorted_chunk_file_paths(tmp_path)
     assert [part_path.name for part_path in part_paths] == ["part_000000000_000000002.parquet"]
+    assert not (tmp_path / "final.parquet").exists()
     frame = pl.read_parquet(part_paths[0])
     assert frame.columns == EXPECTED_FINAL_COLUMNS
     assert frame.get_column("TEST").to_list() == ["ADD", "ADD", "ADD", "ADD"]

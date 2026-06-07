@@ -1,10 +1,10 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
 use arrow::array::{ArrayRef, Float32Array, Int32Array, Int64Array, StringArray};
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use serde_json::json;
 
 use crate::genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
@@ -211,17 +211,127 @@ enum OutputCoordinatorJob {
 }
 
 enum OutputWriteJob {
-    RegenieStep2(Box<RegenieStep2ChunkWriteBatch>),
-    Shutdown,
+    RegenieStep2(Box<OutputWriteTask>),
+}
+
+struct OutputWriteTask {
+    write_batch: RegenieStep2ChunkWriteBatch,
+    config: OutputWriterConfig,
+    worker_errors: Arc<Mutex<Vec<String>>>,
+    worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
+    stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
+    completion_tracker: OutputWriteCompletionTracker,
+}
+
+struct OutputWriterPool {
+    sender: Sender<OutputWriteJob>,
+    receiver: Receiver<OutputWriteJob>,
+    worker_count: Mutex<usize>,
+}
+
+#[derive(Clone)]
+struct OutputWriteCompletionTracker {
+    inner: Arc<(Mutex<usize>, Condvar)>,
+}
+
+struct OutputWriteCompletionGuard {
+    completion_tracker: OutputWriteCompletionTracker,
+}
+
+impl OutputWriterPool {
+    fn new() -> Self {
+        let (sender, receiver) = unbounded();
+        Self { sender, receiver, worker_count: Mutex::new(0) }
+    }
+
+    fn sender(&self) -> Sender<OutputWriteJob> {
+        self.sender.clone()
+    }
+
+    fn ensure_worker_count(&self, requested_worker_count: usize) -> Result<(), OutputWriterError> {
+        let mut worker_count = self
+            .worker_count
+            .lock()
+            .map_err(|_| OutputWriterError::Runtime("Rust output writer pool lock was poisoned.".to_string()))?;
+        while *worker_count < requested_worker_count {
+            let receiver_clone = self.receiver.clone();
+            std::thread::spawn(move || run_output_writer_worker(receiver_clone));
+            *worker_count += 1;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn current_worker_count(&self) -> usize {
+        *self.worker_count.lock().expect("pool worker count should not be poisoned")
+    }
+}
+
+impl OutputWriteCompletionTracker {
+    fn new() -> Self {
+        Self { inner: Arc::new((Mutex::new(0), Condvar::new())) }
+    }
+
+    fn increment(&self) -> Result<(), OutputWriterError> {
+        let (pending_write_count_lock, _) = &*self.inner;
+        let mut pending_write_count = pending_write_count_lock
+            .lock()
+            .map_err(|_| OutputWriterError::Runtime("Rust output writer completion lock was poisoned.".to_string()))?;
+        *pending_write_count += 1;
+        Ok(())
+    }
+
+    fn decrement(&self) {
+        let (pending_write_count_lock, pending_write_condvar) = &*self.inner;
+        if let Ok(mut pending_write_count) = pending_write_count_lock.lock() {
+            *pending_write_count = pending_write_count.saturating_sub(1);
+            if *pending_write_count == 0 {
+                pending_write_condvar.notify_all();
+            }
+        }
+    }
+
+    fn wait(&self) -> Result<(), OutputWriterError> {
+        let (pending_write_count_lock, pending_write_condvar) = &*self.inner;
+        let mut pending_write_count = pending_write_count_lock
+            .lock()
+            .map_err(|_| OutputWriterError::Runtime("Rust output writer completion lock was poisoned.".to_string()))?;
+        while *pending_write_count > 0 {
+            pending_write_count = pending_write_condvar.wait(pending_write_count).map_err(|_| {
+                OutputWriterError::Runtime("Rust output writer completion lock was poisoned.".to_string())
+            })?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for OutputWriteCompletionGuard {
+    fn drop(&mut self) {
+        self.completion_tracker.decrement();
+    }
+}
+
+fn output_writer_pool() -> Arc<OutputWriterPool> {
+    static OUTPUT_WRITER_POOL: OnceLock<Arc<OutputWriterPool>> = OnceLock::new();
+    Arc::clone(OUTPUT_WRITER_POOL.get_or_init(|| Arc::new(OutputWriterPool::new())))
+}
+
+fn get_output_writer_pool(worker_count: usize) -> Result<Arc<OutputWriterPool>, OutputWriterError> {
+    if worker_count == 0 {
+        return Err(OutputWriterError::InvalidInput("Writer thread count must be at least 1.".to_string()));
+    }
+    let pool = output_writer_pool();
+    pool.ensure_worker_count(worker_count)?;
+    Ok(pool)
 }
 
 pub struct OutputWriterSession {
     sender: Mutex<Option<Sender<OutputCoordinatorJob>>>,
     coordinator_handle: Mutex<Option<JoinHandle<()>>>,
-    worker_handles: Mutex<Vec<JoinHandle<()>>>,
     worker_errors: Arc<Mutex<Vec<String>>>,
     worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
     stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
+    completion_tracker: OutputWriteCompletionTracker,
     config: OutputWriterConfig,
 }
 
@@ -259,51 +369,41 @@ impl OutputWriterSession {
             collect_stage_timings,
         };
         let (sender, receiver) = bounded(writer_queue_depth.max(1));
-        let (writer_sender, writer_receiver) = bounded(writer_queue_depth.max(1));
         let worker_errors = Arc::new(Mutex::new(Vec::new()));
         let worker_commits = Arc::new(Mutex::new(Vec::new()));
         let stage_timings = Arc::new(Mutex::new(OutputStageTimingAccumulator::default()));
-        let mut worker_handles = Vec::with_capacity(writer_thread_count);
-        for _ in 0..writer_thread_count {
-            let receiver_clone = writer_receiver.clone();
-            let config_clone = config.clone();
-            let worker_errors_clone = Arc::clone(&worker_errors);
-            let worker_commits_clone = Arc::clone(&worker_commits);
-            let stage_timings_clone = Arc::clone(&stage_timings);
-            worker_handles.push(std::thread::spawn(move || {
-                run_output_writer_worker(
-                    receiver_clone,
-                    config_clone,
-                    worker_errors_clone,
-                    worker_commits_clone,
-                    stage_timings_clone,
-                );
-            }));
-        }
+        let writer_pool = get_output_writer_pool(writer_thread_count)?;
+        let completion_tracker = OutputWriteCompletionTracker::new();
         let coordinator_worker_errors = Arc::clone(&worker_errors);
         let coordinator_stage_timings = Arc::clone(&stage_timings);
         let coordinator_chunks_per_arrow_file = config.chunks_per_arrow_file;
         let coordinator_output_format = config.output_format;
         let coordinator_collect_stage_timings = config.collect_stage_timings;
+        let coordinator_config = config.clone();
+        let coordinator_writer_pool = Arc::clone(&writer_pool);
+        let coordinator_worker_commits = Arc::clone(&worker_commits);
+        let coordinator_completion_tracker = completion_tracker.clone();
         let coordinator_handle = std::thread::spawn(move || {
             run_output_writer_coordinator(
                 receiver,
-                writer_sender,
-                writer_thread_count,
+                coordinator_writer_pool,
+                coordinator_config,
                 coordinator_chunks_per_arrow_file,
                 coordinator_output_format,
                 coordinator_worker_errors,
+                coordinator_worker_commits,
                 coordinator_stage_timings,
                 coordinator_collect_stage_timings,
+                coordinator_completion_tracker,
             );
         });
         Ok(Self {
             sender: Mutex::new(Some(sender)),
             coordinator_handle: Mutex::new(Some(coordinator_handle)),
-            worker_handles: Mutex::new(worker_handles),
             worker_errors,
             worker_commits,
             stage_timings,
+            completion_tracker,
             config,
         })
     }
@@ -312,7 +412,7 @@ impl OutputWriterSession {
         let finish_start_time = start_optional_timing(self.config.collect_stage_timings);
         self.close_writer_sender(OutputCoordinatorJob::Finish)?;
         self.join_coordinator_thread()?;
-        self.join_writer_threads()?;
+        self.wait_for_writer_tasks()?;
         self.raise_if_worker_failed()?;
         let chunk_commits = self.take_worker_commits()?;
         let manifest_commit_start_time = start_optional_timing(self.config.collect_stage_timings);
@@ -346,7 +446,7 @@ impl OutputWriterSession {
         let finish_start_time = start_optional_timing(self.config.collect_stage_timings);
         self.close_writer_sender(OutputCoordinatorJob::Finish)?;
         self.join_coordinator_thread()?;
-        self.join_writer_threads()?;
+        self.wait_for_writer_tasks()?;
         self.raise_if_worker_failed()?;
         let chunk_commits = self.take_worker_commits()?;
         let manifest_commit_start_time = start_optional_timing(self.config.collect_stage_timings);
@@ -367,7 +467,7 @@ impl OutputWriterSession {
     pub fn abort(&self) -> Result<(), OutputWriterError> {
         self.close_writer_sender(OutputCoordinatorJob::Abort)?;
         self.join_coordinator_thread()?;
-        self.join_writer_threads()?;
+        self.wait_for_writer_tasks()?;
         Ok(())
     }
 
@@ -700,17 +800,8 @@ impl OutputWriterSession {
         Ok(())
     }
 
-    fn join_writer_threads(&self) -> Result<(), OutputWriterError> {
-        let mut worker_handles_guard = self
-            .worker_handles
-            .lock()
-            .map_err(|_| OutputWriterError::Runtime("Rust output writer handle lock was poisoned.".to_string()))?;
-        while let Some(worker_handle) = worker_handles_guard.pop() {
-            worker_handle
-                .join()
-                .map_err(|_| OutputWriterError::Runtime("Rust output writer worker thread panicked.".to_string()))?;
-        }
-        Ok(())
+    fn wait_for_writer_tasks(&self) -> Result<(), OutputWriterError> {
+        self.completion_tracker.wait()
     }
 }
 
@@ -738,13 +829,15 @@ fn start_optional_timing(collect_stage_timings: bool) -> Option<Instant> {
 #[allow(clippy::needless_pass_by_value)]
 fn run_output_writer_coordinator(
     receiver: Receiver<OutputCoordinatorJob>,
-    writer_sender: Sender<OutputWriteJob>,
-    writer_thread_count: usize,
+    writer_pool: Arc<OutputWriterPool>,
+    config: OutputWriterConfig,
     chunks_per_arrow_file: usize,
     output_format: OutputFileFormat,
     worker_errors: Arc<Mutex<Vec<String>>>,
+    worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
     stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
     collect_stage_timings: bool,
+    completion_tracker: OutputWriteCompletionTracker,
 ) {
     let mut pending_chunks = Vec::with_capacity(chunks_per_arrow_file);
     while let Ok(job) = receiver.recv() {
@@ -753,12 +846,15 @@ fn run_output_writer_coordinator(
                 pending_chunks.push(*chunk_job);
                 if pending_chunks.len() >= chunks_per_arrow_file
                     && flush_pending_regenie_step2_chunks(
-                        &writer_sender,
+                        &writer_pool,
                         &mut pending_chunks,
+                        &config,
                         output_format,
                         &worker_errors,
+                        &worker_commits,
                         &stage_timings,
                         collect_stage_timings,
+                        &completion_tracker,
                     )
                     .is_err()
                 {
@@ -767,33 +863,33 @@ fn run_output_writer_coordinator(
             }
             OutputCoordinatorJob::Finish => {
                 let _ = flush_pending_regenie_step2_chunks(
-                    &writer_sender,
+                    &writer_pool,
                     &mut pending_chunks,
+                    &config,
                     output_format,
                     &worker_errors,
+                    &worker_commits,
                     &stage_timings,
                     collect_stage_timings,
+                    &completion_tracker,
                 );
                 break;
             }
             OutputCoordinatorJob::Abort => break,
         }
     }
-    for _ in 0..writer_thread_count {
-        if let Err(error) = writer_sender.send(OutputWriteJob::Shutdown) {
-            push_worker_error(&worker_errors, error.to_string());
-            return;
-        }
-    }
 }
 
 fn flush_pending_regenie_step2_chunks(
-    writer_sender: &Sender<OutputWriteJob>,
+    writer_pool: &OutputWriterPool,
     pending_chunks: &mut Vec<RegenieStep2ChunkJob>,
+    config: &OutputWriterConfig,
     output_format: OutputFileFormat,
     worker_errors: &Arc<Mutex<Vec<String>>>,
+    worker_commits: &Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
     stage_timings: &Arc<Mutex<OutputStageTimingAccumulator>>,
     collect_stage_timings: bool,
+    completion_tracker: &OutputWriteCompletionTracker,
 ) -> Result<(), ()> {
     if pending_chunks.is_empty() {
         return Ok(());
@@ -804,7 +900,19 @@ fn flush_pending_regenie_step2_chunks(
         pending_chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
     let chunk_file_name = build_output_file_name(output_format, first_chunk_identifier, last_chunk_identifier);
     let write_batch = RegenieStep2ChunkWriteBatch { chunk_file_name, chunks: std::mem::take(pending_chunks) };
-    writer_sender.send(OutputWriteJob::RegenieStep2(Box::new(write_batch))).map_err(|error| {
+    completion_tracker.increment().map_err(|error| {
+        push_worker_error(worker_errors, error.to_string());
+    })?;
+    let write_task = OutputWriteTask {
+        write_batch,
+        config: config.clone(),
+        worker_errors: Arc::clone(worker_errors),
+        worker_commits: Arc::clone(worker_commits),
+        stage_timings: Arc::clone(stage_timings),
+        completion_tracker: completion_tracker.clone(),
+    };
+    writer_pool.sender().send(OutputWriteJob::RegenieStep2(Box::new(write_task))).map_err(|error| {
+        completion_tracker.decrement();
         push_worker_error(worker_errors, error.to_string());
     })?;
     if let Some(start_time) = flush_start_time {
@@ -824,46 +932,47 @@ fn push_worker_error(worker_errors: &Arc<Mutex<Vec<String>>>, error: String) {
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn run_output_writer_worker(
-    receiver: Receiver<OutputWriteJob>,
-    config: OutputWriterConfig,
-    worker_errors: Arc<Mutex<Vec<String>>>,
-    worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
-    stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
-) {
+fn run_output_writer_worker(receiver: Receiver<OutputWriteJob>) {
     while let Ok(job) = receiver.recv() {
-        let write_result = match job {
-            OutputWriteJob::RegenieStep2(regenie_step2_job) => write_regenie_step2_chunk_job(
-                &config.chunks_directory,
-                *regenie_step2_job,
-                config.output_format,
-                &config.arrow_compression,
-                &config.parquet_compression,
-            ),
-            OutputWriteJob::Shutdown => return,
+        match job {
+            OutputWriteJob::RegenieStep2(output_write_task) => run_output_write_task(*output_write_task),
         };
-        match write_result {
-            Ok(write_result) => {
-                if config.collect_stage_timings {
-                    let Ok(mut stage_timings_guard) = stage_timings.lock() else {
-                        push_worker_error(
-                            &worker_errors,
-                            "Rust output writer stage timing lock was poisoned.".to_string(),
-                        );
-                        return;
-                    };
-                    stage_timings_guard.add_writer_timing(write_result.timing);
-                }
-                let Ok(mut worker_commits_guard) = worker_commits.lock() else {
-                    push_worker_error(&worker_errors, "Rust output writer commit lock was poisoned.".to_string());
+    }
+}
+
+fn run_output_write_task(output_write_task: OutputWriteTask) {
+    let _completion_guard =
+        OutputWriteCompletionGuard { completion_tracker: output_write_task.completion_tracker.clone() };
+    let write_result = write_regenie_step2_chunk_job(
+        &output_write_task.config.chunks_directory,
+        output_write_task.write_batch,
+        output_write_task.config.output_format,
+        &output_write_task.config.arrow_compression,
+        &output_write_task.config.parquet_compression,
+    );
+    match write_result {
+        Ok(write_result) => {
+            if output_write_task.config.collect_stage_timings {
+                let Ok(mut stage_timings_guard) = output_write_task.stage_timings.lock() else {
+                    push_worker_error(
+                        &output_write_task.worker_errors,
+                        "Rust output writer stage timing lock was poisoned.".to_string(),
+                    );
                     return;
                 };
-                worker_commits_guard.extend(write_result.chunk_commits);
+                stage_timings_guard.add_writer_timing(write_result.timing);
             }
-            Err(error) => {
-                push_worker_error(&worker_errors, error);
+            let Ok(mut worker_commits_guard) = output_write_task.worker_commits.lock() else {
+                push_worker_error(
+                    &output_write_task.worker_errors,
+                    "Rust output writer commit lock was poisoned.".to_string(),
+                );
                 return;
-            }
+            };
+            worker_commits_guard.extend(write_result.chunk_commits);
+        }
+        Err(error) => {
+            push_worker_error(&output_write_task.worker_errors, error);
         }
     }
 }
@@ -934,5 +1043,16 @@ mod tests {
             })
             .expect("timing skip path should not lock");
         session.abort().expect("session should abort");
+    }
+
+    #[test]
+    fn output_writer_pool_reuses_one_process_pool_at_max_requested_cap() {
+        let first_pool = get_output_writer_pool(1).expect("first pool should open");
+        let second_pool = get_output_writer_pool(2).expect("second pool should reuse and grow first pool");
+        let third_pool = get_output_writer_pool(1).expect("third pool should reuse existing pool");
+
+        assert!(std::sync::Arc::ptr_eq(&first_pool, &second_pool));
+        assert!(std::sync::Arc::ptr_eq(&second_pool, &third_pool));
+        assert!(third_pool.current_worker_count() >= 2);
     }
 }
