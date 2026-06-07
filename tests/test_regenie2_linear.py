@@ -297,6 +297,39 @@ class TestPrepareRegenie2LinearState:
         crossproduct = covariate_matrix.T @ state.phenotype_residual
         numpy.testing.assert_allclose(crossproduct, jnp.zeros(covariate_count), atol=1e-4)
 
+    def test_chromosome_state_caches_score_left_hand_matrix(self) -> None:
+        """Ensure chromosome state caches the score-kernel matrix product input."""
+        sample_count = 24
+        covariate_count = 2
+        trait_count = 3
+        rng = np.random.default_rng(42)
+        covariate_matrix = jnp.asarray(rng.standard_normal((sample_count, covariate_count)), dtype=jnp.float32)
+        phenotype_matrix = jnp.asarray(rng.standard_normal((trait_count, sample_count)), dtype=jnp.float32)
+        loco_prediction_matrix = jnp.asarray(rng.standard_normal((trait_count, sample_count)), dtype=jnp.float32)
+        state = regenie2_linear.prepare_regenie2_multi_linear_state(covariate_matrix, phenotype_matrix)
+
+        chromosome_state = regenie2_linear.prepare_regenie2_multi_linear_chromosome_state(
+            state,
+            loco_prediction_matrix,
+        )
+
+        expected_score_left_hand_matrix = jnp.concatenate(
+            [
+                chromosome_state.whitened_covariate_transpose,
+                chromosome_state.adjusted_residual_matrix,
+            ],
+            axis=0,
+        )
+        assert chromosome_state.score_left_hand_matrix.shape == (
+            covariate_count + trait_count,
+            sample_count,
+        )
+        numpy.testing.assert_allclose(
+            np.asarray(chromosome_state.score_left_hand_matrix),
+            np.asarray(expected_score_left_hand_matrix),
+            rtol=1.0e-6,
+        )
+
 
 class TestChiSquaredToLog10PValue:
     """Tests for chi_squared_to_log10_p_value."""

@@ -83,6 +83,7 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
     genotype_dosage_sum: jax.Array | None = None,
     genotype_observation_count: jax.Array | None = None,
     genotype_imputed_dosage_square_sum: jax.Array | None = None,
+    score_left_hand_matrix: jax.Array | None = None,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
     linear_minimum_variance: float = regenie2_linear_config.DEFAULT_LINEAR_MINIMUM_VARIANCE,
     linear_relative_variance_tolerance: float = regenie2_linear_config.DEFAULT_LINEAR_RELATIVE_VARIANCE_TOLERANCE,
@@ -117,9 +118,13 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
             score_dtype=score_dtype,
         )
     covariate_count = whitened_covariate_transpose.shape[0]
-    stacked_left_hand_matrix = jnp.concatenate(
-        [whitened_covariate_transpose, adjusted_residual_matrix],
-        axis=0,
+    stacked_left_hand_matrix = (
+        jnp.concatenate(
+            [whitened_covariate_transpose, adjusted_residual_matrix],
+            axis=0,
+        )
+        if score_left_hand_matrix is None
+        else score_left_hand_matrix
     )
     stacked_projection_product = stacked_left_hand_matrix @ normalized_genotype_matrix_by_variant.T
     covariate_projection_coordinates = stacked_projection_product[:covariate_count, :]

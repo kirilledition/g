@@ -121,7 +121,30 @@ def test_scalar_approximate_firth_uses_nr_fallback_after_pseudo_attempt() -> Non
     assert bool(np.asarray(result.valid_mask))
     assert int(np.asarray(result.pseudo_firth_iteration_count)) > 0
     assert int(np.asarray(result.correction_code)) == types.FirthCorrectionCode.NEWTON_RAPHSON_WARM_START.value
+    assert int(np.asarray(result.nr_zero_start_iteration_count)) == 0
     assert int(np.asarray(result.nr_warm_start_iteration_count)) > 0
+
+
+def test_scalar_approximate_firth_reports_zero_counts_for_skipped_lane() -> None:
+    chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
+    kernel_config = build_default_binary_kernel_config()
+
+    result = regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
+        phenotype_vector=chromosome_state.phenotype_vector,
+        genotype_vector=genotype_vector,
+        offset_vector=chromosome_state.null_firth_offset,
+        carrier_sample_mask=raw_genotype_vector > kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
+        sparse_correction=jnp.asarray(1, dtype=jnp.bool_),
+        warm_start_beta=jnp.asarray(0.0, dtype=jnp.float32),
+        skip_firth=jnp.asarray(1, dtype=jnp.bool_),
+        null_failed=jnp.asarray(0, dtype=jnp.bool_),
+        kernel_config=kernel_config,
+    )
+
+    assert not bool(np.asarray(result.valid_mask))
+    assert int(np.asarray(result.pseudo_firth_iteration_count)) == 0
+    assert int(np.asarray(result.nr_zero_start_iteration_count)) == 0
+    assert int(np.asarray(result.nr_warm_start_iteration_count)) == 0
 
 
 def test_scalar_newton_line_search_exhaustion_does_not_move_beta() -> None:

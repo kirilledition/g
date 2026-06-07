@@ -266,6 +266,104 @@ def build_chromosome_state() -> tuple[
     return genotype_matrix, chromosome_state
 
 
+def test_binary_chromosome_state_caches_score_stack_and_full_null_deviance() -> None:
+    genotype_matrix, chromosome_state = build_chromosome_state()
+    expected_score_right_hand_matrix = jnp.concatenate(
+        [
+            chromosome_state.score_projection_matrix,
+            chromosome_state.bernoulli_weight[None, :],
+            chromosome_state.score_residual[None, :],
+        ],
+        axis=0,
+    )
+    null_probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(
+        chromosome_state.null_firth_offset
+    )
+    expected_full_null_deviance = regenie2_binary_logistic.compute_logistic_deviance(
+        chromosome_state.phenotype_vector,
+        null_probability_vector,
+        jnp.ones_like(chromosome_state.phenotype_vector, dtype=jnp.bool_),
+    )
+
+    assert chromosome_state.score_right_hand_matrix.shape == (
+        chromosome_state.score_projection_matrix.shape[0] + 2,
+        genotype_matrix.shape[0],
+    )
+    np.testing.assert_allclose(
+        np.asarray(chromosome_state.score_right_hand_matrix),
+        np.asarray(expected_score_right_hand_matrix),
+        rtol=1.0e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(chromosome_state.full_null_deviance),
+        np.asarray(expected_full_null_deviance),
+        rtol=1.0e-6,
+    )
+
+
+def test_firth_batch_preparation_uses_cached_full_null_deviance() -> None:
+    genotype_matrix, chromosome_state = build_chromosome_state()
+    cached_null_deviance = jnp.asarray(123.0, dtype=jnp.float64)
+    chromosome_state = dataclasses.replace(chromosome_state, full_null_deviance=cached_null_deviance)
+    genotype_matrix_by_variant = jnp.transpose(genotype_matrix)
+    candidate_mask = jnp.asarray([True, False, False], dtype=jnp.bool_)
+    score_beta = jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float32)
+
+    prepared_batch = regenie2_binary_firth_batch.prepare_firth_candidate_batch(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        candidate_mask=candidate_mask,
+        score_beta=score_beta,
+        sparse_candidate_mask=None,
+        candidate_capacity=2,
+        firth_batch_size=1,
+        order_candidates=False,
+        kernel_config=build_default_binary_kernel_config(),
+    )
+
+    np.testing.assert_allclose(np.asarray(prepared_batch.full_null_deviance), np.asarray(cached_null_deviance))
+
+
+def test_multi_firth_batch_preparation_uses_cached_full_null_deviance() -> None:
+    fixture = build_multi_binary_variant_major_fixture()
+    multi_state = regenie2_binary.prepare_regenie2_multi_binary_state(
+        fixture.covariate_matrix,
+        fixture.phenotype_matrix,
+    )
+    chromosome_state = regenie2_binary.prepare_regenie2_multi_binary_chromosome_state(
+        multi_state,
+        fixture.loco_offset_matrix,
+        APPROXIMATE_FIRTH_PLAN,
+        build_default_binary_kernel_config(),
+    )
+    cached_null_deviance = jnp.asarray([101.0, 202.0], dtype=jnp.float64)
+    chromosome_state = dataclasses.replace(chromosome_state, full_null_deviance=cached_null_deviance)
+    candidate_mask = jnp.asarray(
+        [
+            [True, False, False, False, False],
+            [False, True, False, False, False],
+        ],
+        dtype=jnp.bool_,
+    )
+
+    prepared_batch = regenie2_binary_firth_batch.prepare_multi_firth_candidate_batch(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=fixture.genotype_matrix_by_variant,
+        candidate_mask=candidate_mask,
+        score_beta=jnp.zeros(candidate_mask.shape, dtype=jnp.float32),
+        sparse_candidate_mask=None,
+        candidate_capacity=2,
+        firth_batch_size=1,
+        order_candidates=False,
+        kernel_config=build_default_binary_kernel_config(),
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(prepared_batch.full_null_deviance),
+        np.asarray(jnp.take(cached_null_deviance, prepared_batch.candidate_inputs.flat_trait_indices, axis=0)),
+    )
+
+
 def test_score_dtype_float64_controls_binary_score_kernel_dtype() -> None:
     covariate_matrix, phenotype_vector, genotype_matrix = build_binary_inputs()
     state = regenie2_binary.prepare_regenie2_binary_state(

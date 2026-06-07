@@ -109,24 +109,11 @@ def compute_multi_binary_score_test_chunk_variant_major(
     )
     trait_count = chromosome_state.score_residual.shape[0]
     covariate_count = chromosome_state.score_projection_matrix.shape[1]
-    sample_count = raw_genotype_matrix_by_variant.shape[1]
     variant_count = raw_genotype_matrix_by_variant.shape[0]
     genotype_flip_mask = genotype_mean > 1.0
     genotype_flip_mask_by_trait_variant = genotype_flip_mask[None, :]
     genotype_matrix_by_variant_squared = raw_genotype_matrix_by_variant * raw_genotype_matrix_by_variant
-    flattened_projection_matrix = jnp.reshape(
-        chromosome_state.score_projection_matrix,
-        (trait_count * covariate_count, sample_count),
-    )
-    stacked_right_hand_matrix = jnp.concatenate(
-        [
-            flattened_projection_matrix,
-            chromosome_state.bernoulli_weight,
-            chromosome_state.score_residual,
-        ],
-        axis=0,
-    )
-    stacked_product_by_variant = raw_genotype_matrix_by_variant @ stacked_right_hand_matrix.T
+    stacked_product_by_variant = raw_genotype_matrix_by_variant @ chromosome_state.score_right_hand_matrix.T
     projection_row_count = trait_count * covariate_count
     weighted_genotype_sum_start = projection_row_count
     score_start = weighted_genotype_sum_start + trait_count
