@@ -668,15 +668,9 @@ def configuration_from_json_dict(payload: dict[str, typing.Any]) -> BenchmarkCon
     fallback_density_scenarios = payload.get("fallback_density_scenarios")
     return BenchmarkConfiguration(
         data_directory=data_directory,
-        bgen_path=(
-            Path(str(payload["bgen_path"]))
-            if "bgen_path" in payload
-            else data_directory / DEFAULT_BGEN_FILE
-        ),
+        bgen_path=(Path(str(payload["bgen_path"])) if "bgen_path" in payload else data_directory / DEFAULT_BGEN_FILE),
         sample_path=(
-            Path(str(payload["sample_path"]))
-            if "sample_path" in payload
-            else data_directory / DEFAULT_SAMPLE_FILE
+            Path(str(payload["sample_path"])) if "sample_path" in payload else data_directory / DEFAULT_SAMPLE_FILE
         ),
         phenotype_file=Path(str(payload.get("phenotype_file", DEFAULT_PHENOTYPE_FILE))),
         prediction_list=Path(str(payload.get("prediction_list", DEFAULT_PREDICTION_LIST))),
@@ -848,9 +842,7 @@ def trial_result_from_json_dict(payload: dict[str, typing.Any]) -> TrialResult:
         finalize_parquet=bool(payload["finalize_parquet"]),
         same_process_group=(str(payload["same_process_group"]) if payload["same_process_group"] is not None else None),
         wall_time_seconds=float(payload["wall_time_seconds"]),
-        stage_timing_path=(
-            str(payload["stage_timing_path"]) if payload.get("stage_timing_path") is not None else None
-        ),
+        stage_timing_path=(str(payload["stage_timing_path"]) if payload.get("stage_timing_path") is not None else None),
         output_metrics=output_metrics_from_json_dict(payload["output_metrics"]),
     )
 
