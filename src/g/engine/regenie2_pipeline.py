@@ -1288,6 +1288,7 @@ def run_prepared_multi_phenotype_bgen_group(
         writer_sessions=writer_session_tuple,
         callback=callback,
         stage_timing_recorder=context.stage_timing_recorder,
+        writer_finish_thread_count=context.writer_settings.writer_thread_count,
         variant_major_packed8_probability_pairs=context.uses_packed8_genotypes,
     )
 
@@ -1319,6 +1320,7 @@ def run_bgen_engine_with_multi_callback(
     writer_sessions: tuple[typing.Any, ...],
     callback: object,
     stage_timing_recorder: timing.StageTimingRecorder | None,
+    writer_finish_thread_count: int = 1,
     variant_major_packed8_probability_pairs: bool = False,
 ) -> tuple[Path | None, ...]:
     """Run native BGEN chunk delivery once and close all per-phenotype writers."""
@@ -1329,6 +1331,7 @@ def run_bgen_engine_with_multi_callback(
         writer_sessions=writer_sessions,
         callback=callback,
         stage_timing_recorder=stage_timing_recorder,
+        writer_finish_thread_count=writer_finish_thread_count,
         variant_major_packed8_probability_pairs=variant_major_packed8_probability_pairs,
         pipeline_label="Multi-phenotype native BGEN",
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import dataclasses
 import queue
 import threading
@@ -224,6 +225,57 @@ def test_write_regenie2_native_chunk_downcasts_float64_statistics_before_writing
     assert chi_squared.dtype == np.float32
     assert log10_p_value.dtype == np.float32
     np.testing.assert_array_equal(written_chunk["extra_code"], extra_code)
+
+
+def test_finish_writer_sessions_uses_bounded_concurrent_pool() -> None:
+    release_finish = threading.Event()
+    started_finishes: queue.Queue[str] = queue.Queue()
+    active_lock = threading.Lock()
+    active_finish_count = 0
+    maximum_active_finish_count = 0
+
+    class BlockingWriterSession:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def finish(self) -> str:
+            nonlocal active_finish_count, maximum_active_finish_count
+            with active_lock:
+                active_finish_count += 1
+                maximum_active_finish_count = max(maximum_active_finish_count, active_finish_count)
+            started_finishes.put(self.name)
+            release_finish.wait(timeout=5.0)
+            with active_lock:
+                active_finish_count -= 1
+            return f"results/{self.name}.parquet"
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        finish_future = executor.submit(
+            native_dispatch.finish_writer_sessions,
+            writer_sessions=(
+                BlockingWriterSession("trait-a"),
+                BlockingWriterSession("trait-b"),
+                BlockingWriterSession("trait-c"),
+            ),
+            writer_finish_thread_count=2,
+            stage_timing_recorder=None,
+        )
+        first_started = started_finishes.get(timeout=2.0)
+        second_started = started_finishes.get(timeout=2.0)
+
+        assert {first_started, second_started} == {"trait-a", "trait-b"}
+        assert not finish_future.done()
+        assert maximum_active_finish_count == 2
+
+        release_finish.set()
+        final_parquet_paths = finish_future.result(timeout=5.0)
+
+    assert final_parquet_paths == (
+        Path("results/trait-a.parquet"),
+        Path("results/trait-b.parquet"),
+        Path("results/trait-c.parquet"),
+    )
+    assert maximum_active_finish_count == 2
 
 
 def test_write_regenie2_multi_native_chunk_skips_committed_traits_and_slices_extra_code() -> None:

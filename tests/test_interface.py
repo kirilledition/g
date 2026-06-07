@@ -719,6 +719,7 @@ def test_output_tuning_defaults_come_from_packaged_default_config() -> None:
     assert regenie_config.g_output.writer_queue_depth == default_output_options["writer-queue-depth"]
     assert regenie_config.g_output.chunks_per_arrow_file == default_output_options["chunks-per-arrow-file"]
     assert regenie_config.g_output.parquet_compression.value == default_output_options["parquet-compression"]
+    assert regenie_config.g_output.finalize_parquet is False
 
 
 def test_quantitative_execution_plan_rejects_direct_binary_only_config() -> None:

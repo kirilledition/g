@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import contextlib
 import logging
 import time
@@ -427,22 +428,47 @@ def finish_writer_session(
     return typing.cast("str | None", final_parquet_path)
 
 
+def resolve_writer_finish_thread_count(writer_session_count: int, requested_thread_count: int) -> int:
+    """Return the bounded number of threads used to finish writer sessions."""
+    if writer_session_count <= 0:
+        return 0
+    if requested_thread_count <= 0:
+        message = "Writer finish thread count must be positive."
+        raise ValueError(message)
+    return min(writer_session_count, requested_thread_count)
+
+
+def finish_writer_session_to_path(writer_session: typing.Any) -> Path | None:
+    """Finish one writer session and normalize its optional final Parquet path."""
+    final_parquet_path = typing.cast("str | None", writer_session.finish())
+    return None if final_parquet_path is None else Path(final_parquet_path)
+
+
 def finish_writer_sessions(
     *,
     writer_sessions: tuple[typing.Any, ...],
     stage_timing_recorder: timing.StageTimingRecorder | None,
+    writer_finish_thread_count: int = 1,
 ) -> tuple[Path | None, ...]:
     """Finish writer sessions and optionally finalize Parquet output."""
     writer_finish_start_time = time.perf_counter()
     logger.debug("Finishing output writer(s) and optional Parquet finalization.")
-    final_parquet_paths: list[Path | None] = []
-    for writer_session in writer_sessions:
-        final_parquet_path = typing.cast("str | None", writer_session.finish())
-        final_parquet_paths.append(None if final_parquet_path is None else Path(final_parquet_path))
+    resolved_thread_count = resolve_writer_finish_thread_count(len(writer_sessions), writer_finish_thread_count)
+    if resolved_thread_count <= 1:
+        final_parquet_paths = tuple(finish_writer_session_to_path(writer_session) for writer_session in writer_sessions)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=resolved_thread_count,
+            thread_name_prefix="g-writer-finish",
+        ) as executor:
+            futures = tuple(
+                executor.submit(finish_writer_session_to_path, writer_session) for writer_session in writer_sessions
+            )
+            final_parquet_paths = tuple(future.result() for future in futures)
     timing.record_stage_duration(
         stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
     )
-    return tuple(final_parquet_paths)
+    return final_parquet_paths
 
 
 def finish_writer_session_interrupted(
@@ -463,12 +489,26 @@ def finish_writer_sessions_interrupted(
     writer_sessions: tuple[typing.Any, ...],
     shutdown_request: shutdown.GracefulShutdownRequested,
     stage_timing_recorder: timing.StageTimingRecorder | None,
+    writer_finish_thread_count: int = 1,
 ) -> None:
     """Flush interrupted writer sessions without final Parquet output."""
     writer_finish_start_time = time.perf_counter()
     logger.info("Flushing interrupted output writer(s) after %s.", shutdown_request.signal_name)
-    for writer_session in writer_sessions:
-        writer_session.finish_interrupted(shutdown_request.signal_name)
+    resolved_thread_count = resolve_writer_finish_thread_count(len(writer_sessions), writer_finish_thread_count)
+    if resolved_thread_count <= 1:
+        for writer_session in writer_sessions:
+            writer_session.finish_interrupted(shutdown_request.signal_name)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=resolved_thread_count,
+            thread_name_prefix="g-writer-finish",
+        ) as executor:
+            futures = tuple(
+                executor.submit(writer_session.finish_interrupted, shutdown_request.signal_name)
+                for writer_session in writer_sessions
+            )
+            for future in futures:
+                future.result()
     timing.record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)
 
 
@@ -570,6 +610,7 @@ def run_bgen_engine_with_writer_sessions(
     writer_sessions: tuple[typing.Any, ...],
     callback: object,
     stage_timing_recorder: timing.StageTimingRecorder | None,
+    writer_finish_thread_count: int = 1,
     variant_major_packed8_probability_pairs: bool = False,
     pipeline_label: str = "Native BGEN",
     stage_timing_snapshot_writer: typing.Callable[
@@ -612,6 +653,7 @@ def run_bgen_engine_with_writer_sessions(
         callback_finished = True
         final_parquet_paths = finish_writer_sessions(
             writer_sessions=writer_sessions,
+            writer_finish_thread_count=writer_finish_thread_count,
             stage_timing_recorder=stage_timing_recorder,
         )
     except shutdown.GracefulShutdownRequested as shutdown_request:
@@ -622,6 +664,7 @@ def run_bgen_engine_with_writer_sessions(
             finish_writer_sessions_interrupted(
                 writer_sessions=writer_sessions,
                 shutdown_request=shutdown_request,
+                writer_finish_thread_count=writer_finish_thread_count,
                 stage_timing_recorder=stage_timing_recorder,
             )
         except BaseException:

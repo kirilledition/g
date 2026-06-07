@@ -25,8 +25,8 @@ This tracks the implementation campaign for
   F-007, F-008, F-016, F-021, F-022, and F-041 are complete.
 - Wave 3 JAX numerics and Firth performance: partial; F-013, F-014, and
   F-015 are complete.
-- Wave 4 writer/output throughput: partial; F-018, F-030, and F-039 are
-  complete.
+- Wave 4 writer/output throughput: partial; F-018, F-019, F-020, F-030,
+  F-038, and F-039 are complete.
 - Wave 5 Rust decode and larger architecture: partial; F-025, F-036,
   F-037, and F-040 are integrated.
 - Wave 6 warmup and performance proof: pending.
@@ -52,6 +52,16 @@ This tracks the implementation campaign for
   materialization and skip-all-committed behavior.
 - Implemented public writer copy-on-enqueue safety and `EXTRA` all-null/success
   fast paths.
+- Implemented shared native output writer pools keyed by the configured writer
+  cap, so multi-trait runs keep per-trait queues/manifests while actual chunk
+  file writes no longer allocate `trait_count * writer_thread_count` native
+  worker threads.
+- Implemented bounded concurrent multi-writer finish/finalization through the
+  same writer cap, with PyO3 writer lifecycle calls releasing the GIL while
+  Rust drains or finalizes output.
+- Locked in Parquet parts as the default fast final dataset. The existing
+  single `final.parquet` rewrite remains available only when
+  `--g-finalize-parquet` is explicitly enabled.
 - Implemented linear residual variance floors, selective high-frequency
   float64 shifted sum-of-squares, and production routing of those linear
   numerical settings.
@@ -86,8 +96,7 @@ This tracks the implementation campaign for
 
 ## Remaining larger work
 
-- Pipeline architecture and batching: F-009, F-017, F-019, F-020, F-028,
-  F-032, F-033, F-038.
+- Pipeline architecture and batching: F-009, F-017, F-028, F-032, F-033.
 - Packed8 and Firth compute rewrites: F-011, F-012, F-034.
 - Score-kernel/state setup rewrites: F-035.
 - Rust decode and allocation reuse: F-025, F-036, F-037, F-040 are implemented
