@@ -799,28 +799,30 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
         exact_eight_bit_probability_pairs(&packed_probability_bytes[..expected_probability_byte_count]);
     let all_samples_present =
         trusted_no_missing_diploid || trusted::all_samples_present_diploid(sample_ploidy_and_missingness);
-    let mut selected_dosage_total = 0.0_f32;
-    if sample_selection.is_identity && all_samples_present {
+    if trusted_no_missing_diploid {
+        debug_assert!(
+            trusted::all_samples_present_diploid(sample_ploidy_and_missingness),
+            "trusted row-major decode skipped a ploidy scan before validation"
+        );
+    }
+    if all_samples_present {
         let output_write_start_time = profiling_enabled.then(Instant::now);
-        for (file_sample_index, probability_pair) in probability_pairs.iter().copied().enumerate() {
-            let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
-            let dosage_value = dosage_lookup[packed_probability_index];
-            unsafe {
-                // Identity-aligned full-sample reads write file-order rows in the validated output column.
-                output_column.write_unchecked(file_sample_index, dosage_value);
-            }
-            if collect_dosage_totals {
-                selected_dosage_total += dosage_value;
-            }
-        }
+        let selected_dosage_total = decode_all_present_unphased_eight_bit_row_major_selection(
+            probability_pairs,
+            sample_selection,
+            &mut output_column,
+            dosage_lookup,
+            collect_dosage_totals,
+        )?;
         if let Some(output_write_start_time) = output_write_start_time {
             thread_local_profile_snapshot.output_write_ns += elapsed_nanoseconds(output_write_start_time);
             thread_local_profile_snapshot.output_write_count += 1;
-            thread_local_profile_snapshot.output_byte_count +=
-                u64::try_from(sample_ploidy_and_missingness.len().checked_mul(std::mem::size_of::<f32>()).ok_or_else(
-                    || BgenError::Range("Integer overflow while profiling BGEN output bytes.".to_string()),
-                )?)
-                .unwrap_or(u64::MAX);
+            thread_local_profile_snapshot.output_byte_count += u64::try_from(
+                sample_selection.selected_sample_count.checked_mul(std::mem::size_of::<f32>()).ok_or_else(|| {
+                    BgenError::Range("Integer overflow while profiling BGEN output bytes.".to_string())
+                })?,
+            )
+            .unwrap_or(u64::MAX);
         }
 
         if let Some(probability_decode_start_time) = probability_decode_start_time {
@@ -831,6 +833,8 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
 
         return Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total));
     }
+
+    let mut selected_dosage_total = 0.0_f32;
     if sample_selection.is_identity {
         let output_write_start_time = profiling_enabled.then(Instant::now);
         for (file_sample_index, (ploidy_and_missingness, probability_pair)) in
@@ -867,43 +871,6 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
                     || BgenError::Range("Integer overflow while profiling BGEN output bytes.".to_string()),
                 )?)
                 .unwrap_or(u64::MAX);
-        }
-
-        if let Some(probability_decode_start_time) = probability_decode_start_time {
-            thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
-            thread_local_profile_snapshot.probability_decode_count += 1;
-        }
-        record_variant_decode_if_enabled(&mut thread_local_profile_snapshot, profiling_enabled);
-
-        return Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total));
-    }
-
-    if all_samples_present {
-        let output_write_start_time = profiling_enabled.then(Instant::now);
-        for (file_sample_index, probability_pair) in probability_pairs.iter().copied().enumerate() {
-            let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
-            let dosage_value = dosage_lookup[packed_probability_index];
-
-            let selected_index = sample_selection.file_to_selected_index[file_sample_index];
-            if selected_index != usize::MAX {
-                unsafe {
-                    // Selected indices are built by sample selection and map to valid output rows.
-                    output_column.write_unchecked(selected_index, dosage_value);
-                }
-                if collect_dosage_totals {
-                    selected_dosage_total += dosage_value;
-                }
-            }
-        }
-        if let Some(output_write_start_time) = output_write_start_time {
-            thread_local_profile_snapshot.output_write_ns += elapsed_nanoseconds(output_write_start_time);
-            thread_local_profile_snapshot.output_write_count += 1;
-            thread_local_profile_snapshot.output_byte_count += u64::try_from(
-                sample_selection.selected_sample_count.checked_mul(std::mem::size_of::<f32>()).ok_or_else(|| {
-                    BgenError::Range("Integer overflow while profiling BGEN output bytes.".to_string())
-                })?,
-            )
-            .unwrap_or(u64::MAX);
         }
 
         if let Some(probability_decode_start_time) = probability_decode_start_time {
@@ -965,6 +932,146 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     record_variant_decode_if_enabled(&mut thread_local_profile_snapshot, profiling_enabled);
 
     Ok(build_variant_decode_result(thread_local_profile_snapshot, selected_dosage_total))
+}
+
+fn decode_all_present_unphased_eight_bit_row_major_selection(
+    probability_pairs: &[[u8; 2]],
+    sample_selection: &SampleSelection,
+    output_column: &mut RowMajorOutputColumnMut<'_, f32>,
+    dosage_lookup: &[f32],
+    collect_dosage_totals: bool,
+) -> Result<f32, BgenError> {
+    let mut selected_dosage_total = 0.0_f32;
+    if sample_selection.is_identity {
+        for (file_sample_index, probability_pair) in probability_pairs.iter().copied().enumerate() {
+            let dosage_value = decode_unphased_eight_bit_row_major_probability_pair(probability_pair, dosage_lookup);
+            unsafe {
+                // Identity-aligned full-sample reads write file-order rows in the validated output column.
+                output_column.write_unchecked(file_sample_index, dosage_value);
+            }
+            if collect_dosage_totals {
+                selected_dosage_total += dosage_value;
+            }
+        }
+        return Ok(selected_dosage_total);
+    }
+
+    if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start {
+        selected_dosage_total = decode_contiguous_all_present_unphased_eight_bit_row_major_selection(
+            probability_pairs,
+            contiguous_file_index_start,
+            sample_selection.selected_sample_count,
+            output_column,
+            dosage_lookup,
+            collect_dosage_totals,
+        )?;
+        return Ok(selected_dosage_total);
+    }
+
+    if row_major_selection_prefers_sparse_indices(sample_selection, probability_pairs.len()) {
+        selected_dosage_total = decode_sparse_all_present_unphased_eight_bit_row_major_selection(
+            probability_pairs,
+            sample_selection,
+            output_column,
+            dosage_lookup,
+            collect_dosage_totals,
+        )?;
+    } else {
+        selected_dosage_total = decode_dense_all_present_unphased_eight_bit_row_major_selection(
+            probability_pairs,
+            sample_selection,
+            output_column,
+            dosage_lookup,
+            collect_dosage_totals,
+        );
+    }
+    Ok(selected_dosage_total)
+}
+
+fn decode_unphased_eight_bit_row_major_probability_pair(probability_pair: [u8; 2], dosage_lookup: &[f32]) -> f32 {
+    dosage_lookup[packed_eight_bit_probability_index(probability_pair)]
+}
+
+fn decode_contiguous_all_present_unphased_eight_bit_row_major_selection(
+    probability_pairs: &[[u8; 2]],
+    contiguous_file_index_start: usize,
+    selected_sample_count: usize,
+    output_column: &mut RowMajorOutputColumnMut<'_, f32>,
+    dosage_lookup: &[f32],
+    collect_dosage_totals: bool,
+) -> Result<f32, BgenError> {
+    let contiguous_file_index_stop = contiguous_file_index_start
+        .checked_add(selected_sample_count)
+        .ok_or_else(|| BgenError::Range("Integer overflow while slicing contiguous BGEN samples.".to_string()))?;
+    let selected_probability_pairs =
+        probability_pairs.get(contiguous_file_index_start..contiguous_file_index_stop).ok_or_else(|| {
+            BgenError::Range("Contiguous BGEN sample selection exceeds decoded probability pairs.".to_string())
+        })?;
+    let mut selected_dosage_total = 0.0_f32;
+    for (selected_index, probability_pair) in selected_probability_pairs.iter().copied().enumerate() {
+        let dosage_value = decode_unphased_eight_bit_row_major_probability_pair(probability_pair, dosage_lookup);
+        unsafe {
+            // Contiguous selections write selected-order rows to the validated output column.
+            output_column.write_unchecked(selected_index, dosage_value);
+        }
+        if collect_dosage_totals {
+            selected_dosage_total += dosage_value;
+        }
+    }
+    Ok(selected_dosage_total)
+}
+
+fn decode_sparse_all_present_unphased_eight_bit_row_major_selection(
+    probability_pairs: &[[u8; 2]],
+    sample_selection: &SampleSelection,
+    output_column: &mut RowMajorOutputColumnMut<'_, f32>,
+    dosage_lookup: &[f32],
+    collect_dosage_totals: bool,
+) -> Result<f32, BgenError> {
+    let mut selected_dosage_total = 0.0_f32;
+    for (selected_index, file_sample_index) in sample_selection.selected_file_indices.iter().copied().enumerate() {
+        let probability_pair = probability_pairs.get(file_sample_index).copied().ok_or_else(|| {
+            BgenError::Range("Sparse BGEN sample selection exceeds decoded probability pairs.".to_string())
+        })?;
+        let dosage_value = decode_unphased_eight_bit_row_major_probability_pair(probability_pair, dosage_lookup);
+        unsafe {
+            // Sparse selected indices are validated by sample selection and map to output rows.
+            output_column.write_unchecked(selected_index, dosage_value);
+        }
+        if collect_dosage_totals {
+            selected_dosage_total += dosage_value;
+        }
+    }
+    Ok(selected_dosage_total)
+}
+
+fn decode_dense_all_present_unphased_eight_bit_row_major_selection(
+    probability_pairs: &[[u8; 2]],
+    sample_selection: &SampleSelection,
+    output_column: &mut RowMajorOutputColumnMut<'_, f32>,
+    dosage_lookup: &[f32],
+    collect_dosage_totals: bool,
+) -> f32 {
+    let mut selected_dosage_total = 0.0_f32;
+    for (file_sample_index, probability_pair) in probability_pairs.iter().copied().enumerate() {
+        let selected_index = sample_selection.file_to_selected_index[file_sample_index];
+        if selected_index == usize::MAX {
+            continue;
+        }
+        let dosage_value = decode_unphased_eight_bit_row_major_probability_pair(probability_pair, dosage_lookup);
+        unsafe {
+            // Dense-mask selected indices are validated by sample selection and map to output rows.
+            output_column.write_unchecked(selected_index, dosage_value);
+        }
+        if collect_dosage_totals {
+            selected_dosage_total += dosage_value;
+        }
+    }
+    selected_dosage_total
+}
+
+fn row_major_selection_prefers_sparse_indices(sample_selection: &SampleSelection, file_sample_count: usize) -> bool {
+    sample_selection.selected_sample_count.saturating_mul(2) <= file_sample_count
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
@@ -1859,6 +1966,41 @@ mod tests {
         .expect("selected all-present 8-bit row-major decode");
         assert!((selected_all_present_result.selected_dosage_total - 2.0).abs() < f32::EPSILON);
         assert_eq!(selected_all_present_output, vec![2.0, 0.0]);
+    }
+
+    #[test]
+    fn row_major_all_present_selected_paths_match_sample_order() {
+        let variant_record = test_variant_record(0);
+        let probability_bytes = [255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0];
+        let ploidy_bytes = [2_u8; 6];
+
+        for (sample_indices, expected_output, expected_total) in [
+            (vec![0, 1, 2, 3, 4, 5], vec![0.0, 1.0, 2.0, 0.0, 1.0, 2.0], 6.0),
+            (vec![1, 2, 3], vec![1.0, 2.0, 0.0], 3.0),
+            (vec![5, 0], vec![2.0, 0.0], 2.0),
+            (vec![0, 2, 3, 4], vec![0.0, 2.0, 0.0, 1.0], 3.0),
+        ] {
+            let sample_selection =
+                build_sample_selection(6, &sample_indices).expect("selected row-major samples should build");
+            let mut output = vec![f32::NAN; sample_indices.len()];
+            let result = decode_unphased_eight_bit_dosages_into_row_major_matrix(
+                &ploidy_bytes,
+                &probability_bytes,
+                &sample_selection,
+                &variant_record,
+                output.as_mut_ptr() as usize,
+                0,
+                1,
+                true,
+                false,
+                true,
+                ThreadLocalProfileSnapshot::default(),
+            )
+            .expect("selected all-present row-major decode should succeed");
+
+            assert_eq!(output, expected_output);
+            assert!((result.selected_dosage_total - expected_total).abs() < f32::EPSILON);
+        }
     }
 
     #[test]
