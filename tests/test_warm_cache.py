@@ -170,6 +170,31 @@ def test_build_synthetic_genotype_matrix_uses_trait_specific_patterns() -> None:
     np.testing.assert_allclose(np.asarray(quantitative_matrix.mean(axis=0)), np.zeros(2), atol=1e-6)
 
 
+def test_encode_variant_major_dosage_to_packed8_probability_pairs() -> None:
+    genotype_matrix_by_variant = jnp.asarray(
+        [
+            [0.0, 1.0, 2.0],
+            [2.0, 0.0, 1.0],
+        ],
+        dtype=jnp.float32,
+    )
+
+    packed_probability_pairs = warm_cache.encode_variant_major_dosage_to_packed8_probability_pairs(
+        genotype_matrix_by_variant
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(packed_probability_pairs),
+        np.asarray(
+            [
+                [[255, 0], [0, 255], [0, 0]],
+                [[0, 0], [255, 0], [0, 255]],
+            ],
+            dtype=np.uint8,
+        ),
+    )
+
+
 def test_first_engine_chromosome_rejects_empty_metadata() -> None:
     with pytest.raises(ValueError, match="empty BGEN dataset"):
         warm_cache.first_engine_chromosome(cast_fake_engine(FakeEngine(variant_count=0, chromosomes=())))
@@ -194,20 +219,32 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
     def fake_compute_linear_chunk(
         *,
         chromosome_state: object,
-        genotype_matrix: jax.Array,
+        genotype_matrix_by_variant: jax.Array,
+        genotype_dosage_sum: jax.Array,
+        genotype_observation_count: jax.Array,
+        genotype_imputed_dosage_square_sum: jax.Array,
     ) -> FakeChunkResult:
         del chromosome_state
-        observed_shapes.append(typing.cast("tuple[int, int]", genotype_matrix.shape))
+        observed_shapes.append(typing.cast("tuple[int, int]", genotype_matrix_by_variant.shape))
         expected_column = np.asarray([-1.0, 0.0, 1.0, -1.0, 0.0, 1.0], dtype=np.float32)
-        np.testing.assert_allclose(np.asarray(genotype_matrix)[:, 0], expected_column)
-        return FakeChunkResult(log10_p_value=FakeReadyValue(shape=(genotype_matrix.shape[1],)))
+        np.testing.assert_allclose(np.asarray(genotype_matrix_by_variant)[0], expected_column)
+        np.testing.assert_allclose(np.asarray(genotype_dosage_sum), np.zeros(genotype_matrix_by_variant.shape[0]))
+        np.testing.assert_array_equal(
+            np.asarray(genotype_observation_count),
+            np.full(genotype_matrix_by_variant.shape[0], 6, dtype=np.int32),
+        )
+        np.testing.assert_allclose(
+            np.asarray(genotype_imputed_dosage_square_sum),
+            np.full(genotype_matrix_by_variant.shape[0], 4.0, dtype=np.float32),
+        )
+        return FakeChunkResult(log10_p_value=FakeReadyValue(shape=(genotype_matrix_by_variant.shape[0],)))
 
     def fake_block_until_ready(value: FakeReadyValue) -> None:
         ready_values.append(value)
 
     monkeypatch.setattr(
         warm_cache.regenie2_linear,
-        "compute_regenie2_linear_chunk_from_chromosome_state",
+        "compute_regenie2_linear_chunk_from_chromosome_state_variant_major",
         fake_compute_linear_chunk,
     )
     monkeypatch.setattr(warm_cache.callbacks, "block_until_ready", fake_block_until_ready)
@@ -223,7 +260,7 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
         variant_limit=None,
     )
 
-    assert observed_shapes == [(6, 50), (6, 5)]
+    assert observed_shapes == [(50, 6), (5, 6)]
     assert tuple(value.shape for value in ready_values) == ((50,), (5,))
     assert report.warmed_shapes == (
         warm_cache.WarmCacheShape(sample_count=6, variant_count=50),
@@ -259,19 +296,26 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
     def fake_compute_binary_chunk(
         *,
         chromosome_state: object,
-        genotype_matrix: jax.Array,
+        genotype_matrix_by_variant: jax.Array,
         correction_plan: types.BinaryCorrectionPlan,
         kernel_config: regenie2_binary_config.BinaryKernelConfig,
+        dosage_sum: jax.Array,
+        observation_count: jax.Array,
     ) -> FakeChunkResult:
         del chromosome_state, correction_plan
-        observed_shapes.append(typing.cast("tuple[int, int]", genotype_matrix.shape))
+        observed_shapes.append(typing.cast("tuple[int, int]", genotype_matrix_by_variant.shape))
         observed_kernel_configs.append(kernel_config)
-        np.testing.assert_array_equal(np.asarray(genotype_matrix)[:, 0], np.asarray([0, 2, 0, 2, 0, 2]))
-        return FakeChunkResult(log10_p_value=FakeReadyValue(shape=(genotype_matrix.shape[1],)))
+        np.testing.assert_array_equal(np.asarray(genotype_matrix_by_variant)[0], np.asarray([0, 2, 0, 2, 0, 2]))
+        np.testing.assert_array_equal(np.asarray(dosage_sum), np.full(genotype_matrix_by_variant.shape[0], 6.0))
+        np.testing.assert_array_equal(
+            np.asarray(observation_count),
+            np.full(genotype_matrix_by_variant.shape[0], 6, dtype=np.int32),
+        )
+        return FakeChunkResult(log10_p_value=FakeReadyValue(shape=(genotype_matrix_by_variant.shape[0],)))
 
     monkeypatch.setattr(
         warm_cache.regenie2_binary,
-        "compute_regenie2_binary_chunk_from_chromosome_state",
+        "compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
         fake_compute_binary_chunk,
     )
     monkeypatch.setattr(warm_cache.callbacks, "block_until_ready", lambda _: None)
@@ -289,9 +333,82 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
         kernel_config=kernel_config,
     )
 
-    assert observed_shapes == [(6, 50), (6, 5)]
+    assert observed_shapes == [(50, 6), (5, 6)]
     assert observed_kernel_configs == [kernel_config, kernel_config]
     assert report.warmed_shapes == (
         warm_cache.WarmCacheShape(sample_count=6, variant_count=50),
         warm_cache.WarmCacheShape(sample_count=6, variant_count=5),
     )
+
+
+def test_warm_regenie2_binary_packed8_cache_executes_donating_score_entrypoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = FakeEngine(variant_count=50)
+    run_input = build_fake_run_input(is_binary_trait=True)
+    install_native_dispatch_fakes(monkeypatch, engine=engine, run_input=run_input)
+    correction_plan = types.BinaryCorrectionPlan(method=types.BinaryFallbackMethod.SCORE_ONLY)
+    kernel_config = build_default_binary_kernel_config()
+    observed_packed_shapes: list[tuple[int, int, int]] = []
+
+    monkeypatch.setattr(warm_cache.regenie2_binary, "prepare_regenie2_binary_state", lambda **_: object())
+    monkeypatch.setattr(
+        warm_cache.regenie2_binary,
+        "prepare_regenie2_binary_chromosome_state",
+        lambda **keyword_arguments: keyword_arguments,
+    )
+
+    def fake_packed_score_chunk(
+        *,
+        chromosome_state: object,
+        packed_probability_pairs_by_variant: jax.Array,
+        correction_plan: types.BinaryCorrectionPlan,
+        kernel_config: regenie2_binary_config.BinaryKernelConfig,
+        dosage_sum: jax.Array,
+        observation_count: jax.Array,
+    ) -> FakeChunkResult:
+        del chromosome_state, correction_plan, kernel_config
+        observed_packed_shapes.append(typing.cast("tuple[int, int, int]", packed_probability_pairs_by_variant.shape))
+        np.testing.assert_array_equal(
+            np.asarray(packed_probability_pairs_by_variant)[0],
+            np.asarray(
+                [[255, 0], [0, 255], [0, 0], [255, 0], [0, 255], [0, 0]],
+                dtype=np.uint8,
+            ),
+        )
+        np.testing.assert_array_equal(np.asarray(dosage_sum), np.full(50, 6.0))
+        np.testing.assert_array_equal(np.asarray(observation_count), np.full(50, 6, dtype=np.int32))
+        return FakeChunkResult(log10_p_value=FakeReadyValue(shape=(packed_probability_pairs_by_variant.shape[0],)))
+
+    def forbidden_variant_major_chunk(**_: object) -> FakeChunkResult:
+        message = "packed8 score warming should use the packed8 donating entrypoint."
+        raise AssertionError(message)
+
+    monkeypatch.setattr(
+        warm_cache.regenie2_binary,
+        "compute_binary_score_test_packed8_donating_inputs",
+        fake_packed_score_chunk,
+    )
+    monkeypatch.setattr(
+        warm_cache.regenie2_binary,
+        "compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
+        forbidden_variant_major_chunk,
+    )
+    monkeypatch.setattr(warm_cache.callbacks, "block_until_ready", lambda _: None)
+
+    report = warm_cache.warm_regenie2_binary_bgen_cache(
+        genotype_source_config=source.GenotypeSourceConfig(Path("input.bgen"), Path("input.sample")),
+        phenotype_path=Path("phenotypes.tsv"),
+        phenotype_name="trait",
+        prediction_list_path=Path("predictions.list"),
+        covariate_path=None,
+        covariate_names=None,
+        chunk_size=50,
+        variant_limit=None,
+        correction_plan=correction_plan,
+        kernel_config=kernel_config,
+        gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
+    )
+
+    assert observed_packed_shapes == [(50, 6, 2)]
+    assert report.warmed_shapes == (warm_cache.WarmCacheShape(sample_count=6, variant_count=50),)

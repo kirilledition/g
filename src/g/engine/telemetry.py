@@ -181,22 +181,11 @@ def resolve_telemetry_paths(regenie_config: config.RegenieConfig) -> TelemetryPa
         }
     ):
         profile_summary_json = log_dir / "profile.summary.json"
-    stage_timings_json = diagnostics_config.stage_timings_json
-    if (
-        stage_timings_json is None
-        and log_dir is not None
-        and diagnostics_config.telemetry
-        in {
-            types.TelemetryMode.PROFILE,
-            types.TelemetryMode.TRACE,
-        }
-    ):
-        stage_timings_json = log_dir / "stage-timings.json"
     return TelemetryPaths(
         log_dir=log_dir,
         stream_file=stream_file,
         profile_summary_json=profile_summary_json,
-        stage_timings_json=stage_timings_json,
+        stage_timings_json=diagnostics_config.stage_timings_json,
     )
 
 

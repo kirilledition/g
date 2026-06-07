@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import typing
+
 import numpy as np
 import numpy.typing as npt
+
+class ChunkStatsComputeArrays(typing.TypedDict, total=False):
+    dosage_sum: npt.NDArray[np.float32]
+    observation_count: npt.NDArray[np.int32]
+    imputed_dosage_square_sum: npt.NDArray[np.float32]
+    is_rare_sparse_firth_candidate: npt.NDArray[np.bool_]
 
 class ChunkSpec:
     variant_start_index: int
@@ -20,6 +28,12 @@ class ChunkStats:
     nonzero_count: npt.NDArray[np.int32]
     is_sparse_candidate: npt.NDArray[np.bool_]
     is_rare_sparse_firth_candidate: npt.NDArray[np.bool_]
+    def compute_arrays(
+        self,
+        *,
+        include_imputed_dosage_square_sum: bool = True,
+        include_sparse_firth_candidate: bool = True,
+    ) -> ChunkStatsComputeArrays: ...
 
 class VariantMetadata:
     variant_start_index: int

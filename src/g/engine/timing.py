@@ -35,8 +35,9 @@ class StageTimingSnapshot:
 class StageTimingRecorder:
     """Thread-safe diagnostic wall-time collector for profiling harnesses."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, exact_stage_timings: bool = False) -> None:
         """Initialize empty stage timing state."""
+        self.exact_stage_timings = exact_stage_timings
         self.stage_totals_seconds: dict[str, float] = {}
         self.stage_counts: dict[str, int] = {}
         self.native_bgen_profile: dict[str, int] = {}
@@ -85,7 +86,12 @@ def build_stage_timing_recorder(
     """Create a diagnostic stage recorder when requested."""
     if stage_timing_path is None and not force:
         return None
-    return StageTimingRecorder()
+    return StageTimingRecorder(exact_stage_timings=stage_timing_path is not None)
+
+
+def should_collect_exact_stage_timings(stage_timing_recorder: StageTimingRecorder | None) -> bool:
+    """Return whether timing should force synchronized exact stage measurements."""
+    return stage_timing_recorder is not None and stage_timing_recorder.exact_stage_timings
 
 
 def write_stage_timing_snapshot(

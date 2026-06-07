@@ -371,6 +371,19 @@ class RecordingCallback:
         assert chunk_stats.nonzero_count.shape == (genotype_matrix.shape[0],)
         assert chunk_stats.is_sparse_candidate.shape == (genotype_matrix.shape[0],)
         assert chunk_stats.is_rare_sparse_firth_candidate.shape == (genotype_matrix.shape[0],)
+        compute_arrays = chunk_stats.compute_arrays(
+            include_imputed_dosage_square_sum=True,
+            include_sparse_firth_candidate=True,
+        )
+        assert compute_arrays["dosage_sum"].shape == (genotype_matrix.shape[0],)
+        assert compute_arrays["observation_count"].shape == (genotype_matrix.shape[0],)
+        assert compute_arrays["imputed_dosage_square_sum"].shape == (genotype_matrix.shape[0],)
+        assert compute_arrays["is_rare_sparse_firth_candidate"].shape == (genotype_matrix.shape[0],)
+        sparse_omitted_arrays = chunk_stats.compute_arrays(
+            include_imputed_dosage_square_sum=False,
+            include_sparse_firth_candidate=False,
+        )
+        assert set(sparse_omitted_arrays) == {"dosage_sum", "observation_count"}
         assert isinstance(chunk_stats.has_missing_values, bool)
         if self.writer is not None:
             variant_count = metadata.variant_stop_index - metadata.variant_start_index
