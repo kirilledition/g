@@ -77,7 +77,12 @@ impl ChunkStats {
 
     #[getter]
     fn dosage_sum<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
-        self.stats.dosage_sum.clone().into_pyarray(py)
+        self.stats.dosage_sum.as_ref().to_vec().into_pyarray(py)
+    }
+
+    #[getter]
+    fn allele_count<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
+        self.stats.dosage_sum.as_ref().to_vec().into_pyarray(py)
     }
 
     #[getter]
@@ -138,7 +143,7 @@ impl ChunkStats {
         include_sparse_firth_candidate: bool,
     ) -> PyResult<Bound<'py, PyDict>> {
         let compute_arrays = PyDict::new(py);
-        compute_arrays.set_item("dosage_sum", self.stats.dosage_sum.clone().into_pyarray(py))?;
+        compute_arrays.set_item("dosage_sum", self.stats.dosage_sum.as_ref().to_vec().into_pyarray(py))?;
         compute_arrays.set_item("observation_count", self.stats.observation_count.clone().into_pyarray(py))?;
         if include_imputed_dosage_square_sum {
             compute_arrays

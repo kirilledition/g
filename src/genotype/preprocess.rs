@@ -6,6 +6,8 @@
 #![allow(clippy::needless_pass_by_value)]
 #![allow(clippy::unreadable_literal)]
 
+use std::sync::Arc;
+
 use crate::genotype::common::{ChunkStats, GenotypeError};
 
 const NONZERO_DOSAGE_THRESHOLD: f32 = 1.0e-4;
@@ -206,16 +208,18 @@ fn summarize_variant_major_row_scalar(dosage_values: &[f32]) -> VariantMajorRowS
 
 #[must_use]
 pub fn build_empty_chunk_stats(selected_variant_count: usize, has_missing_values: bool) -> ChunkStats {
+    let dosage_sum = Arc::<[f32]>::from(vec![0.0_f32; selected_variant_count]);
+    let allele_count = Arc::clone(&dosage_sum);
     ChunkStats {
         allele_one_frequency: vec![0.0_f32; selected_variant_count],
         observation_count: vec![0_i32; selected_variant_count],
         has_missing_values,
-        dosage_sum: vec![0.0_f32; selected_variant_count],
+        dosage_sum,
         dosage_square_sum: vec![0.0_f32; selected_variant_count],
         imputed_dosage_square_sum: vec![0.0_f32; selected_variant_count],
         dosage_variance_numerator: vec![0.0_f32; selected_variant_count],
         info_score: vec![None; selected_variant_count],
-        allele_count: vec![0.0_f32; selected_variant_count],
+        allele_count,
         minor_allele_count: vec![0.0_f32; selected_variant_count],
         zero_count: vec![0_i32; selected_variant_count],
         nonzero_count: vec![0_i32; selected_variant_count],
@@ -388,16 +392,19 @@ pub fn build_chunk_stats_from_summaries(
         );
     }
 
+    let dosage_sum = Arc::<[f32]>::from(dosage_sum);
+    let allele_count = Arc::clone(&dosage_sum);
+
     Ok(ChunkStats {
         allele_one_frequency,
         observation_count,
         has_missing_values,
-        dosage_sum: dosage_sum.clone(),
+        dosage_sum,
         dosage_square_sum,
         imputed_dosage_square_sum,
         dosage_variance_numerator,
         info_score,
-        allele_count: dosage_sum,
+        allele_count,
         minor_allele_count,
         zero_count,
         nonzero_count,
@@ -525,7 +532,8 @@ mod tests {
         let stats = summarize_variant_major_dosage_matrix(&dosage_values, 3, 2).expect("stats should compute");
 
         assert_eq!(stats.observation_count, vec![3, 3]);
-        assert_eq!(stats.allele_count, vec![1.0, 4.0]);
+        assert_eq!(stats.allele_count.as_ref(), [1.0, 4.0]);
+        assert!(std::sync::Arc::ptr_eq(&stats.dosage_sum, &stats.allele_count));
         assert_eq!(stats.dosage_square_sum, vec![1.0, 8.0]);
         assert_eq!(stats.imputed_dosage_square_sum, vec![1.0, 8.0]);
         assert_eq!(stats.minor_allele_count, vec![1.0, 2.0]);

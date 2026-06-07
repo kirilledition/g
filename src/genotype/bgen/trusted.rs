@@ -106,6 +106,7 @@ fn parse_trusted_unphased_eight_bit_probability_block<'a>(
     sample_count: usize,
     variant_record: &VariantRecord,
     parse_context: TrustedEightBitParseContext,
+    validate_sample_ploidy_and_missingness: bool,
 ) -> Result<TrustedUnphasedEightBitBlock<'a>, BgenError> {
     let variant_identifier = variant_record.resolved_variant_identifier.as_str();
     let mut cursor = 0;
@@ -138,8 +139,14 @@ fn parse_trusted_unphased_eight_bit_probability_block<'a>(
 
     let sample_ploidy_and_missingness = read_exact_bytes(probability_block, cursor, sample_count)?;
     cursor += sample_count;
-    if !all_samples_present_diploid(sample_ploidy_and_missingness) {
+    if validate_sample_ploidy_and_missingness && !all_samples_present_diploid(sample_ploidy_and_missingness) {
         return Err(BgenError::UnsupportedFormat(trusted_missingness_error_message(parse_context, variant_identifier)));
+    }
+    if !validate_sample_ploidy_and_missingness {
+        debug_assert!(
+            all_samples_present_diploid(sample_ploidy_and_missingness),
+            "trusted no-missing diploid decode skipped a ploidy scan before validation"
+        );
     }
 
     let phased_flag = read_u8_at(probability_block, cursor)?;
@@ -178,6 +185,7 @@ pub(super) fn validate_variant_compatible_with_trusted_no_missing_diploid(
         sample_count,
         variant_record,
         TrustedEightBitParseContext::Validation,
+        true,
     )?;
 
     Ok(())
@@ -194,6 +202,7 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
     selected_sample_count: usize,
     tile_variant_start_index: usize,
     profiling_enabled: bool,
+    validate_sample_ploidy_and_missingness: bool,
     tile_stats: &mut VariantMajorTileStatsMut<'_>,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<VariantMajorTileDecodeResult, BgenError> {
@@ -210,6 +219,7 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
             tile_variant_start_index + tile_variant_index,
             selected_sample_count,
             profiling_enabled,
+            validate_sample_ploidy_and_missingness,
             thread_scratch,
         )?;
         let variant_profile_snapshot = variant_decode_result.profile_snapshot;
@@ -251,6 +261,7 @@ pub(super) fn decode_trusted_variant_major_packed8_probability_pair_tile(
     selected_sample_count: usize,
     tile_variant_start_index: usize,
     profiling_enabled: bool,
+    validate_sample_ploidy_and_missingness: bool,
     tile_stats: &mut VariantMajorTileStatsMut<'_>,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<VariantMajorTileDecodeResult, BgenError> {
@@ -267,6 +278,7 @@ pub(super) fn decode_trusted_variant_major_packed8_probability_pair_tile(
             tile_variant_start_index + tile_variant_index,
             selected_sample_count,
             profiling_enabled,
+            validate_sample_ploidy_and_missingness,
             thread_scratch,
         )?;
         let variant_profile_snapshot = variant_decode_result.profile_snapshot;
@@ -309,6 +321,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
     variant_index: usize,
     selected_sample_count: usize,
     profiling_enabled: bool,
+    validate_sample_ploidy_and_missingness: bool,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<VariantDecodeResult, BgenError> {
     let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
@@ -326,6 +339,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
         sample_count,
         variant_record,
         TrustedEightBitParseContext::VariantMajorPackedProbabilityPairs,
+        validate_sample_ploidy_and_missingness,
     )?;
     let packed_probability_bytes = trusted_block.packed_probability_bytes;
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
@@ -410,6 +424,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
     variant_index: usize,
     selected_sample_count: usize,
     profiling_enabled: bool,
+    validate_sample_ploidy_and_missingness: bool,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<VariantDecodeResult, BgenError> {
     let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
@@ -427,6 +442,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         sample_count,
         variant_record,
         TrustedEightBitParseContext::VariantMajorDosage,
+        validate_sample_ploidy_and_missingness,
     )?;
     let packed_probability_bytes = trusted_block.packed_probability_bytes;
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
@@ -738,6 +754,7 @@ mod tests {
             2,
             0,
             false,
+            true,
             &mut tile_stats,
             &mut thread_scratch,
         )
@@ -788,6 +805,7 @@ mod tests {
             output.as_mut_ptr() as usize,
             2,
             0,
+            true,
             true,
             &mut tile_stats,
             &mut thread_scratch,
@@ -843,6 +861,7 @@ mod tests {
             3,
             0,
             true,
+            true,
             &mut identity_stats,
             &mut thread_scratch,
         )
@@ -880,6 +899,7 @@ mod tests {
             noncontiguous_output.as_mut_ptr() as usize,
             2,
             0,
+            true,
             true,
             &mut noncontiguous_stats,
             &mut thread_scratch,
@@ -930,6 +950,7 @@ mod tests {
             4,
             0,
             true,
+            true,
             &mut identity_stats,
             &mut thread_scratch,
         )
@@ -972,6 +993,7 @@ mod tests {
             contiguous_output.as_mut_ptr() as usize,
             2,
             0,
+            true,
             true,
             &mut contiguous_stats,
             &mut thread_scratch,
@@ -1031,6 +1053,7 @@ mod tests {
                 3,
                 0,
                 false,
+                true,
                 &mut tile_stats,
                 &mut thread_scratch,
             )

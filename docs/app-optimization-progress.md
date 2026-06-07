@@ -27,7 +27,8 @@ This tracks the implementation campaign for
   F-015 are complete.
 - Wave 4 writer/output throughput: partial; F-018, F-030, and F-039 are
   complete.
-- Wave 5 Rust decode and larger architecture: pending.
+- Wave 5 Rust decode and larger architecture: partial; F-025, F-036,
+  F-037, and F-040 have a dedicated implementation branch.
 - Wave 6 warmup and performance proof: pending.
 
 ## Current implementation notes
@@ -55,6 +56,17 @@ This tracks the implementation campaign for
   float64 shifted sum-of-squares, and production routing of those linear
   numerical settings.
 - Implemented lazy null-Firth fallback execution with staged `jax.lax.cond`.
+- Implemented row-major selected-sample BGEN all-present fast paths for
+  identity, contiguous, sparse selected-index, and dense-mask selections.
+- Implemented parallel trusted no-missing diploid validation and cache-hit
+  validation bypass. Trusted decode now skips ploidy/missingness rescans only
+  after the reader has been validated, with debug assertions preserving
+  validation hooks.
+- Implemented direct Rayon reduction of variant-major tile profile snapshots,
+  removing the intermediate per-chunk tile result vector.
+- Implemented shared backing storage for generated `dosage_sum` and
+  `allele_count` chunk stats while preserving both field names at the Rust and
+  Python binding boundary.
 
 ## Validation
 
@@ -78,6 +90,9 @@ This tracks the implementation campaign for
   F-020, F-021, F-022, F-028, F-032, F-033, F-038.
 - Packed8 and Firth compute rewrites: F-011, F-012, F-034.
 - Score-kernel/state setup rewrites: F-035.
-- Rust decode and allocation reuse: F-025, F-036, F-037, F-040.
+- Rust decode and allocation reuse: F-025, F-036, F-037, F-040 are implemented
+  on `appopt-rust-decode`; deeper reusable stats-buffer ownership remains a
+  future design item because returned chunk stats can outlive the next reader
+  call.
 - LOCO buffer-sharing optimization: F-027.
 - Scientific parity projects: F-029.
