@@ -49,23 +49,10 @@ def load_default_option_catalog() -> DefaultOptionCatalog:
     )
 
 
-def load_default_toml_config() -> toml_schema.TomlConfig:
-    """Load the packaged default TOML file into the typed schema."""
-    return config_layers.decode_toml_bytes(
-        load_default_toml_bytes(),
-        source=DEFAULT_CONFIG_RESOURCE,
-    )
-
-
 def load_default_toml_bytes() -> bytes:
     """Load packaged default TOML file bytes."""
     default_config_resource = importlib.resources.files("g").joinpath(DEFAULT_CONFIG_RESOURCE)
     return default_config_resource.read_bytes()
-
-
-def load_raw_default_toml() -> dict[str, typing.Any]:
-    """Load the packaged default TOML file."""
-    return dict(load_default_option_catalog().raw_toml)
 
 
 def normalize_default_toml(raw_toml: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
@@ -77,21 +64,6 @@ def normalize_default_toml(raw_toml: typing.Mapping[str, typing.Any]) -> dict[st
             raise ValueError(message)
         normalized_options[canonical_name] = option_value
     return normalized_options
-
-
-def flatten_toml_options(raw_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
-    """Flatten TOML sections into canonical option names where possible."""
-    return config_layers.flatten_toml_mapping(raw_options)
-
-
-def flatten_g_toml_section(raw_g_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
-    """Flatten TOML tables below the reserved [g.*] namespace."""
-    return config_layers.flatten_g_toml_section(raw_g_options)
-
-
-def flatten_toml_section(section_name: str, section_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
-    """Flatten one TOML section through the option registry."""
-    return config_layers.flatten_toml_section(section_name, section_options)
 
 
 def validate_default_catalog(normalized_options: typing.Mapping[str, typing.Any]) -> None:

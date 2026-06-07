@@ -33,16 +33,6 @@ class TomlConfigLayer:
     explicit_options: frozenset[str] = dataclasses.field(default_factory=frozenset)
 
 
-def empty_toml_config() -> toml_schema.TomlConfig:
-    """Return an empty typed config layer."""
-    return toml_schema.TomlConfig()
-
-
-def empty_toml_config_layer() -> TomlConfigLayer:
-    """Return an empty typed config layer with no explicit options."""
-    return TomlConfigLayer(toml_config=empty_toml_config())
-
-
 def decode_toml_bytes(toml_data: bytes | str, *, source: str) -> toml_schema.TomlConfig:
     """Decode TOML bytes into the typed config schema.
 
@@ -97,7 +87,7 @@ def decode_toml_file(path: Path) -> toml_schema.TomlConfig:
 def decode_toml_file_layer(path: Path | None) -> TomlConfigLayer:
     """Decode an optional TOML file into a typed explicit config layer."""
     if path is None:
-        return empty_toml_config_layer()
+        return TomlConfigLayer(toml_config=toml_schema.TomlConfig())
     toml_config = decode_toml_file(path)
     explicit_options = frozenset(toml_config_to_option_dictionary(toml_config))
     return TomlConfigLayer(toml_config=toml_config, explicit_options=explicit_options)

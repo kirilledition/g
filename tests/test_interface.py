@@ -305,7 +305,7 @@ def test_packaged_default_toml_is_loaded_for_python_options() -> None:
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
     packaged_config = config.load_packaged_config()
 
-    assert config.load_default_option_dictionary()["trait"]["bsize"] == packaged_config.trait.bsize
+    assert defaults.load_default_option_catalog().raw_toml["trait"]["bsize"] == packaged_config.trait.bsize
     assert regenie_config.trait.bsize == packaged_config.trait.bsize
     assert regenie_config.g_compute.device == types.Device.CPU
     assert regenie_config.g_compute.null_logistic_nonconvergence_policy == types.NullLogisticNonconvergencePolicy.FAIL
@@ -711,7 +711,7 @@ def test_quantitative_trait_accepts_defaulted_binary_threshold() -> None:
 
 
 def test_output_tuning_defaults_come_from_packaged_default_config() -> None:
-    default_options = config.load_default_option_dictionary()
+    default_options = defaults.load_default_option_catalog().raw_toml
     default_output_options = default_options["g"]["output"]
     regenie_config = config.RegenieConfig.from_options(build_valid_quantitative_options())
 
@@ -780,14 +780,16 @@ def test_config_helper_normalizers_cover_optional_and_trait_alias_paths() -> Non
     assert config.split_name_list(" age, sex ,,") == ("age", "sex")
     assert config.optional_string(123) == "123"
     assert config.optional_string(None) is None
-    assert config.normalize_option_name("trait_type") == "trait_type"
-    assert config.normalize_option_name("g_null_logistic_nonconvergence_policy") == "g-null-logistic-nonconvergence"
+    assert config_layers.normalize_option_name("trait_type") == "trait_type"
+    assert config_layers.normalize_option_name("g_null_logistic_nonconvergence_policy") == (
+        "g-null-logistic-nonconvergence"
+    )
     with pytest.raises(ValueError, match="--qt and --bt are mutually exclusive"):
         config.normalize_trait_type(qt=True, bt=True)
 
 
-def test_flatten_option_dictionary_preserves_unknown_sections_and_g_scalars() -> None:
-    flattened_options = config.flatten_option_dictionary(
+def test_flatten_toml_mapping_preserves_unknown_sections_and_g_scalars() -> None:
+    flattened_options = config_layers.flatten_toml_mapping(
         {
             "unknown": {"nested": "value"},
             "g": {

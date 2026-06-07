@@ -50,7 +50,7 @@ Instead of:
 
 ```python
 raw = tomllib.load(file)
-normalized = normalize_option_dictionary(raw)
+normalized = config_layers.normalize_option_dictionary(raw)
 config = RegenieConfig(
     g_compute=GComputeConfig(
         staging_depth=int(normalized.get("g-staging-depth", 1)),

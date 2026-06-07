@@ -80,13 +80,6 @@ def resolve_trusted_bgen_validation_mode(
     return types.TrustedBgenValidationMode.CACHE_ON_MISS
 
 
-def read_typed_toml_mapping(path: Path | None) -> dict[str, typing.Any]:
-    """Read a TOML file through the typed schema into built-in containers."""
-    if path is None:
-        return {}
-    return config_layers.toml_config_to_builtin_mapping(config_layers.decode_toml_file(path))
-
-
 def explicit_cli_options(context: click.Context, parameters: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Return only command-line provided options."""
     cli_options: dict[str, typing.Any] = {}

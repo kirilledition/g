@@ -14,12 +14,6 @@ import msgspec
 from g import types
 from g.interface import config_layers, defaults, options, toml_schema
 
-
-def load_default_option_dictionary() -> dict[str, typing.Any]:
-    """Load packaged default runtime options."""
-    return dict(defaults.load_default_option_catalog().raw_toml)
-
-
 QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "spa", "pThresh")
 
 
@@ -640,21 +634,6 @@ def resolve_exclusive_column_values(
     return repeated_columns or list_columns
 
 
-def normalize_option_dictionary(raw_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
-    """Normalize snake-case aliases and nested dictionaries into option names."""
-    return config_layers.normalize_option_dictionary(raw_options)
-
-
-def flatten_option_dictionary(raw_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
-    """Flatten TOML-style nested dictionaries into CLI-style names."""
-    return config_layers.flatten_toml_mapping(raw_options)
-
-
-def normalize_option_name(option_name: str) -> str:
-    """Map Pythonic names to REGENIE-compatible names."""
-    return config_layers.normalize_option_name(option_name)
-
-
 def reject_unsupported_options(normalized_options: typing.Mapping[str, typing.Any]) -> None:
     """Reject recognized REGENIE flags that are intentionally unsupported."""
     for option_name in options.unsupported_option_names():
@@ -921,11 +900,6 @@ def load_toml(path: Path) -> RegenieConfig:
         base_config=defaults.load_default_option_catalog().toml_config,
         explicit_layers=(toml_layer,),
     )
-
-
-def read_toml_option_dictionary(path: Path) -> dict[str, typing.Any]:
-    """Read a TOML option dictionary from disk."""
-    return config_layers.toml_config_to_builtin_mapping(config_layers.decode_toml_file(path))
 
 
 def write_toml(config: RegenieConfig, path: Path | str) -> None:

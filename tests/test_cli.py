@@ -16,12 +16,11 @@ from g.cli import (
     main,
     print_success_message,
     print_warm_cache_message,
-    read_typed_toml_mapping,
     regenie_main,
     resolve_trusted_bgen_validation_mode,
 )
 from g.engine import shutdown
-from g.interface import config, options
+from g.interface import config, config_layers, options
 
 runner = CliRunner()
 
@@ -429,7 +428,8 @@ def test_config_subcommands_render_and_validate(tmp_path: Path) -> None:
 
     assert init_result.exit_code == 0
     assert config_path.exists()
-    assert read_typed_toml_mapping(config_path)["trait"]["step"] == 2
+    toml_mapping = config_layers.toml_config_to_builtin_mapping(config_layers.decode_toml_file(config_path))
+    assert toml_mapping["trait"]["step"] == 2
     validate_result = runner.invoke(app, ["config", "validate", str(config_path)])
     assert validate_result.exit_code != 0
     assert "Exactly one genotype source" in validate_result.output
@@ -532,18 +532,6 @@ def test_resolve_trusted_bgen_validation_mode_rejects_conflicts() -> None:
     )
     with pytest.raises(click.BadParameter, match="mutually exclusive"):
         resolve_trusted_bgen_validation_mode(validate_trusted_bgen=True, assume_trusted_bgen_validated=True)
-
-
-def test_read_typed_toml_mapping_handles_optional_path_and_validates_schema(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.toml"
-    config_path.write_text("[trait]\nstep = 2\n", encoding="utf-8")
-
-    assert read_typed_toml_mapping(None) == {}
-    assert read_typed_toml_mapping(config_path) == {"trait": {"step": 2}}
-
-    config_path.write_text("[trait]\nnot-a-real-key = true\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="unknown field `not-a-real-key`"):
-        read_typed_toml_mapping(config_path)
 
 
 def test_main_dispatches_to_click_app() -> None:
