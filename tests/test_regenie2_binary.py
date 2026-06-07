@@ -428,6 +428,24 @@ def build_score_result_with_extra_codes(
     )
 
 
+def build_multi_chunk_result_with_shape(
+    *,
+    trait_count: int,
+    variant_count: int,
+) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+    """Build a simple multi-trait chunk result for dispatch-routing tests."""
+    result_shape = (trait_count, variant_count)
+    score_result = regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult(
+        beta=jnp.zeros(result_shape, dtype=jnp.float32),
+        standard_error=jnp.ones(result_shape, dtype=jnp.float32),
+        chi_squared=jnp.ones(result_shape, dtype=jnp.float32),
+        log10_p_value=jnp.ones(result_shape, dtype=jnp.float32),
+        extra_code=jnp.full(result_shape, types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32),
+        valid_mask=jnp.ones(result_shape, dtype=jnp.bool_),
+    )
+    return regenie2_binary_result.expand_multi_score_result_with_empty_firth_diagnostics(score_result)
+
+
 def require_binary_chunk_result(
     result: regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult,
 ) -> regenie2_binary_result.Regenie2BinaryChunkResult:
@@ -1806,6 +1824,114 @@ def test_multi_trait_approximate_firth_uses_one_multi_score_dispatch(
 
     require_multi_binary_chunk_result(result)
     assert call_counts == {"multi_score": 1, "single_score": 0}
+
+
+def test_multi_trait_variant_major_uses_full_entrypoint_when_overflow_is_impossible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = build_multi_binary_variant_major_fixture()
+    correction_plan = types.BinaryCorrectionPlan(
+        method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+        p_threshold=0.50,
+        firth_se=True,
+    )
+    variant_count = fixture.genotype_matrix_by_variant.shape[0]
+    trait_count = fixture.phenotype_matrix.shape[0]
+    kernel_config = replace_binary_kernel_config(
+        build_default_binary_kernel_config(),
+        firth_candidate={"candidate_capacity": variant_count},
+    )
+    call_count = 0
+
+    def record_full_entrypoint(**kwargs: object) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+        nonlocal call_count
+        call_count += 1
+        assert kwargs["tiny_candidate_capacity"] == trait_count * variant_count
+        assert kwargs["small_candidate_capacity"] == trait_count * variant_count
+        assert kwargs["bounded_candidate_capacity"] == trait_count * variant_count
+        return build_multi_chunk_result_with_shape(trait_count=trait_count, variant_count=variant_count)
+
+    monkeypatch.setattr(
+        regenie2_binary,
+        "compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major_no_overflow",
+        record_full_entrypoint,
+    )
+    multi_state = regenie2_binary.prepare_regenie2_multi_binary_state(
+        fixture.covariate_matrix,
+        fixture.phenotype_matrix,
+    )
+    multi_chromosome_state = regenie2_binary.prepare_regenie2_multi_binary_chromosome_state(
+        multi_state,
+        fixture.loco_offset_matrix,
+        correction_plan,
+        kernel_config,
+    )
+
+    result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
+        chromosome_state=multi_chromosome_state,
+        genotype_matrix_by_variant=fixture.genotype_matrix_by_variant,
+        correction_plan=correction_plan,
+        kernel_config=kernel_config,
+    )
+
+    assert call_count == 1
+    assert result.beta.shape == (trait_count, variant_count)
+
+
+def test_multi_trait_packed8_uses_full_entrypoint_when_overflow_is_impossible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = build_multi_binary_variant_major_fixture()
+    correction_plan = types.BinaryCorrectionPlan(
+        method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
+        p_threshold=0.50,
+        firth_se=True,
+    )
+    variant_count = fixture.genotype_matrix_by_variant.shape[0]
+    trait_count = fixture.phenotype_matrix.shape[0]
+    kernel_config = replace_binary_kernel_config(
+        build_default_binary_kernel_config(),
+        firth_candidate={"candidate_capacity": variant_count},
+    )
+    packed_probability_pairs_by_variant = jnp.ones(
+        (variant_count, fixture.genotype_matrix.shape[0], 2),
+        dtype=jnp.uint8,
+    )
+    call_count = 0
+
+    def record_full_entrypoint(**kwargs: object) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+        nonlocal call_count
+        call_count += 1
+        assert kwargs["tiny_candidate_capacity"] == trait_count * variant_count
+        assert kwargs["small_candidate_capacity"] == trait_count * variant_count
+        assert kwargs["bounded_candidate_capacity"] == trait_count * variant_count
+        return build_multi_chunk_result_with_shape(trait_count=trait_count, variant_count=variant_count)
+
+    monkeypatch.setattr(
+        regenie2_binary,
+        "compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8_no_overflow",
+        record_full_entrypoint,
+    )
+    multi_state = regenie2_binary.prepare_regenie2_multi_binary_state(
+        fixture.covariate_matrix,
+        fixture.phenotype_matrix,
+    )
+    multi_chromosome_state = regenie2_binary.prepare_regenie2_multi_binary_chromosome_state(
+        multi_state,
+        fixture.loco_offset_matrix,
+        correction_plan,
+        kernel_config,
+    )
+
+    result = regenie2_binary.compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
+        chromosome_state=multi_chromosome_state,
+        packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+        correction_plan=correction_plan,
+        kernel_config=kernel_config,
+    )
+
+    assert call_count == 1
+    assert result.beta.shape == (trait_count, variant_count)
 
 
 def test_multi_trait_sparse_candidate_mask_does_not_create_firth_candidates() -> None:
