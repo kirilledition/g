@@ -23,6 +23,9 @@ The recipes read these environment variables:
 | `GWAS_ENGINE_SLURM_MEMORY` | `64G` | Default SLURM memory allocation. |
 | `GWAS_ENGINE_SLURM_GPUS_PER_TASK` | `1` | Default SLURM GPU allocation. |
 | `GWAS_ENGINE_SLURM_EXTRA_ARGS` | empty | Extra SLURM arguments split by shell words. |
+| `SYMPHONY_ELIXIR_DIR` | `/mnt/beegfs/kirill/Projects/symphony/elixir` | Symphony checkout used by `symphony-doctor` and `symphony-run`. |
+| `SYMPHONY_PORT` | `4000` | Port passed to the Symphony daemon. |
+| `SYMPHONY_WORKTREE_ROOT` | `/mnt/beegfs/kirill/Projects/g-worktrees/symphony` | Worktree root for unattended Symphony task branches. |
 
 Most recipes source `scripts/server_env.sh`, which sets repo-local tool paths
 and server cache defaults.
@@ -140,6 +143,22 @@ also accept the same overrides when run directly with `uv run --no-sync python
   `plink`, `plink2`, and `regenie`.
 - Output: prerequisite checks, host name, tools directory, and uv cache path.
 - Use when: validating a server or SLURM login environment.
+
+### `symphony-doctor`
+
+- Inputs: `git`, `gh`, `codex`, `just`, `uv`, `srun`, `mise`, Linear
+  credentials from `SYMPHONY_ENV_FILE` or `~/.config/g-symphony/env`, and a
+  built Symphony checkout.
+- Output: prerequisite checks for unattended Symphony/Linear task execution.
+- Use when: validating the repo-specific Symphony setup before starting the
+  daemon.
+
+### `symphony-run`
+
+- Inputs: same credentials and Symphony checkout as `symphony-doctor`, plus
+  `WORKFLOW.md`.
+- Output: rendered runtime workflow and a foreground Symphony daemon process.
+- Use when: running the Linear-backed unattended agent workflow for this repo.
 
 ### `doctor-baselines`
 
