@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import subprocess
 import sys
 import textwrap
@@ -10,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 import g
+import g.engine.shutdown as shutdown_module
 import g.engine.telemetry as telemetry_module
 from g import api, execution_plan, runner, types
 from g.interface import config
@@ -292,6 +294,117 @@ def test_regenie_callable_dispatches_linear_pipeline() -> None:
     assert mock_pipeline.call_args.kwargs["finalize_parquet"] is False
     mock_extend_run_manifest.assert_called_once()
     mock_write_toml.assert_called_once()
+
+
+def test_regenie_completion_event_includes_user_visible_artifacts(tmp_path: Path) -> None:
+    run_paths = OutputRunPaths(
+        run_directory=tmp_path / "output.g" / "trait.regenie2_linear.run",
+        chunks_directory=tmp_path / "output.g" / "trait.regenie2_linear.run" / "parts",
+    )
+    run_paths.chunks_directory.mkdir(parents=True)
+    final_parquet = run_paths.run_directory / "final.parquet"
+    event_stream_path = tmp_path / "events.jsonl"
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "sample": "dataset.sample",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": str(tmp_path / "output"),
+            "g-output-format": "parquet",
+            "g-log-file": str(event_stream_path),
+        }
+    )
+
+    with (
+        patch("g.runner.initialize_logging"),
+        patch("g.runner.configure_runtime"),
+        patch("g.runner.configure_runtime_before_jax_import"),
+        patch(
+            "g.execution_plan.output.prepare_output_run",
+            return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
+        ),
+        patch("g.runner.run_regenie2_linear_bgen_pipeline", return_value=final_parquet),
+        patch("g.runner.extend_run_manifest"),
+        patch("g.interface.config.write_toml"),
+    ):
+        artifacts = api.regenie(regenie_config)
+
+    event_payloads = [json.loads(line) for line in event_stream_path.read_text(encoding="utf-8").splitlines()]
+    completed_payload = [
+        event_payload for event_payload in event_payloads if event_payload["event"] == "run_completed"
+    ][-1]
+
+    assert artifacts.run_id == completed_payload["run_id"]
+    assert completed_payload["association_mode"] == types.AssociationMode.REGENIE2_LINEAR.value
+    assert completed_payload["phenotype_count"] == 1
+    assert completed_payload["output_run_directory"] == str(run_paths.run_directory)
+    assert completed_payload["final_dataset"] == str(run_paths.chunks_directory)
+    assert completed_payload["final_parquet"] == str(final_parquet)
+    assert completed_payload["phenotype_artifacts"] == [
+        {
+            "effective_config": str(run_paths.run_directory / "effective_config.toml"),
+            "final_dataset": str(run_paths.chunks_directory),
+            "final_parquet": str(final_parquet),
+            "output_run_directory": str(run_paths.run_directory),
+            "phenotype": "trait",
+        }
+    ]
+
+
+def test_regenie_graceful_shutdown_event_preserves_signal_exit(tmp_path: Path) -> None:
+    run_paths = OutputRunPaths(
+        run_directory=tmp_path / "output.g" / "trait.regenie2_linear.run",
+        chunks_directory=tmp_path / "output.g" / "trait.regenie2_linear.run" / "parts",
+    )
+    run_paths.chunks_directory.mkdir(parents=True)
+    event_stream_path = tmp_path / "events.jsonl"
+    regenie_config = config.RegenieConfig.from_options(
+        {
+            "step": 2,
+            "qt": True,
+            "bgen": "dataset.bgen",
+            "sample": "dataset.sample",
+            "phenoFile": "phenotype.tsv",
+            "phenoCol": "trait",
+            "pred": "predictions.list",
+            "out": str(tmp_path / "output"),
+            "g-log-file": str(event_stream_path),
+        }
+    )
+    shutdown_request = shutdown_module.GracefulShutdownRequested(
+        shutdown_module.ShutdownSignal(number=2, name="SIGINT", exit_code=130)
+    )
+
+    with (
+        patch("g.runner.initialize_logging"),
+        patch("g.runner.configure_runtime"),
+        patch("g.runner.configure_runtime_before_jax_import"),
+        patch(
+            "g.execution_plan.output.prepare_output_run",
+            return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
+        ),
+        patch("g.runner.run_regenie2_linear_bgen_pipeline", side_effect=shutdown_request),
+        patch("g.runner.extend_run_manifest"),
+        patch("g.interface.config.write_toml"),
+        pytest.raises(shutdown_module.GracefulShutdownRequested),
+    ):
+        api.regenie(regenie_config)
+
+    event_payloads = [json.loads(line) for line in event_stream_path.read_text(encoding="utf-8").splitlines()]
+    failed_payload = [event_payload for event_payload in event_payloads if event_payload["event"] == "run_failed"][-1]
+
+    assert failed_payload["level"] == "WARN"
+    assert failed_payload["failure_kind"] == "graceful_shutdown"
+    assert failed_payload["signal_name"] == "SIGINT"
+    assert failed_payload["signal_number"] == 2
+    assert failed_payload["exit_code"] == 130
+    assert failed_payload["flushed_for_resume"] is True
+    assert "error_type" not in failed_payload
+    assert "error_message" not in failed_payload
 
 
 def test_regenie_writes_run_start_metadata_before_pipeline_failure() -> None:

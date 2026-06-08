@@ -8,8 +8,8 @@ from pathlib import Path
 
 import click
 
-from g import api, types
-from g.engine import shutdown
+from g import api
+from g.engine import run_events, shutdown
 from g.interface import config, config_layers, defaults, options
 
 
@@ -29,57 +29,6 @@ class NaturalOrderGroup(click.Group):
 )
 def app() -> None:
     """Blazing fast REGENIE step 2 GWAS engine."""
-
-
-def print_success_message(artifacts: api.RunArtifacts) -> None:
-    """Print a concise success message for a completed CLI run."""
-    if artifacts.phenotype_artifacts:
-        for phenotype_artifact in artifacts.phenotype_artifacts:
-            print_success_message(phenotype_artifact)
-        return
-    if artifacts.output_run_directory is not None:
-        click.echo(f"Success. Chunked run saved to {artifacts.output_run_directory}")
-        if artifacts.final_dataset is not None:
-            click.echo(f"Parquet dataset saved to {artifacts.final_dataset}")
-        if artifacts.final_parquet is not None:
-            click.echo(f"Finalized Parquet saved to {artifacts.final_parquet}")
-        if artifacts.final_regenie is not None:
-            click.echo(f"REGENIE text output saved to {artifacts.final_regenie}")
-        return
-    click.echo("Success. Run completed.")
-
-
-def print_warm_cache_message(report: typing.Any) -> None:
-    """Print a concise success message for cache warming."""
-    warmed_shape_descriptions = ", ".join(
-        f"({shape.sample_count}, {shape.variant_count})" for shape in report.warmed_shapes
-    )
-    click.echo(f"Success. Warmed JAX cache shapes: {warmed_shape_descriptions}")
-
-
-def print_interrupted_message(shutdown_request: shutdown.GracefulShutdownRequested) -> None:
-    """Print a concise interrupted-run message."""
-    click.echo(
-        f"Interrupted by {shutdown_request.signal_name}. "
-        "Flushed queued chunks and saved committed output for --resume.",
-        err=True,
-    )
-
-
-def resolve_trusted_bgen_validation_mode(
-    *,
-    validate_trusted_bgen: bool,
-    assume_trusted_bgen_validated: bool,
-) -> types.TrustedBgenValidationMode:
-    """Resolve trusted BGEN validation mode from CLI flags."""
-    if validate_trusted_bgen and assume_trusted_bgen_validated:
-        message = "--validate-trusted-bgen and --assume-trusted-bgen-validated are mutually exclusive."
-        raise click.BadParameter(message)
-    if assume_trusted_bgen_validated:
-        return types.TrustedBgenValidationMode.ASSUME_VALIDATED
-    if validate_trusted_bgen:
-        return types.TrustedBgenValidationMode.FORCE_VALIDATE
-    return types.TrustedBgenValidationMode.CACHE_ON_MISS
 
 
 def explicit_cli_options(context: click.Context, parameters: dict[str, typing.Any]) -> dict[str, typing.Any]:
@@ -172,9 +121,13 @@ def run_regenie_command(context: click.Context, **parameters: typing.Any) -> Non
         with shutdown.install_graceful_shutdown_handlers():
             artifacts = api.regenie(regenie_config)
     except shutdown.GracefulShutdownRequested as shutdown_request:
-        print_interrupted_message(shutdown_request)
+        interrupted_event = run_events.build_run_interrupted_event(shutdown_request)
+        for line in run_events.render_run_interrupted_lines(interrupted_event):
+            click.echo(line, err=True)
         raise click.exceptions.Exit(shutdown_request.exit_code) from shutdown_request
-    print_success_message(artifacts)
+    completed_event = run_events.build_run_completed_event(artifacts)
+    for line in run_events.render_run_completed_lines(completed_event):
+        click.echo(line)
 
 
 @app.group("config", cls=NaturalOrderGroup)
