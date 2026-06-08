@@ -26,6 +26,12 @@ tool:
   regenie_executable: null
   regenie_baseline_trait_types:
     - quantitative
+  trait_types:
+    - quantitative
+    - binary
+  devices:
+    - cpu
+    - gpu
   regenie_baseline_variant_limit: null
   regenie_baseline_warmups: 0
   regenie_baseline_trials: 1
@@ -53,6 +59,10 @@ tool:
   staging_depths:
     - 1
     - 2
+  result_in_flight_limits:
+    - null
+  dosage_buffer_limits:
+    - null
   output_writer_thread_counts:
     - 1
     - 2

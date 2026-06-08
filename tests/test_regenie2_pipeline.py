@@ -1413,6 +1413,95 @@ def test_native_bgen_callback_runner_rejects_nonpositive_staging_depth() -> None
         ConcreteCallbackRunner(worker_name="invalid-staging-depth", staging_depth=0)
 
 
+def test_native_bgen_callback_runner_accepts_explicit_capacity_limits() -> None:
+    class ConcreteCallbackRunner(callbacks.NativeBgenCallbackRunner):
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix_by_variant, chunk_stats
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+
+    default_callback = ConcreteCallbackRunner(worker_name="default-capacity", staging_depth=3)
+    explicit_callback = ConcreteCallbackRunner(
+        worker_name="explicit-capacity",
+        staging_depth=3,
+        result_in_flight_limit=7,
+        dosage_buffer_limit=8,
+    )
+
+    assert default_callback.result_in_flight_limit == 4
+    assert default_callback.dosage_buffer_limit == 4
+    assert explicit_callback.result_in_flight_limit == 7
+    assert explicit_callback.dosage_buffer_limit == 8
+
+
+@pytest.mark.parametrize(
+    ("capacity_name", "error_message"),
+    [
+        ("result_in_flight_limit", "result_in_flight_limit must be positive"),
+        ("dosage_buffer_limit", "dosage_buffer_limit must be positive"),
+    ],
+)
+def test_native_bgen_callback_runner_rejects_nonpositive_capacity_limits(
+    capacity_name: typing.Literal["result_in_flight_limit", "dosage_buffer_limit"],
+    error_message: str,
+) -> None:
+    class ConcreteCallbackRunner(callbacks.NativeBgenCallbackRunner):
+        def compute_preprocessed_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix, chunk_stats
+
+        def compute_preprocessed_variant_major_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            genotype_matrix_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, genotype_matrix_by_variant, chunk_stats
+
+        def compute_preprocessed_variant_major_packed8_chunk(
+            self,
+            *,
+            variant_metadata: object,
+            packed_probability_pairs_by_variant: object,
+            chunk_stats: object,
+        ) -> None:
+            del variant_metadata, packed_probability_pairs_by_variant, chunk_stats
+
+    with pytest.raises(ValueError, match=error_message):
+        if capacity_name == "result_in_flight_limit":
+            ConcreteCallbackRunner(worker_name="invalid-capacity", staging_depth=1, result_in_flight_limit=0)
+        else:
+            ConcreteCallbackRunner(worker_name="invalid-capacity", staging_depth=1, dosage_buffer_limit=0)
+
+
 def test_linear_callback_passes_native_stats_to_writer_without_python_unwrap() -> None:
     writer_session = FakeWriterSession()
     result = regenie2_linear_result.Regenie2LinearChunkResult(
