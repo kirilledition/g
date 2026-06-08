@@ -1066,8 +1066,7 @@ Use this checklist when adding a new development tool.
    config-driven dev workflow.
 
    Keep it out of `tooling/` if it is production runtime behavior, public CLI
-   behavior, or unrelated automation. Codex task farm automation stays under
-   `scripts/codex_task_farm.py`.
+   behavior, or unrelated automation.
 
 2. Add a Hydra config file under `tooling/configs/`.
 

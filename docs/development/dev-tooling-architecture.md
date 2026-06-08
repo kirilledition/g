@@ -22,8 +22,6 @@ The migrated benchmark and profiling commands are invoked through module executi
 uv run --no-sync python -m tooling.cli.benchmark_bgen_reader
 ```
 
-The Codex task farm remains under `scripts/codex_task_farm.py`; it is automation tooling rather than GWAS benchmark tooling and should be split separately if needed.
-
 Optional GPU smoke validation should run through SLURM rather than on the head node:
 
 ```bash

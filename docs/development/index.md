@@ -80,4 +80,4 @@ Follow [Style Guide](STYLEGUIDE.md). Important project rules include:
 
 Symphony work happens in issue-specific worktrees under `/mnt/beegfs/kirill/Projects/g-worktrees/symphony`. Keep changes scoped to the Linear issue and do not commit `data/`, `results/`, local caches, logs, build artifacts, or generated benchmark outputs.
 
-See [Codex Task Farm](codex-task-farm.md) for the local multi-agent worktree automation.
+See [Symphony](symphony.md) for Linear-backed multi-agent orchestration.

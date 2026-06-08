@@ -626,20 +626,16 @@ just coverage-rust
 just coverage
 ```
 
-Codex task-farm helpers:
+Symphony orchestration helpers:
 
 ```bash
-just codex-tasks-sync
-just codex-tasks-doctor
-just codex-tasks-list
-just codex-tasks-run --jobs 4
-just codex-tasks-status
-just codex-tasks-review 1
-just codex-tasks-integrate 1
-just codex-tasks-integrate-ready
+just symphony-doctor
+just symphony-run
+just symphony-cleanup
+just symphony-cleanup-apply
 ```
 
-The task farm uses isolated Git worktrees for worker branches and an integration workflow for reviewed branches. See `docs/development/codex-task-farm.md`.
+Symphony uses Linear-dispatched issue worktrees and direct validated branch integration. See `docs/development/symphony.md`.
 
 ---
 
@@ -653,7 +649,7 @@ Useful docs:
 - `docs/development/UBUNTU_SLURM_DEVELOPMENT.md` — server and SLURM workflow
 - `docs/development/simd-optimization-reference.md` — SIMD decisions and BGEN decode optimization notes
 - `docs/development/logging-setup.md` — telemetry and logging design notes
-- `docs/development/codex-task-farm.md` — Codex worktree automation
+- `docs/development/symphony.md` — Linear-backed multi-agent orchestration
 - `docs/scratchpad/` — internal learning notes, profiling results, and review-derived work products
 
 Some older docs may be historical or pending cleanup. Prefer this README, `docs/development/ROADMAP.md`, and the focused public/development docs for current orientation.

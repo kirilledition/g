@@ -37,7 +37,6 @@ nav = [
     "development/logging-setup.md",
     "development/performance-discovery.md",
     "development/simd-optimization-reference.md",
-    "development/codex-task-farm.md",
     "development/symphony.md",
   ] },
   { "Scratchpad" = [
