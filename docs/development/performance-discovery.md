@@ -37,7 +37,7 @@ recipe:
 just help
 ```
 
-Use `docs/justfile.md`, `docs/gpu-and-slurm.md`, and the issue validation
+Use `docs/development/justfile.md`, `docs/public/gpu-and-slurm.md`, and the issue validation
 section to choose a profiling recipe. Do not run a workload merely because a
 recipe exists.
 
@@ -166,7 +166,7 @@ generation.
 
 Generated performance issues must include the parent identifier and URL, the
 baseline signal, suspected bottleneck, proposed change, validation command, and
-non-goals. Use the generated issue template in `docs/symphony.md`, adding the
+non-goals. Use the generated issue template in `docs/development/symphony.md`, adding the
 performance-specific fields under `Background` when necessary.
 
 ## Completion Checklist

@@ -1,6 +1,6 @@
 # Codex Task Farm
 
-This repository includes a small local automation layer for turning `docs/code-review.md` tasks into isolated Codex worktrees.
+This repository includes a small local automation layer for turning `docs/scratchpad/code-review.md` tasks into isolated Codex worktrees.
 
 ## Workflow
 
@@ -56,7 +56,7 @@ Use `--allow-unreviewed` only when intentionally integrating implemented tasks b
 
 ## Files
 
-`docs/code-review.md` remains the readable source of task intent. `docs/code-review.tasks.json` is the tracked automation manifest generated from it. The sync command preserves manual metadata fields such as `status`, `enabled`, `dependencies`, `notes`, and `manual_expected_paths` when the markdown is refreshed. Generated fields such as `expected_paths`, `priority`, branch names, and worktree paths are refreshed from the markdown and defaults.
+`docs/scratchpad/code-review.md` remains the readable source of task intent. `docs/scratchpad/code-review.tasks.json` is the tracked automation manifest generated from it. The sync command preserves manual metadata fields such as `status`, `enabled`, `dependencies`, `notes`, and `manual_expected_paths` when the markdown is refreshed. Generated fields such as `expected_paths`, `priority`, branch names, and worktree paths are refreshed from the markdown and defaults.
 
 Runtime files live under `.codex-task-worktrees/` and are ignored by git. Task worktrees live outside this checkout under `../g-worktrees` by default. The integration worktree defaults to `../g-worktrees/integration-code-review`.
 

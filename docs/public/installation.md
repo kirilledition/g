@@ -49,7 +49,7 @@ source scripts/server_env.sh
 just doctor-server
 ```
 
-More environment-specific notes are in [No-Nix Development](NO_NIX_DEVELOPMENT.md) and [Ubuntu SLURM Development](UBUNTU_SLURM_DEVELOPMENT.md).
+More environment-specific notes are in [No-Nix Development](../development/NO_NIX_DEVELOPMENT.md) and [Ubuntu SLURM Development](../development/UBUNTU_SLURM_DEVELOPMENT.md).
 
 ## Documentation Dependencies
 

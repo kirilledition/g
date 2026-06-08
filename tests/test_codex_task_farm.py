@@ -71,8 +71,9 @@ Use `src/g/current.py:12-20`, `tests/test_current.py:7`, `src/g/compute/*`, and 
 
 def test_sync_manifest_preserves_only_manual_metadata(tmp_path: Path) -> None:
     docs_directory = tmp_path / "docs"
-    docs_directory.mkdir()
-    (docs_directory / "code-review.md").write_text(
+    scratchpad_directory = docs_directory / "scratchpad"
+    scratchpad_directory.mkdir(parents=True)
+    (scratchpad_directory / "code-review.md").write_text(
         """# Category
 
 ## 7. First task
@@ -80,13 +81,13 @@ def test_sync_manifest_preserves_only_manual_metadata(tmp_path: Path) -> None:
 Body with `src/g/current.py`.
 """
     )
-    (docs_directory / "code-review.tasks.json").write_text(
+    (scratchpad_directory / "code-review.tasks.json").write_text(
         """{
   "defaults": {
     "jobs": 2,
     "worktree_root": "../custom-worktrees"
   },
-  "source_path": "docs/code-review.md",
+  "source_path": "docs/scratchpad/code-review.md",
   "tasks": [
     {
       "id": 7,
@@ -125,8 +126,9 @@ Body with `src/g/current.py`.
 
 def test_review2_sync_uses_isolated_v2_manifest_and_prefixes(tmp_path: Path) -> None:
     docs_directory = tmp_path / "docs"
-    docs_directory.mkdir()
-    (docs_directory / "02.code-review-2-06-26.md").write_text(
+    scratchpad_directory = docs_directory / "scratchpad"
+    scratchpad_directory.mkdir(parents=True)
+    (scratchpad_directory / "02.code-review-2-06-26.md").write_text(
         """# Category
 
 ## 1. First task
@@ -137,9 +139,9 @@ Body with `src/g/compute/regenie2_binary/api.py`.
 
     manifest = codex_task_farm.sync_manifest(
         tmp_path,
-        manifest_relative_path=Path("docs/code-review-2.tasks.json"),
-        source_relative_path=Path("docs/02.code-review-2-06-26.md"),
-        plan_relative_path=Path("docs/code-review-2-plan.md"),
+        manifest_relative_path=Path("docs/scratchpad/code-review-2.tasks.json"),
+        source_relative_path=Path("docs/scratchpad/02.code-review-2-06-26.md"),
+        plan_relative_path=Path("docs/scratchpad/code-review-2-plan.md"),
         state_directory_path=Path(".codex-task-worktrees/code-review-2"),
         branch_prefix="codex/review2-",
         worktree_prefix="../g-worktrees/review2-",
@@ -149,8 +151,8 @@ Body with `src/g/compute/regenie2_binary/api.py`.
 
     task = manifest["tasks"][0]
     assert manifest["version"] == 2
-    assert manifest["source_path"] == "docs/02.code-review-2-06-26.md"
-    assert manifest["defaults"]["plan_path"] == "docs/code-review-2-plan.md"
+    assert manifest["source_path"] == "docs/scratchpad/02.code-review-2-06-26.md"
+    assert manifest["defaults"]["plan_path"] == "docs/scratchpad/code-review-2-plan.md"
     assert manifest["defaults"]["state_directory"] == ".codex-task-worktrees/code-review-2"
     assert manifest["defaults"]["integration_branch"] == "integration/code-review-2"
     assert manifest["defaults"]["push_integration_branch"] is True
@@ -159,15 +161,16 @@ Body with `src/g/compute/regenie2_binary/api.py`.
     assert task["worktree"] == "../g-worktrees/review2-T001-first-task"
     assert task["conflict_group"] == "binary-jax"
     assert task["logs"]["run_directory"] == ".codex-task-worktrees/code-review-2/runs/T001"
-    assert (docs_directory / "code-review-2.tasks.json").exists()
-    assert (docs_directory / "code-review-2-plan.md").read_text().startswith("# Code Review 2 Task Plan")
-    assert not (docs_directory / "code-review.tasks.json").exists()
+    assert (scratchpad_directory / "code-review-2.tasks.json").exists()
+    assert (scratchpad_directory / "code-review-2-plan.md").read_text().startswith("# Code Review 2 Task Plan")
+    assert not (scratchpad_directory / "code-review.tasks.json").exists()
 
 
 def test_review2_resync_preserves_manual_and_runtime_metadata(tmp_path: Path) -> None:
     docs_directory = tmp_path / "docs"
-    docs_directory.mkdir()
-    source_path = docs_directory / "02.code-review-2-06-26.md"
+    scratchpad_directory = docs_directory / "scratchpad"
+    scratchpad_directory.mkdir(parents=True)
+    source_path = scratchpad_directory / "02.code-review-2-06-26.md"
     source_path.write_text(
         """# New Category
 
@@ -176,7 +179,7 @@ def test_review2_resync_preserves_manual_and_runtime_metadata(tmp_path: Path) ->
 Body with `src/g/compute/regenie2_linear/api.py`.
 """
     )
-    (docs_directory / "code-review-2.tasks.json").write_text(
+    (scratchpad_directory / "code-review-2.tasks.json").write_text(
         """{
   "defaults": {
     "branch_prefix": "codex/review2-",
@@ -186,7 +189,7 @@ Body with `src/g/compute/regenie2_linear/api.py`.
     "state_directory": ".codex-task-worktrees/code-review-2",
     "worktree_prefix": "../g-worktrees/review2-"
   },
-  "source_path": "docs/02.code-review-2-06-26.md",
+  "source_path": "docs/scratchpad/02.code-review-2-06-26.md",
   "tasks": [
     {
       "id": "T001",
@@ -211,8 +214,8 @@ Body with `src/g/compute/regenie2_linear/api.py`.
 
     manifest = codex_task_farm.sync_manifest(
         tmp_path,
-        manifest_relative_path=Path("docs/code-review-2.tasks.json"),
-        source_relative_path=Path("docs/02.code-review-2-06-26.md"),
+        manifest_relative_path=Path("docs/scratchpad/code-review-2.tasks.json"),
+        source_relative_path=Path("docs/scratchpad/02.code-review-2-06-26.md"),
         branch_prefix="codex/review2-",
         worktree_prefix="../g-worktrees/review2-",
     )
@@ -234,8 +237,8 @@ Body with `src/g/compute/regenie2_linear/api.py`.
 
 
 def test_load_manifest_requires_explicit_sync(tmp_path: Path) -> None:
-    (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "code-review.md").write_text("")
+    (tmp_path / "docs" / "scratchpad").mkdir(parents=True)
+    (tmp_path / "docs" / "scratchpad" / "code-review.md").write_text("")
 
     with pytest.raises(ValueError, match="sync-manifest"):
         codex_task_farm.load_manifest(tmp_path)
@@ -460,7 +463,7 @@ def test_worker_prompt_uses_runtime_logs_and_forbids_shared_plan_edits() -> None
 
     assert ".codex-task-worktrees/code-review-2/runs/T001" in prompt
     assert "Do not edit shared task plans or manifests" in prompt
-    assert "docs/code-review-2-plan.md" in prompt
+    assert "docs/scratchpad/code-review-2-plan.md" in prompt
     assert "Final response must include changed files" in prompt
 
 
@@ -891,9 +894,10 @@ def test_doctor_reports_missing_nix_as_warning_unless_strict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (tmp_path / ".git").mkdir()
-    (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "code-review.md").write_text("")
-    (tmp_path / "docs" / "STYLEGUIDE.md").write_text("")
+    (tmp_path / "docs" / "scratchpad").mkdir(parents=True)
+    (tmp_path / "docs" / "development").mkdir()
+    (tmp_path / "docs" / "scratchpad" / "code-review.md").write_text("")
+    (tmp_path / "docs" / "development" / "STYLEGUIDE.md").write_text("")
     (tmp_path / "Justfile").write_text("")
     (tmp_path / "AGENTS.md").write_text("")
     manifest = codex_task_farm.default_manifest()

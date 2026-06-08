@@ -64,7 +64,7 @@ src/python/                      PyO3 bindings and logging bridge
 More detailed internal notes:
 
 - [Configuration and CLI Architecture](configuration_cli_architecture.md)
-- [Agent Learning](agent-learning.md)
-- [Linear REGENIE Step 2 Learning](linear-regenie-step2-learning.md)
-- [Binary REGENIE Step 2 Learning](binary-regenie-step2-learning.md)
+- [Agent Learning](../scratchpad/agent-learning.md)
+- [Linear REGENIE Step 2 Learning](../scratchpad/linear-regenie-step2-learning.md)
+- [Binary REGENIE Step 2 Learning](../scratchpad/binary-regenie-step2-learning.md)
 - [SIMD Optimization Reference](simd-optimization-reference.md)

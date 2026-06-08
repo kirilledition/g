@@ -162,7 +162,7 @@ Acceptance criteria:
 - Agents preserve and update `## Agent Learnings`.
 
 Validation:
-- Review docs/symphony.md and WORKFLOW.md for matching section names.
+- Review docs/development/symphony.md and WORKFLOW.md for matching section names.
 - just docs-build
 
 Non-goals:

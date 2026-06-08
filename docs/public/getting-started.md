@@ -49,7 +49,7 @@ Then follow [Quickstart](quickstart.md) for concrete commands.
 
 ## Documentation Commands
 
-The documentation site is built from `docs/`:
+The documentation site is built from `docs/`. User-facing pages live in `docs/public/`; development-team docs live in `docs/development/`; internal work products live in `docs/scratchpad/`:
 
 ```bash
 just docs-serve

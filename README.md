@@ -25,7 +25,7 @@ The package is designed for reproducible, large-scale association runs where the
 
 ## Documentation
 
-The user documentation lives under `docs/` and is built with Zensical. GitHub Pages deployment is defined in `.github/workflows/docs.yml`; the expected published URL is:
+User-facing documentation lives under `docs/public/` and is built with Zensical. Development-team docs live under `docs/development/`; internal work artifacts and historical notes live under `docs/scratchpad/`. GitHub Pages deployment is defined in `.github/workflows/docs.yml`; the expected published URL is:
 
 ```text
 https://kirilledition.github.io/g/
@@ -134,7 +134,7 @@ just doctor-server
 just doctor-baselines
 ```
 
-See `docs/NO_NIX_DEVELOPMENT.md` and `docs/UBUNTU_SLURM_DEVELOPMENT.md` for environment-specific workflows.
+See `docs/development/NO_NIX_DEVELOPMENT.md` and `docs/development/UBUNTU_SLURM_DEVELOPMENT.md` for environment-specific workflows.
 
 ---
 
@@ -657,7 +657,7 @@ just codex-tasks-integrate 1
 just codex-tasks-integrate-ready
 ```
 
-The task farm uses isolated Git worktrees for worker branches and an integration workflow for reviewed branches. See `docs/codex-task-farm.md`.
+The task farm uses isolated Git worktrees for worker branches and an integration workflow for reviewed branches. See `docs/development/codex-task-farm.md`.
 
 ---
 
@@ -665,16 +665,16 @@ The task farm uses isolated Git worktrees for worker branches and an integration
 
 Useful docs:
 
-- `docs/STYLEGUIDE.md` — coding rules and review expectations
-- `docs/NO_NIX_DEVELOPMENT.md` — local reduced-toolchain workflow
-- `docs/UBUNTU_SLURM_DEVELOPMENT.md` — server and SLURM workflow
-- `docs/linear-regenie-step2-learning.md` — quantitative Step 2 math notes
-- `docs/binary-regenie-step2-learning.md` — binary Step 2 / approximate Firth notes
-- `docs/simd-optimization-reference.md` — SIMD decisions and BGEN decode optimization notes
-- `docs/logging-setup.md` — telemetry and logging design notes
-- `docs/codex-task-farm.md` — Codex worktree automation
+- `docs/public/` — user-facing setup, CLI, configuration, input/output, and troubleshooting guidance
+- `docs/development/STYLEGUIDE.md` — coding rules and review expectations
+- `docs/development/NO_NIX_DEVELOPMENT.md` — local reduced-toolchain workflow
+- `docs/development/UBUNTU_SLURM_DEVELOPMENT.md` — server and SLURM workflow
+- `docs/development/simd-optimization-reference.md` — SIMD decisions and BGEN decode optimization notes
+- `docs/development/logging-setup.md` — telemetry and logging design notes
+- `docs/development/codex-task-farm.md` — Codex worktree automation
+- `docs/scratchpad/` — internal learning notes, profiling results, and review-derived work products
 
-Some older docs may be historical or pending cleanup. Prefer this README, `ROADMAP.md`, and the focused learning/reference docs for current orientation.
+Some older docs may be historical or pending cleanup. Prefer this README, `docs/development/ROADMAP.md`, and the focused public/development docs for current orientation.
 
 ---
 

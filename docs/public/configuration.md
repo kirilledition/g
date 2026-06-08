@@ -76,4 +76,4 @@ log-stderr = true
 | `[g.output]` | Writer, format, finalization, and resume settings |
 | `[g.diagnostics]` | Telemetry, logging, progress, and trace settings |
 
-For implementation details behind the configuration model, see [Configuration and CLI Architecture](configuration_cli_architecture.md).
+For implementation details behind the configuration model, see [Configuration and CLI Architecture](../development/configuration_cli_architecture.md).

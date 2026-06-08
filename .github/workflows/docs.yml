@@ -3,8 +3,24 @@ name: Documentation
 on:
   push:
     branches: [main]
+    paths:
+      - docs/**
+      - zensical.toml
+      - pyproject.toml
+      - uv.lock
+      - Justfile
+      - .github/workflows/docs.yml
+      - "!docs/scratchpad/**"
   pull_request:
     branches: [main]
+    paths:
+      - docs/**
+      - zensical.toml
+      - pyproject.toml
+      - uv.lock
+      - Justfile
+      - .github/workflows/docs.yml
+      - "!docs/scratchpad/**"
 
 concurrency:
   group: docs-${{ github.event.pull_request.number || github.ref }}
