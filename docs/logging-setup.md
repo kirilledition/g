@@ -195,12 +195,10 @@ For binary Firth diagnostics, prefer aggregate chunk summaries:
 
 Do not emit one event per candidate iteration in production mode.
 
-## Remaining Telemetry Roadmap
+## Follow-Up Tracking
 
-- Keep file handles or queue-backed writers open for profile and trace streams
-- Keep the non-blocking `firth_candidate_dispatch_plan` timing stage aligned
-  with future Firth dispatch changes.
-- Add bounded event caps for trace mode so accidental high-volume tracing
-  fails clearly instead of filling disks.
-- Keep profile summary generation aligned with stage timings, native BGEN
-  profiles, output finalization timing, and binary diagnostic counters.
+Open telemetry implementation work is tracked in Linear instead of this page.
+The current trace-mode safety follow-up is
+[GLA-25](https://linear.app/glaphyra/issue/GLA-25/add-bounded-trace-mode-telemetry-event-caps).
+Durable telemetry lessons from historical task notes are consolidated in
+[Agent Learning](agent-learning.md).
