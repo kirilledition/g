@@ -29,6 +29,22 @@ native-extension compile smoke in that environment, run:
 uv run maturin develop
 ```
 
+Keep this lane local and focused. On the gauss login node, do not use the
+reduced-toolchain lane as a substitute for full validation. Full Python suites,
+Rust builds, Rust test builds, and mixed Python/Rust validation should use the
+CPU SLURM lane:
+
+```bash
+just slurm-cpu-check
+just slurm-cpu-test
+just slurm-cpu-rust-build
+just slurm-cpu-rust-test
+```
+
+The CPU SLURM recipes derive Cargo and pytest worker counts from the allocation.
+Local `test-local` remains serial by default so focused failures are easy to
+read and do not queue a SLURM job.
+
 Full Rust formatting and clippy checks still require an environment with the
 Rust toolchain available:
 

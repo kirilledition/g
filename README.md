@@ -616,8 +616,6 @@ Common checks:
 just format
 just lint
 just typecheck
-just check
-just test
 ```
 
 Reduced-toolchain local checks:
@@ -626,6 +624,16 @@ Reduced-toolchain local checks:
 just check-local
 just test-local
 just test-local-focused
+```
+
+On the gauss server, keep full CPU validation off the login node:
+
+```bash
+just slurm-cpu-check
+just slurm-cpu-test
+just slurm-cpu-test-full
+just slurm-cpu-rust-build
+just slurm-cpu-rust-test
 ```
 
 Native extension and Rust benchmarks:

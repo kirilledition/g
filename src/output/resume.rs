@@ -199,23 +199,40 @@ fn validate_manifest_chunk_file_commits(
     let expected_commit_identifiers =
         expected_commits.iter().map(|chunk_commit| chunk_commit.chunk_identifier).collect::<BTreeSet<_>>();
     let observed_commit_identifiers = observed_commits.keys().copied().collect::<BTreeSet<_>>();
-    if observed_commit_identifiers != expected_commit_identifiers {
-        return Err(OutputWriterError::InvalidInput(format!(
-            "Strict resume manifest commit set does not match chunk file {}.",
-            chunk_file_path.display()
-        )));
-    }
     for expected_commit in expected_commits {
-        let observed_commit = observed_commits
-            .get(&expected_commit.chunk_identifier)
-            .expect("observed commit identifier set should contain expected commit");
+        let Some(observed_commit) = observed_commits.get(&expected_commit.chunk_identifier) else {
+            return Err(OutputWriterError::InvalidInput(format!(
+                "Strict resume manifest commit set does not match chunk file {}.",
+                chunk_file_path.display()
+            )));
+        };
         if observed_commit != expected_commit {
+            if observed_commit.row_count != expected_commit.row_count {
+                return Err(OutputWriterError::InvalidInput(format!(
+                    "Strict resume row count mismatch for chunk {}.",
+                    expected_commit.chunk_identifier
+                )));
+            }
+            if observed_commit.variant_start_index != expected_commit.variant_start_index
+                || observed_commit.variant_stop_index != expected_commit.variant_stop_index
+            {
+                return Err(OutputWriterError::InvalidInput(format!(
+                    "Strict resume variant range mismatch for chunk {}.",
+                    expected_commit.chunk_identifier
+                )));
+            }
             return Err(OutputWriterError::InvalidInput(format!(
                 "Strict resume found conflicting commit metadata for chunk {}.",
                 expected_commit.chunk_identifier
             )));
         }
         committed_identifiers.insert(expected_commit.chunk_identifier);
+    }
+    if observed_commit_identifiers != expected_commit_identifiers {
+        return Err(OutputWriterError::InvalidInput(format!(
+            "Strict resume manifest commit set does not match chunk file {}.",
+            chunk_file_path.display()
+        )));
     }
     Ok(())
 }
