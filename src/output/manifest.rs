@@ -136,40 +136,38 @@ pub(crate) fn initialize_output_run(
     resume_mode: OutputResumeMode,
 ) -> Result<InitializedOutputRun, OutputWriterError> {
     let current_header = parse_current_header_text(current_header_json)?;
-    let (mut manifest, committed_chunks, committed_chunk_identifiers) = match existing_manifest_json {
-        Some(existing_manifest_text) => {
-            let existing_manifest = parse_run_manifest_text(existing_manifest_text, None)?;
-            validate_manifest_compatibility_values(&existing_manifest, &current_header)?;
-            let manifest_committed_chunks = read_run_manifest_committed_chunks(&existing_manifest)?;
-            let _validated_committed_chunk_identifiers =
-                read_run_manifest_committed_chunk_identifiers(&existing_manifest)?;
-            if resume {
-                match resume_mode {
-                    OutputResumeMode::Fast => {
-                        let committed_chunk_identifiers =
-                            read_run_manifest_committed_chunk_identifiers(&existing_manifest)?;
-                        (existing_manifest, manifest_committed_chunks, committed_chunk_identifiers)
-                    }
-                    OutputResumeMode::Strict => {
-                        let repaired_commits =
-                            resume::repair_strict_manifest_chunk_commits(chunks_directory, existing_manifest_text)?;
-                        let committed_chunk_identifiers =
-                            repaired_commits.iter().map(|chunk_commit| chunk_commit.chunk_identifier).collect();
-                        let committed_chunks = repaired_commits.iter().map(chunk_commit_to_value).collect::<Vec<_>>();
-                        (existing_manifest, committed_chunks, committed_chunk_identifiers)
-                    }
+    let (mut manifest, committed_chunks, committed_chunk_identifiers) = if let Some(existing_manifest_text) =
+        existing_manifest_json
+    {
+        let existing_manifest = parse_run_manifest_text(existing_manifest_text, None)?;
+        validate_manifest_compatibility_values(&existing_manifest, &current_header)?;
+        let manifest_committed_chunks = read_run_manifest_committed_chunks(&existing_manifest)?;
+        let _validated_committed_chunk_identifiers = read_run_manifest_committed_chunk_identifiers(&existing_manifest)?;
+        if resume {
+            match resume_mode {
+                OutputResumeMode::Fast => {
+                    let committed_chunk_identifiers =
+                        read_run_manifest_committed_chunk_identifiers(&existing_manifest)?;
+                    (existing_manifest, manifest_committed_chunks, committed_chunk_identifiers)
                 }
-            } else {
-                (existing_manifest, manifest_committed_chunks, Vec::new())
+                OutputResumeMode::Strict => {
+                    let repaired_commits =
+                        resume::repair_strict_manifest_chunk_commits(chunks_directory, existing_manifest_text)?;
+                    let committed_chunk_identifiers =
+                        repaired_commits.iter().map(|chunk_commit| chunk_commit.chunk_identifier).collect();
+                    let committed_chunks = repaired_commits.iter().map(chunk_commit_to_value).collect::<Vec<_>>();
+                    (existing_manifest, committed_chunks, committed_chunk_identifiers)
+                }
             }
+        } else {
+            (existing_manifest, manifest_committed_chunks, Vec::new())
         }
-        None => {
-            if resume {
-                return Err(OutputWriterError::InvalidInput("Resume requires run_manifest.json.".to_string()));
-            }
-            let manifest = load_run_manifest_value(run_directory)?.unwrap_or_else(|| Value::Object(Map::new()));
-            (manifest, Vec::new(), Vec::new())
+    } else {
+        if resume {
+            return Err(OutputWriterError::InvalidInput("Resume requires run_manifest.json.".to_string()));
         }
+        let manifest = load_run_manifest_value(run_directory)?.unwrap_or_else(|| Value::Object(Map::new()));
+        (manifest, Vec::new(), Vec::new())
     };
     merge_manifest_header(&mut manifest, &current_header)?;
     let manifest_object = manifest

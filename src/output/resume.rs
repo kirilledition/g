@@ -478,7 +478,7 @@ fn count_regenie_text_rows(chunk_file_path: &Path) -> Result<i64, OutputWriterEr
     let mut input_reader = BufReader::new(input_file);
     let mut header_line = String::new();
     input_reader.read_line(&mut header_line).map_err(OutputWriterError::runtime)?;
-    let observed_header = header_line.trim_end_matches(|character| character == '\r' || character == '\n');
+    let observed_header = header_line.trim_end_matches(['\r', '\n']);
     let expected_header = writer::REGENIE_STEP2_TEXT_HEADER.trim_end_matches('\n');
     if observed_header != expected_header {
         return Err(OutputWriterError::InvalidInput(format!(
@@ -494,7 +494,7 @@ fn count_regenie_text_rows(chunk_file_path: &Path) -> Result<i64, OutputWriterEr
         if read_byte_count == 0 {
             break;
         }
-        let row = row_line.trim_end_matches(|character| character == '\r' || character == '\n');
+        let row = row_line.trim_end_matches(['\r', '\n']);
         if row.split('\t').count() != 14 {
             return Err(OutputWriterError::InvalidInput(format!(
                 "Strict resume REGENIE text part has a row with an unexpected column count: {}",
