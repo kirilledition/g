@@ -28,6 +28,7 @@ class RunArtifacts:
         output_run_directory: Chunked output run directory.
         final_dataset: Parquet dataset directory for part-based output.
         final_parquet: Finalized Parquet output path.
+        final_regenie: Finalized REGENIE-compatible text output path.
         effective_config: Written effective TOML config path.
         phenotype_artifacts: Per-phenotype artifacts for multi-phenotype runs.
 
@@ -36,6 +37,7 @@ class RunArtifacts:
     output_run_directory: Path | None = None
     final_dataset: Path | None = None
     final_parquet: Path | None = None
+    final_regenie: Path | None = None
     effective_config: Path | None = None
     phenotype_artifacts: tuple[RunArtifacts, ...] = ()
 
@@ -423,7 +425,7 @@ def run_validated_regenie_config(
         )
         record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)
         logger.debug("Dispatching REGENIE execution plan.")
-        final_parquet_paths = dispatch_execution_plan(
+        final_output_paths = dispatch_execution_plan(
             plan=plan,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
@@ -432,7 +434,7 @@ def run_validated_regenie_config(
         return finalize_execution_plan(
             regenie_config=regenie_config,
             plan=plan,
-            final_parquet_paths=final_parquet_paths,
+            final_output_paths=final_output_paths,
         )
     finally:
         if stage_timing_recorder is not None:
@@ -531,7 +533,7 @@ def dispatch_one_phenotype_engine_pipeline(
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
         logger.debug("Dispatching binary native engine pipeline.")
-        final_parquet_path = run_regenie2_binary_bgen_pipeline(
+        final_output_path = run_regenie2_binary_bgen_pipeline(
             **common_arguments,
             correction_plan=plan.binary_correction_plan,
             kernel_config=plan.kernel_config.binary_kernel_config,
@@ -544,11 +546,11 @@ def dispatch_one_phenotype_engine_pipeline(
             telemetry_session=telemetry_session,
             association_mode=plan.association_mode,
             phenotype=phenotype_run_plan.phenotype_name,
-            final_parquet_path=final_parquet_path,
+            final_output_path=final_output_path,
         )
-        return final_parquet_path
+        return final_output_path
     logger.debug("Dispatching linear native engine pipeline.")
-    final_parquet_path = run_regenie2_linear_bgen_pipeline(
+    final_output_path = run_regenie2_linear_bgen_pipeline(
         **common_arguments,
         gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
         linear_numerical_config=plan.kernel_config.linear_numerical_config,
@@ -557,9 +559,9 @@ def dispatch_one_phenotype_engine_pipeline(
         telemetry_session=telemetry_session,
         association_mode=plan.association_mode,
         phenotype=phenotype_run_plan.phenotype_name,
-        final_parquet_path=final_parquet_path,
+        final_output_path=final_output_path,
     )
-    return final_parquet_path
+    return final_output_path
 
 
 def dispatch_multi_phenotype_engine_pipeline(
@@ -591,7 +593,7 @@ def dispatch_multi_phenotype_engine_pipeline(
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
         logger.debug("Dispatching multi-phenotype binary native engine pipeline.")
-        final_parquet_paths = run_regenie2_multi_phenotype_binary_bgen_pipeline(
+        final_output_paths = run_regenie2_multi_phenotype_binary_bgen_pipeline(
             **common_arguments,
             correction_plan=plan.binary_correction_plan,
             kernel_config=plan.kernel_config.binary_kernel_config,
@@ -601,7 +603,7 @@ def dispatch_multi_phenotype_engine_pipeline(
         )
     else:
         logger.debug("Dispatching multi-phenotype linear native engine pipeline.")
-        final_parquet_paths = run_regenie2_multi_phenotype_linear_bgen_pipeline(
+        final_output_paths = run_regenie2_multi_phenotype_linear_bgen_pipeline(
             **common_arguments,
             linear_numerical_config=plan.kernel_config.linear_numerical_config,
         )
@@ -610,9 +612,9 @@ def dispatch_multi_phenotype_engine_pipeline(
             "writer_finished",
             association_mode=plan.association_mode.value,
             phenotype_count=len(plan.phenotype_run_plans),
-            final_parquet_paths=tuple(None if path is None else str(path) for path in final_parquet_paths),
+            final_output_paths=tuple(None if path is None else str(path) for path in final_output_paths),
         )
-    return final_parquet_paths
+    return final_output_paths
 
 
 def log_writer_finished(
@@ -620,7 +622,7 @@ def log_writer_finished(
     telemetry_session: telemetry.TelemetrySession | None,
     association_mode: types.AssociationMode,
     phenotype: str,
-    final_parquet_path: Path | None,
+    final_output_path: Path | None,
 ) -> None:
     """Record output writer completion."""
     if telemetry_session is None:
@@ -629,7 +631,7 @@ def log_writer_finished(
         "writer_finished",
         association_mode=association_mode.value,
         phenotype=phenotype,
-        final_parquet_path=None if final_parquet_path is None else str(final_parquet_path),
+        final_output_path=None if final_output_path is None else str(final_output_path),
     )
 
 
@@ -676,7 +678,7 @@ def finalize_execution_plan(
     *,
     regenie_config: config.RegenieConfig,
     plan: execution_plan.RegenieExecutionPlan,
-    final_parquet_paths: tuple[Path | None, ...],
+    final_output_paths: tuple[Path | None, ...],
 ) -> RunArtifacts:
     """Build user-facing artifacts after native execution."""
     phenotype_artifacts = tuple(
@@ -684,11 +686,11 @@ def finalize_execution_plan(
             regenie_config=regenie_config,
             plan=plan,
             phenotype_run_plan=phenotype_run_plan,
-            final_parquet_path=final_parquet_path,
+            final_output_path=final_output_path,
         )
-        for phenotype_run_plan, final_parquet_path in zip(
+        for phenotype_run_plan, final_output_path in zip(
             plan.phenotype_run_plans,
-            final_parquet_paths,
+            final_output_paths,
             strict=True,
         )
     )
@@ -703,7 +705,7 @@ def finalize_phenotype_run(
     regenie_config: config.RegenieConfig,
     plan: execution_plan.RegenieExecutionPlan,
     phenotype_run_plan: execution_plan.PhenotypeRunPlan,
-    final_parquet_path: Path | None,
+    final_output_path: Path | None,
 ) -> RunArtifacts:
     """Build artifacts for one phenotype."""
     del regenie_config
@@ -712,10 +714,17 @@ def finalize_phenotype_run(
         if plan.output_plan.output_format == types.OutputFormat.PARQUET
         else None
     )
+    final_parquet_path = None
+    final_regenie_path = None
+    if plan.output_plan.output_format == types.OutputFormat.REGENIE:
+        final_regenie_path = final_output_path
+    else:
+        final_parquet_path = final_output_path
     return RunArtifacts(
         output_run_directory=phenotype_run_plan.output_run_paths.run_directory,
         final_dataset=final_dataset,
         final_parquet=final_parquet_path,
+        final_regenie=final_regenie_path,
         effective_config=phenotype_run_plan.effective_config_path,
     )
 

@@ -70,6 +70,24 @@ uv run g regenie \
 
 Approximate Firth is implemented but numerically sensitive. Use equivalent statistical modes when comparing results against upstream REGENIE.
 
+## REGENIE Text Output
+
+Use `--g-output-format regenie` to write a REGENIE Step 2-compatible
+tab-separated `final.regenie` file for workflow compatibility:
+
+```bash
+uv run g regenie \
+  --step 2 \
+  --qt \
+  --bgen data/1kg_chr22_full.bgen \
+  --sample data/1kg_chr22_full.sample \
+  --phenoFile data/pheno_cont.txt \
+  --phenoCol phenotype_continuous \
+  --pred data/baselines/regenie_step1_qt_pred.list \
+  --out data/example_regenie2_text \
+  --g-output-format regenie
+```
+
 ## Direct Executable
 
 The direct console script is also available:

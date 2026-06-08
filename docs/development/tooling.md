@@ -117,6 +117,14 @@ sweeps, fallback-density scenarios, binary trait-count sweeps, Firth batch-size
 sweeps, Firth candidate-capacity sweeps, stage timing mode, and explicit JAX
 cache paths.
 
+The JSON summary includes `binary_diagnostics_by_case`, keyed by benchmark case
+and mode. Exact stage-timing runs persist candidate counts, Firth outcome
+counts, failure-code counts, correction branch and attempt counts, sparse/dense
+correction counts, Firth iteration summaries, code label values, and the
+available stage timing metadata used to interpret them. Throughput runs with
+`telemetry.stage_timing_mode=off` still emit the same diagnostic object, but
+mark it unavailable and set diagnostic counts to `null`.
+
 `tooling.cli.benchmark_output_stages`
 
 Benchmarks output-stage behavior across bsize, phenotype count, writer threads,

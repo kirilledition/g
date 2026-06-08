@@ -15,6 +15,7 @@ Arrow/Parquet output.
 - BGEN 1.2 input with Oxford `.sample` metadata.
 - TOML, CLI, and Python entry points normalized into `RegenieConfig`.
 - Arrow chunk output and final Parquet materialization.
+- REGENIE-compatible Step 2 text output through `--g-output-format regenie`.
 - Runtime telemetry, progress logging, profile summaries, and trace mode.
 
 ## Not Yet Supported
@@ -23,15 +24,14 @@ Arrow/Parquet output.
 - SPA.
 - Exact Firth without `--approx`.
 - BED/PGEN input.
-- REGENIE-compatible text output.
 - Full public support for all REGENIE Step 2 flags.
 
 ## Tracked Follow-Ups
 
 Roadmap work should be tracked in Linear rather than as unchecked tasks in this
-file. The current docs-task audit generated focused follow-ups for
-REGENIE-compatible text output, packed8 custom-kernel profiling, trace-mode
-event caps, and binary benchmark diagnostics. See
+file. The current docs-task audit generated focused follow-ups for packed8
+custom-kernel profiling, trace-mode event caps, and binary benchmark
+diagnostics. See
 [Agent Learning](../scratchpad/agent-learning.md) for the audit summary and Linear links.
 
 ## Performance Direction

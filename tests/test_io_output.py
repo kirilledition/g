@@ -120,6 +120,8 @@ def write_native_chunks(
     output_format: types.OutputFormat = types.OutputFormat.ARROW,
     extra_code_value: int | None = None,
 ) -> None:
+    if output_format == types.OutputFormat.REGENIE and not output.get_run_manifest_path(output_run_paths).exists():
+        output.write_run_manifest(output_run_paths, {"committed_chunks": []})
     writer_session = output.create_output_writer_session(
         output_run_paths,
         association_mode,
@@ -261,6 +263,13 @@ def test_resolve_output_run_paths_appends_mode_suffix(tmp_path: Path) -> None:
         types.OutputFormat.ARROW,
     )
     assert arrow_run_paths.chunks_directory == tmp_path / "results/output.regenie2_linear.run/chunks"
+
+    regenie_run_paths = output.resolve_output_run_paths(
+        tmp_path / "results/output",
+        AssociationMode.REGENIE2_LINEAR,
+        types.OutputFormat.REGENIE,
+    )
+    assert regenie_run_paths.chunks_directory == tmp_path / "results/output.regenie2_linear.run/regenie"
 
 
 def test_output_manifest_helpers_cover_empty_paths_and_invalid_json(tmp_path: Path) -> None:
@@ -476,6 +485,91 @@ def test_native_writer_writes_parquet_dataset_parts_with_footer_metadata(tmp_pat
             "variant_stop_index": 4,
         },
     ]
+
+
+def test_native_writer_writes_regenie_text_parts_and_final_output(tmp_path: Path) -> None:
+    current_header = build_test_header(tmp_path, output_format=types.OutputFormat.REGENIE)
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        output_format=types.OutputFormat.REGENIE,
+        resume=False,
+    )
+    initialize_test_output_run(prepared_output_run, current_header)
+
+    write_native_chunks(
+        prepared_output_run.output_run_paths,
+        AssociationMode.REGENIE2_LINEAR,
+        output_format=types.OutputFormat.REGENIE,
+    )
+
+    part_paths = output.iter_sorted_chunk_file_paths(prepared_output_run.output_run_paths.chunks_directory)
+    assert [part_path.name for part_path in part_paths] == ["part_000000000_000000002.regenie"]
+    part_lines = part_paths[0].read_text(encoding="utf-8").splitlines()
+    assert part_lines[0].split("\t") == EXPECTED_FINAL_COLUMNS
+    part_rows = [line.split("\t") for line in part_lines[1:]]
+    assert len(part_rows) == 4
+    assert {row[8] for row in part_rows} == {"ADD"}
+    assert {row[9] for row in part_rows} == {"0.1"}
+    assert {row[10] for row in part_rows} == {"0.01"}
+    assert {row[11] for row in part_rows} == {"10"}
+    assert {row[12] for row in part_rows} == {"5"}
+    assert {row[13] for row in part_rows} == {"NA"}
+
+    final_regenie_path = prepared_output_run.output_run_paths.run_directory / "final.regenie"
+    assert final_regenie_path.exists()
+    assert final_regenie_path.read_text(encoding="utf-8").splitlines() == part_lines
+    sidecar = json.loads(part_paths[0].with_suffix(".regenie.json").read_text(encoding="utf-8"))
+    assert [chunk["output_format"] for chunk in sidecar] == ["regenie", "regenie"]
+
+    manifest = output.load_run_manifest(prepared_output_run.output_run_paths)
+    assert manifest is not None
+    assert manifest["finalized"] is True
+    assert manifest["final_output_format"] == "regenie"
+    assert manifest["final_regenie"] == str(final_regenie_path)
+    assert manifest["final_row_count"] == 4
+
+    resumed_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_LINEAR,
+        output_format=types.OutputFormat.REGENIE,
+        resume=True,
+        resume_mode=types.ResumeMode.STRICT,
+    )
+    initialized_output_run = initialize_test_output_run(
+        resumed_output_run,
+        current_header,
+        resume=True,
+        resume_mode=types.ResumeMode.STRICT,
+    )
+    assert initialized_output_run.committed_chunk_identifiers == frozenset({0, 2})
+
+
+def test_native_binary_writer_writes_regenie_text_extra_labels(tmp_path: Path) -> None:
+    current_header = build_test_header(
+        tmp_path,
+        association_mode=AssociationMode.REGENIE2_BINARY,
+        output_format=types.OutputFormat.REGENIE,
+    )
+    prepared_output_run = output.prepare_output_run(
+        output_root=tmp_path / "output",
+        association_mode=AssociationMode.REGENIE2_BINARY,
+        output_format=types.OutputFormat.REGENIE,
+        resume=False,
+    )
+    initialize_test_output_run(prepared_output_run, current_header)
+
+    write_native_chunks(
+        prepared_output_run.output_run_paths,
+        AssociationMode.REGENIE2_BINARY,
+        output_format=types.OutputFormat.REGENIE,
+        extra_code_value=types.BinaryExtraCode.TEST_FAIL.value,
+    )
+
+    final_regenie_path = prepared_output_run.output_run_paths.run_directory / "final.regenie"
+    final_rows = [line.split("\t") for line in final_regenie_path.read_text(encoding="utf-8").splitlines()[1:]]
+    assert len(final_rows) == 4
+    assert {row[13] for row in final_rows} == {"TEST_FAIL"}
 
 
 def test_native_writer_records_output_stage_timings_when_requested(tmp_path: Path) -> None:

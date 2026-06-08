@@ -43,6 +43,8 @@ def print_success_message(artifacts: api.RunArtifacts) -> None:
             click.echo(f"Parquet dataset saved to {artifacts.final_dataset}")
         if artifacts.final_parquet is not None:
             click.echo(f"Finalized Parquet saved to {artifacts.final_parquet}")
+        if artifacts.final_regenie is not None:
+            click.echo(f"REGENIE text output saved to {artifacts.final_regenie}")
         return
     click.echo("Success. Run completed.")
 

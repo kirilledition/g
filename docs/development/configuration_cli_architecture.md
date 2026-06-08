@@ -90,7 +90,9 @@ g regenie \
   --out results/disease
 ```
 
-`g` currently outputs Parquet/Arrow run artifacts rather than REGENIE text by default. Output format is the main intentional user-visible difference from REGENIE.
+`g` defaults to Parquet/Arrow run artifacts for throughput. Users can select
+REGENIE Step 2-compatible text with `--g-output-format regenie` when workflow
+compatibility is more important than output throughput.
 
 ### 1.2 Supported REGENIE-style flags
 
@@ -172,6 +174,7 @@ Examples:
 --g-jax-cache-dir /scratch/$USER/g-jax-cache
 --g-jax-persistent-cache
 --g-output-format parquet
+--g-output-format regenie
 --g-writer-threads 8
 --g-writer-queue-depth 16
 --g-output-chunks-per-arrow-file 16
@@ -279,6 +282,7 @@ jax-persistent-cache = true
 
 [g.output]
 format = "parquet"
+# or format = "regenie" for REGENIE-compatible text
 writer-threads = 8
 writer-queue-depth = 16
 chunks-per-arrow-file = 16

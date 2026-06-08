@@ -64,6 +64,8 @@ data/example_regenie2.g/
 
 Binary runs use `.regenie2_binary.run`. Arrow chunk output uses a `chunks/` directory; Parquet output uses `parts/`. Optional finalization writes a final Parquet artifact when enabled.
 
+Set `--g-output-format regenie` to write REGENIE-compatible text output. Text runs use a `regenie/` directory for tab-separated `.regenie` parts and always write `final.regenie` in the run directory at successful finish. The text parts are plain association tables; strict resume metadata is stored in adjacent native sidecar files.
+
 ## Result Fields
 
 The final table follows REGENIE Step 2-style association fields:
@@ -73,7 +75,13 @@ CHROM, GENPOS, ID, ALLELE0, ALLELE1, A1FREQ, INFO, N,
 TEST, BETA, SE, CHISQ, LOG10P, EXTRA
 ```
 
-`BETA`, `SE`, `CHISQ`, and `LOG10P` are persisted as `float32` in Arrow and Parquet outputs. `EXTRA` is null for ordinary successful rows and `TEST_FAIL` for failed binary correction/statistic rows.
+`BETA`, `SE`, `CHISQ`, and `LOG10P` are persisted from the public `float32` result buffers in Arrow, Parquet, and REGENIE text outputs. In Arrow and Parquet, `EXTRA` is null for ordinary successful rows and `TEST_FAIL` for failed binary correction/statistic rows. In REGENIE text output, null values are written as `NA`.
+
+Compatibility limits:
+
+- Text output is REGENIE Step 2-style association output only; `g` still does not implement REGENIE Step 1.
+- Text output uses the existing supported BGEN Step 2 inputs and does not add BED or PGEN input support.
+- Arrow and Parquet remain the performance-oriented formats; REGENIE text is intended for workflow compatibility.
 
 ## Resume and Reproducibility
 

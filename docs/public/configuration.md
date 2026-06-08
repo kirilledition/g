@@ -95,4 +95,8 @@ constrained by it.
 | `[g.output]` | Writer, format, finalization, and resume settings |
 | `[g.diagnostics]` | Telemetry, logging, progress, and trace settings |
 
+`[g.output].format` accepts `parquet` (default), `arrow`, or `regenie`. Use
+`regenie` for REGENIE Step 2-compatible tab-separated text output with a
+`final.regenie` artifact.
+
 For implementation details behind the configuration model, see [Configuration and CLI Architecture](../development/configuration_cli_architecture.md).
