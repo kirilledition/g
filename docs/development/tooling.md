@@ -137,6 +137,17 @@ Runs the deep landau profiling campaign for original REGENIE and `g` REGENIE
 step 2. It includes BGEN pre-sweeps, candidate tuning, headline trials,
 optional perf/py-spy/cProfile/JAX trace runs, and a smoke mode.
 
+`scripts/benchmark_regenie2_linear_fresh_process.py`
+
+Benchmarks quantitative REGENIE step 2 startup behavior. By default it measures
+fresh Python child-process wall time, including interpreter startup, imports,
+JAX backend setup, and the run itself. Pass `--same-process-trials` to append a
+hot same-process section to the JSON report, `--multi-phenotype-count` to
+generate cloned quantitative traits for amortization measurements, and
+`--emit-stage-timings` to write per-trial stage timing JSON. Same-process trials
+disable telemetry output so repeated runs can share one process-global logging
+configuration.
+
 `tooling.cli.run_regenie2_matrix`
 
 Runs the standard chromosome binary and linear REGENIE step 2 comparison matrix:
@@ -767,6 +778,45 @@ uv run --no-sync python -m tooling.cli.profile_regenie2_deep \
   tool.smoke=true \
   tool.variant_limit=1000
 ```
+
+### Quantitative Startup Amortization
+
+Use the linear fresh-process script when a profile shows quantitative Step 2 is
+dominated by one-time Python or JAX backend startup. The deep profiler's headline
+trials are isolated subprocesses; this is the right baseline for separate CLI
+invocations, but it overstates repeated Python API workflows and batched
+multi-phenotype runs.
+
+Run CPU checks on a CPU compute node and GPU checks through `landau`:
+
+```bash
+uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py \
+  --device cpu \
+  --data-dir /mnt/beegfs/kirill/Projects/g/data \
+  --output-dir data/benchmarks/linear_startup_cpu \
+  --trials 3 \
+  --same-process-trials 3 \
+  --emit-stage-timings
+
+just slurm-gpu-run 'uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --data-dir /mnt/beegfs/kirill/Projects/g/data --output-dir data/benchmarks/linear_startup_gpu --trials 3 --same-process-trials 3 --emit-stage-timings'
+```
+
+Use `--multi-phenotype-count N` when the question is whether one process can do
+more useful work per BGEN decode/JAX initialization. The generated phenotype and
+prediction-list inputs live under the benchmark output directory and are for
+timing only; do not use cloned traits as scientific evidence.
+
+Interpretation:
+
+- Fresh-process wall time includes import, JAX plugin discovery, backend
+  initialization, dynamic library loading, BGEN delivery, compute, and output.
+- Same-process hot trials reuse Python imports, compatible JAX runtime policy,
+  and process-global native runtime setup. Their stage timings should show
+  `jax_device_configuration_backend_init` near zero after warmup.
+- Multi-phenotype timing is only a valid production recommendation when the
+  requested sample mode matches the user's intended statistics. `complete-case`
+  can batch traits on one shared sample intersection, but it is not equivalent
+  to separate per-phenotype scans when missingness differs.
 
 ### GPU Tuning
 

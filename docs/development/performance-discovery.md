@@ -78,6 +78,22 @@ Keep profile, benchmark, and trace artifacts under ignored paths such as
    allocation site, synchronization point, or benchmark group. If the signal
    only says "the command is slow", keep the finding in discovery notes.
 
+   For startup findings, separate first-process costs from amortizable costs.
+   Python imports, JAX plugin discovery, backend initialization, and dynamic
+   library loading are unavoidable for a fresh Python process. Before proposing
+   import or backend changes, include either a same-process hot measurement or a
+   multi-phenotype measurement that shows the cost still matters after users can
+   batch work in one process. Use
+   `scripts/benchmark_regenie2_linear_fresh_process.py --same-process-trials`
+   for quantitative Step 2 startup questions.
+
+   GLA-43 measured this on 2026-06-09: fresh CPU median was 15.77s versus
+   6.79s for hot same-process CPU, and fresh GPU median was 22.51s versus
+   2.14s for hot same-process GPU. The production decision was to keep backend
+   validation intact and prefer batching/repeated API calls in one process over
+   import-boundary cleanup unless a future profile remains slow after this
+   amortization.
+
 4. Propose the smallest plausible change.
    Describe one implementation direction, the files likely to change, expected
    benefit, and known risks. Do not bundle adjacent cleanup or broader rewrites.

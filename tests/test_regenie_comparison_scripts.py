@@ -879,6 +879,63 @@ def test_fresh_process_benchmark_parser_accepts_output_writer_options() -> None:
     assert arguments.output_writer_thread_count == 2
 
 
+def test_fresh_process_benchmark_generates_multi_phenotype_inputs(tmp_path: Path) -> None:
+    data_directory = tmp_path / "data"
+    baseline_directory = data_directory / "baselines"
+    baseline_directory.mkdir(parents=True)
+    (data_directory / "pheno_cont.txt").write_text(
+        "FID\tIID\tphenotype_continuous\nF1\tI1\t1.5\nF2\tI2\t2.5\n",
+        encoding="utf-8",
+    )
+    (baseline_directory / "shared.loco").write_text("FID_IID F1_I1 F2_I2\n22 0.1 0.2\n", encoding="utf-8")
+    (baseline_directory / "regenie_step1_qt_pred.list").write_text(
+        "phenotype_continuous shared.loco\n",
+        encoding="utf-8",
+    )
+
+    benchmark_inputs = fresh_process_benchmark.prepare_benchmark_inputs(
+        data_directory=data_directory,
+        output_directory=tmp_path / "output",
+        phenotype_count=2,
+    )
+
+    assert benchmark_inputs.phenotype_names == ("phenotype_continuous_1", "phenotype_continuous_2")
+    assert benchmark_inputs.phenotype_path.read_text(encoding="utf-8") == (
+        "FID\tIID\tphenotype_continuous_1\tphenotype_continuous_2\nF1\tI1\t1.5\t1.5\nF2\tI2\t2.5\t2.5\n"
+    )
+    assert benchmark_inputs.prediction_list_path.read_text(encoding="utf-8") == (
+        f"phenotype_continuous_1 {baseline_directory / 'shared.loco'}\n"
+        f"phenotype_continuous_2 {baseline_directory / 'shared.loco'}\n"
+    )
+
+
+def test_fresh_process_benchmark_child_command_wires_multi_phenotype_options(tmp_path: Path) -> None:
+    benchmark_inputs = fresh_process_benchmark.BenchmarkInputs(
+        bgen_path=tmp_path / "input.bgen",
+        sample_path=tmp_path / "input.sample",
+        phenotype_path=tmp_path / "phenotypes.tsv",
+        phenotype_names=("trait_a", "trait_b"),
+        covariate_path=tmp_path / "covariates.tsv",
+        prediction_list_path=tmp_path / "pred.list",
+    )
+
+    command_arguments = fresh_process_benchmark.build_child_command(
+        benchmark_inputs=benchmark_inputs,
+        output_path=tmp_path / "out",
+        device="gpu",
+        chunk_size=2048,
+        finalize_parquet=True,
+        output_writer_thread_count=4,
+        stage_timing_path=tmp_path / "stage.json",
+        multi_phenotype_sample_mode="complete-case",
+    )
+    child_code = command_arguments[2]
+
+    assert "'phenoColList': 'trait_a,trait_b'" in child_code
+    assert "'g-multi-phenotype-sample-mode': 'complete-case'" in child_code
+    assert "'g-stage-timings-json':" in child_code
+
+
 def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
     trial_results = [
         fresh_process_benchmark.TrialResult(
@@ -911,6 +968,52 @@ def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
     assert summary.mean_rows_per_second == 75.0
     assert summary.mean_chunk_bytes == 1536.0
     assert summary.mean_final_parquet_bytes == 768.0
+
+
+def test_fresh_process_benchmark_summary_tracks_startup_fields() -> None:
+    trial_results = [
+        fresh_process_benchmark.TrialResult(
+            trial_index=0,
+            wall_time_seconds=4.0,
+            output_path="out0",
+            output_row_count=100,
+            chunk_file_count=1,
+            chunk_bytes=128,
+            final_parquet_bytes=64,
+            mode="fresh_process",
+            phenotype_count=2,
+            child_wall_time_seconds=3.0,
+            stage_timing_path="stage0.json",
+        ),
+        fresh_process_benchmark.TrialResult(
+            trial_index=1,
+            wall_time_seconds=2.0,
+            output_path="out1",
+            output_row_count=100,
+            chunk_file_count=1,
+            chunk_bytes=128,
+            final_parquet_bytes=64,
+            mode="fresh_process",
+            phenotype_count=2,
+            child_wall_time_seconds=1.0,
+            stage_timing_path="stage1.json",
+        ),
+    ]
+
+    summary = fresh_process_benchmark.build_summary(
+        device="gpu",
+        chunk_size=2048,
+        finalize_parquet=True,
+        output_writer_thread_count=4,
+        warmup_count=1,
+        trial_results=trial_results,
+        mode="fresh_process",
+        phenotype_count=2,
+    )
+
+    assert summary.phenotype_count == 2
+    assert summary.mean_child_wall_time_seconds == 2.0
+    assert summary.stage_timing_paths == ["stage0.json", "stage1.json"]
 
 
 def test_binary_hot_benchmark_defaults_to_comparable_modes() -> None:

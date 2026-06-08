@@ -568,10 +568,13 @@ GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
 
 - Inputs: installed perf extension, GPU access, fresh-process benchmark script
   inputs.
-- Output: REGENIE step 2 fresh-process GPU benchmark report.
-- Use when: measuring older linear fresh-process behavior. This recipe still
+- Output: REGENIE step 2 fresh-process GPU benchmark report. The underlying
+  script also accepts `--same-process-trials`, `--multi-phenotype-count`, and
+  `--emit-stage-timings` when run directly for startup-amortization studies.
+- Use when: measuring linear quantitative startup behavior. The recipe still
   uses a `scripts/` entrypoint rather than the new Hydra-backed `tooling/`
-  interface.
+  interface; run it through `just slurm-gpu-run` for custom same-process
+  options on `landau`.
 
 ### `benchmark-regenie2-linear-fresh-gpu-parquet`
 
