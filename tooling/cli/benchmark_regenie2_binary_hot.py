@@ -43,6 +43,30 @@ DEFAULT_PHENOTYPE_COLUMNS = ("phenotype_binary",)
 DEFAULT_LOW_FALLBACK_P_THRESHOLD = 1.0e-8
 DEFAULT_HIGH_FALLBACK_P_THRESHOLD = 0.999999
 ENABLE_XLA_AUTOTUNE_CACHE = os.environ.get("G_PROFILE_ENABLE_XLA_AUTOTUNE_CACHE") == "1"
+BINARY_DIAGNOSTIC_UNAVAILABLE_EXACT_TIMING_DISABLED = "exact_stage_timings_disabled"
+BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_MISSING = "stage_timing_file_missing"
+BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_INVALID = "stage_timing_file_invalid"
+BINARY_DIAGNOSTIC_UNAVAILABLE_BINARY_DIAGNOSTICS_MISSING = "binary_chunk_diagnostics_missing"
+BINARY_DIAGNOSTIC_UNAVAILABLE_BINARY_DIAGNOSTICS_INVALID = "binary_chunk_diagnostics_invalid"
+BINARY_DIAGNOSTIC_COUNT_FIELDS = (
+    "score_test_candidate_count",
+    "firth_candidate_count",
+    "firth_converged_count",
+    "firth_failed_count",
+    "firth_numerical_failure_count",
+    "firth_max_iteration_failure_count",
+    "firth_invalid_statistic_failure_count",
+    "firth_step_halving_failure_count",
+    "pseudo_firth_attempt_count",
+    "pseudo_firth_success_count",
+    "nr_zero_start_attempt_count",
+    "nr_zero_start_success_count",
+    "nr_warm_start_attempt_count",
+    "nr_warm_start_success_count",
+    "sparse_correction_count",
+    "dense_correction_count",
+)
+BINARY_STAGE_TIMING_MAPPING_FIELDS = ("stage_totals_seconds", "stage_counts", "derived_metrics")
 
 
 class BenchmarkMode(enum.StrEnum):
@@ -1128,6 +1152,279 @@ def build_headline_for_results(trial_results: list[TrialResult]) -> dict[str, fl
     }
 
 
+def binary_code_values_to_json_dict() -> dict[str, dict[str, int]]:
+    """Build stable binary/Firth code label mappings."""
+    return {
+        "binary_extra": {
+            binary_extra_code.name.lower(): int(binary_extra_code.value) for binary_extra_code in types.BinaryExtraCode
+        },
+        "firth_failure": {
+            firth_failure_code.name.lower(): int(firth_failure_code.value)
+            for firth_failure_code in types.FirthFailureCode
+        },
+        "firth_correction": {
+            firth_correction_code.name.lower(): int(firth_correction_code.value)
+            for firth_correction_code in types.FirthCorrectionCode
+        },
+    }
+
+
+def empty_binary_diagnostic_counts() -> dict[str, typing.Any]:
+    """Build explicit null-valued binary diagnostic count fields."""
+    return {
+        "candidate_counts": {
+            "score_test": None,
+            "firth": None,
+        },
+        "firth_outcome_counts": {
+            "converged": None,
+            "failed": None,
+        },
+        "failure_code_counts": {
+            "none": None,
+            "numerical": None,
+            "max_iterations": None,
+            "invalid_statistic": None,
+            "step_halving": None,
+        },
+        "correction_branch_counts": {
+            "pseudo_firth": None,
+            "newton_raphson_zero_start": None,
+            "newton_raphson_warm_start": None,
+        },
+        "correction_attempt_counts": {
+            "pseudo_firth": None,
+            "newton_raphson_zero_start": None,
+            "newton_raphson_warm_start": None,
+        },
+        "correction_input_counts": {
+            "sparse": None,
+            "dense": None,
+        },
+        "firth_iteration_counts": {
+            "minimum": None,
+            "median_per_chunk_mean": None,
+            "maximum": None,
+        },
+    }
+
+
+def unavailable_binary_diagnostics_to_json_dict(
+    *,
+    stage_timing_path: str | None,
+    stage_timing_mode: StageTimingMode,
+    reason: str,
+) -> dict[str, typing.Any]:
+    """Build an explicit unavailable binary diagnostic payload."""
+    return {
+        "available": False,
+        "reason": reason,
+        "stage_timing_path": stage_timing_path,
+        "stage_timing_mode": stage_timing_mode.value,
+        "chunk_count": None,
+        **empty_binary_diagnostic_counts(),
+        "code_values": binary_code_values_to_json_dict(),
+        "stage_totals_seconds": None,
+        "stage_counts": None,
+        "derived_metrics": None,
+    }
+
+
+def numeric_diagnostic_value(raw_value: typing.Any) -> float:
+    """Convert a stage-timing diagnostic value into a numeric value."""
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
+        return 0.0
+    return float(raw_value)
+
+
+def sum_binary_diagnostic_count(binary_chunk_diagnostics: list[dict[str, typing.Any]], field_name: str) -> int:
+    """Sum one integer diagnostic field across binary chunks."""
+    return int(
+        sum(numeric_diagnostic_value(diagnostics.get(field_name, 0)) for diagnostics in binary_chunk_diagnostics)
+    )
+
+
+def mean_binary_diagnostic_value(binary_chunk_diagnostics: list[dict[str, typing.Any]], field_name: str) -> float:
+    """Average one diagnostic field across chunks."""
+    if not binary_chunk_diagnostics:
+        return 0.0
+    total = sum(numeric_diagnostic_value(diagnostics.get(field_name, 0)) for diagnostics in binary_chunk_diagnostics)
+    return total / len(binary_chunk_diagnostics)
+
+
+def active_firth_iteration_values(
+    binary_chunk_diagnostics: list[dict[str, typing.Any]],
+    field_name: str,
+) -> list[float]:
+    """Return a per-chunk Firth iteration field for chunks with candidates."""
+    return [
+        numeric_diagnostic_value(diagnostics.get(field_name, 0))
+        for diagnostics in binary_chunk_diagnostics
+        if numeric_diagnostic_value(diagnostics.get("firth_candidate_count", 0)) > 0.0
+    ]
+
+
+def mapping_or_none(raw_value: typing.Any) -> dict[str, typing.Any] | None:
+    """Return a JSON object when available."""
+    if isinstance(raw_value, dict):
+        return typing.cast("dict[str, typing.Any]", raw_value)
+    return None
+
+
+def build_available_binary_diagnostics_to_json_dict(
+    *,
+    stage_timing_payload: dict[str, typing.Any],
+    stage_timing_path: str,
+    stage_timing_mode: StageTimingMode,
+    binary_chunk_diagnostics: list[dict[str, typing.Any]],
+) -> dict[str, typing.Any]:
+    """Build aggregate binary diagnostics from exact stage timing payloads."""
+    diagnostic_counts = {
+        field_name: sum_binary_diagnostic_count(binary_chunk_diagnostics, field_name)
+        for field_name in BINARY_DIAGNOSTIC_COUNT_FIELDS
+    }
+    non_none_failure_count = (
+        diagnostic_counts["firth_numerical_failure_count"]
+        + diagnostic_counts["firth_max_iteration_failure_count"]
+        + diagnostic_counts["firth_invalid_statistic_failure_count"]
+        + diagnostic_counts["firth_step_halving_failure_count"]
+    )
+    minimum_iteration_values = active_firth_iteration_values(binary_chunk_diagnostics, "firth_iteration_min")
+    maximum_iteration_values = active_firth_iteration_values(binary_chunk_diagnostics, "firth_iteration_max")
+    stage_timing_mappings = {
+        field_name: mapping_or_none(stage_timing_payload.get(field_name))
+        for field_name in BINARY_STAGE_TIMING_MAPPING_FIELDS
+    }
+    return {
+        "available": True,
+        "reason": None,
+        "stage_timing_path": stage_timing_path,
+        "stage_timing_mode": stage_timing_mode.value,
+        "chunk_count": len(binary_chunk_diagnostics),
+        "candidate_counts": {
+            "score_test": diagnostic_counts["score_test_candidate_count"],
+            "firth": diagnostic_counts["firth_candidate_count"],
+        },
+        "firth_outcome_counts": {
+            "converged": diagnostic_counts["firth_converged_count"],
+            "failed": diagnostic_counts["firth_failed_count"],
+        },
+        "failure_code_counts": {
+            "none": max(diagnostic_counts["firth_candidate_count"] - non_none_failure_count, 0),
+            "numerical": diagnostic_counts["firth_numerical_failure_count"],
+            "max_iterations": diagnostic_counts["firth_max_iteration_failure_count"],
+            "invalid_statistic": diagnostic_counts["firth_invalid_statistic_failure_count"],
+            "step_halving": diagnostic_counts["firth_step_halving_failure_count"],
+        },
+        "correction_branch_counts": {
+            "pseudo_firth": diagnostic_counts["pseudo_firth_success_count"],
+            "newton_raphson_zero_start": diagnostic_counts["nr_zero_start_success_count"],
+            "newton_raphson_warm_start": diagnostic_counts["nr_warm_start_success_count"],
+        },
+        "correction_attempt_counts": {
+            "pseudo_firth": diagnostic_counts["pseudo_firth_attempt_count"],
+            "newton_raphson_zero_start": diagnostic_counts["nr_zero_start_attempt_count"],
+            "newton_raphson_warm_start": diagnostic_counts["nr_warm_start_attempt_count"],
+        },
+        "correction_input_counts": {
+            "sparse": diagnostic_counts["sparse_correction_count"],
+            "dense": diagnostic_counts["dense_correction_count"],
+        },
+        "firth_iteration_counts": {
+            "minimum": min(minimum_iteration_values) if minimum_iteration_values else 0,
+            "median_per_chunk_mean": mean_binary_diagnostic_value(binary_chunk_diagnostics, "firth_iteration_median"),
+            "maximum": max(maximum_iteration_values) if maximum_iteration_values else 0,
+        },
+        "code_values": binary_code_values_to_json_dict(),
+        "stage_totals_seconds": stage_timing_mappings["stage_totals_seconds"],
+        "stage_counts": stage_timing_mappings["stage_counts"],
+        "derived_metrics": stage_timing_mappings["derived_metrics"],
+    }
+
+
+def load_stage_timing_payload(stage_timing_path: Path) -> dict[str, typing.Any] | None:
+    """Load one exact stage timing JSON payload."""
+    try:
+        raw_payload = json.loads(stage_timing_path.read_text(encoding="utf-8"))
+    except OSError, json.JSONDecodeError:
+        return None
+    if not isinstance(raw_payload, dict):
+        return None
+    return typing.cast("dict[str, typing.Any]", raw_payload)
+
+
+def build_binary_diagnostics_for_trial_result(
+    *,
+    configuration: BenchmarkConfiguration,
+    trial_result: TrialResult,
+) -> dict[str, typing.Any]:
+    """Build the durable binary diagnostic payload for one trial."""
+    if trial_result.stage_timing_path is None:
+        return unavailable_binary_diagnostics_to_json_dict(
+            stage_timing_path=None,
+            stage_timing_mode=configuration.stage_timing_mode,
+            reason=BINARY_DIAGNOSTIC_UNAVAILABLE_EXACT_TIMING_DISABLED,
+        )
+    stage_timing_path = Path(trial_result.stage_timing_path)
+    if not stage_timing_path.exists():
+        return unavailable_binary_diagnostics_to_json_dict(
+            stage_timing_path=trial_result.stage_timing_path,
+            stage_timing_mode=configuration.stage_timing_mode,
+            reason=BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_MISSING,
+        )
+    stage_timing_payload = load_stage_timing_payload(stage_timing_path)
+    if stage_timing_payload is None:
+        return unavailable_binary_diagnostics_to_json_dict(
+            stage_timing_path=trial_result.stage_timing_path,
+            stage_timing_mode=configuration.stage_timing_mode,
+            reason=BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_INVALID,
+        )
+    raw_binary_chunk_diagnostics = stage_timing_payload.get("binary_chunk_diagnostics")
+    if raw_binary_chunk_diagnostics is None:
+        return unavailable_binary_diagnostics_to_json_dict(
+            stage_timing_path=trial_result.stage_timing_path,
+            stage_timing_mode=configuration.stage_timing_mode,
+            reason=BINARY_DIAGNOSTIC_UNAVAILABLE_BINARY_DIAGNOSTICS_MISSING,
+        )
+    if not isinstance(raw_binary_chunk_diagnostics, list):
+        return unavailable_binary_diagnostics_to_json_dict(
+            stage_timing_path=trial_result.stage_timing_path,
+            stage_timing_mode=configuration.stage_timing_mode,
+            reason=BINARY_DIAGNOSTIC_UNAVAILABLE_BINARY_DIAGNOSTICS_INVALID,
+        )
+    binary_chunk_diagnostics: list[dict[str, typing.Any]] = []
+    for raw_chunk_diagnostics in raw_binary_chunk_diagnostics:
+        if not isinstance(raw_chunk_diagnostics, dict):
+            return unavailable_binary_diagnostics_to_json_dict(
+                stage_timing_path=trial_result.stage_timing_path,
+                stage_timing_mode=configuration.stage_timing_mode,
+                reason=BINARY_DIAGNOSTIC_UNAVAILABLE_BINARY_DIAGNOSTICS_INVALID,
+            )
+        binary_chunk_diagnostics.append(typing.cast("dict[str, typing.Any]", raw_chunk_diagnostics))
+    return build_available_binary_diagnostics_to_json_dict(
+        stage_timing_payload=stage_timing_payload,
+        stage_timing_path=trial_result.stage_timing_path,
+        stage_timing_mode=configuration.stage_timing_mode,
+        binary_chunk_diagnostics=binary_chunk_diagnostics,
+    )
+
+
+def build_binary_diagnostics_by_case(
+    *,
+    configuration: BenchmarkConfiguration,
+    trial_results: list[TrialResult],
+) -> dict[str, dict[str, dict[str, typing.Any]]]:
+    """Build per-case binary diagnostics keyed by benchmark mode."""
+    diagnostics_by_case: dict[str, dict[str, dict[str, typing.Any]]] = {}
+    for trial_result in trial_results:
+        case_diagnostics = diagnostics_by_case.setdefault(trial_result.benchmark_case.name, {})
+        case_diagnostics[trial_result.mode.value] = build_binary_diagnostics_for_trial_result(
+            configuration=configuration,
+            trial_result=trial_result,
+        )
+    return diagnostics_by_case
+
+
 def build_summary(
     *,
     configuration: BenchmarkConfiguration,
@@ -1148,6 +1445,10 @@ def build_summary(
             )
             for benchmark_case in build_benchmark_cases(configuration)
         },
+        "binary_diagnostics_by_case": build_binary_diagnostics_by_case(
+            configuration=configuration,
+            trial_results=trial_results,
+        ),
     }
 
 

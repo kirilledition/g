@@ -69,6 +69,29 @@ def test_binary_hot_summary_metrics_are_extracted(tmp_path: Path) -> None:
                 "hot_same_process_no_final_seconds": 8.0,
             },
         },
+        "binary_diagnostics_by_case": {
+            "traits1_variant_major_default_batch64_capacity1024": {
+                "hot_same_process_no_final": {
+                    "available": True,
+                    "reason": None,
+                    "stage_timing_path": "baseline.json",
+                    "stage_timing_mode": "exact",
+                    "chunk_count": 2,
+                    "candidate_counts": {
+                        "score_test": 8,
+                        "firth": 4,
+                    },
+                    "correction_branch_counts": {
+                        "pseudo_firth": 3,
+                        "newton_raphson_zero_start": 0,
+                        "newton_raphson_warm_start": 1,
+                    },
+                    "stage_totals_seconds": {
+                        "jax_compute": 4.0,
+                    },
+                },
+            },
+        },
         "results": [
             {
                 "name": "hot_same_process_no_final",
@@ -88,6 +111,29 @@ def test_binary_hot_summary_metrics_are_extracted(tmp_path: Path) -> None:
         "headline_by_case": {
             "traits1_variant_major_default_batch64_capacity1024": {
                 "hot_same_process_no_final_seconds": 6.0,
+            },
+        },
+        "binary_diagnostics_by_case": {
+            "traits1_variant_major_default_batch64_capacity1024": {
+                "hot_same_process_no_final": {
+                    "available": True,
+                    "reason": None,
+                    "stage_timing_path": "new.json",
+                    "stage_timing_mode": "exact",
+                    "chunk_count": 2,
+                    "candidate_counts": {
+                        "score_test": 9,
+                        "firth": 5,
+                    },
+                    "correction_branch_counts": {
+                        "pseudo_firth": 4,
+                        "newton_raphson_zero_start": 0,
+                        "newton_raphson_warm_start": 1,
+                    },
+                    "stage_totals_seconds": {
+                        "jax_compute": 3.0,
+                    },
+                },
             },
         },
         "results": [
@@ -117,6 +163,20 @@ def test_binary_hot_summary_metrics_are_extracted(tmp_path: Path) -> None:
             "output_metrics.chunk_bytes"
         ].ratio
         == 1.2
+    )
+    assert (
+        comparison_map[
+            "binary_diagnostics_by_case.traits1_variant_major_default_batch64_capacity1024."
+            "hot_same_process_no_final.candidate_counts.firth"
+        ].delta
+        == 1.0
+    )
+    assert (
+        comparison_map[
+            "binary_diagnostics_by_case.traits1_variant_major_default_batch64_capacity1024."
+            "hot_same_process_no_final.stage_totals_seconds.jax_compute"
+        ].delta
+        == -1.0
     )
 
 
