@@ -49,7 +49,13 @@ nav = [
   ] },
 ]
 extra_css = ["assets/stylesheets/g-docs.css"]
-extra_javascript = ["assets/javascripts/section-scroll.js"]
+extra_javascript = [
+  "assets/javascripts/section-scroll.js",
+  "assets/javascripts/mathjax.js",
+  "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
+  "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js",
+  "assets/javascripts/mermaid.js",
+]
 
 [project.extra]
 generator = false
