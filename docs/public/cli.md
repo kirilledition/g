@@ -14,6 +14,8 @@ uv run g regenie --help
 
 `g-regenie` is a direct executable alias for the REGENIE-compatible scan command.
 
+For the statistical meaning of these options, see [Algorithm](algorithm.md).
+
 ## Commands
 
 | Command | Purpose |

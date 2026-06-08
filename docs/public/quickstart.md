@@ -75,6 +75,9 @@ uv run g regenie \
 
 Approximate Firth is implemented but numerically sensitive. Use equivalent statistical modes when comparing results against upstream REGENIE.
 
+See [Algorithm](algorithm.md) for the quantitative, binary score-test, and
+approximate-Firth formulas behind these commands.
+
 ## GPU Execution
 
 Install the GPU dependency group first, then change the device:

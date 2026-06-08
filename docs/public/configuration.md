@@ -14,6 +14,9 @@ packaged defaults in src/g/config.default.toml
 
 An explicit CLI flag overrides both the packaged default and the TOML file.
 
+For how statistical and runtime parameters change the Step 2 algorithm, see
+[Algorithm](algorithm.md).
+
 ## Create and Validate a Config
 
 ```bash

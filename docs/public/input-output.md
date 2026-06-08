@@ -2,6 +2,9 @@
 
 This page summarizes the file contracts that are currently user-facing. Details may change while `g` is pre-release.
 
+For the mathematical use of each input and the interpretation of result
+statistics, see [Algorithm](algorithm.md).
+
 ## Genotypes
 
 - BGEN 1.2 is the active supported genotype source.
