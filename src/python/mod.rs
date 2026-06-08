@@ -29,8 +29,11 @@ mod output;
 
 use logging::{NativeTelemetrySession, initialize_logging, shutdown_logging};
 use output::{
-    OutputWriterSession, finalize_output_run_chunks, repair_strict_manifest_chunk_commits,
-    scan_committed_chunk_identifiers, validate_strict_manifest_chunks, write_regenie2_multi_native_chunk,
+    NativeInitializedOutputRun, NativeOutputRunPaths, NativePreparedOutputRun, OutputWriterSession,
+    finalize_output_run_chunks, initialize_output_run, load_run_manifest_json, prepare_output_run,
+    read_manifest_committed_chunk_identifiers, repair_strict_manifest_chunk_commits, resolve_output_run_paths,
+    scan_committed_chunk_identifiers, validate_run_manifest_compatibility, validate_strict_manifest_chunks,
+    write_regenie2_multi_native_chunk, write_run_manifest_json,
 };
 
 type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
@@ -1495,7 +1498,10 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeAlignedPhenotypeGroup>()?;
     module.add_class::<NativeAlignedSampleData>()?;
     module.add_class::<NativeGroupedAlignedSampleData>()?;
+    module.add_class::<NativeInitializedOutputRun>()?;
     module.add_class::<NativeMultiAlignedSampleData>()?;
+    module.add_class::<NativeOutputRunPaths>()?;
+    module.add_class::<NativePreparedOutputRun>()?;
     module.add_class::<OutputWriterSession>()?;
     module.add_class::<Regenie2RunEngine>()?;
     module.add_class::<RegeniePredictionSource>()?;
@@ -1503,11 +1509,18 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeTelemetrySession>()?;
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(finalize_output_run_chunks, module)?)?;
+    module.add_function(wrap_pyfunction!(initialize_output_run, module)?)?;
+    module.add_function(wrap_pyfunction!(load_run_manifest_json, module)?)?;
+    module.add_function(wrap_pyfunction!(prepare_output_run, module)?)?;
+    module.add_function(wrap_pyfunction!(read_manifest_committed_chunk_identifiers, module)?)?;
     module.add_function(wrap_pyfunction!(repair_strict_manifest_chunk_commits, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_output_run_paths, module)?)?;
     module.add_function(wrap_pyfunction!(scan_committed_chunk_identifiers, module)?)?;
     module.add_function(wrap_pyfunction!(summarize_variant_major_dosage_chunk_stats, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_run_manifest_compatibility, module)?)?;
     module.add_function(wrap_pyfunction!(validate_strict_manifest_chunks, module)?)?;
     module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;
+    module.add_function(wrap_pyfunction!(write_run_manifest_json, module)?)?;
     module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(configure_rayon_global_thread_pool, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;

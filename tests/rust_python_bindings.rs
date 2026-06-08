@@ -436,6 +436,39 @@ try:
 except ValueError:
     pass
 
+native_lifecycle_root = os.path.join(os.path.dirname(run_directory), "native-lifecycle")
+native_prepared = _core.prepare_output_run(native_lifecycle_root, "regenie2_linear", "arrow", False)
+assert native_prepared.run_directory.endswith("native-lifecycle.regenie2_linear.run")
+assert native_prepared.chunks_directory.endswith(os.path.join("native-lifecycle.regenie2_linear.run", "chunks"))
+assert native_prepared.existing_manifest_json is None
+_core.write_run_manifest_json(
+    native_prepared.run_directory,
+    '{"command":{"interface":"g regenie"},"runtime":{"device":"cpu"}}',
+)
+native_initialized = _core.initialize_output_run(
+    native_prepared.run_directory,
+    native_prepared.chunks_directory,
+    None,
+    '{"schema_version":6,"execution_plan":{"chunk_size":2},"execution_plan_hash":"hash"}',
+    False,
+    "fast",
+)
+assert native_initialized.committed_chunk_identifiers == []
+native_manifest = _core.load_run_manifest_json(native_prepared.run_directory)
+assert '"interface": "g regenie"' in native_manifest
+assert '"finalized": false' in native_manifest
+assert _core.read_manifest_committed_chunk_identifiers('{"committed_chunks":[{"chunk_identifier":5}]}') == [5]
+try:
+    _core.prepare_output_run(os.path.join(os.path.dirname(run_directory), "missing-native"), "regenie2_linear", "arrow", True)
+    raise AssertionError("native resume without manifest should fail")
+except ValueError as error:
+    assert "Resume requires run_manifest.json" in str(error)
+try:
+    _core.validate_run_manifest_compatibility('{"root":[{"a":1}]}', '{"root":[{"a":2}]}')
+    raise AssertionError("native manifest mismatch should fail")
+except ValueError as error:
+    assert "root[0].a" in str(error)
+
 writer = _core.OutputWriterSession(
     run_directory,
     chunks_directory,
