@@ -7,7 +7,7 @@ import typing
 
 
 def __getattr__(name: str) -> typing.Any:
-    """Resolve public package attributes lazily to avoid eager heavy imports."""
+    """Resolve public package attributes lazily to keep plain ``import g`` lightweight."""
     if name == "main":
         cli = importlib.import_module("g.cli")
         return cli.main

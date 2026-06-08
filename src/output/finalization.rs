@@ -365,7 +365,7 @@ fn append_regenie_text_part_rows(
 }
 
 fn validate_regenie_text_header(header_line: &str, chunk_file_path: &Path) -> Result<(), OutputWriterError> {
-    let observed_header = header_line.trim_end_matches(|character| character == '\r' || character == '\n');
+    let observed_header = header_line.trim_end_matches(['\r', '\n']);
     let expected_header = writer::REGENIE_STEP2_TEXT_HEADER.trim_end_matches('\n');
     if observed_header == expected_header {
         return Ok(());
@@ -377,7 +377,7 @@ fn validate_regenie_text_header(header_line: &str, chunk_file_path: &Path) -> Re
 }
 
 fn validate_regenie_text_row(row_line: &str, chunk_file_path: &Path) -> Result<(), OutputWriterError> {
-    let row = row_line.trim_end_matches(|character| character == '\r' || character == '\n');
+    let row = row_line.trim_end_matches(['\r', '\n']);
     if row.split('\t').count() == 14 {
         return Ok(());
     }
@@ -475,8 +475,7 @@ fn is_output_chunk_file_path(chunk_file_path: &Path, output_format: OutputFileFo
     );
     match output_format {
         OutputFileFormat::Arrow => file_name.starts_with("chunk_") && extension_matches,
-        OutputFileFormat::Parquet => file_name.starts_with("part_") && extension_matches,
-        OutputFileFormat::Regenie => file_name.starts_with("part_") && extension_matches,
+        OutputFileFormat::Parquet | OutputFileFormat::Regenie => file_name.starts_with("part_") && extension_matches,
     }
 }
 
