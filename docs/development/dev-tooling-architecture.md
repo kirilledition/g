@@ -14,7 +14,7 @@ hydra:
 
 This preserves the current repository-relative behavior of benchmark commands. Dataset paths still honor `GWAS_ENGINE_DATA_DIR`.
 
-The long-form usage and extension guide is `docs/tooling.md`.
+The long-form usage and extension guide is `docs/development/tooling.md`.
 
 The migrated benchmark and profiling commands are invoked through module execution. There is no compatibility-wrapper layer under `scripts/` for these entrypoints. Justfile recipes call the modules directly, for example:
 

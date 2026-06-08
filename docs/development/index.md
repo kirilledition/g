@@ -60,9 +60,11 @@ just docs-serve
 just docs-build
 ```
 
-When changing user-facing CLI behavior, configuration, input/output contracts, runtime behavior, performance assumptions, or deployment workflow, update the relevant page under `docs/` in the same branch. Run `just docs-build` before finishing documentation changes.
+When changing user-facing CLI behavior, configuration, input/output contracts, runtime behavior, performance assumptions, or deployment workflow, update the relevant page under `docs/public/` in the same branch. When changing development workflows or docs infrastructure, update the relevant page under `docs/development/`. Run `just docs-build` before finishing documentation changes.
 
 Generated `site/` output is local build output and is not committed.
+
+See [Documentation Operations](documentation.md) for publishing setup, theme configuration, GitHub Pages settings, and documentation workflow behavior.
 
 ## Coding Rules
 

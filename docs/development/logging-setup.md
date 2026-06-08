@@ -201,4 +201,4 @@ Open telemetry implementation work is tracked in Linear instead of this page.
 The current trace-mode safety follow-up is
 [GLA-25](https://linear.app/glaphyra/issue/GLA-25/add-bounded-trace-mode-telemetry-event-caps).
 Durable telemetry lessons from historical task notes are consolidated in
-[Agent Learning](agent-learning.md).
+[Agent Learning](../scratchpad/agent-learning.md).

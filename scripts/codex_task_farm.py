@@ -23,17 +23,17 @@ from pathlib import Path
 
 JsonObject = dict[str, typing.Any]
 
-REPO_RELATIVE_SOURCE_PATH = Path("docs/code-review.md")
-REPO_RELATIVE_MANIFEST_PATH = Path("docs/code-review.tasks.json")
+REPO_RELATIVE_SOURCE_PATH = Path("docs/scratchpad/code-review.md")
+REPO_RELATIVE_MANIFEST_PATH = Path("docs/scratchpad/code-review.tasks.json")
 REPO_RELATIVE_STATE_DIRECTORY = Path(".codex-task-worktrees")
 DEFAULT_WORKTREE_ROOT = "../g-worktrees"
 DEFAULT_INTEGRATION_WORKTREE = "../g-worktrees/integration-code-review"
 DEFAULT_INTEGRATION_BRANCH = "integration/code-review"
 DEFAULT_BRANCH_PREFIX = "codex/review-"
 DEFAULT_WORKTREE_PREFIX = "../g-worktrees/review-"
-REVIEW2_SOURCE_PATH = Path("docs/02.code-review-2-06-26.md")
-REVIEW2_MANIFEST_PATH = Path("docs/code-review-2.tasks.json")
-REVIEW2_PLAN_PATH = Path("docs/code-review-2-plan.md")
+REVIEW2_SOURCE_PATH = Path("docs/scratchpad/02.code-review-2-06-26.md")
+REVIEW2_MANIFEST_PATH = Path("docs/scratchpad/code-review-2.tasks.json")
+REVIEW2_PLAN_PATH = Path("docs/scratchpad/code-review-2-plan.md")
 REVIEW2_STATE_DIRECTORY = Path(".codex-task-worktrees/code-review-2")
 REVIEW2_BRANCH_PREFIX = "codex/review2-"
 REVIEW2_WORKTREE_PREFIX = "../g-worktrees/review2-"
@@ -1090,12 +1090,14 @@ def build_worker_prompt(task: JsonObject) -> str:
     plan_instruction = ""
     if logs:
         plan_instruction = (
-            "Do not edit shared task plans or manifests such as docs/code-review-2-plan.md or "
-            "docs/code-review-2.tasks.json. Write runtime notes only in the log paths below."
+            "Do not edit shared task plans or manifests such as "
+            "docs/scratchpad/code-review-2-plan.md or "
+            "docs/scratchpad/code-review-2.tasks.json. Write runtime notes only "
+            "in the log paths below."
         )
     return f"""You are a Codex implementation worker in a dedicated git worktree.
 
-Read AGENTS.md, docs/STYLEGUIDE.md, and Justfile before editing code.
+Read AGENTS.md, docs/development/STYLEGUIDE.md, and Justfile before editing code.
 If the worktree already contains edits, inspect them and continue from them unless they are clearly wrong.
 Implement exactly this task and keep the change narrow.
 Commit logical intermediate steps and leave a clean worktree when done.
@@ -1782,7 +1784,7 @@ def collect_doctor_checks(repository_directory: Path, manifest: JsonObject, *, s
         doctor_file_check(repository_directory, source_path),
         doctor_file_check(repository_directory, Path("Justfile")),
         doctor_file_check(repository_directory, Path("AGENTS.md")),
-        doctor_file_check(repository_directory, Path("docs/STYLEGUIDE.md")),
+        doctor_file_check(repository_directory, Path("docs/development/STYLEGUIDE.md")),
     ]
     base_branch_exists = git_branch_exists(repository_directory, base_branch)
     checks.append(
@@ -2673,7 +2675,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    sync_parser = subparsers.add_parser("sync-manifest", help="Regenerate docs/code-review.tasks.json.")
+    sync_parser = subparsers.add_parser(
+        "sync-manifest",
+        help="Regenerate docs/scratchpad/code-review.tasks.json.",
+    )
     sync_parser.add_argument(
         "--manifest",
         default=argparse.SUPPRESS,

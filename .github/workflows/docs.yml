@@ -3,8 +3,24 @@ name: Documentation
 on:
   push:
     branches: [main]
+    paths:
+      - docs/**
+      - zensical.toml
+      - pyproject.toml
+      - uv.lock
+      - Justfile
+      - .github/workflows/docs.yml
+      - "!docs/scratchpad/**"
   pull_request:
     branches: [main]
+    paths:
+      - docs/**
+      - zensical.toml
+      - pyproject.toml
+      - uv.lock
+      - Justfile
+      - .github/workflows/docs.yml
+      - "!docs/scratchpad/**"
 
 concurrency:
   group: docs-${{ github.event.pull_request.number || github.ref }}
@@ -46,8 +62,6 @@ jobs:
       - name: Configure GitHub Pages
         if: github.event_name == 'push'
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: Upload documentation artifact
         if: github.event_name == 'push'

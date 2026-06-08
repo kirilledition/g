@@ -34,7 +34,7 @@ default: help
 
 # Show available recipes and command-reference location
 help:
-    @printf 'GWAS Engine command reference: docs/justfile.md\n\n'
+    @printf 'GWAS Engine command reference: docs/development/justfile.md\n\n'
     @just --list --unsorted
 
 # --- Data Preparation ---
@@ -822,7 +822,7 @@ slurm-cpu-rust-test:
 slurm-cpu-coverage:
     {{ server_env }} && just slurm-cpu-just coverage
 
-# Generate docs/code-review.tasks.json from docs/code-review.md
+# Generate docs/scratchpad/code-review.tasks.json from docs/scratchpad/code-review.md
 codex-tasks-sync:
     {{ server_env }} && uv run python scripts/codex_task_farm.py sync-manifest
 
@@ -854,69 +854,69 @@ codex-tasks-integrate +arguments:
 codex-tasks-integrate-ready *arguments:
     {{ server_env }} && uv run python scripts/codex_task_farm.py integrate-ready {{ arguments }}
 
-# Generate docs/code-review-2.tasks.json from docs/02.code-review-2-06-26.md
+# Generate docs/scratchpad/code-review-2.tasks.json from docs/scratchpad/02.code-review-2-06-26.md
 codex-review2-sync:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py sync-manifest --source docs/02.code-review-2-06-26.md --manifest docs/code-review-2.tasks.json --plan docs/code-review-2-plan.md --state-dir .codex-task-worktrees/code-review-2 --branch-prefix codex/review2- --worktree-prefix ../g-worktrees/review2- --integration-branch integration/code-review-2 --integration-worktree ../g-worktrees/integration-code-review-2
+    {{ server_env }} && uv run python scripts/codex_task_farm.py sync-manifest --source docs/scratchpad/02.code-review-2-06-26.md --manifest docs/scratchpad/code-review-2.tasks.json --plan docs/scratchpad/code-review-2-plan.md --state-dir .codex-task-worktrees/code-review-2 --branch-prefix codex/review2- --worktree-prefix ../g-worktrees/review2- --integration-branch integration/code-review-2 --integration-worktree ../g-worktrees/integration-code-review-2
 
 # Check Review 2 task farm prerequisites
 codex-review2-doctor *arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json doctor {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json doctor {{ arguments }}
 
 # List Review 2 tasks
 codex-review2-list *arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json list {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json list {{ arguments }}
 
 # Claim Review 2 tasks without launching workers
 codex-review2-claim *arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json claim {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json claim {{ arguments }}
 
 # Launch Review 2 worker agents
 codex-review2-run *arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json run {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json run {{ arguments }}
 
 # Show Review 2 status
 codex-review2-status *arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json status {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json status {{ arguments }}
 
 # Review one or more Review 2 task branches
 codex-review2-review +arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json review {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json review {{ arguments }}
 
 # Integrate one or more reviewed Review 2 task branches
 codex-review2-integrate +arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json integrate {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json integrate {{ arguments }}
 
 # Integrate all reviewed Review 2 task branches in order
 codex-review2-integrate-ready *arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json integrate-ready {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json integrate-ready {{ arguments }}
 
 # Show Review 2 task branch diffs
 codex-review2-diff +arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json diff {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json diff {{ arguments }}
 
 # Show Review 2 runtime logs
 codex-review2-log +arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json log {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json log {{ arguments }}
 
 # Mark Review 2 tasks blocked
 codex-review2-block +arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json block {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json block {{ arguments }}
 
 # Mark Review 2 tasks abandoned
 codex-review2-abandon +arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json abandon {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json abandon {{ arguments }}
 
 # Reset stale Review 2 claims
 codex-review2-reset-claim *arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json reset-claim {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json reset-claim {{ arguments }}
 
 # Remove worktrees for integrated Review 2 tasks
 codex-review2-clean-integrated *arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json clean-integrated {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json clean-integrated {{ arguments }}
 
 # Promote Review 2 integration branch to main
 codex-review2-promote-to-main *arguments:
-    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/code-review-2.tasks.json promote-to-main {{ arguments }}
+    {{ server_env }} && uv run python scripts/codex_task_farm.py --manifest docs/scratchpad/code-review-2.tasks.json promote-to-main {{ arguments }}
 
 # Upgrade Python lockfile dependencies, including dev and GPU groups
 upgrade-python-deps:

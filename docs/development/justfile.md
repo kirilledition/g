@@ -460,7 +460,7 @@ GWAS_ENGINE_SLURM_CPUS_PER_TASK=72 \
   tool.trusted_no_missing_diploid=false
 ```
 
-Use the `Benchmark Artifact Analysis Recipes` section in `docs/tooling.md` for
+Use the `Benchmark Artifact Analysis Recipes` section in `docs/development/tooling.md` for
 the common `jq` commands that summarize manifests, old benchmark reports, hot
 benchmark summaries, profile stage timings, and JSONL progress logs.
 
@@ -946,8 +946,8 @@ automation tooling, not GWAS benchmark tooling.
 
 ### `codex-tasks-sync`
 
-- Inputs: `docs/code-review.md`.
-- Output: `docs/code-review.tasks.json`.
+- Inputs: `docs/scratchpad/code-review.md`.
+- Output: `docs/scratchpad/code-review.tasks.json`.
 - Use when: regenerating the default task manifest.
 
 ### `codex-tasks-doctor *arguments`
@@ -994,12 +994,12 @@ automation tooling, not GWAS benchmark tooling.
 
 ## Review 2 Task Farm
 
-The Review 2 recipes use `docs/code-review-2.tasks.json` and the Review 2
+The Review 2 recipes use `docs/scratchpad/code-review-2.tasks.json` and the Review 2
 state/worktree settings.
 
 ### `codex-review2-sync`
 
-- Inputs: `docs/02.code-review-2-06-26.md`.
+- Inputs: `docs/scratchpad/02.code-review-2-06-26.md`.
 - Output: Review 2 manifest, plan, state directory, branches, and worktrees.
 - Use when: regenerating Review 2 task state.
 
