@@ -9,7 +9,7 @@ import typing
 from dataclasses import dataclass
 
 from g import _core, execution_plan, types
-from g.engine import telemetry, timing
+from g.engine import run_events, shutdown, telemetry, timing
 from g.interface import config
 from g.io import output
 
@@ -19,26 +19,7 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class RunArtifacts:
-    """Immutable pointers to generated output files.
-
-    Attributes:
-        output_run_directory: Chunked output run directory.
-        final_dataset: Parquet dataset directory for part-based output.
-        final_parquet: Finalized Parquet output path.
-        final_regenie: Finalized REGENIE-compatible text output path.
-        effective_config: Written effective TOML config path.
-        phenotype_artifacts: Per-phenotype artifacts for multi-phenotype runs.
-
-    """
-
-    output_run_directory: Path | None = None
-    final_dataset: Path | None = None
-    final_parquet: Path | None = None
-    final_regenie: Path | None = None
-    effective_config: Path | None = None
-    phenotype_artifacts: tuple[RunArtifacts, ...] = ()
+RunArtifacts = run_events.RunArtifacts
 
 
 @dataclass(frozen=True)
@@ -355,23 +336,42 @@ def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
     config.validate_config(regenie_config)
     telemetry_session = telemetry.build_telemetry_session(regenie_config)
     initialize_logging(regenie_config.g_diagnostics, telemetry_session.paths)
+    association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)
+    phenotype_count = len(regenie_config.input.pheno_columns)
     telemetry_session.log_event(
         "run_started",
-        association_mode=execution_plan.resolve_association_mode(regenie_config.trait.trait_type).value,
+        association_mode=association_mode.value,
         trait_type=regenie_config.trait.trait_type.value,
-        phenotype_count=len(regenie_config.input.pheno_columns),
+        phenotype_count=phenotype_count,
         output_run_root=str(telemetry.resolve_output_run_root(regenie_config)),
     )
     logger.info("Starting REGENIE run.")
     configure_runtime(regenie_config.g_compute, regenie_config.trait)
     try:
         artifacts = run_validated_regenie_config(regenie_config, telemetry_session=telemetry_session)
-    except Exception:
-        telemetry_session.log_event("run_failed", level="error")
+    except shutdown.GracefulShutdownRequested as shutdown_request:
+        interrupted_event = run_events.build_run_interrupted_event(shutdown_request)
+        telemetry_session.log_event(
+            "run_failed",
+            level="warn",
+            **run_events.run_interrupted_telemetry_fields(interrupted_event),
+        )
+        logger.warning("REGENIE run interrupted by %s.", interrupted_event.signal_name)
+        raise
+    except Exception as error:
+        failed_event = run_events.build_run_failed_event(error)
+        telemetry_session.log_event("run_failed", level="error", **run_events.run_failed_telemetry_fields(failed_event))
         logger.exception("REGENIE run failed.")
         raise
     else:
-        telemetry_session.log_event("run_completed")
+        artifacts = run_events.attach_run_metadata(
+            artifacts,
+            run_id=telemetry_session.run_id,
+            association_mode=association_mode,
+            phenotype_count=phenotype_count,
+        )
+        completed_event = run_events.build_run_completed_event(artifacts)
+        telemetry_session.log_event("run_completed", **run_events.run_completed_telemetry_fields(completed_event))
         logger.info("Finished REGENIE run.")
         return artifacts
     finally:
@@ -694,7 +694,11 @@ def finalize_execution_plan(
     logger.info("Finalized REGENIE run artifacts for %s phenotype(s).", len(phenotype_artifacts))
     if len(phenotype_artifacts) == 1:
         return phenotype_artifacts[0]
-    return RunArtifacts(phenotype_artifacts=phenotype_artifacts)
+    return RunArtifacts(
+        phenotype_artifacts=phenotype_artifacts,
+        association_mode=plan.association_mode,
+        phenotype_count=len(phenotype_artifacts),
+    )
 
 
 def finalize_phenotype_run(
@@ -723,6 +727,9 @@ def finalize_phenotype_run(
         final_parquet=final_parquet_path,
         final_regenie=final_regenie_path,
         effective_config=phenotype_run_plan.effective_config_path,
+        phenotype_name=phenotype_run_plan.phenotype_name,
+        association_mode=plan.association_mode,
+        phenotype_count=len(plan.phenotype_run_plans),
     )
 
 

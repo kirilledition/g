@@ -53,7 +53,6 @@ Given:
 data/example_regenie2.g/
   logs/
     events.jsonl
-    progress.jsonl
   trait_0001_phenotype_continuous.regenie2_linear.run/
     parts/
       part_000000000.parquet
@@ -63,6 +62,12 @@ data/example_regenie2.g/
 ```
 
 Binary runs use `.regenie2_binary.run`. Arrow chunk output uses a `chunks/` directory; Parquet output uses `parts/`. Optional finalization writes a final Parquet artifact when enabled.
+
+The `logs/events.jsonl` stream records run lifecycle facts, throttled progress,
+and native diagnostics when telemetry is enabled. Successful `g regenie` runs
+emit a `run_completed` event with the same output run directory, final dataset,
+final Parquet or REGENIE text path, and per-phenotype artifact entries that the
+terminal success message shows.
 
 Set `--g-output-format regenie` to write REGENIE-compatible text output. Text runs use a `regenie/` directory for tab-separated `.regenie` parts and always write `final.regenie` in the run directory at successful finish. The text parts are plain association tables; strict resume metadata is stored in adjacent native sidecar files.
 
