@@ -4325,35 +4325,36 @@ def test_build_bgen_run_engine_force_validates_trusted_bgen(tmp_path: Path, monk
     assert fake_engine.validation_count == 1
 
 
-def test_load_native_bgen_run_input_rejects_non_bgen_source_suffix() -> None:
-    with np.testing.assert_raises_regex(ValueError, r"Expected a \.bgen source path"):
-        native_dispatch.load_native_bgen_run_input(
-            genotype_source_config=source.GenotypeSourceConfig(source_path=Path("study.vcf")),
-            engine=typing.cast("typing.Any", object()),
-            phenotype_path=Path("phenotype.tsv"),
-            phenotype_name="trait",
-            covariate_path=None,
-            covariate_names=None,
-            is_binary_trait=False,
+def test_bgen_source_config_rejects_non_bgen_suffix_before_engine_open() -> None:
+    with (
+        patch("g.engine.native_dispatch._core.Regenie2RunEngine") as mock_run_engine,
+        pytest.raises(ValueError, match=r"Expected a \.bgen source path"),
+    ):
+        native_dispatch.build_bgen_run_engine(
+            genotype_source_config=source.build_bgen_source_config(Path("study.vcf")),
+            chunk_size=32,
+            variant_limit=100,
         )
 
+    mock_run_engine.assert_not_called()
 
-def test_load_native_bgen_run_input_uses_rust_alignment_for_embedded_samples() -> None:
+
+def test_load_native_bgen_run_input_uses_rust_alignment_for_embedded_samples(tmp_path: Path) -> None:
     native_aligned_sample_data = build_native_aligned_sample_data()
     engine = SimpleNamespace(
         sample_count=2,
         contains_embedded_samples=True,
     )
+    genotype_source_config = source.build_bgen_source_config(tmp_path / "study.bgen")
 
     with (
-        patch("g.io.source.resolve_bgen_sample_path", return_value=None),
         patch(
             "g.engine.native_dispatch.load_native_aligned_sample_data",
             return_value=native_aligned_sample_data,
         ) as mock_load_aligned_sample_data,
     ):
         run_input = native_dispatch.load_native_bgen_run_input(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            genotype_source_config=genotype_source_config,
             engine=typing.cast("typing.Any", engine),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",
@@ -4376,16 +4377,16 @@ def test_load_native_bgen_run_input_uses_rust_sample_file_alignment() -> None:
         contains_embedded_samples=False,
     )
     sample_path = Path("study.sample")
+    genotype_source_config = source.build_bgen_source_config(Path("study.bgen"), sample_path=sample_path)
 
     with (
-        patch("g.io.source.resolve_bgen_sample_path", return_value=sample_path),
         patch(
             "g.engine.native_dispatch.load_native_aligned_sample_data",
             return_value=native_aligned_sample_data,
         ) as mock_load_aligned_sample_data,
     ):
         run_input = native_dispatch.load_native_bgen_run_input(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            genotype_source_config=genotype_source_config,
             engine=typing.cast("typing.Any", engine),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",
@@ -4397,7 +4398,7 @@ def test_load_native_bgen_run_input_uses_rust_sample_file_alignment() -> None:
     assert run_input.native_aligned_sample_data is native_aligned_sample_data
     mock_load_aligned_sample_data.assert_called_once_with(
         engine=engine,
-        sample_path=sample_path,
+        sample_path=genotype_source_config.resolved_sample_path,
         phenotype_path=Path("phenotype.tsv"),
         phenotype_name="trait",
         covariate_path=Path("covariates.tsv"),
@@ -4407,7 +4408,7 @@ def test_load_native_bgen_run_input_uses_rust_sample_file_alignment() -> None:
     )
 
 
-def test_alignment_config_reaches_native_alignment_and_prediction_source() -> None:
+def test_alignment_config_reaches_native_alignment_and_prediction_source(tmp_path: Path) -> None:
     native_aligned_sample_data = build_native_aligned_sample_data()
     alignment_config = SimpleNamespace(
         sample_key_mode=types.SampleKeyMode.FID_IID,
@@ -4416,9 +4417,9 @@ def test_alignment_config_reaches_native_alignment_and_prediction_source() -> No
         sample_count=2,
         contains_embedded_samples=True,
     )
+    genotype_source_config = source.build_bgen_source_config(tmp_path / "study.bgen")
 
     with (
-        patch("g.io.source.resolve_bgen_sample_path", return_value=None),
         patch(
             "g.engine.native_dispatch.load_native_aligned_sample_data",
             return_value=native_aligned_sample_data,
@@ -4426,7 +4427,7 @@ def test_alignment_config_reaches_native_alignment_and_prediction_source() -> No
         patch("g.engine.native_dispatch._core.RegeniePredictionSource", FakePredictionSource),
     ):
         run_input = native_dispatch.load_native_bgen_run_input(
-            genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+            genotype_source_config=genotype_source_config,
             engine=typing.cast("typing.Any", engine),
             phenotype_path=Path("phenotype.tsv"),
             phenotype_name="trait",

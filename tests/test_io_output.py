@@ -276,10 +276,13 @@ def test_output_manifest_helpers_cover_empty_paths_and_invalid_json(tmp_path: Pa
         output.load_run_manifest(output_run_paths)
 
 
-def test_manifest_mismatch_path_reports_missing_and_nested_list_differences() -> None:
-    assert output.find_first_manifest_mismatch_path({"a": 1}, {"b": 1}, "root") == "root.a"
-    assert output.find_first_manifest_mismatch_path([{"a": 1}], [{"a": 2}], "root") == "root[0].a"
-    assert output.find_first_manifest_mismatch_path([1, 2], [1], "root") == "root"
+def test_native_manifest_compatibility_reports_missing_and_nested_differences() -> None:
+    with pytest.raises(ValueError, match=r"root\.a"):
+        output.validate_manifest_compatibility({"root": {"a": 1}}, {"root": {"b": 1}})
+    with pytest.raises(ValueError, match=r"root\[0\]\.a"):
+        output.validate_manifest_compatibility({"root": [{"a": 1}]}, {"root": [{"a": 2}]})
+    with pytest.raises(ValueError, match="root"):
+        output.validate_manifest_compatibility({"root": [1, 2]}, {"root": [1]})
 
 
 @pytest.mark.parametrize(
@@ -287,6 +290,7 @@ def test_manifest_mismatch_path_reports_missing_and_nested_list_differences() ->
     [
         ({"committed_chunks": "bad"}, "committed_chunks field must be a list"),
         ({"committed_chunks": ["bad"]}, "committed chunk entries must be objects"),
+        ({"committed_chunks": [{}]}, "missing chunk_identifier"),
     ],
 )
 def test_read_manifest_committed_chunk_identifiers_rejects_invalid_shapes(

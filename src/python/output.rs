@@ -10,11 +10,17 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use crate::output::{
-    NativeChunkHandle, OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
+    NativeChunkHandle, OutputResumeMode, OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
     finalize_output_run_chunks as finalize_native_output_run_chunks,
+    initialize_output_run as initialize_native_output_run, load_run_manifest_json as load_native_run_manifest_json,
+    prepare_output_run as prepare_native_output_run,
+    read_run_manifest_committed_chunk_identifiers_from_text as read_native_manifest_committed_chunk_identifiers,
     repair_strict_manifest_chunk_commits as repair_native_strict_manifest_chunk_commits,
+    resolve_output_run_paths as resolve_native_output_run_paths,
     scan_committed_chunk_identifiers as scan_native_committed_chunk_identifiers,
+    validate_run_manifest_compatibility as validate_native_run_manifest_compatibility,
     validate_strict_manifest_chunks as validate_native_strict_manifest_chunks,
+    write_run_manifest_json as write_native_run_manifest_json,
 };
 
 use super::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata};
@@ -22,6 +28,30 @@ use super::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata};
 #[pyclass]
 pub(crate) struct OutputWriterSession {
     inner: NativeOutputWriterSession,
+}
+
+#[pyclass]
+pub(crate) struct NativeOutputRunPaths {
+    #[pyo3(get)]
+    run_directory: String,
+    #[pyo3(get)]
+    chunks_directory: String,
+}
+
+#[pyclass]
+pub(crate) struct NativePreparedOutputRun {
+    #[pyo3(get)]
+    run_directory: String,
+    #[pyo3(get)]
+    chunks_directory: String,
+    #[pyo3(get)]
+    existing_manifest_json: Option<String>,
+}
+
+#[pyclass]
+pub(crate) struct NativeInitializedOutputRun {
+    #[pyo3(get)]
+    committed_chunk_identifiers: Vec<i64>,
 }
 
 #[pymethods]
@@ -219,6 +249,88 @@ pub(crate) fn finalize_output_run_chunks(
     )
     .map(|path| path.display().to_string())
     .map_err(output_writer_error_to_py)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn resolve_output_run_paths(
+    output_root: String,
+    association_mode: String,
+    output_format: String,
+) -> PyResult<NativeOutputRunPaths> {
+    let native_output_format = crate::output::OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
+    let output_run_paths =
+        resolve_native_output_run_paths(Path::new(&output_root), &association_mode, native_output_format);
+    Ok(NativeOutputRunPaths {
+        run_directory: output_run_paths.run_directory.display().to_string(),
+        chunks_directory: output_run_paths.chunks_directory.display().to_string(),
+    })
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn prepare_output_run(
+    output_root: String,
+    association_mode: String,
+    output_format: String,
+    resume: bool,
+) -> PyResult<NativePreparedOutputRun> {
+    let native_output_format = crate::output::OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
+    let prepared_output_run =
+        prepare_native_output_run(Path::new(&output_root), &association_mode, native_output_format, resume)
+            .map_err(output_writer_error_to_py)?;
+    Ok(NativePreparedOutputRun {
+        run_directory: prepared_output_run.output_run_paths.run_directory.display().to_string(),
+        chunks_directory: prepared_output_run.output_run_paths.chunks_directory.display().to_string(),
+        existing_manifest_json: prepared_output_run.existing_manifest_json,
+    })
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn load_run_manifest_json(run_directory: String) -> PyResult<Option<String>> {
+    load_native_run_manifest_json(Path::new(&run_directory)).map_err(output_writer_error_to_py)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn write_run_manifest_json(run_directory: String, manifest_json: String) -> PyResult<()> {
+    write_native_run_manifest_json(Path::new(&run_directory), &manifest_json).map_err(output_writer_error_to_py)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn validate_run_manifest_compatibility(manifest_json: String, current_header_json: String) -> PyResult<()> {
+    validate_native_run_manifest_compatibility(&manifest_json, &current_header_json).map_err(output_writer_error_to_py)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn read_manifest_committed_chunk_identifiers(manifest_json: String) -> PyResult<Vec<i64>> {
+    read_native_manifest_committed_chunk_identifiers(&manifest_json).map_err(output_writer_error_to_py)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn initialize_output_run(
+    run_directory: String,
+    chunks_directory: String,
+    existing_manifest_json: Option<String>,
+    current_header_json: String,
+    resume: bool,
+    resume_mode: String,
+) -> PyResult<NativeInitializedOutputRun> {
+    let native_resume_mode = OutputResumeMode::parse(&resume_mode).map_err(output_writer_error_to_py)?;
+    let initialized_output_run = initialize_native_output_run(
+        Path::new(&run_directory),
+        Path::new(&chunks_directory),
+        existing_manifest_json.as_deref(),
+        &current_header_json,
+        resume,
+        native_resume_mode,
+    )
+    .map_err(output_writer_error_to_py)?;
+    Ok(NativeInitializedOutputRun { committed_chunk_identifiers: initialized_output_run.committed_chunk_identifiers })
 }
 
 #[pyfunction]

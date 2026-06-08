@@ -16,10 +16,12 @@ from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.engine import callbacks, native_dispatch, preflight, telemetry, timing
-from g.io import output, source
+from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
+
+    from g.io import source
 
 REGENIE_COMPUTE_PATCH_TARGETS = (regenie2_binary, regenie2_linear)
 logger = logging.getLogger(__name__)
@@ -309,10 +311,7 @@ def build_pipeline_manifest_header(
     return output.build_current_run_manifest_header(
         association_mode=context.association_mode,
         bgen_path=context.genotype_source_config.source_path,
-        sample_path=source.resolve_bgen_sample_path(
-            context.genotype_source_config.source_path,
-            context.genotype_source_config.sample_path,
-        ),
+        sample_path=context.genotype_source_config.resolved_sample_path,
         phenotype_path=context.phenotype_path,
         phenotype_name=phenotype_name,
         covariate_path=context.covariate_path,
