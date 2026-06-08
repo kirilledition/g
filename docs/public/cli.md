@@ -59,6 +59,18 @@ uv run g regenie --help
 --g-telemetry profile
 ```
 
+Trace mode defaults to a bounded JSONL event cap:
+
+```bash
+--g-telemetry trace
+--g-trace-event-cap 1000000
+```
+
+Raise `--g-trace-event-cap` for planned deep traces, or set it to `0` to
+disable the cap. Extra trace events are dropped only when `--g-log-lossy` is
+enabled; with `--no-g-log-lossy`, exceeding the cap fails with a message that
+names the cap and stream path.
+
 Use `g config explain` for the current option registry:
 
 ```bash

@@ -107,6 +107,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "g-profile-summary-json": "logs/profile.summary.json",
         "g-trace-file": "logs/trace.jsonl",
         "g-trace-filter": "g=trace",
+        "g-trace-event-cap": 2048,
         "g-log-queue-size": 1024,
         "g-log-lossy": False,
         "g-include-source-location": True,
@@ -149,6 +150,7 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_diagnostics.profile_summary_json == Path("logs/profile.summary.json")
     assert regenie_config.g_diagnostics.trace_file == Path("logs/trace.jsonl")
     assert regenie_config.g_diagnostics.trace_filter == "g=trace"
+    assert regenie_config.g_diagnostics.trace_event_cap == 2048
     assert regenie_config.g_diagnostics.log_queue_size == 1024
     assert regenie_config.g_diagnostics.log_lossy is False
     assert regenie_config.g_diagnostics.include_source_location is True
@@ -278,6 +280,7 @@ def test_logging_diagnostics_default_to_info_stderr() -> None:
     assert diagnostics_config.progress_interval_chunks == 10
     assert diagnostics_config.profile_summary_json is None
     assert diagnostics_config.trace_file is None
+    assert diagnostics_config.trace_event_cap == 1_000_000
     assert diagnostics_config.log_queue_size == 65536
     assert diagnostics_config.log_lossy is True
     assert diagnostics_config.include_source_location is False
@@ -507,6 +510,7 @@ def test_recognized_unsupported_options_use_specific_errors(option_name: str, er
         ({"g-writer-threads": 0}, "--g-writer-threads must be positive"),
         ({"g-writer-queue-depth": 0}, "--g-writer-queue-depth must be positive"),
         ({"g-output-chunks-per-arrow-file": 0}, "--g-output-chunks-per-arrow-file must be positive"),
+        ({"g-trace-event-cap": -1}, "--g-trace-event-cap must be non-negative"),
     ],
 )
 def test_config_validation_rejects_required_and_positive_option_errors(
@@ -518,6 +522,15 @@ def test_config_validation_rejects_required_and_positive_option_errors(
 
     with pytest.raises(ValueError, match=error_match):
         config.RegenieConfig.from_options(raw_options)
+
+
+def test_trace_event_cap_zero_disables_cap_in_config() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options["g-trace-event-cap"] = 0
+
+    regenie_config = config.RegenieConfig.from_options(raw_options)
+
+    assert regenie_config.g_diagnostics.trace_event_cap == 0
 
 
 @pytest.mark.parametrize(

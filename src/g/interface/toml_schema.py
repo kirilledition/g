@@ -148,6 +148,7 @@ class GDiagnosticsToml(msgspec.Struct, forbid_unknown_fields=True, omit_defaults
     profile_summary_json: str | msgspec.UnsetType = msgspec.UNSET
     trace_file: str | msgspec.UnsetType = msgspec.UNSET
     trace_filter: str | msgspec.UnsetType = msgspec.UNSET
+    trace_event_cap: int | msgspec.UnsetType = msgspec.UNSET
     log_queue_size: int | msgspec.UnsetType = msgspec.UNSET
     log_lossy: bool | msgspec.UnsetType = msgspec.UNSET
     include_source_location: bool | msgspec.UnsetType = msgspec.UNSET

@@ -36,7 +36,7 @@ The audit created these bounded Linear follow-ups:
 
 - [GLA-23](https://linear.app/glaphyra/issue/GLA-23/profile-packed8-score-custom-kernel-gate): profile the packed8 score custom-kernel gate before any Pallas/CUDA prototype.
 - [GLA-24](https://linear.app/glaphyra/issue/GLA-24/add-regenie-compatible-step-2-text-output): add typed REGENIE Step 2-compatible text output.
-- [GLA-25](https://linear.app/glaphyra/issue/GLA-25/add-bounded-trace-mode-telemetry-event-caps): add bounded trace-mode telemetry event caps.
+- [GLA-25](https://linear.app/glaphyra/issue/GLA-25/add-bounded-trace-mode-telemetry-event-caps): added bounded trace-mode telemetry event caps.
 - [GLA-26](https://linear.app/glaphyra/issue/GLA-26/persist-binary-benchmark-diagnostics-in-summaries): persist richer binary benchmark diagnostics in summary JSON.
 
 ## Configuration
@@ -152,10 +152,9 @@ Production timing should not force JAX synchronization by default. Exact stage
 timings are diagnostic and should be requested deliberately when the user needs
 synchronized attribution.
 
-Trace mode is also diagnostic and can perturb performance. It still needs a
-bounded event-cap policy so accidental high-volume tracing fails clearly or
-drops events only under an explicit lossy policy. That work is tracked in
-GLA-25.
+Trace mode is also diagnostic and can perturb performance. It has a bounded
+event-cap policy so accidental high-volume tracing fails clearly or drops
+events only under the documented lossy policy.
 
 Binary hot benchmark summaries should persist enough diagnostic information to
 interpret Firth performance across runs: score candidates, Firth candidates,

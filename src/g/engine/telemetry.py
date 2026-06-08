@@ -51,6 +51,7 @@ class TelemetrySession:
         progress_interval_chunks: int,
         queue_size: int = 8192,
         lossy: bool = True,
+        trace_event_cap: int = 0,
         run_id: str | None = None,
     ) -> None:
         """Initialize a run telemetry session."""
@@ -62,8 +63,14 @@ class TelemetrySession:
         self.lock = threading.Lock()
         self.last_progress_time = 0.0
         self.last_progress_chunk_count = 0
+        native_event_cap = trace_event_cap if mode == types.TelemetryMode.TRACE and trace_event_cap > 0 else None
         self.native_telemetry_session = (
-            _core.NativeTelemetrySession(str(paths.stream_file), queue_size=queue_size, lossy=lossy)
+            _core.NativeTelemetrySession(
+                str(paths.stream_file),
+                queue_size=queue_size,
+                lossy=lossy,
+                event_cap=native_event_cap,
+            )
             if self.enabled and paths.stream_file is not None
             else None
         )
@@ -226,14 +233,14 @@ def build_telemetry_session(regenie_config: config.RegenieConfig) -> TelemetrySe
         progress_interval_chunks=diagnostics_config.progress_interval_chunks,
         queue_size=diagnostics_config.log_queue_size,
         lossy=diagnostics_config.log_lossy,
+        trace_event_cap=diagnostics_config.trace_event_cap,
     )
 
 
 def close_telemetry_session(telemetry_session: TelemetrySession | None) -> None:
-    """Flush best-effort telemetry teardown hooks."""
+    """Flush telemetry teardown hooks and preserve close failures."""
     if telemetry_session is None:
         return
     with contextlib.suppress(Exception):
         telemetry_session.log_event("telemetry_session_closed", level="debug")
-    with contextlib.suppress(Exception):
-        telemetry_session.close()
+    telemetry_session.close()
