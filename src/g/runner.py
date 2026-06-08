@@ -64,6 +64,7 @@ class LoggingRuntimePolicy:
         include_span_events: Whether tracing span lifecycle events are emitted.
         trace_file: Optional high-volume trace file.
         trace_filter: Trace file filter.
+        trace_event_cap: Optional trace-mode event cap. None disables native cap enforcement.
 
     """
 
@@ -76,6 +77,7 @@ class LoggingRuntimePolicy:
     include_span_events: bool
     trace_file: Path | None
     trace_filter: str
+    trace_event_cap: int | None
 
 
 CONFIGURED_JAX_RUNTIME_POLICY: JaxRuntimePolicy | None = None
@@ -294,6 +296,9 @@ def initialize_logging(
     telemetry_stream_file = None if telemetry_paths is None else telemetry_paths.stream_file
     log_file = diagnostics_config.log_file if telemetry_stream_file is None else None
     trace_file = diagnostics_config.trace_file if telemetry_stream_file is None else telemetry_stream_file
+    trace_event_cap = (
+        diagnostics_config.trace_event_cap if diagnostics_config.telemetry == types.TelemetryMode.TRACE else None
+    )
     core_module = importlib.import_module("g._core")
     runtime_policy = LoggingRuntimePolicy(
         log_filter=diagnostics_config.log_filter,
@@ -305,6 +310,7 @@ def initialize_logging(
         include_span_events=diagnostics_config.include_span_events,
         trace_file=trace_file,
         trace_filter=diagnostics_config.trace_filter,
+        trace_event_cap=trace_event_cap,
     )
     initialized_logging = core_module.initialize_logging(
         log_filter=diagnostics_config.log_filter,
@@ -316,6 +322,7 @@ def initialize_logging(
         include_span_events=diagnostics_config.include_span_events,
         trace_file=None if trace_file is None else str(trace_file),
         trace_filter=diagnostics_config.trace_filter,
+        trace_event_cap=trace_event_cap,
     )
     if initialized_logging is False:
         if CONFIGURED_LOGGING_RUNTIME_POLICY is not None and runtime_policy != CONFIGURED_LOGGING_RUNTIME_POLICY:

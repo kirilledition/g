@@ -29,6 +29,7 @@ g-progress-interval-chunks
 g-profile-summary-json
 g-trace-file
 g-trace-filter
+g-trace-event-cap
 g-log-queue-size
 g-log-lossy
 g-include-source-location
@@ -164,6 +165,7 @@ Use both when evaluating performance changes.
 telemetry = "trace"
 log-filter = "g=debug"
 trace-filter = "g.native.bgen=trace,g.output=debug"
+trace-event-cap = 1000000
 log-file = "results/run/logs/events.jsonl"
 log-stderr = false
 log-lossy = true
@@ -173,6 +175,32 @@ Trace mode is for small runs, targeted chromosomes, or `--g-variant-limit`.
 It may emit high-volume native events and can perturb performance. Do not use
 it for full production-scale scans unless the goal is to diagnose a specific
 runtime problem.
+
+Trace mode has a default `trace-event-cap = 1000000`, enforced by the
+Rust-owned JSONL stream before completed event lines are queued for writing.
+The cap applies only when `telemetry = "trace"`; progress and profile streams
+are not constrained by this trace-only cap.
+
+When `log-lossy = true`, events after the cap are dropped and the native writer
+prints one stderr diagnostic that additional trace events are being dropped.
+When `log-lossy = false`, the run fails with:
+
+```text
+Trace telemetry event cap exceeded at <cap> events for <path>. Increase --g-trace-event-cap or set --g-trace-event-cap 0 to disable the cap for intentional deep traces. Use --g-log-lossy to drop events after the cap instead of failing.
+```
+
+Raise the cap for a planned deep trace, or set it to `0` to disable cap
+enforcement:
+
+```toml
+[g.diagnostics]
+telemetry = "trace"
+trace-event-cap = 5000000
+```
+
+```bash
+g regenie --g-telemetry trace --g-trace-event-cap 0
+```
 
 ## CLI Examples
 
@@ -206,7 +234,8 @@ g regenie \
   --bt \
   --g-telemetry trace \
   --g-variant-limit 1000 \
-  --g-trace-filter g.native.bgen=trace,g.output=debug
+  --g-trace-filter g.native.bgen=trace,g.output=debug \
+  --g-trace-event-cap 1000000
 ```
 
 ## Production-Safe Logging
@@ -234,7 +263,5 @@ Do not emit one event per candidate iteration in production mode.
 ## Follow-Up Tracking
 
 Open telemetry implementation work is tracked in Linear instead of this page.
-The current trace-mode safety follow-up is
-[GLA-25](https://linear.app/glaphyra/issue/GLA-25/add-bounded-trace-mode-telemetry-event-caps).
 Durable telemetry lessons from historical task notes are consolidated in
 [Agent Learning](../scratchpad/agent-learning.md).
