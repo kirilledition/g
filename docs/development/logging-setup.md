@@ -88,6 +88,8 @@ forces device synchronization just to log.
 Safe production events include:
 
 - run start, config resolution, and execution-plan preparation
+- JAX runtime setup choices, including platform, cache directory, XLA auxiliary
+  cache mode, transfer guard, and GPU validation
 - preflight completion
 - chromosome start and completion
 - throttled progress ticks

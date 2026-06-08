@@ -272,7 +272,8 @@ data/regenie2_binary_chr22_gpu.regenie2_binary.run/
 
 - `just upgrade-deps` is now Python-package only. Nix lockfile updates moved to `just upgrade-nix-lock`.
 - `just doctor-jax` should be treated as a host-specific check. On a login node without NVIDIA libraries, CPU fallback is expected.
-- JAX persistent compilation cache lives under `JAX_COMPILATION_CACHE_DIR` when set, otherwise under the current user cache directory.
+- JAX persistent compilation cache defaults to `/tmp/<user>/g-jax-cache`; use
+  `--g-jax-cache-dir` for an explicit cache path.
 - `.tools/` and `data/` are local server state and must not be committed.
 - `results/` contains local benchmark output, including `perf-*` summaries, and
   must not be committed.

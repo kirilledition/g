@@ -86,5 +86,8 @@ Important runtime knobs include:
 | `--g-writer-queue-depth` | Output writer queue depth. |
 | `--g-firth-batch-size` | Binary approximate-Firth batch size. |
 | `--g-jax-persistent-cache` | Enable JAX persistent compilation cache. |
+| `--g-jax-cache-dir` | Persistent JAX compilation cache directory. Defaults to `/tmp/<user>/g-jax-cache`. |
+| `--g-jax-xla-autotune-cache` | Enable XLA auxiliary autotune caches only when the cache directory is node-local. |
+| `--g-jax-transfer-guard` | Enable JAX transfer guard diagnostics. |
 
 Fair performance comparisons require equivalent statistical modes. Compare score-only to score-only, and compare approximate Firth only when both tools use approximate Firth with the same fallback threshold.
