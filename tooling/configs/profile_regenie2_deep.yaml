@@ -61,6 +61,10 @@ tool:
   staging_depths:
     - 1
     - 2
+  result_in_flight_limits:
+    - null
+  dosage_buffer_limits:
+    - null
   output_writer_thread_counts:
     - 1
     - 2

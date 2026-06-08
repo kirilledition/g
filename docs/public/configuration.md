@@ -102,4 +102,9 @@ constrained by it.
 `regenie` for REGENIE Step 2-compatible tab-separated text output with a
 `final.regenie` artifact.
 
+`[g.compute].result-in-flight-limit` and
+`[g.compute].dosage-buffer-limit` are optional tuning overrides for pipeline
+profiling. Omit them for the default derived capacity of `staging-depth + 1`;
+increase them only with measured benefit from stage timing queue metrics.
+
 For implementation details behind the configuration model, see [Configuration and CLI Architecture](../development/configuration_cli_architecture.md).

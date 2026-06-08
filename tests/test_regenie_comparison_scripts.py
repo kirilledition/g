@@ -1767,6 +1767,8 @@ def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pyte
         device="gpu",
         chunk_size=8192,
         staging_depth=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
         output_writer_thread_count=4,
         output_writer_queue_depth=8,
         bgen_decode_tile_variant_count=128,
@@ -1788,6 +1790,19 @@ def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pyte
     assert "JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES" not in environment
 
 
+def test_deep_profile_arguments_can_focus_workload_grid() -> None:
+    arguments = deep_profile.build_arguments_from_overrides(
+        [
+            "tool.workload_keys=[binary_gpu]",
+        ]
+    )
+
+    assert arguments.workload_keys == "binary_gpu"
+    assert deep_profile.parse_profile_workload_keys(arguments.workload_keys) == (
+        deep_profile.ProfileWorkloadKey.BINARY_GPU,
+    )
+
+
 def test_deep_profile_child_command_contains_binary_controls() -> None:
     baseline_paths = baseline_benchmark.build_baseline_paths()
     candidate = deep_profile.Step2Candidate(
@@ -1795,6 +1810,8 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
         device="cpu",
         chunk_size=4096,
         staging_depth=2,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
         output_writer_thread_count=1,
         output_writer_queue_depth=2,
         bgen_decode_tile_variant_count=None,
@@ -2131,6 +2148,8 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         device="gpu",
         chunk_size=8192,
         staging_depth=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
         output_writer_thread_count=4,
         output_writer_queue_depth=8,
         bgen_decode_tile_variant_count=128,

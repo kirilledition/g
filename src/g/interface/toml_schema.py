@@ -70,6 +70,8 @@ class GComputeToml(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=Tru
 
     device: str | msgspec.UnsetType = msgspec.UNSET
     staging_depth: int | msgspec.UnsetType = msgspec.UNSET
+    result_in_flight_limit: int | msgspec.UnsetType = msgspec.UNSET
+    dosage_buffer_limit: int | msgspec.UnsetType = msgspec.UNSET
     variant_limit: int | msgspec.UnsetType = msgspec.UNSET
     trusted_no_missing_diploid: bool | msgspec.UnsetType = msgspec.UNSET
     trusted_bgen_validation_mode: str | msgspec.UnsetType = msgspec.UNSET
