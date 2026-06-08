@@ -127,6 +127,7 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
     assert arguments.regenie_baseline_variant_limit is None
     assert arguments.regenie_baseline_warmups == 0
     assert arguments.regenie_baseline_trials == 1
+    assert arguments.stage_timing_mode == deep_profile.ProfileStageTimingMode.EXACT
     assert profile_plan.profiler_modes == {
         "regenie_baseline": True,
         "jax_trace": True,
@@ -148,6 +149,14 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
         ["cargo", "bench", "--bench", "bgen_read"],
         ["cargo", "bench", "--bench", "preprocess"],
     ]
+    off_arguments = deep_profile.build_arguments_from_overrides(
+        [
+            f"tool.output_dir={tmp_path / 'profile-off'}",
+            "tool.dry_run=true",
+            "telemetry.stage_timing_mode=off",
+        ]
+    )
+    assert off_arguments.stage_timing_mode == deep_profile.ProfileStageTimingMode.OFF
 
 
 def test_hydra_tooling_config_converts_to_tool_arguments() -> None:

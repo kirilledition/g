@@ -517,6 +517,211 @@ def test_deep_profile_builds_stage_comparison_rows(tmp_path: Path) -> None:
     assert any("BGEN delivery" in finding for finding in findings)
 
 
+def test_deep_profile_builds_binary_correction_diagnostics(tmp_path: Path) -> None:
+    stage_timing_path = tmp_path / "binary.stage_timings.json"
+    stage_timing_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "jax_compute": 3.0,
+                    "output_write": 1.0,
+                },
+                "stage_counts": {
+                    "jax_compute": 2,
+                    "output_write": 1,
+                },
+                "chunk_stage_timings": [
+                    {
+                        "chunk_identifier": 10,
+                        "chromosome": "22",
+                        "variant_start_index": 0,
+                        "variant_stop_index": 2,
+                        "variant_count": 2,
+                        "stage_name": "jax_compute",
+                        "duration_seconds": 1.0,
+                    },
+                    {
+                        "chunk_identifier": 11,
+                        "chromosome": "22",
+                        "variant_start_index": 2,
+                        "variant_stop_index": 5,
+                        "variant_count": 3,
+                        "stage_name": "jax_compute",
+                        "duration_seconds": 2.0,
+                    },
+                ],
+                "binary_chunk_diagnostics": [
+                    {
+                        "score_test_candidate_count": 2,
+                        "firth_candidate_count": 1,
+                        "firth_iteration_min": 4,
+                        "firth_iteration_median": 4.0,
+                        "firth_iteration_max": 4,
+                        "firth_converged_count": 1,
+                        "firth_failed_count": 0,
+                        "firth_numerical_failure_count": 0,
+                        "firth_max_iteration_failure_count": 0,
+                        "firth_invalid_statistic_failure_count": 0,
+                        "firth_step_halving_failure_count": 0,
+                        "pseudo_firth_attempt_count": 1,
+                        "pseudo_firth_success_count": 1,
+                        "nr_zero_start_attempt_count": 0,
+                        "nr_zero_start_success_count": 0,
+                        "nr_warm_start_attempt_count": 0,
+                        "nr_warm_start_success_count": 0,
+                        "sparse_correction_count": 0,
+                        "dense_correction_count": 1,
+                    },
+                    {
+                        "score_test_candidate_count": 3,
+                        "firth_candidate_count": 2,
+                        "firth_iteration_min": 5,
+                        "firth_iteration_median": 6.0,
+                        "firth_iteration_max": 7,
+                        "firth_converged_count": 1,
+                        "firth_failed_count": 1,
+                        "firth_numerical_failure_count": 0,
+                        "firth_max_iteration_failure_count": 1,
+                        "firth_invalid_statistic_failure_count": 0,
+                        "firth_step_halving_failure_count": 0,
+                        "pseudo_firth_attempt_count": 2,
+                        "pseudo_firth_success_count": 1,
+                        "nr_zero_start_attempt_count": 1,
+                        "nr_zero_start_success_count": 0,
+                        "nr_warm_start_attempt_count": 1,
+                        "nr_warm_start_success_count": 1,
+                        "sparse_correction_count": 1,
+                        "dense_correction_count": 1,
+                    },
+                ],
+                "null_logistic_diagnostics": [
+                    {
+                        "chromosome": "22",
+                        "iteration_count": 3,
+                        "converged": 1,
+                        "firth_iteration_count": 2,
+                        "firth_convergence_reason_code": 0,
+                        "correction_method": "firth",
+                    }
+                ],
+                "queue_backpressure": [
+                    {
+                        "queue_name": "writer",
+                        "operation_name": "enqueue",
+                        "observation_count": 2,
+                        "max_depth": 4,
+                        "max_capacity": 8,
+                        "total_elapsed_seconds": 1.0,
+                        "total_blocked_seconds": 0.25,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    trial = deep_profile.TrialResult(
+        name="headline_g_binary_gpu_trial00",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        status="success",
+        wall_time_seconds=2.0,
+        output_row_count=10,
+        stdout_log_path="stdout",
+        stderr_log_path="stderr",
+        command_arguments=[],
+        environment_overrides={},
+        stage_timing_path=str(stage_timing_path),
+    )
+    headline = deep_profile.aggregate_trial_results(
+        name="headline_g_binary_gpu",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        warmup_count=0,
+        trial_results=[trial],
+    )
+    finalist = dataclasses.replace(headline, name="finalist_binary_gpu")
+
+    diagnostics = deep_profile.build_binary_correction_diagnostics(
+        headline_results=[headline],
+        finalist_results_by_key={"binary_gpu": [finalist]},
+        stage_timing_mode=deep_profile.ProfileStageTimingMode.EXACT,
+    )
+    headline_diagnostics = diagnostics["headline"]["headline_g_binary_gpu"]
+    finalist_diagnostics = diagnostics["finalists"]["binary_gpu"]["finalist_binary_gpu"]
+
+    assert headline_diagnostics["available"] is True
+    assert headline_diagnostics["candidate_counts"]["score_test"] == 5
+    assert headline_diagnostics["candidate_counts"]["firth"] == 3
+    assert headline_diagnostics["correction_outcome_counts"] == {
+        "corrected": 2,
+        "failed": 1,
+        "score_test_or_uncorrected": 2,
+    }
+    assert headline_diagnostics["failure_code_counts"]["max_iterations"] == 1
+    assert headline_diagnostics["firth_iteration_counts"] == {
+        "active_chunk_count": 2,
+        "minimum": 4.0,
+        "median_per_chunk_mean": 5.0,
+        "maximum": 7.0,
+    }
+    assert headline_diagnostics["correction_input_counts"] == {"sparse": 1, "dense": 2}
+    assert headline_diagnostics["fallback_density"]["firth_candidates_per_output_row"] == 0.3
+    assert headline_diagnostics["stage_counts"]["jax_compute"] == 2.0
+    assert headline_diagnostics["null_logistic"]["converged_count"] == 1
+    assert headline_diagnostics["queue_backpressure"][0]["blocked_fraction"] == 0.25
+    assert headline_diagnostics["chunk_outliers"][0]["chunk_index"] == 1
+    assert headline_diagnostics["chunk_outliers"][0]["chunk_identity"]["chunk_identifier"] == 11
+    assert finalist_diagnostics["available"] is True
+
+
+def test_deep_profile_binary_correction_diagnostics_report_stage_timing_off() -> None:
+    trial = deep_profile.TrialResult(
+        name="headline_g_binary_cpu_trial00",
+        implementation="g",
+        trait_type="binary",
+        device="cpu",
+        status="success",
+        wall_time_seconds=2.0,
+        output_row_count=10,
+        stdout_log_path="stdout",
+        stderr_log_path="stderr",
+        command_arguments=[],
+        environment_overrides={},
+        stage_timing_path=None,
+    )
+    headline = deep_profile.aggregate_trial_results(
+        name="headline_g_binary_cpu",
+        implementation="g",
+        trait_type="binary",
+        device="cpu",
+        warmup_count=0,
+        trial_results=[trial],
+    )
+
+    diagnostics = deep_profile.build_binary_correction_diagnostics(
+        headline_results=[headline],
+        finalist_results_by_key={},
+        stage_timing_mode=deep_profile.ProfileStageTimingMode.OFF,
+    )
+    markdown = deep_profile.build_summary_markdown(
+        aggregate_results=[headline],
+        comparisons={},
+        stage_totals={},
+        stage_comparison_rows=[],
+        algorithmic_findings=[],
+        binary_correction_diagnostics=diagnostics,
+    )
+    headline_diagnostics = diagnostics["headline"]["headline_g_binary_cpu"]
+
+    assert headline_diagnostics["available"] is False
+    assert headline_diagnostics["reason"] == "exact_stage_timings_disabled"
+    assert "## Binary Correction Diagnostics" in markdown
+    assert "telemetry.stage_timing_mode=off" in markdown
+    assert "unavailable: stage timing mode off" in markdown
+
+
 def test_deep_profile_algorithmic_findings_respect_speedup_direction() -> None:
     rows: list[dict[str, float | str]] = [
         {
