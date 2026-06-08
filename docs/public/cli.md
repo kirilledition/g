@@ -52,6 +52,7 @@ uv run g regenie --help
 --g-device gpu
 --g-staging-depth 2
 --g-output-format parquet
+--g-output-format regenie
 --g-resume
 --g-resume-mode strict
 --g-trusted-no-missing-diploid

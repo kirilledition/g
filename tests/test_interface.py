@@ -357,6 +357,15 @@ def test_user_toml_overrides_packaged_defaults(tmp_path: Path) -> None:
     assert regenie_config.g_diagnostics.log_filter == "g=debug"
 
 
+def test_python_options_accept_regenie_text_output_format() -> None:
+    raw_options = build_valid_quantitative_options()
+    raw_options["g-output-format"] = "regenie"
+
+    regenie_config = config.RegenieConfig.from_options(raw_options)
+
+    assert regenie_config.g_output.format == types.OutputFormat.REGENIE
+
+
 def test_user_toml_binary_trait_overrides_default_quantitative_trait(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(

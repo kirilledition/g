@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::fs::File;
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -18,7 +19,7 @@ use parquet::schema::types::ColumnPath;
 
 use crate::output::manifest;
 use crate::output::schema;
-use crate::output::writer::{OutputFileFormat, OutputWriterError};
+use crate::output::writer::{self, OutputFileFormat, OutputWriterError};
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 
@@ -51,9 +52,28 @@ pub fn finalize_output_run_chunks(
     association_mode: &str,
     output_format: OutputFileFormat,
 ) -> Result<PathBuf, OutputWriterError> {
-    let final_parquet_path = run_directory.join("final.parquet");
-    write_final_parquet_from_chunk_files(chunks_directory, &final_parquet_path, association_mode, output_format)?;
-    Ok(final_parquet_path)
+    match output_format {
+        OutputFileFormat::Arrow | OutputFileFormat::Parquet => {
+            let final_parquet_path = run_directory.join("final.parquet");
+            write_final_parquet_from_chunk_files(
+                chunks_directory,
+                &final_parquet_path,
+                association_mode,
+                output_format,
+            )?;
+            Ok(final_parquet_path)
+        }
+        OutputFileFormat::Regenie => {
+            let final_regenie_path = run_directory.join("final.regenie");
+            write_final_regenie_from_chunk_files(
+                chunks_directory,
+                &final_regenie_path,
+                association_mode,
+                output_format,
+            )?;
+            Ok(final_regenie_path)
+        }
+    }
 }
 
 pub(crate) fn write_final_parquet_from_chunk_files(
@@ -182,6 +202,191 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
     })
 }
 
+pub(crate) fn write_final_regenie_from_chunk_files(
+    chunks_directory: &Path,
+    final_regenie_path: &Path,
+    association_mode: &str,
+    output_format: OutputFileFormat,
+) -> Result<(), OutputWriterError> {
+    write_final_regenie_from_chunk_files_with_timing(
+        chunks_directory,
+        final_regenie_path,
+        association_mode,
+        output_format,
+    )
+    .map(|_| ())
+}
+
+pub(crate) fn write_final_regenie_from_chunk_files_with_timing(
+    chunks_directory: &Path,
+    final_regenie_path: &Path,
+    association_mode: &str,
+    output_format: OutputFileFormat,
+) -> Result<RegenieStep2FinalizationTiming, OutputWriterError> {
+    let total_start_time = Instant::now();
+    if association_mode != "regenie2_linear" && association_mode != "regenie2_binary" {
+        return Err(OutputWriterError::InvalidInput(format!(
+            "Unsupported association mode for Rust output writer finalization: {association_mode}",
+        )));
+    }
+    if output_format != OutputFileFormat::Regenie {
+        return Err(OutputWriterError::InvalidInput(
+            "REGENIE text finalization requires output_format=regenie.".to_string(),
+        ));
+    }
+
+    let list_chunk_files_start_time = Instant::now();
+    let run_directory = final_regenie_path.parent().ok_or_else(|| {
+        OutputWriterError::InvalidInput("Final REGENIE text path must have a parent run directory.".to_string())
+    })?;
+    let manifest_commits =
+        manifest::read_run_manifest_chunk_commits(run_directory).map_err(OutputWriterError::runtime)?;
+    let chunk_file_paths = manifest_output_chunk_file_paths(chunks_directory, output_format, &manifest_commits)?;
+    let list_chunk_files_seconds = list_chunk_files_start_time.elapsed().as_secs_f64();
+
+    let parquet_file_create_start_time = Instant::now();
+    let temporary_final_path = final_regenie_path.with_extension("regenie.tmp");
+    let output_file = File::create(&temporary_final_path).map_err(OutputWriterError::runtime)?;
+    let parquet_file_create_seconds = parquet_file_create_start_time.elapsed().as_secs_f64();
+
+    let parquet_writer_init_start_time = Instant::now();
+    let mut output_writer = BufWriter::new(output_file);
+    output_writer.write_all(writer::REGENIE_STEP2_TEXT_HEADER.as_bytes()).map_err(OutputWriterError::runtime)?;
+    let parquet_writer_init_seconds = parquet_writer_init_start_time.elapsed().as_secs_f64();
+
+    let chunk_file_count = chunk_file_paths.len();
+    let mut output_row_count = 0usize;
+    let mut batch_count = 0u64;
+    let mut arrow_file_open_seconds = 0.0;
+    let mut arrow_batch_read_seconds = 0.0;
+    let mut read_arrow_seconds = 0.0;
+    let mut write_parquet_seconds = 0.0;
+    let mut arrow_file_bytes = 0u64;
+    for chunk_file_path in chunk_file_paths {
+        arrow_file_bytes = arrow_file_bytes
+            .saturating_add(std::fs::metadata(&chunk_file_path).map_err(OutputWriterError::runtime)?.len());
+        let append_result = append_regenie_text_part_rows(
+            &chunk_file_path,
+            &mut output_writer,
+            &mut arrow_file_open_seconds,
+            &mut arrow_batch_read_seconds,
+            &mut read_arrow_seconds,
+            &mut write_parquet_seconds,
+        )?;
+        output_row_count += append_result;
+        batch_count += 1;
+    }
+
+    let close_writer_start_time = Instant::now();
+    output_writer.flush().map_err(OutputWriterError::runtime)?;
+    drop(output_writer);
+    let close_writer_seconds = close_writer_start_time.elapsed().as_secs_f64();
+    std::fs::rename(&temporary_final_path, final_regenie_path).map_err(OutputWriterError::runtime)?;
+    let parquet_file_bytes = std::fs::metadata(final_regenie_path).map_err(OutputWriterError::runtime)?.len();
+
+    let manifest_update_start_time = Instant::now();
+    manifest::mark_run_manifest_finalized_output(
+        final_regenie_path,
+        output_row_count,
+        chunk_file_count,
+        output_format_name(output_format),
+    )
+    .map_err(OutputWriterError::runtime)?;
+    let manifest_update_seconds = manifest_update_start_time.elapsed().as_secs_f64();
+
+    Ok(RegenieStep2FinalizationTiming {
+        chunk_file_count: u64::try_from(chunk_file_count).map_err(OutputWriterError::runtime)?,
+        batch_count,
+        row_count: u64::try_from(output_row_count).map_err(OutputWriterError::runtime)?,
+        list_chunk_files_seconds,
+        parquet_writer_properties_seconds: 0.0,
+        parquet_file_create_seconds,
+        parquet_writer_init_seconds,
+        arrow_file_open_seconds,
+        arrow_reader_init_seconds: 0.0,
+        arrow_batch_read_seconds,
+        read_arrow_seconds,
+        project_batch_seconds: 0.0,
+        write_parquet_seconds,
+        footer_metadata_seconds: 0.0,
+        close_writer_seconds,
+        manifest_update_seconds,
+        arrow_file_bytes,
+        parquet_file_bytes,
+        total_seconds: total_start_time.elapsed().as_secs_f64(),
+    })
+}
+
+fn append_regenie_text_part_rows(
+    chunk_file_path: &Path,
+    output_writer: &mut BufWriter<File>,
+    arrow_file_open_seconds: &mut f64,
+    arrow_batch_read_seconds: &mut f64,
+    read_arrow_seconds: &mut f64,
+    write_parquet_seconds: &mut f64,
+) -> Result<usize, OutputWriterError> {
+    let arrow_file_open_start_time = Instant::now();
+    let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
+    let current_arrow_file_open_seconds = arrow_file_open_start_time.elapsed().as_secs_f64();
+    *arrow_file_open_seconds += current_arrow_file_open_seconds;
+    *read_arrow_seconds += current_arrow_file_open_seconds;
+
+    let mut input_reader = BufReader::new(input_file);
+    let mut header_line = String::new();
+    let header_read_start_time = Instant::now();
+    input_reader.read_line(&mut header_line).map_err(OutputWriterError::runtime)?;
+    let header_read_seconds = header_read_start_time.elapsed().as_secs_f64();
+    *arrow_batch_read_seconds += header_read_seconds;
+    *read_arrow_seconds += header_read_seconds;
+    validate_regenie_text_header(&header_line, chunk_file_path)?;
+
+    let mut row_count = 0usize;
+    let mut row_line = String::new();
+    loop {
+        row_line.clear();
+        let row_read_start_time = Instant::now();
+        let read_byte_count = input_reader.read_line(&mut row_line).map_err(OutputWriterError::runtime)?;
+        let row_read_seconds = row_read_start_time.elapsed().as_secs_f64();
+        *arrow_batch_read_seconds += row_read_seconds;
+        *read_arrow_seconds += row_read_seconds;
+        if read_byte_count == 0 {
+            break;
+        }
+        validate_regenie_text_row(&row_line, chunk_file_path)?;
+        let write_start_time = Instant::now();
+        output_writer.write_all(row_line.as_bytes()).map_err(OutputWriterError::runtime)?;
+        if !row_line.ends_with('\n') {
+            output_writer.write_all(b"\n").map_err(OutputWriterError::runtime)?;
+        }
+        *write_parquet_seconds += write_start_time.elapsed().as_secs_f64();
+        row_count += 1;
+    }
+    Ok(row_count)
+}
+
+fn validate_regenie_text_header(header_line: &str, chunk_file_path: &Path) -> Result<(), OutputWriterError> {
+    let observed_header = header_line.trim_end_matches(|character| character == '\r' || character == '\n');
+    let expected_header = writer::REGENIE_STEP2_TEXT_HEADER.trim_end_matches('\n');
+    if observed_header == expected_header {
+        return Ok(());
+    }
+    Err(OutputWriterError::InvalidInput(format!(
+        "REGENIE text part has an unexpected header: {}",
+        chunk_file_path.display()
+    )))
+}
+
+fn validate_regenie_text_row(row_line: &str, chunk_file_path: &Path) -> Result<(), OutputWriterError> {
+    let row = row_line.trim_end_matches(|character| character == '\r' || character == '\n');
+    if row.split('\t').count() == 14 {
+        return Ok(());
+    }
+    Err(OutputWriterError::InvalidInput(format!(
+        "REGENIE text part has a row with an unexpected column count: {}",
+        chunk_file_path.display()
+    )))
+}
+
 fn manifest_output_chunk_file_paths(
     chunks_directory: &Path,
     output_format: OutputFileFormat,
@@ -240,6 +445,7 @@ fn output_format_name(output_format: OutputFileFormat) -> &'static str {
     match output_format {
         OutputFileFormat::Arrow => "arrow",
         OutputFileFormat::Parquet => "parquet",
+        OutputFileFormat::Regenie => "regenie",
     }
 }
 
@@ -264,11 +470,13 @@ fn is_output_chunk_file_path(chunk_file_path: &Path, output_format: OutputFileFo
         |extension| match output_format {
             OutputFileFormat::Arrow => extension.eq_ignore_ascii_case("arrow"),
             OutputFileFormat::Parquet => extension.eq_ignore_ascii_case("parquet"),
+            OutputFileFormat::Regenie => extension.eq_ignore_ascii_case("regenie"),
         },
     );
     match output_format {
         OutputFileFormat::Arrow => file_name.starts_with("chunk_") && extension_matches,
         OutputFileFormat::Parquet => file_name.starts_with("part_") && extension_matches,
+        OutputFileFormat::Regenie => file_name.starts_with("part_") && extension_matches,
     }
 }
 
@@ -296,6 +504,11 @@ fn read_output_chunk_file_batches(
                 .build()
                 .map_err(OutputWriterError::runtime)?;
             Box::new(parquet_reader)
+        }
+        OutputFileFormat::Regenie => {
+            return Err(OutputWriterError::InvalidInput(
+                "REGENIE text chunks cannot be read by the Parquet finalizer.".to_string(),
+            ));
         }
     };
     let current_arrow_reader_init_seconds = arrow_reader_init_start_time.elapsed().as_secs_f64();
@@ -374,7 +587,7 @@ mod tests {
     use arrow::array::{ArrayRef, Float32Array, Int32Array, Int64Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
 
-    use crate::output::writer::OutputFileFormat;
+    use crate::output::writer::{self as output_writer, OutputFileFormat};
 
     use super::*;
 
@@ -500,5 +713,68 @@ mod tests {
         assert_eq!(prepared_batch.schema().fields(), schema::get_regenie_step2_final_schema().fields());
         assert!(Arc::ptr_eq(prepared_batch.column(0), &columns[0]));
         assert!(Arc::ptr_eq(prepared_batch.column(13), &columns[13]));
+    }
+
+    #[test]
+    fn finalization_concatenates_regenie_text_parts_with_one_header() {
+        let run_directory = create_test_directory();
+        let regenie_directory = run_directory.join("regenie");
+        std::fs::create_dir_all(&regenie_directory).expect("regenie directory should be created");
+        let first_part_path = regenie_directory.join("part_000000000.regenie");
+        let second_part_path = regenie_directory.join("part_000000002.regenie");
+        std::fs::write(
+            &first_part_path,
+            format!(
+                "{}22\t100\tvariant0\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tNA\n",
+                output_writer::REGENIE_STEP2_TEXT_HEADER
+            ),
+        )
+        .expect("first REGENIE text part should be written");
+        std::fs::write(
+            &second_part_path,
+            format!(
+                "{}22\t102\tvariant2\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tTEST_FAIL\n",
+                output_writer::REGENIE_STEP2_TEXT_HEADER
+            ),
+        )
+        .expect("second REGENIE text part should be written");
+        std::fs::write(
+            run_directory.join("run_manifest.json"),
+            r#"{
+              "committed_chunks": [
+                {"chunk_identifier":0,"output_format":"regenie","compression":"none","variant_start_index":0,"variant_stop_index":1,"row_count":1,"chunk_file_name":"part_000000000.regenie"},
+                {"chunk_identifier":2,"output_format":"regenie","compression":"none","variant_start_index":2,"variant_stop_index":3,"row_count":1,"chunk_file_name":"part_000000002.regenie"}
+              ]
+            }"#,
+        )
+        .expect("manifest should be written");
+
+        let final_regenie_path = run_directory.join("final.regenie");
+        write_final_regenie_from_chunk_files(
+            &regenie_directory,
+            &final_regenie_path,
+            "regenie2_binary",
+            OutputFileFormat::Regenie,
+        )
+        .expect("final REGENIE text should write");
+
+        let final_lines = std::fs::read_to_string(&final_regenie_path)
+            .expect("final REGENIE text should be readable")
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(final_lines.len(), 3);
+        assert_eq!(
+            final_lines[0],
+            "CHROM\tGENPOS\tID\tALLELE0\tALLELE1\tA1FREQ\tINFO\tN\tTEST\tBETA\tSE\tCHISQ\tLOG10P\tEXTRA"
+        );
+        assert_eq!(final_lines[2], "22\t102\tvariant2\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tTEST_FAIL");
+        let manifest_text =
+            std::fs::read_to_string(run_directory.join("run_manifest.json")).expect("manifest should be readable");
+        let manifest = serde_json::from_str::<serde_json::Value>(&manifest_text).expect("manifest should parse");
+        assert_eq!(manifest.get("final_output_format").and_then(serde_json::Value::as_str), Some("regenie"));
+        assert_eq!(manifest.get("final_row_count").and_then(serde_json::Value::as_i64), Some(2));
+
+        std::fs::remove_dir_all(run_directory).expect("test directory should be removed");
     }
 }
