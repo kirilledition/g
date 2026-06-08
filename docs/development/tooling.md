@@ -285,8 +285,8 @@ The full run writes:
 - `summary.json`: structured run results, comparisons, stage totals, and
   profiler metadata.
 - `summary.md`: human-readable bottleneck report.
-- `artifact_manifest.json`: artifact list, profiler availability, and skipped
-  profiler reasons.
+- `artifact_manifest.json`: artifact list, profiler availability, per-profiler
+  artifact and application output paths, and skipped profiler reasons.
 - `logs/*.stdout.log` and `logs/*.stderr.log`: subprocess logs.
 - `bgen_sweep/bgen_sweep.json`: native BGEN reader pre-sweep.
 - `tuning_*.json`: candidate tuning grids and finalists.
@@ -313,6 +313,11 @@ The full run writes:
   `tool.enable_nsight_compute=true` and `ncu` is available.
 - `deep_profiles/*.perf.data`: Linux perf native stack profiles when `perf` is
   available.
+- `deep_profiles/profile_*_<profiler>.g/`: isolated application output run
+  directories for profiler-wrapped child processes. Each profiler gets its own
+  output root and `profile_*_<profiler>.stage_timings.json`, while the primary
+  profiler artifacts above keep stable names such as `*.scalene.json` and
+  `*.memray.bin`.
 - Rust Criterion output for `bgen_read` and `preprocess` when
   `tool.enable_rust_criterion=true`.
 

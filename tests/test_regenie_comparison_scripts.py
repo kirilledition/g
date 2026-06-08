@@ -1429,7 +1429,20 @@ def test_deep_profile_artifact_manifest_records_tools_and_skips(tmp_path: Path) 
                     "name": "profile_binary_gpu_py_spy",
                     "status": "skipped",
                     "notes": "py-spy is not on PATH.",
-                }
+                },
+                {
+                    "name": "profile_binary_gpu_scalene",
+                    "implementation": "Scalene",
+                    "status": "failed",
+                    "profiler_artifact_path": str(output_directory / "deep_profiles" / "binary_gpu.scalene.json"),
+                    "application_output_prefix": str(output_directory / "deep_profiles" / "profile_binary_gpu_scalene"),
+                    "application_output_run_directory": str(
+                        output_directory / "deep_profiles" / "profile_binary_gpu_scalene.g"
+                    ),
+                    "stage_timing_path": str(
+                        output_directory / "deep_profiles" / "profile_binary_gpu_scalene.stage_timings.json"
+                    ),
+                },
             ]
         }
     }
@@ -1442,7 +1455,18 @@ def test_deep_profile_artifact_manifest_records_tools_and_skips(tmp_path: Path) 
 
     assert manifest["artifact_paths"] == ["summary.json"]
     assert manifest["profiler_tools"]["py_spy"]["available"] is False
-    assert manifest["skipped_profiles"] == summary_payload["deep_profiles"]["sampling_profiles"]
+    assert manifest["profiler_runs"] == [
+        {
+            "name": "profile_binary_gpu_scalene",
+            "implementation": "Scalene",
+            "status": "failed",
+            "profiler_artifact_path": "deep_profiles/binary_gpu.scalene.json",
+            "application_output_prefix": "deep_profiles/profile_binary_gpu_scalene",
+            "application_output_run_directory": "deep_profiles/profile_binary_gpu_scalene.g",
+            "stage_timing_path": "deep_profiles/profile_binary_gpu_scalene.stage_timings.json",
+        }
+    ]
+    assert manifest["skipped_profiles"] == [summary_payload["deep_profiles"]["sampling_profiles"][0]]
 
 
 def test_deep_profile_scalene_command_uses_run_subcommand(tmp_path: Path) -> None:
@@ -1602,6 +1626,8 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         [
             f"tool.output_dir={tmp_path / 'profile'}",
             "tool.variant_limit=1000",
+            "tool.enable_scalene=true",
+            "tool.enable_memray=true",
         ]
     )
     logged_commands: list[tuple[str, list[str]]] = []
@@ -1610,13 +1636,15 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
 
     def fake_run_g_trial(**keyword_arguments: typing.Any) -> deep_profile.TrialResult:
         jax_profile_names.append(str(keyword_arguments["name"]))
+        output_prefix = typing.cast("Path", keyword_arguments["output_directory"]) / str(keyword_arguments["name"])
+        stage_timing_path = output_prefix.parent / f"{output_prefix.name}.stage_timings.json"
         profile_command = deep_profile.build_g_step2_child_command(
             baseline_paths=typing.cast("baseline_benchmark.BaselinePaths", keyword_arguments["baseline_paths"]),
             candidate=typing.cast("deep_profile.Step2Candidate", keyword_arguments["candidate"]),
-            output_prefix=typing.cast("Path", keyword_arguments["output_directory"]) / str(keyword_arguments["name"]),
+            output_prefix=output_prefix,
             variant_limit=typing.cast("int | None", keyword_arguments["variant_limit"]),
             cache_directory=typing.cast("Path", keyword_arguments["cache_directory"]),
-            stage_timing_path=typing.cast("Path | None", keyword_arguments.get("stage_timing_path")),
+            stage_timing_path=stage_timing_path,
             trace_directory=typing.cast("Path | None", keyword_arguments.get("trace_directory")),
             memory_profile_path=typing.cast("Path | None", keyword_arguments.get("memory_profile_path")),
         )
@@ -1632,6 +1660,9 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
             stderr_log_path="stderr.log",
             command_arguments=profile_command,
             environment_overrides={},
+            stage_timing_path=str(stage_timing_path),
+            application_output_prefix=str(output_prefix),
+            application_output_run_directory=str(deep_profile.build_application_output_run_directory(output_prefix)),
         )
 
     def fake_run_logged_command(**keyword_arguments: typing.Any) -> deep_profile.TrialResult:
@@ -1664,13 +1695,18 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         return {"command": command_arguments, "returncode": 0, "stdout": "profile\n", "stderr": ""}
 
     def fake_which(command_name: str) -> str | None:
-        if command_name in {"cargo", "py-spy", "perf"}:
+        if command_name in {"cargo", "py-spy", "perf", "uv"}:
             return f"/usr/bin/{command_name}"
         return None
+
+    def fake_python_module_is_available(module_name: str) -> bool:
+        del module_name
+        return False
 
     monkeypatch.setattr(deep_profile, "run_g_trial", fake_run_g_trial)
     monkeypatch.setattr(deep_profile, "run_logged_command", fake_run_logged_command)
     monkeypatch.setattr(deep_profile, "command_output", fake_command_output)
+    monkeypatch.setattr(deep_profile, "python_module_is_available", fake_python_module_is_available)
     monkeypatch.setattr(deep_profile.shutil, "which", fake_which)
 
     results = deep_profile.run_deep_profiles(
@@ -1683,14 +1719,42 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
 
     implementations = [implementation for implementation, _command in logged_commands]
     assert jax_profile_names == ["profile_binary_gpu_jax"]
-    assert implementations == ["cProfile", "py-spy", "perf"]
+    assert implementations == ["cProfile", "py-spy", "Scalene", "Memray", "perf"]
     assert metadata_commands[:2] == [
         ["cargo", "bench", "--bench", "bgen_read"],
         ["cargo", "bench", "--bench", "preprocess"],
     ]
     assert any(command[0].endswith("py-spy") and "--format" in command for _implementation, command in logged_commands)
     assert any(command[0].endswith("perf") and "record" in command for _implementation, command in logged_commands)
-    assert len(results["sampling_profiles"]) == 4
+    profile_directory = tmp_path / "profile" / "deep_profiles"
+    sampling_profiles = typing.cast("list[dict[str, object]]", results["sampling_profiles"])
+    sampling_profile_by_name = {str(profile["name"]): profile for profile in sampling_profiles}
+    expected_profiler_artifacts = {
+        "cprofile": "binary_gpu.cprofile",
+        "py_spy": "binary_gpu.speedscope.json",
+        "scalene": "binary_gpu.scalene.json",
+        "memray": "binary_gpu.memray.bin",
+        "perf": "binary_gpu.perf.data",
+    }
+    for profiler_suffix, artifact_name in expected_profiler_artifacts.items():
+        profile_name = f"profile_binary_gpu_{profiler_suffix}"
+        expected_stage_timing_path = profile_directory / f"{profile_name}.stage_timings.json"
+        profile_result = sampling_profile_by_name[profile_name]
+        assert profile_result["profiler_artifact_path"] == str(profile_directory / artifact_name)
+        assert profile_result["application_output_prefix"] == str(profile_directory / profile_name)
+        assert profile_result["application_output_run_directory"] == str(profile_directory / f"{profile_name}.g")
+        assert profile_result["stage_timing_path"] == str(expected_stage_timing_path)
+        script_text = (profile_directory / f"{profile_name}_child.py").read_text(encoding="utf-8")
+        assert f"\"out\": '{profile_directory / profile_name}'" in script_text
+        assert f"\"g-stage-timings-json\": '{expected_stage_timing_path}'" in script_text
+        assert "profile_binary_gpu_profiler" not in script_text
+    application_output_run_directories = {
+        str(profile["application_output_run_directory"])
+        for profile in sampling_profiles
+        if profile.get("application_output_run_directory") is not None
+    }
+    assert len(application_output_run_directories) == 6
+    assert len(results["sampling_profiles"]) == 6
 
 
 def test_deep_profile_aggregates_trial_results() -> None:

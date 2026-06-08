@@ -751,6 +751,8 @@ py-spy speedscope profiles when available, optional Scalene/Memray/Nsight
 passes when enabled and available, Linux perf data when available, Rust
 Criterion benches, stage timings, telemetry/logging perturbation runs,
 subprocess logs, `artifact_manifest.json`, `summary.json`, and `summary.md`.
+The artifact manifest includes per-profiler artifact paths and isolated
+application output run directories so profiler reruns do not collide.
 
 Example:
 
