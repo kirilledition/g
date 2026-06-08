@@ -15,6 +15,13 @@ The recipes read these environment variables:
 | `GWAS_ENGINE_DATA_DIR` | `data` | Local input data and generated benchmark artifacts. |
 | `GWAS_ENGINE_PYTHON_VERSION` | `3.14` | Python version requested by bootstrap and checks. |
 | `GWAS_ENGINE_TOOLS_DIR` | `.tools` | Server-local tool install location reported by `doctor-server`. |
+| `GWAS_ENGINE_REGENIE_PATCHED_SOURCE_DIR` | `reference/regenie-patched` | Patched REGENIE source directory used by `build-patched-regenie`. |
+| `GWAS_ENGINE_REGENIE_PATCHED_OUTPUT_DIR` | `.tools/regenie-patched/native` | Gitignored output directory for the patched REGENIE native binary. |
+| `GWAS_ENGINE_REGENIE_BGEN_PATH` | empty | External BGEN library root for patched REGENIE builds. Falls back to `BGEN_PATH`. |
+| `GWAS_ENGINE_REGENIE_BUILD_NODE` | `GWAS_ENGINE_CPU_NODE` | Default node for `slurm-build-patched-regenie` when no node argument is passed. |
+| `GWAS_ENGINE_REGENIE_BUILD_JOBS` | allocated CPU count | Override for patched REGENIE `make -j`; defaults to `SLURM_CPUS_ON_NODE`, then `SLURM_CPUS_PER_TASK`, then `nproc`. |
+| `GWAS_ENGINE_REGENIE_PERF_FLAGS` | `-march=native -mtune=native -flto -DNDEBUG` | Extra native performance flags appended after required OpenMP flags and the patched REGENIE Makefile defaults. |
+| `GWAS_ENGINE_REGENIE_EXTRA_CFLAGS` | empty | Additional patched REGENIE compile and link flags appended after `GWAS_ENGINE_REGENIE_PERF_FLAGS`. |
 | `GWAS_ENGINE_GPU_NODE` | `landau` | SLURM GPU node. |
 | `GWAS_ENGINE_CPU_NODE` | `cantor` | SLURM CPU node for CPU benchmark recipes. |
 | `GWAS_ENGINE_SLURM_PARTITION` | empty | Optional SLURM partition. |
@@ -199,6 +206,29 @@ also accept the same overrides when run directly with `uv run --no-sync python
 - Output: baseline tool availability check.
 - Use when: preparing to run external baseline or comparison benchmarks.
 
+### `build-patched-regenie`
+
+- Inputs: patched source under `GWAS_ENGINE_REGENIE_PATCHED_SOURCE_DIR`, a C++
+  compiler, `make`, and an external BGEN library root supplied by
+  `GWAS_ENGINE_REGENIE_BGEN_PATH` or `BGEN_PATH`.
+- Output: patched REGENIE binary at
+  `GWAS_ENGINE_REGENIE_PATCHED_OUTPUT_DIR/regenie`.
+- Use when: building the local patched REGENIE reference with the upstream
+  Makefile's `-O3` and `-ffast-math` flags plus explicit OpenMP, native
+  architecture, native tuning, LTO, and `NDEBUG` flags. The recipe uses all CPUs
+  visible to the job by default and runs `make clean` first so stale objects do
+  not hide changed flags. Set `GWAS_ENGINE_REGENIE_SKIP_CLEAN=1` only for an
+  intentional incremental rebuild. Makefile options such as `MKLROOT`,
+  `OPENBLAS_ROOT`, `HTSLIB_PATH`, `STATIC`, and `HAS_BOOST_IOSTREAM` are
+  forwarded when present in the environment.
+
+Example:
+
+```bash
+GWAS_ENGINE_REGENIE_BGEN_PATH=/path/to/bgen \
+  just build-patched-regenie
+```
+
 ### `doctor-jax`
 
 - Inputs: Python environment.
@@ -259,6 +289,28 @@ just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke
 - Output: that recipe executed inside a CPU SLURM allocation.
 - Use when: wrapping existing CPU benchmark recipes while preserving the Justfile
   interface.
+
+### `slurm-build-patched-regenie node=''`
+
+- Inputs: SLURM access, optional node argument, and the same build inputs as
+  `build-patched-regenie`.
+- Output: patched REGENIE native build performed inside an exclusive one-node
+  SLURM allocation. The wrapper defaults to `GWAS_ENGINE_REGENIE_BUILD_NODE`,
+  then `GWAS_ENGINE_CPU_NODE`, and uses `--exclusive` so the build recipe can
+  pick up all node CPUs through `SLURM_CPUS_ON_NODE`.
+- Use when: compiling patched REGENIE without running a heavy build on the
+  login node. Pass `cantor`, `landau`, or another scheduler-visible node name
+  as the first argument.
+
+Examples:
+
+```bash
+GWAS_ENGINE_REGENIE_BGEN_PATH=/path/to/bgen \
+  just slurm-build-patched-regenie cantor
+
+GWAS_ENGINE_REGENIE_BGEN_PATH=/path/to/bgen \
+  just slurm-build-patched-regenie landau
+```
 
 ## Direct REGENIE Runs
 

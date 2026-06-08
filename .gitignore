@@ -16,6 +16,10 @@ src/g/_core*.so
 /archive/direct_association/regenie/regenie
 /archive/direct_association/regenie/**/*.a
 /archive/direct_association/regenie/**/*.o
+/reference/regenie-patched/regenie
+/reference/regenie-patched/src/*.o
+/reference/regenie-patched/external_libs/**/*.a
+/reference/regenie-patched/external_libs/**/*.o
 
 .coverage
 
