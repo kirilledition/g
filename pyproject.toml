@@ -131,6 +131,21 @@ source = ["src/g"]
 
 [tool.coverage.report]
 fail_under = 90
-omit = ["src/g/__init__.py"]
+omit = [
+    # Package marker or re-export boilerplate only; src/g/__init__.py contains
+    # lazy public API behavior and remains covered.
+    "src/g/compute/__init__.py",
+    "src/g/compute/common/__init__.py",
+    "src/g/compute/regenie2_binary/__init__.py",
+    "src/g/compute/regenie2_binary/firth/__init__.py",
+    "src/g/compute/regenie2_linear/__init__.py",
+    "src/g/engine/__init__.py",
+    "src/g/interface/__init__.py",
+    "src/g/io/__init__.py",
+]
+exclude_also = [
+    # Annotation-only import blocks are not reachable at runtime.
+    "if typing\\.TYPE_CHECKING:",
+]
 show_missing = true
 skip_covered = false
