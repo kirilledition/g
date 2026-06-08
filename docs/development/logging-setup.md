@@ -56,6 +56,42 @@ The default stream layout is:
 accepted as a compatibility alias for the same stream. If both are configured,
 they must point at the same path.
 
+## Lifecycle Events
+
+Run lifecycle facts are represented once as structured payloads and then used
+for both terminal rendering and the JSONL diagnostics stream. The CLI still
+uses normal Click stdout for data commands such as `g config init`, but
+`g regenie` success and graceful-interruption messages are derived from these
+typed lifecycle events.
+
+`run_completed` includes the user-visible output artifacts needed by operators
+and diagnostic tools:
+
+```json
+{
+  "event": "run_completed",
+  "association_mode": "regenie2_linear",
+  "phenotype_count": 1,
+  "output_run_directory": "results/output.g/trait.regenie2_linear.run",
+  "final_dataset": "results/output.g/trait.regenie2_linear.run/parts",
+  "final_parquet": "results/output.g/trait.regenie2_linear.run/final.parquet",
+  "phenotype_artifacts": [
+    {
+      "phenotype": "trait",
+      "output_run_directory": "results/output.g/trait.regenie2_linear.run",
+      "final_dataset": "results/output.g/trait.regenie2_linear.run/parts",
+      "final_parquet": "results/output.g/trait.regenie2_linear.run/final.parquet",
+      "effective_config": "results/output.g/trait.regenie2_linear.run/effective_config.toml"
+    }
+  ]
+}
+```
+
+For multi-phenotype runs, `phenotype_artifacts` contains one entry per
+phenotype. Graceful shutdown is emitted as `run_failed` with
+`failure_kind = "graceful_shutdown"`, signal metadata, the signal-derived exit
+code, and `flushed_for_resume = true`.
+
 ## Supported Modes
 
 ### Off

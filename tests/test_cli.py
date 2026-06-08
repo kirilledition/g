@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import signal
-import typing
-from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,29 +9,11 @@ import pytest
 from click.testing import CliRunner
 
 from g import api, types
-from g.cli import (
-    app,
-    main,
-    print_success_message,
-    print_warm_cache_message,
-    regenie_main,
-    resolve_trusted_bgen_validation_mode,
-)
-from g.engine import shutdown
+from g.cli import app, main, regenie_main
+from g.engine import run_events, shutdown
 from g.interface import config, config_layers, options
 
 runner = CliRunner()
-
-
-@dataclass(frozen=True)
-class WarmShape:
-    sample_count: int
-    variant_count: int
-
-
-@dataclass(frozen=True)
-class WarmReport:
-    warmed_shapes: tuple[WarmShape, ...]
 
 
 def test_root_command_without_arguments_shows_help() -> None:
@@ -518,60 +498,52 @@ def test_legacy_commands_are_not_registered() -> None:
         assert "No such command" in result.output
 
 
-def test_print_success_message_reports_run_directory_outputs(capsys: typing.Any) -> None:
-    print_success_message(
+def test_run_completed_renderer_reports_run_directory_outputs() -> None:
+    completed_event = run_events.build_run_completed_event(
         api.RunArtifacts(
             output_run_directory=Path("results/output.g/trait.regenie2_linear.run"),
             final_dataset=Path("results/output.g/trait.regenie2_linear.run/parts"),
             final_parquet=Path("results/output.g/trait.regenie2_linear.run/final.parquet"),
         )
     )
-    captured = capsys.readouterr()
-    assert "results/output.g/trait.regenie2_linear.run" in captured.out
-    assert "Parquet dataset" in captured.out
-    assert "final.parquet" in captured.out
+    rendered_lines = run_events.render_run_completed_lines(completed_event)
+
+    assert any("results/output.g/trait.regenie2_linear.run" in line for line in rendered_lines)
+    assert any("Parquet dataset" in line for line in rendered_lines)
+    assert any("final.parquet" in line for line in rendered_lines)
 
 
-def test_print_success_message_reports_nested_phenotype_artifacts(capsys: typing.Any) -> None:
-    print_success_message(
+def test_run_completed_renderer_reports_nested_phenotype_artifacts() -> None:
+    completed_event = run_events.build_run_completed_event(
         api.RunArtifacts(
             phenotype_artifacts=(
-                api.RunArtifacts(output_run_directory=Path("results/trait_a.run")),
+                api.RunArtifacts(output_run_directory=Path("results/trait_a.run"), phenotype_name="trait_a"),
                 api.RunArtifacts(
-                    output_run_directory=Path("results/trait_b.run"), final_parquet=Path("trait_b.parquet")
+                    output_run_directory=Path("results/trait_b.run"),
+                    final_parquet=Path("trait_b.parquet"),
+                    phenotype_name="trait_b",
                 ),
             )
         )
     )
+    rendered_output = "\n".join(run_events.render_run_completed_lines(completed_event))
+    telemetry_fields = run_events.run_completed_telemetry_fields(completed_event)
 
-    captured = capsys.readouterr()
-    assert "results/trait_a.run" in captured.out
-    assert "results/trait_b.run" in captured.out
-    assert "trait_b.parquet" in captured.out
-
-
-def test_print_warm_cache_message_lists_warmed_shapes(capsys: typing.Any) -> None:
-    print_warm_cache_message(WarmReport(warmed_shapes=(WarmShape(sample_count=12, variant_count=512),)))
-
-    captured = capsys.readouterr()
-    assert "(12, 512)" in captured.out
-
-
-def test_resolve_trusted_bgen_validation_mode_rejects_conflicts() -> None:
-    assert (
-        resolve_trusted_bgen_validation_mode(validate_trusted_bgen=False, assume_trusted_bgen_validated=False)
-        == types.TrustedBgenValidationMode.CACHE_ON_MISS
+    assert "results/trait_a.run" in rendered_output
+    assert "results/trait_b.run" in rendered_output
+    assert "trait_b.parquet" in rendered_output
+    assert telemetry_fields["phenotype_count"] == 2
+    assert telemetry_fields["phenotype_artifacts"] == (
+        {
+            "output_run_directory": "results/trait_a.run",
+            "phenotype": "trait_a",
+        },
+        {
+            "final_parquet": "trait_b.parquet",
+            "output_run_directory": "results/trait_b.run",
+            "phenotype": "trait_b",
+        },
     )
-    assert (
-        resolve_trusted_bgen_validation_mode(validate_trusted_bgen=True, assume_trusted_bgen_validated=False)
-        == types.TrustedBgenValidationMode.FORCE_VALIDATE
-    )
-    assert (
-        resolve_trusted_bgen_validation_mode(validate_trusted_bgen=False, assume_trusted_bgen_validated=True)
-        == types.TrustedBgenValidationMode.ASSUME_VALIDATED
-    )
-    with pytest.raises(click.BadParameter, match="mutually exclusive"):
-        resolve_trusted_bgen_validation_mode(validate_trusted_bgen=True, assume_trusted_bgen_validated=True)
 
 
 def test_main_dispatches_to_click_app() -> None:
