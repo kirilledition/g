@@ -15,9 +15,11 @@ import numpy.typing as npt
 
 from g import _core, types
 from g.engine import shutdown, timing, trusted_validation
-from g.io import source
 
 logger = logging.getLogger(__name__)
+
+if typing.TYPE_CHECKING:
+    from g.io import source
 
 
 class SampleAlignmentConfigProtocol(typing.Protocol):
@@ -273,16 +275,11 @@ def load_native_bgen_run_input(
     load_aligned_sample_data_callable: typing.Callable[..., _core.NativeAlignedSampleData] | None = None,
 ) -> NativeBgenRunInput:
     """Load native-aligned samples and JAX compute inputs for a native BGEN run."""
-    source.validate_genotype_source_config(genotype_source_config)
-    resolved_sample_path = source.resolve_bgen_sample_path(
-        genotype_source_config.source_path,
-        genotype_source_config.sample_path,
-    )
     resolved_build_native_bgen_run_input = build_native_bgen_run_input_callable or build_native_bgen_run_input
     resolved_load_aligned_sample_data = load_aligned_sample_data_callable or load_native_aligned_sample_data
     native_aligned_sample_data = resolved_load_aligned_sample_data(
         engine=engine,
-        sample_path=resolved_sample_path,
+        sample_path=genotype_source_config.resolved_sample_path,
         phenotype_path=phenotype_path,
         phenotype_name=phenotype_name,
         covariate_path=covariate_path,
@@ -305,14 +302,9 @@ def load_native_bgen_multi_run_input(
     alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> NativeBgenMultiRunInput:
     """Load native complete-case multi-phenotype samples and JAX compute inputs."""
-    source.validate_genotype_source_config(genotype_source_config)
-    resolved_sample_path = source.resolve_bgen_sample_path(
-        genotype_source_config.source_path,
-        genotype_source_config.sample_path,
-    )
     native_multi_aligned_sample_data = load_native_multi_aligned_sample_data(
         engine=engine,
-        sample_path=resolved_sample_path,
+        sample_path=genotype_source_config.resolved_sample_path,
         phenotype_path=phenotype_path,
         phenotype_names=phenotype_names,
         covariate_path=covariate_path,
@@ -336,13 +328,10 @@ def load_native_bgen_grouped_run_inputs(
     alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> tuple[NativeBgenGroupedRunInput, ...]:
     """Load native grouped per-phenotype samples and JAX compute inputs."""
-    source.validate_genotype_source_config(genotype_source_config)
-    resolved_sample_path = source.resolve_bgen_sample_path(
-        genotype_source_config.source_path,
-        genotype_source_config.sample_path,
-    )
     native_grouped_aligned_sample_data = engine.align_grouped_sample_data(
-        str(resolved_sample_path) if resolved_sample_path is not None else None,
+        str(genotype_source_config.resolved_sample_path)
+        if genotype_source_config.resolved_sample_path is not None
+        else None,
         str(phenotype_path),
         list(phenotype_names),
         str(covariate_path) if covariate_path is not None else None,
