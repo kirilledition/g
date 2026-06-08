@@ -26,8 +26,6 @@ Common checks:
 just format
 just lint
 just typecheck
-just check
-just test
 ```
 
 Reduced-toolchain local checks:
@@ -37,6 +35,21 @@ just check-local
 just test-local
 just test-local-focused
 ```
+
+Full CPU validation belongs on a CPU SLURM node on the gauss server:
+
+```bash
+just slurm-cpu-check
+just slurm-cpu-test
+just slurm-cpu-test-full
+just slurm-cpu-rust-build
+just slurm-cpu-rust-test
+```
+
+`just check` and `just test` remain available as direct recipes, but do not run
+the full versions on a login node when they will compile Rust dependencies or
+execute the large Python suite. Use [Ubuntu SLURM Development](UBUNTU_SLURM_DEVELOPMENT.md)
+for the CPU/GPU routing rules and allocation environment variables.
 
 ## Documentation
 

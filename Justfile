@@ -9,13 +9,20 @@ regenie_patched_source_dir := env_var_or_default('GWAS_ENGINE_REGENIE_PATCHED_SO
 regenie_patched_output_dir := env_var_or_default('GWAS_ENGINE_REGENIE_PATCHED_OUTPUT_DIR', '.tools/regenie-patched/native')
 slurm_gpu_node := env_var_or_default('GWAS_ENGINE_GPU_NODE', 'landau')
 slurm_cpu_node := env_var_or_default('GWAS_ENGINE_CPU_NODE', 'cantor')
-slurm_partition := env_var_or_default('GWAS_ENGINE_SLURM_PARTITION', '')
-slurm_account := env_var_or_default('GWAS_ENGINE_SLURM_ACCOUNT', '')
-slurm_time_limit := env_var_or_default('GWAS_ENGINE_SLURM_TIME', '04:00:00')
-slurm_cpus_per_task := env_var_or_default('GWAS_ENGINE_SLURM_CPUS_PER_TASK', '8')
-slurm_memory := env_var_or_default('GWAS_ENGINE_SLURM_MEMORY', '64G')
-slurm_gpu_count := env_var_or_default('GWAS_ENGINE_SLURM_GPUS_PER_TASK', '1')
-slurm_extra_arguments := env_var_or_default('GWAS_ENGINE_SLURM_EXTRA_ARGS', '')
+slurm_gpu_partition := env_var_or_default('GWAS_ENGINE_GPU_PARTITION', env_var_or_default('GWAS_ENGINE_SLURM_PARTITION', ''))
+slurm_gpu_account := env_var_or_default('GWAS_ENGINE_GPU_ACCOUNT', env_var_or_default('GWAS_ENGINE_SLURM_ACCOUNT', ''))
+slurm_gpu_time_limit := env_var_or_default('GWAS_ENGINE_GPU_TIME', env_var_or_default('GWAS_ENGINE_SLURM_TIME', '04:00:00'))
+slurm_gpu_cpus_per_task := env_var_or_default('GWAS_ENGINE_GPU_CPUS_PER_TASK', env_var_or_default('GWAS_ENGINE_SLURM_CPUS_PER_TASK', '8'))
+slurm_gpu_memory := env_var_or_default('GWAS_ENGINE_GPU_MEMORY', env_var_or_default('GWAS_ENGINE_SLURM_MEMORY', '64G'))
+slurm_gpu_count := env_var_or_default('GWAS_ENGINE_GPU_GPUS_PER_TASK', env_var_or_default('GWAS_ENGINE_SLURM_GPUS_PER_TASK', '1'))
+slurm_gpu_extra_arguments := env_var_or_default('GWAS_ENGINE_GPU_EXTRA_ARGS', env_var_or_default('GWAS_ENGINE_SLURM_EXTRA_ARGS', ''))
+slurm_cpu_partition := env_var_or_default('GWAS_ENGINE_CPU_PARTITION', env_var_or_default('GWAS_ENGINE_SLURM_PARTITION', ''))
+slurm_cpu_account := env_var_or_default('GWAS_ENGINE_CPU_ACCOUNT', env_var_or_default('GWAS_ENGINE_SLURM_ACCOUNT', ''))
+slurm_cpu_time_limit := env_var_or_default('GWAS_ENGINE_CPU_TIME', env_var_or_default('GWAS_ENGINE_SLURM_TIME', '04:00:00'))
+slurm_cpu_cpus_per_task := env_var_or_default('GWAS_ENGINE_CPU_CPUS_PER_TASK', env_var_or_default('GWAS_ENGINE_SLURM_CPUS_PER_TASK', '40'))
+slurm_cpu_memory := env_var_or_default('GWAS_ENGINE_CPU_MEMORY', env_var_or_default('GWAS_ENGINE_SLURM_MEMORY', '128G'))
+slurm_cpu_extra_arguments := env_var_or_default('GWAS_ENGINE_CPU_EXTRA_ARGS', env_var_or_default('GWAS_ENGINE_SLURM_EXTRA_ARGS', ''))
+slurm_cpu_exclusive := env_var_or_default('GWAS_ENGINE_SLURM_EXCLUSIVE', '1')
 perf_results_dir := env_var_or_default('GWAS_ENGINE_PERF_RESULTS_DIR', 'results/perf')
 server_env := '. scripts/server_env.sh'
 symphony_elixir_dir := env_var_or_default('SYMPHONY_ELIXIR_DIR', '/mnt/beegfs/kirill/Projects/symphony/elixir')
@@ -138,7 +145,7 @@ doctor-server:
     #!/usr/bin/env bash
     set -euo pipefail
     . scripts/server_env.sh
-    required_commands=(just uv srun zstd cargo cargo-clippy cargo-fmt rustc rustfmt plink plink2 regenie)
+    required_commands=(git just uv srun zstd cargo cargo-clippy cargo-fmt rustc rustfmt plink plink2 regenie)
     for command_name in "${required_commands[@]}"; do
       if ! command -v "${command_name}" >/dev/null 2>&1; then
         echo "Missing required server command: ${command_name}" >&2
@@ -344,21 +351,22 @@ slurm-build-patched-regenie node='':
     fi
     slurm_arguments=(
       "--nodes=1"
+      "--ntasks=1"
       "--exclusive"
-      "--mem={{ slurm_memory }}"
-      "--time={{ slurm_time_limit }}"
+      "--mem={{ slurm_cpu_memory }}"
+      "--time={{ slurm_cpu_time_limit }}"
     )
     if [[ -n "${build_node}" ]]; then
       slurm_arguments+=("--nodelist=${build_node}")
     fi
-    if [[ -n "{{ slurm_partition }}" ]]; then
-      slurm_arguments+=("--partition={{ slurm_partition }}")
+    if [[ -n "{{ slurm_cpu_partition }}" ]]; then
+      slurm_arguments+=("--partition={{ slurm_cpu_partition }}")
     fi
-    if [[ -n "{{ slurm_account }}" ]]; then
-      slurm_arguments+=("--account={{ slurm_account }}")
+    if [[ -n "{{ slurm_cpu_account }}" ]]; then
+      slurm_arguments+=("--account={{ slurm_cpu_account }}")
     fi
-    if [[ -n "{{ slurm_extra_arguments }}" ]]; then
-      read -r -a extra_arguments <<< "{{ slurm_extra_arguments }}"
+    if [[ -n "{{ slurm_cpu_extra_arguments }}" ]]; then
+      read -r -a extra_arguments <<< "{{ slurm_cpu_extra_arguments }}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
     repository_root="$(pwd -P)"
@@ -375,20 +383,21 @@ slurm-gpu-shell:
     set -euo pipefail
     . scripts/server_env.sh
     slurm_arguments=(
+      "--ntasks=1"
       "--nodelist={{ slurm_gpu_node }}"
       "--gres=gpu:{{ slurm_gpu_count }}"
-      "--cpus-per-task={{ slurm_cpus_per_task }}"
-      "--mem={{ slurm_memory }}"
-      "--time={{ slurm_time_limit }}"
+      "--cpus-per-task={{ slurm_gpu_cpus_per_task }}"
+      "--mem={{ slurm_gpu_memory }}"
+      "--time={{ slurm_gpu_time_limit }}"
     )
-    if [[ -n "{{ slurm_partition }}" ]]; then
-      slurm_arguments+=("--partition={{ slurm_partition }}")
+    if [[ -n "{{ slurm_gpu_partition }}" ]]; then
+      slurm_arguments+=("--partition={{ slurm_gpu_partition }}")
     fi
-    if [[ -n "{{ slurm_account }}" ]]; then
-      slurm_arguments+=("--account={{ slurm_account }}")
+    if [[ -n "{{ slurm_gpu_account }}" ]]; then
+      slurm_arguments+=("--account={{ slurm_gpu_account }}")
     fi
-    if [[ -n "{{ slurm_extra_arguments }}" ]]; then
-      read -r -a extra_arguments <<< "{{ slurm_extra_arguments }}"
+    if [[ -n "{{ slurm_gpu_extra_arguments }}" ]]; then
+      read -r -a extra_arguments <<< "{{ slurm_gpu_extra_arguments }}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
     exec srun "${slurm_arguments[@]}" --pty bash -l
@@ -400,20 +409,21 @@ slurm-gpu-run command:
     . scripts/server_env.sh
     command='{{ command }}'
     slurm_arguments=(
+      "--ntasks=1"
       "--nodelist={{ slurm_gpu_node }}"
       "--gres=gpu:{{ slurm_gpu_count }}"
-      "--cpus-per-task={{ slurm_cpus_per_task }}"
-      "--mem={{ slurm_memory }}"
-      "--time={{ slurm_time_limit }}"
+      "--cpus-per-task={{ slurm_gpu_cpus_per_task }}"
+      "--mem={{ slurm_gpu_memory }}"
+      "--time={{ slurm_gpu_time_limit }}"
     )
-    if [[ -n "{{ slurm_partition }}" ]]; then
-      slurm_arguments+=("--partition={{ slurm_partition }}")
+    if [[ -n "{{ slurm_gpu_partition }}" ]]; then
+      slurm_arguments+=("--partition={{ slurm_gpu_partition }}")
     fi
-    if [[ -n "{{ slurm_account }}" ]]; then
-      slurm_arguments+=("--account={{ slurm_account }}")
+    if [[ -n "{{ slurm_gpu_account }}" ]]; then
+      slurm_arguments+=("--account={{ slurm_gpu_account }}")
     fi
-    if [[ -n "{{ slurm_extra_arguments }}" ]]; then
-      read -r -a extra_arguments <<< "{{ slurm_extra_arguments }}"
+    if [[ -n "{{ slurm_gpu_extra_arguments }}" ]]; then
+      read -r -a extra_arguments <<< "{{ slurm_gpu_extra_arguments }}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
     exec srun "${slurm_arguments[@]}" bash -lc "${command}"
@@ -425,31 +435,78 @@ slurm-gpu-just +just_arguments:
     . scripts/server_env.sh
     exec just slurm-gpu-run 'just {{ just_arguments }}'
 
+# Start an interactive SLURM shell on the configured CPU node
+slurm-cpu-shell:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    repository_root="{{ justfile_directory() }}"
+    slurm_arguments=(
+      "--nodes=1"
+      "--ntasks=1"
+      "--cpus-per-task={{ slurm_cpu_cpus_per_task }}"
+      "--mem={{ slurm_cpu_memory }}"
+      "--time={{ slurm_cpu_time_limit }}"
+    )
+    if [[ -n "{{ slurm_cpu_node }}" ]]; then
+      slurm_arguments+=("--nodelist={{ slurm_cpu_node }}")
+    fi
+    if [[ -n "{{ slurm_cpu_partition }}" ]]; then
+      slurm_arguments+=("--partition={{ slurm_cpu_partition }}")
+    fi
+    if [[ -n "{{ slurm_cpu_account }}" ]]; then
+      slurm_arguments+=("--account={{ slurm_cpu_account }}")
+    fi
+    case "{{ slurm_cpu_exclusive }}" in
+      "" | 0 | false | False | no | No)
+        ;;
+      *)
+        slurm_arguments+=("--exclusive")
+        ;;
+    esac
+    if [[ -n "{{ slurm_cpu_extra_arguments }}" ]]; then
+      read -r -a extra_arguments <<< "{{ slurm_cpu_extra_arguments }}"
+      slurm_arguments+=("${extra_arguments[@]}")
+    fi
+    printf -v job_command 'cd %q && . scripts/server_env.sh && gwas_engine_configure_cpu_parallelism && echo "GWAS_ENGINE_ALLOCATED_CPU_COUNT=${GWAS_ENGINE_ALLOCATED_CPU_COUNT}" && echo "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}" && echo "GWAS_ENGINE_PYTEST_WORKERS=${GWAS_ENGINE_PYTEST_WORKERS}" && exec bash -l' "${repository_root}"
+    exec srun "${slurm_arguments[@]}" --pty bash -lc "${job_command}"
+
 # Run a shell command through SLURM on the configured CPU node
 slurm-cpu-run command:
     #!/usr/bin/env bash
     set -euo pipefail
     . scripts/server_env.sh
+    repository_root="{{ justfile_directory() }}"
     command='{{ command }}'
     slurm_arguments=(
-      "--cpus-per-task={{ slurm_cpus_per_task }}"
-      "--mem={{ slurm_memory }}"
-      "--time={{ slurm_time_limit }}"
+      "--nodes=1"
+      "--ntasks=1"
+      "--cpus-per-task={{ slurm_cpu_cpus_per_task }}"
+      "--mem={{ slurm_cpu_memory }}"
+      "--time={{ slurm_cpu_time_limit }}"
     )
     if [[ -n "{{ slurm_cpu_node }}" ]]; then
       slurm_arguments+=("--nodelist={{ slurm_cpu_node }}")
     fi
-    if [[ -n "{{ slurm_partition }}" ]]; then
-      slurm_arguments+=("--partition={{ slurm_partition }}")
+    if [[ -n "{{ slurm_cpu_partition }}" ]]; then
+      slurm_arguments+=("--partition={{ slurm_cpu_partition }}")
     fi
-    if [[ -n "{{ slurm_account }}" ]]; then
-      slurm_arguments+=("--account={{ slurm_account }}")
+    if [[ -n "{{ slurm_cpu_account }}" ]]; then
+      slurm_arguments+=("--account={{ slurm_cpu_account }}")
     fi
-    if [[ -n "{{ slurm_extra_arguments }}" ]]; then
-      read -r -a extra_arguments <<< "{{ slurm_extra_arguments }}"
+    case "{{ slurm_cpu_exclusive }}" in
+      "" | 0 | false | False | no | No)
+        ;;
+      *)
+        slurm_arguments+=("--exclusive")
+        ;;
+    esac
+    if [[ -n "{{ slurm_cpu_extra_arguments }}" ]]; then
+      read -r -a extra_arguments <<< "{{ slurm_cpu_extra_arguments }}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
-    exec srun "${slurm_arguments[@]}" bash -lc "${command}"
+    printf -v job_command 'cd %q && . scripts/server_env.sh && gwas_engine_configure_cpu_parallelism && %s' "${repository_root}" "${command}"
+    exec srun "${slurm_arguments[@]}" bash -lc "${job_command}"
 
 # Run another just recipe through SLURM on the configured CPU node
 slurm-cpu-just +just_arguments:
@@ -687,13 +744,44 @@ ci-test:
     {{ server_env }} && uv sync --group dev --frozen
     {{ server_env }} && uv run --no-sync pytest tests/ -m "not phase0_data and not phase1_parity"
 
-# Run tests
+# Run CPU-focused tests excluding data/parity workloads
+test-cpu:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    pytest_arguments=()
+    if gwas_engine_is_positive_integer "${GWAS_ENGINE_PYTEST_WORKERS:-}" && [[ "${GWAS_ENGINE_PYTEST_WORKERS}" -gt 1 ]]; then
+      gwas_engine_configure_parallel_pytest_thread_limits
+      pytest_arguments+=("-n" "${GWAS_ENGINE_PYTEST_WORKERS}")
+    fi
+    uv run pytest tests/ -m "not phase0_data and not phase1_parity" "${pytest_arguments[@]}"
+
+# Run tests, using xdist when GWAS_ENGINE_PYTEST_WORKERS is configured
 test:
-    {{ server_env }} && uv run pytest tests/
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    pytest_arguments=()
+    if gwas_engine_is_positive_integer "${GWAS_ENGINE_PYTEST_WORKERS:-}" && [[ "${GWAS_ENGINE_PYTEST_WORKERS}" -gt 1 ]]; then
+      gwas_engine_configure_parallel_pytest_thread_limits
+      pytest_arguments+=("-n" "${GWAS_ENGINE_PYTEST_WORKERS}")
+    fi
+    uv run pytest tests/ "${pytest_arguments[@]}"
+
+# Explicit full Python test-suite alias
+test-full: test
 
 # Run Python coverage gate
 coverage-python:
-    {{ server_env }} && uv run pytest tests/ --cov=src/g --cov-report=term-missing --cov-fail-under=90
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    pytest_arguments=()
+    if gwas_engine_is_positive_integer "${GWAS_ENGINE_PYTEST_WORKERS:-}" && [[ "${GWAS_ENGINE_PYTEST_WORKERS}" -gt 1 ]]; then
+      gwas_engine_configure_parallel_pytest_thread_limits
+      pytest_arguments+=("-n" "${GWAS_ENGINE_PYTEST_WORKERS}")
+    fi
+    uv run pytest tests/ --cov=src/g --cov-report=term-missing --cov-fail-under=90 "${pytest_arguments[@]}"
 
 # Run Rust line coverage gate
 coverage-rust:
@@ -701,6 +789,38 @@ coverage-rust:
 
 # Run all coverage gates
 coverage: coverage-python coverage-rust
+
+# Build all Rust targets
+rust-build:
+    {{ server_env }} && cargo build --workspace --all-targets
+
+# Run the Rust test suite
+rust-test:
+    {{ server_env }} && cargo test --workspace
+
+# Run all checks on the configured CPU SLURM node
+slurm-cpu-check:
+    {{ server_env }} && just slurm-cpu-just check
+
+# Run CPU-focused Python tests on the configured CPU SLURM node
+slurm-cpu-test:
+    {{ server_env }} && just slurm-cpu-just test-cpu
+
+# Run the full Python test suite on the configured CPU SLURM node
+slurm-cpu-test-full:
+    {{ server_env }} && just slurm-cpu-just test-full
+
+# Build all Rust targets on the configured CPU SLURM node
+slurm-cpu-rust-build:
+    {{ server_env }} && just slurm-cpu-just rust-build
+
+# Run Rust tests on the configured CPU SLURM node
+slurm-cpu-rust-test:
+    {{ server_env }} && just slurm-cpu-just rust-test
+
+# Run coverage on the configured CPU SLURM node
+slurm-cpu-coverage:
+    {{ server_env }} && just slurm-cpu-just coverage
 
 # Generate docs/scratchpad/code-review.tasks.json from docs/scratchpad/code-review.md
 codex-tasks-sync:

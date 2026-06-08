@@ -4,12 +4,14 @@ This repository was originally developed inside the Nix flake on a personal mach
 
 - login node: dependency sync, formatting, linting, CPU-only tests, lightweight iteration
 - GPU node (`landau` by default): JAX CUDA probing, GPU tests, GPU benchmarks, REGENIE profiling
-- CPU compute node (`cantor` by default for benchmark wrappers): CPU-heavy benchmark runs
+- CPU compute node (`cantor` by default): full CPU validation, Rust builds/tests,
+  Python test parallelism, CPU-heavy benchmark runs
 
 ## Required Host Tooling
 
 Install or make available on `PATH`:
 
+- `git`
 - `uv`
 - `srun`
 - `zstd`
@@ -45,17 +47,39 @@ just doctor
 just doctor-baselines
 ```
 
-## Normal Development Flow
+## Workflow Tiers
 
-Run these on the login node:
+Run quick iteration on the login node:
 
 ```bash
-just check
-just test
-just coverage
+just check-local
+just test-local
+just test-local-focused
 just perf-smoke
 just perf-compare BASE.json NEW.json
 ```
+
+`check-local` runs Python format/lint/type checks plus a focused native-extension
+smoke. `test-local` runs the non-data Python suite serially. These are the right
+commands for small edits and head-node feedback.
+
+Use one CPU SLURM node for full CPU validation:
+
+```bash
+just slurm-cpu-check
+just slurm-cpu-test
+just slurm-cpu-test-full
+just slurm-cpu-rust-build
+just slurm-cpu-rust-test
+just slurm-cpu-coverage
+```
+
+`slurm-cpu-check` wraps `just check`. `slurm-cpu-test` runs the non-data Python
+suite with large-node pytest parallelism. `slurm-cpu-test-full` and
+`just slurm-cpu-just test` run the full Python suite, including data/parity
+tests when the required local files are present. Do not run full `just check`,
+full `just test`, Rust dependency builds, or Rust test builds directly on the
+login node.
 
 `perf-smoke` and `perf-compare` are intentionally login-node-safe. Do not run
 `perf-cpu`, `perf-gpu`, full benchmark sweeps, or GPU commands directly on the
@@ -74,17 +98,85 @@ just setup-binary-baseline
 just verify-regenie2-binary-gpu-inputs
 ```
 
+## CPU Workflow Through SLURM
+
+The CPU node defaults to `cantor`, which currently reports 40 CPUs and about
+192 GB memory. The CPU helpers request one task on one node, use
+`--exclusive` by default, and set `CARGO_BUILD_JOBS` from the allocation inside
+the job. Override cluster-specific settings independently from GPU settings:
+
+```bash
+export GWAS_ENGINE_CPU_NODE=cantor
+export GWAS_ENGINE_CPU_CPUS_PER_TASK=40
+export GWAS_ENGINE_CPU_MEMORY=128G
+export GWAS_ENGINE_CPU_TIME=04:00:00
+export GWAS_ENGINE_CPU_PARTITION=compute
+export GWAS_ENGINE_CPU_ACCOUNT=my-account
+export GWAS_ENGINE_CPU_EXTRA_ARGS='--reservation=my-reservation'
+export GWAS_ENGINE_SLURM_EXCLUSIVE=1
+```
+
+The older generic `GWAS_ENGINE_SLURM_*` variables still work as fallbacks, but
+prefer `GWAS_ENGINE_CPU_*` for CPU jobs and `GWAS_ENGINE_GPU_*` for GPU jobs.
+Set `GWAS_ENGINE_CPU_NODE` to an empty string when the scheduler should choose
+the CPU host.
+
+Open an interactive CPU shell:
+
+```bash
+just slurm-cpu-shell
+```
+
+Run one-off commands or existing recipes on the CPU node:
+
+```bash
+just slurm-cpu-run 'cargo build --workspace --all-targets'
+just slurm-cpu-just check
+just slurm-cpu-just test
+just slurm-cpu-just rust-test
+```
+
+Inside CPU SLURM jobs, `scripts/server_env.sh` derives
+`GWAS_ENGINE_ALLOCATED_CPU_COUNT` from `SLURM_CPUS_PER_TASK`,
+`SLURM_CPUS_ON_NODE`, or `nproc`; sets `CARGO_BUILD_JOBS` to that count unless
+already configured; and sets `GWAS_ENGINE_PYTEST_WORKERS` for pytest. Python
+tests default to at most 8 xdist workers because the suite imports JAX and the
+native extension, so one pytest worker per core can oversubscribe process-level
+JAX/native thread pools. Override after measuring:
+
+```bash
+GWAS_ENGINE_CPU_PYTEST_WORKERS=16 just slurm-cpu-test
+GWAS_ENGINE_CPU_PYTEST_WORKERS=1 just slurm-cpu-test-full
+```
+
+When xdist is active, pytest subprocesses get conservative BLAS/OpenMP thread
+limits to reduce accidental oversubscription. Cargo builds and Rust tests use
+the full allocated CPU count through Cargo's own scheduler.
+
+Rejected CPU-loop changes:
+
+- Do not change `RUSTFLAGS`, linker choice, incremental settings, or release/perf
+  profile semantics for validation recipes without benchmark evidence. Native
+  `RUSTFLAGS="-C target-cpu=native"` stays limited to perf/bench recipes.
+- Do not share one global Rust `target/` directory across Symphony worktrees by
+  default; that can reduce cold builds but risks cross-worktree contention and
+  confusing invalidation during unattended branch work.
+- Do not push every focused test through SLURM; local `check-local`,
+  `test-local`, and targeted `uv run pytest ...` remain faster for small edits.
+
 ## GPU Workflow Through SLURM
 
-The GPU node defaults to `landau`. Override cluster-specific settings with environment variables when needed:
+The GPU node defaults to `landau`. Override cluster-specific settings with GPU
+environment variables when needed:
 
 ```bash
 export GWAS_ENGINE_GPU_NODE=landau
-export GWAS_ENGINE_SLURM_PARTITION=gpu
-export GWAS_ENGINE_SLURM_ACCOUNT=my-account
-export GWAS_ENGINE_SLURM_CPUS_PER_TASK=8
-export GWAS_ENGINE_SLURM_MEMORY=64G
-export GWAS_ENGINE_SLURM_TIME=04:00:00
+export GWAS_ENGINE_GPU_PARTITION=gpu
+export GWAS_ENGINE_GPU_ACCOUNT=my-account
+export GWAS_ENGINE_GPU_CPUS_PER_TASK=8
+export GWAS_ENGINE_GPU_MEMORY=64G
+export GWAS_ENGINE_GPU_TIME=04:00:00
+export GWAS_ENGINE_GPU_GPUS_PER_TASK=1
 ```
 
 Open an interactive GPU shell:
@@ -125,6 +217,41 @@ writes summaries under `results/perf/cpu/`. Override the CPU host with
 the node. `perf-gpu` wraps the existing binary-hot GPU SLURM recipe and writes
 under `results/perf/gpu/`.
 
+## Timing Notes
+
+Baseline measured on `cantor` before the CPU workflow update, using a 40-CPU,
+128 GB, exclusive allocation:
+
+- `just check`: 96.53 seconds with a cold Cargo dependency cache.
+- `just test`: failed after 714.91 seconds because `cantor` had no `git`
+  executable, causing `tests/test_symphony_sync_main.py` to fail near the end of
+  the serial run. Installing user-level `git` with `pixi global install git`
+  made `git` available on both `gauss` and `cantor`.
+
+Post-change timings on the same node and allocation:
+
+- `just slurm-cpu-just check`: 17.75 seconds with warm Cargo artifacts.
+- `just slurm-cpu-check`: 66.69 seconds after a native Rust source change forced
+  a rebuild.
+- `just test-local`: 731.03 seconds on the login node for the serial non-data
+  suite.
+- `just slurm-cpu-test`: 212.81 seconds for the same non-data suite with 8 xdist
+  workers.
+- `just slurm-cpu-just test`: 224.76 seconds for the full suite with 8 xdist
+  workers.
+- `just slurm-cpu-test-full`: 230.24 seconds through the explicit full-suite
+  alias.
+- `just slurm-cpu-rust-build`: 128.03 seconds.
+- `just slurm-cpu-rust-test`: 32.45 seconds after the strict-resume diagnostic
+  fix.
+- `just slurm-cpu-coverage`: 408.87 seconds, with Python coverage at 92.73% and
+  Rust line coverage at 91.21%.
+
+Use large-node validation when the command will compile Rust dependencies, build
+Rust tests, run the full Python suite, or combine Python and Rust checks. For
+single-file Python changes, targeted `uv run pytest tests/<file>.py` or
+`just test-local-focused` is usually faster than queueing a SLURM job.
+
 The binary chr22 GPU run uses:
 
 ```bash
@@ -149,4 +276,7 @@ data/regenie2_binary_chr22_gpu.regenie2_binary.run/
 - `.tools/` and `data/` are local server state and must not be committed.
 - `results/` contains local benchmark output, including `perf-*` summaries, and
   must not be committed.
-- `scripts/server_env.sh` sets repo-local tools on `PATH`, `UV_CACHE_DIR=/tmp/g-uv-cache`, `UV_LINK_MODE=copy`, and repo-local Rust homes unless those variables are already set.
+- `scripts/server_env.sh` sets repo-local tools on `PATH`,
+  `UV_CACHE_DIR=/tmp/g-uv-cache`, `UV_LINK_MODE=copy`, repo-local Rust homes
+  unless those variables are already set, and CPU allocation-derived variables
+  when a CPU SLURM wrapper calls `gwas_engine_configure_cpu_parallelism`.

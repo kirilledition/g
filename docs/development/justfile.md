@@ -23,14 +23,23 @@ The recipes read these environment variables:
 | `GWAS_ENGINE_REGENIE_PERF_FLAGS` | `-march=native -mtune=native -flto -DNDEBUG` | Extra native performance flags appended after required OpenMP flags and the patched REGENIE Makefile defaults. |
 | `GWAS_ENGINE_REGENIE_EXTRA_CFLAGS` | empty | Additional patched REGENIE compile and link flags appended after `GWAS_ENGINE_REGENIE_PERF_FLAGS`. |
 | `GWAS_ENGINE_GPU_NODE` | `landau` | SLURM GPU node. |
-| `GWAS_ENGINE_CPU_NODE` | `cantor` | SLURM CPU node for CPU benchmark recipes. |
-| `GWAS_ENGINE_SLURM_PARTITION` | empty | Optional SLURM partition. |
-| `GWAS_ENGINE_SLURM_ACCOUNT` | empty | Optional SLURM account. |
-| `GWAS_ENGINE_SLURM_TIME` | `04:00:00` | Default SLURM time limit. |
-| `GWAS_ENGINE_SLURM_CPUS_PER_TASK` | `8` | Default SLURM CPU allocation. |
-| `GWAS_ENGINE_SLURM_MEMORY` | `64G` | Default SLURM memory allocation. |
-| `GWAS_ENGINE_SLURM_GPUS_PER_TASK` | `1` | Default SLURM GPU allocation. |
-| `GWAS_ENGINE_SLURM_EXTRA_ARGS` | empty | Extra SLURM arguments split by shell words. |
+| `GWAS_ENGINE_GPU_PARTITION` | `GWAS_ENGINE_SLURM_PARTITION` or empty | Optional GPU SLURM partition. |
+| `GWAS_ENGINE_GPU_ACCOUNT` | `GWAS_ENGINE_SLURM_ACCOUNT` or empty | Optional GPU SLURM account. |
+| `GWAS_ENGINE_GPU_TIME` | `GWAS_ENGINE_SLURM_TIME` or `04:00:00` | GPU SLURM time limit. |
+| `GWAS_ENGINE_GPU_CPUS_PER_TASK` | `GWAS_ENGINE_SLURM_CPUS_PER_TASK` or `8` | CPU count for GPU SLURM jobs. |
+| `GWAS_ENGINE_GPU_MEMORY` | `GWAS_ENGINE_SLURM_MEMORY` or `64G` | Memory for GPU SLURM jobs. |
+| `GWAS_ENGINE_GPU_GPUS_PER_TASK` | `GWAS_ENGINE_SLURM_GPUS_PER_TASK` or `1` | GPU count for GPU SLURM jobs. |
+| `GWAS_ENGINE_GPU_EXTRA_ARGS` | `GWAS_ENGINE_SLURM_EXTRA_ARGS` or empty | Extra GPU SLURM arguments split by shell words. |
+| `GWAS_ENGINE_CPU_NODE` | `cantor` | SLURM CPU node for full CPU validation and CPU benchmark recipes. |
+| `GWAS_ENGINE_CPU_PARTITION` | `GWAS_ENGINE_SLURM_PARTITION` or empty | Optional CPU SLURM partition. |
+| `GWAS_ENGINE_CPU_ACCOUNT` | `GWAS_ENGINE_SLURM_ACCOUNT` or empty | Optional CPU SLURM account. |
+| `GWAS_ENGINE_CPU_TIME` | `GWAS_ENGINE_SLURM_TIME` or `04:00:00` | CPU SLURM time limit. |
+| `GWAS_ENGINE_CPU_CPUS_PER_TASK` | `GWAS_ENGINE_SLURM_CPUS_PER_TASK` or `40` | CPU count for one CPU SLURM task. |
+| `GWAS_ENGINE_CPU_MEMORY` | `GWAS_ENGINE_SLURM_MEMORY` or `128G` | Memory for CPU SLURM jobs. |
+| `GWAS_ENGINE_CPU_EXTRA_ARGS` | `GWAS_ENGINE_SLURM_EXTRA_ARGS` or empty | Extra CPU SLURM arguments split by shell words. |
+| `GWAS_ENGINE_SLURM_EXCLUSIVE` | `1` | Request `--exclusive` for CPU SLURM jobs unless set to `0`, `false`, or `no`. |
+| `GWAS_ENGINE_CPU_PYTEST_WORKERS` | unset | Override CPU SLURM pytest worker count. |
+| `GWAS_ENGINE_CPU_PYTEST_WORKER_LIMIT` | `8` | Default cap for CPU SLURM pytest workers. |
 | `GWAS_ENGINE_PERF_RESULTS_DIR` | `results/perf` | Local gitignored result root used by `perf-*` recipes. |
 | `SYMPHONY_ELIXIR_DIR` | `/mnt/beegfs/kirill/Projects/symphony/elixir` | Symphony checkout used by `symphony-doctor` and `symphony-run`. |
 | `SYMPHONY_PORT` | `4000` | Port passed to the Symphony daemon. |
@@ -39,9 +48,11 @@ The recipes read these environment variables:
 Most recipes source `scripts/server_env.sh`, which sets repo-local tool paths
 and server cache defaults.
 
-Do not run GPU workloads, large benchmark sweeps, or large test suites on the
-`gauss` head node. `just perf-smoke` and `just perf-compare` are safe on the
-login node. `just perf-cpu` and `just perf-gpu` submit work through SLURM.
+Do not run GPU workloads, Rust dependency builds, large benchmark sweeps, or
+large test suites on the `gauss` head node. `just check-local`,
+`just test-local`, `just perf-smoke`, and `just perf-compare` are safe on the
+login node. `just slurm-cpu-*`, `just perf-cpu`, and `just perf-gpu` submit work
+through SLURM.
 
 ## Hydra Overrides
 
@@ -149,7 +160,7 @@ also accept the same overrides when run directly with `uv run --no-sync python
 
 ### `doctor-server`
 
-- Inputs: server tools including `just`, `uv`, `srun`, `zstd`, Rust tools,
+- Inputs: server tools including `git`, `just`, `uv`, `srun`, `zstd`, Rust tools,
   `plink`, `plink2`, and `regenie`.
 - Output: prerequisite checks, host name, tools directory, and uv cache path.
 - Use when: validating a server or SLURM login environment.
@@ -245,13 +256,15 @@ GWAS_ENGINE_REGENIE_BGEN_PATH=/path/to/bgen \
 
 ### `slurm-gpu-shell`
 
-- Inputs: SLURM environment and optional `GWAS_ENGINE_SLURM_*` variables.
+- Inputs: SLURM environment and optional `GWAS_ENGINE_GPU_*` variables, with
+  older `GWAS_ENGINE_SLURM_*` variables as fallbacks.
 - Output: interactive shell on the configured GPU node.
 - Use when: debugging GPU environment or running manual commands on `landau`.
 
 ### `slurm-gpu-run command`
 
-- Inputs: one shell command string and optional `GWAS_ENGINE_SLURM_*` variables.
+- Inputs: one shell command string and optional `GWAS_ENGINE_GPU_*` variables,
+  with older `GWAS_ENGINE_SLURM_*` variables as fallbacks.
 - Output: command execution through `bash -lc` inside an `srun` allocation on
   the configured GPU node.
 - Use when: submitting one GPU command without writing a dedicated recipe.
@@ -275,20 +288,45 @@ Example:
 just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke
 ```
 
+### `slurm-cpu-shell`
+
+- Inputs: SLURM environment and optional `GWAS_ENGINE_CPU_*` variables.
+- Output: interactive shell on the configured CPU node with
+  `GWAS_ENGINE_ALLOCATED_CPU_COUNT`, `CARGO_BUILD_JOBS`, and
+  `GWAS_ENGINE_PYTEST_WORKERS` printed before the shell starts.
+- Use when: debugging CPU-node environment or manually iterating on expensive
+  CPU validation.
+
 ### `slurm-cpu-run command`
 
-- Inputs: one shell command string and optional `GWAS_ENGINE_SLURM_*` variables.
-- Output: command execution through `bash -lc` inside an `srun` CPU allocation.
-- Use when: running CPU-heavy commands away from the login node. The default
-  node is `GWAS_ENGINE_CPU_NODE=cantor`; set it to an empty string or another
-  node name when the scheduler should choose a different CPU host.
+- Inputs: one shell command string and optional `GWAS_ENGINE_CPU_*` variables,
+  with older `GWAS_ENGINE_SLURM_*` variables as fallbacks.
+- Output: command execution through `bash -lc` inside a one-node, one-task CPU
+  `srun` allocation. The default node is `GWAS_ENGINE_CPU_NODE=cantor`; set it
+  to an empty string or another node name when the scheduler should choose a
+  different CPU host.
+- Use when: running CPU-heavy commands away from the login node. CPU jobs
+  request `--exclusive` by default; set `GWAS_ENGINE_SLURM_EXCLUSIVE=0` for
+  short smoke commands that do not need a full node.
 
 ### `slurm-cpu-just +just_arguments`
 
 - Inputs: another Just recipe and arguments.
 - Output: that recipe executed inside a CPU SLURM allocation.
-- Use when: wrapping existing CPU benchmark recipes while preserving the Justfile
-  interface.
+- Use when: wrapping existing CPU validation or benchmark recipes while
+  preserving the Justfile interface.
+
+Example:
+
+```bash
+just slurm-cpu-run 'cargo build --workspace --all-targets'
+just slurm-cpu-just check
+just slurm-cpu-just test
+```
+
+Inside CPU jobs, the wrapper sources `scripts/server_env.sh`, derives allocated
+CPU count from SLURM, sets `CARGO_BUILD_JOBS` to that count, and defaults pytest
+xdist to at most 8 workers unless `GWAS_ENGINE_CPU_PYTEST_WORKERS` is set.
 
 ### `slurm-build-patched-regenie node=''`
 
@@ -807,14 +845,34 @@ just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
 ### `test`
 
 - Inputs: full Python test environment.
-- Output: full pytest run.
-- Use when: intentionally running all tests.
+- Output: full pytest run. When `GWAS_ENGINE_PYTEST_WORKERS` is set to a value
+  greater than 1, the recipe adds `pytest-xdist -n <workers>`.
+- Use when: intentionally running all tests. Prefer `just slurm-cpu-just test`
+  or `just slurm-cpu-test-full` for full-suite runs on the gauss server.
+
+### `test-cpu`
+
+- Inputs: full Python test environment and optional
+  `GWAS_ENGINE_PYTEST_WORKERS`.
+- Output: pytest results excluding `phase0_data` and `phase1_parity`; uses
+  xdist when worker count is configured.
+- Use when: running the CPU validation suite without local data/parity
+  workloads, usually through `just slurm-cpu-test`.
+
+### `test-full`
+
+- Inputs: same as `test`.
+- Output: same as `test`.
+- Use when: making the full-suite intent explicit in `just slurm-cpu-test-full`.
 
 ### `coverage-python`
 
-- Inputs: full Python test environment.
-- Output: Python coverage report with a 90 percent gate.
-- Use when: checking Python coverage.
+- Inputs: full Python test environment and optional
+  `GWAS_ENGINE_PYTEST_WORKERS`.
+- Output: Python coverage report with a 90 percent gate; uses xdist when worker
+  count is configured.
+- Use when: checking Python coverage, preferably through `slurm-cpu-coverage`
+  for full CPU validation.
 
 ### `coverage-rust`
 
@@ -827,6 +885,59 @@ just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
 - Inputs: same as `coverage-python` and `coverage-rust`.
 - Output: both coverage gates.
 - Use when: running complete coverage validation.
+
+### `rust-build`
+
+- Inputs: Rust toolchain.
+- Output: `cargo build --workspace --all-targets`.
+- Use when: building all Rust targets. In a CPU SLURM allocation,
+  `CARGO_BUILD_JOBS` is set from the allocation.
+
+### `rust-test`
+
+- Inputs: Rust toolchain.
+- Output: `cargo test --workspace`.
+- Use when: running Rust tests. In a CPU SLURM allocation, dependency and test
+  builds inherit `CARGO_BUILD_JOBS`.
+
+### `slurm-cpu-check`
+
+- Inputs: CPU SLURM access.
+- Output: `just check` executed on the configured CPU node.
+- Use when: running format, lint, clippy, and typecheck validation without
+  compiling Rust on the login node.
+
+### `slurm-cpu-test`
+
+- Inputs: CPU SLURM access.
+- Output: `test-cpu` executed on the configured CPU node.
+- Use when: running the non-data Python suite with bounded pytest parallelism.
+
+### `slurm-cpu-test-full`
+
+- Inputs: CPU SLURM access and optional local phase data.
+- Output: `test-full` executed on the configured CPU node.
+- Use when: running the full Python suite, including data/parity tests when
+  present.
+
+### `slurm-cpu-rust-build`
+
+- Inputs: CPU SLURM access and Rust toolchain.
+- Output: `rust-build` executed on the configured CPU node.
+- Use when: compiling all Rust targets with allocated CPU build jobs.
+
+### `slurm-cpu-rust-test`
+
+- Inputs: CPU SLURM access and Rust toolchain.
+- Output: `rust-test` executed on the configured CPU node.
+- Use when: running Rust tests with allocated CPU build jobs.
+
+### `slurm-cpu-coverage`
+
+- Inputs: CPU SLURM access and `cargo-llvm-cov` for Rust coverage.
+- Output: Python and Rust coverage gates executed on the configured CPU node.
+- Use when: full coverage is needed without running coverage workloads on the
+  login node.
 
 ## Codex Task Farm
 
