@@ -870,14 +870,20 @@ just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
 - Inputs: full Python test environment and optional
   `GWAS_ENGINE_PYTEST_WORKERS`.
 - Output: Python coverage report with a 90 percent gate; uses xdist when worker
-  count is configured.
+  count is configured. Coverage omits only verified Python package-marker or
+  re-export-boilerplate `__init__.py` files; lazy public API behavior in
+  `src/g/__init__.py` remains measured. Annotation-only
+  `if typing.TYPE_CHECKING:` blocks are excluded from reporting.
 - Use when: checking Python coverage, preferably through `slurm-cpu-coverage`
   for full CPU validation.
 
 ### `coverage-rust`
 
 - Inputs: Rust toolchain with `cargo llvm-cov`.
-- Output: Rust line coverage report with a 90 percent gate.
+- Output: Rust line coverage report with a 90 percent gate. The report ignores
+  `benches/` benchmark harnesses and `tests/` integration-test harness source
+  with `--ignore-filename-regex '(^|/)(benches|tests)/'`; production Rust under
+  `src/` remains in the denominator.
 - Use when: checking Rust coverage.
 
 ### `coverage`

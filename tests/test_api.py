@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 import g
+import g.cli as cli_module
 import g.engine.shutdown as shutdown_module
 import g.engine.telemetry as telemetry_module
 from g import api, execution_plan, runner, types
@@ -69,6 +70,18 @@ def test_public_package_exposes_only_new_regenie_interface() -> None:
     assert "regenie2_linear" not in g.__all__
     assert "ComputeConfig" not in g.__all__
     assert g.regenie is api.regenie
+
+
+def test_public_package_lazy_exports_cli_and_type_symbols() -> None:
+    assert g.main is cli_module.main
+    assert g.RunArtifacts is api.RunArtifacts
+    assert g.OutputFormat is types.OutputFormat
+    assert g.ArrayMemoryOrder is types.ArrayMemoryOrder
+
+
+def test_public_package_rejects_unknown_attributes() -> None:
+    with pytest.raises(AttributeError, match="module 'g' has no attribute 'missing'"):
+        g.__getattr__("missing")
 
 
 def test_importing_api_does_not_import_jax_heavy_modules() -> None:
