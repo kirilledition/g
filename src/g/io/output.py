@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.parquet$")
+REGENIE_PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.regenie$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
 RUN_MANIFEST_SCHEMA_VERSION = 6
 OUTPUT_SCHEMA_VERSION = 1
@@ -466,6 +467,7 @@ def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:
             for child_path in chunks_directory.iterdir()
             if CHUNK_FILENAME_PATTERN.match(child_path.name) is not None
             or PART_FILENAME_PATTERN.match(child_path.name) is not None
+            or REGENIE_PART_FILENAME_PATTERN.match(child_path.name) is not None
         )
     )
 

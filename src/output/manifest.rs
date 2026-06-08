@@ -70,6 +70,7 @@ pub(crate) fn resolve_output_run_paths(
     let output_directory_name = match output_format {
         OutputFileFormat::Arrow => "chunks",
         OutputFileFormat::Parquet => "parts",
+        OutputFileFormat::Regenie => "regenie",
     };
     OutputRunPaths { chunks_directory: run_directory.join(output_directory_name), run_directory }
 }
@@ -454,6 +455,9 @@ fn read_optional_manifest_string(committed_chunk: &Value, field_name: &str) -> O
 }
 
 fn infer_output_format_from_file_name(chunk_file_name: &str) -> &'static str {
+    if chunk_file_name.ends_with(".regenie") {
+        return "regenie";
+    }
     if chunk_file_name.ends_with(".parquet") {
         return "parquet";
     }
@@ -477,14 +481,40 @@ pub(crate) fn mark_run_manifest_finalized(
     row_count: usize,
     chunk_file_count: usize,
 ) -> Result<(), String> {
-    let Some(run_directory) = final_parquet_path.parent() else {
+    mark_run_manifest_finalized_output(final_parquet_path, row_count, chunk_file_count, "parquet")
+}
+
+pub(crate) fn mark_run_manifest_finalized_output(
+    final_output_path: &Path,
+    row_count: usize,
+    chunk_file_count: usize,
+    output_format: &str,
+) -> Result<(), String> {
+    let Some(run_directory) = final_output_path.parent() else {
         return Ok(());
     };
     update_run_manifest(run_directory, |manifest| {
         let manifest_object =
             manifest.as_object_mut().ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
         manifest_object.insert("finalized".to_string(), Value::Bool(true));
-        manifest_object.insert("final_parquet".to_string(), Value::String(final_parquet_path.display().to_string()));
+        manifest_object.insert("final_output".to_string(), Value::String(final_output_path.display().to_string()));
+        manifest_object.insert("final_output_format".to_string(), Value::String(output_format.to_string()));
+        match output_format {
+            "parquet" => {
+                manifest_object
+                    .insert("final_parquet".to_string(), Value::String(final_output_path.display().to_string()));
+                manifest_object.remove("final_regenie");
+            }
+            "regenie" => {
+                manifest_object
+                    .insert("final_regenie".to_string(), Value::String(final_output_path.display().to_string()));
+                manifest_object.remove("final_parquet");
+            }
+            _ => {
+                manifest_object.remove("final_parquet");
+                manifest_object.remove("final_regenie");
+            }
+        }
         manifest_object.insert("final_row_count".to_string(), json!(row_count));
         manifest_object.insert("final_chunk_file_count".to_string(), json!(chunk_file_count));
         manifest_object.remove("interrupted");
@@ -501,6 +531,9 @@ pub(crate) fn mark_run_manifest_interrupted(run_directory: &Path, signal_name: &
         manifest_object.insert("interrupted".to_string(), Value::Bool(true));
         manifest_object.insert("interrupted_signal".to_string(), Value::String(signal_name.to_string()));
         manifest_object.remove("final_parquet");
+        manifest_object.remove("final_regenie");
+        manifest_object.remove("final_output");
+        manifest_object.remove("final_output_format");
         manifest_object.remove("final_row_count");
         manifest_object.remove("final_chunk_file_count");
         Ok(())

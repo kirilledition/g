@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -14,7 +15,7 @@ use serde_json::Value;
 
 use crate::output::manifest;
 use crate::output::schema;
-use crate::output::writer::OutputWriterError;
+use crate::output::writer::{self, OutputWriterError};
 
 pub fn scan_committed_chunk_identifiers(chunks_directory: &Path) -> Result<Vec<i64>, OutputWriterError> {
     Ok(scan_committed_chunk_commits(chunks_directory)?
@@ -139,7 +140,9 @@ fn scan_committed_chunk_commits(
         .map_err(OutputWriterError::runtime)?
         .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
         .filter(|chunk_file_path| {
-            chunk_file_path.extension().is_some_and(|extension| extension == "arrow" || extension == "parquet")
+            chunk_file_path
+                .extension()
+                .is_some_and(|extension| extension == "arrow" || extension == "parquet" || extension == "regenie")
         })
         .collect::<Vec<_>>();
     chunk_file_paths.sort();
@@ -262,6 +265,9 @@ fn collect_chunk_commits_by_identifier(
 fn inspect_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFileCommitObservation, OutputWriterError> {
     if chunk_file_path.extension().is_some_and(|extension| extension == "parquet") {
         return inspect_parquet_chunk_file_commits(chunk_file_path);
+    }
+    if chunk_file_path.extension().is_some_and(|extension| extension == "regenie") {
+        return inspect_regenie_text_chunk_file_commits(chunk_file_path);
     }
     let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
     let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
@@ -417,6 +423,91 @@ fn inspect_parquet_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFil
     Ok(ChunkFileCommitObservation { schema, chunk_commits: manifest_commits })
 }
 
+fn inspect_regenie_text_chunk_file_commits(
+    chunk_file_path: &Path,
+) -> Result<ChunkFileCommitObservation, OutputWriterError> {
+    let schema = Arc::clone(schema::get_regenie_step2_final_schema());
+    let chunk_file_name = chunk_file_path
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .ok_or_else(|| OutputWriterError::Runtime("Rust output writer text part file name is not UTF-8.".to_string()))?
+        .to_string();
+    let sidecar_path = writer::build_regenie_text_metadata_sidecar_path(chunk_file_path);
+    let chunk_commit_text = std::fs::read_to_string(&sidecar_path).map_err(|error| {
+        OutputWriterError::InvalidInput(format!(
+            "Strict resume REGENIE text part is missing chunk commit metadata: {} ({error})",
+            sidecar_path.display()
+        ))
+    })?;
+    let chunk_commits = read_chunk_commit_observations_text(&chunk_commit_text)?;
+    let observed_row_count = count_regenie_text_rows(chunk_file_path)?;
+    let summed_row_count = chunk_commits
+        .iter()
+        .try_fold(0_i64, |total, chunk_commit| total.checked_add(chunk_commit.row_count).ok_or(()))
+        .map_err(|()| {
+            OutputWriterError::Runtime("Rust output writer REGENIE text row count overflowed.".to_string())
+        })?;
+    if summed_row_count != observed_row_count {
+        return Err(OutputWriterError::InvalidInput(format!(
+            "Strict resume REGENIE text row count mismatch for part {chunk_file_name}."
+        )));
+    }
+    let mut manifest_commits = Vec::with_capacity(chunk_commits.len());
+    for chunk_commit in chunk_commits {
+        if chunk_commit.output_format != "regenie" {
+            return Err(OutputWriterError::InvalidInput(format!(
+                "Strict resume REGENIE text part has non-REGENIE commit metadata for chunk {}.",
+                chunk_commit.chunk_identifier
+            )));
+        }
+        manifest_commits.push(manifest::RunManifestChunkCommit {
+            chunk_identifier: chunk_commit.chunk_identifier,
+            output_format: chunk_commit.output_format,
+            compression: chunk_commit.compression,
+            variant_start_index: chunk_commit.variant_start_index,
+            variant_stop_index: chunk_commit.variant_stop_index,
+            row_count: usize::try_from(chunk_commit.row_count).map_err(OutputWriterError::runtime)?,
+            chunk_file_name: chunk_file_name.clone(),
+        });
+    }
+    Ok(ChunkFileCommitObservation { schema, chunk_commits: manifest_commits })
+}
+
+fn count_regenie_text_rows(chunk_file_path: &Path) -> Result<i64, OutputWriterError> {
+    let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
+    let mut input_reader = BufReader::new(input_file);
+    let mut header_line = String::new();
+    input_reader.read_line(&mut header_line).map_err(OutputWriterError::runtime)?;
+    let observed_header = header_line.trim_end_matches(|character| character == '\r' || character == '\n');
+    let expected_header = writer::REGENIE_STEP2_TEXT_HEADER.trim_end_matches('\n');
+    if observed_header != expected_header {
+        return Err(OutputWriterError::InvalidInput(format!(
+            "Strict resume REGENIE text part has an unexpected header: {}",
+            chunk_file_path.display()
+        )));
+    }
+    let mut row_count = 0_i64;
+    let mut row_line = String::new();
+    loop {
+        row_line.clear();
+        let read_byte_count = input_reader.read_line(&mut row_line).map_err(OutputWriterError::runtime)?;
+        if read_byte_count == 0 {
+            break;
+        }
+        let row = row_line.trim_end_matches(|character| character == '\r' || character == '\n');
+        if row.split('\t').count() != 14 {
+            return Err(OutputWriterError::InvalidInput(format!(
+                "Strict resume REGENIE text part has a row with an unexpected column count: {}",
+                chunk_file_path.display()
+            )));
+        }
+        row_count = row_count.checked_add(1).ok_or_else(|| {
+            OutputWriterError::Runtime("Rust output writer REGENIE text row count overflowed.".to_string())
+        })?;
+    }
+    Ok(row_count)
+}
+
 fn read_parquet_arrow_schema(chunk_file_path: &Path) -> Result<Arc<Schema>, OutputWriterError> {
     let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
     let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(input_file).map_err(OutputWriterError::runtime)?;
@@ -487,6 +578,7 @@ mod tests {
     use parquet::file::metadata::KeyValue;
 
     use crate::output::schema as output_schema;
+    use crate::output::writer as output_writer;
 
     use super::{
         repair_strict_manifest_chunk_commits, scan_committed_chunk_identifiers, validate_strict_manifest_chunks,
@@ -640,6 +732,35 @@ mod tests {
         let manifest = r#"{"committed_chunks":[{"chunk_identifier":0,"output_format":"parquet","compression":"none","variant_start_index":0,"variant_stop_index":1,"row_count":1,"chunk_file_name":"part_000000000_000000002.parquet"},{"chunk_identifier":2,"output_format":"parquet","compression":"none","variant_start_index":2,"variant_stop_index":4,"row_count":2,"chunk_file_name":"part_000000000_000000002.parquet"}]}"#;
         assert_eq!(
             validate_strict_manifest_chunks(&directory_path, manifest).expect("Parquet manifest should validate"),
+            vec![0, 2],
+        );
+
+        std::fs::remove_dir_all(directory_path).expect("resume test directory should be removed");
+    }
+
+    #[test]
+    fn scan_and_strict_resume_read_regenie_text_sidecar_commits() {
+        let directory_path = create_test_directory();
+        let part_file_path = directory_path.join("part_000000000_000000002.regenie");
+        let chunk_commits_json = r#"[{"chunk_identifier":0,"output_format":"regenie","compression":"none","variant_start_index":0,"variant_stop_index":1,"row_count":1,"chunk_file_name":"part_000000000_000000002.regenie"},{"chunk_identifier":2,"output_format":"regenie","compression":"none","variant_start_index":2,"variant_stop_index":4,"row_count":2,"chunk_file_name":"part_000000000_000000002.regenie"}]"#;
+        std::fs::write(
+            &part_file_path,
+            format!(
+                "{}22\t100\tvariant0\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tNA\n22\t102\tvariant2\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tTEST_FAIL\n22\t103\tvariant3\tG\tA\t0.5\t0.9\t100\tADD\t0.1\t0.01\t10\t5\tNA\n",
+                output_writer::REGENIE_STEP2_TEXT_HEADER
+            ),
+        )
+        .expect("REGENIE text part should be written");
+        std::fs::write(output_writer::build_regenie_text_metadata_sidecar_path(&part_file_path), chunk_commits_json)
+            .expect("REGENIE text sidecar should be written");
+
+        let committed_identifiers =
+            scan_committed_chunk_identifiers(&directory_path).expect("REGENIE text part should scan");
+
+        assert_eq!(committed_identifiers, vec![0, 2]);
+        let manifest = format!(r#"{{"committed_chunks":{chunk_commits_json}}}"#);
+        assert_eq!(
+            validate_strict_manifest_chunks(&directory_path, &manifest).expect("REGENIE text manifest should validate"),
             vec![0, 2],
         );
 

@@ -30,6 +30,7 @@ class OutputFormat(enum.StrEnum):
 
     PARQUET = "parquet"
     ARROW = "arrow"
+    REGENIE = "regenie"
 
 
 class JaxMatmulPrecision(enum.StrEnum):

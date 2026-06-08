@@ -418,6 +418,19 @@ impl OutputWriterSession {
                 stage_timings.manifest_commit_count += 1;
             })?;
         }
+        if self.config.output_format == OutputFileFormat::Regenie {
+            let final_regenie_path = self.config.run_directory.join("final.regenie");
+            let finalization_timing = finalization::write_final_regenie_from_chunk_files_with_timing(
+                &self.config.chunks_directory,
+                &final_regenie_path,
+                &self.config.association_mode,
+                self.config.output_format,
+            )?;
+            self.record_stage_timing(|stage_timings| stage_timings.add_finalization_timing(finalization_timing))?;
+            self.record_finish_timing(finish_start_time)?;
+            self.write_stage_timing_snapshot()?;
+            return Ok(Some(final_regenie_path));
+        }
         if !self.config.finalize_parquet {
             self.record_finish_timing(finish_start_time)?;
             self.write_stage_timing_snapshot()?;

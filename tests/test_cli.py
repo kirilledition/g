@@ -147,6 +147,43 @@ def test_regenie_command_dispatches_config_api() -> None:
     assert "final.parquet" in result.output
 
 
+def test_regenie_command_accepts_regenie_text_output_format() -> None:
+    with patch(
+        "g.cli.api.regenie",
+        return_value=api.RunArtifacts(
+            output_run_directory=Path("results/output.g/trait.regenie2_linear.run"),
+            final_regenie=Path("results/output.g/trait.regenie2_linear.run/final.regenie"),
+        ),
+    ) as mock_regenie_api:
+        result = runner.invoke(
+            app,
+            [
+                "regenie",
+                "--step",
+                "2",
+                "--bgen",
+                "dataset.bgen",
+                "--phenoFile",
+                "phenotype.tsv",
+                "--phenoCol",
+                "trait",
+                "--pred",
+                "predictions.list",
+                "--out",
+                "results/output",
+                "--qt",
+                "--g-output-format",
+                "regenie",
+            ],
+        )
+
+    assert result.exit_code == 0
+    regenie_config = mock_regenie_api.call_args.args[0]
+    assert regenie_config.g_output.format == types.OutputFormat.REGENIE
+    assert "REGENIE text output saved" in result.output
+    assert "final.regenie" in result.output
+
+
 def test_regenie_command_loads_packaged_default_toml() -> None:
     with patch("g.cli.api.regenie", return_value=api.RunArtifacts()) as mock_regenie_api:
         result = runner.invoke(
