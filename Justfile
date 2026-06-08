@@ -6,6 +6,7 @@ data_dir := env_var_or_default('GWAS_ENGINE_DATA_DIR', 'data')
 python_version := env_var_or_default('GWAS_ENGINE_PYTHON_VERSION', '3.14')
 tools_dir := env_var_or_default('GWAS_ENGINE_TOOLS_DIR', '.tools')
 slurm_gpu_node := env_var_or_default('GWAS_ENGINE_GPU_NODE', 'landau')
+slurm_cpu_node := env_var_or_default('GWAS_ENGINE_CPU_NODE', 'cantor')
 slurm_partition := env_var_or_default('GWAS_ENGINE_SLURM_PARTITION', '')
 slurm_account := env_var_or_default('GWAS_ENGINE_SLURM_ACCOUNT', '')
 slurm_time_limit := env_var_or_default('GWAS_ENGINE_SLURM_TIME', '04:00:00')
@@ -13,6 +14,7 @@ slurm_cpus_per_task := env_var_or_default('GWAS_ENGINE_SLURM_CPUS_PER_TASK', '8'
 slurm_memory := env_var_or_default('GWAS_ENGINE_SLURM_MEMORY', '64G')
 slurm_gpu_count := env_var_or_default('GWAS_ENGINE_SLURM_GPUS_PER_TASK', '1')
 slurm_extra_arguments := env_var_or_default('GWAS_ENGINE_SLURM_EXTRA_ARGS', '')
+perf_results_dir := env_var_or_default('GWAS_ENGINE_PERF_RESULTS_DIR', 'results/perf')
 server_env := '. scripts/server_env.sh'
 symphony_elixir_dir := env_var_or_default('SYMPHONY_ELIXIR_DIR', '/mnt/beegfs/kirill/Projects/symphony/elixir')
 symphony_port := env_var_or_default('SYMPHONY_PORT', '4000')
@@ -316,6 +318,39 @@ slurm-gpu-just +just_arguments:
     . scripts/server_env.sh
     exec just slurm-gpu-run 'just {{ just_arguments }}'
 
+# Run a shell command through SLURM on the configured CPU node
+slurm-cpu-run command:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    command='{{ command }}'
+    slurm_arguments=(
+      "--cpus-per-task={{ slurm_cpus_per_task }}"
+      "--mem={{ slurm_memory }}"
+      "--time={{ slurm_time_limit }}"
+    )
+    if [[ -n "{{ slurm_cpu_node }}" ]]; then
+      slurm_arguments+=("--nodelist={{ slurm_cpu_node }}")
+    fi
+    if [[ -n "{{ slurm_partition }}" ]]; then
+      slurm_arguments+=("--partition={{ slurm_partition }}")
+    fi
+    if [[ -n "{{ slurm_account }}" ]]; then
+      slurm_arguments+=("--account={{ slurm_account }}")
+    fi
+    if [[ -n "{{ slurm_extra_arguments }}" ]]; then
+      read -r -a extra_arguments <<< "{{ slurm_extra_arguments }}"
+      slurm_arguments+=("${extra_arguments[@]}")
+    fi
+    exec srun "${slurm_arguments[@]}" bash -lc "${command}"
+
+# Run another just recipe through SLURM on the configured CPU node
+slurm-cpu-just +just_arguments:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    exec just slurm-cpu-run 'just {{ just_arguments }}'
+
 # Run REGENIE step 2 with local baseline predictions
 regenie-linear:
     {{ server_env }} && uv run g regenie --step 2 --qt --bgen {{ data_dir }}/1kg_chr22_full.bgen --sample {{ data_dir }}/1kg_chr22_full.sample --phenoFile {{ data_dir }}/pheno_cont.txt --phenoCol phenotype_continuous --covarFile {{ data_dir }}/covariates.txt --covarColList age,sex --pred {{ data_dir }}/baselines/regenie_step1_qt_pred.list --out {{ data_dir }}/regenie_linear --g-output-format parquet
@@ -408,6 +443,30 @@ benchmark-regenie2-binary-hot-gpu-smoke *overrides: install-perf-extension
 # Submit binary hot benchmark to the configured GPU node
 slurm-benchmark-regenie2-binary-hot-gpu *overrides:
     {{ server_env }} && just slurm-gpu-just benchmark-regenie2-binary-hot-gpu {{ overrides }}
+
+# Run the login-node-safe performance harness smoke benchmark
+perf-smoke *arguments:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.performance_smoke --output-root "{{ perf_results_dir }}/smoke" {{ arguments }}
+
+# Submit the standard CPU performance benchmark through the configured CPU SLURM node
+perf-cpu *overrides:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    run_directory="{{ perf_results_dir }}/cpu/bgen_reader_$(date -u +%Y%m%dT%H%M%SZ)"
+    exec just slurm-cpu-just benchmark-bgen-reader "telemetry.json_summary_path=${run_directory}/bgen_reader_summary.json" "telemetry.markdown_summary_path=${run_directory}/bgen_reader_summary.md" {{ overrides }}
+
+# Submit the standard GPU performance benchmark through the existing GPU SLURM recipe
+perf-gpu *overrides:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    run_directory="{{ perf_results_dir }}/gpu/regenie2_binary_hot_$(date -u +%Y%m%dT%H%M%SZ)"
+    exec just slurm-benchmark-regenie2-binary-hot-gpu "tool.output_dir=${run_directory}" "telemetry.json_summary_path=${run_directory}/regenie2_binary_hot_summary.json" {{ overrides }}
+
+# Compare two benchmark JSON summaries
+perf-compare baseline_json new_json:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.performance_compare '{{ baseline_json }}' '{{ new_json }}'
 
 # Sequentially tune GPU REGENIE step 2 and active BGEN reader knobs
 tune-regenie2-gpu *overrides: install-perf-extension

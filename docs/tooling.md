@@ -153,6 +153,10 @@ just benchmark-bgen-reader
 just benchmark-regenie2-binary-hot-gpu tool.variant_limit=1000
 just benchmark-output-stages-gpu tool.trials=1
 just benchmark-regenie2-binary-hot-gpu-smoke telemetry.stage_timing_mode=exact
+just perf-smoke
+just perf-cpu sweep.chunk_sizes=[4096,8192]
+just perf-gpu tool.variant_limit=1000
+just perf-compare results/perf/baseline.json results/perf/new.json
 just regenie2-chr10-matrix-dry-run tool.output_dir=data/benchmarks/regenie2_chr10_matrix_plan
 just slurm-regenie2-chr10-matrix tool.output_dir=data/benchmarks/regenie2_chr10_matrix_current
 just regenie2-chr22-matrix-dry-run tool.output_dir=data/benchmarks/regenie2_chr22_matrix_plan
@@ -185,6 +189,27 @@ just profile-app-full-landau
 
 Do not run GPU workloads, heavy benchmark sweeps, large test suites, or
 compilation-heavy work on the `gauss` head node.
+
+## Performance Harness
+
+Use the `perf-*` recipes as the stable command surface for optimization tasks:
+
+- `just perf-smoke` is login-node-safe. It runs a tiny deterministic workload,
+  writes `performance_smoke_summary.json` under `results/perf/smoke/`, and
+  validates that JSON summary generation works.
+- `just perf-cpu` requires SLURM. It submits the BGEN reader benchmark through
+  `slurm-cpu-just` and writes JSON/Markdown summaries under `results/perf/cpu/`.
+- `just perf-gpu` requires SLURM GPU access. It wraps
+  `slurm-benchmark-regenie2-binary-hot-gpu` and writes binary-hot artifacts under
+  `results/perf/gpu/`.
+- `just perf-compare BASE.json NEW.json` is login-node-safe. It compares common
+  speed, memory, and numerical metrics from smoke summaries, BGEN reader
+  summaries, binary-hot summaries, and matrix manifests. Malformed JSON,
+  nonnumeric metric values, or summaries with no common metrics fail with a
+  nonzero exit status.
+
+All default `perf-*` outputs live under `results/perf`, which is gitignored.
+Set `GWAS_ENGINE_PERF_RESULTS_DIR` to route local artifacts elsewhere.
 
 ## Common Tasks
 

@@ -16,6 +16,7 @@ The recipes read these environment variables:
 | `GWAS_ENGINE_PYTHON_VERSION` | `3.14` | Python version requested by bootstrap and checks. |
 | `GWAS_ENGINE_TOOLS_DIR` | `.tools` | Server-local tool install location reported by `doctor-server`. |
 | `GWAS_ENGINE_GPU_NODE` | `landau` | SLURM GPU node. |
+| `GWAS_ENGINE_CPU_NODE` | `cantor` | SLURM CPU node for CPU benchmark recipes. |
 | `GWAS_ENGINE_SLURM_PARTITION` | empty | Optional SLURM partition. |
 | `GWAS_ENGINE_SLURM_ACCOUNT` | empty | Optional SLURM account. |
 | `GWAS_ENGINE_SLURM_TIME` | `04:00:00` | Default SLURM time limit. |
@@ -23,6 +24,7 @@ The recipes read these environment variables:
 | `GWAS_ENGINE_SLURM_MEMORY` | `64G` | Default SLURM memory allocation. |
 | `GWAS_ENGINE_SLURM_GPUS_PER_TASK` | `1` | Default SLURM GPU allocation. |
 | `GWAS_ENGINE_SLURM_EXTRA_ARGS` | empty | Extra SLURM arguments split by shell words. |
+| `GWAS_ENGINE_PERF_RESULTS_DIR` | `results/perf` | Local gitignored result root used by `perf-*` recipes. |
 | `SYMPHONY_ELIXIR_DIR` | `/mnt/beegfs/kirill/Projects/symphony/elixir` | Symphony checkout used by `symphony-doctor` and `symphony-run`. |
 | `SYMPHONY_PORT` | `4000` | Port passed to the Symphony daemon. |
 | `SYMPHONY_WORKTREE_ROOT` | `/mnt/beegfs/kirill/Projects/g-worktrees/symphony` | Worktree root for unattended Symphony task branches. |
@@ -31,7 +33,8 @@ Most recipes source `scripts/server_env.sh`, which sets repo-local tool paths
 and server cache defaults.
 
 Do not run GPU workloads, large benchmark sweeps, or large test suites on the
-`gauss` head node. Use SLURM recipes for GPU work.
+`gauss` head node. `just perf-smoke` and `just perf-compare` are safe on the
+login node. `just perf-cpu` and `just perf-gpu` submit work through SLURM.
 
 ## Hydra Overrides
 
@@ -232,6 +235,21 @@ Example:
 ```bash
 just slurm-gpu-just benchmark-regenie2-binary-hot-gpu-smoke
 ```
+
+### `slurm-cpu-run command`
+
+- Inputs: one shell command string and optional `GWAS_ENGINE_SLURM_*` variables.
+- Output: command execution through `bash -lc` inside an `srun` CPU allocation.
+- Use when: running CPU-heavy commands away from the login node. The default
+  node is `GWAS_ENGINE_CPU_NODE=cantor`; set it to an empty string or another
+  node name when the scheduler should choose a different CPU host.
+
+### `slurm-cpu-just +just_arguments`
+
+- Inputs: another Just recipe and arguments.
+- Output: that recipe executed inside a CPU SLURM allocation.
+- Use when: wrapping existing CPU benchmark recipes while preserving the Justfile
+  interface.
 
 ## Direct REGENIE Runs
 
@@ -470,6 +488,67 @@ GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
 - Inputs: same as `benchmark-regenie2-binary-hot-gpu`, plus SLURM GPU access.
 - Output: binary-hot benchmark run through SLURM.
 - Use when: running the benchmark on `landau`.
+
+### `perf-smoke *arguments`
+
+- Inputs: Python environment only; no GWAS data and no GPU are required.
+- Output: timestamped smoke summary under
+  `results/perf/smoke/smoke_<timestamp>/performance_smoke_summary.json` by
+  default.
+- Use when: checking the benchmark/report plumbing from the login node. This is
+  intentionally small and safe for `gauss`.
+
+Example:
+
+```bash
+just perf-smoke
+```
+
+### `perf-cpu *overrides`
+
+- Inputs: SLURM CPU access, local benchmark data, and the native perf extension
+  build prerequisites.
+- Output: BGEN reader JSON and Markdown summaries under
+  `results/perf/cpu/bgen_reader_<timestamp>/`.
+- Use when: collecting a standard CPU-side benchmark without running heavy work
+  on the login node. The recipe submits `benchmark-bgen-reader` through
+  `slurm-cpu-just`.
+
+Example:
+
+```bash
+just perf-cpu sweep.chunk_sizes=[4096,8192]
+```
+
+### `perf-gpu *overrides`
+
+- Inputs: SLURM GPU access, binary step 2 inputs, and GPU-capable dependencies.
+- Output: binary-hot benchmark artifacts and
+  `regenie2_binary_hot_summary.json` under
+  `results/perf/gpu/regenie2_binary_hot_<timestamp>/`.
+- Use when: collecting the standard GPU performance benchmark through the
+  existing `slurm-benchmark-regenie2-binary-hot-gpu` wrapper.
+
+Example:
+
+```bash
+just perf-gpu tool.variant_limit=1000
+```
+
+### `perf-compare baseline_json new_json`
+
+- Inputs: two benchmark JSON summaries.
+- Output: concise Markdown table comparing common speed, memory, and numerical
+  metrics; exits nonzero for malformed JSON or summaries with no common
+  metrics.
+- Use when: comparing smoke outputs, BGEN reader summaries, binary-hot summaries,
+  or matrix manifests.
+
+Example:
+
+```bash
+just perf-compare results/perf/baseline.json results/perf/new.json
+```
 
 ### `benchmark-output-stages-gpu *overrides`
 

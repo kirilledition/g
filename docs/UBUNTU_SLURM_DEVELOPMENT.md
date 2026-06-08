@@ -4,6 +4,7 @@ This repository was originally developed inside the Nix flake on a personal mach
 
 - login node: dependency sync, formatting, linting, CPU-only tests, lightweight iteration
 - GPU node (`landau` by default): JAX CUDA probing, GPU tests, GPU benchmarks, REGENIE profiling
+- CPU compute node (`cantor` by default for benchmark wrappers): CPU-heavy benchmark runs
 
 ## Required Host Tooling
 
@@ -52,7 +53,13 @@ Run these on the login node:
 just check
 just test
 just coverage
+just perf-smoke
+just perf-compare BASE.json NEW.json
 ```
+
+`perf-smoke` and `perf-compare` are intentionally login-node-safe. Do not run
+`perf-cpu`, `perf-gpu`, full benchmark sweeps, or GPU commands directly on the
+login node.
 
 Prepare benchmark data only after `plink2` is available:
 
@@ -105,6 +112,19 @@ just slurm-gpu-just benchmark-regenie-comparison-gpu
 just slurm-gpu-just profile-regenie-comparison-gpu
 ```
 
+Run standard performance harness entrypoints:
+
+```bash
+just perf-cpu
+just perf-gpu tool.variant_limit=1000
+```
+
+`perf-cpu` submits the BGEN reader benchmark through a CPU SLURM allocation and
+writes summaries under `results/perf/cpu/`. Override the CPU host with
+`GWAS_ENGINE_CPU_NODE`; set it to an empty string if the scheduler should choose
+the node. `perf-gpu` wraps the existing binary-hot GPU SLURM recipe and writes
+under `results/perf/gpu/`.
+
 The binary chr22 GPU run uses:
 
 ```bash
@@ -127,4 +147,6 @@ data/regenie2_binary_chr22_gpu.regenie2_binary.run/
 - `just doctor-jax` should be treated as a host-specific check. On a login node without NVIDIA libraries, CPU fallback is expected.
 - JAX persistent compilation cache lives under `JAX_COMPILATION_CACHE_DIR` when set, otherwise under the current user cache directory.
 - `.tools/` and `data/` are local server state and must not be committed.
+- `results/` contains local benchmark output, including `perf-*` summaries, and
+  must not be committed.
 - `scripts/server_env.sh` sets repo-local tools on `PATH`, `UV_CACHE_DIR=/tmp/g-uv-cache`, `UV_LINK_MODE=copy`, and repo-local Rust homes unless those variables are already set.

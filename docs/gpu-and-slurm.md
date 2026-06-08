@@ -23,6 +23,8 @@ If JAX cannot see the expected accelerator, fix the environment before measuring
 ## Server Rules
 
 On the gauss server, do not run heavy computation, large test suites, or GPU workloads on the login node. Use SLURM recipes for GPU work. The default GPU node is configured through `GWAS_ENGINE_GPU_NODE` and defaults to `landau`.
+CPU-heavy benchmark wrappers use `GWAS_ENGINE_CPU_NODE`, which defaults to
+`cantor`.
 
 Useful recipes:
 
@@ -30,7 +32,30 @@ Useful recipes:
 just slurm-gpu-shell
 just slurm-gpu-run 'uv run --no-sync python scripts/probe_jax_runtime.py'
 just slurm-gpu-just regenie2-binary-gpu-smoke
+just slurm-cpu-just benchmark-bgen-reader
 ```
+
+## Performance Harness
+
+These commands are the stable entrypoints for optimization baseline evidence:
+
+```bash
+just perf-smoke
+just perf-compare BASE.json NEW.json
+```
+
+`perf-smoke` and `perf-compare` are safe on the login node. `perf-smoke` writes a
+small JSON summary under `results/perf/smoke/`.
+
+```bash
+just perf-cpu
+just perf-gpu
+```
+
+`perf-cpu` and `perf-gpu` require SLURM. The CPU wrapper submits the BGEN reader
+benchmark through `slurm-cpu-just`; the GPU wrapper reuses
+`slurm-benchmark-regenie2-binary-hot-gpu` on `landau`. Both write under the
+gitignored `results/perf/` tree by default.
 
 Binary GPU examples:
 
