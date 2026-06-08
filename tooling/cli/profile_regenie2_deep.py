@@ -75,6 +75,70 @@ class ProfileStageTimingMode(enum.StrEnum):
     OFF = "off"
 
 
+class ProfileWorkloadKey(enum.StrEnum):
+    """Trait/device workload keys for splittable deep profile campaigns."""
+
+    QUANTITATIVE_CPU = "quantitative_cpu"
+    QUANTITATIVE_GPU = "quantitative_gpu"
+    BINARY_CPU = "binary_cpu"
+    BINARY_GPU = "binary_gpu"
+
+    @property
+    def trait_type(self) -> str:
+        """Return the workload trait type."""
+        return self.value.rsplit("_", maxsplit=1)[0]
+
+    @property
+    def device(self) -> str:
+        """Return the workload device."""
+        return self.value.rsplit("_", maxsplit=1)[1]
+
+
+class ProfileWorkloadSelector(enum.StrEnum):
+    """Accepted workload selection tokens."""
+
+    ALL = "all"
+    QUANTITATIVE = "quantitative"
+    BINARY = "binary"
+    CPU = "cpu"
+    GPU = "gpu"
+    QUANTITATIVE_CPU = "quantitative_cpu"
+    QUANTITATIVE_GPU = "quantitative_gpu"
+    BINARY_CPU = "binary_cpu"
+    BINARY_GPU = "binary_gpu"
+
+
+PROFILE_WORKLOAD_KEYS: tuple[ProfileWorkloadKey, ...] = (
+    ProfileWorkloadKey.QUANTITATIVE_CPU,
+    ProfileWorkloadKey.QUANTITATIVE_GPU,
+    ProfileWorkloadKey.BINARY_CPU,
+    ProfileWorkloadKey.BINARY_GPU,
+)
+
+
+class CampaignBudgetSectionName(enum.StrEnum):
+    """Budget accounting sections in execution order."""
+
+    BGEN_PRE_SWEEP = "bgen_pre_sweep"
+    TUNING = "tuning"
+    FINALISTS = "finalists"
+    HEADLINE_TRIALS = "headline_trials"
+    DEEP_PROFILERS = "deep_profilers"
+    LOGGING_PERTURBATION = "logging_perturbation"
+    RUST_CRITERION = "rust_criterion"
+
+
+CAMPAIGN_BUDGET_SECTION_DISPLAY_NAMES: dict[CampaignBudgetSectionName, str] = {
+    CampaignBudgetSectionName.BGEN_PRE_SWEEP: "BGEN pre-sweep",
+    CampaignBudgetSectionName.TUNING: "Tuning",
+    CampaignBudgetSectionName.FINALISTS: "Finalists",
+    CampaignBudgetSectionName.HEADLINE_TRIALS: "Headline trials",
+    CampaignBudgetSectionName.DEEP_PROFILERS: "Deep profilers",
+    CampaignBudgetSectionName.LOGGING_PERTURBATION: "Logging perturbation",
+    CampaignBudgetSectionName.RUST_CRITERION: "Rust Criterion",
+}
+
+
 @dataclasses.dataclass(frozen=True)
 class ProfileArguments:
     """Resolved deep profile campaign parameters.
@@ -101,6 +165,10 @@ class ProfileArguments:
         regenie_baseline_variant_limit: Optional baseline variant cap. Defaults to variant_limit when unset.
         regenie_baseline_warmups: Warmup count for original REGENIE baseline trials.
         regenie_baseline_trials: Measured count for original REGENIE baseline trials.
+        workload_keys: Comma-separated trait/device workloads to include.
+        max_subprocess_runs: Maximum planned subprocess runs allowed without override.
+        max_major_profiler_runs: Maximum major profiler runs allowed without override.
+        allow_over_budget: Whether to allow execution over the configured budget.
         smoke: Whether to use the reduced smoke campaign.
         skip_deep_profiles: Whether to skip sampling and trace profiles.
         enable_jax_trace: Whether deep profiles capture JAX profiler traces.
@@ -156,6 +224,10 @@ class ProfileArguments:
     regenie_baseline_variant_limit: int | None
     regenie_baseline_warmups: int
     regenie_baseline_trials: int
+    workload_keys: str
+    max_subprocess_runs: int | None
+    max_major_profiler_runs: int | None
+    allow_over_budget: bool
     smoke: bool
     skip_deep_profiles: bool
     enable_jax_trace: bool
@@ -247,6 +319,58 @@ class BgenCandidateSummary:
     median_seconds: float
     mean_seconds: float
     durations_seconds: list[float]
+
+
+@dataclasses.dataclass(frozen=True)
+class CampaignBudgetSection:
+    """Budget estimate for one campaign section.
+
+    Attributes:
+        name: Stable machine-readable section name.
+        display_name: Human-readable section name.
+        candidate_count: Planned cases or configurations in the section.
+        subprocess_run_count: Estimated subprocess executions in the section.
+        major_profiler_run_count: Estimated heavy profiler executions in the section.
+        notes: Explanation for the estimate.
+
+    """
+
+    name: str
+    display_name: str
+    candidate_count: int
+    subprocess_run_count: int
+    major_profiler_run_count: int
+    notes: str
+
+
+@dataclasses.dataclass(frozen=True)
+class CampaignBudget:
+    """Budget estimate for a deep profile campaign.
+
+    Attributes:
+        workload_keys: Trait/device workloads selected for this campaign.
+        max_subprocess_runs: Configured subprocess budget.
+        max_major_profiler_runs: Configured major-profiler budget.
+        total_candidate_count: Total planned cases or configurations.
+        total_subprocess_run_count: Total estimated subprocess executions.
+        total_major_profiler_run_count: Total estimated heavy profiler executions.
+        over_subprocess_budget: Whether the subprocess estimate exceeds the configured budget.
+        over_major_profiler_budget: Whether the profiler estimate exceeds the configured budget.
+        sections: Section-level budget estimates.
+        guidance: Human-readable guidance for reducing or overriding the campaign.
+
+    """
+
+    workload_keys: tuple[str, ...]
+    max_subprocess_runs: int | None
+    max_major_profiler_runs: int | None
+    total_candidate_count: int
+    total_subprocess_run_count: int
+    total_major_profiler_run_count: int
+    over_subprocess_budget: bool
+    over_major_profiler_budget: bool
+    sections: tuple[CampaignBudgetSection, ...]
+    guidance: tuple[str, ...]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -368,6 +492,8 @@ class ProfilePlan:
         chromosome_label: Chromosome label selected by Hydra.
         output_directory: Planned output directory.
         required_inputs: Input paths and step 1 prediction paths used by real runs.
+        workload_keys: Trait/device workloads selected for this campaign.
+        campaign_budget: Estimated campaign budget and section counts.
         profiler_modes: Profiler modes requested by config.
         profiler_tools: Profiler tool availability records.
         logging_perturbation_cases: Planned telemetry/logging perturbation cases.
@@ -381,6 +507,8 @@ class ProfilePlan:
     chromosome_label: str
     output_directory: str
     required_inputs: list[str]
+    workload_keys: list[str]
+    campaign_budget: CampaignBudget
     profiler_modes: dict[str, bool]
     profiler_tools: dict[str, dict[str, object]]
     logging_perturbation_cases: list[dict[str, object]]
@@ -492,6 +620,59 @@ def parse_regenie_baseline_trait_types(raw_values: str) -> tuple[str, ...]:
         message = f"Unsupported REGENIE baseline trait types: {', '.join(invalid_trait_types)}"
         raise ValueError(message)
     return trait_types
+
+
+def parse_profile_workload_keys(raw_values: str) -> tuple[ProfileWorkloadKey, ...]:
+    """Parse and expand workload selection tokens."""
+    selected_workload_keys: list[ProfileWorkloadKey] = []
+    invalid_selectors: list[str] = []
+    for raw_selector in parse_string_list(raw_values):
+        try:
+            selector = ProfileWorkloadSelector(raw_selector)
+        except ValueError:
+            invalid_selectors.append(raw_selector)
+            continue
+        if selector == ProfileWorkloadSelector.ALL:
+            selected_workload_keys.extend(PROFILE_WORKLOAD_KEYS)
+        elif selector == ProfileWorkloadSelector.QUANTITATIVE:
+            selected_workload_keys.extend(
+                workload_key for workload_key in PROFILE_WORKLOAD_KEYS if workload_key.trait_type == "quantitative"
+            )
+        elif selector == ProfileWorkloadSelector.BINARY:
+            selected_workload_keys.extend(
+                workload_key for workload_key in PROFILE_WORKLOAD_KEYS if workload_key.trait_type == "binary"
+            )
+        elif selector == ProfileWorkloadSelector.CPU:
+            selected_workload_keys.extend(
+                workload_key for workload_key in PROFILE_WORKLOAD_KEYS if workload_key.device == "cpu"
+            )
+        elif selector == ProfileWorkloadSelector.GPU:
+            selected_workload_keys.extend(
+                workload_key for workload_key in PROFILE_WORKLOAD_KEYS if workload_key.device == "gpu"
+            )
+        else:
+            selected_workload_keys.append(ProfileWorkloadKey(selector.value))
+    if invalid_selectors:
+        valid_values = ", ".join(selector.value for selector in ProfileWorkloadSelector)
+        message = (
+            f"Unsupported deep-profile workload selectors: {', '.join(invalid_selectors)}. "
+            f"Valid selectors: {valid_values}."
+        )
+        raise ValueError(message)
+    deduplicated_workload_keys = tuple(dict.fromkeys(selected_workload_keys))
+    if not deduplicated_workload_keys:
+        message = "At least one deep-profile workload key is required."
+        raise ValueError(message)
+    return deduplicated_workload_keys
+
+
+def selected_regenie_baseline_trait_types(arguments: ProfileArguments) -> tuple[str, ...]:
+    """Return REGENIE baseline traits that match the selected workload traits."""
+    requested_trait_types = parse_regenie_baseline_trait_types(arguments.regenie_baseline_trait_types)
+    selected_trait_types = {
+        workload_key.trait_type for workload_key in parse_profile_workload_keys(arguments.workload_keys)
+    }
+    return tuple(trait_type for trait_type in requested_trait_types if trait_type in selected_trait_types)
 
 
 def should_emit_stage_timings(arguments: ProfileArguments) -> bool:
@@ -1223,6 +1404,280 @@ def build_step2_candidates(
                             )
                         )
     return tuple(candidates)
+
+
+def build_campaign_budget_section(
+    *,
+    section_name: CampaignBudgetSectionName,
+    candidate_count: int,
+    subprocess_run_count: int,
+    major_profiler_run_count: int = 0,
+    notes: str,
+) -> CampaignBudgetSection:
+    """Build one campaign budget section."""
+    return CampaignBudgetSection(
+        name=section_name.value,
+        display_name=CAMPAIGN_BUDGET_SECTION_DISPLAY_NAMES[section_name],
+        candidate_count=candidate_count,
+        subprocess_run_count=subprocess_run_count,
+        major_profiler_run_count=major_profiler_run_count,
+        notes=notes,
+    )
+
+
+def count_queue_depth_grid(writer_thread_counts: tuple[int, ...], queue_depth_multipliers: tuple[int, ...]) -> int:
+    """Count distinct writer queue-depth settings across writer thread counts."""
+    return sum(
+        len(build_queue_depth_values(writer_thread_count, queue_depth_multipliers))
+        for writer_thread_count in writer_thread_counts
+    )
+
+
+def count_step2_tuning_candidates(
+    *,
+    workload_key: ProfileWorkloadKey,
+    selected_bgen_candidate_count: int,
+    chunk_sizes: tuple[int, ...],
+    staging_depths: tuple[int, ...],
+    writer_thread_counts: tuple[int, ...],
+    queue_depth_multipliers: tuple[int, ...],
+    firth_batch_sizes: tuple[int, ...],
+    smoke: bool,
+) -> int:
+    """Count step 2 tuning candidates for one selected workload."""
+    queue_depth_count = count_queue_depth_grid(writer_thread_counts, queue_depth_multipliers)
+    candidate_count = selected_bgen_candidate_count * len(chunk_sizes) * len(staging_depths) * queue_depth_count
+    if workload_key.trait_type == "binary":
+        candidate_count *= len(firth_batch_sizes)
+    if smoke:
+        return min(candidate_count, 1)
+    return candidate_count
+
+
+def count_enabled_deep_profiler_modes(arguments: ProfileArguments) -> int:
+    """Count profiler subprocess modes run for each selected winner."""
+    mode_count = 0
+    if arguments.enable_jax_trace or arguments.enable_jax_memory_profile:
+        mode_count += 1
+    enabled_modes = (
+        arguments.enable_python_cprofile,
+        arguments.enable_py_spy,
+        arguments.enable_scalene,
+        arguments.enable_memray,
+        arguments.enable_linux_perf,
+        arguments.enable_nsight_systems,
+        arguments.enable_nsight_compute,
+    )
+    return mode_count + sum(1 for enabled in enabled_modes if enabled)
+
+
+def campaign_budget_is_over_limit(campaign_budget: CampaignBudget) -> bool:
+    """Return whether a campaign exceeds either configured budget."""
+    return campaign_budget.over_subprocess_budget or campaign_budget.over_major_profiler_budget
+
+
+def build_campaign_budget(
+    *,
+    arguments: ProfileArguments,
+    output_directory: Path,
+) -> CampaignBudget:
+    """Estimate campaign section counts before executing workloads."""
+    workload_keys = parse_profile_workload_keys(arguments.workload_keys)
+    chunk_sizes = parse_int_list(arguments.chunk_sizes)
+    staging_depths = parse_int_list(arguments.staging_depths)
+    writer_thread_counts = parse_int_list(arguments.output_writer_thread_counts)
+    queue_depth_multipliers = parse_int_list(arguments.writer_queue_depth_multipliers)
+    firth_batch_sizes = parse_int_list(arguments.firth_batch_sizes)
+    bgen_decode_tile_variant_counts = parse_int_list(arguments.bgen_decode_tile_variant_counts)
+    rayon_thread_counts = parse_int_list(arguments.rayon_thread_counts)
+    bgen_candidate_count = len(bgen_decode_tile_variant_counts) * len(rayon_thread_counts)
+    selected_bgen_candidate_count = min(arguments.top_bgen_candidates, bgen_candidate_count)
+    tuning_candidate_counts = [
+        count_step2_tuning_candidates(
+            workload_key=workload_key,
+            selected_bgen_candidate_count=selected_bgen_candidate_count,
+            chunk_sizes=chunk_sizes,
+            staging_depths=staging_depths,
+            writer_thread_counts=writer_thread_counts,
+            queue_depth_multipliers=queue_depth_multipliers,
+            firth_batch_sizes=firth_batch_sizes,
+            smoke=arguments.smoke,
+        )
+        for workload_key in workload_keys
+    ]
+    tuning_candidate_count = sum(tuning_candidate_counts)
+    finalist_candidate_counts = [
+        min(arguments.top_finalists, tuning_candidate_count_for_workload)
+        for tuning_candidate_count_for_workload in tuning_candidate_counts
+    ]
+    finalist_candidate_count = sum(finalist_candidate_counts)
+    expected_winner_count = sum(
+        1
+        for finalist_count in finalist_candidate_counts
+        if finalist_count > 0 and arguments.tuning_trials > 0 and arguments.finalist_trials > 0
+    )
+    regenie_baseline_trait_count = 0
+    if arguments.include_regenie_baseline:
+        regenie_baseline_trait_count = len(selected_regenie_baseline_trait_types(arguments))
+    g_headline_run_count = expected_winner_count * (arguments.headline_warmups + arguments.headline_trials)
+    regenie_headline_run_count = regenie_baseline_trait_count * (
+        arguments.regenie_baseline_warmups + arguments.regenie_baseline_trials
+    )
+    deep_profiler_mode_count = 0 if arguments.skip_deep_profiles else count_enabled_deep_profiler_modes(arguments)
+    deep_profiler_run_count = expected_winner_count * deep_profiler_mode_count
+    logging_case_count = 0
+    if arguments.enable_logging_perturbation:
+        logging_case_count = len(
+            build_logging_perturbation_cases(output_directory=output_directory, smoke=arguments.smoke)
+        )
+    logging_run_count = expected_winner_count * logging_case_count
+    rust_benchmark_count = 0
+    if arguments.enable_rust_criterion and not arguments.skip_deep_profiles:
+        rust_benchmark_count = len(parse_string_list(arguments.rust_benchmarks))
+    sections = (
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.BGEN_PRE_SWEEP,
+            candidate_count=bgen_candidate_count,
+            subprocess_run_count=bgen_candidate_count,
+            notes=(
+                f"{len(bgen_decode_tile_variant_counts)} BGEN tile values x "
+                f"{len(rayon_thread_counts)} Rayon thread values; each case repeats internally "
+                f"{arguments.tuning_trials} time(s)."
+            ),
+        ),
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.TUNING,
+            candidate_count=tuning_candidate_count,
+            subprocess_run_count=tuning_candidate_count * (arguments.tuning_warmups + arguments.tuning_trials),
+            notes=(
+                f"{len(workload_keys)} selected workload(s), top {selected_bgen_candidate_count} BGEN candidate(s), "
+                f"{arguments.tuning_warmups} warmup(s), and {arguments.tuning_trials} measured trial(s)."
+            ),
+        ),
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.FINALISTS,
+            candidate_count=finalist_candidate_count,
+            subprocess_run_count=finalist_candidate_count * (arguments.finalist_warmups + arguments.finalist_trials),
+            notes=(
+                f"Up to {arguments.top_finalists} finalist(s) per selected workload, "
+                f"{arguments.finalist_warmups} warmup(s), and {arguments.finalist_trials} measured trial(s)."
+            ),
+        ),
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.HEADLINE_TRIALS,
+            candidate_count=expected_winner_count + regenie_baseline_trait_count,
+            subprocess_run_count=g_headline_run_count + regenie_headline_run_count,
+            notes=(
+                f"{expected_winner_count} expected g winner(s) and "
+                f"{regenie_baseline_trait_count} selected REGENIE baseline trait(s)."
+            ),
+        ),
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.DEEP_PROFILERS,
+            candidate_count=deep_profiler_run_count,
+            subprocess_run_count=deep_profiler_run_count,
+            major_profiler_run_count=deep_profiler_run_count,
+            notes=(
+                "Skipped by tool.skip_deep_profiles=true."
+                if arguments.skip_deep_profiles
+                else f"{deep_profiler_mode_count} profiler mode(s) per expected g winner."
+            ),
+        ),
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.LOGGING_PERTURBATION,
+            candidate_count=logging_run_count,
+            subprocess_run_count=logging_run_count,
+            notes=(
+                "Disabled by tool.enable_logging_perturbation=false."
+                if not arguments.enable_logging_perturbation
+                else f"{logging_case_count} logging case(s) per expected g winner."
+            ),
+        ),
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.RUST_CRITERION,
+            candidate_count=rust_benchmark_count,
+            subprocess_run_count=rust_benchmark_count,
+            major_profiler_run_count=rust_benchmark_count,
+            notes=(
+                "Skipped because Rust Criterion is disabled or tool.skip_deep_profiles=true."
+                if rust_benchmark_count == 0
+                else "Each configured Criterion benchmark is one cargo bench subprocess."
+            ),
+        ),
+    )
+    total_candidate_count = sum(section.candidate_count for section in sections)
+    total_subprocess_run_count = sum(section.subprocess_run_count for section in sections)
+    total_major_profiler_run_count = sum(section.major_profiler_run_count for section in sections)
+    over_subprocess_budget = (
+        arguments.max_subprocess_runs is not None and total_subprocess_run_count > arguments.max_subprocess_runs
+    )
+    over_major_profiler_budget = (
+        arguments.max_major_profiler_runs is not None
+        and total_major_profiler_run_count > arguments.max_major_profiler_runs
+    )
+    guidance = (
+        "Run a dry run first and inspect profile_plan.md for the section counts.",
+        "Reduce tool.workload_keys, tool.top_bgen_candidates, tool.top_finalists, trial counts, "
+        "Firth batch sizes, writer counts, BGEN tile values, or Rayon thread counts to fit the budget.",
+        "For an intentional huge campaign, pass tool.allow_over_budget=true and keep the run on an appropriate "
+        "SLURM node.",
+    )
+    return CampaignBudget(
+        workload_keys=tuple(workload_key.value for workload_key in workload_keys),
+        max_subprocess_runs=arguments.max_subprocess_runs,
+        max_major_profiler_runs=arguments.max_major_profiler_runs,
+        total_candidate_count=total_candidate_count,
+        total_subprocess_run_count=total_subprocess_run_count,
+        total_major_profiler_run_count=total_major_profiler_run_count,
+        over_subprocess_budget=over_subprocess_budget,
+        over_major_profiler_budget=over_major_profiler_budget,
+        sections=sections,
+        guidance=guidance,
+    )
+
+
+def log_campaign_budget(campaign_budget: CampaignBudget) -> None:
+    """Log section-level campaign budget estimates."""
+    logger.info(
+        "Estimated campaign budget: candidates=%s subprocess_runs=%s major_profiler_runs=%s",
+        campaign_budget.total_candidate_count,
+        campaign_budget.total_subprocess_run_count,
+        campaign_budget.total_major_profiler_run_count,
+    )
+    for section in campaign_budget.sections:
+        logger.info(
+            "Budget section %s: candidates=%s subprocess_runs=%s major_profiler_runs=%s",
+            section.display_name,
+            section.candidate_count,
+            section.subprocess_run_count,
+            section.major_profiler_run_count,
+        )
+
+
+def enforce_campaign_budget(arguments: ProfileArguments, campaign_budget: CampaignBudget) -> None:
+    """Fail early when a non-dry-run campaign exceeds the configured budget."""
+    if arguments.allow_over_budget or not campaign_budget_is_over_limit(campaign_budget):
+        return
+    budget_messages = [
+        "Deep profile campaign exceeds the configured budget.",
+        (
+            f"Estimated subprocess runs: {campaign_budget.total_subprocess_run_count} "
+            f"(limit: {campaign_budget.max_subprocess_runs})."
+        ),
+        (
+            f"Estimated major profiler runs: {campaign_budget.total_major_profiler_run_count} "
+            f"(limit: {campaign_budget.max_major_profiler_runs})."
+        ),
+        "Section counts:",
+    ]
+    for section in campaign_budget.sections:
+        budget_messages.append(
+            f"- {section.display_name}: candidates={section.candidate_count}, "
+            f"subprocess_runs={section.subprocess_run_count}, "
+            f"major_profiler_runs={section.major_profiler_run_count}"
+        )
+    budget_messages.extend(campaign_budget.guidance)
+    raise ValueError("\n".join(budget_messages))
 
 
 def build_g_trial_environment(
@@ -2086,78 +2541,77 @@ def run_candidate_tuning(
     queue_depth_multipliers = parse_int_list(arguments.writer_queue_depth_multipliers)
     firth_batch_sizes = parse_int_list(arguments.firth_batch_sizes)
     selected_bgen_summaries = bgen_summaries[: arguments.top_bgen_candidates]
-    for trait_type in ("quantitative", "binary"):
-        for device in ("cpu", "gpu"):
-            candidates = build_step2_candidates(
-                trait_type=trait_type,
-                device=device,
-                bgen_candidates=selected_bgen_summaries,
-                chunk_sizes=chunk_sizes,
-                staging_depths=staging_depths,
-                writer_thread_counts=writer_thread_counts,
-                queue_depth_multipliers=queue_depth_multipliers,
-                firth_batch_sizes=firth_batch_sizes,
+    for workload_key in parse_profile_workload_keys(arguments.workload_keys):
+        candidates = build_step2_candidates(
+            trait_type=workload_key.trait_type,
+            device=workload_key.device,
+            bgen_candidates=selected_bgen_summaries,
+            chunk_sizes=chunk_sizes,
+            staging_depths=staging_depths,
+            writer_thread_counts=writer_thread_counts,
+            queue_depth_multipliers=queue_depth_multipliers,
+            firth_batch_sizes=firth_batch_sizes,
+        )
+        if arguments.smoke:
+            candidates = candidates[:1]
+        initial_results = [
+            run_repeated_g_trials(
+                name=f"tune_{build_candidate_slug(candidate)}",
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                output_directory=output_directory / "tuning_runs",
+                log_directory=output_directory / "logs",
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+                warmup_count=arguments.tuning_warmups,
+                trial_count=arguments.tuning_trials,
+                emit_stage_timings=False,
             )
-            if arguments.smoke:
-                candidates = candidates[:1]
-            initial_results = [
+            for candidate in candidates
+        ]
+        successful_initial_results = [
+            result for result in initial_results if result.median_wall_time_seconds is not None
+        ]
+        finalists = sorted(
+            successful_initial_results,
+            key=lambda result: typing.cast("float", result.median_wall_time_seconds),
+        )[: arguments.top_finalists]
+        finalist_results: list[AggregateResult] = []
+        for finalist in finalists:
+            candidate = recover_candidate_from_trial(finalist.trials[0], candidates)
+            finalist_results.append(
                 run_repeated_g_trials(
-                    name=f"tune_{build_candidate_slug(candidate)}",
+                    name=f"finalist_{build_candidate_slug(candidate)}",
                     baseline_paths=baseline_paths,
                     candidate=candidate,
-                    output_directory=output_directory / "tuning_runs",
+                    output_directory=output_directory / "finalist_runs",
                     log_directory=output_directory / "logs",
                     cache_directory=cache_directory,
                     variant_limit=arguments.variant_limit,
-                    warmup_count=arguments.tuning_warmups,
-                    trial_count=arguments.tuning_trials,
-                    emit_stage_timings=False,
+                    warmup_count=arguments.finalist_warmups,
+                    trial_count=arguments.finalist_trials,
+                    emit_stage_timings=emit_stage_timings,
                 )
-                for candidate in candidates
-            ]
-            successful_initial_results = [
-                result for result in initial_results if result.median_wall_time_seconds is not None
-            ]
-            finalists = sorted(
-                successful_initial_results,
-                key=lambda result: typing.cast("float", result.median_wall_time_seconds),
-            )[: arguments.top_finalists]
-            finalist_results: list[AggregateResult] = []
-            for finalist in finalists:
-                candidate = recover_candidate_from_trial(finalist.trials[0], candidates)
-                finalist_results.append(
-                    run_repeated_g_trials(
-                        name=f"finalist_{build_candidate_slug(candidate)}",
-                        baseline_paths=baseline_paths,
-                        candidate=candidate,
-                        output_directory=output_directory / "finalist_runs",
-                        log_directory=output_directory / "logs",
-                        cache_directory=cache_directory,
-                        variant_limit=arguments.variant_limit,
-                        warmup_count=arguments.finalist_warmups,
-                        trial_count=arguments.finalist_trials,
-                        emit_stage_timings=emit_stage_timings,
-                    )
-                )
-            if finalist_results:
-                winner = sorted(
-                    finalist_results,
-                    key=lambda result: typing.cast("float", result.median_wall_time_seconds),
-                )[0]
-                winners[f"{trait_type}_{device}"] = winner
-                finalist_results_by_key[f"{trait_type}_{device}"] = finalist_results
-            tuning_path = output_directory / f"tuning_{trait_type}_{device}.json"
-            tuning_path.write_text(
-                json.dumps(
-                    {
-                        "initial_results": [dataclasses.asdict(result) for result in initial_results],
-                        "finalist_results": [dataclasses.asdict(result) for result in finalist_results],
-                    },
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
             )
+        if finalist_results:
+            winner = sorted(
+                finalist_results,
+                key=lambda result: typing.cast("float", result.median_wall_time_seconds),
+            )[0]
+            winners[workload_key.value] = winner
+            finalist_results_by_key[workload_key.value] = finalist_results
+        tuning_path = output_directory / f"tuning_{workload_key.value}.json"
+        tuning_path.write_text(
+            json.dumps(
+                {
+                    "initial_results": [dataclasses.asdict(result) for result in initial_results],
+                    "finalist_results": [dataclasses.asdict(result) for result in finalist_results],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     return CandidateTuningResults(winners=winners, finalist_results_by_key=finalist_results_by_key)
 
 
@@ -2184,7 +2638,7 @@ def run_headline_trials(
     headline_results: list[AggregateResult] = []
     emit_stage_timings = should_emit_stage_timings(arguments)
     if arguments.include_regenie_baseline:
-        regenie_trait_types = parse_regenie_baseline_trait_types(arguments.regenie_baseline_trait_types)
+        regenie_trait_types = selected_regenie_baseline_trait_types(arguments)
         if regenie_executable is None:
             for trait_type in regenie_trait_types:
                 headline_results.append(
@@ -4005,6 +4459,10 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileArgument
         ),
         regenie_baseline_warmups=int(tool_values["regenie_baseline_warmups"]),
         regenie_baseline_trials=int(tool_values["regenie_baseline_trials"]),
+        workload_keys=tooling_hydra_arguments.comma_join(tool_values["workload_keys"]),
+        max_subprocess_runs=tooling_hydra_arguments.integer_or_none(tool_values.get("max_subprocess_runs")),
+        max_major_profiler_runs=tooling_hydra_arguments.integer_or_none(tool_values.get("max_major_profiler_runs")),
+        allow_over_budget=bool(tool_values["allow_over_budget"]),
         smoke=bool(tool_values["smoke"]),
         skip_deep_profiles=bool(tool_values["skip_deep_profiles"]),
         enable_jax_trace=bool(tool_values["enable_jax_trace"]),
@@ -4070,10 +4528,11 @@ def build_profile_plan(
     arguments: ProfileArguments,
     baseline_paths: baseline_benchmark.BaselinePaths,
     output_directory: Path,
+    campaign_budget: CampaignBudget,
 ) -> ProfilePlan:
     """Build a dry-run plan for the full profile campaign."""
     rust_benchmark_commands: list[list[str]] = []
-    if arguments.enable_rust_criterion:
+    if arguments.enable_rust_criterion and not arguments.skip_deep_profiles:
         rust_benchmark_commands = [
             ["cargo", "bench", "--bench", benchmark_name]
             for benchmark_name in parse_string_list(arguments.rust_benchmarks)
@@ -4089,7 +4548,7 @@ def build_profile_plan(
         "linux_perf": arguments.enable_linux_perf,
         "nsight_systems": arguments.enable_nsight_systems,
         "nsight_compute": arguments.enable_nsight_compute,
-        "rust_criterion": arguments.enable_rust_criterion,
+        "rust_criterion": arguments.enable_rust_criterion and not arguments.skip_deep_profiles,
         "logging_perturbation": arguments.enable_logging_perturbation,
     }
     profiler_tools = serialize_profiler_tool_status(build_profiler_tool_status(arguments))
@@ -4113,7 +4572,7 @@ def build_profile_plan(
         regenie_baseline_scope = serialize_regenie_baseline_scope(scope)
         if scope.status != RegenieBaselineScopeStatus.UNSUPPORTED:
             regenie_executable = configured_regenie_executable(arguments)
-            for trait_type in parse_regenie_baseline_trait_types(arguments.regenie_baseline_trait_types):
+            for trait_type in selected_regenie_baseline_trait_types(arguments):
                 command_arguments = build_regenie_step2_command(
                     trait_type=trait_type,
                     regenie_executable=regenie_executable,
@@ -4145,6 +4604,8 @@ def build_profile_plan(
         chromosome_label=arguments.chromosome_label,
         output_directory=str(output_directory),
         required_inputs=[str(path) for path in required_profile_input_paths(baseline_paths)],
+        workload_keys=list(campaign_budget.workload_keys),
+        campaign_budget=campaign_budget,
         profiler_modes=profiler_modes,
         profiler_tools=profiler_tools,
         logging_perturbation_cases=logging_perturbation_cases,
@@ -4166,10 +4627,34 @@ def write_profile_plan(plan: ProfilePlan, output_directory: Path) -> None:
         "",
         f"- Chromosome: `{plan.chromosome_label}`",
         f"- Output directory: `{plan.output_directory}`",
+        f"- Workloads: `{', '.join(plan.workload_keys)}`",
         "",
-        "## Profiler Modes",
+        "## Campaign Budget",
         "",
+        f"- Total candidates/cases: `{plan.campaign_budget.total_candidate_count}`",
+        f"- Estimated subprocess runs: `{plan.campaign_budget.total_subprocess_run_count}`",
+        f"- Estimated major profiler runs: `{plan.campaign_budget.total_major_profiler_run_count}`",
+        f"- Max subprocess runs: `{plan.campaign_budget.max_subprocess_runs}`",
+        f"- Max major profiler runs: `{plan.campaign_budget.max_major_profiler_runs}`",
+        f"- Over subprocess budget: `{str(plan.campaign_budget.over_subprocess_budget).lower()}`",
+        f"- Over major profiler budget: `{str(plan.campaign_budget.over_major_profiler_budget).lower()}`",
+        "",
+        "| section | candidates/cases | subprocess runs | major profiler runs | notes |",
+        "| --- | ---: | ---: | ---: | --- |",
     ]
+    for section in plan.campaign_budget.sections:
+        lines.append(
+            "| "
+            f"{section.display_name} | "
+            f"{section.candidate_count} | "
+            f"{section.subprocess_run_count} | "
+            f"{section.major_profiler_run_count} | "
+            f"{section.notes} |"
+        )
+    lines.extend(["", "### Budget Guidance", ""])
+    for guidance_item in plan.campaign_budget.guidance:
+        lines.append(f"- {guidance_item}")
+    lines.extend(["", "## Profiler Modes", ""])
     for mode_name, enabled in plan.profiler_modes.items():
         lines.append(f"- `{mode_name}`: `{str(enabled).lower()}`")
     lines.extend(["", "## Profiler Tool Availability", ""])
@@ -4232,11 +4717,14 @@ def run_tool(arguments: ProfileArguments) -> None:
         baseline_paths=baseline_paths,
         output_directory=output_directory,
     )
+    campaign_budget = build_campaign_budget(arguments=arguments, output_directory=output_directory)
+    log_campaign_budget(campaign_budget)
     if arguments.dry_run:
         profile_plan = build_profile_plan(
             arguments=arguments,
             baseline_paths=baseline_paths,
             output_directory=output_directory,
+            campaign_budget=campaign_budget,
         )
         write_profile_plan(profile_plan, output_directory)
         write_artifact_manifest(
@@ -4246,6 +4734,20 @@ def run_tool(arguments: ProfileArguments) -> None:
         )
         logger.info("Wrote dry-run profile plan under %s", output_directory)
         return
+    if campaign_budget_is_over_limit(campaign_budget) and not arguments.allow_over_budget:
+        profile_plan = build_profile_plan(
+            arguments=arguments,
+            baseline_paths=baseline_paths,
+            output_directory=output_directory,
+            campaign_budget=campaign_budget,
+        )
+        write_profile_plan(profile_plan, output_directory)
+        write_artifact_manifest(
+            output_directory=output_directory,
+            profiler_tool_status=profiler_tool_status,
+            profile_plan=profile_plan,
+        )
+    enforce_campaign_budget(arguments, campaign_budget)
     logger.info("Validating profile inputs")
     baseline_benchmark.validate_input_files(baseline_paths)
     prediction_list_paths = [
@@ -4341,6 +4843,7 @@ def run_tool(arguments: ProfileArguments) -> None:
     summary_payload = {
         "stage_timing_mode": arguments.stage_timing_mode.value,
         "preflight": preflight_metadata,
+        "campaign_budget": dataclasses.asdict(campaign_budget),
         "setup_results": [dataclasses.asdict(result) for result in setup_results],
         "bgen_summaries": [dataclasses.asdict(summary) for summary in bgen_summaries],
         "winners": {key: dataclasses.asdict(value) for key, value in winners.items()},
