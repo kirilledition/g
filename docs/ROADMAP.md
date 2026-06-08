@@ -26,14 +26,13 @@ Arrow/Parquet output.
 - REGENIE-compatible text output.
 - Full public support for all REGENIE Step 2 flags.
 
-## Near-Term P0
+## Tracked Follow-Ups
 
-- JIT and fuse the binary variant-major score-only path.
-- Remove the multi-binary `traits x variants x samples` intermediate.
-- Fix O(T x N^2) complete-case multi-phenotype alignment.
-- Fail by default on binary null logistic non-convergence.
-- Output NaN for invalid binary score statistics instead of
-  `CHISQ = 0` and `LOG10P = 0`.
+Roadmap work should be tracked in Linear rather than as unchecked tasks in this
+file. The current docs-task audit generated focused follow-ups for
+REGENIE-compatible text output, packed8 custom-kernel profiling, trace-mode
+event caps, and binary benchmark diagnostics. See
+[Agent Learning](agent-learning.md) for the audit summary and Linear links.
 
 ## Performance Direction
 
@@ -47,8 +46,8 @@ Arrow/Parquet output.
   avoid redundant GPU reductions.
 - Reduce output-writer copies and clarify ownership of chunk metadata and
   result buffers.
-- Measure synchronization points explicitly, especially Firth candidate
-  counting and profile-mode timing.
+- Measure synchronization points explicitly in profiling mode while keeping
+  production telemetry low overhead.
 
 ## Architecture Direction
 

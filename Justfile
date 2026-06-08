@@ -5,6 +5,8 @@ set shell := ["bash", "-cu"]
 data_dir := env_var_or_default('GWAS_ENGINE_DATA_DIR', 'data')
 python_version := env_var_or_default('GWAS_ENGINE_PYTHON_VERSION', '3.14')
 tools_dir := env_var_or_default('GWAS_ENGINE_TOOLS_DIR', '.tools')
+regenie_patched_source_dir := env_var_or_default('GWAS_ENGINE_REGENIE_PATCHED_SOURCE_DIR', 'reference/regenie-patched')
+regenie_patched_output_dir := env_var_or_default('GWAS_ENGINE_REGENIE_PATCHED_OUTPUT_DIR', '.tools/regenie-patched/native')
 slurm_gpu_node := env_var_or_default('GWAS_ENGINE_GPU_NODE', 'landau')
 slurm_cpu_node := env_var_or_default('GWAS_ENGINE_CPU_NODE', 'cantor')
 slurm_gpu_partition := env_var_or_default('GWAS_ENGINE_GPU_PARTITION', env_var_or_default('GWAS_ENGINE_SLURM_PARTITION', ''))
@@ -273,6 +275,103 @@ doctor-baselines:
       fi
     done
     echo "Baseline benchmark tools are available on PATH."
+
+# Build the patched REGENIE reference binary with native CPU performance flags
+build-patched-regenie:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    source_directory="{{ regenie_patched_source_dir }}"
+    output_directory="{{ regenie_patched_output_dir }}"
+    bgen_path="${GWAS_ENGINE_REGENIE_BGEN_PATH:-${BGEN_PATH:-}}"
+    if [[ -z "${bgen_path}" ]]; then
+      echo "Set GWAS_ENGINE_REGENIE_BGEN_PATH or BGEN_PATH to the external BGEN library root." >&2
+      exit 1
+    fi
+    if [[ ! -d "${source_directory}" ]]; then
+      echo "Patched REGENIE source directory does not exist: ${source_directory}" >&2
+      exit 1
+    fi
+    if [[ ! -d "${bgen_path}" ]]; then
+      echo "BGEN library directory does not exist: ${bgen_path}" >&2
+      exit 1
+    fi
+    source_path="$(cd "${source_directory}" && pwd -P)"
+    bgen_path="$(cd "${bgen_path}" && pwd -P)"
+    if [[ ! -f "${bgen_path}/build/libbgen.a" ]]; then
+      echo "BGEN library archive not found: ${bgen_path}/build/libbgen.a" >&2
+      exit 1
+    fi
+    case "${output_directory}" in
+      /*) output_root="${output_directory}" ;;
+      *) output_root="${PWD}/${output_directory}" ;;
+    esac
+    mkdir -p "${output_root}"
+    output_path="${output_root}/regenie"
+    job_count="${GWAS_ENGINE_REGENIE_BUILD_JOBS:-${SLURM_CPUS_ON_NODE:-${SLURM_CPUS_PER_TASK:-$(nproc)}}}"
+    job_count="${job_count%%(*}"
+    if [[ ! "${job_count}" =~ ^[1-9][0-9]*$ ]]; then
+      echo "Resolved invalid REGENIE build job count: ${job_count}" >&2
+      exit 1
+    fi
+    compiler="${GWAS_ENGINE_REGENIE_CXX:-${CXX:-g++}}"
+    if ! command -v "${compiler}" >/dev/null 2>&1; then
+      echo "C++ compiler not found on PATH: ${compiler}" >&2
+      exit 1
+    fi
+    required_flags="-fopenmp"
+    performance_flags="${GWAS_ENGINE_REGENIE_PERF_FLAGS:--march=native -mtune=native -flto -DNDEBUG}"
+    extra_flags="${GWAS_ENGINE_REGENIE_EXTRA_CFLAGS:-}"
+    combined_flags="${required_flags} ${performance_flags}${extra_flags:+ ${extra_flags}}"
+    export OMP_NUM_THREADS="${OMP_NUM_THREADS:-${job_count}}"
+    if [[ "${GWAS_ENGINE_REGENIE_SKIP_CLEAN:-0}" != "1" ]]; then
+      make -C "${source_path}" clean EFILE="${output_path}"
+    fi
+    make -C "${source_path}" --jobs="${job_count}" \
+      BGEN_PATH="${bgen_path}" \
+      EFILE="${output_path}" \
+      CXX="${compiler}" \
+      CFLAGS="${combined_flags}" \
+      HAS_BOOST_IOSTREAM="${HAS_BOOST_IOSTREAM:-0}" \
+      STATIC="${STATIC:-0}" \
+      MKLROOT="${MKLROOT:-}" \
+      OPENBLAS_ROOT="${OPENBLAS_ROOT:-}" \
+      HTSLIB_PATH="${HTSLIB_PATH:-}"
+    test -x "${output_path}"
+    echo "Built patched REGENIE native binary at ${output_path}"
+
+# Build patched REGENIE on all cores of a named SLURM node
+slurm-build-patched-regenie node='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . scripts/server_env.sh
+    build_node="{{ node }}"
+    if [[ -z "${build_node}" ]]; then
+      build_node="${GWAS_ENGINE_REGENIE_BUILD_NODE:-{{ slurm_cpu_node }}}"
+    fi
+    slurm_arguments=(
+      "--nodes=1"
+      "--ntasks=1"
+      "--exclusive"
+      "--mem={{ slurm_cpu_memory }}"
+      "--time={{ slurm_cpu_time_limit }}"
+    )
+    if [[ -n "${build_node}" ]]; then
+      slurm_arguments+=("--nodelist=${build_node}")
+    fi
+    if [[ -n "{{ slurm_cpu_partition }}" ]]; then
+      slurm_arguments+=("--partition={{ slurm_cpu_partition }}")
+    fi
+    if [[ -n "{{ slurm_cpu_account }}" ]]; then
+      slurm_arguments+=("--account={{ slurm_cpu_account }}")
+    fi
+    if [[ -n "{{ slurm_cpu_extra_arguments }}" ]]; then
+      read -r -a extra_arguments <<< "{{ slurm_cpu_extra_arguments }}"
+      slurm_arguments+=("${extra_arguments[@]}")
+    fi
+    repository_root="$(pwd -P)"
+    printf -v quoted_repository_root "%q" "${repository_root}"
+    exec srun "${slurm_arguments[@]}" bash -lc "cd ${quoted_repository_root} && just build-patched-regenie"
 
 # Probe JAX runtime on the current host
 doctor-jax:

@@ -34,6 +34,7 @@ The repository also contains design notes, learning documents, and planning refe
 - [Ubuntu SLURM Development](UBUNTU_SLURM_DEVELOPMENT.md)
 - [No-Nix Development](NO_NIX_DEVELOPMENT.md)
 - [Configuration and CLI Architecture](configuration_cli_architecture.md)
+- [Agent Learning](agent-learning.md)
 - [Linear REGENIE Step 2 Learning](linear-regenie-step2-learning.md)
 - [Binary REGENIE Step 2 Learning](binary-regenie-step2-learning.md)
 - [Performance Discovery Playbook](performance-discovery.md)

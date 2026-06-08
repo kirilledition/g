@@ -206,32 +206,40 @@ fn validate_manifest_chunk_file_commits(
                 chunk_file_path.display()
             )));
         };
-        if observed_commit != expected_commit {
-            if observed_commit.row_count != expected_commit.row_count {
-                return Err(OutputWriterError::InvalidInput(format!(
-                    "Strict resume row count mismatch for chunk {}.",
-                    expected_commit.chunk_identifier
-                )));
-            }
-            if observed_commit.variant_start_index != expected_commit.variant_start_index
-                || observed_commit.variant_stop_index != expected_commit.variant_stop_index
-            {
-                return Err(OutputWriterError::InvalidInput(format!(
-                    "Strict resume variant range mismatch for chunk {}.",
-                    expected_commit.chunk_identifier
-                )));
-            }
-            return Err(OutputWriterError::InvalidInput(format!(
-                "Strict resume found conflicting commit metadata for chunk {}.",
-                expected_commit.chunk_identifier
-            )));
-        }
+        validate_manifest_chunk_commit(expected_commit, observed_commit)?;
         committed_identifiers.insert(expected_commit.chunk_identifier);
     }
     if observed_commit_identifiers != expected_commit_identifiers {
         return Err(OutputWriterError::InvalidInput(format!(
             "Strict resume manifest commit set does not match chunk file {}.",
             chunk_file_path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_manifest_chunk_commit(
+    expected_commit: &manifest::RunManifestChunkCommit,
+    observed_commit: &manifest::RunManifestChunkCommit,
+) -> Result<(), OutputWriterError> {
+    if observed_commit.variant_start_index != expected_commit.variant_start_index
+        || observed_commit.variant_stop_index != expected_commit.variant_stop_index
+    {
+        return Err(OutputWriterError::InvalidInput(format!(
+            "Strict resume variant range mismatch for chunk {}.",
+            expected_commit.chunk_identifier
+        )));
+    }
+    if observed_commit.row_count != expected_commit.row_count {
+        return Err(OutputWriterError::InvalidInput(format!(
+            "Strict resume row count mismatch for chunk {}.",
+            expected_commit.chunk_identifier
+        )));
+    }
+    if observed_commit != expected_commit {
+        return Err(OutputWriterError::InvalidInput(format!(
+            "Strict resume found conflicting commit metadata for chunk {}.",
+            expected_commit.chunk_identifier
         )));
     }
     Ok(())
