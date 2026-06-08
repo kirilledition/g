@@ -26,15 +26,17 @@ tool:
   regenie_executable: null
   regenie_baseline_trait_types:
     - quantitative
-  trait_types:
-    - quantitative
-    - binary
-  devices:
-    - cpu
-    - gpu
   regenie_baseline_variant_limit: null
   regenie_baseline_warmups: 0
   regenie_baseline_trials: 1
+  workload_keys:
+    - quantitative_cpu
+    - quantitative_gpu
+    - binary_cpu
+    - binary_gpu
+  max_subprocess_runs: 1000
+  max_major_profiler_runs: 64
+  allow_over_budget: false
   smoke: false
   skip_deep_profiles: false
   enable_jax_trace: true

@@ -135,7 +135,11 @@ JAX tracing.
 
 Runs the deep landau profiling campaign for original REGENIE and `g` REGENIE
 step 2. It includes BGEN pre-sweeps, candidate tuning, headline trials,
-optional perf/py-spy/cProfile/JAX trace runs, and a smoke mode.
+optional perf/py-spy/cProfile/JAX trace runs, and a smoke mode. Exact
+stage-timing runs add compact binary correction diagnostics to `summary.md` and
+machine-readable headline/finalist aggregates to `summary.json`; runs with
+`telemetry.stage_timing_mode=off` mark those diagnostics unavailable instead of
+emitting per-chunk timing artifacts.
 
 `scripts/benchmark_regenie2_linear_fresh_process.py`
 
@@ -251,7 +255,8 @@ step 1 prediction lists must be present.
 
 Start with a dry run. This writes `profile_plan.json` and `profile_plan.md`
 without running workloads. It also writes `artifact_manifest.json`, including
-optional profiler availability and skipped-tool reasons:
+optional profiler availability, skipped-tool reasons, and the campaign budget
+estimate:
 
 ```bash
 just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
@@ -265,6 +270,29 @@ just profile-regenie2-deep-dry-run \
   tool.include_regenie_baseline=true \
   tool.output_dir=data/profiles/regenie_pair_plan
 ```
+
+The plan reports section-level candidate/case counts and subprocess estimates
+for BGEN pre-sweep, tuning, finalists, headline trials, deep profilers, logging
+perturbation, and Rust Criterion. Non-dry runs fail before input validation when
+the estimate exceeds `tool.max_subprocess_runs` or
+`tool.max_major_profiler_runs`. Use `tool.allow_over_budget=true` only for an
+intentional large campaign submitted to the correct SLURM node.
+
+Split independent trait/device sweeps with `tool.workload_keys`. The accepted
+selectors are `all`, `quantitative`, `binary`, `cpu`, `gpu`, and the concrete
+workload keys `quantitative_cpu`, `quantitative_gpu`, `binary_cpu`, and
+`binary_gpu`:
+
+```bash
+just profile-regenie2-deep-dry-run \
+  tool.workload_keys=[binary_gpu] \
+  tool.output_dir=data/profiles/binary_gpu_plan
+```
+
+When original REGENIE baselines are enabled, `tool.regenie_baseline_trait_types`
+is filtered to the selected workload traits. For example, a `binary_gpu` run
+does not schedule a default quantitative REGENIE baseline unless the selected
+workloads include a quantitative key.
 
 Install optional user-local profiler tools before a deep campaign when the host
 does not already provide them:
@@ -292,6 +320,37 @@ The smoke recipe sets `tool.enable_rust_criterion=false` so it validates the
 JAX/Python/native-profiler workflow without spending time in Criterion. The
 full `profile-app-full-landau` recipe keeps Criterion enabled.
 
+The `profile-app-full-landau` and `profile-regenie2-deep-landau` recipes use a
+bounded 12-hour `landau` default instead of the broad exploratory grid. This is
+the practical recipe used for the successful `data/profiles/deep-20260608-final-full`
+campaign:
+
+```bash
+just profile-app-full-landau \
+  tool.output_dir=data/profiles/deep-20260608-final-full \
+  tool.chunk_sizes=[2048,4096] \
+  tool.staging_depths=[1,2] \
+  tool.output_writer_thread_counts=[1,4] \
+  tool.writer_queue_depth_multipliers=[1,2] \
+  tool.firth_batch_sizes=[32] \
+  tool.bgen_decode_tile_variant_counts=[64,128] \
+  tool.rayon_thread_counts=[4,8] \
+  tool.top_bgen_candidates=1 \
+  tool.top_finalists=2 \
+  tool.tuning_warmups=0 \
+  tool.tuning_trials=1 \
+  tool.finalist_warmups=0 \
+  tool.finalist_trials=2 \
+  tool.headline_warmups=0 \
+  tool.headline_trials=3
+```
+
+With all four workload keys selected and original REGENIE disabled, this plan is
+about 130 subprocess runs and 18 major profiler or Criterion runs. Override
+`tool.workload_keys` to split the same bounded campaign across multiple jobs,
+for example `tool.workload_keys=[binary_gpu]` on one node and
+`tool.workload_keys=[quantitative_gpu]` on another.
+
 Run the full profile bundle on `landau`:
 
 ```bash
@@ -302,9 +361,10 @@ The full run writes:
 
 - `tooling.log`: phase-level progress for long-running jobs.
 - `preflight.json`: git, hardware, JAX, Rust, CUDA, REGENIE, and input metadata.
-- `summary.json`: structured run results, comparisons, stage totals, and
-  profiler metadata.
-- `summary.md`: human-readable bottleneck report.
+- `summary.json`: structured run results, comparisons, stage totals, binary
+  correction diagnostics, and profiler metadata.
+- `summary.md`: human-readable bottleneck report with compact binary correction
+  diagnostic tables for headline and finalist binary runs.
 - `artifact_manifest.json`: artifact list, profiler availability, per-profiler
   artifact and application output paths, and skipped profiler reasons.
 - `logs/*.stdout.log` and `logs/*.stderr.log`: subprocess logs.
@@ -369,10 +429,9 @@ Useful overrides:
   use this only after a hot kernel is identified because it is intrusive.
 - `tool.enable_logging_perturbation=false`: skip telemetry/logging perturbation
   trials when reproducing a narrower benchmark.
-- `tool.trait_types=[binary]`: tune only binary `g` candidates. Defaults to
-  both `quantitative` and `binary`.
-- `tool.devices=[cpu,gpu]`: tune a selected device set. Defaults to both CPU
-  and GPU.
+- `tool.workload_keys=[binary_cpu,binary_gpu]`: tune only selected `g`
+  trait/device workloads. Defaults to all four quantitative/binary CPU/GPU
+  workloads.
 - `tool.result_in_flight_limits=[default,4]`: include explicit result
   in-flight slot limits in the candidate grid. `default` keeps the runtime
   derived capacity of `staging_depth + 1`.
@@ -396,7 +455,7 @@ Useful overrides:
 variant workload.
 
 Queue timings in `*.stage_timings.json` need direction-aware interpretation:
-`result_queue:put` and `result_in_flight_slots:producer_blocking` are producer
+`result_queue:put` and blocked `result_in_flight_slots:acquire` are producer
 backpressure signals. `result_queue:consumer_wait` is normally the writer
 thread sleeping while JAX/native work is still upstream, so it is expected idle
 time unless paired with blocked producer puts. `dosage_buffer_pool:consumer_wait`

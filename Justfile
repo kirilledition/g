@@ -24,6 +24,7 @@ slurm_cpu_memory := env_var_or_default('GWAS_ENGINE_CPU_MEMORY', env_var_or_defa
 slurm_cpu_extra_arguments := env_var_or_default('GWAS_ENGINE_CPU_EXTRA_ARGS', env_var_or_default('GWAS_ENGINE_SLURM_EXTRA_ARGS', ''))
 slurm_cpu_exclusive := env_var_or_default('GWAS_ENGINE_SLURM_EXCLUSIVE', '1')
 perf_results_dir := env_var_or_default('GWAS_ENGINE_PERF_RESULTS_DIR', 'results/perf')
+deep_profile_landau_budget_overrides := 'tool.chunk_sizes=[2048,4096] tool.staging_depths=[1,2] tool.output_writer_thread_counts=[1,4] tool.writer_queue_depth_multipliers=[1,2] tool.firth_batch_sizes=[32] tool.bgen_decode_tile_variant_counts=[64,128] tool.rayon_thread_counts=[4,8] tool.top_bgen_candidates=1 tool.top_finalists=2 tool.tuning_warmups=0 tool.tuning_trials=1 tool.finalist_warmups=0 tool.finalist_trials=2 tool.headline_warmups=0 tool.headline_trials=3 tool.max_subprocess_runs=1000 tool.max_major_profiler_runs=64'
 server_env := '. scripts/server_env.sh'
 symphony_elixir_dir := env_var_or_default('SYMPHONY_ELIXIR_DIR', '/mnt/beegfs/kirill/Projects/symphony/elixir')
 symphony_port := env_var_or_default('SYMPHONY_PORT', '4000')
@@ -668,15 +669,15 @@ profile-regenie2-deep-dry-run *overrides:
     {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.dry_run=true {{ overrides }}
 
 # Smoke test the deep REGENIE step 2 profiling harness on the current host
-profile-regenie2-deep-smoke *overrides: install-perf-extension
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.smoke=true tool.skip_deep_profiles=true {{ overrides }}
+profile-regenie2-deep-smoke *overrides: install-gpu-dependencies install-perf-extension
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.smoke=true tool.skip_deep_profiles=true tool.enable_rust_criterion=false {{ overrides }}
 
 # Write the full app profiling plan without running workloads
 profile-app-full-dry-run *overrides:
     {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false tool.dry_run=true {{ overrides }}
 
 # Smoke test the full app profiling bundle on the current host
-profile-app-full-smoke *overrides: install-perf-extension
+profile-app-full-smoke *overrides: install-gpu-dependencies install-perf-extension
     {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false tool.enable_rust_criterion=false tool.smoke=true {{ overrides }}
 
 # Submit one long landau SLURM job for the deep REGENIE step 2 profiling harness
@@ -688,7 +689,7 @@ profile-regenie2-deep-landau *overrides:
     export GWAS_ENGINE_SLURM_CPUS_PER_TASK="${GWAS_ENGINE_SLURM_CPUS_PER_TASK:-8}"
     export GWAS_ENGINE_SLURM_MEMORY="${GWAS_ENGINE_SLURM_MEMORY:-64G}"
     export GWAS_ENGINE_SLURM_GPUS_PER_TASK="${GWAS_ENGINE_SLURM_GPUS_PER_TASK:-1}"
-    exec just slurm-gpu-run '. scripts/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false {{ overrides }}'
+    exec just slurm-gpu-run '. scripts/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false {{ deep_profile_landau_budget_overrides }} {{ overrides }}'
 
 # Submit one long landau SLURM job for the full app profiling bundle
 profile-app-full-landau *overrides:
@@ -699,7 +700,7 @@ profile-app-full-landau *overrides:
     export GWAS_ENGINE_SLURM_CPUS_PER_TASK="${GWAS_ENGINE_SLURM_CPUS_PER_TASK:-8}"
     export GWAS_ENGINE_SLURM_MEMORY="${GWAS_ENGINE_SLURM_MEMORY:-64G}"
     export GWAS_ENGINE_SLURM_GPUS_PER_TASK="${GWAS_ENGINE_SLURM_GPUS_PER_TASK:-1}"
-    exec just slurm-gpu-run '. scripts/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false {{ overrides }}'
+    exec just slurm-gpu-run '. scripts/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false {{ deep_profile_landau_budget_overrides }} {{ overrides }}'
 
 # Format code
 format:

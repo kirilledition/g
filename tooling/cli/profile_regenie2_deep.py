@@ -42,6 +42,101 @@ DEFAULT_VARIANT_COUNT = 418_943
 JAX_XLA_AUTOTUNE_CACHE = "xla_gpu_per_fusion_autotune_cache_dir"
 ENABLE_XLA_AUTOTUNE_CACHE = os.environ.get("G_PROFILE_ENABLE_XLA_AUTOTUNE_CACHE") == "1"
 GPU_JAX_CACHE_PARENT_DEFAULT = "/tmp/g-jax-profile-cache"
+BINARY_DIAGNOSTIC_UNAVAILABLE_EXACT_TIMING_DISABLED = "exact_stage_timings_disabled"
+BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_MISSING = "stage_timing_file_missing"
+BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_INVALID = "stage_timing_file_invalid"
+BINARY_DIAGNOSTIC_UNAVAILABLE_BINARY_DIAGNOSTICS_MISSING = "binary_chunk_diagnostics_missing"
+BINARY_DIAGNOSTIC_UNAVAILABLE_BINARY_DIAGNOSTICS_INVALID = "binary_chunk_diagnostics_invalid"
+BINARY_DIAGNOSTIC_COUNT_FIELDS = (
+    "score_test_candidate_count",
+    "firth_candidate_count",
+    "firth_converged_count",
+    "firth_failed_count",
+    "firth_numerical_failure_count",
+    "firth_max_iteration_failure_count",
+    "firth_invalid_statistic_failure_count",
+    "firth_step_halving_failure_count",
+    "pseudo_firth_attempt_count",
+    "pseudo_firth_success_count",
+    "nr_zero_start_attempt_count",
+    "nr_zero_start_success_count",
+    "nr_warm_start_attempt_count",
+    "nr_warm_start_success_count",
+    "sparse_correction_count",
+    "dense_correction_count",
+)
+BINARY_CHUNK_OUTLIER_LIMIT = 5
+
+
+class ProfileStageTimingMode(enum.StrEnum):
+    """Stage timing collection mode for deep profile runs."""
+
+    EXACT = "exact"
+    OFF = "off"
+
+
+class ProfileWorkloadKey(enum.StrEnum):
+    """Trait/device workload keys for splittable deep profile campaigns."""
+
+    QUANTITATIVE_CPU = "quantitative_cpu"
+    QUANTITATIVE_GPU = "quantitative_gpu"
+    BINARY_CPU = "binary_cpu"
+    BINARY_GPU = "binary_gpu"
+
+    @property
+    def trait_type(self) -> str:
+        """Return the workload trait type."""
+        return self.value.rsplit("_", maxsplit=1)[0]
+
+    @property
+    def device(self) -> str:
+        """Return the workload device."""
+        return self.value.rsplit("_", maxsplit=1)[1]
+
+
+class ProfileWorkloadSelector(enum.StrEnum):
+    """Accepted workload selection tokens."""
+
+    ALL = "all"
+    QUANTITATIVE = "quantitative"
+    BINARY = "binary"
+    CPU = "cpu"
+    GPU = "gpu"
+    QUANTITATIVE_CPU = "quantitative_cpu"
+    QUANTITATIVE_GPU = "quantitative_gpu"
+    BINARY_CPU = "binary_cpu"
+    BINARY_GPU = "binary_gpu"
+
+
+PROFILE_WORKLOAD_KEYS: tuple[ProfileWorkloadKey, ...] = (
+    ProfileWorkloadKey.QUANTITATIVE_CPU,
+    ProfileWorkloadKey.QUANTITATIVE_GPU,
+    ProfileWorkloadKey.BINARY_CPU,
+    ProfileWorkloadKey.BINARY_GPU,
+)
+
+
+class CampaignBudgetSectionName(enum.StrEnum):
+    """Budget accounting sections in execution order."""
+
+    BGEN_PRE_SWEEP = "bgen_pre_sweep"
+    TUNING = "tuning"
+    FINALISTS = "finalists"
+    HEADLINE_TRIALS = "headline_trials"
+    DEEP_PROFILERS = "deep_profilers"
+    LOGGING_PERTURBATION = "logging_perturbation"
+    RUST_CRITERION = "rust_criterion"
+
+
+CAMPAIGN_BUDGET_SECTION_DISPLAY_NAMES: dict[CampaignBudgetSectionName, str] = {
+    CampaignBudgetSectionName.BGEN_PRE_SWEEP: "BGEN pre-sweep",
+    CampaignBudgetSectionName.TUNING: "Tuning",
+    CampaignBudgetSectionName.FINALISTS: "Finalists",
+    CampaignBudgetSectionName.HEADLINE_TRIALS: "Headline trials",
+    CampaignBudgetSectionName.DEEP_PROFILERS: "Deep profilers",
+    CampaignBudgetSectionName.LOGGING_PERTURBATION: "Logging perturbation",
+    CampaignBudgetSectionName.RUST_CRITERION: "Rust Criterion",
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -67,11 +162,13 @@ class ProfileArguments:
         include_regenie_baseline: Whether headline trials include original REGENIE.
         regenie_executable: Optional original or patched REGENIE executable for baseline runs.
         regenie_baseline_trait_types: Comma-separated REGENIE baseline trait types.
-        trait_types: Comma-separated g trait types to tune.
-        devices: Comma-separated g devices to tune.
         regenie_baseline_variant_limit: Optional baseline variant cap. Defaults to variant_limit when unset.
         regenie_baseline_warmups: Warmup count for original REGENIE baseline trials.
         regenie_baseline_trials: Measured count for original REGENIE baseline trials.
+        workload_keys: Comma-separated trait/device workloads to include.
+        max_subprocess_runs: Maximum planned subprocess runs allowed without override.
+        max_major_profiler_runs: Maximum major profiler runs allowed without override.
+        allow_over_budget: Whether to allow execution over the configured budget.
         smoke: Whether to use the reduced smoke campaign.
         skip_deep_profiles: Whether to skip sampling and trace profiles.
         enable_jax_trace: Whether deep profiles capture JAX profiler traces.
@@ -104,6 +201,7 @@ class ProfileArguments:
         finalist_trials: Measured count for finalist trials.
         headline_warmups: Warmup count for headline trials.
         headline_trials: Measured count for headline trials.
+        stage_timing_mode: Whether exact stage timing JSON artifacts are emitted.
 
     """
 
@@ -125,11 +223,13 @@ class ProfileArguments:
     include_regenie_baseline: bool
     regenie_executable: str | None
     regenie_baseline_trait_types: str
-    trait_types: str
-    devices: str
     regenie_baseline_variant_limit: int | None
     regenie_baseline_warmups: int
     regenie_baseline_trials: int
+    workload_keys: str
+    max_subprocess_runs: int | None
+    max_major_profiler_runs: int | None
+    allow_over_budget: bool
     smoke: bool
     skip_deep_profiles: bool
     enable_jax_trace: bool
@@ -162,6 +262,7 @@ class ProfileArguments:
     finalist_trials: int
     headline_warmups: int
     headline_trials: int
+    stage_timing_mode: ProfileStageTimingMode
 
 
 @dataclasses.dataclass(frozen=True)
@@ -227,6 +328,58 @@ class BgenCandidateSummary:
 
 
 @dataclasses.dataclass(frozen=True)
+class CampaignBudgetSection:
+    """Budget estimate for one campaign section.
+
+    Attributes:
+        name: Stable machine-readable section name.
+        display_name: Human-readable section name.
+        candidate_count: Planned cases or configurations in the section.
+        subprocess_run_count: Estimated subprocess executions in the section.
+        major_profiler_run_count: Estimated heavy profiler executions in the section.
+        notes: Explanation for the estimate.
+
+    """
+
+    name: str
+    display_name: str
+    candidate_count: int
+    subprocess_run_count: int
+    major_profiler_run_count: int
+    notes: str
+
+
+@dataclasses.dataclass(frozen=True)
+class CampaignBudget:
+    """Budget estimate for a deep profile campaign.
+
+    Attributes:
+        workload_keys: Trait/device workloads selected for this campaign.
+        max_subprocess_runs: Configured subprocess budget.
+        max_major_profiler_runs: Configured major-profiler budget.
+        total_candidate_count: Total planned cases or configurations.
+        total_subprocess_run_count: Total estimated subprocess executions.
+        total_major_profiler_run_count: Total estimated heavy profiler executions.
+        over_subprocess_budget: Whether the subprocess estimate exceeds the configured budget.
+        over_major_profiler_budget: Whether the profiler estimate exceeds the configured budget.
+        sections: Section-level budget estimates.
+        guidance: Human-readable guidance for reducing or overriding the campaign.
+
+    """
+
+    workload_keys: tuple[str, ...]
+    max_subprocess_runs: int | None
+    max_major_profiler_runs: int | None
+    total_candidate_count: int
+    total_subprocess_run_count: int
+    total_major_profiler_run_count: int
+    over_subprocess_budget: bool
+    over_major_profiler_budget: bool
+    sections: tuple[CampaignBudgetSection, ...]
+    guidance: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True)
 class TrialResult:
     """One measured process execution."""
 
@@ -258,14 +411,14 @@ class DeepProfilerRunPaths:
     Attributes:
         application_output_prefix: Prefix passed to the profiled g child as `out`.
         application_output_run_directory: Expected chunked g output run directory.
-        stage_timing_path: Stage timing JSON path for the profiled child run.
+        stage_timing_path: Stage timing JSON path for the profiled child run when exact timing is enabled.
         profile_script_path: Python script path executed by the profiler wrapper.
 
     """
 
     application_output_prefix: Path
     application_output_run_directory: Path
-    stage_timing_path: Path
+    stage_timing_path: Path | None
     profile_script_path: Path
 
 
@@ -306,6 +459,38 @@ class AggregateResult:
 
 
 @dataclasses.dataclass(frozen=True)
+class CandidateTuningResults:
+    """Candidate tuning output retained for final reporting.
+
+    Attributes:
+        winners: Fastest finalist aggregate keyed by trait and device.
+        finalist_results_by_key: All measured finalist aggregates keyed by trait and device.
+
+    """
+
+    winners: dict[str, AggregateResult]
+    finalist_results_by_key: dict[str, list[AggregateResult]]
+
+
+@dataclasses.dataclass(frozen=True)
+class BinaryDiagnosticTrialPayload:
+    """Loaded stage timing diagnostics for one binary trial.
+
+    Attributes:
+        trial_name: Trial name from the aggregate result.
+        stage_timing_path: Stage timing JSON path when one was requested.
+        unavailable_reason: Reason diagnostics could not be read.
+        payload: Parsed stage timing payload when available.
+
+    """
+
+    trial_name: str
+    stage_timing_path: str | None
+    unavailable_reason: str | None
+    payload: dict[str, typing.Any] | None
+
+
+@dataclasses.dataclass(frozen=True)
 class ProfilePlan:
     """Dry-run profile campaign plan.
 
@@ -313,6 +498,8 @@ class ProfilePlan:
         chromosome_label: Chromosome label selected by Hydra.
         output_directory: Planned output directory.
         required_inputs: Input paths and step 1 prediction paths used by real runs.
+        workload_keys: Trait/device workloads selected for this campaign.
+        campaign_budget: Estimated campaign budget and section counts.
         profiler_modes: Profiler modes requested by config.
         profiler_tools: Profiler tool availability records.
         logging_perturbation_cases: Planned telemetry/logging perturbation cases.
@@ -326,6 +513,8 @@ class ProfilePlan:
     chromosome_label: str
     output_directory: str
     required_inputs: list[str]
+    workload_keys: list[str]
+    campaign_budget: CampaignBudget
     profiler_modes: dict[str, bool]
     profiler_tools: dict[str, dict[str, object]]
     logging_perturbation_cases: list[dict[str, object]]
@@ -447,33 +636,71 @@ def parse_string_list(raw_values: str) -> tuple[str, ...]:
 
 def parse_regenie_baseline_trait_types(raw_values: str) -> tuple[str, ...]:
     """Parse and validate original REGENIE baseline trait types."""
-    return parse_profile_trait_types(raw_values, setting_name="REGENIE baseline trait types")
-
-
-def parse_profile_trait_types(
-    raw_values: str,
-    *,
-    setting_name: str = "profile trait types",
-) -> tuple[str, ...]:
-    """Parse and validate g profile trait types."""
     trait_types = parse_string_list(raw_values)
     valid_trait_types = {"quantitative", "binary"}
     invalid_trait_types = sorted(set(trait_types) - valid_trait_types)
     if invalid_trait_types:
-        message = f"Unsupported {setting_name}: {', '.join(invalid_trait_types)}"
+        message = f"Unsupported REGENIE baseline trait types: {', '.join(invalid_trait_types)}"
         raise ValueError(message)
     return trait_types
 
 
-def parse_profile_devices(raw_values: str) -> tuple[str, ...]:
-    """Parse and validate g profile devices."""
-    devices = parse_string_list(raw_values)
-    valid_devices = {"cpu", "gpu"}
-    invalid_devices = sorted(set(devices) - valid_devices)
-    if invalid_devices:
-        message = f"Unsupported profile devices: {', '.join(invalid_devices)}"
+def parse_profile_workload_keys(raw_values: str) -> tuple[ProfileWorkloadKey, ...]:
+    """Parse and expand workload selection tokens."""
+    selected_workload_keys: list[ProfileWorkloadKey] = []
+    invalid_selectors: list[str] = []
+    for raw_selector in parse_string_list(raw_values):
+        try:
+            selector = ProfileWorkloadSelector(raw_selector)
+        except ValueError:
+            invalid_selectors.append(raw_selector)
+            continue
+        if selector == ProfileWorkloadSelector.ALL:
+            selected_workload_keys.extend(PROFILE_WORKLOAD_KEYS)
+        elif selector == ProfileWorkloadSelector.QUANTITATIVE:
+            selected_workload_keys.extend(
+                workload_key for workload_key in PROFILE_WORKLOAD_KEYS if workload_key.trait_type == "quantitative"
+            )
+        elif selector == ProfileWorkloadSelector.BINARY:
+            selected_workload_keys.extend(
+                workload_key for workload_key in PROFILE_WORKLOAD_KEYS if workload_key.trait_type == "binary"
+            )
+        elif selector == ProfileWorkloadSelector.CPU:
+            selected_workload_keys.extend(
+                workload_key for workload_key in PROFILE_WORKLOAD_KEYS if workload_key.device == "cpu"
+            )
+        elif selector == ProfileWorkloadSelector.GPU:
+            selected_workload_keys.extend(
+                workload_key for workload_key in PROFILE_WORKLOAD_KEYS if workload_key.device == "gpu"
+            )
+        else:
+            selected_workload_keys.append(ProfileWorkloadKey(selector.value))
+    if invalid_selectors:
+        valid_values = ", ".join(selector.value for selector in ProfileWorkloadSelector)
+        message = (
+            f"Unsupported deep-profile workload selectors: {', '.join(invalid_selectors)}. "
+            f"Valid selectors: {valid_values}."
+        )
         raise ValueError(message)
-    return devices
+    deduplicated_workload_keys = tuple(dict.fromkeys(selected_workload_keys))
+    if not deduplicated_workload_keys:
+        message = "At least one deep-profile workload key is required."
+        raise ValueError(message)
+    return deduplicated_workload_keys
+
+
+def selected_regenie_baseline_trait_types(arguments: ProfileArguments) -> tuple[str, ...]:
+    """Return REGENIE baseline traits that match the selected workload traits."""
+    requested_trait_types = parse_regenie_baseline_trait_types(arguments.regenie_baseline_trait_types)
+    selected_trait_types = {
+        workload_key.trait_type for workload_key in parse_profile_workload_keys(arguments.workload_keys)
+    }
+    return tuple(trait_type for trait_type in requested_trait_types if trait_type in selected_trait_types)
+
+
+def should_emit_stage_timings(arguments: ProfileArguments) -> bool:
+    """Return whether exact stage timing artifacts should be emitted."""
+    return arguments.stage_timing_mode == ProfileStageTimingMode.EXACT
 
 
 def build_output_directory(arguments: ProfileArguments) -> Path:
@@ -1212,6 +1439,293 @@ def build_step2_candidates(
     return tuple(candidates)
 
 
+def build_campaign_budget_section(
+    *,
+    section_name: CampaignBudgetSectionName,
+    candidate_count: int,
+    subprocess_run_count: int,
+    major_profiler_run_count: int = 0,
+    notes: str,
+) -> CampaignBudgetSection:
+    """Build one campaign budget section."""
+    return CampaignBudgetSection(
+        name=section_name.value,
+        display_name=CAMPAIGN_BUDGET_SECTION_DISPLAY_NAMES[section_name],
+        candidate_count=candidate_count,
+        subprocess_run_count=subprocess_run_count,
+        major_profiler_run_count=major_profiler_run_count,
+        notes=notes,
+    )
+
+
+def count_queue_depth_grid(writer_thread_counts: tuple[int, ...], queue_depth_multipliers: tuple[int, ...]) -> int:
+    """Count distinct writer queue-depth settings across writer thread counts."""
+    return sum(
+        len(build_queue_depth_values(writer_thread_count, queue_depth_multipliers))
+        for writer_thread_count in writer_thread_counts
+    )
+
+
+def count_step2_tuning_candidates(
+    *,
+    workload_key: ProfileWorkloadKey,
+    selected_bgen_candidate_count: int,
+    chunk_sizes: tuple[int, ...],
+    staging_depths: tuple[int, ...],
+    result_in_flight_limits: tuple[int | None, ...],
+    dosage_buffer_limits: tuple[int | None, ...],
+    writer_thread_counts: tuple[int, ...],
+    queue_depth_multipliers: tuple[int, ...],
+    firth_batch_sizes: tuple[int, ...],
+    smoke: bool,
+) -> int:
+    """Count step 2 tuning candidates for one selected workload."""
+    queue_depth_count = count_queue_depth_grid(writer_thread_counts, queue_depth_multipliers)
+    candidate_count = (
+        selected_bgen_candidate_count
+        * len(chunk_sizes)
+        * len(staging_depths)
+        * len(result_in_flight_limits)
+        * len(dosage_buffer_limits)
+        * queue_depth_count
+    )
+    if workload_key.trait_type == "binary":
+        candidate_count *= len(firth_batch_sizes)
+    if smoke:
+        return min(candidate_count, 1)
+    return candidate_count
+
+
+def count_enabled_deep_profiler_modes(arguments: ProfileArguments) -> int:
+    """Count profiler subprocess modes run for each selected winner."""
+    mode_count = 0
+    if arguments.enable_jax_trace or arguments.enable_jax_memory_profile:
+        mode_count += 1
+    enabled_modes = (
+        arguments.enable_python_cprofile,
+        arguments.enable_py_spy,
+        arguments.enable_scalene,
+        arguments.enable_memray,
+        arguments.enable_linux_perf,
+        arguments.enable_nsight_systems,
+        arguments.enable_nsight_compute,
+    )
+    return mode_count + sum(1 for enabled in enabled_modes if enabled)
+
+
+def campaign_budget_is_over_limit(campaign_budget: CampaignBudget) -> bool:
+    """Return whether a campaign exceeds either configured budget."""
+    return campaign_budget.over_subprocess_budget or campaign_budget.over_major_profiler_budget
+
+
+def build_campaign_budget(
+    *,
+    arguments: ProfileArguments,
+    output_directory: Path,
+) -> CampaignBudget:
+    """Estimate campaign section counts before executing workloads."""
+    workload_keys = parse_profile_workload_keys(arguments.workload_keys)
+    chunk_sizes = parse_int_list(arguments.chunk_sizes)
+    staging_depths = parse_int_list(arguments.staging_depths)
+    result_in_flight_limits = parse_optional_int_list(arguments.result_in_flight_limits)
+    dosage_buffer_limits = parse_optional_int_list(arguments.dosage_buffer_limits)
+    writer_thread_counts = parse_int_list(arguments.output_writer_thread_counts)
+    queue_depth_multipliers = parse_int_list(arguments.writer_queue_depth_multipliers)
+    firth_batch_sizes = parse_int_list(arguments.firth_batch_sizes)
+    bgen_decode_tile_variant_counts = parse_int_list(arguments.bgen_decode_tile_variant_counts)
+    rayon_thread_counts = parse_int_list(arguments.rayon_thread_counts)
+    bgen_candidate_count = len(bgen_decode_tile_variant_counts) * len(rayon_thread_counts)
+    selected_bgen_candidate_count = min(arguments.top_bgen_candidates, bgen_candidate_count)
+    tuning_candidate_counts = [
+        count_step2_tuning_candidates(
+            workload_key=workload_key,
+            selected_bgen_candidate_count=selected_bgen_candidate_count,
+            chunk_sizes=chunk_sizes,
+            staging_depths=staging_depths,
+            result_in_flight_limits=result_in_flight_limits,
+            dosage_buffer_limits=dosage_buffer_limits,
+            writer_thread_counts=writer_thread_counts,
+            queue_depth_multipliers=queue_depth_multipliers,
+            firth_batch_sizes=firth_batch_sizes,
+            smoke=arguments.smoke,
+        )
+        for workload_key in workload_keys
+    ]
+    tuning_candidate_count = sum(tuning_candidate_counts)
+    finalist_candidate_counts = [
+        min(arguments.top_finalists, tuning_candidate_count_for_workload)
+        for tuning_candidate_count_for_workload in tuning_candidate_counts
+    ]
+    finalist_candidate_count = sum(finalist_candidate_counts)
+    expected_winner_count = sum(
+        1
+        for finalist_count in finalist_candidate_counts
+        if finalist_count > 0 and arguments.tuning_trials > 0 and arguments.finalist_trials > 0
+    )
+    regenie_baseline_trait_count = 0
+    if arguments.include_regenie_baseline:
+        regenie_baseline_trait_count = len(selected_regenie_baseline_trait_types(arguments))
+    g_headline_run_count = expected_winner_count * (arguments.headline_warmups + arguments.headline_trials)
+    regenie_headline_run_count = regenie_baseline_trait_count * (
+        arguments.regenie_baseline_warmups + arguments.regenie_baseline_trials
+    )
+    deep_profiler_mode_count = 0 if arguments.skip_deep_profiles else count_enabled_deep_profiler_modes(arguments)
+    deep_profiler_run_count = expected_winner_count * deep_profiler_mode_count
+    logging_case_count = 0
+    if arguments.enable_logging_perturbation:
+        logging_case_count = len(
+            build_logging_perturbation_cases(output_directory=output_directory, smoke=arguments.smoke)
+        )
+    logging_run_count = expected_winner_count * logging_case_count
+    rust_benchmark_count = 0
+    if arguments.enable_rust_criterion and not arguments.skip_deep_profiles:
+        rust_benchmark_count = len(parse_string_list(arguments.rust_benchmarks))
+    sections = (
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.BGEN_PRE_SWEEP,
+            candidate_count=bgen_candidate_count,
+            subprocess_run_count=bgen_candidate_count,
+            notes=(
+                f"{len(bgen_decode_tile_variant_counts)} BGEN tile values x "
+                f"{len(rayon_thread_counts)} Rayon thread values; each case repeats internally "
+                f"{arguments.tuning_trials} time(s)."
+            ),
+        ),
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.TUNING,
+            candidate_count=tuning_candidate_count,
+            subprocess_run_count=tuning_candidate_count * (arguments.tuning_warmups + arguments.tuning_trials),
+            notes=(
+                f"{len(workload_keys)} selected workload(s), top {selected_bgen_candidate_count} BGEN candidate(s), "
+                f"{arguments.tuning_warmups} warmup(s), and {arguments.tuning_trials} measured trial(s)."
+            ),
+        ),
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.FINALISTS,
+            candidate_count=finalist_candidate_count,
+            subprocess_run_count=finalist_candidate_count * (arguments.finalist_warmups + arguments.finalist_trials),
+            notes=(
+                f"Up to {arguments.top_finalists} finalist(s) per selected workload, "
+                f"{arguments.finalist_warmups} warmup(s), and {arguments.finalist_trials} measured trial(s)."
+            ),
+        ),
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.HEADLINE_TRIALS,
+            candidate_count=expected_winner_count + regenie_baseline_trait_count,
+            subprocess_run_count=g_headline_run_count + regenie_headline_run_count,
+            notes=(
+                f"{expected_winner_count} expected g winner(s) and "
+                f"{regenie_baseline_trait_count} selected REGENIE baseline trait(s)."
+            ),
+        ),
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.DEEP_PROFILERS,
+            candidate_count=deep_profiler_run_count,
+            subprocess_run_count=deep_profiler_run_count,
+            major_profiler_run_count=deep_profiler_run_count,
+            notes=(
+                "Skipped by tool.skip_deep_profiles=true."
+                if arguments.skip_deep_profiles
+                else f"{deep_profiler_mode_count} profiler mode(s) per expected g winner."
+            ),
+        ),
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.LOGGING_PERTURBATION,
+            candidate_count=logging_run_count,
+            subprocess_run_count=logging_run_count,
+            notes=(
+                "Disabled by tool.enable_logging_perturbation=false."
+                if not arguments.enable_logging_perturbation
+                else f"{logging_case_count} logging case(s) per expected g winner."
+            ),
+        ),
+        build_campaign_budget_section(
+            section_name=CampaignBudgetSectionName.RUST_CRITERION,
+            candidate_count=rust_benchmark_count,
+            subprocess_run_count=rust_benchmark_count,
+            major_profiler_run_count=rust_benchmark_count,
+            notes=(
+                "Skipped because Rust Criterion is disabled or tool.skip_deep_profiles=true."
+                if rust_benchmark_count == 0
+                else "Each configured Criterion benchmark is one cargo bench subprocess."
+            ),
+        ),
+    )
+    total_candidate_count = sum(section.candidate_count for section in sections)
+    total_subprocess_run_count = sum(section.subprocess_run_count for section in sections)
+    total_major_profiler_run_count = sum(section.major_profiler_run_count for section in sections)
+    over_subprocess_budget = (
+        arguments.max_subprocess_runs is not None and total_subprocess_run_count > arguments.max_subprocess_runs
+    )
+    over_major_profiler_budget = (
+        arguments.max_major_profiler_runs is not None
+        and total_major_profiler_run_count > arguments.max_major_profiler_runs
+    )
+    guidance = (
+        "Run a dry run first and inspect profile_plan.md for the section counts.",
+        "Reduce tool.workload_keys, tool.top_bgen_candidates, tool.top_finalists, trial counts, "
+        "Firth batch sizes, writer counts, BGEN tile values, or Rayon thread counts to fit the budget.",
+        "For an intentional huge campaign, pass tool.allow_over_budget=true and keep the run on an appropriate "
+        "SLURM node.",
+    )
+    return CampaignBudget(
+        workload_keys=tuple(workload_key.value for workload_key in workload_keys),
+        max_subprocess_runs=arguments.max_subprocess_runs,
+        max_major_profiler_runs=arguments.max_major_profiler_runs,
+        total_candidate_count=total_candidate_count,
+        total_subprocess_run_count=total_subprocess_run_count,
+        total_major_profiler_run_count=total_major_profiler_run_count,
+        over_subprocess_budget=over_subprocess_budget,
+        over_major_profiler_budget=over_major_profiler_budget,
+        sections=sections,
+        guidance=guidance,
+    )
+
+
+def log_campaign_budget(campaign_budget: CampaignBudget) -> None:
+    """Log section-level campaign budget estimates."""
+    logger.info(
+        "Estimated campaign budget: candidates=%s subprocess_runs=%s major_profiler_runs=%s",
+        campaign_budget.total_candidate_count,
+        campaign_budget.total_subprocess_run_count,
+        campaign_budget.total_major_profiler_run_count,
+    )
+    for section in campaign_budget.sections:
+        logger.info(
+            "Budget section %s: candidates=%s subprocess_runs=%s major_profiler_runs=%s",
+            section.display_name,
+            section.candidate_count,
+            section.subprocess_run_count,
+            section.major_profiler_run_count,
+        )
+
+
+def enforce_campaign_budget(arguments: ProfileArguments, campaign_budget: CampaignBudget) -> None:
+    """Fail early when a non-dry-run campaign exceeds the configured budget."""
+    if arguments.allow_over_budget or not campaign_budget_is_over_limit(campaign_budget):
+        return
+    budget_messages = [
+        "Deep profile campaign exceeds the configured budget.",
+        (
+            f"Estimated subprocess runs: {campaign_budget.total_subprocess_run_count} "
+            f"(limit: {campaign_budget.max_subprocess_runs})."
+        ),
+        (
+            f"Estimated major profiler runs: {campaign_budget.total_major_profiler_run_count} "
+            f"(limit: {campaign_budget.max_major_profiler_runs})."
+        ),
+        "Section counts:",
+    ]
+    for section in campaign_budget.sections:
+        budget_messages.append(
+            f"- {section.display_name}: candidates={section.candidate_count}, "
+            f"subprocess_runs={section.subprocess_run_count}, "
+            f"major_profiler_runs={section.major_profiler_run_count}"
+        )
+    budget_messages.extend(campaign_budget.guidance)
+    raise ValueError("\n".join(budget_messages))
+
+
 def build_g_trial_environment(
     *,
     candidate: Step2Candidate,
@@ -1524,13 +2038,19 @@ def write_inline_python_profile_script(command_arguments: list[str], script_path
     return script_path
 
 
-def build_deep_profiler_run_paths(*, profile_directory: Path, profile_name: str) -> DeepProfilerRunPaths:
+def build_deep_profiler_run_paths(
+    *,
+    profile_directory: Path,
+    profile_name: str,
+    emit_stage_timings: bool,
+) -> DeepProfilerRunPaths:
     """Build isolated application paths for one deep profiler implementation."""
     application_output_prefix = profile_directory / profile_name
+    stage_timing_path = profile_directory / f"{profile_name}.stage_timings.json" if emit_stage_timings else None
     return DeepProfilerRunPaths(
         application_output_prefix=application_output_prefix,
         application_output_run_directory=build_application_output_run_directory(application_output_prefix),
-        stage_timing_path=profile_directory / f"{profile_name}.stage_timings.json",
+        stage_timing_path=stage_timing_path,
         profile_script_path=profile_directory / f"{profile_name}_child.py",
     )
 
@@ -1543,9 +2063,14 @@ def build_deep_profiler_child_command(
     candidate: Step2Candidate,
     cache_directory: Path,
     variant_limit: int | None,
+    emit_stage_timings: bool,
 ) -> DeepProfilerChildCommand:
     """Build an isolated child command for one deep profiler implementation."""
-    run_paths = build_deep_profiler_run_paths(profile_directory=profile_directory, profile_name=profile_name)
+    run_paths = build_deep_profiler_run_paths(
+        profile_directory=profile_directory,
+        profile_name=profile_name,
+        emit_stage_timings=emit_stage_timings,
+    )
     inline_command_arguments = build_g_step2_child_command(
         baseline_paths=baseline_paths,
         candidate=candidate,
@@ -1578,7 +2103,7 @@ def attach_deep_profiler_metadata(
         profiler_artifact_path=str(profiler_artifact_path) if profiler_artifact_path is not None else None,
         application_output_prefix=str(run_paths.application_output_prefix),
         application_output_run_directory=str(run_paths.application_output_run_directory),
-        stage_timing_path=str(run_paths.stage_timing_path),
+        stage_timing_path=str(run_paths.stage_timing_path) if run_paths.stage_timing_path is not None else None,
     )
 
 
@@ -2061,9 +2586,11 @@ def run_candidate_tuning(
     bgen_summaries: tuple[BgenCandidateSummary, ...],
     output_directory: Path,
     cache_directory: Path,
-) -> dict[str, AggregateResult]:
+) -> CandidateTuningResults:
     """Tune g candidates for each trait/device and return winners."""
     winners: dict[str, AggregateResult] = {}
+    finalist_results_by_key: dict[str, list[AggregateResult]] = {}
+    emit_stage_timings = should_emit_stage_timings(arguments)
     chunk_sizes = parse_int_list(arguments.chunk_sizes)
     staging_depths = parse_int_list(arguments.staging_depths)
     result_in_flight_limits = parse_optional_int_list(arguments.result_in_flight_limits)
@@ -2072,80 +2599,80 @@ def run_candidate_tuning(
     queue_depth_multipliers = parse_int_list(arguments.writer_queue_depth_multipliers)
     firth_batch_sizes = parse_int_list(arguments.firth_batch_sizes)
     selected_bgen_summaries = bgen_summaries[: arguments.top_bgen_candidates]
-    for trait_type in parse_profile_trait_types(arguments.trait_types):
-        for device in parse_profile_devices(arguments.devices):
-            candidates = build_step2_candidates(
-                trait_type=trait_type,
-                device=device,
-                bgen_candidates=selected_bgen_summaries,
-                chunk_sizes=chunk_sizes,
-                staging_depths=staging_depths,
-                result_in_flight_limits=result_in_flight_limits,
-                dosage_buffer_limits=dosage_buffer_limits,
-                writer_thread_counts=writer_thread_counts,
-                queue_depth_multipliers=queue_depth_multipliers,
-                firth_batch_sizes=firth_batch_sizes,
+    for workload_key in parse_profile_workload_keys(arguments.workload_keys):
+        candidates = build_step2_candidates(
+            trait_type=workload_key.trait_type,
+            device=workload_key.device,
+            bgen_candidates=selected_bgen_summaries,
+            chunk_sizes=chunk_sizes,
+            staging_depths=staging_depths,
+            result_in_flight_limits=result_in_flight_limits,
+            dosage_buffer_limits=dosage_buffer_limits,
+            writer_thread_counts=writer_thread_counts,
+            queue_depth_multipliers=queue_depth_multipliers,
+            firth_batch_sizes=firth_batch_sizes,
+        )
+        if arguments.smoke:
+            candidates = candidates[:1]
+        initial_results = [
+            run_repeated_g_trials(
+                name=f"tune_{build_candidate_slug(candidate)}",
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                output_directory=output_directory / "tuning_runs",
+                log_directory=output_directory / "logs",
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+                warmup_count=arguments.tuning_warmups,
+                trial_count=arguments.tuning_trials,
+                emit_stage_timings=False,
             )
-            if arguments.smoke:
-                candidates = candidates[:1]
-            initial_results = [
+            for candidate in candidates
+        ]
+        successful_initial_results = [
+            result for result in initial_results if result.median_wall_time_seconds is not None
+        ]
+        finalists = sorted(
+            successful_initial_results,
+            key=lambda result: typing.cast("float", result.median_wall_time_seconds),
+        )[: arguments.top_finalists]
+        finalist_results: list[AggregateResult] = []
+        for finalist in finalists:
+            candidate = recover_candidate_from_trial(finalist.trials[0], candidates)
+            finalist_results.append(
                 run_repeated_g_trials(
-                    name=f"tune_{build_candidate_slug(candidate)}",
+                    name=f"finalist_{build_candidate_slug(candidate)}",
                     baseline_paths=baseline_paths,
                     candidate=candidate,
-                    output_directory=output_directory / "tuning_runs",
+                    output_directory=output_directory / "finalist_runs",
                     log_directory=output_directory / "logs",
                     cache_directory=cache_directory,
                     variant_limit=arguments.variant_limit,
-                    warmup_count=arguments.tuning_warmups,
-                    trial_count=arguments.tuning_trials,
-                    emit_stage_timings=False,
+                    warmup_count=arguments.finalist_warmups,
+                    trial_count=arguments.finalist_trials,
+                    emit_stage_timings=emit_stage_timings,
                 )
-                for candidate in candidates
-            ]
-            successful_initial_results = [
-                result for result in initial_results if result.median_wall_time_seconds is not None
-            ]
-            finalists = sorted(
-                successful_initial_results,
-                key=lambda result: typing.cast("float", result.median_wall_time_seconds),
-            )[: arguments.top_finalists]
-            finalist_results: list[AggregateResult] = []
-            for finalist in finalists:
-                candidate = recover_candidate_from_trial(finalist.trials[0], candidates)
-                finalist_results.append(
-                    run_repeated_g_trials(
-                        name=f"finalist_{build_candidate_slug(candidate)}",
-                        baseline_paths=baseline_paths,
-                        candidate=candidate,
-                        output_directory=output_directory / "finalist_runs",
-                        log_directory=output_directory / "logs",
-                        cache_directory=cache_directory,
-                        variant_limit=arguments.variant_limit,
-                        warmup_count=arguments.finalist_warmups,
-                        trial_count=arguments.finalist_trials,
-                        emit_stage_timings=True,
-                    )
-                )
-            if finalist_results:
-                winner = sorted(
-                    finalist_results,
-                    key=lambda result: typing.cast("float", result.median_wall_time_seconds),
-                )[0]
-                winners[f"{trait_type}_{device}"] = winner
-            tuning_path = output_directory / f"tuning_{trait_type}_{device}.json"
-            tuning_path.write_text(
-                json.dumps(
-                    {
-                        "initial_results": [dataclasses.asdict(result) for result in initial_results],
-                        "finalist_results": [dataclasses.asdict(result) for result in finalist_results],
-                    },
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
             )
-    return winners
+        if finalist_results:
+            winner = sorted(
+                finalist_results,
+                key=lambda result: typing.cast("float", result.median_wall_time_seconds),
+            )[0]
+            winners[workload_key.value] = winner
+            finalist_results_by_key[workload_key.value] = finalist_results
+        tuning_path = output_directory / f"tuning_{workload_key.value}.json"
+        tuning_path.write_text(
+            json.dumps(
+                {
+                    "initial_results": [dataclasses.asdict(result) for result in initial_results],
+                    "finalist_results": [dataclasses.asdict(result) for result in finalist_results],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    return CandidateTuningResults(winners=winners, finalist_results_by_key=finalist_results_by_key)
 
 
 def recover_candidate_from_trial(trial_result: TrialResult, candidates: tuple[Step2Candidate, ...]) -> Step2Candidate:
@@ -2169,8 +2696,9 @@ def run_headline_trials(
 ) -> list[AggregateResult]:
     """Run headline original REGENIE and winning g configurations."""
     headline_results: list[AggregateResult] = []
+    emit_stage_timings = should_emit_stage_timings(arguments)
     if arguments.include_regenie_baseline:
-        regenie_trait_types = parse_regenie_baseline_trait_types(arguments.regenie_baseline_trait_types)
+        regenie_trait_types = selected_regenie_baseline_trait_types(arguments)
         if regenie_executable is None:
             for trait_type in regenie_trait_types:
                 headline_results.append(
@@ -2227,7 +2755,7 @@ def run_headline_trials(
                 variant_limit=arguments.variant_limit,
                 warmup_count=arguments.headline_warmups,
                 trial_count=arguments.headline_trials,
-                emit_stage_timings=True,
+                emit_stage_timings=emit_stage_timings,
             )
         )
     return headline_results
@@ -2521,6 +3049,609 @@ def build_algorithmic_findings(stage_comparison_rows: list[dict[str, float | str
     return sorted(set(findings))
 
 
+def numeric_diagnostic_value(raw_value: typing.Any) -> float:
+    """Convert a diagnostic JSON value into a numeric value."""
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
+        return 0.0
+    return float(raw_value)
+
+
+def optional_numeric_value(raw_value: typing.Any) -> float | None:
+    """Convert a JSON value into a float when it is numeric."""
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
+        return None
+    return float(raw_value)
+
+
+def sum_binary_diagnostic_count(binary_chunk_diagnostics: list[dict[str, typing.Any]], field_name: str) -> int:
+    """Sum one integer diagnostic field across binary chunks."""
+    return int(
+        sum(numeric_diagnostic_value(diagnostics.get(field_name, 0)) for diagnostics in binary_chunk_diagnostics)
+    )
+
+
+def mean_binary_diagnostic_value(binary_chunk_diagnostics: list[dict[str, typing.Any]], field_name: str) -> float:
+    """Average one diagnostic field across chunks."""
+    if not binary_chunk_diagnostics:
+        return 0.0
+    total = sum(numeric_diagnostic_value(diagnostics.get(field_name, 0)) for diagnostics in binary_chunk_diagnostics)
+    return total / len(binary_chunk_diagnostics)
+
+
+def active_firth_iteration_values(
+    binary_chunk_diagnostics: list[dict[str, typing.Any]],
+    field_name: str,
+) -> list[float]:
+    """Return a Firth iteration field for chunks with attempted Firth correction."""
+    return [
+        numeric_diagnostic_value(diagnostics.get(field_name, 0))
+        for diagnostics in binary_chunk_diagnostics
+        if numeric_diagnostic_value(diagnostics.get("firth_candidate_count", 0)) > 0.0
+    ]
+
+
+def safe_ratio(numerator: float, denominator: float) -> float | None:
+    """Divide only when the denominator is positive."""
+    if denominator <= 0.0:
+        return None
+    return numerator / denominator
+
+
+def load_binary_diagnostic_trial_payload(
+    *,
+    stage_timing_mode: ProfileStageTimingMode,
+    trial: TrialResult,
+) -> BinaryDiagnosticTrialPayload:
+    """Load one trial's stage timing payload with an explicit unavailable reason."""
+    if trial.stage_timing_path is None:
+        reason = (
+            BINARY_DIAGNOSTIC_UNAVAILABLE_EXACT_TIMING_DISABLED
+            if stage_timing_mode == ProfileStageTimingMode.OFF
+            else BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_MISSING
+        )
+        return BinaryDiagnosticTrialPayload(
+            trial_name=trial.name,
+            stage_timing_path=None,
+            unavailable_reason=reason,
+            payload=None,
+        )
+    stage_timing_path = Path(trial.stage_timing_path)
+    if not stage_timing_path.exists():
+        return BinaryDiagnosticTrialPayload(
+            trial_name=trial.name,
+            stage_timing_path=trial.stage_timing_path,
+            unavailable_reason=BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_MISSING,
+            payload=None,
+        )
+    try:
+        raw_payload = json.loads(stage_timing_path.read_text(encoding="utf-8"))
+    except OSError:
+        return BinaryDiagnosticTrialPayload(
+            trial_name=trial.name,
+            stage_timing_path=trial.stage_timing_path,
+            unavailable_reason=BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_INVALID,
+            payload=None,
+        )
+    except json.JSONDecodeError:
+        return BinaryDiagnosticTrialPayload(
+            trial_name=trial.name,
+            stage_timing_path=trial.stage_timing_path,
+            unavailable_reason=BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_INVALID,
+            payload=None,
+        )
+    if not isinstance(raw_payload, dict):
+        return BinaryDiagnosticTrialPayload(
+            trial_name=trial.name,
+            stage_timing_path=trial.stage_timing_path,
+            unavailable_reason=BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_INVALID,
+            payload=None,
+        )
+    return BinaryDiagnosticTrialPayload(
+        trial_name=trial.name,
+        stage_timing_path=trial.stage_timing_path,
+        unavailable_reason=None,
+        payload=typing.cast("dict[str, typing.Any]", raw_payload),
+    )
+
+
+def extract_binary_chunk_diagnostics(
+    loaded_payload: BinaryDiagnosticTrialPayload,
+) -> list[dict[str, typing.Any]] | None:
+    """Extract valid binary chunk diagnostic mappings from one loaded payload."""
+    if loaded_payload.payload is None:
+        return None
+    raw_binary_chunk_diagnostics = loaded_payload.payload.get("binary_chunk_diagnostics")
+    if raw_binary_chunk_diagnostics is None or not isinstance(raw_binary_chunk_diagnostics, list):
+        return None
+    binary_chunk_diagnostics: list[dict[str, typing.Any]] = []
+    for raw_chunk_diagnostics in raw_binary_chunk_diagnostics:
+        if not isinstance(raw_chunk_diagnostics, dict):
+            return None
+        binary_chunk_diagnostics.append(typing.cast("dict[str, typing.Any]", raw_chunk_diagnostics))
+    return binary_chunk_diagnostics
+
+
+def summarize_stage_mapping(
+    stage_timing_payloads: list[dict[str, typing.Any]],
+    field_name: str,
+) -> dict[str, float]:
+    """Sum numeric values from a stage timing mapping field across trials."""
+    summary: dict[str, float] = {}
+    for stage_timing_payload in stage_timing_payloads:
+        raw_mapping = stage_timing_payload.get(field_name)
+        if not isinstance(raw_mapping, dict):
+            continue
+        for raw_key, raw_value in raw_mapping.items():
+            numeric_value = optional_numeric_value(raw_value)
+            if numeric_value is None:
+                continue
+            key = str(raw_key)
+            summary[key] = summary.get(key, 0.0) + numeric_value
+    return summary
+
+
+def summarize_null_logistic_diagnostics(stage_timing_payloads: list[dict[str, typing.Any]]) -> dict[str, typing.Any]:
+    """Aggregate null logistic diagnostics across available binary trials."""
+    diagnostics: list[dict[str, typing.Any]] = []
+    for stage_timing_payload in stage_timing_payloads:
+        raw_diagnostics = stage_timing_payload.get("null_logistic_diagnostics")
+        if not isinstance(raw_diagnostics, list):
+            continue
+        for raw_diagnostic in raw_diagnostics:
+            if isinstance(raw_diagnostic, dict):
+                diagnostics.append(typing.cast("dict[str, typing.Any]", raw_diagnostic))
+    iteration_counts = [
+        numeric_diagnostic_value(diagnostic.get("iteration_count", diagnostic.get("null_logistic_iteration_count", 0)))
+        for diagnostic in diagnostics
+    ]
+    firth_iteration_counts = [
+        numeric_diagnostic_value(diagnostic.get("firth_iteration_count", 0)) for diagnostic in diagnostics
+    ]
+    correction_method_counts: dict[str, int] = {}
+    convergence_reason_counts: dict[str, int] = {}
+    converged_count = 0
+    for diagnostic in diagnostics:
+        if numeric_diagnostic_value(diagnostic.get("converged", 0)) > 0.0:
+            converged_count += 1
+        correction_method = diagnostic.get("correction_method")
+        if correction_method is not None:
+            correction_method_key = str(correction_method)
+            correction_method_counts[correction_method_key] = correction_method_counts.get(correction_method_key, 0) + 1
+        convergence_reason_code = diagnostic.get("firth_convergence_reason_code")
+        if convergence_reason_code is not None:
+            convergence_reason_key = str(convergence_reason_code)
+            convergence_reason_counts[convergence_reason_key] = (
+                convergence_reason_counts.get(convergence_reason_key, 0) + 1
+            )
+    return {
+        "chromosome_count": len(diagnostics),
+        "converged_count": converged_count,
+        "failed_count": max(len(diagnostics) - converged_count, 0),
+        "iteration_counts": summarize_numeric_values(iteration_counts),
+        "firth_iteration_counts": summarize_numeric_values(firth_iteration_counts),
+        "correction_method_counts": correction_method_counts,
+        "firth_convergence_reason_code_counts": convergence_reason_counts,
+    }
+
+
+def summarize_numeric_values(values: list[float]) -> dict[str, float | int | None]:
+    """Summarize a numeric vector for JSON output."""
+    if not values:
+        return {
+            "count": 0,
+            "minimum": None,
+            "mean": None,
+            "median": None,
+            "maximum": None,
+        }
+    return {
+        "count": len(values),
+        "minimum": min(values),
+        "mean": statistics.fmean(values),
+        "median": statistics.median(values),
+        "maximum": max(values),
+    }
+
+
+def summarize_queue_backpressure(stage_timing_payloads: list[dict[str, typing.Any]]) -> list[dict[str, typing.Any]]:
+    """Aggregate queue/backpressure observations across available trials."""
+    summaries: dict[str, dict[str, typing.Any]] = {}
+    for stage_timing_payload in stage_timing_payloads:
+        raw_queue_backpressure = stage_timing_payload.get("queue_backpressure")
+        if not isinstance(raw_queue_backpressure, list):
+            continue
+        for raw_queue_snapshot in raw_queue_backpressure:
+            if not isinstance(raw_queue_snapshot, dict):
+                continue
+            queue_name = str(raw_queue_snapshot.get("queue_name", ""))
+            operation_name = str(raw_queue_snapshot.get("operation_name", ""))
+            summary_key = f"{queue_name}:{operation_name}"
+            summary = summaries.setdefault(
+                summary_key,
+                {
+                    "queue_name": queue_name,
+                    "operation_name": operation_name,
+                    "observation_count": 0,
+                    "max_depth": 0,
+                    "max_capacity": 0,
+                    "total_elapsed_seconds": 0.0,
+                    "total_blocked_seconds": 0.0,
+                },
+            )
+            summary["observation_count"] = int(summary["observation_count"]) + int(
+                numeric_diagnostic_value(raw_queue_snapshot.get("observation_count", 0))
+            )
+            summary["max_depth"] = max(
+                int(summary["max_depth"]),
+                int(numeric_diagnostic_value(raw_queue_snapshot.get("max_depth", 0))),
+            )
+            summary["max_capacity"] = max(
+                int(summary["max_capacity"]),
+                int(numeric_diagnostic_value(raw_queue_snapshot.get("max_capacity", 0))),
+            )
+            summary["total_elapsed_seconds"] = float(summary["total_elapsed_seconds"]) + numeric_diagnostic_value(
+                raw_queue_snapshot.get("total_elapsed_seconds", 0.0)
+            )
+            summary["total_blocked_seconds"] = float(summary["total_blocked_seconds"]) + numeric_diagnostic_value(
+                raw_queue_snapshot.get("total_blocked_seconds", 0.0)
+            )
+    rows = list(summaries.values())
+    for row in rows:
+        row["blocked_fraction"] = safe_ratio(
+            float(row["total_blocked_seconds"]),
+            float(row["total_elapsed_seconds"]),
+        )
+    return sorted(rows, key=lambda row: float(row["total_blocked_seconds"]), reverse=True)
+
+
+def collect_chunk_identities(stage_timing_payload: dict[str, typing.Any]) -> list[dict[str, typing.Any]]:
+    """Collect first-seen chunk identities from exact chunk stage timings."""
+    raw_chunk_stage_timings = stage_timing_payload.get("chunk_stage_timings")
+    if not isinstance(raw_chunk_stage_timings, list):
+        return []
+    identities: list[dict[str, typing.Any]] = []
+    seen_chunk_identifiers: set[str] = set()
+    for raw_chunk_stage_timing in raw_chunk_stage_timings:
+        if not isinstance(raw_chunk_stage_timing, dict):
+            continue
+        chunk_identifier = str(raw_chunk_stage_timing.get("chunk_identifier", len(identities)))
+        if chunk_identifier in seen_chunk_identifiers:
+            continue
+        seen_chunk_identifiers.add(chunk_identifier)
+        identities.append(
+            {
+                "chunk_identifier": raw_chunk_stage_timing.get("chunk_identifier"),
+                "chromosome": raw_chunk_stage_timing.get("chromosome"),
+                "variant_start_index": raw_chunk_stage_timing.get("variant_start_index"),
+                "variant_stop_index": raw_chunk_stage_timing.get("variant_stop_index"),
+                "variant_count": raw_chunk_stage_timing.get("variant_count"),
+            }
+        )
+    return identities
+
+
+def build_binary_chunk_outliers(
+    available_trials: list[dict[str, typing.Any]],
+) -> list[dict[str, typing.Any]]:
+    """Build a compact top-N list of per-chunk binary correction outliers."""
+    outliers: list[dict[str, typing.Any]] = []
+    for available_trial in available_trials:
+        trial = typing.cast("BinaryDiagnosticTrialPayload", available_trial["trial"])
+        stage_timing_payload = typing.cast("dict[str, typing.Any]", available_trial["payload"])
+        binary_chunk_diagnostics = typing.cast(
+            "list[dict[str, typing.Any]]",
+            available_trial["binary_chunk_diagnostics"],
+        )
+        chunk_identities = collect_chunk_identities(stage_timing_payload)
+        for chunk_index, diagnostics in enumerate(binary_chunk_diagnostics):
+            firth_candidate_count = sum_binary_diagnostic_count([diagnostics], "firth_candidate_count")
+            firth_failed_count = sum_binary_diagnostic_count([diagnostics], "firth_failed_count")
+            score_test_candidate_count = sum_binary_diagnostic_count([diagnostics], "score_test_candidate_count")
+            if firth_candidate_count == 0 and score_test_candidate_count == 0:
+                continue
+            outlier = {
+                "trial_name": trial.trial_name,
+                "chunk_index": chunk_index,
+                "rank_fields": {
+                    "firth_candidate_count": firth_candidate_count,
+                    "firth_failed_count": firth_failed_count,
+                    "firth_iteration_max": numeric_diagnostic_value(diagnostics.get("firth_iteration_max", 0)),
+                    "score_test_candidate_count": score_test_candidate_count,
+                },
+                "diagnostics": {
+                    "score_test_candidate_count": score_test_candidate_count,
+                    "firth_candidate_count": firth_candidate_count,
+                    "firth_converged_count": sum_binary_diagnostic_count([diagnostics], "firth_converged_count"),
+                    "firth_failed_count": firth_failed_count,
+                    "firth_iteration_min": numeric_diagnostic_value(diagnostics.get("firth_iteration_min", 0)),
+                    "firth_iteration_median": numeric_diagnostic_value(diagnostics.get("firth_iteration_median", 0)),
+                    "firth_iteration_max": numeric_diagnostic_value(diagnostics.get("firth_iteration_max", 0)),
+                    "sparse_correction_count": sum_binary_diagnostic_count([diagnostics], "sparse_correction_count"),
+                    "dense_correction_count": sum_binary_diagnostic_count([diagnostics], "dense_correction_count"),
+                },
+                "chunk_identity": chunk_identities[chunk_index] if chunk_index < len(chunk_identities) else None,
+            }
+            outliers.append(outlier)
+    return sorted(
+        outliers,
+        key=lambda outlier: (
+            int(typing.cast("dict[str, typing.Any]", outlier["rank_fields"])["firth_candidate_count"]),
+            int(typing.cast("dict[str, typing.Any]", outlier["rank_fields"])["firth_failed_count"]),
+            float(typing.cast("dict[str, typing.Any]", outlier["rank_fields"])["firth_iteration_max"]),
+            int(typing.cast("dict[str, typing.Any]", outlier["rank_fields"])["score_test_candidate_count"]),
+        ),
+        reverse=True,
+    )[:BINARY_CHUNK_OUTLIER_LIMIT]
+
+
+def unavailable_binary_correction_diagnostics(
+    *,
+    aggregate_result: AggregateResult,
+    stage_timing_mode: ProfileStageTimingMode,
+    reason: str,
+    unavailable_trials: list[dict[str, str | None]],
+) -> dict[str, typing.Any]:
+    """Build an explicit unavailable binary correction diagnostic payload."""
+    return {
+        "available": False,
+        "reason": reason,
+        "aggregate_name": aggregate_result.name,
+        "trait_type": aggregate_result.trait_type,
+        "device": aggregate_result.device,
+        "status": aggregate_result.status,
+        "stage_timing_mode": stage_timing_mode.value,
+        "trial_count": aggregate_result.trial_count,
+        "available_trial_count": 0,
+        "unavailable_trials": unavailable_trials,
+        "chunk_count": None,
+        "candidate_counts": {
+            "score_test": None,
+            "firth": None,
+        },
+        "correction_outcome_counts": {
+            "corrected": None,
+            "failed": None,
+            "score_test_or_uncorrected": None,
+        },
+        "failure_code_counts": {
+            "none": None,
+            "numerical": None,
+            "max_iterations": None,
+            "invalid_statistic": None,
+            "step_halving": None,
+        },
+        "firth_iteration_counts": {
+            "active_chunk_count": None,
+            "minimum": None,
+            "median_per_chunk_mean": None,
+            "maximum": None,
+        },
+        "correction_branch_counts": {
+            "pseudo_firth": None,
+            "newton_raphson_zero_start": None,
+            "newton_raphson_warm_start": None,
+        },
+        "correction_attempt_counts": {
+            "pseudo_firth": None,
+            "newton_raphson_zero_start": None,
+            "newton_raphson_warm_start": None,
+        },
+        "correction_input_counts": {
+            "sparse": None,
+            "dense": None,
+        },
+        "fallback_density": {
+            "firth_candidates_per_output_row": None,
+            "firth_candidates_per_score_test_candidate": None,
+        },
+        "stage_counts": None,
+        "stage_totals_seconds": None,
+        "null_logistic": None,
+        "queue_backpressure": None,
+        "chunk_outliers": [],
+    }
+
+
+def build_binary_correction_diagnostics_for_aggregate(
+    *,
+    aggregate_result: AggregateResult,
+    stage_timing_mode: ProfileStageTimingMode,
+) -> dict[str, typing.Any]:
+    """Build aggregate binary correction diagnostics for one g binary result."""
+    loaded_payloads = [
+        load_binary_diagnostic_trial_payload(stage_timing_mode=stage_timing_mode, trial=trial)
+        for trial in aggregate_result.trials
+        if trial.status == "success"
+    ]
+    unavailable_trials: list[dict[str, str | None]] = []
+    available_trials: list[dict[str, typing.Any]] = []
+    for loaded_payload in loaded_payloads:
+        if loaded_payload.unavailable_reason is not None:
+            unavailable_trials.append(
+                {
+                    "trial_name": loaded_payload.trial_name,
+                    "stage_timing_path": loaded_payload.stage_timing_path,
+                    "reason": loaded_payload.unavailable_reason,
+                }
+            )
+            continue
+        binary_chunk_diagnostics = extract_binary_chunk_diagnostics(loaded_payload)
+        if binary_chunk_diagnostics is None:
+            reason = BINARY_DIAGNOSTIC_UNAVAILABLE_BINARY_DIAGNOSTICS_MISSING
+            if (
+                loaded_payload.payload is not None
+                and "binary_chunk_diagnostics" in loaded_payload.payload
+                and not isinstance(loaded_payload.payload["binary_chunk_diagnostics"], list)
+            ):
+                reason = BINARY_DIAGNOSTIC_UNAVAILABLE_BINARY_DIAGNOSTICS_INVALID
+            unavailable_trials.append(
+                {
+                    "trial_name": loaded_payload.trial_name,
+                    "stage_timing_path": loaded_payload.stage_timing_path,
+                    "reason": reason,
+                }
+            )
+            continue
+        available_trials.append(
+            {
+                "trial": loaded_payload,
+                "payload": typing.cast("dict[str, typing.Any]", loaded_payload.payload),
+                "binary_chunk_diagnostics": binary_chunk_diagnostics,
+            }
+        )
+    if not available_trials:
+        reason = BINARY_DIAGNOSTIC_UNAVAILABLE_STAGE_TIMING_FILE_MISSING
+        if unavailable_trials:
+            reason = str(unavailable_trials[0]["reason"])
+        return unavailable_binary_correction_diagnostics(
+            aggregate_result=aggregate_result,
+            stage_timing_mode=stage_timing_mode,
+            reason=reason,
+            unavailable_trials=unavailable_trials,
+        )
+    all_binary_chunk_diagnostics: list[dict[str, typing.Any]] = []
+    for available_trial in available_trials:
+        all_binary_chunk_diagnostics.extend(
+            typing.cast("list[dict[str, typing.Any]]", available_trial["binary_chunk_diagnostics"])
+        )
+    diagnostic_counts = {
+        field_name: sum_binary_diagnostic_count(all_binary_chunk_diagnostics, field_name)
+        for field_name in BINARY_DIAGNOSTIC_COUNT_FIELDS
+    }
+    non_none_failure_count = (
+        diagnostic_counts["firth_numerical_failure_count"]
+        + diagnostic_counts["firth_max_iteration_failure_count"]
+        + diagnostic_counts["firth_invalid_statistic_failure_count"]
+        + diagnostic_counts["firth_step_halving_failure_count"]
+    )
+    stage_timing_payloads = [
+        typing.cast("dict[str, typing.Any]", available_trial["payload"]) for available_trial in available_trials
+    ]
+    output_row_count_by_trial = {
+        trial.name: trial.output_row_count
+        for trial in aggregate_result.trials
+        if trial.status == "success" and trial.output_row_count is not None
+    }
+    available_output_row_count = sum(
+        output_row_count_by_trial.get(
+            typing.cast("BinaryDiagnosticTrialPayload", available_trial["trial"]).trial_name,
+            0,
+        )
+        or 0
+        for available_trial in available_trials
+    )
+    minimum_iteration_values = active_firth_iteration_values(all_binary_chunk_diagnostics, "firth_iteration_min")
+    maximum_iteration_values = active_firth_iteration_values(all_binary_chunk_diagnostics, "firth_iteration_max")
+    score_test_candidate_count = diagnostic_counts["score_test_candidate_count"]
+    firth_candidate_count = diagnostic_counts["firth_candidate_count"]
+    firth_converged_count = diagnostic_counts["firth_converged_count"]
+    firth_failed_count = diagnostic_counts["firth_failed_count"]
+    return {
+        "available": True,
+        "reason": None,
+        "aggregate_name": aggregate_result.name,
+        "trait_type": aggregate_result.trait_type,
+        "device": aggregate_result.device,
+        "status": aggregate_result.status,
+        "stage_timing_mode": stage_timing_mode.value,
+        "trial_count": aggregate_result.trial_count,
+        "available_trial_count": len(available_trials),
+        "unavailable_trials": unavailable_trials,
+        "chunk_count": len(all_binary_chunk_diagnostics),
+        "candidate_counts": {
+            "score_test": score_test_candidate_count,
+            "firth": firth_candidate_count,
+            "score_test_per_available_trial_mean": score_test_candidate_count / len(available_trials),
+            "firth_per_available_trial_mean": firth_candidate_count / len(available_trials),
+        },
+        "correction_outcome_counts": {
+            "corrected": firth_converged_count,
+            "failed": firth_failed_count,
+            "score_test_or_uncorrected": max(
+                score_test_candidate_count - firth_converged_count - firth_failed_count, 0
+            ),
+        },
+        "failure_code_counts": {
+            "none": max(firth_candidate_count - non_none_failure_count, 0),
+            "numerical": diagnostic_counts["firth_numerical_failure_count"],
+            "max_iterations": diagnostic_counts["firth_max_iteration_failure_count"],
+            "invalid_statistic": diagnostic_counts["firth_invalid_statistic_failure_count"],
+            "step_halving": diagnostic_counts["firth_step_halving_failure_count"],
+        },
+        "firth_iteration_counts": {
+            "active_chunk_count": len(minimum_iteration_values),
+            "minimum": min(minimum_iteration_values) if minimum_iteration_values else 0,
+            "median_per_chunk_mean": mean_binary_diagnostic_value(
+                all_binary_chunk_diagnostics,
+                "firth_iteration_median",
+            ),
+            "maximum": max(maximum_iteration_values) if maximum_iteration_values else 0,
+        },
+        "correction_branch_counts": {
+            "pseudo_firth": diagnostic_counts["pseudo_firth_success_count"],
+            "newton_raphson_zero_start": diagnostic_counts["nr_zero_start_success_count"],
+            "newton_raphson_warm_start": diagnostic_counts["nr_warm_start_success_count"],
+        },
+        "correction_attempt_counts": {
+            "pseudo_firth": diagnostic_counts["pseudo_firth_attempt_count"],
+            "newton_raphson_zero_start": diagnostic_counts["nr_zero_start_attempt_count"],
+            "newton_raphson_warm_start": diagnostic_counts["nr_warm_start_attempt_count"],
+        },
+        "correction_input_counts": {
+            "sparse": diagnostic_counts["sparse_correction_count"],
+            "dense": diagnostic_counts["dense_correction_count"],
+        },
+        "fallback_density": {
+            "firth_candidates_per_output_row": safe_ratio(
+                float(firth_candidate_count), float(available_output_row_count)
+            ),
+            "firth_candidates_per_score_test_candidate": safe_ratio(
+                float(firth_candidate_count),
+                float(score_test_candidate_count),
+            ),
+        },
+        "stage_counts": summarize_stage_mapping(stage_timing_payloads, "stage_counts"),
+        "stage_totals_seconds": summarize_stage_mapping(stage_timing_payloads, "stage_totals_seconds"),
+        "null_logistic": summarize_null_logistic_diagnostics(stage_timing_payloads),
+        "queue_backpressure": summarize_queue_backpressure(stage_timing_payloads),
+        "chunk_outliers": build_binary_chunk_outliers(available_trials),
+    }
+
+
+def build_binary_correction_diagnostics(
+    *,
+    headline_results: list[AggregateResult],
+    finalist_results_by_key: dict[str, list[AggregateResult]],
+    stage_timing_mode: ProfileStageTimingMode,
+) -> dict[str, typing.Any]:
+    """Build binary correction diagnostics for headline and finalist g runs."""
+    headline_diagnostics = {
+        aggregate_result.name: build_binary_correction_diagnostics_for_aggregate(
+            aggregate_result=aggregate_result,
+            stage_timing_mode=stage_timing_mode,
+        )
+        for aggregate_result in headline_results
+        if aggregate_result.implementation == "g" and aggregate_result.trait_type == "binary"
+    }
+    finalist_diagnostics: dict[str, dict[str, typing.Any]] = {}
+    for winner_key, finalist_results in sorted(finalist_results_by_key.items()):
+        if not winner_key.startswith("binary_"):
+            continue
+        finalist_diagnostics[winner_key] = {
+            aggregate_result.name: build_binary_correction_diagnostics_for_aggregate(
+                aggregate_result=aggregate_result,
+                stage_timing_mode=stage_timing_mode,
+            )
+            for aggregate_result in finalist_results
+            if aggregate_result.implementation == "g" and aggregate_result.trait_type == "binary"
+        }
+    return {
+        "stage_timing_mode": stage_timing_mode.value,
+        "headline": headline_diagnostics,
+        "finalists": finalist_diagnostics,
+    }
+
+
 def build_summary_markdown(
     *,
     aggregate_results: list[AggregateResult],
@@ -2531,6 +3662,7 @@ def build_summary_markdown(
     comparison_notes: RuntimeComparisonNotes | None = None,
     regenie_baseline_scope: RegenieBaselineScope | None = None,
     logging_perturbation_results: list[dict[str, typing.Any]] | None = None,
+    binary_correction_diagnostics: dict[str, typing.Any] | None = None,
 ) -> str:
     """Build the human-readable campaign summary."""
     lines = ["# Landau Deep REGENIE Step 2 Profile", ""]
@@ -2611,6 +3743,7 @@ def build_summary_markdown(
             lines.append(f"- {finding}")
     else:
         lines.append("- Re-run with successful REGENIE and g profile JSON files to generate source-level findings.")
+    append_binary_correction_diagnostics_markdown(lines, binary_correction_diagnostics or {})
     lines.extend(["", "## Logging And Telemetry Perturbation", ""])
     logging_rows = build_logging_perturbation_rows(logging_perturbation_results or [])
     if logging_rows:
@@ -2640,6 +3773,182 @@ def build_summary_markdown(
     else:
         lines.append("- Re-run with successful g diagnostic trials to rank measured stage shares.")
     return "\n".join(lines) + "\n"
+
+
+def diagnostic_mapping(raw_value: typing.Any) -> dict[str, typing.Any]:
+    """Return a diagnostic mapping or an empty mapping."""
+    if isinstance(raw_value, dict):
+        return typing.cast("dict[str, typing.Any]", raw_value)
+    return {}
+
+
+def binary_diagnostic_markdown_rows(
+    binary_correction_diagnostics: dict[str, typing.Any],
+    group_name: str,
+) -> list[dict[str, typing.Any]]:
+    """Flatten headline or finalist diagnostic payloads into Markdown rows."""
+    rows: list[dict[str, typing.Any]] = []
+    raw_group = binary_correction_diagnostics.get(group_name)
+    if group_name == "headline":
+        group_payload = diagnostic_mapping(raw_group)
+        for aggregate_name, raw_diagnostics in sorted(group_payload.items()):
+            diagnostics = diagnostic_mapping(raw_diagnostics)
+            if diagnostics:
+                row = dict(diagnostics)
+                row["display_name"] = aggregate_name
+                rows.append(row)
+        return rows
+    nested_payload = diagnostic_mapping(raw_group)
+    for winner_key, raw_aggregate_payload in sorted(nested_payload.items()):
+        aggregate_payload = diagnostic_mapping(raw_aggregate_payload)
+        for aggregate_name, raw_diagnostics in sorted(aggregate_payload.items()):
+            diagnostics = diagnostic_mapping(raw_diagnostics)
+            if diagnostics:
+                row = dict(diagnostics)
+                row["display_name"] = f"{winner_key}/{aggregate_name}"
+                rows.append(row)
+    return rows
+
+
+def format_diagnostic_integer(raw_value: typing.Any) -> str:
+    """Format an optional diagnostic integer."""
+    numeric_value = optional_numeric_value(raw_value)
+    if numeric_value is None:
+        return ""
+    return str(int(numeric_value))
+
+
+def format_diagnostic_ratio(raw_value: typing.Any) -> str:
+    """Format an optional diagnostic ratio as a percentage."""
+    numeric_value = optional_numeric_value(raw_value)
+    if numeric_value is None:
+        return ""
+    return f"{numeric_value * 100.0:.2f}%"
+
+
+def format_binary_diagnostic_status(diagnostics: dict[str, typing.Any]) -> str:
+    """Format binary diagnostic availability for Markdown."""
+    if diagnostics.get("available") is True:
+        return "available"
+    reason = str(diagnostics.get("reason", "unavailable"))
+    if reason == BINARY_DIAGNOSTIC_UNAVAILABLE_EXACT_TIMING_DISABLED:
+        return "unavailable: stage timing mode off"
+    return f"unavailable: {reason}"
+
+
+def format_binary_failure_counts(failure_counts: dict[str, typing.Any]) -> str:
+    """Format compact failure-code counts."""
+    if not failure_counts:
+        return ""
+    formatted_counts = []
+    for field_name in ("numerical", "max_iterations", "invalid_statistic", "step_halving"):
+        numeric_value = optional_numeric_value(failure_counts.get(field_name))
+        if numeric_value is not None and numeric_value > 0.0:
+            formatted_counts.append(f"{field_name}={int(numeric_value)}")
+    if formatted_counts:
+        return ", ".join(formatted_counts)
+    none_count = optional_numeric_value(failure_counts.get("none"))
+    if none_count is None:
+        return ""
+    return f"none={int(none_count)}"
+
+
+def format_binary_branch_mix(branch_counts: dict[str, typing.Any]) -> str:
+    """Format compact Firth correction branch counts."""
+    if not branch_counts:
+        return ""
+    return (
+        "pseudo="
+        f"{format_diagnostic_integer(branch_counts.get('pseudo_firth'))}, "
+        "zero="
+        f"{format_diagnostic_integer(branch_counts.get('newton_raphson_zero_start'))}, "
+        "warm="
+        f"{format_diagnostic_integer(branch_counts.get('newton_raphson_warm_start'))}"
+    )
+
+
+def format_binary_firth_iterations(iteration_counts: dict[str, typing.Any]) -> str:
+    """Format compact Firth iteration summary."""
+    if not iteration_counts:
+        return ""
+    minimum = optional_numeric_value(iteration_counts.get("minimum"))
+    median_mean = optional_numeric_value(iteration_counts.get("median_per_chunk_mean"))
+    maximum = optional_numeric_value(iteration_counts.get("maximum"))
+    if minimum is None or median_mean is None or maximum is None:
+        return ""
+    return f"{minimum:.0f}/{median_mean:.1f}/{maximum:.0f}"
+
+
+def append_binary_diagnostic_table(
+    lines: list[str],
+    *,
+    title: str,
+    rows: list[dict[str, typing.Any]],
+) -> None:
+    """Append one compact binary diagnostic Markdown table."""
+    lines.extend(["", f"### {title}", ""])
+    if not rows:
+        lines.append("- No binary correction diagnostics were available.")
+        return
+    lines.append(
+        "| run | device | status | trials | chunks | score cand | Firth cand | corrected/failed | failures | "
+        "iters min/mean/max | branch mix | sparse/dense | Firth density |"
+    )
+    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | ---: |")
+    for diagnostics in rows:
+        candidate_counts = diagnostic_mapping(diagnostics.get("candidate_counts"))
+        outcome_counts = diagnostic_mapping(diagnostics.get("correction_outcome_counts"))
+        failure_counts = diagnostic_mapping(diagnostics.get("failure_code_counts"))
+        iteration_counts = diagnostic_mapping(diagnostics.get("firth_iteration_counts"))
+        branch_counts = diagnostic_mapping(diagnostics.get("correction_branch_counts"))
+        input_counts = diagnostic_mapping(diagnostics.get("correction_input_counts"))
+        fallback_density = diagnostic_mapping(diagnostics.get("fallback_density"))
+        lines.append(
+            "| "
+            f"{diagnostics.get('display_name', diagnostics.get('aggregate_name', ''))} | "
+            f"{diagnostics.get('device', '')} | "
+            f"{format_binary_diagnostic_status(diagnostics)} | "
+            f"{format_diagnostic_integer(diagnostics.get('available_trial_count'))} | "
+            f"{format_diagnostic_integer(diagnostics.get('chunk_count'))} | "
+            f"{format_diagnostic_integer(candidate_counts.get('score_test'))} | "
+            f"{format_diagnostic_integer(candidate_counts.get('firth'))} | "
+            f"{format_diagnostic_integer(outcome_counts.get('corrected'))}/"
+            f"{format_diagnostic_integer(outcome_counts.get('failed'))} | "
+            f"{format_binary_failure_counts(failure_counts)} | "
+            f"{format_binary_firth_iterations(iteration_counts)} | "
+            f"{format_binary_branch_mix(branch_counts)} | "
+            f"{format_diagnostic_integer(input_counts.get('sparse'))}/"
+            f"{format_diagnostic_integer(input_counts.get('dense'))} | "
+            f"{format_diagnostic_ratio(fallback_density.get('firth_candidates_per_output_row'))} |"
+        )
+
+
+def append_binary_correction_diagnostics_markdown(
+    lines: list[str],
+    binary_correction_diagnostics: dict[str, typing.Any],
+) -> None:
+    """Append compact binary correction diagnostics to the summary report."""
+    lines.extend(["", "## Binary Correction Diagnostics", ""])
+    if not binary_correction_diagnostics:
+        lines.append("- No binary correction diagnostics were computed.")
+        return
+    stage_timing_mode = str(binary_correction_diagnostics.get("stage_timing_mode", "unknown"))
+    lines.append(
+        "_Exact stage timing JSON is required for correction diagnostics; bounded per-chunk outliers remain in "
+        "`summary.json` and raw stage timing artifacts._"
+    )
+    if stage_timing_mode == ProfileStageTimingMode.OFF.value:
+        lines.append("- Diagnostics are unavailable because `telemetry.stage_timing_mode=off`.")
+    append_binary_diagnostic_table(
+        lines,
+        title="Headline Winners",
+        rows=binary_diagnostic_markdown_rows(binary_correction_diagnostics, "headline"),
+    )
+    append_binary_diagnostic_table(
+        lines,
+        title="Finalists",
+        rows=binary_diagnostic_markdown_rows(binary_correction_diagnostics, "finalists"),
+    )
 
 
 def build_logging_perturbation_rows(
@@ -2699,6 +4008,7 @@ def run_deep_profiles(
     profile_directory = output_directory / "deep_profiles"
     profile_directory.mkdir(parents=True, exist_ok=True)
     profiler_tool_status = build_profiler_tool_status(arguments)
+    emit_stage_timings = should_emit_stage_timings(arguments)
     results: dict[str, typing.Any] = {
         "profiler_tools": serialize_profiler_tool_status(profiler_tool_status),
         "rust_criterion": [],
@@ -2734,7 +4044,7 @@ def run_deep_profiles(
                 log_directory=output_directory / "logs",
                 cache_directory=cache_directory,
                 variant_limit=arguments.variant_limit,
-                emit_stage_timings=True,
+                emit_stage_timings=emit_stage_timings,
                 trace_directory=trace_directory,
                 memory_profile_path=memory_profile_path,
             )
@@ -2758,6 +4068,7 @@ def run_deep_profiles(
                 candidate=candidate,
                 cache_directory=cache_directory,
                 variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
             )
             cprofile_result = attach_deep_profiler_metadata(
                 result=run_logged_command(
@@ -2803,6 +4114,7 @@ def run_deep_profiles(
                 candidate=candidate,
                 cache_directory=cache_directory,
                 variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
             )
             command_arguments = [
                 py_spy_status.executable_path or "py-spy",
@@ -2846,6 +4158,7 @@ def run_deep_profiles(
                 candidate=candidate,
                 cache_directory=cache_directory,
                 variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
             )
             append_logged_profile_result(
                 results=results,
@@ -2883,6 +4196,7 @@ def run_deep_profiles(
                 candidate=candidate,
                 cache_directory=cache_directory,
                 variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
             )
             append_logged_profile_result(
                 results=results,
@@ -2920,6 +4234,7 @@ def run_deep_profiles(
                 candidate=candidate,
                 cache_directory=cache_directory,
                 variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
             )
             append_logged_profile_result(
                 results=results,
@@ -2962,6 +4277,7 @@ def run_deep_profiles(
                 candidate=candidate,
                 cache_directory=cache_directory,
                 variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
             )
             append_logged_profile_result(
                 results=results,
@@ -3004,6 +4320,7 @@ def run_deep_profiles(
                 candidate=candidate,
                 cache_directory=cache_directory,
                 variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
             )
             command_arguments = [
                 perf_status.executable_path or "perf",
@@ -3105,6 +4422,7 @@ def run_logging_perturbation_profiles(
     perturbation_directory = output_directory / "logging_perturbation"
     perturbation_directory.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, typing.Any]] = []
+    emit_stage_timings = should_emit_stage_timings(arguments)
     for winner_key, winner in sorted(winners.items()):
         if not winner.trials:
             continue
@@ -3126,7 +4444,7 @@ def run_logging_perturbation_profiles(
                 log_directory=output_directory / "logs",
                 cache_directory=cache_directory,
                 variant_limit=arguments.variant_limit,
-                emit_stage_timings=True,
+                emit_stage_timings=emit_stage_timings,
                 diagnostic_options=diagnostic_options,
             )
             results.append(
@@ -3176,6 +4494,9 @@ def apply_smoke_overrides(arguments: ProfileArguments) -> ProfileArguments:
 def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileArguments:
     """Build profile parameters from a composed Hydra config."""
     tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    stage_timing_mode = ProfileStageTimingMode.EXACT
+    if "telemetry" in config:
+        stage_timing_mode = ProfileStageTimingMode(str(config.telemetry.stage_timing_mode))
     data_directory = resolve_repo_path(tool_values["data_dir"])
     output_parent = resolve_repo_path(tool_values.get("output_parent", DEFAULT_OUTPUT_PARENT))
     explicit_output_directory = tooling_hydra_arguments.path_or_none(tool_values.get("output_dir"))
@@ -3206,13 +4527,15 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileArgument
             None if tool_values.get("regenie_executable") is None else str(tool_values["regenie_executable"])
         ),
         regenie_baseline_trait_types=tooling_hydra_arguments.comma_join(tool_values["regenie_baseline_trait_types"]),
-        trait_types=tooling_hydra_arguments.comma_join(tool_values["trait_types"]),
-        devices=tooling_hydra_arguments.comma_join(tool_values["devices"]),
         regenie_baseline_variant_limit=tooling_hydra_arguments.integer_or_none(
             tool_values.get("regenie_baseline_variant_limit")
         ),
         regenie_baseline_warmups=int(tool_values["regenie_baseline_warmups"]),
         regenie_baseline_trials=int(tool_values["regenie_baseline_trials"]),
+        workload_keys=tooling_hydra_arguments.comma_join(tool_values["workload_keys"]),
+        max_subprocess_runs=tooling_hydra_arguments.integer_or_none(tool_values.get("max_subprocess_runs")),
+        max_major_profiler_runs=tooling_hydra_arguments.integer_or_none(tool_values.get("max_major_profiler_runs")),
+        allow_over_budget=bool(tool_values["allow_over_budget"]),
         smoke=bool(tool_values["smoke"]),
         skip_deep_profiles=bool(tool_values["skip_deep_profiles"]),
         enable_jax_trace=bool(tool_values["enable_jax_trace"]),
@@ -3249,6 +4572,7 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileArgument
         finalist_trials=int(tool_values["finalist_trials"]),
         headline_warmups=int(tool_values["headline_warmups"]),
         headline_trials=int(tool_values["headline_trials"]),
+        stage_timing_mode=stage_timing_mode,
     )
 
 
@@ -3279,10 +4603,11 @@ def build_profile_plan(
     arguments: ProfileArguments,
     baseline_paths: baseline_benchmark.BaselinePaths,
     output_directory: Path,
+    campaign_budget: CampaignBudget,
 ) -> ProfilePlan:
     """Build a dry-run plan for the full profile campaign."""
     rust_benchmark_commands: list[list[str]] = []
-    if arguments.enable_rust_criterion:
+    if arguments.enable_rust_criterion and not arguments.skip_deep_profiles:
         rust_benchmark_commands = [
             ["cargo", "bench", "--bench", benchmark_name]
             for benchmark_name in parse_string_list(arguments.rust_benchmarks)
@@ -3298,7 +4623,7 @@ def build_profile_plan(
         "linux_perf": arguments.enable_linux_perf,
         "nsight_systems": arguments.enable_nsight_systems,
         "nsight_compute": arguments.enable_nsight_compute,
-        "rust_criterion": arguments.enable_rust_criterion,
+        "rust_criterion": arguments.enable_rust_criterion and not arguments.skip_deep_profiles,
         "logging_perturbation": arguments.enable_logging_perturbation,
     }
     profiler_tools = serialize_profiler_tool_status(build_profiler_tool_status(arguments))
@@ -3322,7 +4647,7 @@ def build_profile_plan(
         regenie_baseline_scope = serialize_regenie_baseline_scope(scope)
         if scope.status != RegenieBaselineScopeStatus.UNSUPPORTED:
             regenie_executable = configured_regenie_executable(arguments)
-            for trait_type in parse_regenie_baseline_trait_types(arguments.regenie_baseline_trait_types):
+            for trait_type in selected_regenie_baseline_trait_types(arguments):
                 command_arguments = build_regenie_step2_command(
                     trait_type=trait_type,
                     regenie_executable=regenie_executable,
@@ -3344,6 +4669,8 @@ def build_profile_plan(
     ]
     if arguments.skip_deep_profiles:
         notes.append("Deep profiler captures are disabled by tool.skip_deep_profiles=true.")
+    if not should_emit_stage_timings(arguments):
+        notes.append("Exact stage timing diagnostics are disabled by telemetry.stage_timing_mode=off.")
     if not arguments.include_regenie_baseline:
         notes.append("Original REGENIE headline trials are disabled by tool.include_regenie_baseline=false.")
     elif regenie_baseline_scope is not None:
@@ -3352,6 +4679,8 @@ def build_profile_plan(
         chromosome_label=arguments.chromosome_label,
         output_directory=str(output_directory),
         required_inputs=[str(path) for path in required_profile_input_paths(baseline_paths)],
+        workload_keys=list(campaign_budget.workload_keys),
+        campaign_budget=campaign_budget,
         profiler_modes=profiler_modes,
         profiler_tools=profiler_tools,
         logging_perturbation_cases=logging_perturbation_cases,
@@ -3373,10 +4702,34 @@ def write_profile_plan(plan: ProfilePlan, output_directory: Path) -> None:
         "",
         f"- Chromosome: `{plan.chromosome_label}`",
         f"- Output directory: `{plan.output_directory}`",
+        f"- Workloads: `{', '.join(plan.workload_keys)}`",
         "",
-        "## Profiler Modes",
+        "## Campaign Budget",
         "",
+        f"- Total candidates/cases: `{plan.campaign_budget.total_candidate_count}`",
+        f"- Estimated subprocess runs: `{plan.campaign_budget.total_subprocess_run_count}`",
+        f"- Estimated major profiler runs: `{plan.campaign_budget.total_major_profiler_run_count}`",
+        f"- Max subprocess runs: `{plan.campaign_budget.max_subprocess_runs}`",
+        f"- Max major profiler runs: `{plan.campaign_budget.max_major_profiler_runs}`",
+        f"- Over subprocess budget: `{str(plan.campaign_budget.over_subprocess_budget).lower()}`",
+        f"- Over major profiler budget: `{str(plan.campaign_budget.over_major_profiler_budget).lower()}`",
+        "",
+        "| section | candidates/cases | subprocess runs | major profiler runs | notes |",
+        "| --- | ---: | ---: | ---: | --- |",
     ]
+    for section in plan.campaign_budget.sections:
+        lines.append(
+            "| "
+            f"{section.display_name} | "
+            f"{section.candidate_count} | "
+            f"{section.subprocess_run_count} | "
+            f"{section.major_profiler_run_count} | "
+            f"{section.notes} |"
+        )
+    lines.extend(["", "### Budget Guidance", ""])
+    for guidance_item in plan.campaign_budget.guidance:
+        lines.append(f"- {guidance_item}")
+    lines.extend(["", "## Profiler Modes", ""])
     for mode_name, enabled in plan.profiler_modes.items():
         lines.append(f"- `{mode_name}`: `{str(enabled).lower()}`")
     lines.extend(["", "## Profiler Tool Availability", ""])
@@ -3439,11 +4792,14 @@ def run_tool(arguments: ProfileArguments) -> None:
         baseline_paths=baseline_paths,
         output_directory=output_directory,
     )
+    campaign_budget = build_campaign_budget(arguments=arguments, output_directory=output_directory)
+    log_campaign_budget(campaign_budget)
     if arguments.dry_run:
         profile_plan = build_profile_plan(
             arguments=arguments,
             baseline_paths=baseline_paths,
             output_directory=output_directory,
+            campaign_budget=campaign_budget,
         )
         write_profile_plan(profile_plan, output_directory)
         write_artifact_manifest(
@@ -3453,6 +4809,20 @@ def run_tool(arguments: ProfileArguments) -> None:
         )
         logger.info("Wrote dry-run profile plan under %s", output_directory)
         return
+    if campaign_budget_is_over_limit(campaign_budget) and not arguments.allow_over_budget:
+        profile_plan = build_profile_plan(
+            arguments=arguments,
+            baseline_paths=baseline_paths,
+            output_directory=output_directory,
+            campaign_budget=campaign_budget,
+        )
+        write_profile_plan(profile_plan, output_directory)
+        write_artifact_manifest(
+            output_directory=output_directory,
+            profiler_tool_status=profiler_tool_status,
+            profile_plan=profile_plan,
+        )
+    enforce_campaign_budget(arguments, campaign_budget)
     logger.info("Validating profile inputs")
     baseline_benchmark.validate_input_files(baseline_paths)
     prediction_list_paths = [
@@ -3497,13 +4867,14 @@ def run_tool(arguments: ProfileArguments) -> None:
         output_directory=output_directory,
     )
     logger.info("Running candidate tuning")
-    winners = run_candidate_tuning(
+    tuning_results = run_candidate_tuning(
         arguments=arguments,
         baseline_paths=baseline_paths,
         bgen_summaries=bgen_summaries,
         output_directory=output_directory,
         cache_directory=cache_directory,
     )
+    winners = tuning_results.winners
     logger.info("Running headline trials")
     headline_results = run_headline_trials(
         arguments=arguments,
@@ -3539,8 +4910,15 @@ def run_tool(arguments: ProfileArguments) -> None:
     stage_totals = collect_stage_totals(headline_results)
     stage_comparison_rows = build_stage_comparison_rows(headline_results)
     algorithmic_findings = build_algorithmic_findings(stage_comparison_rows)
+    binary_correction_diagnostics = build_binary_correction_diagnostics(
+        headline_results=headline_results,
+        finalist_results_by_key=tuning_results.finalist_results_by_key,
+        stage_timing_mode=arguments.stage_timing_mode,
+    )
     summary_payload = {
+        "stage_timing_mode": arguments.stage_timing_mode.value,
         "preflight": preflight_metadata,
+        "campaign_budget": dataclasses.asdict(campaign_budget),
         "setup_results": [dataclasses.asdict(result) for result in setup_results],
         "bgen_summaries": [dataclasses.asdict(summary) for summary in bgen_summaries],
         "winners": {key: dataclasses.asdict(value) for key, value in winners.items()},
@@ -3551,6 +4929,7 @@ def run_tool(arguments: ProfileArguments) -> None:
         "stage_totals": stage_totals,
         "stage_comparisons": stage_comparison_rows,
         "algorithmic_findings": algorithmic_findings,
+        "binary_correction_diagnostics": binary_correction_diagnostics,
         "deep_profiles": deep_profile_results,
         "logging_perturbation_results": logging_perturbation_results,
     }
@@ -3565,6 +4944,7 @@ def run_tool(arguments: ProfileArguments) -> None:
             stage_comparison_rows=stage_comparison_rows,
             algorithmic_findings=algorithmic_findings,
             logging_perturbation_results=logging_perturbation_results,
+            binary_correction_diagnostics=binary_correction_diagnostics,
         ),
         encoding="utf-8",
     )
