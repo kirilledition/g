@@ -192,6 +192,91 @@ def test_profile_telemetry_flushes_buffered_events_on_close(tmp_path: Path) -> N
     assert event_payloads[19]["chunk_index"] == 19
 
 
+def test_trace_telemetry_event_cap_fails_without_lossy_mode(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.TRACE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        lossy=False,
+        trace_event_cap=2,
+        run_id="run-1",
+    )
+
+    telemetry_session.log_event("first_trace_event")
+    telemetry_session.log_event("second_trace_event")
+    with pytest.raises(RuntimeError, match="Trace telemetry event cap exceeded at 2 events"):
+        telemetry_session.log_event("third_trace_event")
+    with pytest.raises(RuntimeError, match="Trace telemetry event cap exceeded at 2 events"):
+        telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event"] for event_payload in event_payloads] == [
+        "first_trace_event",
+        "second_trace_event",
+    ]
+
+
+def test_trace_telemetry_event_cap_drops_with_lossy_mode(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.TRACE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        lossy=True,
+        trace_event_cap=2,
+        run_id="run-1",
+    )
+
+    for event_index in range(5):
+        telemetry_session.log_event("trace_event", event_index=event_index)
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event_index"] for event_payload in event_payloads] == [0, 1]
+
+
+@pytest.mark.parametrize("telemetry_mode", [types.TelemetryMode.PROGRESS, types.TelemetryMode.PROFILE])
+def test_non_trace_telemetry_ignores_trace_event_cap(tmp_path: Path, telemetry_mode: types.TelemetryMode) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=telemetry_mode,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        lossy=False,
+        trace_event_cap=1,
+        run_id="run-1",
+    )
+
+    for event_index in range(3):
+        telemetry_session.log_event("non_trace_event", event_index=event_index)
+    telemetry_session.close()
+
+    assert telemetry_paths.stream_file is not None
+    event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
+    assert [event_payload["event_index"] for event_payload in event_payloads] == [0, 1, 2]
+
+
 def test_log_file_replaces_default_telemetry_stream() -> None:
     regenie_config = config.RegenieConfig.from_options(
         {

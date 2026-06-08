@@ -389,6 +389,7 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
             calls.append(kwargs)
 
     diagnostics_config = build_diagnostics_config(
+        telemetry=types.TelemetryMode.TRACE,
         log_filter="g=debug",
         log_file=tmp_path / "logs" / "g.jsonl",
         log_stderr=False,
@@ -398,6 +399,7 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
         include_span_events=True,
         trace_file=tmp_path / "logs" / "trace.jsonl",
         trace_filter="g=trace",
+        trace_event_cap=2048,
     )
 
     with patch("g.runner._core", FakeCoreModule()):
@@ -414,6 +416,7 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
             "include_span_events": True,
             "trace_file": str(tmp_path / "logs" / "trace.jsonl"),
             "trace_filter": "g=trace",
+            "trace_event_cap": 2048,
         }
     ]
 
@@ -443,6 +446,37 @@ def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> Non
 
     assert calls[0]["log_file"] is None
     assert calls[0]["trace_file"] == str(stream_file)
+    assert calls[0]["trace_event_cap"] is None
+
+
+def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeCoreModule:
+        def initialize_logging(self, **kwargs: object) -> bool:
+            calls.append(kwargs)
+            return True
+
+    stream_file = tmp_path / "logs" / "events.jsonl"
+    diagnostics_config = build_diagnostics_config(
+        telemetry=types.TelemetryMode.TRACE,
+        log_file=stream_file,
+        trace_event_cap=17,
+    )
+    telemetry_paths = telemetry_module.TelemetryPaths(
+        log_dir=tmp_path / "logs",
+        stream_file=stream_file,
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+
+    with (
+        patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
+        patch("g.runner._core", FakeCoreModule()),
+    ):
+        runner.initialize_logging(diagnostics_config, telemetry_paths)
+
+    assert calls[0]["trace_event_cap"] == 17
 
 
 def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Path) -> None:
@@ -470,6 +504,7 @@ def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Pa
 
     assert calls[0]["log_file"] is None
     assert calls[0]["trace_file"] == str(stream_file)
+    assert calls[0]["trace_event_cap"] is None
 
 
 def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path: Path) -> None:
@@ -488,6 +523,7 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
         include_span_events=False,
         trace_file=None,
         trace_filter=config.load_packaged_config().g_diagnostics.trace_filter,
+        trace_event_cap=None,
     )
     diagnostics_config = build_diagnostics_config(log_file=tmp_path / "logs" / "second.jsonl")
 

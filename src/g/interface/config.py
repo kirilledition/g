@@ -138,6 +138,7 @@ class GDiagnosticsConfig:
     profile_summary_json: Path | None
     trace_file: Path | None
     trace_filter: str
+    trace_event_cap: int
     log_queue_size: int
     log_lossy: bool
     include_source_location: bool
@@ -554,6 +555,7 @@ def build_runtime_config_from_toml_config(
             profile_summary_json=optional_toml_path(g_diagnostics_section.profile_summary_json),
             trace_file=optional_toml_path(g_diagnostics_section.trace_file),
             trace_filter=required_toml_value(g_diagnostics_section.trace_filter, "g-trace-filter"),
+            trace_event_cap=required_toml_value(g_diagnostics_section.trace_event_cap, "g-trace-event-cap"),
             log_queue_size=required_toml_value(g_diagnostics_section.log_queue_size, "g-log-queue-size"),
             log_lossy=required_toml_value(g_diagnostics_section.log_lossy, "g-log-lossy"),
             include_source_location=required_toml_value(
@@ -818,6 +820,7 @@ def validate_config(config: RegenieConfig) -> None:
         config.g_diagnostics.progress_interval_seconds,
     )
     validate_positive_integer("--g-progress-interval-chunks", config.g_diagnostics.progress_interval_chunks)
+    validate_non_negative_integer("--g-trace-event-cap", config.g_diagnostics.trace_event_cap)
     validate_positive_integer("--g-log-queue-size", config.g_diagnostics.log_queue_size)
     if not (0.0 < config.binary.p_threshold < 1.0):
         message = "--pThresh must be in (0, 1)."
@@ -875,6 +878,13 @@ def validate_positive_integer(option_name: str, value: int) -> None:
     """Validate that an integer config value is positive."""
     if value <= 0:
         message = f"{option_name} must be positive."
+        raise ValueError(message)
+
+
+def validate_non_negative_integer(option_name: str, value: int) -> None:
+    """Validate that an integer config value is non-negative."""
+    if value < 0:
+        message = f"{option_name} must be non-negative."
         raise ValueError(message)
 
 
@@ -1044,6 +1054,7 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
             **optional_mapping("profile-summary-json", config.g_diagnostics.profile_summary_json),
             **optional_mapping("trace-file", config.g_diagnostics.trace_file),
             "trace-filter": config.g_diagnostics.trace_filter,
+            "trace-event-cap": config.g_diagnostics.trace_event_cap,
             "log-queue-size": config.g_diagnostics.log_queue_size,
             "log-lossy": config.g_diagnostics.log_lossy,
             "include-source-location": config.g_diagnostics.include_source_location,

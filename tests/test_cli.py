@@ -115,6 +115,8 @@ def test_regenie_command_dispatches_config_api() -> None:
                 "logs/trace.jsonl",
                 "--g-trace-filter",
                 "g=trace",
+                "--g-trace-event-cap",
+                "2048",
                 "--g-log-queue-size",
                 "1024",
                 "--no-g-log-lossy",
@@ -139,6 +141,7 @@ def test_regenie_command_dispatches_config_api() -> None:
     assert regenie_config.g_diagnostics.profile_summary_json == Path("logs/profile.summary.json")
     assert regenie_config.g_diagnostics.trace_file == Path("logs/trace.jsonl")
     assert regenie_config.g_diagnostics.trace_filter == "g=trace"
+    assert regenie_config.g_diagnostics.trace_event_cap == 2048
     assert regenie_config.g_diagnostics.log_queue_size == 1024
     assert regenie_config.g_diagnostics.log_lossy is False
     assert regenie_config.g_diagnostics.include_source_location is True

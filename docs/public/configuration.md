@@ -64,6 +64,25 @@ telemetry = "progress"
 log-stderr = true
 ```
 
+## Trace Telemetry Caps
+
+Trace telemetry is bounded by default. In trace mode, the Rust-owned JSONL
+stream writes at most `trace-event-cap = 1000000` completed events unless you
+raise the cap or set it to `0`.
+
+```toml
+[g.diagnostics]
+telemetry = "trace"
+trace-event-cap = 5000000
+log-lossy = true
+```
+
+With `log-lossy = true`, events after the cap are dropped. With
+`log-lossy = false`, exceeding the cap fails clearly and tells you to raise
+`--g-trace-event-cap` or set it to `0` for an intentional deep trace. The cap
+applies only to `telemetry = "trace"`; progress and profile modes are not
+constrained by it.
+
 ## Sections
 
 | Section | Typical contents |

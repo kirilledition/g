@@ -1060,6 +1060,16 @@ def test_binary_hot_benchmark_can_disable_exact_stage_timings(tmp_path: Path) ->
         ).stage_timing_path
         is None
     )
+    summary = binary_hot_benchmark.build_summary(configuration=configuration, trial_results=[trial_result])
+    diagnostics = summary["binary_diagnostics_by_case"][benchmark_case.name]["hot_same_process_no_final"]
+    assert diagnostics["available"] is False
+    assert diagnostics["reason"] == binary_hot_benchmark.BINARY_DIAGNOSTIC_UNAVAILABLE_EXACT_TIMING_DISABLED
+    assert diagnostics["stage_timing_path"] is None
+    assert diagnostics["stage_timing_mode"] == "off"
+    assert diagnostics["candidate_counts"] == {"score_test": None, "firth": None}
+    assert diagnostics["failure_code_counts"]["none"] is None
+    assert diagnostics["correction_branch_counts"]["pseudo_firth"] is None
+    assert diagnostics["stage_totals_seconds"] is None
 
 
 def test_binary_hot_benchmark_accepts_custom_genotype_inputs(tmp_path: Path) -> None:
@@ -1178,6 +1188,69 @@ def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
         chunk_bytes=1024,
         final_parquet_bytes=None,
     )
+    stage_timing_path = tmp_path / "hot_no_final.json"
+    stage_timing_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "jax_compute": 3.0,
+                    "output_write": 1.0,
+                },
+                "stage_counts": {
+                    "jax_compute": 2,
+                    "output_write": 1,
+                },
+                "derived_metrics": {
+                    "jax_variant_compute_per_second": 50.0,
+                },
+                "binary_chunk_diagnostics": [
+                    {
+                        "score_test_candidate_count": 2,
+                        "firth_candidate_count": 1,
+                        "firth_iteration_min": 4,
+                        "firth_iteration_median": 4.0,
+                        "firth_iteration_max": 4,
+                        "firth_converged_count": 1,
+                        "firth_failed_count": 0,
+                        "firth_numerical_failure_count": 0,
+                        "firth_max_iteration_failure_count": 0,
+                        "firth_invalid_statistic_failure_count": 0,
+                        "firth_step_halving_failure_count": 0,
+                        "pseudo_firth_attempt_count": 1,
+                        "pseudo_firth_success_count": 1,
+                        "nr_zero_start_attempt_count": 0,
+                        "nr_zero_start_success_count": 0,
+                        "nr_warm_start_attempt_count": 0,
+                        "nr_warm_start_success_count": 0,
+                        "sparse_correction_count": 0,
+                        "dense_correction_count": 1,
+                    },
+                    {
+                        "score_test_candidate_count": 3,
+                        "firth_candidate_count": 2,
+                        "firth_iteration_min": 5,
+                        "firth_iteration_median": 6.0,
+                        "firth_iteration_max": 7,
+                        "firth_converged_count": 1,
+                        "firth_failed_count": 1,
+                        "firth_numerical_failure_count": 0,
+                        "firth_max_iteration_failure_count": 1,
+                        "firth_invalid_statistic_failure_count": 0,
+                        "firth_step_halving_failure_count": 0,
+                        "pseudo_firth_attempt_count": 2,
+                        "pseudo_firth_success_count": 1,
+                        "nr_zero_start_attempt_count": 1,
+                        "nr_zero_start_success_count": 0,
+                        "nr_warm_start_attempt_count": 1,
+                        "nr_warm_start_success_count": 1,
+                        "sparse_correction_count": 1,
+                        "dense_correction_count": 1,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     trial_results = [
         binary_hot_benchmark.TrialResult(
             name=f"{benchmark_case.name}_hot_same_process_no_final",
@@ -1187,7 +1260,7 @@ def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
             finalize_parquet=False,
             same_process_group="no_final",
             wall_time_seconds=7.25,
-            stage_timing_path="hot_no_final.json",
+            stage_timing_path=str(stage_timing_path),
             output_metrics=output_metrics,
         ),
         binary_hot_benchmark.TrialResult(
@@ -1208,6 +1281,24 @@ def test_binary_hot_summary_records_headline_modes(tmp_path: Path) -> None:
     assert summary["metadata"]["configuration"]["trusted_no_missing_diploid"] is True
     assert summary["metadata"]["configuration"]["firth_candidate_capacities"] == [2048]
     assert summary["headline_by_case"][benchmark_case.name]["hot_same_process_finalized_seconds"] == 7.85
+    diagnostics = summary["binary_diagnostics_by_case"][benchmark_case.name]["hot_same_process_no_final"]
+    assert diagnostics["available"] is True
+    assert diagnostics["candidate_counts"] == {"score_test": 5, "firth": 3}
+    assert diagnostics["firth_outcome_counts"] == {"converged": 2, "failed": 1}
+    assert diagnostics["failure_code_counts"]["none"] == 2
+    assert diagnostics["failure_code_counts"]["max_iterations"] == 1
+    assert diagnostics["correction_branch_counts"] == {
+        "pseudo_firth": 2,
+        "newton_raphson_zero_start": 0,
+        "newton_raphson_warm_start": 1,
+    }
+    assert diagnostics["correction_attempt_counts"]["newton_raphson_zero_start"] == 1
+    assert diagnostics["correction_input_counts"] == {"sparse": 1, "dense": 2}
+    assert diagnostics["firth_iteration_counts"] == {"minimum": 4.0, "median_per_chunk_mean": 5.0, "maximum": 7.0}
+    assert diagnostics["code_values"]["firth_failure"]["max_iterations"] == 2
+    assert diagnostics["stage_totals_seconds"]["jax_compute"] == 3.0
+    assert diagnostics["stage_counts"]["jax_compute"] == 2
+    assert diagnostics["derived_metrics"]["jax_variant_compute_per_second"] == 50.0
 
 
 def test_output_stage_benchmark_builds_recommended_matrix() -> None:

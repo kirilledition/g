@@ -432,6 +432,57 @@ def extract_binary_hot_result_metrics(payload: dict[str, typing.Any], metrics: M
                 )
 
 
+def extract_binary_hot_diagnostic_value(
+    *,
+    metric_prefix: str,
+    raw_value: typing.Any,
+    metrics: MetricMap,
+) -> None:
+    """Extract nested numeric binary diagnostic metrics."""
+    if raw_value is None:
+        add_metric(metrics, metric_prefix, raw_value)
+        return
+    if isinstance(raw_value, dict):
+        for raw_field_name, raw_field_value in raw_value.items():
+            if raw_field_name in {"available", "reason", "stage_timing_path", "stage_timing_mode", "code_values"}:
+                continue
+            extract_binary_hot_diagnostic_value(
+                metric_prefix=f"{metric_prefix}.{raw_field_name}",
+                raw_value=raw_field_value,
+                metrics=metrics,
+            )
+        return
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
+        return
+    add_metric(metrics, metric_prefix, raw_value, category=infer_metric_category(metric_prefix))
+
+
+def extract_binary_hot_diagnostic_metrics(payload: dict[str, typing.Any], metrics: MetricMap) -> None:
+    """Extract per-case binary-hot diagnostic metrics.
+
+    Args:
+        payload: Benchmark summary payload.
+        metrics: Metric map to update.
+
+    """
+    raw_diagnostics_by_case = payload.get("binary_diagnostics_by_case")
+    if raw_diagnostics_by_case is None:
+        return
+    diagnostics_by_case = mapping_or_error(raw_diagnostics_by_case, "`binary_diagnostics_by_case`")
+    for raw_case_name, raw_case_payload in diagnostics_by_case.items():
+        case_payload = mapping_or_error(raw_case_payload, f"`binary_diagnostics_by_case.{raw_case_name}`")
+        for raw_mode_name, raw_mode_payload in case_payload.items():
+            mode_payload = mapping_or_error(
+                raw_mode_payload,
+                f"`binary_diagnostics_by_case.{raw_case_name}.{raw_mode_name}`",
+            )
+            extract_binary_hot_diagnostic_value(
+                metric_prefix=f"binary_diagnostics_by_case.{raw_case_name}.{raw_mode_name}",
+                raw_value=mode_payload,
+                metrics=metrics,
+            )
+
+
 def matrix_stage_metric_name(run_name: str, stage_name: str) -> str:
     """Build a stable stage timing metric name.
 
@@ -618,6 +669,7 @@ def extract_metrics(payload: dict[str, typing.Any]) -> MetricMap:
     extract_explicit_metrics(payload, metrics)
     extract_headline_metrics(payload, metrics)
     extract_binary_hot_result_metrics(payload, metrics)
+    extract_binary_hot_diagnostic_metrics(payload, metrics)
     extract_matrix_run_metrics(payload, metrics)
     extract_bgen_reader_metrics(payload, metrics)
     if not metrics:
