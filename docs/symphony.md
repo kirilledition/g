@@ -212,6 +212,12 @@ Use this pattern for discovery work:
   in `## Agent Learnings`, and creates at most 5 generated implementation issues
   unless the parent issue states another limit.
 
+For optimization-search issues, use the
+[Performance Discovery Playbook](performance-discovery.md). It requires a
+baseline signal, suspected bottleneck, proposed change, validation command,
+non-goals, duplicate Linear search, and an explicit dispatch decision before a
+finding can become an implementation issue.
+
 Generated issues must include:
 
 ```text
