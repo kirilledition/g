@@ -267,8 +267,45 @@ class TrialResult:
     output_path: str | None = None
     stage_timing_path: str | None = None
     regenie_profile_path: str | None = None
+    profiler_artifact_path: str | None = None
+    application_output_prefix: str | None = None
+    application_output_run_directory: str | None = None
     device_diagnostics: dict[str, typing.Any] | None = None
     notes: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class DeepProfilerRunPaths:
+    """Paths dedicated to one deep profiler's application child process.
+
+    Attributes:
+        application_output_prefix: Prefix passed to the profiled g child as `out`.
+        application_output_run_directory: Expected chunked g output run directory.
+        stage_timing_path: Stage timing JSON path for the profiled child run when exact timing is enabled.
+        profile_script_path: Python script path executed by the profiler wrapper.
+
+    """
+
+    application_output_prefix: Path
+    application_output_run_directory: Path
+    stage_timing_path: Path | None
+    profile_script_path: Path
+
+
+@dataclasses.dataclass(frozen=True)
+class DeepProfilerChildCommand:
+    """Prepared child command and metadata for one deep profiler wrapper.
+
+    Attributes:
+        command_arguments: Python command used as the profiler wrapper target.
+        environment_overrides: Environment overrides for the profiler wrapper.
+        run_paths: Paths dedicated to this profiler's application child process.
+
+    """
+
+    command_arguments: list[str]
+    environment_overrides: dict[str, str]
+    run_paths: DeepProfilerRunPaths
 
 
 @dataclasses.dataclass(frozen=True)
@@ -619,6 +656,64 @@ def serialize_profiler_tool_status(tool_status: dict[str, ProfilerToolStatus]) -
     return {tool_name: dataclasses.asdict(status) for tool_name, status in sorted(tool_status.items())}
 
 
+def manifest_path_value(*, output_directory: Path, path_value: typing.Any) -> str | None:
+    """Return a manifest path relative to the campaign directory when possible."""
+    if path_value is None:
+        return None
+    path = Path(str(path_value))
+    if path.is_absolute():
+        try:
+            return str(path.relative_to(output_directory))
+        except ValueError:
+            return str(path)
+    return str(path)
+
+
+def collect_profiler_run_manifest_entries(
+    *,
+    output_directory: Path,
+    sampling_profiles: list[dict[str, typing.Any]],
+) -> list[dict[str, str | None]]:
+    """Collect per-profiler artifact and application output paths for the manifest."""
+    profiler_runs: list[dict[str, str | None]] = []
+    for profile in sampling_profiles:
+        profiler_artifact_path = manifest_path_value(
+            output_directory=output_directory,
+            path_value=profile.get("profiler_artifact_path"),
+        )
+        application_output_prefix = manifest_path_value(
+            output_directory=output_directory,
+            path_value=profile.get("application_output_prefix"),
+        )
+        application_output_run_directory = manifest_path_value(
+            output_directory=output_directory,
+            path_value=profile.get("application_output_run_directory"),
+        )
+        stage_timing_path = manifest_path_value(
+            output_directory=output_directory,
+            path_value=profile.get("stage_timing_path"),
+        )
+        if (
+            profiler_artifact_path is None
+            and application_output_prefix is None
+            and application_output_run_directory is None
+            and stage_timing_path is None
+        ):
+            continue
+        profiler_runs.append(
+            {
+                "name": str(profile.get("name", "")),
+                "implementation": str(profile.get("implementation", "")),
+                "status": str(profile.get("status", "")),
+                "profiler_artifact_path": profiler_artifact_path,
+                "application_output_prefix": application_output_prefix,
+                "application_output_run_directory": application_output_run_directory,
+                "stage_timing_path": stage_timing_path,
+            }
+        )
+    return profiler_runs
+
+
 def serialize_regenie_baseline_scope(scope: RegenieBaselineScope) -> dict[str, object]:
     """Serialize baseline scope without embedding long extract lists."""
     return {
@@ -729,6 +824,8 @@ def collect_artifact_manifest(
             "list[dict[str, typing.Any]]", deep_profile_results.get("sampling_profiles", [])
         )
         skipped_profiles = [profile for profile in sampling_profiles if profile.get("status") == "skipped"]
+    else:
+        sampling_profiles = []
     baseline_commands = collect_summary_baseline_commands(summary_payload)
     regenie_baseline_scope = None
     if summary_payload is not None:
@@ -737,7 +834,7 @@ def collect_artifact_manifest(
         baseline_commands = profile_plan.regenie_baseline_commands
         regenie_baseline_scope = profile_plan.regenie_baseline_scope
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(UTC).isoformat(),
         "output_directory": str(output_directory),
         "profiler_tools": serialize_profiler_tool_status(profiler_tool_status),
@@ -745,6 +842,10 @@ def collect_artifact_manifest(
         "regenie_baseline_scope": regenie_baseline_scope,
         "regenie_baseline_commands": baseline_commands,
         "artifact_paths": artifact_paths,
+        "profiler_runs": collect_profiler_run_manifest_entries(
+            output_directory=output_directory,
+            sampling_profiles=sampling_profiles,
+        ),
         "skipped_profiles": skipped_profiles,
     }
 
@@ -1289,6 +1390,11 @@ def build_g_step2_child_command(
     return [sys.executable, "-c", child_code]
 
 
+def build_application_output_run_directory(output_prefix: Path) -> Path:
+    """Return the default g output run directory for an output prefix."""
+    return output_prefix.with_name(f"{output_prefix.name}.g")
+
+
 def run_logged_command(
     *,
     name: str,
@@ -1421,6 +1527,75 @@ def write_inline_python_profile_script(command_arguments: list[str], script_path
     return script_path
 
 
+def build_deep_profiler_run_paths(
+    *,
+    profile_directory: Path,
+    profile_name: str,
+    emit_stage_timings: bool,
+) -> DeepProfilerRunPaths:
+    """Build isolated application paths for one deep profiler implementation."""
+    application_output_prefix = profile_directory / profile_name
+    stage_timing_path = profile_directory / f"{profile_name}.stage_timings.json" if emit_stage_timings else None
+    return DeepProfilerRunPaths(
+        application_output_prefix=application_output_prefix,
+        application_output_run_directory=build_application_output_run_directory(application_output_prefix),
+        stage_timing_path=stage_timing_path,
+        profile_script_path=profile_directory / f"{profile_name}_child.py",
+    )
+
+
+def build_deep_profiler_child_command(
+    *,
+    profile_directory: Path,
+    profile_name: str,
+    baseline_paths: typing.Any,
+    candidate: Step2Candidate,
+    cache_directory: Path,
+    variant_limit: int | None,
+    emit_stage_timings: bool,
+) -> DeepProfilerChildCommand:
+    """Build an isolated child command for one deep profiler implementation."""
+    run_paths = build_deep_profiler_run_paths(
+        profile_directory=profile_directory,
+        profile_name=profile_name,
+        emit_stage_timings=emit_stage_timings,
+    )
+    inline_command_arguments = build_g_step2_child_command(
+        baseline_paths=baseline_paths,
+        candidate=candidate,
+        output_prefix=run_paths.application_output_prefix,
+        variant_limit=variant_limit,
+        cache_directory=cache_directory,
+        stage_timing_path=run_paths.stage_timing_path,
+    )
+    write_inline_python_profile_script(inline_command_arguments, run_paths.profile_script_path)
+    return DeepProfilerChildCommand(
+        command_arguments=[sys.executable, str(run_paths.profile_script_path)],
+        environment_overrides=build_g_trial_environment(
+            candidate=candidate,
+            cache_directory=cache_directory,
+            stage_timing_path=run_paths.stage_timing_path,
+        ),
+        run_paths=run_paths,
+    )
+
+
+def attach_deep_profiler_metadata(
+    *,
+    result: TrialResult,
+    run_paths: DeepProfilerRunPaths,
+    profiler_artifact_path: Path | None,
+) -> TrialResult:
+    """Attach profiler artifact and application output metadata to a result."""
+    return dataclasses.replace(
+        result,
+        profiler_artifact_path=str(profiler_artifact_path) if profiler_artifact_path is not None else None,
+        application_output_prefix=str(run_paths.application_output_prefix),
+        application_output_run_directory=str(run_paths.application_output_run_directory),
+        stage_timing_path=str(run_paths.stage_timing_path) if run_paths.stage_timing_path is not None else None,
+    )
+
+
 def executable_name(executable_path: str | None) -> str:
     """Return the command basename for an optional executable path."""
     if executable_path is None:
@@ -1542,18 +1717,24 @@ def append_logged_profile_result(
     command_arguments: list[str],
     environment_overrides: dict[str, str],
     log_directory: Path,
+    run_paths: DeepProfilerRunPaths,
+    profiler_artifact_path: Path | None,
 ) -> None:
     """Run and append one external profiler result."""
     results["sampling_profiles"].append(
         dataclasses.asdict(
-            run_logged_command(
-                name=name,
-                implementation=implementation,
-                trait_type=trait_type,
-                device=device,
-                command_arguments=command_arguments,
-                environment_overrides=environment_overrides,
-                log_directory=log_directory,
+            attach_deep_profiler_metadata(
+                result=run_logged_command(
+                    name=name,
+                    implementation=implementation,
+                    trait_type=trait_type,
+                    device=device,
+                    command_arguments=command_arguments,
+                    environment_overrides=environment_overrides,
+                    log_directory=log_directory,
+                ),
+                run_paths=run_paths,
+                profiler_artifact_path=profiler_artifact_path,
             )
         )
     )
@@ -1618,6 +1799,8 @@ def run_g_trial(
         output_row_count=output_row_count,
         output_path=output_path,
         stage_timing_path=str(stage_timing_path) if stage_timing_path is not None else None,
+        application_output_prefix=str(output_prefix),
+        application_output_run_directory=str(build_application_output_run_directory(output_prefix)),
         device_diagnostics=device_diagnostics,
     )
 
@@ -3324,6 +3507,7 @@ def run_deep_profiles(
             memory_profile_path = (
                 profile_directory / f"{winner_key}_device_memory.prof" if arguments.enable_jax_memory_profile else None
             )
+            profiler_artifact_path = trace_directory if trace_directory is not None else memory_profile_path
             logger.info("Running JAX profiler capture for %s", winner_key)
             profile_result = run_g_trial(
                 name=f"profile_{winner_key}_jax",
@@ -3337,46 +3521,47 @@ def run_deep_profiles(
                 trace_directory=trace_directory,
                 memory_profile_path=memory_profile_path,
             )
-            results["sampling_profiles"].append(dataclasses.asdict(profile_result))
-        base_profile_command_arguments = build_g_step2_child_command(
-            baseline_paths=baseline_paths,
-            candidate=candidate,
-            output_prefix=profile_directory / f"profile_{winner_key}_profiler",
-            variant_limit=arguments.variant_limit,
-            cache_directory=cache_directory,
-            stage_timing_path=(
-                profile_directory / f"{winner_key}_profiler_stage_timings.json" if emit_stage_timings else None
-            ),
-        )
-        base_profile_environment = build_g_trial_environment(
-            candidate=candidate,
-            cache_directory=cache_directory,
-            stage_timing_path=(
-                profile_directory / f"{winner_key}_profiler_stage_timings.json" if emit_stage_timings else None
-            ),
-        )
-        profile_script_path = write_inline_python_profile_script(
-            base_profile_command_arguments,
-            profile_directory / f"{winner_key}_profiler_child.py",
-        )
+            results["sampling_profiles"].append(
+                dataclasses.asdict(
+                    dataclasses.replace(
+                        profile_result,
+                        profiler_artifact_path=(
+                            str(profiler_artifact_path) if profiler_artifact_path is not None else None
+                        ),
+                    )
+                )
+            )
         if arguments.enable_python_cprofile:
             cprofile_output_path = profile_directory / f"{winner_key}.cprofile"
             cprofile_text_path = profile_directory / f"{winner_key}.cprofile.txt"
-            cprofile_result = run_logged_command(
-                name=f"profile_{winner_key}_cprofile",
-                implementation="cProfile",
-                trait_type=candidate.trait_type,
-                device=candidate.device,
-                command_arguments=[
-                    sys.executable,
-                    "-m",
-                    "cProfile",
-                    "-o",
-                    str(cprofile_output_path),
-                    str(profile_script_path),
-                ],
-                environment_overrides=base_profile_environment,
-                log_directory=output_directory / "logs",
+            cprofile_child_command = build_deep_profiler_child_command(
+                profile_directory=profile_directory,
+                profile_name=f"profile_{winner_key}_cprofile",
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
+            )
+            cprofile_result = attach_deep_profiler_metadata(
+                result=run_logged_command(
+                    name=f"profile_{winner_key}_cprofile",
+                    implementation="cProfile",
+                    trait_type=candidate.trait_type,
+                    device=candidate.device,
+                    command_arguments=[
+                        sys.executable,
+                        "-m",
+                        "cProfile",
+                        "-o",
+                        str(cprofile_output_path),
+                        str(cprofile_child_command.run_paths.profile_script_path),
+                    ],
+                    environment_overrides=cprofile_child_command.environment_overrides,
+                    log_directory=output_directory / "logs",
+                ),
+                run_paths=cprofile_child_command.run_paths,
+                profiler_artifact_path=cprofile_output_path,
             )
             results["sampling_profiles"].append(dataclasses.asdict(cprofile_result))
             if cprofile_result.status == "success":
@@ -3395,6 +3580,15 @@ def run_deep_profiles(
         py_spy_status = profiler_tool_status["py_spy"]
         if arguments.enable_py_spy and py_spy_status.available:
             speedscope_path = profile_directory / f"{winner_key}.speedscope.json"
+            py_spy_child_command = build_deep_profiler_child_command(
+                profile_directory=profile_directory,
+                profile_name=f"profile_{winner_key}_py_spy",
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
+            )
             command_arguments = [
                 py_spy_status.executable_path or "py-spy",
                 "record",
@@ -3403,7 +3597,7 @@ def run_deep_profiles(
                 "--output",
                 str(speedscope_path),
                 "--",
-                *base_profile_command_arguments,
+                *py_spy_child_command.command_arguments,
             ]
             append_logged_profile_result(
                 results=results,
@@ -3412,8 +3606,10 @@ def run_deep_profiles(
                 trait_type=candidate.trait_type,
                 device=candidate.device,
                 command_arguments=command_arguments,
-                environment_overrides=base_profile_environment,
+                environment_overrides=py_spy_child_command.environment_overrides,
                 log_directory=output_directory / "logs",
+                run_paths=py_spy_child_command.run_paths,
+                profiler_artifact_path=speedscope_path,
             )
         elif arguments.enable_py_spy:
             append_skipped_executable_profile(
@@ -3428,6 +3624,15 @@ def run_deep_profiles(
         scalene_status = profiler_tool_status["scalene"]
         if arguments.enable_scalene and scalene_status.available:
             scalene_json_path = profile_directory / f"{winner_key}.scalene.json"
+            scalene_child_command = build_deep_profiler_child_command(
+                profile_directory=profile_directory,
+                profile_name=f"profile_{winner_key}_scalene",
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
+            )
             append_logged_profile_result(
                 results=results,
                 name=f"profile_{winner_key}_scalene",
@@ -3437,10 +3642,12 @@ def run_deep_profiles(
                 command_arguments=build_scalene_command_arguments(
                     tool_status=scalene_status,
                     output_path=scalene_json_path,
-                    profile_script_path=profile_script_path,
+                    profile_script_path=scalene_child_command.run_paths.profile_script_path,
                 ),
-                environment_overrides=base_profile_environment,
+                environment_overrides=scalene_child_command.environment_overrides,
                 log_directory=output_directory / "logs",
+                run_paths=scalene_child_command.run_paths,
+                profiler_artifact_path=scalene_json_path,
             )
         elif arguments.enable_scalene:
             append_skipped_executable_profile(
@@ -3455,6 +3662,15 @@ def run_deep_profiles(
         memray_status = profiler_tool_status["memray"]
         if arguments.enable_memray and memray_status.available:
             memray_output_path = profile_directory / f"{winner_key}.memray.bin"
+            memray_child_command = build_deep_profiler_child_command(
+                profile_directory=profile_directory,
+                profile_name=f"profile_{winner_key}_memray",
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
+            )
             append_logged_profile_result(
                 results=results,
                 name=f"profile_{winner_key}_memray",
@@ -3464,10 +3680,12 @@ def run_deep_profiles(
                 command_arguments=build_memray_command_arguments(
                     tool_status=memray_status,
                     output_path=memray_output_path,
-                    profile_script_path=profile_script_path,
+                    profile_script_path=memray_child_command.run_paths.profile_script_path,
                 ),
-                environment_overrides=base_profile_environment,
+                environment_overrides=memray_child_command.environment_overrides,
                 log_directory=output_directory / "logs",
+                run_paths=memray_child_command.run_paths,
+                profiler_artifact_path=memray_output_path,
             )
         elif arguments.enable_memray:
             append_skipped_executable_profile(
@@ -3482,6 +3700,15 @@ def run_deep_profiles(
         nsight_systems_status = profiler_tool_status["nsight_systems"]
         if arguments.enable_nsight_systems and nsight_systems_status.available:
             nsight_report_prefix = profile_directory / f"{winner_key}_nsys"
+            nsight_systems_child_command = build_deep_profiler_child_command(
+                profile_directory=profile_directory,
+                profile_name=f"profile_{winner_key}_nsys",
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
+            )
             append_logged_profile_result(
                 results=results,
                 name=f"profile_{winner_key}_nsys",
@@ -3496,10 +3723,12 @@ def run_deep_profiles(
                     "--force-overwrite=true",
                     "--output",
                     str(nsight_report_prefix),
-                    *base_profile_command_arguments,
+                    *nsight_systems_child_command.command_arguments,
                 ],
-                environment_overrides=base_profile_environment,
+                environment_overrides=nsight_systems_child_command.environment_overrides,
                 log_directory=output_directory / "logs",
+                run_paths=nsight_systems_child_command.run_paths,
+                profiler_artifact_path=nsight_report_prefix,
             )
         elif arguments.enable_nsight_systems:
             append_skipped_executable_profile(
@@ -3514,6 +3743,15 @@ def run_deep_profiles(
         nsight_compute_status = profiler_tool_status["nsight_compute"]
         if arguments.enable_nsight_compute and nsight_compute_status.available:
             nsight_compute_report_path = profile_directory / f"{winner_key}_ncu"
+            nsight_compute_child_command = build_deep_profiler_child_command(
+                profile_directory=profile_directory,
+                profile_name=f"profile_{winner_key}_ncu",
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
+            )
             append_logged_profile_result(
                 results=results,
                 name=f"profile_{winner_key}_ncu",
@@ -3528,10 +3766,12 @@ def run_deep_profiles(
                     "default",
                     "--export",
                     str(nsight_compute_report_path),
-                    *base_profile_command_arguments,
+                    *nsight_compute_child_command.command_arguments,
                 ],
-                environment_overrides=base_profile_environment,
+                environment_overrides=nsight_compute_child_command.environment_overrides,
                 log_directory=output_directory / "logs",
+                run_paths=nsight_compute_child_command.run_paths,
+                profiler_artifact_path=nsight_compute_report_path,
             )
         elif arguments.enable_nsight_compute:
             append_skipped_executable_profile(
@@ -3546,6 +3786,15 @@ def run_deep_profiles(
         perf_status = profiler_tool_status["linux_perf"]
         if arguments.enable_linux_perf and perf_status.available:
             perf_path = profile_directory / f"{winner_key}.perf.data"
+            perf_child_command = build_deep_profiler_child_command(
+                profile_directory=profile_directory,
+                profile_name=f"profile_{winner_key}_perf",
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+                emit_stage_timings=emit_stage_timings,
+            )
             command_arguments = [
                 perf_status.executable_path or "perf",
                 "record",
@@ -3553,7 +3802,7 @@ def run_deep_profiles(
                 "-o",
                 str(perf_path),
                 "--",
-                *base_profile_command_arguments,
+                *perf_child_command.command_arguments,
             ]
             append_logged_profile_result(
                 results=results,
@@ -3562,8 +3811,10 @@ def run_deep_profiles(
                 trait_type=candidate.trait_type,
                 device=candidate.device,
                 command_arguments=command_arguments,
-                environment_overrides=base_profile_environment,
+                environment_overrides=perf_child_command.environment_overrides,
                 log_directory=output_directory / "logs",
+                run_paths=perf_child_command.run_paths,
+                profiler_artifact_path=perf_path,
             )
         elif arguments.enable_linux_perf:
             append_skipped_executable_profile(
