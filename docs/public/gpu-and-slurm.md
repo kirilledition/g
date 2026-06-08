@@ -1,77 +1,108 @@
 # GPU and SLURM
 
-`g` can execute statistical kernels on CPU or GPU through JAX:
+`g` executes statistical kernels through JAX. Choose the target device with:
 
 ```bash
 --g-device cpu
 --g-device gpu
 ```
 
-GPU acceleration is workload-dependent. Single-trait runs can be limited by BGEN decode, host-device transfer, or output writing rather than JAX compute.
+CPU support is installed by the base runtime dependencies. GPU support requires the
+[GPU installation flow](installation.md#gpu-install-from-source) and a scheduler allocation on a GPU
+node.
 
-## Local GPU Checks
+GPU acceleration is workload-dependent. Single-trait runs can be limited by BGEN decode, host-device
+transfer, or output writing rather than JAX compute.
 
-Bootstrap and probe the JAX runtime:
+## Probe the JAX Runtime
 
-```bash
-just bootstrap-gpu
-just doctor-jax
-```
-
-If JAX cannot see the expected accelerator, fix the environment before measuring `g` performance.
-
-## Server Rules
-
-On the gauss server, do not run heavy computation, large test suites, or GPU workloads on the login node. Use SLURM recipes for GPU work. The default GPU node is configured through `GWAS_ENGINE_GPU_NODE` and defaults to `landau`.
-CPU-heavy validation and benchmark wrappers use `GWAS_ENGINE_CPU_NODE`, which
-defaults to `cantor`. CPU helpers request one task on one node, use
-`--exclusive` by default, and derive `CARGO_BUILD_JOBS` and pytest worker counts
-from the allocation.
-
-Useful recipes:
+Run this check in the same environment and on the same kind of node where the scan will run:
 
 ```bash
-just slurm-gpu-shell
-just slurm-gpu-run 'uv run --no-sync python scripts/probe_jax_runtime.py'
-just slurm-gpu-just regenie2-binary-gpu-smoke
-just slurm-cpu-check
-just slurm-cpu-test
-just slurm-cpu-rust-build
-just slurm-cpu-just benchmark-bgen-reader
+uv run python -c "import jax; print(jax.devices())"
 ```
 
-## Performance Harness
+If JAX cannot see the expected accelerator, fix the driver, CUDA, or JAX wheel environment before
+measuring `g` performance. On a login node without NVIDIA devices, a CPU-only result can be
+expected even when the GPU environment is otherwise valid.
 
-These commands are the stable entrypoints for optimization baseline evidence:
+## Generic SLURM GPU Job
+
+Install and sync the checkout before submitting the job. Inside the batch script, use
+`uv run --no-sync` so the job uses the already-created `.venv/` instead of trying to change the
+environment while the scan is running:
 
 ```bash
-just perf-smoke
-just perf-compare BASE.json NEW.json
+#!/usr/bin/env bash
+#SBATCH --job-name=g-regenie2
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=04:00:00
+
+set -euo pipefail
+
+cd /path/to/g
+export UV_CACHE_DIR="${SCRATCH:-$HOME}/.cache/uv"
+export UV_LINK_MODE=copy
+
+uv run --no-sync g regenie \
+  --step 2 \
+  --qt \
+  --bgen /path/to/genotypes.bgen \
+  --sample /path/to/genotypes.sample \
+  --phenoFile /path/to/phenotypes.tsv \
+  --phenoCol phenotype_continuous \
+  --pred /path/to/regenie_step1_qt_pred.list \
+  --out /path/to/output/g_gpu_regenie2 \
+  --g-device gpu
 ```
 
-`perf-smoke` and `perf-compare` are safe on the login node. `perf-smoke` writes a
-small JSON summary under `results/perf/smoke/`.
+Adjust `#SBATCH` options for your site's partitions, accounts, GPU resource syntax, and memory
+policy.
+
+## Generic SLURM CPU Job
+
+Large CPU scans should also run on a compute node rather than a login node:
 
 ```bash
-just perf-cpu
-just perf-gpu
+#!/usr/bin/env bash
+#SBATCH --job-name=g-regenie2-cpu
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=64G
+#SBATCH --time=04:00:00
+
+set -euo pipefail
+
+cd /path/to/g
+export UV_CACHE_DIR="${SCRATCH:-$HOME}/.cache/uv"
+export UV_LINK_MODE=copy
+
+uv run --no-sync g regenie \
+  --step 2 \
+  --qt \
+  --bgen /path/to/genotypes.bgen \
+  --sample /path/to/genotypes.sample \
+  --phenoFile /path/to/phenotypes.tsv \
+  --phenoCol phenotype_continuous \
+  --pred /path/to/regenie_step1_qt_pred.list \
+  --out /path/to/output/g_cpu_regenie2 \
+  --threads "${SLURM_CPUS_PER_TASK:-16}" \
+  --g-device cpu
 ```
 
-`perf-cpu` and `perf-gpu` require SLURM. The CPU wrapper submits the BGEN reader
-benchmark through `slurm-cpu-just`; the GPU wrapper reuses
-`slurm-benchmark-regenie2-binary-hot-gpu` on `landau`. Both write under the
-gitignored `results/perf/` tree by default.
+## Cluster Notes
 
-Binary GPU examples:
+- Do not run GPU scans or large CPU scans on a login node.
+- Keep `UV_CACHE_DIR` and run output on user-writable storage with enough quota.
+- Use `UV_LINK_MODE=copy` on shared filesystems where hardlinks or reflinks are unreliable.
+- Run `uv sync` before submitting production jobs, then use `uv run --no-sync` inside batch jobs.
+- Use upstream `regenie` to create Step 1 predictions before running `g` Step 2.
 
-```bash
-just setup-regenie2-binary-gpu-inputs
-just verify-regenie2-binary-gpu-inputs
-just slurm-regenie2-binary-gpu-smoke
-just slurm-regenie2-binary-gpu
-```
+The gauss development-server recipes and benchmark wrappers are documented in
+[Ubuntu SLURM Development](../development/UBUNTU_SLURM_DEVELOPMENT.md).
 
-## Performance Notes
+## Runtime Knobs
 
 Important runtime knobs include:
 
@@ -90,4 +121,6 @@ Important runtime knobs include:
 | `--g-jax-xla-autotune-cache` | Enable XLA auxiliary autotune caches only when the cache directory is node-local. |
 | `--g-jax-transfer-guard` | Enable JAX transfer guard diagnostics. |
 
-Fair performance comparisons require equivalent statistical modes. Compare score-only to score-only, and compare approximate Firth only when both tools use approximate Firth with the same fallback threshold.
+Fair performance comparisons require equivalent statistical modes. Compare score-only to score-only,
+and compare approximate Firth only when both tools use approximate Firth with the same fallback
+threshold.

@@ -19,12 +19,12 @@
 
 ## Start Here
 
-- [Getting Started](getting-started.md) explains the shortest path through setup and a first scan.
-- [Installation](installation.md) covers local, GPU, and server bootstrap commands.
+- [Getting Started](getting-started.md) explains the shortest path from install to a first scan.
+- [Installation](installation.md) covers source-checkout installation for CPU, GPU, clusters, and development.
 - [Quickstart](quickstart.md) shows quantitative, binary, and approximate-Firth examples.
 - [CLI](cli.md) and [Configuration](configuration.md) document the main user interface.
 - [Input and Output](input-output.md) describes file expectations and run artifacts.
-- [GPU and SLURM](gpu-and-slurm.md) covers accelerator and cluster notes.
+- [GPU and SLURM](gpu-and-slurm.md) covers accelerator and generic cluster job notes.
 
 ## Documentation Sections
 
