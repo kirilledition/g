@@ -7,7 +7,6 @@ authors = [
 ]
 requires-python = ">=3.14,<3.15"
 dependencies = [
-    "click>=8.4.1",
     "jax[cpu]>=0.10.1",
     "msgspec>=0.21.1",
     "numpy>=2.4.6",
@@ -52,6 +51,8 @@ python-source = "src"
 cache-keys = [
     { file = "pyproject.toml" },
     { file = "src/**/*.rs" },
+    { file = "src/config_options.json" },
+    { file = "src/g/config.default.toml" },
     { file = "Cargo.toml" },
     { file = "Cargo.lock" },
 ]

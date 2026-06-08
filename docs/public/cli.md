@@ -20,9 +20,11 @@ uv run g regenie --help
 | --- | --- |
 | `g regenie` | Run a REGENIE-compatible Step 2 association scan |
 | `g-regenie` | Direct executable form of `g regenie` |
-| `g config init` | Write a starter TOML config |
-| `g config validate` | Validate a TOML config |
-| `g config explain` | Explain supported and recognized options |
+
+This experimental Rust CLI/config branch intentionally does not expose the
+previous `g config` helper command. Use `g regenie --config run.toml` to load a
+TOML file and `g regenie --help` or `g-regenie --help` for the supported
+runtime flags.
 
 ## Core REGENIE-style Options
 
@@ -72,13 +74,9 @@ disable the cap. Extra trace events are dropped only when `--g-log-lossy` is
 enabled; with `--no-g-log-lossy`, exceeding the cap fails with a message that
 names the cap and stream path.
 
-Use `g config explain` for the current option registry:
-
-```bash
-uv run g config explain pThresh
-uv run g config explain g-telemetry
-```
-
 ## Unsupported Options
 
-Recognized but unsupported REGENIE options, such as `--bed`, `--pgen`, categorical covariate flags, `--spa`, and exact Firth without `--approx`, fail loudly. Treat that as an intentional guardrail while the supported surface is still narrow.
+Unsupported REGENIE options, such as `--bed`, `--pgen`, categorical covariate
+flags, `--spa`, and exact Firth without `--approx`, fail instead of being
+silently ignored. Treat that as an intentional guardrail while the supported
+surface is still narrow.

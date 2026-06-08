@@ -7,16 +7,23 @@ This page defines how `g` exposes configuration to users and how developers must
 1. **REGENIE compatibility:** users should be able to take an existing REGENIE Step 2 command and replace `regenie` with `g regenie`, with the same flag names and statistical meaning whenever the feature is supported.
 2. **Reproducibility:** every run should be representable as a TOML config, every CLI option should be overrideable from TOML, and every run should write an effective config and manifest.
 
+On the experimental Rust CLI/config branch, the authoritative frontend lives in
+Rust. `clap` parses `g regenie` and `g-regenie`, `toml-spanner` decodes TOML,
+Rust overlays packaged defaults with TOML and explicit CLI/Python options,
+validates the effective configuration, and exposes PyO3 config objects to
+Python. Python keeps the JAX/runtime layer and treats those objects as immutable
+runtime inputs.
+
 The production flow is:
 
 ```text
 CLI args / TOML config / Python option dict
         ↓
-raw option layers
+Rust option layers
         ↓
-OptionSpec registry + default config
+Rust option registry + packaged default config
         ↓
-RegenieConfig
+PyO3 RegenieConfig
         ↓
 ExecutionPlan
         ↓
@@ -24,6 +31,30 @@ engine pipeline
 ```
 
 The engine must never read CLI flags, TOML files, environment variables, or scattered `DEFAULT_*` values directly. It should receive all user-controlled behavior through `RegenieConfig` and then `ExecutionPlan`.
+
+The previous `g config init|validate|explain` subcommands are intentionally not
+registered on this branch. Keep the branch focused on supported REGENIE-style
+`g regenie` flags, `--g-*` runtime extensions, `--config`, and the Python
+compatibility functions in `g.interface.config`.
+
+The Rust frontend is split by responsibility:
+
+```text
+src/config_frontend/
+  mod.rs        option layering, runtime config construction, validation
+  cli.rs        clap command construction and dispatch
+  metadata.rs   option metadata registry loaded from config_options.json
+  render.rs     deterministic effective TOML and template rendering
+
+src/python/config/
+  mod.rs        PyO3 config classes and registered config functions
+  conversion.rs Python/Rust value conversion helpers
+```
+
+`src/g/interface/config.py` and `src/g/interface/config_layers.py` are
+compatibility shims. They should delegate parsing, flattening, normalization,
+default loading, validation, and effective TOML behavior to Rust instead of
+reimplementing a second config engine in Python.
 
 ---
 
@@ -439,13 +470,13 @@ src/g/config.default.toml
   Packaged default values for configurable parameters.
 
 src/g/interface/config.py
-  Raw option layers -> normalized option dictionary -> RegenieConfig.
+  Thin compatibility wrappers around Rust-owned config objects.
 
 src/g/execution_plan.py
   RegenieConfig -> immutable execution plan used by the engine.
 
 src/g/cli.py
-  Click command generation from OptionSpec.
+  Thin Python dispatcher into the Rust CLI frontend.
 
 src/g/types.py
   Shared enums and small immutable public/internal plan structs.
@@ -557,9 +588,9 @@ Use this checklist.
 
 1. Add an `OptionSpec` to the supported REGENIE options in `src/g/interface/options.py`.
 2. Use the REGENIE name exactly, including mixed case such as `phenoFile` or `pThresh`.
-3. Add Click flags only if the default generated flag would be wrong.
+3. Add Rust CLI flag metadata only if the generated long flag would be wrong.
 4. Add a default to `src/g/config.default.toml` if the option has a meaningful default.
-5. Add parsing/mapping in `src/g/interface/config.py` if the option affects `RegenieConfig`.
+5. Add parsing/mapping in the Rust config frontend if the option affects `RegenieConfig`.
 6. Add validation if it has constraints or incompatibilities.
 7. Add it to `ExecutionPlan` if the engine needs it.
 8. Add it to the run manifest if it affects outputs, statistics, resume compatibility, or performance semantics.
@@ -750,7 +781,7 @@ The current implementation already has the core pieces:
 ```text
 OptionSpec registry
 default policy and TOML path metadata
-Click generation from OptionSpec
+Rust Clap generation from OptionSpec metadata
 packaged config.default.toml
 validated default catalog hash
 TOML/CLI/Python normalization
@@ -761,7 +792,7 @@ manifest validation
 
 Two areas need continuing discipline:
 
-1. **Binary-only defaults appear in `config.default.toml` but are commented in `g config init`.** This keeps starter configs quantitative by default without making `pThresh` or Firth flags explicit user overrides.
+1. **Binary-only defaults appear in `config.default.toml` but should stay out of starter examples.** This keeps starter configs quantitative by default without making `pThresh` or Firth flags explicit user overrides.
 2. **TOML `[g.*]` keys currently omit the `g-` prefix.** This is intentional: the table provides the namespace. The internal canonical name still includes `g-`.
 
 ---

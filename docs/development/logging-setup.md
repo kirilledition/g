@@ -59,10 +59,9 @@ they must point at the same path.
 ## Lifecycle Events
 
 Run lifecycle facts are represented once as structured payloads and then used
-for both terminal rendering and the JSONL diagnostics stream. The CLI still
-uses normal Click stdout for data commands such as `g config init`, but
-`g regenie` success and graceful-interruption messages are derived from these
-typed lifecycle events.
+for both terminal rendering and the JSONL diagnostics stream. `g regenie`
+success and graceful-interruption messages are derived from these typed
+lifecycle events.
 
 `run_completed` includes the user-visible output artifacts needed by operators
 and diagnostic tools:

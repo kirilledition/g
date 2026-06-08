@@ -35,7 +35,8 @@ class DefaultOptionCatalog:
 
 @functools.cache
 def load_default_option_catalog() -> DefaultOptionCatalog:
-    """Load, normalize, validate, and hash packaged default options."""
+    """Load Rust-owned packaged defaults through the compatibility catalog."""
+    ensure_rust_default_config_loads()
     default_toml_bytes = load_default_toml_bytes()
     toml_config = config_layers.decode_toml_bytes(default_toml_bytes, source=DEFAULT_CONFIG_RESOURCE)
     raw_toml = config_layers.decode_toml_builtin_mapping(default_toml_bytes, source=DEFAULT_CONFIG_RESOURCE)
@@ -53,6 +54,14 @@ def load_default_toml_bytes() -> bytes:
     """Load packaged default TOML file bytes."""
     default_config_resource = importlib.resources.files("g").joinpath(DEFAULT_CONFIG_RESOURCE)
     return default_config_resource.read_bytes()
+
+
+@functools.cache
+def ensure_rust_default_config_loads() -> None:
+    """Assert Rust can load the packaged default config."""
+    import g._core
+
+    g._core.load_packaged_config()
 
 
 def normalize_default_toml(raw_toml: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
@@ -105,9 +114,32 @@ def validate_default_catalog(normalized_options: typing.Mapping[str, typing.Any]
 
 def build_default_config_hash(raw_toml: typing.Mapping[str, typing.Any]) -> str:
     """Build a stable SHA-256 hash for the packaged default config."""
-    normalized_payload = normalize_hash_value(raw_toml)
+    embedded_hash = metadata_default_config_hash(raw_toml)
+    if embedded_hash is not None:
+        return embedded_hash
+    normalized_payload = normalize_hash_value(default_hash_payload(raw_toml))
     encoded_payload = json.dumps(normalized_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded_payload).hexdigest()
+
+
+def metadata_default_config_hash(raw_toml: typing.Mapping[str, typing.Any]) -> str | None:
+    """Return the Rust-rendered default hash embedded in TOML metadata."""
+    raw_metadata = raw_toml.get("metadata")
+    if not isinstance(raw_metadata, dict):
+        return None
+    raw_hash = raw_metadata.get("default-config-hash")
+    if isinstance(raw_hash, str):
+        return raw_hash
+    return None
+
+
+def default_hash_payload(raw_toml: typing.Mapping[str, typing.Any]) -> typing.Mapping[str, typing.Any]:
+    """Return TOML payload fields covered by the default hash."""
+    if "metadata" not in raw_toml:
+        return raw_toml
+    return {
+        section_name: section_value for section_name, section_value in raw_toml.items() if section_name != "metadata"
+    }
 
 
 def normalize_hash_value(value: typing.Any) -> typing.Any:

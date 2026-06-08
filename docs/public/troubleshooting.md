@@ -6,11 +6,8 @@ This page lists common issues and the first checks to run.
 
 Some REGENIE-style options are recognized but not implemented. BED/PGEN input, SPA, categorical covariate flags, and exact Firth without `--approx` are current examples.
 
-Check the option registry:
-
-```bash
-uv run g config explain <option-name>
-```
+Check `uv run g regenie --help` for the currently supported CLI surface on this
+experimental Rust frontend branch.
 
 ## Missing Step 1 Predictions
 

@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-import dataclasses
-
 from g import jax_runtime, jax_setup
 from g.interface import config
 
-COMPUTE_CONFIG = dataclasses.replace(config.load_packaged_config().g_compute, jax_persistent_cache=False)
+COMPUTE_CONFIG = config.RegenieConfig.from_options(
+    {
+        "bgen": "dataset.bgen",
+        "phenoFile": "phenotype.tsv",
+        "phenoCol": "trait",
+        "pred": "predictions.list",
+        "out": "results/output",
+        "g-jax-persistent-cache": False,
+    }
+).g_compute
 jax_setup.configure_jax_runtime(jax_runtime.build_jax_runtime_policy(COMPUTE_CONFIG))

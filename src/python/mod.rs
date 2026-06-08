@@ -24,6 +24,7 @@ use crate::sample::{
     MultiAlignmentInputs, SampleKeyMode,
 };
 
+mod config;
 mod logging;
 mod output;
 
@@ -1493,6 +1494,7 @@ fn configure_rayon_global_thread_pool(thread_count: usize) -> PyResult<()> {
 
 #[allow(clippy::missing_errors_doc)]
 pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    config::register_module(module)?;
     module.add_class::<ChunkSpec>()?;
     module.add_class::<ChunkStats>()?;
     module.add_class::<NativeAlignedPhenotypeGroup>()?;

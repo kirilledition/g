@@ -45,11 +45,11 @@ class OptionSpec:
 
     Attributes:
         name: User-facing option name without leading dashes.
-        destination: Python destination name used by Click and Python callers.
+        destination: Python destination name used by Python callers.
         section: TOML section name.
         support_level: Whether the option is supported by this engine.
         help_text: Concise user-facing description.
-        cli_flags: Click-style CLI flags.
+        cli_flags: Legacy CLI flag spelling metadata.
         type: Scalar value kind.
         multiple: Whether the option may be repeated.
         is_flag: Whether the option is a boolean flag.
@@ -1113,8 +1113,9 @@ TOML_KEY_BY_NAME = {
 
 PYTHON_ALIASES_BY_NAME = {
     "phenoFile": ("pheno",),
-    "phenoCol": ("pheno_name",),
+    "phenoCol": ("pheno_columns", "pheno_name"),
     "covarFile": ("covar",),
+    "covarCol": ("covar_columns",),
     "covarColList": ("covar_names",),
     "pThresh": ("p_thresh",),
     "bsize": ("chunk_size",),

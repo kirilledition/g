@@ -60,7 +60,7 @@ just docs-build
 
 The public surface is intentionally narrow:
 
-- CLI: `g regenie ...`, `g-regenie ...`, and `g config init|validate|explain`
+- CLI: `g regenie ...` and `g-regenie ...`
 - Python API: `g.regenie(config)` and `g.regenie.from_options({...})`
 - Config: TOML files using the same option names as the CLI flags
 
@@ -86,7 +86,7 @@ For single-phenotype scans, speedups can be limited by BGEN decode, host-device 
 The project is managed with `uv`, `just`, Rust/Cargo, and `maturin`.
 
 - Python: `>=3.14,<3.15`
-- Runtime Python dependencies: Click, JAX, NumPy
+- Runtime Python dependencies: JAX, NumPy
 - Native extension: Rust 2024 + PyO3 ABI3 for Python 3.14
 - Optional GPU workflow: CUDA-capable JAX environment
 - Development/benchmark tools: `plink`, `plink2`, `regenie`, `zstd`, and optionally Nix/SLURM
@@ -259,12 +259,10 @@ packaged defaults in src/g/config.default.toml
         < explicit CLI flags
 ```
 
-Create and validate a starter config:
-
-```bash
-uv run g config init --out regenie.toml
-uv run g config validate regenie.toml
-```
+This experimental Rust CLI/config branch does not expose the previous
+`g config init|validate|explain` helper command. Use `g regenie --config
+regenie.toml` to load a TOML file; Rust performs parsing, default overlay, and
+validation before Python receives the runtime config object.
 
 Example quantitative config:
 
@@ -313,13 +311,6 @@ Run with config and override a single option:
 
 ```bash
 uv run g regenie --config regenie.toml --g-device cpu
-```
-
-Explain any known option:
-
-```bash
-uv run g config explain pThresh
-uv run g config explain g-telemetry
 ```
 
 ---
@@ -566,10 +557,10 @@ Fair performance comparisons require equivalent statistical modes. Compare score
 ```text
 src/g/
   api.py                         # thin public Python API
-  cli.py                         # Click CLI generated from OptionSpec
+  cli.py                         # thin Python dispatcher into the Rust CLI frontend
   interface/
-    options.py                   # single option registry for CLI/TOML/Python names
-    config.py                    # typed config, TOML load/dump, validation
+    options.py                   # Python compatibility metadata for CLI/TOML/Python names
+    config.py                    # compatibility wrappers around Rust-owned config objects
   execution_plan.py              # immutable normalized run plans
   runner.py                      # runtime setup, telemetry, dispatch, artifacts
   engine/

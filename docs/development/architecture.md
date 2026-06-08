@@ -23,10 +23,10 @@ Arrow chunks + optional finalized Parquet
 ```text
 src/g/
   api.py                         public Python API
-  cli.py                         Click CLI generated from OptionSpec
+  cli.py                         thin Python dispatcher into the Rust CLI frontend
   interface/
-    options.py                   option registry for CLI/TOML/Python names
-    config.py                    typed config, TOML load/dump, validation
+    options.py                   Python compatibility metadata for CLI/TOML/Python names
+    config.py                    compatibility wrappers around Rust-owned config objects
   execution_plan.py              immutable normalized run plans
   runner.py                      runtime orchestration, telemetry, dispatch, artifacts
   jax_runtime.py                 JAX runtime policy, reports, diagnostics
@@ -49,10 +49,11 @@ src/g/
 ## Native Runtime
 
 ```text
+src/config_frontend/             Rust CLI/config frontend, clap, toml-spanner
 src/genotype/                    BGEN mmap/index/decode/preprocess/profile
 src/sample.rs                    sample/phenotype/covariate alignment
 src/output/                      Arrow IPC chunks, Parquet finalization, manifests
-src/python/                      PyO3 bindings and logging bridge
+src/python/                      PyO3 config/runtime bindings and logging bridge
 ```
 
 ## Design Principles

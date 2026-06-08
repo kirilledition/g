@@ -1,5 +1,6 @@
 #![warn(clippy::pedantic)]
 
+pub mod config_frontend;
 pub mod genotype;
 pub mod output;
 pub mod pipeline;

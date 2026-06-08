@@ -14,12 +14,12 @@ packaged defaults in src/g/config.default.toml
 
 An explicit CLI flag overrides both the packaged default and the TOML file.
 
-## Create and Validate a Config
+## Run With a Config
 
-```bash
-uv run g config init --out regenie.toml
-uv run g config validate regenie.toml
-```
+This experimental Rust CLI/config branch does not expose the previous
+`g config init` or `g config validate` helper commands. Config parsing,
+default overlay, validation, and effective TOML serialization are still owned
+by the Rust frontend when a run uses `--config`.
 
 Run with a config and override one value:
 

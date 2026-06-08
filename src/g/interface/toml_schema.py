@@ -5,7 +5,6 @@ from __future__ import annotations
 import typing
 
 import msgspec
-import msgspec.inspect
 
 type TomlStringList = str | list[str] | msgspec.UnsetType
 type TomlValue = str | int | float | bool | list[str] | msgspec.UnsetType
@@ -188,10 +187,7 @@ SECTION_STRUCT_TYPES: dict[str, type[msgspec.Struct]] = {
 
 
 def schema_toml_paths() -> frozenset[tuple[str, str]]:
-    """Return TOML option paths accepted by the typed schema."""
-    schema_paths: set[tuple[str, str]] = set()
-    for section_name, struct_type in SECTION_STRUCT_TYPES.items():
-        struct_information = typing.cast("msgspec.inspect.StructType", msgspec.inspect.type_info(struct_type))
-        for field_information in struct_information.fields:
-            schema_paths.add((section_name, field_information.encode_name))
-    return frozenset(schema_paths)
+    """Return TOML option paths accepted by the option registry."""
+    from g.interface import options
+
+    return frozenset(options.OPTION_SPEC_BY_TOML_PATH)
