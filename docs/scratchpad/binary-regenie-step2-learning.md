@@ -445,7 +445,9 @@ converted to padded fixed-size batches:
 - `build_device_firth_batch_plan` finds candidate indices with fixed capacity.
 - The code uses `firth_batch_size` lanes per batch.
 - If candidate count exceeds `firth_candidate_capacity`, the kernel falls back
-  to full chunk capacity.
+  to a separate full-chunk overflow executable after a scalar candidate-count
+  check. Keeping that overflow executable out of the common bounded path is
+  currently faster than folding overflow routing into the main JIT dispatch.
 - Inactive padded lanes are skipped with masks and empty result placeholders.
 
 This avoids host callbacks and per-candidate Python loops.
