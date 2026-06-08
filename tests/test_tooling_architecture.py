@@ -132,6 +132,7 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
     assert arguments.regenie_baseline_variant_limit is None
     assert arguments.regenie_baseline_warmups == 0
     assert arguments.regenie_baseline_trials == 1
+    assert arguments.stage_timing_mode == deep_profile.ProfileStageTimingMode.EXACT
     assert arguments.workload_keys == "quantitative_cpu,quantitative_gpu,binary_cpu,binary_gpu"
     assert arguments.max_subprocess_runs == 1000
     assert arguments.max_major_profiler_runs == 64
@@ -180,6 +181,14 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
         ["cargo", "bench", "--bench", "bgen_read"],
         ["cargo", "bench", "--bench", "preprocess"],
     ]
+    off_arguments = deep_profile.build_arguments_from_overrides(
+        [
+            f"tool.output_dir={tmp_path / 'profile-off'}",
+            "tool.dry_run=true",
+            "telemetry.stage_timing_mode=off",
+        ]
+    )
+    assert off_arguments.stage_timing_mode == deep_profile.ProfileStageTimingMode.OFF
 
 
 def test_deep_profile_budget_respects_workload_subset_and_bounded_grid(tmp_path: Path) -> None:

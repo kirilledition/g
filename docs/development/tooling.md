@@ -135,7 +135,11 @@ JAX tracing.
 
 Runs the deep landau profiling campaign for original REGENIE and `g` REGENIE
 step 2. It includes BGEN pre-sweeps, candidate tuning, headline trials,
-optional perf/py-spy/cProfile/JAX trace runs, and a smoke mode.
+optional perf/py-spy/cProfile/JAX trace runs, and a smoke mode. Exact
+stage-timing runs add compact binary correction diagnostics to `summary.md` and
+machine-readable headline/finalist aggregates to `summary.json`; runs with
+`telemetry.stage_timing_mode=off` mark those diagnostics unavailable instead of
+emitting per-chunk timing artifacts.
 
 `scripts/benchmark_regenie2_linear_fresh_process.py`
 
@@ -358,10 +362,11 @@ The full run writes:
 - `tooling.log`: phase-level progress for long-running jobs.
 - `preflight.json`: git, hardware, JAX, Rust, CUDA, REGENIE, and input metadata.
 - `summary.json`: structured run results, comparisons, JAX cache diagnostics,
-  stage totals, and profiler metadata.
-- `summary.md`: human-readable bottleneck report, including a JAX compile/cache
-  table with cold-versus-warm subprocess timing, persistent-cache path and use,
-  cache file/byte deltas, and parsed compile/cache hit/miss log counts.
+  stage totals, binary correction diagnostics, and profiler metadata.
+- `summary.md`: human-readable bottleneck report with compact binary correction
+  diagnostic tables plus a JAX compile/cache table with cold-versus-warm
+  subprocess timing, persistent-cache path and use, cache file/byte deltas, and
+  parsed compile/cache hit/miss log counts.
 - `artifact_manifest.json`: artifact list, profiler availability, per-profiler
   artifact and application output paths, and skipped profiler reasons.
 - `logs/*.stdout.log` and `logs/*.stderr.log`: subprocess logs.
