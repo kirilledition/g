@@ -568,10 +568,13 @@ GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
 
 - Inputs: installed perf extension, GPU access, fresh-process benchmark script
   inputs.
-- Output: REGENIE step 2 fresh-process GPU benchmark report.
-- Use when: measuring older linear fresh-process behavior. This recipe still
+- Output: REGENIE step 2 fresh-process GPU benchmark report. The underlying
+  script also accepts `--same-process-trials`, `--multi-phenotype-count`, and
+  `--emit-stage-timings` when run directly for startup-amortization studies.
+- Use when: measuring linear quantitative startup behavior. The recipe still
   uses a `scripts/` entrypoint rather than the new Hydra-backed `tooling/`
-  interface.
+  interface; run it through `just slurm-gpu-run` for custom same-process
+  options on `landau`.
 
 ### `benchmark-regenie2-linear-fresh-gpu-parquet`
 
@@ -766,6 +769,13 @@ just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
 - Output: deep profiling artifacts under `data/profiles/landau_deep_*` unless an
   explicit output directory is configured.
 - Use when: running the lower-level full profile harness on the current host.
+
+### `profile-regenie2-deep-dry-run *overrides`
+
+- Inputs: repository config only; workloads are not executed.
+- Output: `profile_plan.json`, `profile_plan.md`, and `artifact_manifest.json`.
+- Use when: inspecting paired original or patched REGENIE baseline commands and
+  input files before submitting bounded profiling work.
 
 ### `profile-regenie2-deep-smoke *overrides`
 

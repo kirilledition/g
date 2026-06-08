@@ -80,7 +80,7 @@ REGENIE is already a very strong CPU implementation. `g` focuses on architecture
 - preserve run manifests and effective configs for reproducibility;
 - expose profiling-grade telemetry for performance work.
 
-For single-phenotype scans, speedups can be limited by BGEN decode, host-device transfer, and output. The long-term performance path is to decode each genotype chunk once and reuse it across more useful work, especially multi-phenotype quantitative scans.
+For single-phenotype scans, speedups can be limited by BGEN decode, host-device transfer, output, and first-process Python/JAX startup. The long-term performance path is to keep repeated work in one process and decode each genotype chunk once for more useful work, especially multi-phenotype quantitative scans.
 
 ---
 
@@ -386,7 +386,7 @@ Opt-in batching mode:
 --g-multi-phenotype-sample-mode complete-case
 ```
 
-This runs a shared complete-case sample intersection for all requested phenotypes and can reuse genotype decoding/transfer across traits. It is faster when applicable, but it is **not statistically equivalent** to running each phenotype with its own sample set. Use it only when the shared complete-case intersection is intended.
+This runs a shared complete-case sample intersection for all requested phenotypes and can reuse genotype decoding/transfer across traits. It also amortizes one-time Python and JAX backend startup over more work when the run is launched once. It is faster when applicable, but it is **not statistically equivalent** to running each phenotype with its own sample set. Use it only when the shared complete-case intersection is intended.
 
 ---
 

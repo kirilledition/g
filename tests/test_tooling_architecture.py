@@ -122,6 +122,11 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
     assert arguments.enable_python_cprofile is True
     assert arguments.enable_rust_criterion is True
     assert arguments.include_regenie_baseline is True
+    assert arguments.regenie_executable is None
+    assert arguments.regenie_baseline_trait_types == "quantitative"
+    assert arguments.regenie_baseline_variant_limit is None
+    assert arguments.regenie_baseline_warmups == 0
+    assert arguments.regenie_baseline_trials == 1
     assert profile_plan.profiler_modes == {
         "regenie_baseline": True,
         "jax_trace": True,
@@ -137,6 +142,7 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
         "logging_perturbation": True,
     }
     assert profile_plan.logging_perturbation_cases
+    assert profile_plan.regenie_baseline_scope is not None
     assert "py_spy" in profile_plan.profiler_tools
     assert profile_plan.rust_benchmark_commands == [
         ["cargo", "bench", "--bench", "bgen_read"],
