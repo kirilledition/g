@@ -663,6 +663,10 @@ profile-regenie-comparison: profile-regenie-comparison-cpu
 profile-regenie2-deep *overrides: install-perf-extension
     {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu {{ overrides }}
 
+# Write the deep REGENIE step 2 profiling plan without running workloads
+profile-regenie2-deep-dry-run *overrides:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.dry_run=true {{ overrides }}
+
 # Smoke test the deep REGENIE step 2 profiling harness on the current host
 profile-regenie2-deep-smoke *overrides: install-perf-extension
     {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.smoke=true tool.skip_deep_profiles=true {{ overrides }}

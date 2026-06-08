@@ -768,6 +768,13 @@ just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
   explicit output directory is configured.
 - Use when: running the lower-level full profile harness on the current host.
 
+### `profile-regenie2-deep-dry-run *overrides`
+
+- Inputs: repository config only; workloads are not executed.
+- Output: `profile_plan.json`, `profile_plan.md`, and `artifact_manifest.json`.
+- Use when: inspecting paired original or patched REGENIE baseline commands and
+  input files before submitting bounded profiling work.
+
 ### `profile-regenie2-deep-smoke *overrides`
 
 - Inputs: same as `profile-regenie2-deep`.

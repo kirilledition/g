@@ -23,6 +23,12 @@ tool:
   variant_limit: null
   dry_run: false
   include_regenie_baseline: true
+  regenie_executable: null
+  regenie_baseline_trait_types:
+    - quantitative
+  regenie_baseline_variant_limit: null
+  regenie_baseline_warmups: 0
+  regenie_baseline_trials: 1
   smoke: false
   skip_deep_profiles: false
   enable_jax_trace: true
