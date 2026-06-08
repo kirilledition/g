@@ -371,7 +371,11 @@ def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
             phenotype_count=phenotype_count,
         )
         completed_event = run_events.build_run_completed_event(artifacts)
-        telemetry_session.log_event("run_completed", **run_events.run_completed_telemetry_fields(completed_event))
+        telemetry_session.log_event(
+            "run_completed",
+            level="info",
+            **run_events.run_completed_telemetry_fields(completed_event),
+        )
         logger.info("Finished REGENIE run.")
         return artifacts
     finally:
