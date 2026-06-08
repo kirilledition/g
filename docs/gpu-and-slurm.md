@@ -23,8 +23,10 @@ If JAX cannot see the expected accelerator, fix the environment before measuring
 ## Server Rules
 
 On the gauss server, do not run heavy computation, large test suites, or GPU workloads on the login node. Use SLURM recipes for GPU work. The default GPU node is configured through `GWAS_ENGINE_GPU_NODE` and defaults to `landau`.
-CPU-heavy benchmark wrappers use `GWAS_ENGINE_CPU_NODE`, which defaults to
-`cantor`.
+CPU-heavy validation and benchmark wrappers use `GWAS_ENGINE_CPU_NODE`, which
+defaults to `cantor`. CPU helpers request one task on one node, use
+`--exclusive` by default, and derive `CARGO_BUILD_JOBS` and pytest worker counts
+from the allocation.
 
 Useful recipes:
 
@@ -32,6 +34,9 @@ Useful recipes:
 just slurm-gpu-shell
 just slurm-gpu-run 'uv run --no-sync python scripts/probe_jax_runtime.py'
 just slurm-gpu-just regenie2-binary-gpu-smoke
+just slurm-cpu-check
+just slurm-cpu-test
+just slurm-cpu-rust-build
 just slurm-cpu-just benchmark-bgen-reader
 ```
 

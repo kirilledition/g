@@ -200,18 +200,20 @@ fn validate_manifest_chunk_file_commits(
         expected_commits.iter().map(|chunk_commit| chunk_commit.chunk_identifier).collect::<BTreeSet<_>>();
     let observed_commit_identifiers = observed_commits.keys().copied().collect::<BTreeSet<_>>();
     for expected_commit in expected_commits {
-        if let Some(observed_commit) = observed_commits.get(&expected_commit.chunk_identifier) {
-            validate_manifest_chunk_commit(expected_commit, observed_commit)?;
-        }
+        let Some(observed_commit) = observed_commits.get(&expected_commit.chunk_identifier) else {
+            return Err(OutputWriterError::InvalidInput(format!(
+                "Strict resume manifest commit set does not match chunk file {}.",
+                chunk_file_path.display()
+            )));
+        };
+        validate_manifest_chunk_commit(expected_commit, observed_commit)?;
+        committed_identifiers.insert(expected_commit.chunk_identifier);
     }
     if observed_commit_identifiers != expected_commit_identifiers {
         return Err(OutputWriterError::InvalidInput(format!(
             "Strict resume manifest commit set does not match chunk file {}.",
             chunk_file_path.display()
         )));
-    }
-    for expected_commit in expected_commits {
-        committed_identifiers.insert(expected_commit.chunk_identifier);
     }
     Ok(())
 }
