@@ -831,15 +831,12 @@ output.
 - If a performance optimization changes batching, first prove score-only
   parity, then corrected-row parity, then full output parity.
 
-## Future Work
+## Follow-Up Tracking
 
-Likely next areas:
-
-- GPU parity and performance validation for binary Firth workloads.
-- Persist richer per-run binary diagnostics from the benchmark script.
-- Consider a compact carrier-only representation for rare-sparse approximate
-  Firth, rather than dense vectors plus masks.
-- Decide whether the legacy full-model JAX Firth path should remain, move to a
-  separate experimental module, or be removed.
-- Revisit the public numeric output schema if float32 output becomes the final
-  limiting factor for parity.
+Open binary/Firth implementation work is tracked in Linear instead of this
+learning note. The current follow-ups from the docs-task audit are
+[GLA-23](https://linear.app/glaphyra/issue/GLA-23/profile-packed8-score-custom-kernel-gate)
+for packed8 custom-kernel profiling and
+[GLA-26](https://linear.app/glaphyra/issue/GLA-26/persist-binary-benchmark-diagnostics-in-summaries)
+for richer benchmark diagnostics. Durable binary/Firth lessons from historical
+task notes are consolidated in [Agent Learning](agent-learning.md).
