@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-import importlib
 import re
 import typing
 from dataclasses import dataclass
 
 from g import types
+from g.compute.regenie2_binary import config as regenie2_binary_config
+from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.interface import config
 from g.io import output, source
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
-
-    from g.compute.regenie2_binary import config as regenie2_binary_config
-    from g.compute.regenie2_linear import config as regenie2_linear_config
 
 
 PHENOTYPE_DIRECTORY_SAFE_CHARACTER_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
@@ -169,22 +167,21 @@ def normalize_binary_correction_config(binary_config: config.BinaryConfig) -> ty
 
 def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie2_binary_config.BinaryKernelConfig:
     """Build immutable binary JAX kernel settings from public compute config."""
-    binary_config_module = importlib.import_module("g.compute.regenie2_binary.config")
-    return binary_config_module.BinaryKernelConfig(
-        numerical=binary_config_module.BinaryNumericalConfig(
+    return regenie2_binary_config.BinaryKernelConfig(
+        numerical=regenie2_binary_config.BinaryNumericalConfig(
             minimum_probability=compute_config.binary_minimum_probability,
             minimum_variance=compute_config.binary_minimum_variance,
             relative_variance_tolerance=compute_config.binary_relative_variance_tolerance,
         ),
-        null_logistic=binary_config_module.BinaryNullLogisticConfig(
+        null_logistic=regenie2_binary_config.BinaryNullLogisticConfig(
             maximum_iterations=compute_config.binary_null_maximum_iterations,
             coefficient_tolerance=compute_config.binary_null_coefficient_tolerance,
         ),
-        firth_candidate=binary_config_module.FirthCandidateConfig(
+        firth_candidate=regenie2_binary_config.FirthCandidateConfig(
             batch_size=compute_config.firth_batch_size,
             candidate_capacity=compute_config.firth_candidate_capacity,
         ),
-        approximate_firth=binary_config_module.ApproximateFirthConfig(
+        approximate_firth=regenie2_binary_config.ApproximateFirthConfig(
             maximum_iterations=compute_config.firth_maximum_iterations,
             gradient_tolerance=compute_config.firth_gradient_tolerance,
             coefficient_tolerance=compute_config.firth_coefficient_tolerance,
@@ -200,7 +197,7 @@ def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie
             step_halving_scale=compute_config.firth_step_halving_scale,
             use_block_math=compute_config.use_block_firth_math,
         ),
-        null_firth=binary_config_module.NullFirthConfig(
+        null_firth=regenie2_binary_config.NullFirthConfig(
             maximum_iterations=compute_config.null_firth_maximum_iterations,
             gradient_tolerance=compute_config.null_firth_gradient_tolerance,
             maximum_step_size=compute_config.null_firth_maximum_step_size,
@@ -216,8 +213,6 @@ def build_linear_numerical_config(
     compute_config: config.GComputeConfig,
 ) -> regenie2_linear_config.LinearNumericalConfig:
     """Build immutable linear JAX numerical settings from public compute config."""
-    from g.compute.regenie2_linear import config as regenie2_linear_config
-
     return regenie2_linear_config.LinearNumericalConfig(
         minimum_variance=compute_config.linear_minimum_variance,
         relative_variance_tolerance=compute_config.linear_relative_variance_tolerance,

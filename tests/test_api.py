@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 import g
+import g.cli as cli_module
 import g.engine.shutdown as shutdown_module
 import g.engine.telemetry as telemetry_module
 from g import api, execution_plan, jax_runtime, runner, types
@@ -72,6 +73,18 @@ def test_public_package_exposes_only_new_regenie_interface() -> None:
     assert g.regenie is api.regenie
 
 
+def test_public_package_lazy_exports_cli_and_type_symbols() -> None:
+    assert g.main is cli_module.main
+    assert g.RunArtifacts is api.RunArtifacts
+    assert g.OutputFormat is types.OutputFormat
+    assert g.ArrayMemoryOrder is types.ArrayMemoryOrder
+
+
+def test_public_package_rejects_unknown_attributes() -> None:
+    with pytest.raises(AttributeError, match="module 'g' has no attribute 'missing'"):
+        g.__getattr__("missing")
+
+
 def test_importing_api_does_not_import_jax_heavy_modules() -> None:
     script = textwrap.dedent(
         """
@@ -83,8 +96,9 @@ def test_importing_api_does_not_import_jax_heavy_modules() -> None:
             "jax",
             "jax.numpy",
             "g.jax_setup",
-            "g.compute.regenie2_linear",
-            "g.compute.regenie2_binary",
+            "g.compute.regenie2_linear.api",
+            "g.compute.regenie2_binary.api",
+            "g.compute.common.genotype",
             "g.engine.callbacks",
             "g.engine.native_dispatch",
             "g.engine.regenie2_pipeline",
@@ -515,10 +529,9 @@ def test_initialize_logging_passes_diagnostics_to_core(tmp_path: Path) -> None:
         trace_event_cap=2048,
     )
 
-    with patch("g.runner.importlib.import_module", return_value=FakeCoreModule()) as mock_import_module:
+    with patch("g.runner._core", FakeCoreModule()):
         runner.initialize_logging(diagnostics_config)
 
-    mock_import_module.assert_called_once_with("g._core")
     assert calls == [
         {
             "log_filter": "g=debug",
@@ -554,11 +567,10 @@ def test_initialize_logging_uses_unified_telemetry_stream(tmp_path: Path) -> Non
 
     with (
         patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()) as mock_import_module,
+        patch("g.runner._core", FakeCoreModule()),
     ):
         runner.initialize_logging(diagnostics_config, telemetry_paths)
 
-    mock_import_module.assert_called_once_with("g._core")
     assert calls[0]["log_file"] is None
     assert calls[0]["trace_file"] == str(stream_file)
     assert calls[0]["trace_event_cap"] is None
@@ -587,7 +599,7 @@ def test_initialize_logging_applies_trace_cap_only_in_trace_mode(tmp_path: Path)
 
     with (
         patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
+        patch("g.runner._core", FakeCoreModule()),
     ):
         runner.initialize_logging(diagnostics_config, telemetry_paths)
 
@@ -613,7 +625,7 @@ def test_initialize_logging_uses_trace_file_alias_as_unified_stream(tmp_path: Pa
 
     with (
         patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", None),
-        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
+        patch("g.runner._core", FakeCoreModule()),
     ):
         runner.initialize_logging(diagnostics_config, telemetry_paths)
 
@@ -644,7 +656,7 @@ def test_initialize_logging_rejects_incompatible_process_global_policy(tmp_path:
 
     with (
         patch("g.runner.CONFIGURED_LOGGING_RUNTIME_POLICY", configured_policy),
-        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
+        patch("g.runner._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Logging is process-global"),
     ):
         runner.initialize_logging(diagnostics_config)
@@ -662,14 +674,13 @@ def test_configure_runtime_sets_native_knobs_and_threads() -> None:
 
     with (
         patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", None),
-        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()) as mock_import_module,
+        patch("g.runner._core", FakeCoreModule()),
     ):
         runner.configure_runtime(
             build_compute_config(bgen_decode_tile_variant_count=32),
             build_trait_config(threads=4),
         )
 
-    mock_import_module.assert_called_once_with("g._core")
     assert calls == [("tile", 32), ("threads", 4)]
 
 
@@ -685,7 +696,7 @@ def test_configure_runtime_skips_matching_rayon_thread_reconfiguration() -> None
 
     with (
         patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", 4),
-        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
+        patch("g.runner._core", FakeCoreModule()),
     ):
         runner.configure_runtime(
             build_compute_config(bgen_decode_tile_variant_count=32),
@@ -707,7 +718,7 @@ def test_configure_runtime_rejects_incompatible_rayon_thread_reconfiguration() -
 
     with (
         patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", 4),
-        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
+        patch("g.runner._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="already configured with 4 thread\\(s\\)"),
     ):
         runner.configure_runtime(
@@ -731,7 +742,7 @@ def test_configure_runtime_rejects_native_rayon_configuration_failure() -> None:
 
     with (
         patch("g.runner.CONFIGURED_RAYON_THREAD_COUNT", None),
-        patch("g.runner.importlib.import_module", return_value=FakeCoreModule()),
+        patch("g.runner._core", FakeCoreModule()),
         pytest.raises(RuntimeError, match="Unable to configure Rayon global thread pool"),
     ):
         runner.configure_runtime(
@@ -883,24 +894,9 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
                 gpu_validation=jax_runtime.GpuValidationResult(status=jax_runtime.GpuValidationStatus.SKIPPED),
             )
 
-    class FakeTimingModule:
-        def build_stage_timing_recorder(self, stage_timing_path: Path | None) -> None:
-            del stage_timing_path
-
-        def record_stage_duration(self, stage_timing_recorder: object, stage_name: str, start_time: float) -> None:
-            del stage_timing_recorder, start_time
-            call_order.append(f"timing:{stage_name}")
-
-        def write_stage_timing_snapshot(self, stage_timing_recorder: object, stage_timing_path: Path | None) -> None:
-            del stage_timing_recorder, stage_timing_path
-
     def import_module(module_name: str) -> object:
         if module_name == "g.jax_setup":
             return FakeJaxSetupModule()
-        if module_name == "g.engine.timing":
-            return FakeTimingModule()
-        if module_name == "g.engine.telemetry":
-            return telemetry_module
         raise AssertionError(f"Unexpected import: {module_name}")
 
     first_config = config.RegenieConfig.from_options(
@@ -1058,11 +1054,24 @@ def test_regenie_callable_dispatches_binary_pipeline_with_option_derived_kernel_
 
 def test_quantitative_kernel_config_does_not_import_binary_runtime() -> None:
     regenie_config = build_minimal_config()
+    binary_runtime_module_names = (
+        "g.compute.regenie2_binary.api",
+        "g.compute.regenie2_binary.score",
+        "g.compute.regenie2_binary.state",
+        "g.compute.regenie2_binary.firth.batch",
+    )
+    previous_modules = {module_name: sys.modules.pop(module_name, None) for module_name in binary_runtime_module_names}
 
-    with patch("g.execution_plan.importlib.import_module", side_effect=AssertionError("unexpected binary import")):
+    try:
         kernel_config = execution_plan.build_kernel_config(regenie_config)
+        imported_modules = [module_name for module_name in binary_runtime_module_names if module_name in sys.modules]
+    finally:
+        for module_name, previous_module in previous_modules.items():
+            if previous_module is not None:
+                sys.modules[module_name] = previous_module
 
     assert kernel_config.binary_kernel_config is None
+    assert imported_modules == []
 
 
 def test_dispatch_engine_pipeline_forwards_binary_kernel_config() -> None:

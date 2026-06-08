@@ -793,7 +793,7 @@ coverage-python:
 
 # Run Rust line coverage gate
 coverage-rust:
-    {{ server_env }} && cargo llvm-cov --workspace --all-targets --fail-under-lines 90
+    {{ server_env }} && cargo llvm-cov --workspace --all-targets --ignore-filename-regex '(^|/)(benches|tests)/' --fail-under-lines 90
 
 # Run all coverage gates
 coverage: coverage-python coverage-rust

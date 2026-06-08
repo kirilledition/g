@@ -8,15 +8,13 @@ import time
 import typing
 from dataclasses import dataclass
 
-from g import execution_plan, jax_runtime, types
-from g.engine import run_events, shutdown
+from g import _core, execution_plan, jax_runtime, types
+from g.engine import run_events, shutdown, telemetry, timing
 from g.interface import config
 from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
-
-    from g.engine import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -58,23 +56,15 @@ CONFIGURED_LOGGING_RUNTIME_POLICY: LoggingRuntimePolicy | None = None
 CONFIGURED_RAYON_THREAD_COUNT: int | None = None
 
 
-def load_regenie2_pipeline_module() -> typing.Any:
-    """Load the JAX-heavy REGENIE pipeline module lazily."""
+# These lazy boundaries intentionally keep JAX and JAX-decorated pipeline modules out
+# of API/CLI startup until the run's process-global runtime policy is applied.
+def load_regenie2_pipeline_module_after_jax_runtime_setup() -> typing.Any:
+    """Load the JAX-heavy REGENIE pipeline after runtime policy is configured."""
     return importlib.import_module("g.engine.regenie2_pipeline")
 
 
-def load_timing_module() -> typing.Any:
-    """Load stage-timing helpers lazily."""
-    return importlib.import_module("g.engine.timing")
-
-
-def load_telemetry_module() -> typing.Any:
-    """Load telemetry helpers lazily."""
-    return importlib.import_module("g.engine.telemetry")
-
-
-def load_jax_setup_module() -> typing.Any:
-    """Load JAX setup lazily after runtime environment is configured."""
+def load_jax_setup_module_at_runtime_boundary() -> typing.Any:
+    """Load JAX setup only from explicit JAX runtime configuration paths."""
     return importlib.import_module("g.jax_setup")
 
 
@@ -117,7 +107,7 @@ def configure_runtime_before_jax_import(
     def record_diagnostic_event(diagnostic_event: jax_runtime.JaxRuntimeDiagnosticEvent) -> None:
         record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session=telemetry_session)
 
-    setup_report = load_jax_setup_module().configure_jax_runtime_before_backend_init(
+    setup_report = load_jax_setup_module_at_runtime_boundary().configure_jax_runtime_before_backend_init(
         requested_policy,
         diagnostic_sink=record_diagnostic_event,
     )
@@ -131,21 +121,20 @@ def configure_jax_runtime(compute_config: config.GComputeConfig) -> jax_runtime.
 
 
 def build_stage_timing_recorder(stage_timing_path: Path | None, *, force: bool = False) -> typing.Any:
-    """Build a stage timing recorder lazily."""
-    timing_module = load_timing_module()
+    """Build a stage timing recorder."""
     if force:
-        return timing_module.build_stage_timing_recorder(stage_timing_path, force=True)
-    return timing_module.build_stage_timing_recorder(stage_timing_path)
+        return timing.build_stage_timing_recorder(stage_timing_path, force=True)
+    return timing.build_stage_timing_recorder(stage_timing_path)
 
 
 def record_stage_duration(stage_timing_recorder: typing.Any, stage_name: str, start_time: float) -> None:
-    """Record one stage duration lazily."""
-    load_timing_module().record_stage_duration(stage_timing_recorder, stage_name, start_time)
+    """Record one stage duration."""
+    timing.record_stage_duration(stage_timing_recorder, stage_name, start_time)
 
 
 def write_stage_timing_snapshot(stage_timing_recorder: typing.Any, stage_timing_path: Path | None) -> None:
-    """Write a stage timing snapshot lazily."""
-    load_timing_module().write_stage_timing_snapshot(stage_timing_recorder, stage_timing_path)
+    """Write a stage timing snapshot."""
+    timing.write_stage_timing_snapshot(stage_timing_recorder, stage_timing_path)
 
 
 def write_profile_summary(
@@ -153,33 +142,43 @@ def write_profile_summary(
     profile_summary_path: Path | None,
     run_id: str | None,
 ) -> None:
-    """Write an aggregate profile summary lazily."""
-    load_timing_module().write_profile_summary(stage_timing_recorder, profile_summary_path, run_id=run_id)
+    """Write an aggregate profile summary."""
+    timing.write_profile_summary(stage_timing_recorder, profile_summary_path, run_id=run_id)
 
 
 def run_regenie2_linear_bgen_pipeline(**kwargs: typing.Any) -> Path | None:
-    """Run the linear native pipeline lazily."""
-    return typing.cast("Path | None", load_regenie2_pipeline_module().run_regenie2_linear_bgen_pipeline(**kwargs))
+    """Run the linear native pipeline after JAX runtime setup."""
+    return typing.cast(
+        "Path | None",
+        load_regenie2_pipeline_module_after_jax_runtime_setup().run_regenie2_linear_bgen_pipeline(**kwargs),
+    )
 
 
 def run_regenie2_binary_bgen_pipeline(**kwargs: typing.Any) -> Path | None:
-    """Run the binary native pipeline lazily."""
-    return typing.cast("Path | None", load_regenie2_pipeline_module().run_regenie2_binary_bgen_pipeline(**kwargs))
+    """Run the binary native pipeline after JAX runtime setup."""
+    return typing.cast(
+        "Path | None",
+        load_regenie2_pipeline_module_after_jax_runtime_setup().run_regenie2_binary_bgen_pipeline(**kwargs),
+    )
 
 
 def run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs: typing.Any) -> tuple[Path | None, ...]:
-    """Run the multi-phenotype linear native pipeline lazily."""
+    """Run the multi-phenotype linear native pipeline after JAX runtime setup."""
     return typing.cast(
         "tuple[Path | None, ...]",
-        load_regenie2_pipeline_module().run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs),
+        load_regenie2_pipeline_module_after_jax_runtime_setup().run_regenie2_multi_phenotype_linear_bgen_pipeline(
+            **kwargs
+        ),
     )
 
 
 def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> tuple[Path | None, ...]:
-    """Run the multi-phenotype binary native pipeline lazily."""
+    """Run the multi-phenotype binary native pipeline after JAX runtime setup."""
     return typing.cast(
         "tuple[Path | None, ...]",
-        load_regenie2_pipeline_module().run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs),
+        load_regenie2_pipeline_module_after_jax_runtime_setup().run_regenie2_multi_phenotype_binary_bgen_pipeline(
+            **kwargs
+        ),
     )
 
 
@@ -214,11 +213,10 @@ def effective_rayon_thread_count(requested_thread_count: int | None) -> int | No
 
 def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
     """Apply native runtime knobs before engine execution."""
-    core_module = importlib.import_module("g._core")
     logger.debug("Configuring native runtime knobs.")
-    core_module.configure_bgen_decode_tile_variant_count(compute_config.bgen_decode_tile_variant_count)
+    _core.configure_bgen_decode_tile_variant_count(compute_config.bgen_decode_tile_variant_count)
     if trait_config.threads is not None:
-        configure_rayon_thread_pool(core_module, trait_config.threads)
+        configure_rayon_thread_pool(_core, trait_config.threads)
 
 
 def initialize_logging(
@@ -233,7 +231,6 @@ def initialize_logging(
     trace_event_cap = (
         diagnostics_config.trace_event_cap if diagnostics_config.telemetry == types.TelemetryMode.TRACE else None
     )
-    core_module = importlib.import_module("g._core")
     runtime_policy = LoggingRuntimePolicy(
         log_filter=diagnostics_config.log_filter,
         log_file=log_file,
@@ -246,7 +243,7 @@ def initialize_logging(
         trace_filter=diagnostics_config.trace_filter,
         trace_event_cap=trace_event_cap,
     )
-    initialized_logging = core_module.initialize_logging(
+    initialized_logging = _core.initialize_logging(
         log_filter=diagnostics_config.log_filter,
         log_file=None if log_file is None else str(log_file),
         log_stderr=diagnostics_config.log_stderr,
@@ -271,8 +268,7 @@ def initialize_logging(
 def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
     """Run the shared REGENIE-compatible config path."""
     config.validate_config(regenie_config)
-    telemetry_module = load_telemetry_module()
-    telemetry_session = telemetry_module.build_telemetry_session(regenie_config)
+    telemetry_session = telemetry.build_telemetry_session(regenie_config)
     initialize_logging(regenie_config.g_diagnostics, telemetry_session.paths)
     association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)
     phenotype_count = len(regenie_config.input.pheno_columns)
@@ -281,7 +277,7 @@ def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
         association_mode=association_mode.value,
         trait_type=regenie_config.trait.trait_type.value,
         phenotype_count=phenotype_count,
-        output_run_root=str(telemetry_module.resolve_output_run_root(regenie_config)),
+        output_run_root=str(telemetry.resolve_output_run_root(regenie_config)),
     )
     logger.info("Starting REGENIE run.")
     configure_runtime(regenie_config.g_compute, regenie_config.trait)
@@ -309,11 +305,15 @@ def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
             phenotype_count=phenotype_count,
         )
         completed_event = run_events.build_run_completed_event(artifacts)
-        telemetry_session.log_event("run_completed", **run_events.run_completed_telemetry_fields(completed_event))
+        telemetry_session.log_event(
+            "run_completed",
+            level="info",
+            **run_events.run_completed_telemetry_fields(completed_event),
+        )
         logger.info("Finished REGENIE run.")
         return artifacts
     finally:
-        telemetry_module.close_telemetry_session(telemetry_session)
+        telemetry.close_telemetry_session(telemetry_session)
 
 
 def run_validated_regenie_config(
