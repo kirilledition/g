@@ -357,12 +357,16 @@ The full run writes:
 
 - `tooling.log`: phase-level progress for long-running jobs.
 - `preflight.json`: git, hardware, JAX, Rust, CUDA, REGENIE, and input metadata.
-- `summary.json`: structured run results, comparisons, stage totals, and
-  profiler metadata.
-- `summary.md`: human-readable bottleneck report.
+- `summary.json`: structured run results, comparisons, JAX cache diagnostics,
+  stage totals, and profiler metadata.
+- `summary.md`: human-readable bottleneck report, including a JAX compile/cache
+  table with cold-versus-warm subprocess timing, persistent-cache path and use,
+  cache file/byte deltas, and parsed compile/cache hit/miss log counts.
 - `artifact_manifest.json`: artifact list, profiler availability, per-profiler
   artifact and application output paths, and skipped profiler reasons.
 - `logs/*.stdout.log` and `logs/*.stderr.log`: subprocess logs.
+  `g` subprocess stderr logs enable documented JAX persistent-cache DEBUG
+  logging and compile logging for cache-hit and cache-miss diagnostics.
 - `bgen_sweep/bgen_sweep.json`: native BGEN reader pre-sweep.
 - `tuning_*.json`: candidate tuning grids and finalists.
 - `headline_runs/`: winning `g` outputs, plus original REGENIE outputs when

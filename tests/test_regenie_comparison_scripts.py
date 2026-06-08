@@ -433,6 +433,105 @@ def test_deep_profile_collects_regenie_and_g_stage_totals(tmp_path: Path) -> Non
     assert stage_totals["headline_regenie_quantitative:bgen_decode_impute_filter"] == 3.0
 
 
+def test_deep_profile_summarizes_jax_cache_and_compile_diagnostics(tmp_path: Path) -> None:
+    cache_directory = tmp_path / "jax_cache"
+    cache_directory.mkdir()
+    before_snapshot = deep_profile.collect_jax_cache_snapshot(cache_directory)
+    (cache_directory / "entry").write_bytes(b"cache")
+    after_snapshot = deep_profile.collect_jax_cache_snapshot(cache_directory)
+    stderr_path = tmp_path / "jax.stderr.log"
+    stderr_path.write_text(
+        "\n".join(
+            [
+                "Finished tracing + transforming score_kernel for pjit in 0.001 sec",
+                "Compiling score_kernel with global shapes and types",
+                "TRACING CACHE MISS at /tmp/model.py:10 (score_kernel):",
+                "Persistent compilation cache miss for score_kernel because no entry was found",
+                "Persistent compilation cache hit for score_kernel",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    diagnostics = deep_profile.build_jax_cache_diagnostics(
+        cache_directory=cache_directory,
+        child_reported_cache_directory=str(cache_directory),
+        persistent_cache_used=True,
+        before_snapshot=before_snapshot,
+        after_snapshot=after_snapshot,
+        stderr_log_path=str(stderr_path),
+    )
+    cold_trial = deep_profile.TrialResult(
+        name="headline_g_binary_gpu_warmup00",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        status="success",
+        wall_time_seconds=10.0,
+        output_row_count=10,
+        stdout_log_path="stdout0",
+        stderr_log_path=str(stderr_path),
+        command_arguments=[],
+        environment_overrides={},
+        jax_cache_diagnostics=diagnostics,
+    )
+    warm_trial = dataclasses.replace(
+        cold_trial,
+        name="headline_g_binary_gpu_trial00",
+        wall_time_seconds=5.0,
+        jax_cache_diagnostics=dataclasses.replace(
+            diagnostics,
+            file_count_delta=0,
+            size_bytes_delta=0,
+            compile_log_summary=deep_profile.JaxCompileLogSummary(
+                compilation_event_count=1,
+                persistent_cache_event_count=1,
+                persistent_cache_hit_count=1,
+                persistent_cache_miss_count=0,
+                tracing_cache_miss_count=0,
+                cache_miss_explanation_count=0,
+                sample_log_lines=[],
+            ),
+        ),
+    )
+
+    aggregate = deep_profile.aggregate_trial_results(
+        name="headline_g_binary_gpu",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        warmup_count=1,
+        trial_results=[warm_trial],
+        warmup_trials=[cold_trial],
+    )
+    summary = typing.cast("deep_profile.JaxColdWarmDiagnostics", aggregate.jax_cold_warm_summary)
+    collected_diagnostics = deep_profile.collect_jax_cache_diagnostics([aggregate])
+    markdown = deep_profile.build_summary_markdown(
+        aggregate_results=[aggregate],
+        comparisons={},
+        stage_totals={},
+        stage_comparison_rows=[],
+        algorithmic_findings=[],
+    )
+
+    assert diagnostics.file_count_delta == 1
+    assert diagnostics.size_bytes_delta == 5
+    assert diagnostics.compile_log_summary.compilation_event_count == 2
+    assert diagnostics.compile_log_summary.persistent_cache_hit_count == 1
+    assert diagnostics.compile_log_summary.persistent_cache_miss_count == 1
+    assert diagnostics.compile_log_summary.tracing_cache_miss_count == 1
+    assert summary.cold_trial_name == "headline_g_binary_gpu_warmup00"
+    assert summary.warm_trial_count == 1
+    assert summary.cold_to_warm_speedup_ratio == 2.0
+    assert summary.cold_cache_file_count_delta == 1
+    assert summary.warm_cache_file_count_delta == 0
+    assert summary.cold_tracing_cache_miss_count == 1
+    assert summary.warm_tracing_cache_miss_count == 0
+    assert collected_diagnostics["headline_g_binary_gpu"]["persistent_cache_used"] is True
+    assert "JAX Compile And Cache Diagnostics" in markdown
+    assert "headline_g_binary_gpu" in markdown
+
+
 def test_deep_profile_builds_stage_comparison_rows(tmp_path: Path) -> None:
     g_stage_path = tmp_path / "g.stage_timings.json"
     regenie_profile_path = tmp_path / "regenie.profile.json"
@@ -1474,6 +1573,8 @@ def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pyte
         cache_directory=tmp_path / "jax_cache",
         stage_timing_path=tmp_path / "stages.json",
     )
+    assert environment["JAX_LOGGING_LEVEL"] == "DEBUG"
+    assert environment["JAX_DEBUG_LOG_MODULES"] == "jax._src.compiler,jax._src.lru_cache"
     assert "JAX_COMPILATION_CACHE_DIR" not in environment
     assert "G_REGENIE2_STAGE_TIMINGS_JSON" not in environment
     assert "G_BGEN_DECODE_TILE_VARIANT_COUNT" not in environment
@@ -1508,6 +1609,9 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
     assert '"bsize": 4096' in command_text
     assert '"g-variant-limit": 1000' in command_text
     assert '"firth": True' in command_text
+    assert '"g-jax-persistent-cache": True' in command_text
+    assert "jax_explain_cache_misses" in command_text
+    assert "jax_log_compiles" in command_text
     assert "count_artifact_rows" in command_text
     assert "parts" in command_text
     assert "jax_probe_device_platform" in command_text
