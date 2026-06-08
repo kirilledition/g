@@ -31,6 +31,9 @@ User-facing documentation lives under `docs/public/` and is built with Zensical.
 https://kirilledition.github.io/g/
 ```
 
+The public guide includes an algorithm reference at `docs/public/algorithm.md`
+covering the Step 2 mathematics, parameter effects, and output interpretation.
+
 Local documentation commands:
 
 ```bash

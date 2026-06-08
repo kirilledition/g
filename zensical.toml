@@ -17,6 +17,7 @@ nav = [
     "public/quickstart.md",
   ] },
   { "User Guide" = [
+    "public/algorithm.md",
     "public/cli.md",
     "public/configuration.md",
     "public/input-output.md",

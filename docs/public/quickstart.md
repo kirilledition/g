@@ -70,6 +70,9 @@ uv run g regenie \
 
 Approximate Firth is implemented but numerically sensitive. Use equivalent statistical modes when comparing results against upstream REGENIE.
 
+See [Algorithm](algorithm.md) for the quantitative, binary score-test, and
+approximate-Firth formulas behind these commands.
+
 ## REGENIE Text Output
 
 Use `--g-output-format regenie` to write a REGENIE Step 2-compatible
