@@ -28,7 +28,10 @@ src/g/
     options.py                   option registry for CLI/TOML/Python names
     config.py                    typed config, TOML load/dump, validation
   execution_plan.py              immutable normalized run plans
-  runner.py                      runtime setup, telemetry, dispatch, artifacts
+  runner.py                      runtime orchestration, telemetry, dispatch, artifacts
+  jax_runtime.py                 JAX runtime policy, reports, diagnostics
+  jax_setup.py                   order-sensitive JAX config mutation and GPU validation
+  runtime_paths.py               node-local and cluster path policy
   engine/
     regenie2_pipeline.py         native-driven BGEN pipeline wrappers
     callbacks.py                 JAX callback workers and result materialization

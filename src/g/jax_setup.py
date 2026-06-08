@@ -2,40 +2,22 @@
 
 from __future__ import annotations
 
-import getpass
+import dataclasses
 import typing
 from pathlib import Path
 
 import jax
 
-from g import runtime_policy, types
+from g import jax_runtime, runtime_paths, runtime_policy, types
 
-DEFAULT_NODE_LOCAL_CACHE_ROOT = Path("/tmp")
 DEFAULT_CACHE_DIRECTORY_NAME = "g-jax-cache"
-XLA_AUTOTUNE_CACHE_OPTION = "xla_gpu_per_fusion_autotune_cache_dir"
-DISABLE_XLA_CACHE_OPTION = "none"
 
 
 def default_node_local_jax_compilation_cache_directory() -> Path:
     """Build the default node-local JAX compilation cache directory."""
-    user_name = getpass.getuser() or "unknown"
-    return DEFAULT_NODE_LOCAL_CACHE_ROOT / user_name / DEFAULT_CACHE_DIRECTORY_NAME
+    return runtime_paths.default_node_local_cache_directory(DEFAULT_CACHE_DIRECTORY_NAME)
 
 
-def path_is_beegfs(path: Path) -> bool:
-    """Return whether a path is on the BeeGFS mount used by this project."""
-    expanded_path = path.expanduser()
-    return str(expanded_path).startswith("/mnt/beegfs/")
-
-
-def path_is_node_local(path: Path) -> bool:
-    """Return whether a cache path is safe for node-local XLA auxiliary caches."""
-    expanded_path = path.expanduser()
-    return str(expanded_path).startswith("/tmp/") or str(expanded_path) == "/tmp"
-
-
-JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
-CUDA_PLATFORM_NAME = "cuda"
 GPU_DEVICE_PLATFORM_NAME = "gpu"
 NVIDIA_CONTROL_DEVICE_PATH = Path("/dev/nvidiactl")
 NVIDIA_UVM_DEVICE_PATH = Path("/dev/nvidia-uvm")
@@ -49,16 +31,62 @@ def resolve_jax_compilation_cache_directory(cache_directory: Path | None = None)
     return default_node_local_jax_compilation_cache_directory()
 
 
-def resolve_xla_cache_option(cache_directory: Path, *, enable_xla_autotune_cache: bool = False) -> str:
-    """Resolve whether XLA auxiliary persistent caches should be enabled."""
-    if enable_xla_autotune_cache and path_is_node_local(cache_directory) and not path_is_beegfs(cache_directory):
-        return XLA_AUTOTUNE_CACHE_OPTION
-    return DISABLE_XLA_CACHE_OPTION
+def resolve_jax_platform(device: types.Device) -> jax_runtime.JaxPlatform:
+    """Resolve the JAX backend platform for a requested device.
+
+    Args:
+        device: Requested execution device.
+
+    Returns:
+        JAX platform selector.
+
+    """
+    if device == types.Device.GPU:
+        return jax_runtime.JaxPlatform.CUDA
+    return jax_runtime.JaxPlatform.CPU
 
 
-def transfer_guard_diagnostics_enabled(*, enable_transfer_guard: bool = False) -> bool:
-    """Return whether transfer guard diagnostics should disallow implicit transfers."""
-    return enable_transfer_guard
+def resolve_xla_auxiliary_cache(
+    cache_directory: Path,
+    *,
+    persistent_cache: bool,
+    enable_xla_autotune_cache: bool,
+) -> jax_runtime.XlaAuxiliaryCacheResolution:
+    """Resolve whether XLA auxiliary persistent caches should be enabled.
+
+    Args:
+        cache_directory: Resolved persistent compilation cache directory.
+        persistent_cache: Whether the JAX persistent compilation cache is enabled.
+        enable_xla_autotune_cache: Whether the user requested XLA autotune caches.
+
+    Returns:
+        XLA auxiliary cache mode and reason.
+
+    """
+    if not persistent_cache:
+        return jax_runtime.XlaAuxiliaryCacheResolution(
+            mode=jax_runtime.XlaAuxiliaryCacheMode.DISABLED,
+            reason="persistent compilation cache is disabled",
+        )
+    if not enable_xla_autotune_cache:
+        return jax_runtime.XlaAuxiliaryCacheResolution(
+            mode=jax_runtime.XlaAuxiliaryCacheMode.DISABLED,
+            reason="XLA auxiliary cache was not requested",
+        )
+    if runtime_paths.path_is_beegfs(cache_directory):
+        return jax_runtime.XlaAuxiliaryCacheResolution(
+            mode=jax_runtime.XlaAuxiliaryCacheMode.DISABLED,
+            reason="cache directory is on BeeGFS",
+        )
+    if not runtime_paths.path_is_node_local(cache_directory):
+        return jax_runtime.XlaAuxiliaryCacheResolution(
+            mode=jax_runtime.XlaAuxiliaryCacheMode.DISABLED,
+            reason="cache directory is not node-local",
+        )
+    return jax_runtime.XlaAuxiliaryCacheResolution(
+        mode=jax_runtime.XlaAuxiliaryCacheMode.PER_FUSION_AUTOTUNE,
+        reason="cache directory is node-local",
+    )
 
 
 def nvidia_driver_is_visible() -> bool:
@@ -68,81 +96,164 @@ def nvidia_driver_is_visible() -> bool:
     )
 
 
-def configure_jax_platform(device: types.Device) -> None:
-    """Configure the JAX platform without initializing a backend."""
-    if device == types.Device.GPU:
-        jax.config.update("jax_platforms", CUDA_PLATFORM_NAME)
-    else:
-        jax.config.update("jax_platforms", "cpu")
+def resolve_jax_runtime_setup(policy: jax_runtime.JaxRuntimePolicy) -> jax_runtime.JaxRuntimeSetupReport:
+    """Resolve JAX setup decisions without mutating process-global state.
+
+    Args:
+        policy: Requested runtime policy.
+
+    Returns:
+        Setup report with pure resolution decisions.
+
+    """
+    resolved_cache_directory = resolve_jax_compilation_cache_directory(policy.cache_directory)
+    gpu_validation = jax_runtime.GpuValidationResult(
+        status=jax_runtime.GpuValidationStatus.SKIPPED,
+        message="CPU runtime requested; GPU validation skipped.",
+    )
+    if policy.device == types.Device.GPU:
+        gpu_validation = jax_runtime.GpuValidationResult(status=jax_runtime.GpuValidationStatus.PENDING)
+    matmul_precision = types.JaxMatmulPrecision.FLOAT32
+    if policy.matmul_precision is not None:
+        matmul_precision = policy.matmul_precision
+    return jax_runtime.JaxRuntimeSetupReport(
+        requested_device=policy.device,
+        platform=resolve_jax_platform(policy.device),
+        cache_directory=resolved_cache_directory,
+        matmul_precision=matmul_precision,
+        persistent_cache_enabled=policy.persistent_cache,
+        persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
+        xla_auxiliary_cache=resolve_xla_auxiliary_cache(
+            resolved_cache_directory,
+            persistent_cache=policy.persistent_cache,
+            enable_xla_autotune_cache=policy.xla_autotune_cache,
+        ),
+        transfer_guard_enabled=policy.transfer_guard,
+        gpu_validation=gpu_validation,
+    )
+
+
+def build_jax_config_update_operations(
+    setup_report: jax_runtime.JaxRuntimeSetupReport,
+) -> tuple[jax_runtime.JaxConfigUpdateOperation, ...]:
+    """Build ordered JAX config mutations from a setup report.
+
+    Args:
+        setup_report: Resolved setup decisions.
+
+    Returns:
+        Ordered JAX config update operations.
+
+    """
+    operations = [
+        jax_runtime.JaxConfigUpdateOperation("jax_platforms", setup_report.platform.value),
+        jax_runtime.JaxConfigUpdateOperation("jax_enable_x64", runtime_policy.JAX_ENABLE_X64),
+        jax_runtime.JaxConfigUpdateOperation("jax_default_matmul_precision", setup_report.matmul_precision.value),
+    ]
+    if setup_report.persistent_cache_enabled:
+        operations.extend(
+            [
+                jax_runtime.JaxConfigUpdateOperation(
+                    "jax_compilation_cache_dir",
+                    str(setup_report.cache_directory),
+                ),
+                jax_runtime.JaxConfigUpdateOperation(
+                    "jax_persistent_cache_min_entry_size_bytes",
+                    setup_report.persistent_cache_min_entry_size_bytes,
+                ),
+                jax_runtime.JaxConfigUpdateOperation(
+                    "jax_persistent_cache_min_compile_time_secs",
+                    setup_report.persistent_cache_min_compile_time_seconds,
+                ),
+                jax_runtime.JaxConfigUpdateOperation(
+                    "jax_persistent_cache_enable_xla_caches",
+                    setup_report.xla_auxiliary_cache.mode.value,
+                ),
+            ]
+        )
+    if setup_report.transfer_guard_enabled:
+        operations.append(jax_runtime.JaxConfigUpdateOperation("jax_transfer_guard", "disallow"))
+    return tuple(operations)
+
+
+def apply_jax_config_update_operations(
+    operations: tuple[jax_runtime.JaxConfigUpdateOperation, ...],
+) -> None:
+    """Apply ordered JAX config update operations.
+
+    Args:
+        operations: Config update operations to apply.
+
+    """
+    for operation in operations:
+        jax.config.update(operation.setting_name, operation.value)
 
 
 def configure_jax_runtime(
+    policy: jax_runtime.JaxRuntimePolicy,
     *,
-    cache_directory: Path | None = None,
-    matmul_precision: types.JaxMatmulPrecision | None = None,
-    persistent_cache: bool,
-    persistent_cache_min_entry_size_bytes: int,
-    persistent_cache_min_compile_time_seconds: int,
-    xla_autotune_cache: bool = False,
-    transfer_guard: bool = False,
-) -> None:
-    """Configure JAX runtime knobs before engine modules are imported."""
-    jax.config.update("jax_enable_x64", runtime_policy.JAX_ENABLE_X64)
-    precision_value = JAX_MATMUL_PRECISION_WHEN_UNSET if matmul_precision is None else matmul_precision.value
-    jax.config.update("jax_default_matmul_precision", precision_value)
-    if persistent_cache:
-        resolved_cache_directory = resolve_jax_compilation_cache_directory(cache_directory)
-        resolved_cache_directory.mkdir(parents=True, exist_ok=True)
-        jax.config.update("jax_compilation_cache_dir", str(resolved_cache_directory))
-        jax.config.update("jax_persistent_cache_min_entry_size_bytes", persistent_cache_min_entry_size_bytes)
-        jax.config.update("jax_persistent_cache_min_compile_time_secs", persistent_cache_min_compile_time_seconds)
-        jax.config.update(
-            "jax_persistent_cache_enable_xla_caches",
-            resolve_xla_cache_option(
-                resolved_cache_directory,
-                enable_xla_autotune_cache=xla_autotune_cache,
-            ),
-        )
-    if transfer_guard_diagnostics_enabled(enable_transfer_guard=transfer_guard):
-        jax.config.update("jax_transfer_guard", "disallow")
+    diagnostic_sink: typing.Callable[[jax_runtime.JaxRuntimeDiagnosticEvent], None] | None = None,
+) -> jax_runtime.JaxRuntimeSetupReport:
+    """Configure JAX runtime knobs before engine modules are imported.
+
+    Args:
+        policy: Requested runtime policy.
+        diagnostic_sink: Optional structured diagnostic event sink.
+
+    Returns:
+        Setup report after validation.
+
+    """
+    return configure_jax_runtime_before_backend_init(policy, diagnostic_sink=diagnostic_sink)
 
 
 def configure_jax_runtime_before_backend_init(
+    policy: jax_runtime.JaxRuntimePolicy,
     *,
-    device: types.Device,
-    cache_directory: Path | None = None,
-    matmul_precision: types.JaxMatmulPrecision | None = None,
-    persistent_cache: bool,
-    persistent_cache_min_entry_size_bytes: int,
-    persistent_cache_min_compile_time_seconds: int,
-    xla_autotune_cache: bool = False,
-    transfer_guard: bool = False,
-) -> None:
-    """Configure JAX platform and runtime knobs before backend initialization."""
-    configure_jax_platform(device)
-    configure_jax_runtime(
-        cache_directory=cache_directory,
-        matmul_precision=matmul_precision,
-        persistent_cache=persistent_cache,
-        persistent_cache_min_entry_size_bytes=persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds=persistent_cache_min_compile_time_seconds,
-        xla_autotune_cache=xla_autotune_cache,
-        transfer_guard=transfer_guard,
-    )
-    if device == types.Device.GPU:
-        require_gpu_device()
-
-
-def configure_jax_device(device: types.Device) -> None:
-    """Configure the JAX execution device.
+    diagnostic_sink: typing.Callable[[jax_runtime.JaxRuntimeDiagnosticEvent], None] | None = None,
+) -> jax_runtime.JaxRuntimeSetupReport:
+    """Configure JAX platform and runtime knobs before backend initialization.
 
     Args:
-        device: Device enum specifying CPU or GPU execution.
+        policy: Requested runtime policy.
+        diagnostic_sink: Optional structured diagnostic event sink.
+
+    Returns:
+        Setup report after validation.
+
+    Raises:
+        RuntimeError: If GPU execution was requested but validation fails.
 
     """
-    configure_jax_platform(device)
-    if device == types.Device.GPU:
+    setup_report = resolve_jax_runtime_setup(policy)
+    if setup_report.persistent_cache_enabled:
+        setup_report.cache_directory.mkdir(parents=True, exist_ok=True)
+    apply_jax_config_update_operations(build_jax_config_update_operations(setup_report))
+    if policy.device != types.Device.GPU:
+        jax_runtime.emit_jax_runtime_setup_diagnostics(setup_report, diagnostic_sink)
+        return setup_report
+    try:
         require_gpu_device()
+    except RuntimeError as error:
+        failed_report = dataclasses.replace(
+            setup_report,
+            gpu_validation=jax_runtime.GpuValidationResult(
+                status=jax_runtime.GpuValidationStatus.FAILED,
+                message=str(error),
+            ),
+        )
+        jax_runtime.emit_jax_runtime_setup_diagnostics(failed_report, diagnostic_sink)
+        raise
+    validated_report = dataclasses.replace(
+        setup_report,
+        gpu_validation=jax_runtime.GpuValidationResult(
+            status=jax_runtime.GpuValidationStatus.SUCCEEDED,
+            message="JAX reported at least one GPU device.",
+        ),
+    )
+    jax_runtime.emit_jax_runtime_setup_diagnostics(validated_report, diagnostic_sink)
+    return validated_report
 
 
 def require_gpu_device() -> None:

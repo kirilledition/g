@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import textwrap
+import typing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,7 +15,7 @@ import g
 import g.cli as cli_module
 import g.engine.shutdown as shutdown_module
 import g.engine.telemetry as telemetry_module
-from g import api, execution_plan, runner, types
+from g import api, execution_plan, jax_runtime, runner, types
 from g.interface import config
 from g.io import output
 from g.io.output import OutputRunPaths, PreparedOutputRun
@@ -764,36 +765,103 @@ def test_effective_rayon_thread_count_returns_requested_thread_count_without_con
         assert runner.effective_rayon_thread_count(8) == 8
 
 
-def test_runtime_bootstrap_sets_jax_platform_before_setup_import() -> None:
+def test_runtime_bootstrap_delegates_policy_to_jax_setup_once() -> None:
     call_order: list[str] = []
 
-    class FakeJaxConfig:
-        def update(self, setting_name: str, value: object) -> None:
-            call_order.append(f"{setting_name}:{value}")
-
-    class FakeJaxModule:
-        config = FakeJaxConfig()
-
     class FakeJaxSetupModule:
-        def configure_jax_runtime_before_backend_init(self, **kwargs: object) -> None:
-            del kwargs
-            call_order.append("setup")
+        def configure_jax_runtime_before_backend_init(
+            self,
+            policy: jax_runtime.JaxRuntimePolicy,
+            *,
+            diagnostic_sink: typing.Callable[[jax_runtime.JaxRuntimeDiagnosticEvent], None],
+        ) -> jax_runtime.JaxRuntimeSetupReport:
+            del diagnostic_sink
+            call_order.append(f"setup:{policy.device.value}")
+            return jax_runtime.JaxRuntimeSetupReport(
+                requested_device=policy.device,
+                platform=jax_runtime.JaxPlatform.CUDA,
+                cache_directory=Path("/tmp/test-jax-cache"),
+                matmul_precision=types.JaxMatmulPrecision.FLOAT32,
+                persistent_cache_enabled=policy.persistent_cache,
+                persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
+                persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
+                xla_auxiliary_cache=jax_runtime.XlaAuxiliaryCacheResolution(
+                    mode=jax_runtime.XlaAuxiliaryCacheMode.DISABLED,
+                    reason="not requested",
+                ),
+                transfer_guard_enabled=policy.transfer_guard,
+                gpu_validation=jax_runtime.GpuValidationResult(status=jax_runtime.GpuValidationStatus.SUCCEEDED),
+            )
 
     def import_module(module_name: str) -> object:
         call_order.append(f"import:{module_name}")
-        if module_name == "jax":
-            return FakeJaxModule()
         if module_name == "g.jax_setup":
             return FakeJaxSetupModule()
         raise AssertionError(f"Unexpected import: {module_name}")
 
     with (
-        patch("g.runner.CONFIGURED_JAX_RUNTIME_POLICY", None),
+        patch("g.jax_runtime.CONFIGURED_JAX_RUNTIME_POLICY", None),
         patch("g.runner.importlib.import_module", side_effect=import_module),
     ):
         runner.configure_runtime_before_jax_import(build_compute_config(device=types.Device.GPU))
 
-    assert call_order == ["import:jax", "jax_platforms:cuda", "import:g.jax_setup", "setup"]
+    assert call_order == ["import:g.jax_setup", "setup:gpu"]
+
+
+def test_runtime_bootstrap_records_jax_runtime_diagnostics() -> None:
+    recorded_events: list[tuple[str, str, dict[str, object]]] = []
+
+    class RecordingTelemetrySession:
+        def log_event(self, event_name: str, level: str = "info", **fields: object) -> None:
+            recorded_events.append((event_name, level, fields))
+
+    class FakeJaxSetupModule:
+        def configure_jax_runtime_before_backend_init(
+            self,
+            policy: jax_runtime.JaxRuntimePolicy,
+            *,
+            diagnostic_sink: typing.Callable[[jax_runtime.JaxRuntimeDiagnosticEvent], None],
+        ) -> jax_runtime.JaxRuntimeSetupReport:
+            setup_report = jax_runtime.JaxRuntimeSetupReport(
+                requested_device=policy.device,
+                platform=jax_runtime.JaxPlatform.CPU,
+                cache_directory=Path("/tmp/test-jax-cache"),
+                matmul_precision=types.JaxMatmulPrecision.FLOAT32,
+                persistent_cache_enabled=policy.persistent_cache,
+                persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
+                persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
+                xla_auxiliary_cache=jax_runtime.XlaAuxiliaryCacheResolution(
+                    mode=jax_runtime.XlaAuxiliaryCacheMode.DISABLED,
+                    reason="not requested",
+                ),
+                transfer_guard_enabled=policy.transfer_guard,
+                gpu_validation=jax_runtime.GpuValidationResult(status=jax_runtime.GpuValidationStatus.SKIPPED),
+            )
+            jax_runtime.emit_jax_runtime_setup_diagnostics(setup_report, diagnostic_sink)
+            return setup_report
+
+    def import_module(module_name: str) -> object:
+        if module_name == "g.jax_setup":
+            return FakeJaxSetupModule()
+        raise AssertionError(f"Unexpected import: {module_name}")
+
+    telemetry_session = typing.cast("telemetry_module.TelemetrySession", RecordingTelemetrySession())
+
+    with (
+        patch("g.jax_runtime.CONFIGURED_JAX_RUNTIME_POLICY", None),
+        patch("g.runner.importlib.import_module", side_effect=import_module),
+    ):
+        runner.configure_runtime_before_jax_import(build_compute_config(), telemetry_session=telemetry_session)
+
+    assert [recorded_event[0] for recorded_event in recorded_events] == [
+        "jax_platform_selected",
+        "jax_persistent_cache_configured",
+        "jax_xla_auxiliary_cache_configured",
+        "jax_transfer_guard_configured",
+        "jax_gpu_validation",
+    ]
+    assert recorded_events[0][2]["platform"] == "cpu"
+    assert recorded_events[-1][2]["status"] == "skipped"
 
 
 def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_path: Path) -> None:
@@ -803,16 +871,30 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
     )
     call_order: list[str] = []
 
-    class FakeJaxConfig:
-        def update(self, setting_name: str, value: object) -> None:
-            call_order.append(f"jax:{setting_name}:{value}")
-
-    class FakeJaxModule:
-        config = FakeJaxConfig()
-
     class FakeJaxSetupModule:
-        def configure_jax_runtime_before_backend_init(self, **kwargs: object) -> None:
-            call_order.append(f"setup:{kwargs['cache_directory']}")
+        def configure_jax_runtime_before_backend_init(
+            self,
+            policy: jax_runtime.JaxRuntimePolicy,
+            *,
+            diagnostic_sink: typing.Callable[[jax_runtime.JaxRuntimeDiagnosticEvent], None],
+        ) -> jax_runtime.JaxRuntimeSetupReport:
+            del diagnostic_sink
+            call_order.append(f"setup:{policy.cache_directory}")
+            return jax_runtime.JaxRuntimeSetupReport(
+                requested_device=policy.device,
+                platform=jax_runtime.JaxPlatform.CPU,
+                cache_directory=typing.cast("Path", policy.cache_directory),
+                matmul_precision=types.JaxMatmulPrecision.FLOAT32,
+                persistent_cache_enabled=policy.persistent_cache,
+                persistent_cache_min_entry_size_bytes=policy.persistent_cache_min_entry_size_bytes,
+                persistent_cache_min_compile_time_seconds=policy.persistent_cache_min_compile_time_seconds,
+                xla_auxiliary_cache=jax_runtime.XlaAuxiliaryCacheResolution(
+                    mode=jax_runtime.XlaAuxiliaryCacheMode.DISABLED,
+                    reason="not requested",
+                ),
+                transfer_guard_enabled=policy.transfer_guard,
+                gpu_validation=jax_runtime.GpuValidationResult(status=jax_runtime.GpuValidationStatus.SKIPPED),
+            )
 
     class FakeTimingModule:
         def build_stage_timing_recorder(self, stage_timing_path: Path | None) -> None:
@@ -826,8 +908,6 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
             del stage_timing_recorder, stage_timing_path
 
     def import_module(module_name: str) -> object:
-        if module_name == "jax":
-            return FakeJaxModule()
         if module_name == "g.jax_setup":
             return FakeJaxSetupModule()
         if module_name == "g.engine.timing":
@@ -863,7 +943,7 @@ def test_repeated_runs_allow_same_jax_runtime_and_reject_incompatible_cache(tmp_
         }
     )
     with (
-        patch("g.runner.CONFIGURED_JAX_RUNTIME_POLICY", None),
+        patch("g.jax_runtime.CONFIGURED_JAX_RUNTIME_POLICY", None),
         patch(
             "g.execution_plan.output.prepare_output_run",
             return_value=PreparedOutputRun(output_run_paths=run_paths, existing_manifest=None),
