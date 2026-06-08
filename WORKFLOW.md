@@ -176,7 +176,7 @@ commands.
 - `In Progress`: continue implementation from the workpad.
 - `Rework`: inspect review feedback, update the workpad, address required changes, and revalidate.
 - `In Review`: not used for normal Symphony work; wait only if a human manually moved the issue there.
-- `Merging`: serialize direct integration to `main`; refresh `origin/main`, merge it into the task branch if needed, revalidate, push the task branch, push `HEAD:main`, then move the issue to `Done`.
+- `Merging`: serialize direct integration to `main`; refresh `origin/main`, merge it into the task branch if needed, revalidate, push the task branch, push `HEAD:main`, run `just symphony-sync-main`, then move the issue to `Done`.
 - `Done`, `Closed`, `Cancelled`, `Canceled`, `Duplicate`: terminal; do not modify.
 
 ## Workpad Requirements
@@ -303,10 +303,11 @@ Non-goals:
 17. Fetch `origin/main`, merge it into the task branch if it has advanced, and resolve conflicts locally.
 18. Re-run validation after any merge or conflict resolution.
 19. Push directly to main from the validated task branch: `git push origin HEAD:main`. If this is rejected because `main` advanced, repeat fetch, merge, validation, and push. If protected-branch policy rejects direct push, record that blocker in Linear.
-20. Attach or link the pushed branch and main commit on the Linear issue; do not create a GitHub PR unless a human explicitly asks for one on that issue.
-21. Avoid `gh run watch`, long polling loops, or commands that print CI status repeatedly into the Codex transcript.
-22. Update the Linear issue description's `## Agent Learnings` section.
-23. Move the issue to `Done` after `origin/main` contains the task branch head and required validation is complete.
+20. Run `just symphony-sync-main` to fast-forward the local `main` checkout when it is safe. If it reports `skipped`, record the reason in the workpad but do not block completion when `origin/main` contains the task branch head.
+21. Attach or link the pushed branch and main commit on the Linear issue; do not create a GitHub PR unless a human explicitly asks for one on that issue.
+22. Avoid `gh run watch`, long polling loops, or commands that print CI status repeatedly into the Codex transcript.
+23. Update the Linear issue description's `## Agent Learnings` section.
+24. Move the issue to `Done` after `origin/main` contains the task branch head and required validation is complete.
 
 ## Blockers
 

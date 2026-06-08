@@ -29,13 +29,16 @@ integration into `main`.
    - `git push origin HEAD:main`
 9. If the `HEAD:main` push is rejected because `main` advanced, repeat fetch,
    merge, validation, and push.
-10. If GitHub branch protection rejects direct pushes to `main`, record the
+10. Run `just symphony-sync-main` to fast-forward the local `main` checkout when
+   it is safe. If it reports `skipped`, record the reason in the workpad but do
+   not block completion when `origin/main` contains the task branch head.
+11. If GitHub branch protection rejects direct pushes to `main`, record the
    blocker in the Linear workpad and leave the issue in `Merging` or `Blocked`.
-11. Attach or link the pushed branch and main commit on the Linear issue using
+12. Attach or link the pushed branch and main commit on the Linear issue using
    the `linear` skill.
-12. Update the workpad with the branch URL, main commit SHA, and validation
+13. Update the workpad with the branch URL, main commit SHA, and validation
    evidence.
-13. Move the Linear issue to `Done` after `origin/main` contains the task branch
+14. Move the Linear issue to `Done` after `origin/main` contains the task branch
    head.
 
 Never use `git push --force`; use `--force-with-lease` only after an intentional

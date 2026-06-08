@@ -216,6 +216,15 @@ symphony-run:
       --port "{{symphony_port}}" \
       "${runtime_workflow}"
 
+# Safely fast-forward the local main checkout after a Symphony direct merge
+symphony-sync-main *arguments:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repository_root="{{ justfile_directory() }}"
+    cd "${repository_root}"
+    . scripts/server_env.sh
+    uv run --no-sync python -m tooling.cli.symphony_sync_main --repository "${repository_root}" {{ arguments }}
+
 # Dry-run stale Symphony worktree and branch cleanup
 symphony-cleanup *arguments:
     #!/usr/bin/env bash

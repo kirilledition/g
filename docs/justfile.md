@@ -167,6 +167,15 @@ also accept the same overrides when run directly with `uv run --no-sync python
 - Output: rendered runtime workflow and a foreground Symphony daemon process.
 - Use when: running the Linear-backed unattended agent workflow for this repo.
 
+### `symphony-sync-main *arguments`
+
+- Inputs: any checkout or worktree in this repository and a reachable `origin`.
+- Output: safe local `main` synchronization report.
+- Use when: fast-forwarding the local `main` checkout after Symphony has pushed
+  a validated task branch directly to `origin/main`. The command locates the
+  main worktree automatically and skips without changing files when local `main`
+  is dirty, checked out elsewhere unexpectedly, or diverged from `origin/main`.
+
 ### `symphony-cleanup *arguments`
 
 - Inputs: git worktree metadata, `SYMPHONY_WORKTREE_ROOT`, and optional Linear

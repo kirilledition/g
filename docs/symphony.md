@@ -344,12 +344,19 @@ history and integrates directly with:
 ```bash
 git push -u origin HEAD
 git push origin HEAD:main
+just symphony-sync-main
 ```
 
 If `origin/main` has advanced, the agent fetches and merges `origin/main` into
 the task branch, resolves conflicts in the task worktree, reruns validation, and
 then retries the `HEAD:main` push. If GitHub branch protection blocks direct
 pushes to `main`, the agent records that blocker in Linear.
+
+`just symphony-sync-main` safely fast-forwards the local `main` checkout after a
+direct merge. It can be run from a Symphony issue worktree because it locates the
+worktree that has `main` checked out. It updates only when local `main` is clean
+and is an ancestor of `origin/main`; otherwise it reports `skipped` and leaves
+the checkout untouched.
 
 The workflow grants Codex write access to the Symphony worktree root and the
 main checkout's `.git` metadata so Git worktree commits and branch updates work
