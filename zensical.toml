@@ -10,13 +10,11 @@ docs_dir = "docs"
 site_dir = "site"
 nav = [
   { "Home" = "index.md" },
-  { "Public User Guide" = [
+  { "User Guide" = [
     "public/index.md",
     "public/getting-started.md",
     "public/installation.md",
     "public/quickstart.md",
-  ] },
-  { "User Guide" = [
     "public/cli.md",
     "public/configuration.md",
     "public/input-output.md",
@@ -49,9 +47,16 @@ nav = [
     "scratchpad/output-performance-results.md",
   ] },
 ]
+extra_css = ["assets/stylesheets/g-docs.css"]
+extra_javascript = ["assets/javascripts/section-scroll.js"]
+
+[project.extra]
+generator = false
 
 [project.theme]
 variant = "modern"
+logo = "assets/images/sparkles-logo.svg"
+favicon = "assets/images/sparkles-favicon.svg"
 features = [
   "navigation.sections",
   "navigation.expand",

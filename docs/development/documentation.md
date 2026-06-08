@@ -26,8 +26,10 @@ The site is configured in `zensical.toml`.
 
 - `docs_dir = "docs"` keeps all three documentation sections publishable.
 - `site_dir = "site"` keeps generated output in the ignored local build directory.
-- `nav` controls section names and ordering. Put user guidance under `public/`, development guidance under `development/`, and internal work artifacts under `scratchpad/`.
-- `[project.theme]` controls the Zensical theme. Change `variant` for the base visual treatment and update `features` for navigation, search, and content actions.
+- `nav` controls section names and ordering. Keep page order explicit because it is the source of truth for previous/next links and same-section continuous scrolling.
+- `extra_css` and `extra_javascript` load the repository docs assets used for same-section continuous scrolling.
+- `[project.extra]` contains Zensical extras, including `generator = false` to suppress the generator notice in the footer.
+- `[project.theme]` controls the Zensical theme. Change `variant` for the base visual treatment, update `features` for navigation, search, and content actions, and keep `logo` and `favicon` pointed at the sparkle assets under `docs/assets/images/`.
 - `[project.plugins.mkdocstrings.handlers.python]` points API documentation rendering at `src/` and keeps Google-style docstrings aligned with the project style guide.
 
 When moving a page between sections, update `zensical.toml`, local Markdown links, and any repository references to the old path.
