@@ -57,6 +57,8 @@ class GComputeConfig:
 
     device: types.Device
     staging_depth: int
+    result_in_flight_limit: int | None
+    dosage_buffer_limit: int | None
     variant_limit: int | None
     trusted_no_missing_diploid: bool
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
@@ -345,6 +347,8 @@ def build_runtime_config_from_toml_config(
         g_compute=GComputeConfig(
             device=types.Device(required_toml_value(g_compute_section.device, "g-device")),
             staging_depth=required_toml_value(g_compute_section.staging_depth, "g-staging-depth"),
+            result_in_flight_limit=optional_toml_value(g_compute_section.result_in_flight_limit),
+            dosage_buffer_limit=optional_toml_value(g_compute_section.dosage_buffer_limit),
             variant_limit=optional_toml_value(g_compute_section.variant_limit),
             trusted_no_missing_diploid=required_toml_value(
                 g_compute_section.trusted_no_missing_diploid,
@@ -721,6 +725,12 @@ def validate_config(config: RegenieConfig) -> None:
     if config.g_compute.staging_depth <= 0:
         message = "--g-staging-depth must be positive."
         raise ValueError(message)
+    if config.g_compute.result_in_flight_limit is not None and config.g_compute.result_in_flight_limit <= 0:
+        message = "--g-result-in-flight-limit must be positive when provided."
+        raise ValueError(message)
+    if config.g_compute.dosage_buffer_limit is not None and config.g_compute.dosage_buffer_limit <= 0:
+        message = "--g-dosage-buffer-limit must be positive when provided."
+        raise ValueError(message)
     if config.g_compute.variant_limit is not None and config.g_compute.variant_limit <= 0:
         message = "--g-variant-limit must be positive when provided."
         raise ValueError(message)
@@ -977,6 +987,8 @@ def build_toml_sections(config: RegenieConfig) -> dict[str, dict[str, typing.Any
         "g.compute": {
             "device": config.g_compute.device.value,
             "staging-depth": config.g_compute.staging_depth,
+            **optional_mapping("result-in-flight-limit", config.g_compute.result_in_flight_limit),
+            **optional_mapping("dosage-buffer-limit", config.g_compute.dosage_buffer_limit),
             **optional_mapping("variant-limit", config.g_compute.variant_limit),
             "trusted-no-missing-diploid": config.g_compute.trusted_no_missing_diploid,
             "trusted-bgen-validation-mode": config.g_compute.trusted_bgen_validation_mode.value,

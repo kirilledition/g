@@ -429,6 +429,15 @@ Useful overrides:
   use this only after a hot kernel is identified because it is intrusive.
 - `tool.enable_logging_perturbation=false`: skip telemetry/logging perturbation
   trials when reproducing a narrower benchmark.
+- `tool.workload_keys=[binary_cpu,binary_gpu]`: tune only selected `g`
+  trait/device workloads. Defaults to all four quantitative/binary CPU/GPU
+  workloads.
+- `tool.result_in_flight_limits=[default,4]`: include explicit result
+  in-flight slot limits in the candidate grid. `default` keeps the runtime
+  derived capacity of `staging_depth + 1`.
+- `tool.dosage_buffer_limits=[default,4]`: include explicit reusable native
+  dosage buffer pool limits in the candidate grid. `default` keeps the runtime
+  derived capacity of `staging_depth + 1`.
 - `tool.rust_benchmarks=[bgen_read]`: limit Rust Criterion benches.
 - `tool.include_regenie_baseline=true`: also run original REGENIE headline
   trials when `regenie` is available.
@@ -443,7 +452,22 @@ Useful overrides:
   unset, bounded smoke runs reuse `tool.variant_limit`; the harness writes a
   REGENIE `--extract` list from the first variants in the matching `.pvar` or
   `.bim` file so the original REGENIE run is comparable to `g`'s first-N
-  variant workload.
+variant workload.
+
+Queue timings in `*.stage_timings.json` need direction-aware interpretation:
+`result_queue:put` and blocked `result_in_flight_slots:acquire` are producer
+backpressure signals. `result_queue:consumer_wait` is normally the writer
+thread sleeping while JAX/native work is still upstream, so it is expected idle
+time unless paired with blocked producer puts. `dosage_buffer_pool:consumer_wait`
+blocks native callback delivery while waiting for a reusable decode buffer; tune
+`tool.staging_depths`, `tool.result_in_flight_limits`, and
+`tool.dosage_buffer_limits` before treating that wait as lost wall time.
+In the GLA-47 binary sweep, larger dosage-buffer capacity removed most
+`dosage_buffer_pool:consumer_wait`, but the same runs shifted time into
+`dosage_queue:producer_blocking` because the bounded staging queue correctly
+throttled native delivery behind JAX compute. With `result_queue:put` still at
+zero blocked seconds and mixed CPU/GPU headline results, that pattern did not
+justify increasing packaged queue-capacity defaults.
 
 The summary separates successful direct ratios from unsupported comparisons
 such as disabled baselines, missing REGENIE binaries, or missing `.pvar`/`.bim`
