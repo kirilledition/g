@@ -63,15 +63,30 @@ def get_run_manifest_path(output_run_paths: OutputRunPaths) -> Path:
     return output_run_paths.run_directory / RUN_MANIFEST_FILENAME
 
 
+def parse_run_manifest_json(manifest_json: str, manifest_path: Path | None = None) -> dict[str, typing.Any]:
+    """Parse a native run manifest JSON payload for Python callers."""
+    manifest: typing.Any = json.loads(manifest_json)
+    if not isinstance(manifest, dict):
+        message = (
+            "Run manifest must contain a JSON object."
+            if manifest_path is None
+            else f"Run manifest '{manifest_path}' must contain a JSON object."
+        )
+        raise ValueError(message)
+    return manifest
+
+
 def resolve_output_run_paths(
     output_root: Path,
     association_mode: types.AssociationMode,
     output_format: types.OutputFormat = types.OutputFormat.PARQUET,
 ) -> OutputRunPaths:
     """Derive run paths from an output root and association mode."""
-    run_directory = output_root if output_root.suffix == ".run" else Path(f"{output_root}.{association_mode}.run")
-    output_directory_name = "parts" if output_format == types.OutputFormat.PARQUET else "chunks"
-    return OutputRunPaths(run_directory=run_directory, chunks_directory=run_directory / output_directory_name)
+    native_run_paths = _core.resolve_output_run_paths(str(output_root), association_mode.value, output_format.value)
+    return OutputRunPaths(
+        run_directory=Path(native_run_paths.run_directory),
+        chunks_directory=Path(native_run_paths.chunks_directory),
+    )
 
 
 def build_chunk_file_name(chunk_identifier: int) -> str:
@@ -88,24 +103,18 @@ def scan_committed_chunk_identifiers(chunks_directory: Path) -> frozenset[int]:
 def load_run_manifest(output_run_paths: OutputRunPaths) -> dict[str, typing.Any] | None:
     """Load a run manifest when present."""
     manifest_path = get_run_manifest_path(output_run_paths)
-    if not manifest_path.exists():
+    manifest_json = _core.load_run_manifest_json(str(output_run_paths.run_directory))
+    if manifest_json is None:
         return None
-    with manifest_path.open("r", encoding="utf-8") as manifest_file:
-        manifest = json.load(manifest_file)
-    if not isinstance(manifest, dict):
-        message = f"Run manifest '{manifest_path}' must contain a JSON object."
-        raise ValueError(message)
-    return manifest
+    return parse_run_manifest_json(manifest_json, manifest_path)
 
 
 def write_run_manifest(output_run_paths: OutputRunPaths, manifest: dict[str, typing.Any]) -> None:
     """Atomically write a run manifest."""
-    manifest_path = get_run_manifest_path(output_run_paths)
-    temporary_manifest_path = manifest_path.with_suffix(".json.tmp")
-    with temporary_manifest_path.open("w", encoding="utf-8") as manifest_file:
-        json.dump(manifest, manifest_file, indent=2, sort_keys=True)
-        manifest_file.write("\n")
-    temporary_manifest_path.replace(manifest_path)
+    _core.write_run_manifest_json(
+        str(output_run_paths.run_directory),
+        json.dumps(manifest, sort_keys=True),
+    )
 
 
 def build_file_fingerprint(path: Path | None) -> dict[str, typing.Any] | None:
@@ -313,63 +322,21 @@ def build_current_run_manifest_header(
     return header
 
 
-def find_first_manifest_mismatch_path(
-    manifest_value: typing.Any,
-    current_value: typing.Any,
-    field_path: str,
-) -> str | None:
-    """Return the first nested field path that differs between two manifest values."""
-    if isinstance(manifest_value, dict) and isinstance(current_value, dict):
-        for key in sorted(set(manifest_value) | set(current_value)):
-            nested_path = f"{field_path}.{key}"
-            if key not in manifest_value or key not in current_value:
-                return nested_path
-            mismatch_path = find_first_manifest_mismatch_path(manifest_value[key], current_value[key], nested_path)
-            if mismatch_path is not None:
-                return mismatch_path
-        return None
-    if isinstance(manifest_value, list) and isinstance(current_value, list):
-        for index, (manifest_item, current_item) in enumerate(zip(manifest_value, current_value, strict=False)):
-            nested_path = f"{field_path}[{index}]"
-            mismatch_path = find_first_manifest_mismatch_path(manifest_item, current_item, nested_path)
-            if mismatch_path is not None:
-                return mismatch_path
-        if len(manifest_value) != len(current_value):
-            return field_path
-        return None
-    if manifest_value != current_value:
-        return field_path
-    return None
-
-
 def validate_manifest_compatibility(
     manifest: dict[str, typing.Any],
     current_header: dict[str, typing.Any],
 ) -> None:
     """Validate immutable manifest fields against the current run header."""
-    for field_name, current_value in current_header.items():
-        if field_name not in manifest:
-            message = f"Run manifest field '{field_name}' is missing."
-            raise ValueError(message)
-        mismatch_path = find_first_manifest_mismatch_path(manifest[field_name], current_value, field_name)
-        if mismatch_path is not None:
-            message = f"Run manifest field '{mismatch_path}' is incompatible with the requested run."
-            raise ValueError(message)
+    _core.validate_run_manifest_compatibility(
+        json.dumps(manifest, sort_keys=True),
+        json.dumps(current_header, sort_keys=True),
+    )
 
 
 def read_manifest_committed_chunk_identifiers(manifest: dict[str, typing.Any]) -> frozenset[int]:
     """Read committed chunk identifiers from a run manifest."""
-    committed_chunks = manifest.get("committed_chunks", [])
-    if not isinstance(committed_chunks, list):
-        message = "Run manifest committed_chunks field must be a list."
-        raise ValueError(message)
-    chunk_identifiers = set[int]()
-    for committed_chunk in committed_chunks:
-        if not isinstance(committed_chunk, dict):
-            message = "Run manifest committed chunk entries must be objects."
-            raise ValueError(message)
-        chunk_identifiers.add(int(committed_chunk["chunk_identifier"]))
-    return frozenset(chunk_identifiers)
+    chunk_identifiers = _core.read_manifest_committed_chunk_identifiers(json.dumps(manifest, sort_keys=True))
+    return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
 
 
 def validate_strict_manifest_chunks(
@@ -410,34 +377,19 @@ def initialize_output_run(
     resume_mode: types.ResumeMode,
 ) -> InitializedOutputRun:
     """Validate/write the manifest header and return accepted committed chunks."""
-    committed_chunk_identifiers = frozenset[int]()
-    committed_chunks: list[typing.Any] = []
-    manifest = (
-        dict(existing_manifest) if existing_manifest is not None else dict(load_run_manifest(output_run_paths) or {})
+    native_initialized_output_run = _core.initialize_output_run(
+        str(output_run_paths.run_directory),
+        str(output_run_paths.chunks_directory),
+        None if existing_manifest is None else json.dumps(existing_manifest, sort_keys=True),
+        json.dumps(current_header, sort_keys=True),
+        resume,
+        resume_mode.value,
     )
-    if existing_manifest is not None:
-        validate_manifest_compatibility(existing_manifest, current_header)
-        committed_chunks_value = existing_manifest.get("committed_chunks", [])
-        if not isinstance(committed_chunks_value, list):
-            message = "Run manifest committed_chunks field must be a list."
-            raise ValueError(message)
-        committed_chunks = committed_chunks_value
-        if resume:
-            if resume_mode == types.ResumeMode.STRICT:
-                committed_chunks = repair_strict_manifest_chunk_commits(output_run_paths, existing_manifest)
-                committed_chunk_identifiers = read_manifest_committed_chunk_identifiers(
-                    {"committed_chunks": committed_chunks}
-                )
-            else:
-                committed_chunk_identifiers = read_manifest_committed_chunk_identifiers(existing_manifest)
-            logger.info("Resuming run with %d previously committed chunks.", len(committed_chunk_identifiers))
-    elif resume:
-        message = "Resume requires run_manifest.json."
-        raise ValueError(message)
-    manifest.update(current_header)
-    manifest["committed_chunks"] = committed_chunks
-    manifest.setdefault("finalized", False)
-    write_run_manifest(output_run_paths, manifest)
+    committed_chunk_identifiers = frozenset(
+        int(chunk_identifier) for chunk_identifier in native_initialized_output_run.committed_chunk_identifiers
+    )
+    if resume:
+        logger.info("Resuming run with %d previously committed chunks.", len(committed_chunk_identifiers))
     return InitializedOutputRun(committed_chunk_identifiers=committed_chunk_identifiers)
 
 
@@ -450,18 +402,25 @@ def prepare_output_run(
     resume_mode: types.ResumeMode = types.ResumeMode.FAST,
 ) -> PreparedOutputRun:
     """Prepare a chunked output run directory and load existing manifest state."""
-    output_run_paths = resolve_output_run_paths(output_root, association_mode, output_format)
-    if not resume and output_run_paths.run_directory.exists() and any(output_run_paths.run_directory.iterdir()):
-        message = (
-            f"Output run directory '{output_run_paths.run_directory}' already exists and is not empty. "
-            "Use --resume or choose a new output path."
+    del resume_mode
+    native_prepared_output_run = _core.prepare_output_run(
+        str(output_root),
+        association_mode.value,
+        output_format.value,
+        resume,
+    )
+    output_run_paths = OutputRunPaths(
+        run_directory=Path(native_prepared_output_run.run_directory),
+        chunks_directory=Path(native_prepared_output_run.chunks_directory),
+    )
+    manifest = (
+        None
+        if native_prepared_output_run.existing_manifest_json is None
+        else parse_run_manifest_json(
+            native_prepared_output_run.existing_manifest_json,
+            get_run_manifest_path(output_run_paths),
         )
-        raise ValueError(message)
-    output_run_paths.chunks_directory.mkdir(parents=True, exist_ok=True)
-    manifest = load_run_manifest(output_run_paths)
-    if resume and manifest is None:
-        message = "Resume requires run_manifest.json."
-        raise ValueError(message)
+    )
     return PreparedOutputRun(
         output_run_paths=output_run_paths,
         existing_manifest=manifest,
