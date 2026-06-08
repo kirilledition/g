@@ -119,6 +119,14 @@ bootstrap-gpu:
 install-gpu-dependencies:
     {{ server_env }} && uv sync --python {{ python_version }} --group dev --group gpu
 
+# Install optional user-local profiler CLIs used by deep app profiling
+install-profiling-tools:
+    {{ server_env }} && uv tool install py-spy
+    {{ server_env }} && uv tool install scalene
+    {{ server_env }} && uv tool install memray
+    {{ server_env }} && uv tool install xprof
+    {{ server_env }} && cargo install --locked samply flamegraph
+
 # Check local toolchain prerequisites for development on the current host
 doctor:
     #!/usr/bin/env bash
@@ -687,7 +695,7 @@ profile-app-full-landau *overrides:
     export GWAS_ENGINE_SLURM_CPUS_PER_TASK="${GWAS_ENGINE_SLURM_CPUS_PER_TASK:-8}"
     export GWAS_ENGINE_SLURM_MEMORY="${GWAS_ENGINE_SLURM_MEMORY:-64G}"
     export GWAS_ENGINE_SLURM_GPUS_PER_TASK="${GWAS_ENGINE_SLURM_GPUS_PER_TASK:-1}"
-    exec just slurm-gpu-run '. scripts/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu {{ overrides }}'
+    exec just slurm-gpu-run '. scripts/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false {{ overrides }}'
 
 # Format code
 format:

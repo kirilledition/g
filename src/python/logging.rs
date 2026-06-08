@@ -8,9 +8,11 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -56,6 +58,19 @@ enum TelemetryCapAction {
     Drop,
 }
 
+#[derive(Clone)]
+struct TelemetryWriterCounterSnapshot {
+    accepted_event_count: usize,
+    written_event_count: usize,
+    dropped_event_count: usize,
+    cap_dropped_event_count: usize,
+    queue_dropped_event_count: usize,
+    event_cap_exceeded: bool,
+    lossy: bool,
+    event_cap: Option<usize>,
+    finish_flush_duration_seconds: Option<f64>,
+}
+
 impl TelemetryWriterFactory {
     fn new(writer: NonBlocking, event_cap_state: TelemetryEventCapState) -> Self {
         Self { writer, event_cap_state: Arc::new(event_cap_state) }
@@ -75,6 +90,11 @@ impl TelemetryWriterFactory {
             return Err(PyRuntimeError::new_err(self.event_cap_state.cap_exceeded_error_message()));
         }
         Ok(())
+    }
+
+    fn counter_snapshot(&self, finish_flush_duration_seconds: Option<f64>) -> TelemetryWriterCounterSnapshot {
+        self.event_cap_state
+            .counter_snapshot(self.writer.error_counter().dropped_lines(), finish_flush_duration_seconds)
     }
 }
 
@@ -102,6 +122,10 @@ impl TelemetryLineWriter {
 impl io::Write for TelemetryLineWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         if self.event_cap_state.event_cap.is_none() {
+            let event_count = buffer.iter().filter(|byte| **byte == b'\n').count();
+            if event_count > 0 {
+                self.event_cap_state.written_event_count.fetch_add(event_count, Ordering::Relaxed);
+            }
             self.writer.write_all(buffer)?;
             return Ok(buffer.len());
         }
@@ -176,6 +200,26 @@ impl TelemetryEventCapState {
         self.exceeded.load(Ordering::Acquire) && !self.lossy
     }
 
+    fn counter_snapshot(
+        &self,
+        queue_dropped_event_count: usize,
+        finish_flush_duration_seconds: Option<f64>,
+    ) -> TelemetryWriterCounterSnapshot {
+        let accepted_event_count = self.written_event_count.load(Ordering::Acquire);
+        let cap_dropped_event_count = self.dropped_event_count.load(Ordering::Acquire);
+        TelemetryWriterCounterSnapshot {
+            accepted_event_count,
+            written_event_count: accepted_event_count.saturating_sub(queue_dropped_event_count),
+            dropped_event_count: cap_dropped_event_count.saturating_add(queue_dropped_event_count),
+            cap_dropped_event_count,
+            queue_dropped_event_count,
+            event_cap_exceeded: self.exceeded.load(Ordering::Acquire),
+            lossy: self.lossy,
+            event_cap: self.event_cap,
+            finish_flush_duration_seconds,
+        }
+    }
+
     fn cap_exceeded_error_message(&self) -> String {
         let event_cap = self.event_cap.unwrap_or(0);
         format!(
@@ -200,6 +244,7 @@ pub struct NativeTelemetrySession {
     path: PathBuf,
     writer: Mutex<Option<TelemetryWriterFactory>>,
     guard: Mutex<Option<WorkerGuard>>,
+    last_counter_snapshot: Mutex<Option<TelemetryWriterCounterSnapshot>>,
 }
 
 #[pymethods]
@@ -210,7 +255,12 @@ impl NativeTelemetrySession {
         let path = PathBuf::from(stream_file);
         let (writer, guard) = build_telemetry_file_writer(&path, queue_size, lossy, normalize_event_cap(event_cap))?;
         replace_shared_telemetry_writer(path.clone(), writer.clone())?;
-        Ok(Self { path, writer: Mutex::new(Some(writer)), guard: Mutex::new(Some(guard)) })
+        Ok(Self {
+            path,
+            writer: Mutex::new(Some(writer)),
+            guard: Mutex::new(Some(guard)),
+            last_counter_snapshot: Mutex::new(None),
+        })
     }
 
     pub fn emit_json_line(&self, json_line: &str) -> PyResult<()> {
@@ -223,7 +273,24 @@ impl NativeTelemetrySession {
         Ok(())
     }
 
-    pub fn finish(&self) -> PyResult<()> {
+    pub fn counters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let writer_guard =
+            self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
+        if let Some(writer) = writer_guard.as_ref() {
+            return writer.counter_snapshot(None).into_py_dict(py);
+        }
+        let last_counter_snapshot = self
+            .last_counter_snapshot
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
+        let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
+            return TelemetryWriterCounterSnapshot::empty().into_py_dict(py);
+        };
+        counter_snapshot.into_py_dict(py)
+    }
+
+    pub fn finish<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let finish_start_time = Instant::now();
         let mut writer_guard =
             self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
         let dropped_writer = writer_guard.take();
@@ -231,11 +298,57 @@ impl NativeTelemetrySession {
             self.guard.lock().map_err(|_| PyRuntimeError::new_err("Telemetry guard mutex was poisoned."))?;
         let dropped_guard = guard.take();
         drop(dropped_guard);
+        let finish_flush_duration_seconds = finish_start_time.elapsed().as_secs_f64();
         clear_shared_telemetry_writer(&self.path)?;
-        if let Some(writer) = dropped_writer.as_ref() {
-            writer.fail_if_lossless_cap_exceeded()?;
+        let Some(writer) = dropped_writer.as_ref() else {
+            let last_counter_snapshot = self
+                .last_counter_snapshot
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
+            let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
+                return TelemetryWriterCounterSnapshot::empty().into_py_dict(py);
+            };
+            return counter_snapshot.into_py_dict(py);
+        };
+
+        let counter_snapshot = writer.counter_snapshot(Some(finish_flush_duration_seconds));
+        let mut last_counter_snapshot = self
+            .last_counter_snapshot
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
+        *last_counter_snapshot = Some(counter_snapshot.clone());
+        writer.fail_if_lossless_cap_exceeded()?;
+        counter_snapshot.into_py_dict(py)
+    }
+}
+
+impl TelemetryWriterCounterSnapshot {
+    fn empty() -> Self {
+        Self {
+            accepted_event_count: 0,
+            written_event_count: 0,
+            dropped_event_count: 0,
+            cap_dropped_event_count: 0,
+            queue_dropped_event_count: 0,
+            event_cap_exceeded: false,
+            lossy: true,
+            event_cap: None,
+            finish_flush_duration_seconds: None,
         }
-        Ok(())
+    }
+
+    fn into_py_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let counters = PyDict::new(py);
+        counters.set_item("accepted_event_count", self.accepted_event_count)?;
+        counters.set_item("written_event_count", self.written_event_count)?;
+        counters.set_item("dropped_event_count", self.dropped_event_count)?;
+        counters.set_item("cap_dropped_event_count", self.cap_dropped_event_count)?;
+        counters.set_item("queue_dropped_event_count", self.queue_dropped_event_count)?;
+        counters.set_item("event_cap_exceeded", self.event_cap_exceeded)?;
+        counters.set_item("lossy", self.lossy)?;
+        counters.set_item("event_cap", self.event_cap)?;
+        counters.set_item("finish_flush_duration_seconds", self.finish_flush_duration_seconds)?;
+        Ok(counters)
     }
 }
 

@@ -204,6 +204,13 @@ trace-event-cap = 5000000
 g regenie --g-telemetry trace --g-trace-event-cap 0
 ```
 
+Telemetry sessions record native writer counters on close. The final
+`telemetry_session_closed` event includes `writer_counters` with accepted,
+written, cap-dropped, queue-dropped, and total dropped event counts, the cap
+state, lossy mode, and native finish/flush duration. Use these counters when
+profiling logging overhead so a faster run caused by dropped events is not
+mistaken for real application throughput.
+
 ## CLI Examples
 
 Production default with an explicit log directory:

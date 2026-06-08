@@ -218,6 +218,29 @@ baseline signal, suspected bottleneck, proposed change, validation command,
 non-goals, duplicate Linear search, and an explicit dispatch decision before a
 finding can become an implementation issue.
 
+For deep app profiling before an optimization cycle, create a parent discovery
+issue with `symphony`, `discovery`, `task-generator`, `benchmark`, `gpu`,
+`data`, and `local-first`. The parent agent owns Linear updates, SLURM
+submissions, artifact locations, duplicate checks, and generated follow-ups.
+It may spawn read-only subagents for JAX/GPU evidence, Python profiler output,
+Rust/native evidence, output/logging telemetry overhead, and report review.
+Subagents report findings to the parent; they do not create Linear issues
+directly.
+
+Use the profiling command ladder:
+
+```bash
+just profile-app-full-dry-run tool.output_dir=data/profiles/<issue-key>-plan
+just slurm-gpu-just profile-app-full-smoke tool.output_dir=data/profiles/<issue-key>-smoke
+just profile-app-full-landau tool.output_dir=data/profiles/<issue-key>-full
+```
+
+If the full `landau` profile can exceed the Symphony agent turn timeout, split
+submission and report analysis into separate issues, or make the issue
+explicitly resumable from `data/profiles/<issue-key>-full`. Generated
+optimization issues must cite the measured profiler artifact and stay limited
+to concrete P1/P2 findings unless the parent issue says otherwise.
+
 Generated issues must include:
 
 ```text

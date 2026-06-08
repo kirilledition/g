@@ -128,9 +128,16 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
         "jax_memory_profile": True,
         "python_cprofile": True,
         "py_spy": True,
+        "scalene": False,
+        "memray": False,
         "linux_perf": True,
+        "nsight_systems": False,
+        "nsight_compute": False,
         "rust_criterion": True,
+        "logging_perturbation": True,
     }
+    assert profile_plan.logging_perturbation_cases
+    assert "py_spy" in profile_plan.profiler_tools
     assert profile_plan.rust_benchmark_commands == [
         ["cargo", "bench", "--bench", "bgen_read"],
         ["cargo", "bench", "--bench", "preprocess"],

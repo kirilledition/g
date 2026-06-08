@@ -69,8 +69,13 @@ class ProfileArguments:
         enable_jax_memory_profile: Whether deep profiles capture JAX memory profiles.
         enable_python_cprofile: Whether deep profiles capture cProfile output.
         enable_py_spy: Whether deep profiles capture py-spy speedscope output when available.
+        enable_scalene: Whether deep profiles capture Scalene CPU/memory output when available.
+        enable_memray: Whether deep profiles capture Memray allocation output when available.
         enable_linux_perf: Whether deep profiles capture Linux perf native stack data when available.
+        enable_nsight_systems: Whether deep profiles capture Nsight Systems CUDA timelines when available.
+        enable_nsight_compute: Whether deep profiles capture Nsight Compute kernel reports when available.
         enable_rust_criterion: Whether deep profiles run Rust Criterion benches.
+        enable_logging_perturbation: Whether the profile runs telemetry/logging perturbation trials.
         rust_benchmarks: Comma-separated Rust Criterion benchmark names.
         chunk_sizes: Comma-separated step 2 chunk-size values.
         staging_depths: Comma-separated staging-depth values.
@@ -113,8 +118,13 @@ class ProfileArguments:
     enable_jax_memory_profile: bool
     enable_python_cprofile: bool
     enable_py_spy: bool
+    enable_scalene: bool
+    enable_memray: bool
     enable_linux_perf: bool
+    enable_nsight_systems: bool
+    enable_nsight_compute: bool
     enable_rust_criterion: bool
+    enable_logging_perturbation: bool
     rust_benchmarks: str
     chunk_sizes: str
     staging_depths: str
@@ -132,6 +142,40 @@ class ProfileArguments:
     finalist_trials: int
     headline_warmups: int
     headline_trials: int
+
+
+@dataclasses.dataclass(frozen=True)
+class ProfilerToolStatus:
+    """Availability status for one optional profiling tool.
+
+    Attributes:
+        tool_name: Stable profiler tool name.
+        enabled: Whether the current profile config requests the tool.
+        available: Whether the local executable or built-in profiler is available.
+        executable_path: Resolved executable path when one is required.
+        notes: Human-readable status details.
+
+    """
+
+    tool_name: str
+    enabled: bool
+    available: bool
+    executable_path: str | None
+    notes: str
+
+
+@dataclasses.dataclass(frozen=True)
+class LoggingPerturbationCase:
+    """One telemetry/logging perturbation case.
+
+    Attributes:
+        name: Stable case name used in artifact paths.
+        diagnostic_options: Extra g diagnostics options for the child run.
+
+    """
+
+    name: str
+    diagnostic_options: dict[str, object]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -211,6 +255,8 @@ class ProfilePlan:
         output_directory: Planned output directory.
         required_inputs: Input paths and step 1 prediction paths used by real runs.
         profiler_modes: Profiler modes requested by config.
+        profiler_tools: Profiler tool availability records.
+        logging_perturbation_cases: Planned telemetry/logging perturbation cases.
         rust_benchmark_commands: Rust Criterion benchmark commands.
         notes: Human-readable plan notes.
 
@@ -220,6 +266,8 @@ class ProfilePlan:
     output_directory: str
     required_inputs: list[str]
     profiler_modes: dict[str, bool]
+    profiler_tools: dict[str, dict[str, object]]
+    logging_perturbation_cases: list[dict[str, object]]
     rust_benchmark_commands: list[list[str]]
     notes: list[str]
 
@@ -277,6 +325,109 @@ def build_output_directory(arguments: ProfileArguments) -> Path:
         return arguments.output_dir
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return arguments.output_parent / f"landau_deep_{arguments.chromosome_label}_{timestamp}"
+
+
+def build_profiler_tool_status(arguments: ProfileArguments) -> dict[str, ProfilerToolStatus]:
+    """Build profiler tool availability records for the current host."""
+    optional_executable_tools = {
+        "py_spy": ("py-spy", arguments.enable_py_spy),
+        "scalene": ("scalene", arguments.enable_scalene),
+        "memray": ("memray", arguments.enable_memray),
+        "linux_perf": ("perf", arguments.enable_linux_perf),
+        "nsight_systems": ("nsys", arguments.enable_nsight_systems),
+        "nsight_compute": ("ncu", arguments.enable_nsight_compute),
+    }
+    tool_status = {
+        "python_cprofile": ProfilerToolStatus(
+            tool_name="python_cprofile",
+            enabled=arguments.enable_python_cprofile,
+            available=True,
+            executable_path=sys.executable,
+            notes="Python cProfile is part of the standard library.",
+        ),
+        "jax_trace": ProfilerToolStatus(
+            tool_name="jax_trace",
+            enabled=arguments.enable_jax_trace,
+            available=True,
+            executable_path=None,
+            notes="JAX profiler trace capture is provided by the installed JAX package.",
+        ),
+        "jax_memory_profile": ProfilerToolStatus(
+            tool_name="jax_memory_profile",
+            enabled=arguments.enable_jax_memory_profile,
+            available=True,
+            executable_path=None,
+            notes="JAX device memory capture is provided by the installed JAX package.",
+        ),
+        "rust_criterion": ProfilerToolStatus(
+            tool_name="rust_criterion",
+            enabled=arguments.enable_rust_criterion,
+            available=shutil.which("cargo") is not None,
+            executable_path=shutil.which("cargo"),
+            notes="Rust Criterion benches run through cargo.",
+        ),
+    }
+    for tool_name, (executable_name, enabled) in optional_executable_tools.items():
+        executable_path = shutil.which(executable_name)
+        available = executable_path is not None
+        notes = f"{executable_name} is available on PATH." if available else f"{executable_name} is not on PATH."
+        tool_status[tool_name] = ProfilerToolStatus(
+            tool_name=tool_name,
+            enabled=enabled,
+            available=available,
+            executable_path=executable_path,
+            notes=notes,
+        )
+    return tool_status
+
+
+def serialize_profiler_tool_status(tool_status: dict[str, ProfilerToolStatus]) -> dict[str, dict[str, object]]:
+    """Serialize profiler tool availability records."""
+    return {tool_name: dataclasses.asdict(status) for tool_name, status in sorted(tool_status.items())}
+
+
+def collect_artifact_manifest(
+    *,
+    output_directory: Path,
+    profiler_tool_status: dict[str, ProfilerToolStatus],
+    summary_payload: dict[str, typing.Any] | None = None,
+) -> dict[str, typing.Any]:
+    """Build a structured artifact manifest for one profile campaign."""
+    artifact_paths = sorted(
+        str(path.relative_to(output_directory))
+        for path in output_directory.rglob("*")
+        if path.is_file() and path.name != "artifact_manifest.json"
+    )
+    skipped_profiles: list[dict[str, typing.Any]] = []
+    if summary_payload is not None:
+        deep_profile_results = typing.cast("dict[str, typing.Any]", summary_payload.get("deep_profiles", {}))
+        sampling_profiles = typing.cast(
+            "list[dict[str, typing.Any]]", deep_profile_results.get("sampling_profiles", [])
+        )
+        skipped_profiles = [profile for profile in sampling_profiles if profile.get("status") == "skipped"]
+    return {
+        "schema_version": 1,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "output_directory": str(output_directory),
+        "profiler_tools": serialize_profiler_tool_status(profiler_tool_status),
+        "artifact_paths": artifact_paths,
+        "skipped_profiles": skipped_profiles,
+    }
+
+
+def write_artifact_manifest(
+    *,
+    output_directory: Path,
+    profiler_tool_status: dict[str, ProfilerToolStatus],
+    summary_payload: dict[str, typing.Any] | None = None,
+) -> None:
+    """Write the profile artifact manifest."""
+    manifest = collect_artifact_manifest(
+        output_directory=output_directory,
+        profiler_tool_status=profiler_tool_status,
+        summary_payload=summary_payload,
+    )
+    (output_directory / "artifact_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
 def command_output(
@@ -516,6 +667,7 @@ def build_g_step2_child_command(
     stage_timing_path: Path | None = None,
     trace_directory: Path | None = None,
     memory_profile_path: Path | None = None,
+    diagnostic_options: dict[str, object] | None = None,
 ) -> list[str]:
     """Build one isolated Python child command for a g REGENIE step 2 run."""
     phenotype_path = baseline_paths.continuous_phenotype_path
@@ -539,6 +691,7 @@ def build_g_step2_child_command(
     )
     firth_batch_expression = "1024" if candidate.firth_batch_size is None else str(candidate.firth_batch_size)
     rayon_thread_expression = "None" if candidate.rayon_thread_count is None else str(candidate.rayon_thread_count)
+    diagnostic_options_expression = repr(diagnostic_options or {})
     child_code = textwrap.dedent(
         """
         import json
@@ -604,6 +757,7 @@ def build_g_step2_child_command(
                 "g-jax-cache-dir": {jax_cache_directory_expression},
                 "g-jax-xla-autotune-cache": {enable_xla_autotune_cache},
                 "g-stage-timings-json": {stage_timing_path!r},
+                **{diagnostic_options_expression},
                 **{binary_options_expression},
             }})
             wall_time_seconds = time.perf_counter() - start_time
@@ -648,6 +802,7 @@ def build_g_step2_child_command(
         jax_cache_directory_expression=jax_cache_directory_expression,
         enable_xla_autotune_cache=ENABLE_XLA_AUTOTUNE_CACHE,
         stage_timing_path=str(stage_timing_path) if stage_timing_path is not None else None,
+        diagnostic_options_expression=diagnostic_options_expression,
         binary_options_expression=binary_options_expression,
     )
     return [sys.executable, "-c", child_code]
@@ -740,6 +895,67 @@ def skipped_profile_result(
     )
 
 
+def write_inline_python_profile_script(command_arguments: list[str], script_path: Path) -> Path:
+    """Write an inline Python command to a script file for external profilers."""
+    if len(command_arguments) < 3 or command_arguments[0] != sys.executable or command_arguments[1] != "-c":
+        message = "Expected an inline Python child command."
+        raise ValueError(message)
+    script_path.write_text(command_arguments[2], encoding="utf-8")
+    return script_path
+
+
+def append_skipped_executable_profile(
+    *,
+    results: dict[str, typing.Any],
+    tool_status: ProfilerToolStatus,
+    name: str,
+    implementation: str,
+    trait_type: str,
+    device: str,
+    log_directory: Path,
+) -> None:
+    """Append a skipped profiler result for a missing executable."""
+    results["sampling_profiles"].append(
+        dataclasses.asdict(
+            skipped_profile_result(
+                name=name,
+                implementation=implementation,
+                trait_type=trait_type,
+                device=device,
+                log_directory=log_directory,
+                notes=tool_status.notes,
+            )
+        )
+    )
+
+
+def append_logged_profile_result(
+    *,
+    results: dict[str, typing.Any],
+    name: str,
+    implementation: str,
+    trait_type: str,
+    device: str,
+    command_arguments: list[str],
+    environment_overrides: dict[str, str],
+    log_directory: Path,
+) -> None:
+    """Run and append one external profiler result."""
+    results["sampling_profiles"].append(
+        dataclasses.asdict(
+            run_logged_command(
+                name=name,
+                implementation=implementation,
+                trait_type=trait_type,
+                device=device,
+                command_arguments=command_arguments,
+                environment_overrides=environment_overrides,
+                log_directory=log_directory,
+            )
+        )
+    )
+
+
 def run_g_trial(
     *,
     name: str,
@@ -752,6 +968,7 @@ def run_g_trial(
     emit_stage_timings: bool,
     trace_directory: Path | None = None,
     memory_profile_path: Path | None = None,
+    diagnostic_options: dict[str, object] | None = None,
 ) -> TrialResult:
     """Run one g trial in a fresh Python process."""
     output_prefix = output_directory / name
@@ -765,6 +982,7 @@ def run_g_trial(
         stage_timing_path=stage_timing_path,
         trace_directory=trace_directory,
         memory_profile_path=memory_profile_path,
+        diagnostic_options=diagnostic_options,
     )
     environment_overrides = build_g_trial_environment(
         candidate=candidate,
@@ -1460,6 +1678,7 @@ def build_summary_markdown(
     stage_totals: dict[str, float],
     stage_comparison_rows: list[dict[str, float | str]],
     algorithmic_findings: list[str],
+    logging_perturbation_results: list[dict[str, typing.Any]] | None = None,
 ) -> str:
     """Build the human-readable campaign summary."""
     lines = ["# Landau Deep REGENIE Step 2 Profile", ""]
@@ -1512,6 +1731,22 @@ def build_summary_markdown(
             lines.append(f"- {finding}")
     else:
         lines.append("- Re-run with successful REGENIE and g profile JSON files to generate source-level findings.")
+    lines.extend(["", "## Logging And Telemetry Perturbation", ""])
+    logging_rows = build_logging_perturbation_rows(logging_perturbation_results or [])
+    if logging_rows:
+        lines.append("| winner | case | wall s | delta vs off s | ratio vs off | status |")
+        lines.append("| --- | --- | ---: | ---: | ---: | --- |")
+        for row in logging_rows:
+            lines.append(
+                "| "
+                f"{row['winner_key']} | {row['case_name']} | "
+                f"{format_optional_float(typing.cast('float | None', row['wall_time_seconds']))} | "
+                f"{format_optional_float(typing.cast('float | None', row['delta_vs_off_seconds']))} | "
+                f"{format_optional_float(typing.cast('float | None', row['ratio_vs_off']))} | "
+                f"{row['status']} |"
+            )
+    else:
+        lines.append("- No logging perturbation results were available.")
     lines.extend(["", "## Ranked Bottlenecks", ""])
     if stage_totals:
         for stage_name, seconds in sorted(stage_totals.items(), key=lambda item: item[1], reverse=True)[:20]:
@@ -1525,6 +1760,44 @@ def build_summary_markdown(
     else:
         lines.append("- Re-run with successful g diagnostic trials to rank measured stage shares.")
     return "\n".join(lines) + "\n"
+
+
+def build_logging_perturbation_rows(
+    logging_perturbation_results: list[dict[str, typing.Any]],
+) -> list[dict[str, float | str | None]]:
+    """Build comparable telemetry/logging perturbation rows."""
+    baseline_times: dict[str, float] = {}
+    for result in logging_perturbation_results:
+        winner_key = str(result["winner_key"])
+        case_payload = typing.cast("dict[str, typing.Any]", result["case"])
+        trial_payload = typing.cast("dict[str, typing.Any]", result["trial"])
+        wall_time = trial_payload.get("wall_time_seconds")
+        if case_payload.get("name") == "telemetry_off" and isinstance(wall_time, (int, float)):
+            baseline_times[winner_key] = float(wall_time)
+    rows: list[dict[str, float | str | None]] = []
+    for result in logging_perturbation_results:
+        winner_key = str(result["winner_key"])
+        case_payload = typing.cast("dict[str, typing.Any]", result["case"])
+        trial_payload = typing.cast("dict[str, typing.Any]", result["trial"])
+        wall_time_value = trial_payload.get("wall_time_seconds")
+        wall_time = float(wall_time_value) if isinstance(wall_time_value, (int, float)) else None
+        baseline_time = baseline_times.get(winner_key)
+        delta_vs_off = None
+        ratio_vs_off = None
+        if wall_time is not None and baseline_time is not None and baseline_time > 0.0:
+            delta_vs_off = wall_time - baseline_time
+            ratio_vs_off = wall_time / baseline_time
+        rows.append(
+            {
+                "winner_key": winner_key,
+                "case_name": str(case_payload.get("name", "")),
+                "wall_time_seconds": wall_time,
+                "delta_vs_off_seconds": delta_vs_off,
+                "ratio_vs_off": ratio_vs_off,
+                "status": str(trial_payload.get("status", "")),
+            }
+        )
+    return rows
 
 
 def format_optional_float(value: float | None) -> str:
@@ -1545,11 +1818,13 @@ def run_deep_profiles(
     """Run optional profiler commands for representative g winners."""
     profile_directory = output_directory / "deep_profiles"
     profile_directory.mkdir(parents=True, exist_ok=True)
+    profiler_tool_status = build_profiler_tool_status(arguments)
     results: dict[str, typing.Any] = {
+        "profiler_tools": serialize_profiler_tool_status(profiler_tool_status),
         "rust_criterion": [],
         "sampling_profiles": [],
     }
-    if arguments.enable_rust_criterion:
+    if arguments.enable_rust_criterion and profiler_tool_status["rust_criterion"].available:
         for benchmark_name in parse_string_list(arguments.rust_benchmarks):
             logger.info("Running Rust Criterion benchmark %s", benchmark_name)
             results["rust_criterion"].append(
@@ -1558,6 +1833,8 @@ def run_deep_profiles(
                     environment_overrides={"RUSTFLAGS": "-C target-cpu=native"},
                 )
             )
+    elif arguments.enable_rust_criterion:
+        results["rust_criterion"].append(dataclasses.asdict(profiler_tool_status["rust_criterion"]))
     for winner_key, winner in sorted(winners.items()):
         if not winner.trials:
             continue
@@ -1594,11 +1871,13 @@ def run_deep_profiles(
             cache_directory=cache_directory,
             stage_timing_path=profile_directory / f"{winner_key}_profiler_stage_timings.json",
         )
+        profile_script_path = write_inline_python_profile_script(
+            base_profile_command_arguments,
+            profile_directory / f"{winner_key}_profiler_child.py",
+        )
         if arguments.enable_python_cprofile:
-            cprofile_script_path = profile_directory / f"{winner_key}_cprofile_child.py"
             cprofile_output_path = profile_directory / f"{winner_key}.cprofile"
             cprofile_text_path = profile_directory / f"{winner_key}.cprofile.txt"
-            cprofile_script_path.write_text(base_profile_command_arguments[2], encoding="utf-8")
             cprofile_result = run_logged_command(
                 name=f"profile_{winner_key}_cprofile",
                 implementation="cProfile",
@@ -1610,7 +1889,7 @@ def run_deep_profiles(
                     "cProfile",
                     "-o",
                     str(cprofile_output_path),
-                    str(cprofile_script_path),
+                    str(profile_script_path),
                 ],
                 environment_overrides=base_profile_environment,
                 log_directory=output_directory / "logs",
@@ -1629,10 +1908,11 @@ def run_deep_profiles(
                     ]
                 )
                 cprofile_text_path.write_text(cprofile_text_result["stdout"], encoding="utf-8")
-        if arguments.enable_py_spy and shutil.which("py-spy") is not None:
+        py_spy_status = profiler_tool_status["py_spy"]
+        if arguments.enable_py_spy and py_spy_status.available:
             speedscope_path = profile_directory / f"{winner_key}.speedscope.json"
             command_arguments = [
-                "py-spy",
+                py_spy_status.executable_path or "py-spy",
                 "record",
                 "--format",
                 "speedscope",
@@ -1641,7 +1921,8 @@ def run_deep_profiles(
                 "--",
                 *base_profile_command_arguments,
             ]
-            sampling_result = run_logged_command(
+            append_logged_profile_result(
+                results=results,
                 name=f"profile_{winner_key}_py_spy",
                 implementation="py-spy",
                 trait_type=candidate.trait_type,
@@ -1650,24 +1931,143 @@ def run_deep_profiles(
                 environment_overrides=base_profile_environment,
                 log_directory=output_directory / "logs",
             )
-            results["sampling_profiles"].append(dataclasses.asdict(sampling_result))
         elif arguments.enable_py_spy:
-            results["sampling_profiles"].append(
-                dataclasses.asdict(
-                    skipped_profile_result(
-                        name=f"profile_{winner_key}_py_spy",
-                        implementation="py-spy",
-                        trait_type=candidate.trait_type,
-                        device=candidate.device,
-                        log_directory=output_directory / "logs",
-                        notes="py-spy executable is not available on PATH.",
-                    )
-                )
+            append_skipped_executable_profile(
+                results=results,
+                tool_status=py_spy_status,
+                name=f"profile_{winner_key}_py_spy",
+                implementation="py-spy",
+                trait_type=candidate.trait_type,
+                device=candidate.device,
+                log_directory=output_directory / "logs",
             )
-        if arguments.enable_linux_perf and shutil.which("perf") is not None:
+        scalene_status = profiler_tool_status["scalene"]
+        if arguments.enable_scalene and scalene_status.available:
+            scalene_json_path = profile_directory / f"{winner_key}.scalene.json"
+            append_logged_profile_result(
+                results=results,
+                name=f"profile_{winner_key}_scalene",
+                implementation="Scalene",
+                trait_type=candidate.trait_type,
+                device=candidate.device,
+                command_arguments=[
+                    scalene_status.executable_path or "scalene",
+                    "--json",
+                    "--outfile",
+                    str(scalene_json_path),
+                    str(profile_script_path),
+                ],
+                environment_overrides=base_profile_environment,
+                log_directory=output_directory / "logs",
+            )
+        elif arguments.enable_scalene:
+            append_skipped_executable_profile(
+                results=results,
+                tool_status=scalene_status,
+                name=f"profile_{winner_key}_scalene",
+                implementation="Scalene",
+                trait_type=candidate.trait_type,
+                device=candidate.device,
+                log_directory=output_directory / "logs",
+            )
+        memray_status = profiler_tool_status["memray"]
+        if arguments.enable_memray and memray_status.available:
+            memray_output_path = profile_directory / f"{winner_key}.memray.bin"
+            append_logged_profile_result(
+                results=results,
+                name=f"profile_{winner_key}_memray",
+                implementation="Memray",
+                trait_type=candidate.trait_type,
+                device=candidate.device,
+                command_arguments=[
+                    memray_status.executable_path or "memray",
+                    "run",
+                    "--output",
+                    str(memray_output_path),
+                    str(profile_script_path),
+                ],
+                environment_overrides=base_profile_environment,
+                log_directory=output_directory / "logs",
+            )
+        elif arguments.enable_memray:
+            append_skipped_executable_profile(
+                results=results,
+                tool_status=memray_status,
+                name=f"profile_{winner_key}_memray",
+                implementation="Memray",
+                trait_type=candidate.trait_type,
+                device=candidate.device,
+                log_directory=output_directory / "logs",
+            )
+        nsight_systems_status = profiler_tool_status["nsight_systems"]
+        if arguments.enable_nsight_systems and nsight_systems_status.available:
+            nsight_report_prefix = profile_directory / f"{winner_key}_nsys"
+            append_logged_profile_result(
+                results=results,
+                name=f"profile_{winner_key}_nsys",
+                implementation="Nsight Systems",
+                trait_type=candidate.trait_type,
+                device=candidate.device,
+                command_arguments=[
+                    nsight_systems_status.executable_path or "nsys",
+                    "profile",
+                    "--trace=cuda,cudnn,cublas,osrt,nvtx",
+                    "--stats=true",
+                    "--force-overwrite=true",
+                    "--output",
+                    str(nsight_report_prefix),
+                    *base_profile_command_arguments,
+                ],
+                environment_overrides=base_profile_environment,
+                log_directory=output_directory / "logs",
+            )
+        elif arguments.enable_nsight_systems:
+            append_skipped_executable_profile(
+                results=results,
+                tool_status=nsight_systems_status,
+                name=f"profile_{winner_key}_nsys",
+                implementation="Nsight Systems",
+                trait_type=candidate.trait_type,
+                device=candidate.device,
+                log_directory=output_directory / "logs",
+            )
+        nsight_compute_status = profiler_tool_status["nsight_compute"]
+        if arguments.enable_nsight_compute and nsight_compute_status.available:
+            nsight_compute_report_path = profile_directory / f"{winner_key}_ncu"
+            append_logged_profile_result(
+                results=results,
+                name=f"profile_{winner_key}_ncu",
+                implementation="Nsight Compute",
+                trait_type=candidate.trait_type,
+                device=candidate.device,
+                command_arguments=[
+                    nsight_compute_status.executable_path or "ncu",
+                    "--target-processes",
+                    "all",
+                    "--set",
+                    "default",
+                    "--export",
+                    str(nsight_compute_report_path),
+                    *base_profile_command_arguments,
+                ],
+                environment_overrides=base_profile_environment,
+                log_directory=output_directory / "logs",
+            )
+        elif arguments.enable_nsight_compute:
+            append_skipped_executable_profile(
+                results=results,
+                tool_status=nsight_compute_status,
+                name=f"profile_{winner_key}_ncu",
+                implementation="Nsight Compute",
+                trait_type=candidate.trait_type,
+                device=candidate.device,
+                log_directory=output_directory / "logs",
+            )
+        perf_status = profiler_tool_status["linux_perf"]
+        if arguments.enable_linux_perf and perf_status.available:
             perf_path = profile_directory / f"{winner_key}.perf.data"
             command_arguments = [
-                "perf",
+                perf_status.executable_path or "perf",
                 "record",
                 "-g",
                 "-o",
@@ -1675,7 +2075,8 @@ def run_deep_profiles(
                 "--",
                 *base_profile_command_arguments,
             ]
-            perf_result = run_logged_command(
+            append_logged_profile_result(
+                results=results,
                 name=f"profile_{winner_key}_perf",
                 implementation="perf",
                 trait_type=candidate.trait_type,
@@ -1684,20 +2085,123 @@ def run_deep_profiles(
                 environment_overrides=base_profile_environment,
                 log_directory=output_directory / "logs",
             )
-            results["sampling_profiles"].append(dataclasses.asdict(perf_result))
         elif arguments.enable_linux_perf:
-            results["sampling_profiles"].append(
-                dataclasses.asdict(
-                    skipped_profile_result(
-                        name=f"profile_{winner_key}_perf",
-                        implementation="perf",
-                        trait_type=candidate.trait_type,
-                        device=candidate.device,
-                        log_directory=output_directory / "logs",
-                        notes="perf executable is not available on PATH.",
-                    )
-                )
+            append_skipped_executable_profile(
+                results=results,
+                tool_status=perf_status,
+                name=f"profile_{winner_key}_perf",
+                implementation="perf",
+                trait_type=candidate.trait_type,
+                device=candidate.device,
+                log_directory=output_directory / "logs",
             )
+    return results
+
+
+def build_logging_perturbation_cases(
+    *,
+    output_directory: Path,
+    smoke: bool,
+) -> tuple[LoggingPerturbationCase, ...]:
+    """Build telemetry/logging perturbation cases for representative winners."""
+    perturbation_directory = output_directory / "logging_perturbation"
+    cases = (
+        LoggingPerturbationCase(
+            name="telemetry_off",
+            diagnostic_options={
+                "g-telemetry": "off",
+                "g-log-stderr": False,
+            },
+        ),
+        LoggingPerturbationCase(
+            name="progress_file_lossy",
+            diagnostic_options={
+                "g-telemetry": "progress",
+                "g-log-dir": str(perturbation_directory / "progress_file_lossy_logs"),
+                "g-log-stderr": False,
+                "g-log-lossy": True,
+                "g-log-queue-size": 8192,
+            },
+        ),
+        LoggingPerturbationCase(
+            name="profile_file_lossy",
+            diagnostic_options={
+                "g-telemetry": "profile",
+                "g-log-dir": str(perturbation_directory / "profile_file_lossy_logs"),
+                "g-log-stderr": False,
+                "g-log-lossy": True,
+                "g-log-queue-size": 8192,
+            },
+        ),
+        LoggingPerturbationCase(
+            name="trace_file_lossy_capped",
+            diagnostic_options={
+                "g-telemetry": "trace",
+                "g-log-dir": str(perturbation_directory / "trace_file_lossy_capped_logs"),
+                "g-log-stderr": False,
+                "g-log-lossy": True,
+                "g-log-queue-size": 8192,
+                "g-trace-event-cap": 100_000,
+            },
+        ),
+    )
+    if smoke:
+        return cases[:2]
+    return cases
+
+
+def run_logging_perturbation_profiles(
+    *,
+    arguments: ProfileArguments,
+    baseline_paths: typing.Any,
+    winners: dict[str, AggregateResult],
+    output_directory: Path,
+    cache_directory: Path,
+) -> list[dict[str, typing.Any]]:
+    """Run representative winners under telemetry/logging perturbation cases."""
+    if not arguments.enable_logging_perturbation:
+        return []
+    perturbation_directory = output_directory / "logging_perturbation"
+    perturbation_directory.mkdir(parents=True, exist_ok=True)
+    results: list[dict[str, typing.Any]] = []
+    for winner_key, winner in sorted(winners.items()):
+        if not winner.trials:
+            continue
+        candidate = candidate_from_aggregate_name(winner_key, winner)
+        for perturbation_case in build_logging_perturbation_cases(
+            output_directory=output_directory,
+            smoke=arguments.smoke,
+        ):
+            diagnostic_options = dict(perturbation_case.diagnostic_options)
+            if diagnostic_options.get("g-telemetry") != "off":
+                diagnostic_options["g-log-dir"] = str(
+                    perturbation_directory / f"{winner_key}_{perturbation_case.name}_logs"
+                )
+            trial_result = run_g_trial(
+                name=f"logging_{winner_key}_{perturbation_case.name}",
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                output_directory=perturbation_directory,
+                log_directory=output_directory / "logs",
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+                emit_stage_timings=True,
+                diagnostic_options=diagnostic_options,
+            )
+            results.append(
+                {
+                    "winner_key": winner_key,
+                    "case": {
+                        "name": perturbation_case.name,
+                        "diagnostic_options": diagnostic_options,
+                    },
+                    "trial": dataclasses.asdict(trial_result),
+                }
+            )
+    (perturbation_directory / "logging_perturbation.json").write_text(
+        json.dumps(results, indent=2) + "\n",
+        encoding="utf-8",
+    )
     return results
 
 
@@ -1761,8 +2265,13 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileArgument
         enable_jax_memory_profile=bool(tool_values["enable_jax_memory_profile"]),
         enable_python_cprofile=bool(tool_values["enable_python_cprofile"]),
         enable_py_spy=bool(tool_values["enable_py_spy"]),
+        enable_scalene=bool(tool_values["enable_scalene"]),
+        enable_memray=bool(tool_values["enable_memray"]),
         enable_linux_perf=bool(tool_values["enable_linux_perf"]),
+        enable_nsight_systems=bool(tool_values["enable_nsight_systems"]),
+        enable_nsight_compute=bool(tool_values["enable_nsight_compute"]),
         enable_rust_criterion=bool(tool_values["enable_rust_criterion"]),
+        enable_logging_perturbation=bool(tool_values["enable_logging_perturbation"]),
         rust_benchmarks=tooling_hydra_arguments.comma_join(tool_values["rust_benchmarks"]),
         chunk_sizes=tooling_hydra_arguments.comma_join(tool_values["chunk_sizes"]),
         staging_depths=tooling_hydra_arguments.comma_join(tool_values["staging_depths"]),
@@ -1828,13 +2337,28 @@ def build_profile_plan(
         "jax_memory_profile": arguments.enable_jax_memory_profile,
         "python_cprofile": arguments.enable_python_cprofile,
         "py_spy": arguments.enable_py_spy,
+        "scalene": arguments.enable_scalene,
+        "memray": arguments.enable_memray,
         "linux_perf": arguments.enable_linux_perf,
+        "nsight_systems": arguments.enable_nsight_systems,
+        "nsight_compute": arguments.enable_nsight_compute,
         "rust_criterion": arguments.enable_rust_criterion,
+        "logging_perturbation": arguments.enable_logging_perturbation,
     }
+    profiler_tools = serialize_profiler_tool_status(build_profiler_tool_status(arguments))
+    logging_perturbation_cases = []
+    if arguments.enable_logging_perturbation:
+        logging_perturbation_cases = [
+            dataclasses.asdict(perturbation_case)
+            for perturbation_case in build_logging_perturbation_cases(
+                output_directory=output_directory,
+                smoke=arguments.smoke,
+            )
+        ]
     notes = [
         "Dry run only: no workloads, profilers, or setup commands were executed.",
         "Real runs generate summary.json, summary.md, preflight.json, subprocess logs, stage timings, "
-        "and deep_profiles artifacts.",
+        "deep_profiles artifacts, logging perturbation results, and artifact_manifest.json.",
     ]
     if arguments.skip_deep_profiles:
         notes.append("Deep profiler captures are disabled by tool.skip_deep_profiles=true.")
@@ -1845,6 +2369,8 @@ def build_profile_plan(
         output_directory=str(output_directory),
         required_inputs=[str(path) for path in required_profile_input_paths(baseline_paths)],
         profiler_modes=profiler_modes,
+        profiler_tools=profiler_tools,
+        logging_perturbation_cases=logging_perturbation_cases,
         rust_benchmark_commands=rust_benchmark_commands,
         notes=notes,
     )
@@ -1867,6 +2393,18 @@ def write_profile_plan(plan: ProfilePlan, output_directory: Path) -> None:
     ]
     for mode_name, enabled in plan.profiler_modes.items():
         lines.append(f"- `{mode_name}`: `{str(enabled).lower()}`")
+    lines.extend(["", "## Profiler Tool Availability", ""])
+    for tool_name, tool_status in plan.profiler_tools.items():
+        available = str(tool_status["available"]).lower()
+        enabled = str(tool_status["enabled"]).lower()
+        notes = str(tool_status["notes"])
+        lines.append(f"- `{tool_name}`: enabled=`{enabled}`, available=`{available}`; {notes}")
+    lines.extend(["", "## Logging Perturbation Cases", ""])
+    if plan.logging_perturbation_cases:
+        for perturbation_case in plan.logging_perturbation_cases:
+            lines.append(f"- `{perturbation_case['name']}`: `{perturbation_case['diagnostic_options']}`")
+    else:
+        lines.append("- Logging perturbation profiling is disabled.")
     lines.extend(["", "## Inputs And Step 1 Prediction Lists", ""])
     for input_path in plan.required_inputs:
         lines.append(f"- `{input_path}`")
@@ -1896,6 +2434,7 @@ def run_tool(arguments: ProfileArguments) -> None:
     logger.info("Starting %s deep profile campaign", arguments.chromosome_label)
     logger.info("Writing profile artifacts under %s", output_directory)
     baseline_paths = build_baseline_paths(arguments)
+    profiler_tool_status = build_profiler_tool_status(arguments)
     if arguments.dry_run:
         profile_plan = build_profile_plan(
             arguments=arguments,
@@ -1903,6 +2442,10 @@ def run_tool(arguments: ProfileArguments) -> None:
             output_directory=output_directory,
         )
         write_profile_plan(profile_plan, output_directory)
+        write_artifact_manifest(
+            output_directory=output_directory,
+            profiler_tool_status=profiler_tool_status,
+        )
         logger.info("Wrote dry-run profile plan under %s", output_directory)
         return
     logger.info("Validating profile inputs")
@@ -1967,6 +2510,14 @@ def run_tool(arguments: ProfileArguments) -> None:
         )
     else:
         logger.info("Skipping full profiler bundle")
+    logger.info("Running logging perturbation profiles")
+    logging_perturbation_results = run_logging_perturbation_profiles(
+        arguments=arguments,
+        baseline_paths=baseline_paths,
+        winners=winners,
+        output_directory=output_directory,
+        cache_directory=cache_directory,
+    )
     comparisons = build_runtime_comparisons(headline_results)
     stage_totals = collect_stage_totals(headline_results)
     stage_comparison_rows = build_stage_comparison_rows(headline_results)
@@ -1982,6 +2533,7 @@ def run_tool(arguments: ProfileArguments) -> None:
         "stage_comparisons": stage_comparison_rows,
         "algorithmic_findings": algorithmic_findings,
         "deep_profiles": deep_profile_results,
+        "logging_perturbation_results": logging_perturbation_results,
     }
     (output_directory / "summary.json").write_text(json.dumps(summary_payload, indent=2) + "\n", encoding="utf-8")
     (output_directory / "summary.md").write_text(
@@ -1991,8 +2543,14 @@ def run_tool(arguments: ProfileArguments) -> None:
             stage_totals=stage_totals,
             stage_comparison_rows=stage_comparison_rows,
             algorithmic_findings=algorithmic_findings,
+            logging_perturbation_results=logging_perturbation_results,
         ),
         encoding="utf-8",
+    )
+    write_artifact_manifest(
+        output_directory=output_directory,
+        profiler_tool_status=profiler_tool_status,
+        summary_payload=summary_payload,
     )
     logger.info("Wrote deep profile artifacts under %s", output_directory)
 

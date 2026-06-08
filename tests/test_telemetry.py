@@ -188,8 +188,45 @@ def test_profile_telemetry_flushes_buffered_events_on_close(tmp_path: Path) -> N
     event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
     assert [event_payload["event"] for event_payload in event_payloads[:-1]] == ["chunk_profile"] * 20
     assert event_payloads[-1]["event"] == "telemetry_session_closed"
+    assert event_payloads[-1]["writer_counters"]["written_event_count"] == 20
+    assert event_payloads[-1]["writer_counters"]["dropped_event_count"] == 0
+    assert telemetry_session.close_metadata is not None
+    assert telemetry_session.close_metadata["writer_counters"]["written_event_count"] == 21
+    assert telemetry_session.close_metadata["writer_counters"]["dropped_event_count"] == 0
     assert event_payloads[0]["chunk_index"] == 0
     assert event_payloads[19]["chunk_index"] == 19
+
+
+def test_telemetry_close_returns_writer_counters(tmp_path: Path) -> None:
+    telemetry_paths = telemetry.TelemetryPaths(
+        log_dir=tmp_path,
+        stream_file=tmp_path / "events.jsonl",
+        profile_summary_json=None,
+        stage_timings_json=None,
+    )
+    telemetry_session = telemetry.TelemetrySession(
+        mode=types.TelemetryMode.PROFILE,
+        paths=telemetry_paths,
+        progress_interval_seconds=999.0,
+        progress_interval_chunks=10,
+        run_id="run-1",
+    )
+
+    telemetry_session.log_event("first_profile_event")
+    telemetry_session.log_event("second_profile_event")
+    close_metadata = telemetry_session.close()
+
+    assert close_metadata is not None
+    writer_counters = close_metadata["writer_counters"]
+    assert writer_counters["accepted_event_count"] == 2
+    assert writer_counters["written_event_count"] == 2
+    assert writer_counters["dropped_event_count"] == 0
+    assert writer_counters["cap_dropped_event_count"] == 0
+    assert writer_counters["queue_dropped_event_count"] == 0
+    assert writer_counters["event_cap_exceeded"] is False
+    assert writer_counters["lossy"] is True
+    assert writer_counters["event_cap"] is None
+    assert isinstance(writer_counters["finish_flush_duration_seconds"], float)
 
 
 def test_trace_telemetry_event_cap_fails_without_lossy_mode(tmp_path: Path) -> None:
@@ -243,11 +280,21 @@ def test_trace_telemetry_event_cap_drops_with_lossy_mode(tmp_path: Path) -> None
 
     for event_index in range(5):
         telemetry_session.log_event("trace_event", event_index=event_index)
-    telemetry_session.close()
+    close_metadata = telemetry_session.close()
 
     assert telemetry_paths.stream_file is not None
     event_payloads = [json.loads(line) for line in telemetry_paths.stream_file.read_text(encoding="utf-8").splitlines()]
     assert [event_payload["event_index"] for event_payload in event_payloads] == [0, 1]
+    assert close_metadata is not None
+    writer_counters = close_metadata["writer_counters"]
+    assert writer_counters["accepted_event_count"] == 2
+    assert writer_counters["written_event_count"] == 2
+    assert writer_counters["dropped_event_count"] == 3
+    assert writer_counters["cap_dropped_event_count"] == 3
+    assert writer_counters["queue_dropped_event_count"] == 0
+    assert writer_counters["event_cap_exceeded"] is True
+    assert writer_counters["lossy"] is True
+    assert writer_counters["event_cap"] == 2
 
 
 @pytest.mark.parametrize("telemetry_mode", [types.TelemetryMode.PROGRESS, types.TelemetryMode.PROFILE])

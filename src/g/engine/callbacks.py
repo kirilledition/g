@@ -209,6 +209,39 @@ def put_compute_array_on_device(array: HostOrDeviceFloatArray) -> jax.Array:
     return typing.cast("jax.Array", jax.device_put(array))
 
 
+def record_transfer_metadata_for_array(
+    *,
+    stage_timing_recorder: timing.StageTimingRecorder | None,
+    transfer_name: str,
+    array_role: str,
+    array: object,
+) -> None:
+    """Record conservative transfer size metadata when diagnostics are active."""
+    if stage_timing_recorder is None:
+        return
+    shape = getattr(array, "shape", None)
+    dtype = getattr(array, "dtype", None)
+    if shape is None or dtype is None:
+        return
+    try:
+        numpy_dtype = np.dtype(dtype)
+    except TypeError:
+        return
+    element_count = 1
+    ndim = 0
+    for dimension in typing.cast("typing.Iterable[typing.Any]", shape):
+        element_count *= int(dimension)
+        ndim += 1
+    stage_timing_recorder.add_transfer_metadata(
+        transfer_name=transfer_name,
+        array_role=array_role,
+        dtype_name=numpy_dtype.name,
+        ndim=ndim,
+        byte_count=element_count * int(numpy_dtype.itemsize),
+        element_count=element_count,
+    )
+
+
 def enforce_null_logistic_nonconvergence_policy(
     *,
     chromosome: str,
@@ -275,6 +308,8 @@ def put_genotype_matrix_on_device(
     genotype_matrix: jax.Array | HostGenotypeBuffer,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     chunk_metadata: typing.Any | None = None,
+    *,
+    array_role: str = "genotype_matrix",
 ) -> jax.Array:
     """Transfer a genotype chunk to the active JAX device with optional timing."""
     start_time = time.perf_counter()
@@ -287,6 +322,12 @@ def put_genotype_matrix_on_device(
         start_time=start_time,
         chunk_metadata=chunk_metadata,
     )
+    record_transfer_metadata_for_array(
+        stage_timing_recorder=stage_timing_recorder,
+        transfer_name="host_to_device_transfer",
+        array_role=array_role,
+        array=genotype_matrix,
+    )
     return genotype_device_array
 
 
@@ -294,6 +335,8 @@ def put_chunk_array_on_device(
     array: jax.Array | npt.NDArray[typing.Any],
     stage_timing_recorder: timing.StageTimingRecorder | None,
     chunk_metadata: typing.Any,
+    *,
+    array_role: str = "chunk_array",
 ) -> jax.Array:
     """Transfer one chunk-scoped array to the active JAX device with timing."""
     start_time = time.perf_counter()
@@ -305,6 +348,12 @@ def put_chunk_array_on_device(
         stage_name="host_to_device_transfer",
         start_time=start_time,
         chunk_metadata=chunk_metadata,
+    )
+    record_transfer_metadata_for_array(
+        stage_timing_recorder=stage_timing_recorder,
+        transfer_name="host_to_device_transfer",
+        array_role=array_role,
+        array=array,
     )
     return device_array
 
@@ -480,12 +529,47 @@ def write_regenie2_native_chunk_with_optional_timing(
     Rust writer call.
     """
     materialization_start_time = time.perf_counter()
+    beta_device_array = narrow_public_statistic_array_on_device(beta)
+    standard_error_device_array = narrow_public_statistic_array_on_device(standard_error)
+    chi_squared_device_array = narrow_public_statistic_array_on_device(chi_squared)
+    log10_p_value_device_array = narrow_public_statistic_array_on_device(log10_p_value)
+    record_transfer_metadata_for_array(
+        stage_timing_recorder=stage_timing_recorder,
+        transfer_name="device_to_host_materialization",
+        array_role="beta",
+        array=beta_device_array,
+    )
+    record_transfer_metadata_for_array(
+        stage_timing_recorder=stage_timing_recorder,
+        transfer_name="device_to_host_materialization",
+        array_role="standard_error",
+        array=standard_error_device_array,
+    )
+    record_transfer_metadata_for_array(
+        stage_timing_recorder=stage_timing_recorder,
+        transfer_name="device_to_host_materialization",
+        array_role="chi_squared",
+        array=chi_squared_device_array,
+    )
+    record_transfer_metadata_for_array(
+        stage_timing_recorder=stage_timing_recorder,
+        transfer_name="device_to_host_materialization",
+        array_role="log10_p_value",
+        array=log10_p_value_device_array,
+    )
+    if extra_code is not None:
+        record_transfer_metadata_for_array(
+            stage_timing_recorder=stage_timing_recorder,
+            transfer_name="device_to_host_materialization",
+            array_role="extra_code",
+            array=extra_code,
+        )
     host_values = jax.device_get(
         {
-            "beta": narrow_public_statistic_array_on_device(beta),
-            "standard_error": narrow_public_statistic_array_on_device(standard_error),
-            "chi_squared": narrow_public_statistic_array_on_device(chi_squared),
-            "log10_p_value": narrow_public_statistic_array_on_device(log10_p_value),
+            "beta": beta_device_array,
+            "standard_error": standard_error_device_array,
+            "chi_squared": chi_squared_device_array,
+            "log10_p_value": log10_p_value_device_array,
             "extra_code": extra_code,
         }
     )
@@ -567,36 +651,71 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
         )
 
     materialization_start_time = time.perf_counter()
+    beta_device_array = narrow_public_statistic_array_on_device(
+        select_active_trait_rows_on_device(
+            beta,
+            active_trait_indices=active_trait_indices,
+            total_trait_count=total_trait_count,
+        )
+    )
+    standard_error_device_array = narrow_public_statistic_array_on_device(
+        select_active_trait_rows_on_device(
+            standard_error,
+            active_trait_indices=active_trait_indices,
+            total_trait_count=total_trait_count,
+        )
+    )
+    chi_squared_device_array = narrow_public_statistic_array_on_device(
+        select_active_trait_rows_on_device(
+            chi_squared,
+            active_trait_indices=active_trait_indices,
+            total_trait_count=total_trait_count,
+        )
+    )
+    log10_p_value_device_array = narrow_public_statistic_array_on_device(
+        select_active_trait_rows_on_device(
+            log10_p_value,
+            active_trait_indices=active_trait_indices,
+            total_trait_count=total_trait_count,
+        )
+    )
+    record_transfer_metadata_for_array(
+        stage_timing_recorder=stage_timing_recorder,
+        transfer_name="device_to_host_materialization",
+        array_role="beta",
+        array=beta_device_array,
+    )
+    record_transfer_metadata_for_array(
+        stage_timing_recorder=stage_timing_recorder,
+        transfer_name="device_to_host_materialization",
+        array_role="standard_error",
+        array=standard_error_device_array,
+    )
+    record_transfer_metadata_for_array(
+        stage_timing_recorder=stage_timing_recorder,
+        transfer_name="device_to_host_materialization",
+        array_role="chi_squared",
+        array=chi_squared_device_array,
+    )
+    record_transfer_metadata_for_array(
+        stage_timing_recorder=stage_timing_recorder,
+        transfer_name="device_to_host_materialization",
+        array_role="log10_p_value",
+        array=log10_p_value_device_array,
+    )
+    if active_extra_code is not None:
+        record_transfer_metadata_for_array(
+            stage_timing_recorder=stage_timing_recorder,
+            transfer_name="device_to_host_materialization",
+            array_role="extra_code",
+            array=active_extra_code,
+        )
     host_values = jax.device_get(
         {
-            "beta": narrow_public_statistic_array_on_device(
-                select_active_trait_rows_on_device(
-                    beta,
-                    active_trait_indices=active_trait_indices,
-                    total_trait_count=total_trait_count,
-                )
-            ),
-            "standard_error": narrow_public_statistic_array_on_device(
-                select_active_trait_rows_on_device(
-                    standard_error,
-                    active_trait_indices=active_trait_indices,
-                    total_trait_count=total_trait_count,
-                )
-            ),
-            "chi_squared": narrow_public_statistic_array_on_device(
-                select_active_trait_rows_on_device(
-                    chi_squared,
-                    active_trait_indices=active_trait_indices,
-                    total_trait_count=total_trait_count,
-                )
-            ),
-            "log10_p_value": narrow_public_statistic_array_on_device(
-                select_active_trait_rows_on_device(
-                    log10_p_value,
-                    active_trait_indices=active_trait_indices,
-                    total_trait_count=total_trait_count,
-                )
-            ),
+            "beta": beta_device_array,
+            "standard_error": standard_error_device_array,
+            "chi_squared": chi_squared_device_array,
+            "log10_p_value": log10_p_value_device_array,
             "extra_code": active_extra_code,
         }
     )
@@ -810,6 +929,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.result_queue_depth = staging_depth
         self.result_in_flight_limit = self.result_queue_depth + 1
         self.dosage_buffer_limit = self.dosage_queue_depth + 1
+        self.result_in_flight_slot_count = 0
+        self.result_in_flight_slot_lock = threading.Lock()
         self.dosage_queue: queue.Queue[
             PreprocessedDosageChunkWorkItem
             | PreprocessedVariantMajorDosageChunkWorkItem
@@ -869,6 +990,100 @@ class NativeBgenCallbackRunner(abc.ABC):
         if self.stage_timing_recorder is None:
             return None
         return self.record_stage_duration
+
+    def record_queue_operation(
+        self,
+        *,
+        queue_name: str,
+        operation_name: str,
+        observed_queue: queue.Queue[typing.Any],
+        elapsed_seconds: float = 0.0,
+        blocked_seconds: float = 0.0,
+    ) -> None:
+        """Record aggregate queue depth and wait metadata."""
+        if self.stage_timing_recorder is None:
+            return
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=queue_name,
+            operation_name=operation_name,
+            queue_depth=observed_queue.qsize(),
+            queue_capacity=observed_queue.maxsize,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=blocked_seconds,
+        )
+
+    def record_queue_stage_duration(
+        self,
+        *,
+        queue_name: str,
+        operation_name: str,
+        stage_name: str,
+        observed_queue: queue.Queue[typing.Any],
+        start_time: float,
+        blocked: bool,
+    ) -> None:
+        """Record a queue stage duration plus aggregate pressure metadata."""
+        elapsed_seconds = time.perf_counter() - start_time
+        if self.stage_timing_recorder is None:
+            return
+        self.stage_timing_recorder.add_stage_duration(stage_name, elapsed_seconds)
+        blocked_seconds = elapsed_seconds if blocked else 0.0
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=queue_name,
+            operation_name=operation_name,
+            queue_depth=observed_queue.qsize(),
+            queue_capacity=observed_queue.maxsize,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=blocked_seconds,
+        )
+
+    def record_bounded_resource_operation(
+        self,
+        *,
+        resource_name: str,
+        operation_name: str,
+        current_depth: int,
+        capacity: int,
+        elapsed_seconds: float = 0.0,
+        blocked_seconds: float = 0.0,
+    ) -> None:
+        """Record aggregate bounded-resource occupancy metadata."""
+        if self.stage_timing_recorder is None:
+            return
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=resource_name,
+            operation_name=operation_name,
+            queue_depth=current_depth,
+            queue_capacity=capacity,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=blocked_seconds,
+        )
+
+    def record_bounded_resource_stage_duration(
+        self,
+        *,
+        resource_name: str,
+        operation_name: str,
+        current_depth: int,
+        capacity: int,
+        stage_name: str,
+        start_time: float,
+        blocked: bool,
+    ) -> None:
+        """Record a bounded-resource stage duration plus pressure metadata."""
+        elapsed_seconds = time.perf_counter() - start_time
+        if self.stage_timing_recorder is None:
+            return
+        self.stage_timing_recorder.add_stage_duration(stage_name, elapsed_seconds)
+        blocked_seconds = elapsed_seconds if blocked else 0.0
+        self.stage_timing_recorder.add_queue_backpressure_observation(
+            queue_name=resource_name,
+            operation_name=operation_name,
+            queue_depth=current_depth,
+            queue_capacity=capacity,
+            elapsed_seconds=elapsed_seconds,
+            blocked_seconds=blocked_seconds,
+        )
 
     @abc.abstractmethod
     def compute_preprocessed_chunk(
@@ -964,9 +1179,18 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Consume queued dosage chunks and run JAX work in order."""
         try:
             while True:
+                get_start_time = time.perf_counter()
                 work_item = self.dosage_queue.get()
                 if work_item is None:
                     return
+                self.record_queue_stage_duration(
+                    queue_name="dosage_queue",
+                    operation_name="consumer_wait",
+                    stage_name="callback_queue_consumer_wait",
+                    observed_queue=self.dosage_queue,
+                    start_time=get_start_time,
+                    blocked=True,
+                )
                 python_callback_start_time = time.perf_counter()
                 if isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
                     try:
@@ -1046,9 +1270,18 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Materialize computed JAX results and write them in order."""
         try:
             while True:
+                get_start_time = time.perf_counter()
                 work_item = self.result_queue.get()
                 if work_item is None:
                     return
+                self.record_queue_stage_duration(
+                    queue_name="result_queue",
+                    operation_name="consumer_wait",
+                    stage_name="result_queue_consumer_wait",
+                    observed_queue=self.result_queue,
+                    start_time=get_start_time,
+                    blocked=True,
+                )
                 try:
                     write_regenie2_native_chunk_with_optional_timing(
                         writer_session=typing.cast("typing.Any", self).writer_session,
@@ -1082,11 +1315,23 @@ class NativeBgenCallbackRunner(abc.ABC):
             put_start_time = time.perf_counter()
             try:
                 self.dosage_queue.put(work_item, timeout=0.1)
-                timing.record_stage_duration(self.stage_timing_recorder, "callback_queue_put", put_start_time)
+                self.record_queue_stage_duration(
+                    queue_name="dosage_queue",
+                    operation_name="put",
+                    stage_name="callback_queue_put",
+                    observed_queue=self.dosage_queue,
+                    start_time=put_start_time,
+                    blocked=False,
+                )
                 return
             except queue.Full:
-                timing.record_stage_duration(
-                    self.stage_timing_recorder, "callback_queue_producer_blocking", put_start_time
+                self.record_queue_stage_duration(
+                    queue_name="dosage_queue",
+                    operation_name="producer_blocking",
+                    stage_name="callback_queue_producer_blocking",
+                    observed_queue=self.dosage_queue,
+                    start_time=put_start_time,
+                    blocked=True,
                 )
                 continue
 
@@ -1110,11 +1355,23 @@ class NativeBgenCallbackRunner(abc.ABC):
             put_start_time = time.perf_counter()
             try:
                 self.result_queue.put(work_item, timeout=0.1)
-                timing.record_stage_duration(self.stage_timing_recorder, "result_queue_put", put_start_time)
+                self.record_queue_stage_duration(
+                    queue_name="result_queue",
+                    operation_name="put",
+                    stage_name="result_queue_put",
+                    observed_queue=self.result_queue,
+                    start_time=put_start_time,
+                    blocked=False,
+                )
                 return
             except queue.Full:
-                timing.record_stage_duration(
-                    self.stage_timing_recorder, "result_queue_producer_blocking", put_start_time
+                self.record_queue_stage_duration(
+                    queue_name="result_queue",
+                    operation_name="producer_blocking",
+                    stage_name="result_queue_producer_blocking",
+                    observed_queue=self.result_queue,
+                    start_time=put_start_time,
+                    blocked=True,
                 )
                 continue
 
@@ -1124,19 +1381,44 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.raise_worker_error_if_present()
             acquire_start_time = time.perf_counter()
             if self.result_in_flight_slots.acquire(timeout=0.1):
-                timing.record_stage_duration(
-                    self.stage_timing_recorder, "result_in_flight_slot_acquire", acquire_start_time
+                with self.result_in_flight_slot_lock:
+                    self.result_in_flight_slot_count += 1
+                    current_depth = self.result_in_flight_slot_count
+                self.record_bounded_resource_stage_duration(
+                    resource_name="result_in_flight_slots",
+                    operation_name="acquire",
+                    current_depth=current_depth,
+                    capacity=self.result_in_flight_limit,
+                    stage_name="result_in_flight_slot_acquire",
+                    start_time=acquire_start_time,
+                    blocked=False,
                 )
                 return
-            timing.record_stage_duration(
-                self.stage_timing_recorder,
-                "result_in_flight_producer_blocking",
-                acquire_start_time,
+            with self.result_in_flight_slot_lock:
+                current_depth = self.result_in_flight_slot_count
+            self.record_bounded_resource_stage_duration(
+                resource_name="result_in_flight_slots",
+                operation_name="producer_blocking",
+                current_depth=current_depth,
+                capacity=self.result_in_flight_limit,
+                stage_name="result_in_flight_producer_blocking",
+                start_time=acquire_start_time,
+                blocked=True,
             )
 
     def release_result_in_flight_slot(self) -> None:
         """Release capacity for one completed chunk of GPU result work."""
         self.result_in_flight_slots.release()
+        with self.result_in_flight_slot_lock:
+            if self.result_in_flight_slot_count > 0:
+                self.result_in_flight_slot_count -= 1
+            current_depth = self.result_in_flight_slot_count
+        self.record_bounded_resource_operation(
+            resource_name="result_in_flight_slots",
+            operation_name="release",
+            current_depth=current_depth,
+            capacity=self.result_in_flight_limit,
+        )
 
     def finish(self) -> None:
         """Wait until all queued JAX work has been written."""
@@ -1275,6 +1557,11 @@ class NativeBgenCallbackRunner(abc.ABC):
             with contextlib.suppress(queue.Empty):
                 dosage_buffer = self.free_dosage_buffers.get_nowait()
                 if dosage_buffer.shape == expected_shape and dosage_buffer.dtype == dtype:
+                    self.record_queue_operation(
+                        queue_name="dosage_buffer_pool",
+                        operation_name="reuse",
+                        observed_queue=self.free_dosage_buffers,
+                    )
                     return dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
                 if self.dosage_buffer_count < self.dosage_buffer_limit:
@@ -1283,8 +1570,22 @@ class NativeBgenCallbackRunner(abc.ABC):
             if self.dosage_buffer_count < self.dosage_buffer_limit:
                 return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
             with contextlib.suppress(queue.Empty):
+                buffer_wait_start_time = time.perf_counter()
                 dosage_buffer = self.free_dosage_buffers.get(timeout=0.1)
+                self.record_queue_stage_duration(
+                    queue_name="dosage_buffer_pool",
+                    operation_name="consumer_wait",
+                    stage_name="dosage_buffer_pool_consumer_wait",
+                    observed_queue=self.free_dosage_buffers,
+                    start_time=buffer_wait_start_time,
+                    blocked=True,
+                )
                 if dosage_buffer.shape == expected_shape and dosage_buffer.dtype == dtype:
+                    self.record_queue_operation(
+                        queue_name="dosage_buffer_pool",
+                        operation_name="reuse",
+                        observed_queue=self.free_dosage_buffers,
+                    )
                     return dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
                 if self.dosage_buffer_count < self.dosage_buffer_limit:
@@ -1296,7 +1597,17 @@ class NativeBgenCallbackRunner(abc.ABC):
             return
         try:
             self.free_dosage_buffers.put_nowait(dosage_buffer)
+            self.record_queue_operation(
+                queue_name="dosage_buffer_pool",
+                operation_name="return",
+                observed_queue=self.free_dosage_buffers,
+            )
         except queue.Full:
+            self.record_queue_operation(
+                queue_name="dosage_buffer_pool",
+                operation_name="return_full",
+                observed_queue=self.free_dosage_buffers,
+            )
             self.discard_dosage_buffer_slot(dosage_buffer)
 
     def allocate_dosage_buffer_with_shape(
@@ -1308,6 +1619,11 @@ class NativeBgenCallbackRunner(abc.ABC):
         dosage_buffer = typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
         self.dosage_buffer_count += 1
         self.dosage_buffer_identifiers.add(id(dosage_buffer))
+        self.record_queue_operation(
+            queue_name="dosage_buffer_pool",
+            operation_name="allocate",
+            observed_queue=self.free_dosage_buffers,
+        )
         return dosage_buffer
 
     def discard_dosage_buffer_slot(self, dosage_buffer: HostGenotypeBuffer) -> None:
@@ -1318,6 +1634,11 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.dosage_buffer_identifiers.remove(dosage_buffer_identifier)
         if self.dosage_buffer_count > 0:
             self.dosage_buffer_count -= 1
+        self.record_queue_operation(
+            queue_name="dosage_buffer_pool",
+            operation_name="discard",
+            observed_queue=self.free_dosage_buffers,
+        )
 
     def release_numpy_dosage_buffer(self, dosage_buffer: jax.Array | HostGenotypeBuffer) -> None:
         """Return a NumPy host dosage buffer to the pool after device transfer."""
@@ -1690,9 +2011,18 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         """Materialize computed multi-trait JAX results and write each trait in order."""
         try:
             while True:
+                get_start_time = time.perf_counter()
                 work_item = self.result_queue.get()
                 if work_item is None:
                     return
+                self.record_queue_stage_duration(
+                    queue_name="result_queue",
+                    operation_name="consumer_wait",
+                    stage_name="result_queue_consumer_wait",
+                    observed_queue=self.result_queue,
+                    start_time=get_start_time,
+                    blocked=True,
+                )
                 multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
                 try:
                     write_regenie2_multi_native_chunk_with_optional_timing(
@@ -2354,9 +2684,18 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         """Materialize computed multi-trait JAX results and write each trait in order."""
         try:
             while True:
+                get_start_time = time.perf_counter()
                 work_item = self.result_queue.get()
                 if work_item is None:
                     return
+                self.record_queue_stage_duration(
+                    queue_name="result_queue",
+                    operation_name="consumer_wait",
+                    stage_name="result_queue_consumer_wait",
+                    observed_queue=self.result_queue,
+                    start_time=get_start_time,
+                    blocked=True,
+                )
                 multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
                 try:
                     write_regenie2_multi_native_chunk_with_optional_timing(

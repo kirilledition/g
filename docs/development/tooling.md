@@ -226,8 +226,9 @@ Set `GWAS_ENGINE_PERF_RESULTS_DIR` to route local artifacts elsewhere.
 This is the standard profiling task:
 
 > Run full documented profiling of the app with JAX tracing, JAX memory
-> profiles, Python cProfile, py-spy sampling, Linux perf native stack samples,
-> Rust Criterion benches, stage timings, logs, bottleneck summaries, and a
+> profiles, Python cProfile, py-spy sampling, optional Scalene/Memray/Nsight
+> passes, Linux perf native stack samples, Rust Criterion benches, stage
+> timings, logs, telemetry perturbation runs, bottleneck summaries, and a
 > Markdown report.
 
 Use the full app profiling recipe. It is backed by
@@ -238,11 +239,24 @@ require the external `regenie` executable. Existing binary and quantitative
 step 1 prediction lists must be present.
 
 Start with a dry run. This writes `profile_plan.json` and `profile_plan.md`
-without running workloads:
+without running workloads. It also writes `artifact_manifest.json`, including
+optional profiler availability and skipped-tool reasons:
 
 ```bash
 just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
 ```
+
+Install optional user-local profiler tools before a deep campaign when the host
+does not already provide them:
+
+```bash
+just install-profiling-tools
+```
+
+Nsight Systems (`nsys`) and Nsight Compute (`ncu`) are not installed by this
+recipe; use a local NVIDIA install or module when available on the GPU node.
+The harness records missing or permission-blocked profilers as skipped results
+instead of failing the campaign.
 
 Run a small end-to-end smoke profile before spending a full SLURM allocation:
 
@@ -267,11 +281,15 @@ The full run writes:
 - `summary.json`: structured run results, comparisons, stage totals, and
   profiler metadata.
 - `summary.md`: human-readable bottleneck report.
+- `artifact_manifest.json`: artifact list, profiler availability, and skipped
+  profiler reasons.
 - `logs/*.stdout.log` and `logs/*.stderr.log`: subprocess logs.
 - `bgen_sweep/bgen_sweep.json`: native BGEN reader pre-sweep.
 - `tuning_*.json`: candidate tuning grids and finalists.
 - `headline_runs/`: winning `g` outputs, plus original REGENIE outputs when
   `tool.include_regenie_baseline=true`.
+- `logging_perturbation/logging_perturbation.json`: telemetry/logging
+  perturbation trials for representative winners.
 - `deep_profiles/*_jax_trace/`: JAX profiler traces for TensorBoard or
   Perfetto-compatible viewers.
 - `deep_profiles/*_device_memory.prof`: JAX device memory profiles.
@@ -279,6 +297,14 @@ The full run writes:
   cProfile data and cumulative-time text summaries.
 - `deep_profiles/*.speedscope.json`: py-spy sampling profiles when `py-spy` is
   installed.
+- `deep_profiles/*.scalene.json`: Scalene CPU/memory profile output when
+  `tool.enable_scalene=true` and `scalene` is installed.
+- `deep_profiles/*.memray.bin`: Memray allocation traces when
+  `tool.enable_memray=true` and `memray` is installed.
+- `deep_profiles/*_nsys.*`: Nsight Systems reports when
+  `tool.enable_nsight_systems=true` and `nsys` is available.
+- `deep_profiles/*_ncu.*`: Nsight Compute reports when
+  `tool.enable_nsight_compute=true` and `ncu` is available.
 - `deep_profiles/*.perf.data`: Linux perf native stack profiles when `perf` is
   available.
 - Rust Criterion output for `bgen_read` and `preprocess` when
@@ -304,6 +330,14 @@ Useful overrides:
   captures.
 - `tool.enable_linux_perf=false`: skip perf when the node disallows it.
 - `tool.enable_py_spy=false`: skip py-spy sampling.
+- `tool.enable_scalene=true`: run optional Scalene CPU/memory profile passes.
+- `tool.enable_memray=true`: run optional Memray allocation profile passes.
+- `tool.enable_nsight_systems=true`: run optional Nsight Systems CUDA timeline
+  passes for representative winners.
+- `tool.enable_nsight_compute=true`: run optional Nsight Compute kernel reports;
+  use this only after a hot kernel is identified because it is intrusive.
+- `tool.enable_logging_perturbation=false`: skip telemetry/logging perturbation
+  trials when reproducing a narrower benchmark.
 - `tool.rust_benchmarks=[bgen_read]`: limit Rust Criterion benches.
 - `tool.include_regenie_baseline=true`: also run original REGENIE headline
   trials when `regenie` is available.

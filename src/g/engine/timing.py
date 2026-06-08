@@ -67,6 +67,8 @@ class StageTimingSnapshot:
         native_bgen_profile: Native BGEN profile counters from the run engine.
         binary_chunk_diagnostics: Binary score/Firth diagnostics per processed chunk.
         null_logistic_diagnostics: Binary null logistic fit diagnostics per chromosome.
+        queue_backpressure: Queue and bounded-resource backpressure summaries.
+        transfer_metadata: Host/device transfer metadata summaries.
 
     """
 
@@ -76,6 +78,101 @@ class StageTimingSnapshot:
     native_bgen_profile: dict[str, int]
     binary_chunk_diagnostics: tuple[dict[str, int | float], ...]
     null_logistic_diagnostics: tuple[dict[str, int | str], ...]
+    queue_backpressure: tuple[QueueBackpressureSnapshot, ...]
+    transfer_metadata: tuple[TransferMetadataSnapshot, ...]
+
+
+@dataclass(frozen=True)
+class QueueBackpressureSnapshot:
+    """Aggregate queue or bounded-resource pressure metadata.
+
+    Attributes:
+        queue_name: Queue or resource being observed.
+        operation_name: Operation that produced this observation.
+        observation_count: Number of observations included in the aggregate.
+        max_depth: Highest observed queue depth or resource occupancy.
+        max_capacity: Configured queue or resource capacity.
+        total_elapsed_seconds: Total elapsed time spent in the operation.
+        total_blocked_seconds: Elapsed time known to be producer/consumer blocking.
+
+    """
+
+    queue_name: str
+    operation_name: str
+    observation_count: int
+    max_depth: int
+    max_capacity: int
+    total_elapsed_seconds: float
+    total_blocked_seconds: float
+
+
+@dataclass(frozen=True)
+class TransferMetadataSnapshot:
+    """Aggregate metadata for one host/device transfer class.
+
+    Attributes:
+        transfer_name: Timed transfer stage name.
+        array_role: Logical role for the transferred array.
+        dtype_name: Data type name for the transferred array.
+        ndim: Number of array dimensions.
+        observation_count: Number of transfers included in the aggregate.
+        total_bytes: Total estimated bytes transferred.
+        max_bytes: Largest estimated single-transfer byte count.
+        total_elements: Total element count across observations.
+
+    """
+
+    transfer_name: str
+    array_role: str
+    dtype_name: str
+    ndim: int
+    observation_count: int
+    total_bytes: int
+    max_bytes: int
+    total_elements: int
+
+
+@dataclass
+class QueueBackpressureAccumulator:
+    """Mutable queue/backpressure aggregate held behind the recorder lock."""
+
+    observation_count: int = 0
+    max_depth: int = 0
+    max_capacity: int = 0
+    total_elapsed_seconds: float = 0.0
+    total_blocked_seconds: float = 0.0
+
+    def add_observation(
+        self,
+        *,
+        queue_depth: int,
+        queue_capacity: int,
+        elapsed_seconds: float,
+        blocked_seconds: float,
+    ) -> None:
+        """Add one queue/backpressure observation."""
+        self.observation_count += 1
+        self.max_depth = max(self.max_depth, queue_depth)
+        self.max_capacity = max(self.max_capacity, queue_capacity)
+        self.total_elapsed_seconds += elapsed_seconds
+        self.total_blocked_seconds += blocked_seconds
+
+
+@dataclass
+class TransferMetadataAccumulator:
+    """Mutable transfer metadata aggregate held behind the recorder lock."""
+
+    observation_count: int = 0
+    total_bytes: int = 0
+    max_bytes: int = 0
+    total_elements: int = 0
+
+    def add_observation(self, *, byte_count: int, element_count: int) -> None:
+        """Add one transfer metadata observation."""
+        self.observation_count += 1
+        self.total_bytes += byte_count
+        self.max_bytes = max(self.max_bytes, byte_count)
+        self.total_elements += element_count
 
 
 class StageTimingRecorder:
@@ -90,6 +187,8 @@ class StageTimingRecorder:
         self.native_bgen_profile: dict[str, int] = {}
         self.binary_chunk_diagnostics: list[dict[str, int | float]] = []
         self.null_logistic_diagnostics: list[dict[str, int | str]] = []
+        self.queue_backpressure: dict[tuple[str, str], QueueBackpressureAccumulator] = {}
+        self.transfer_metadata: dict[tuple[str, str, str, int], TransferMetadataAccumulator] = {}
         self.lock = threading.Lock()
 
     def add_stage_duration_unlocked(self, stage_name: str, duration_seconds: float) -> None:
@@ -139,6 +238,43 @@ class StageTimingRecorder:
         with self.lock:
             self.null_logistic_diagnostics.append(dict(diagnostics))
 
+    def add_queue_backpressure_observation(
+        self,
+        *,
+        queue_name: str,
+        operation_name: str,
+        queue_depth: int,
+        queue_capacity: int,
+        elapsed_seconds: float = 0.0,
+        blocked_seconds: float = 0.0,
+    ) -> None:
+        """Store one queue or bounded-resource pressure observation."""
+        with self.lock:
+            key = (queue_name, operation_name)
+            accumulator = self.queue_backpressure.setdefault(key, QueueBackpressureAccumulator())
+            accumulator.add_observation(
+                queue_depth=queue_depth,
+                queue_capacity=queue_capacity,
+                elapsed_seconds=elapsed_seconds,
+                blocked_seconds=blocked_seconds,
+            )
+
+    def add_transfer_metadata(
+        self,
+        *,
+        transfer_name: str,
+        array_role: str,
+        dtype_name: str,
+        ndim: int,
+        byte_count: int,
+        element_count: int,
+    ) -> None:
+        """Store metadata for one host/device transfer observation."""
+        with self.lock:
+            key = (transfer_name, array_role, dtype_name, ndim)
+            accumulator = self.transfer_metadata.setdefault(key, TransferMetadataAccumulator())
+            accumulator.add_observation(byte_count=byte_count, element_count=element_count)
+
     def snapshot(self) -> StageTimingSnapshot:
         """Return an immutable copy of the current timings."""
         with self.lock:
@@ -149,6 +285,33 @@ class StageTimingRecorder:
                 native_bgen_profile=dict(self.native_bgen_profile),
                 binary_chunk_diagnostics=tuple(dict(diagnostics) for diagnostics in self.binary_chunk_diagnostics),
                 null_logistic_diagnostics=tuple(dict(diagnostics) for diagnostics in self.null_logistic_diagnostics),
+                queue_backpressure=tuple(
+                    QueueBackpressureSnapshot(
+                        queue_name=queue_name,
+                        operation_name=operation_name,
+                        observation_count=accumulator.observation_count,
+                        max_depth=accumulator.max_depth,
+                        max_capacity=accumulator.max_capacity,
+                        total_elapsed_seconds=accumulator.total_elapsed_seconds,
+                        total_blocked_seconds=accumulator.total_blocked_seconds,
+                    )
+                    for (queue_name, operation_name), accumulator in sorted(self.queue_backpressure.items())
+                ),
+                transfer_metadata=tuple(
+                    TransferMetadataSnapshot(
+                        transfer_name=transfer_name,
+                        array_role=array_role,
+                        dtype_name=dtype_name,
+                        ndim=ndim,
+                        observation_count=accumulator.observation_count,
+                        total_bytes=accumulator.total_bytes,
+                        max_bytes=accumulator.max_bytes,
+                        total_elements=accumulator.total_elements,
+                    )
+                    for (transfer_name, array_role, dtype_name, ndim), accumulator in sorted(
+                        self.transfer_metadata.items()
+                    )
+                ),
             )
 
 
@@ -185,6 +348,8 @@ def write_stage_timing_snapshot(
         "native_bgen_profile": snapshot.native_bgen_profile,
         "binary_chunk_diagnostics": snapshot.binary_chunk_diagnostics,
         "null_logistic_diagnostics": snapshot.null_logistic_diagnostics,
+        "queue_backpressure": serialize_queue_backpressure(snapshot.queue_backpressure),
+        "transfer_metadata": serialize_transfer_metadata(snapshot.transfer_metadata),
         "derived_metrics": build_derived_metrics(snapshot),
     }
     stage_timing_path.parent.mkdir(parents=True, exist_ok=True)
@@ -212,6 +377,8 @@ def write_profile_summary(
         "derived_metrics": build_derived_metrics(snapshot),
         "chunk_stage_summary": build_chunk_stage_summary(snapshot.chunk_stage_timings),
         "binary_chunk_summary": build_binary_chunk_summary(snapshot.binary_chunk_diagnostics),
+        "queue_backpressure": serialize_queue_backpressure(snapshot.queue_backpressure),
+        "transfer_metadata": serialize_transfer_metadata(snapshot.transfer_metadata),
         "null_logistic_summary": {
             "chromosome_count": len(snapshot.null_logistic_diagnostics),
         },
@@ -235,6 +402,43 @@ def serialize_chunk_stage_timings(
             "duration_seconds": chunk_stage_timing.duration_seconds,
         }
         for chunk_stage_timing in chunk_stage_timings
+    )
+
+
+def serialize_queue_backpressure(
+    queue_backpressure: tuple[QueueBackpressureSnapshot, ...],
+) -> tuple[dict[str, int | float | str], ...]:
+    """Serialize queue/backpressure observations to JSON-compatible dictionaries."""
+    return tuple(
+        {
+            "queue_name": queue_snapshot.queue_name,
+            "operation_name": queue_snapshot.operation_name,
+            "observation_count": queue_snapshot.observation_count,
+            "max_depth": queue_snapshot.max_depth,
+            "max_capacity": queue_snapshot.max_capacity,
+            "total_elapsed_seconds": queue_snapshot.total_elapsed_seconds,
+            "total_blocked_seconds": queue_snapshot.total_blocked_seconds,
+        }
+        for queue_snapshot in queue_backpressure
+    )
+
+
+def serialize_transfer_metadata(
+    transfer_metadata: tuple[TransferMetadataSnapshot, ...],
+) -> tuple[dict[str, int | str], ...]:
+    """Serialize transfer metadata observations to JSON-compatible dictionaries."""
+    return tuple(
+        {
+            "transfer_name": transfer_snapshot.transfer_name,
+            "array_role": transfer_snapshot.array_role,
+            "dtype_name": transfer_snapshot.dtype_name,
+            "ndim": transfer_snapshot.ndim,
+            "observation_count": transfer_snapshot.observation_count,
+            "total_bytes": transfer_snapshot.total_bytes,
+            "max_bytes": transfer_snapshot.max_bytes,
+            "total_elements": transfer_snapshot.total_elements,
+        }
+        for transfer_snapshot in transfer_metadata
     )
 
 
@@ -300,6 +504,15 @@ def build_derived_metrics(snapshot: StageTimingSnapshot) -> dict[str, float]:
         derived_metrics["native_dosage_values_per_second"] = (
             variant_decode_count * selected_sample_count / native_delivery_seconds
         )
+    transfer_byte_totals: dict[str, int] = {}
+    for transfer_snapshot in snapshot.transfer_metadata:
+        transfer_byte_totals[transfer_snapshot.transfer_name] = (
+            transfer_byte_totals.get(transfer_snapshot.transfer_name, 0) + transfer_snapshot.total_bytes
+        )
+    for transfer_name, byte_count in transfer_byte_totals.items():
+        transfer_seconds = snapshot.stage_totals_seconds.get(transfer_name, 0.0)
+        if byte_count > 0 and transfer_seconds > 0.0:
+            derived_metrics[f"{transfer_name}_bytes_per_second"] = float(byte_count) / transfer_seconds
     return derived_metrics
 
 

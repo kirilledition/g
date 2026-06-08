@@ -1409,6 +1409,78 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
     assert "jax_probe_device_platform" in command_text
 
 
+def test_deep_profile_artifact_manifest_records_tools_and_skips(tmp_path: Path) -> None:
+    output_directory = tmp_path / "profile"
+    output_directory.mkdir()
+    (output_directory / "summary.json").write_text("{}\n", encoding="utf-8")
+    profiler_tool_status = {
+        "py_spy": deep_profile.ProfilerToolStatus(
+            tool_name="py_spy",
+            enabled=True,
+            available=False,
+            executable_path=None,
+            notes="py-spy is not on PATH.",
+        )
+    }
+    summary_payload = {
+        "deep_profiles": {
+            "sampling_profiles": [
+                {
+                    "name": "profile_binary_gpu_py_spy",
+                    "status": "skipped",
+                    "notes": "py-spy is not on PATH.",
+                }
+            ]
+        }
+    }
+
+    manifest = deep_profile.collect_artifact_manifest(
+        output_directory=output_directory,
+        profiler_tool_status=profiler_tool_status,
+        summary_payload=summary_payload,
+    )
+
+    assert manifest["artifact_paths"] == ["summary.json"]
+    assert manifest["profiler_tools"]["py_spy"]["available"] is False
+    assert manifest["skipped_profiles"] == summary_payload["deep_profiles"]["sampling_profiles"]
+
+
+def test_deep_profile_logging_perturbation_rows_compare_against_off() -> None:
+    rows = deep_profile.build_logging_perturbation_rows(
+        [
+            {
+                "winner_key": "binary_gpu",
+                "case": {"name": "telemetry_off"},
+                "trial": {"status": "success", "wall_time_seconds": 2.0},
+            },
+            {
+                "winner_key": "binary_gpu",
+                "case": {"name": "trace_file_lossy_capped"},
+                "trial": {"status": "success", "wall_time_seconds": 2.5},
+            },
+        ]
+    )
+
+    assert rows == [
+        {
+            "winner_key": "binary_gpu",
+            "case_name": "telemetry_off",
+            "wall_time_seconds": 2.0,
+            "delta_vs_off_seconds": 0.0,
+            "ratio_vs_off": 1.0,
+            "status": "success",
+        },
+        {
+            "winner_key": "binary_gpu",
+            "case_name": "trace_file_lossy_capped",
+            "wall_time_seconds": 2.5,
+            "delta_vs_off_seconds": 0.5,
+            "ratio_vs_off": 1.25,
+            "status": "success",
+        },
+    ]
+
+
 def test_deep_profile_full_bundle_builds_profiler_commands(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1526,7 +1598,7 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         return {"command": command_arguments, "returncode": 0, "stdout": "profile\n", "stderr": ""}
 
     def fake_which(command_name: str) -> str | None:
-        if command_name in {"py-spy", "perf"}:
+        if command_name in {"cargo", "py-spy", "perf"}:
             return f"/usr/bin/{command_name}"
         return None
 
@@ -1550,8 +1622,8 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         ["cargo", "bench", "--bench", "bgen_read"],
         ["cargo", "bench", "--bench", "preprocess"],
     ]
-    assert any(command[0] == "py-spy" and "--format" in command for _implementation, command in logged_commands)
-    assert any(command[0] == "perf" and "record" in command for _implementation, command in logged_commands)
+    assert any(command[0].endswith("py-spy") and "--format" in command for _implementation, command in logged_commands)
+    assert any(command[0].endswith("perf") and "record" in command for _implementation, command in logged_commands)
     assert len(results["sampling_profiles"]) == 4
 
 

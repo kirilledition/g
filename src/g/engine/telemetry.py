@@ -15,6 +15,10 @@ from g import _core, types
 
 TELEMETRY_SCHEMA_VERSION = 1
 
+TelemetryCounterValue = bool | float | int | None
+TelemetryWriterCounters = dict[str, TelemetryCounterValue]
+TelemetryCloseMetadata = dict[str, TelemetryWriterCounters]
+
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
@@ -63,6 +67,7 @@ class TelemetrySession:
         self.lock = threading.Lock()
         self.last_progress_time = 0.0
         self.last_progress_chunk_count = 0
+        self.close_metadata: TelemetryCloseMetadata | None = None
         native_event_cap = trace_event_cap if mode == types.TelemetryMode.TRACE and trace_event_cap > 0 else None
         self.native_telemetry_session = (
             _core.NativeTelemetrySession(
@@ -145,11 +150,20 @@ class TelemetrySession:
         line = f"{json.dumps(payload, sort_keys=True, default=str)}\n"
         self.native_telemetry_session.emit_json_line(line)
 
-    def close(self) -> None:
+    def writer_counters(self) -> TelemetryWriterCounters:
+        """Return the current native telemetry writer counters."""
+        if self.native_telemetry_session is None:
+            return build_empty_writer_counters()
+        return typing.cast("TelemetryWriterCounters", dict(self.native_telemetry_session.counters()))
+
+    def close(self) -> TelemetryCloseMetadata | None:
         """Flush buffered telemetry resources."""
         if self.native_telemetry_session is None:
-            return
-        self.native_telemetry_session.finish()
+            self.close_metadata = None
+            return None
+        writer_counters = typing.cast("TelemetryWriterCounters", dict(self.native_telemetry_session.finish()))
+        self.close_metadata = {"writer_counters": writer_counters}
+        return self.close_metadata
 
 
 def format_timestamp(timestamp_seconds: float) -> str:
@@ -237,10 +251,29 @@ def build_telemetry_session(regenie_config: config.RegenieConfig) -> TelemetrySe
     )
 
 
+def build_empty_writer_counters() -> TelemetryWriterCounters:
+    """Return a zeroed telemetry writer counter snapshot."""
+    return {
+        "accepted_event_count": 0,
+        "written_event_count": 0,
+        "dropped_event_count": 0,
+        "cap_dropped_event_count": 0,
+        "queue_dropped_event_count": 0,
+        "event_cap_exceeded": False,
+        "lossy": True,
+        "event_cap": None,
+        "finish_flush_duration_seconds": None,
+    }
+
+
 def close_telemetry_session(telemetry_session: TelemetrySession | None) -> None:
     """Flush telemetry teardown hooks and preserve close failures."""
     if telemetry_session is None:
         return
     with contextlib.suppress(Exception):
-        telemetry_session.log_event("telemetry_session_closed", level="debug")
+        telemetry_session.log_event(
+            "telemetry_session_closed",
+            level="debug",
+            writer_counters=telemetry_session.writer_counters(),
+        )
     telemetry_session.close()

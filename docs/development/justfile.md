@@ -143,6 +143,17 @@ also accept the same overrides when run directly with `uv run --no-sync python
 - Output: synced `dev` and `gpu` dependencies.
 - Use when: refreshing GPU dependencies before GPU benchmarks or profiles.
 
+### `install-profiling-tools`
+
+- Inputs: internet access, writable user `uv` tool directory, and writable
+  Cargo install directory.
+- Output: optional user-local profiler CLIs for deep app profiling: `py-spy`,
+  `scalene`, `memray`, `xprof`, `samply`, and `flamegraph`.
+- Use when: preparing this machine for the deepest app profiling campaign.
+- Notes: Nsight Systems and Nsight Compute are not installed by this recipe; use
+  local NVIDIA tooling or cluster modules when available. The profile harness
+  records missing optional tools as skipped profiler results.
+
 ### `install-perf-extension`
 
 - Inputs: Rust toolchain, `maturin`, current Python environment.
@@ -691,11 +702,12 @@ just perf-compare results/perf/baseline.json results/perf/new.json
 ### `profile-app-full-dry-run *overrides`
 
 - Inputs: Hydra profile config and optional trailing overrides.
-- Output: `profile_plan.json`, `profile_plan.md`, and `tooling.log` under the
-  configured profile output directory.
+- Output: `profile_plan.json`, `profile_plan.md`, `artifact_manifest.json`, and
+  `tooling.log` under the configured profile output directory.
 - Use when: checking the full app profiling plan before submitting a long run.
 - Notes: sets `tool.include_regenie_baseline=false`; existing step 1 prediction
-  lists must be present.
+  lists must be present. The plan includes optional profiler availability and
+  logging perturbation cases.
 
 Example:
 
@@ -710,7 +722,8 @@ just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
 - Output: reduced full-profile artifacts under `data/profiles/landau_deep_*` or
   the configured `tool.output_dir`.
 - Use when: validating JAX trace, cProfile, py-spy, perf, stage-timing, and
-  summary artifact generation on a small workload.
+  summary artifact generation on a small workload. Smoke mode also validates a
+  reduced telemetry/logging perturbation matrix.
 - Notes: sets `tool.include_regenie_baseline=false`; use
   `tool.include_regenie_baseline=true` only when external `regenie` is available.
   Also sets `tool.enable_rust_criterion=false` so smoke checks stay short.
@@ -732,9 +745,10 @@ just slurm-gpu-just profile-app-full-smoke tool.output_dir=data/profiles/app_pro
   `tool.include_regenie_baseline=true` only when external `regenie` is available.
 
 The run captures JAX traces, JAX device-memory profiles, Python cProfile,
-py-spy speedscope profiles when available, Linux perf data when available, Rust
-Criterion benches, stage timings, subprocess logs, `summary.json`, and
-`summary.md`.
+py-spy speedscope profiles when available, optional Scalene/Memray/Nsight
+passes when enabled and available, Linux perf data when available, Rust
+Criterion benches, stage timings, telemetry/logging perturbation runs,
+subprocess logs, `artifact_manifest.json`, `summary.json`, and `summary.md`.
 
 Example:
 

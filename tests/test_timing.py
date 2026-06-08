@@ -57,6 +57,78 @@ def test_stage_timing_recorder_accumulates_and_snapshots_independent_state() -> 
     assert snapshot.native_bgen_profile == {"variant_decode_count": 4}
     assert snapshot.binary_chunk_diagnostics == ({"firth_candidate_count": 2},)
     assert snapshot.null_logistic_diagnostics == ({"chromosome": "22", "null_logistic_iteration_count": 5},)
+    assert snapshot.queue_backpressure == ()
+    assert snapshot.transfer_metadata == ()
+
+
+def test_stage_timing_recorder_aggregates_queue_backpressure() -> None:
+    recorder = timing.StageTimingRecorder()
+
+    recorder.add_queue_backpressure_observation(
+        queue_name="result_queue",
+        operation_name="put",
+        queue_depth=1,
+        queue_capacity=2,
+        elapsed_seconds=0.25,
+    )
+    recorder.add_queue_backpressure_observation(
+        queue_name="result_queue",
+        operation_name="put",
+        queue_depth=2,
+        queue_capacity=2,
+        elapsed_seconds=0.5,
+        blocked_seconds=0.5,
+    )
+
+    assert recorder.snapshot().queue_backpressure == (
+        timing.QueueBackpressureSnapshot(
+            queue_name="result_queue",
+            operation_name="put",
+            observation_count=2,
+            max_depth=2,
+            max_capacity=2,
+            total_elapsed_seconds=0.75,
+            total_blocked_seconds=0.5,
+        ),
+    )
+
+
+def test_stage_timing_recorder_aggregates_transfer_metadata() -> None:
+    recorder = timing.StageTimingRecorder()
+
+    recorder.add_stage_duration("host_to_device_transfer", 2.0)
+    recorder.add_transfer_metadata(
+        transfer_name="host_to_device_transfer",
+        array_role="genotype_matrix",
+        dtype_name="float32",
+        ndim=2,
+        byte_count=64,
+        element_count=16,
+    )
+    recorder.add_transfer_metadata(
+        transfer_name="host_to_device_transfer",
+        array_role="genotype_matrix",
+        dtype_name="float32",
+        ndim=2,
+        byte_count=32,
+        element_count=8,
+    )
+
+    snapshot = recorder.snapshot()
+
+    assert snapshot.transfer_metadata == (
+        timing.TransferMetadataSnapshot(
+            transfer_name="host_to_device_transfer",
+            array_role="genotype_matrix",
+            dtype_name="float32",
+            ndim=2,
+            observation_count=2,
+            total_bytes=96,
+            max_bytes=64,
+            total_elements=24,
+        ),
+    )
+    assert timing.build_derived_metrics(snapshot) == {"host_to_device_transfer_bytes_per_second": 48.0}
 
 
 def test_build_stage_timing_recorder_is_opt_in(tmp_path: Path) -> None:
@@ -121,6 +193,8 @@ def test_write_stage_timing_snapshot_persists_payload_and_derived_metrics(tmp_pa
     ]
     assert payload["binary_chunk_diagnostics"] == [{"score_test_candidate_count": 1}]
     assert payload["null_logistic_diagnostics"] == [{"chromosome": "22"}]
+    assert payload["queue_backpressure"] == []
+    assert payload["transfer_metadata"] == []
     assert payload["derived_metrics"] == {
         "native_variant_decode_per_second": 4.0,
         "output_variant_rows_per_second": 2.0,
@@ -160,6 +234,8 @@ def test_write_profile_summary_persists_aggregate_payload(tmp_path: Path) -> Non
     assert payload["schema_version"] == 1
     assert payload["run_id"] == "run-1"
     assert payload["chunk_stage_summary"] == {"output_write": {"total_seconds": 0.5, "count": 1}}
+    assert payload["queue_backpressure"] == []
+    assert payload["transfer_metadata"] == []
     assert payload["binary_chunk_summary"]["chunk_count"] == 1
     assert payload["binary_chunk_summary"]["score_test_candidate_count_total"] == 2
     assert payload["binary_chunk_summary"]["firth_iteration_max"] == 8
@@ -173,6 +249,8 @@ def test_build_derived_metrics_omits_zero_denominator_values() -> None:
         native_bgen_profile={"variant_decode_count": 0, "selected_sample_count": 10},
         binary_chunk_diagnostics=(),
         null_logistic_diagnostics=(),
+        queue_backpressure=(),
+        transfer_metadata=(),
     )
 
     assert timing.build_derived_metrics(snapshot) == {}

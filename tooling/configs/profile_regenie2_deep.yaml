@@ -29,8 +29,13 @@ tool:
   enable_jax_memory_profile: true
   enable_python_cprofile: true
   enable_py_spy: true
+  enable_scalene: false
+  enable_memray: false
   enable_linux_perf: true
+  enable_nsight_systems: false
+  enable_nsight_compute: false
   enable_rust_criterion: true
+  enable_logging_perturbation: true
   rust_benchmarks:
     - bgen_read
     - preprocess
