@@ -2,6 +2,19 @@
 
 This page is a short orientation for a first local run. The project is still pre-release, so prefer the repository README and these docs over assumptions from older branches or external examples.
 
+## Install First
+
+Install `g` from source with the consumer flow in [Installation](installation.md). That page keeps
+the Python environment inside the checkout's `.venv/` and separates runtime setup from development
+setup.
+
+After installation, the basic command checks are:
+
+```bash
+uv run g --help
+uv run g regenie --help
+```
+
 ## What You Can Run
 
 The active user workflow is REGENIE Step 2 over BGEN input:
@@ -12,48 +25,18 @@ The active user workflow is REGENIE Step 2 over BGEN input:
 
 `g` currently recognizes some REGENIE flags that are not implemented, including BED/PGEN inputs, SPA, and exact Firth without `--approx`. These fail explicitly rather than being silently ignored.
 
-## Local Setup
-
-For a CPU-oriented local environment:
-
-```bash
-just bootstrap
-just doctor
-just check-local
-```
-
-For a GPU-capable environment:
-
-```bash
-just bootstrap-gpu
-just doctor-jax
-```
-
-The project requires Python `>=3.14,<3.15`, Rust/Cargo, `uv`, `just`, and `maturin`. Baseline comparisons and data-preparation workflows also use tools such as `plink`, `plink2`, `regenie`, and `zstd`.
-
 ## First Data-backed Run
 
-The repository provides data-preparation recipes for local 1000 Genomes chromosome 22 fixture data and simulated phenotypes:
+Prepare or locate the files that a REGENIE Step 2 run needs:
 
-```bash
-just setup-data
-```
+- BGEN genotype file and optional Oxford `.sample` file.
+- Phenotype table.
+- Optional covariate table.
+- REGENIE Step 1 prediction list from upstream `regenie`.
 
-Binary examples also need REGENIE Step 1 baseline predictions:
+Then follow [Quickstart](quickstart.md) for concrete CPU and GPU command shapes.
 
-```bash
-just setup-binary-baseline
-```
+## Development Setup
 
-Then follow [Quickstart](quickstart.md) for concrete commands.
-
-## Documentation Commands
-
-The documentation site is built from `docs/`. User-facing pages live in `docs/public/`; development-team docs live in `docs/development/`; internal work products live in `docs/scratchpad/`:
-
-```bash
-just docs-serve
-just docs-build
-```
-
-Generated `site/` output is local build output and is not committed.
+If you are changing code, building documentation, or using repository fixture-data recipes, use the
+separate [Development Installation](installation.md#development-installation) section.

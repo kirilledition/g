@@ -15,6 +15,7 @@ nav = [
     "public/getting-started.md",
     "public/installation.md",
     "public/quickstart.md",
+    "public/algorithm.md",
     "public/cli.md",
     "public/configuration.md",
     "public/input-output.md",

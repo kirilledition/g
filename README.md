@@ -31,6 +31,9 @@ User-facing documentation lives under `docs/public/` and is built with Zensical.
 https://kirilledition.github.io/g/
 ```
 
+The public guide includes an algorithm reference at `docs/public/algorithm.md`
+covering the Step 2 mathematics, parameter effects, and output interpretation.
+
 Local documentation commands:
 
 ```bash
@@ -83,13 +86,13 @@ For single-phenotype scans, speedups can be limited by BGEN decode, host-device 
 
 ## Requirements
 
-The project is managed with `uv`, `just`, Rust/Cargo, and `maturin`.
+The project is installed from a Git checkout because it is not published on PyPI.
 
 - Python: `>=3.14,<3.15`
 - Runtime Python dependencies: Click, JAX, NumPy
 - Native extension: Rust 2024 + PyO3 ABI3 for Python 3.14
 - Optional GPU workflow: CUDA-capable JAX environment
-- Development/benchmark tools: `plink`, `plink2`, `regenie`, `zstd`, and optionally Nix/SLURM
+- Development/benchmark tools: `just`, `maturin`, `plink`, `plink2`, `regenie`, `zstd`, and optionally Nix/SLURM
 
 Install-time runtime dependency policy is intentionally small. Python table libraries such as Polars and PyArrow are development/inspection dependencies, not core runtime dependencies.
 
@@ -97,48 +100,19 @@ Install-time runtime dependency policy is intentionally small. Python table libr
 
 ## Setup
 
-### Nix development shell
+Use [docs/public/installation.md](docs/public/installation.md) for the consumer install path. It
+installs from source into a checkout-local `.venv/` through `uv`, so it does not modify your system
+Python or an existing Conda environment.
 
-```bash
-nix develop
-```
-
-### CPU-oriented local setup
-
-```bash
-just bootstrap
-just doctor
-just check-local
-```
-
-### GPU-capable setup
-
-```bash
-just bootstrap-gpu
-just doctor-jax
-```
-
-### Ubuntu / SLURM server setup
-
-On the server, bootstrap repo-local tools and source the generated environment script:
-
-```bash
-UV_CACHE_DIR=/tmp/g-uv-cache uv run --no-project python scripts/bootstrap_server_tools.py
-source scripts/server_env.sh
-```
-
-Useful server checks:
-
-```bash
-just doctor-server
-just doctor-baselines
-```
-
-See `docs/development/NO_NIX_DEVELOPMENT.md` and `docs/development/UBUNTU_SLURM_DEVELOPMENT.md` for environment-specific workflows.
+Development setup uses `just`, development dependency groups, and optional server-specific wrappers.
+Start from [docs/development/index.md](docs/development/index.md) when changing code.
 
 ---
 
 ## Quick start
+
+For user commands against your own files, start with [docs/public/quickstart.md](docs/public/quickstart.md).
+The local fixture commands below are development and evaluation conveniences for this checkout.
 
 Prepare the local 1000 Genomes chromosome 22 benchmark data and simulated phenotypes:
 

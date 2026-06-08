@@ -16,11 +16,8 @@ uv run g config explain <option-name>
 
 `g` does not implement REGENIE Step 1. Produce prediction lists with upstream `regenie` and pass the list through `--pred`.
 
-For local binary examples:
-
-```bash
-just setup-binary-baseline
-```
+For repository fixture-data examples, use the development recipes listed in
+[Quickstart](quickstart.md#repository-fixture-data).
 
 ## Sample Alignment Fails
 
@@ -47,16 +44,12 @@ Use `force_validate` when validating a file or cache state. Use `assume_validate
 Probe JAX first:
 
 ```bash
-just doctor-jax
+uv run python -c "import jax; print(jax.devices())"
 ```
 
-On the server, use SLURM for GPU checks:
-
-```bash
-just slurm-gpu-run 'uv run --no-sync python scripts/probe_jax_runtime.py'
-```
-
-If the accelerator is visible but performance does not improve, check whether the run is dominated by BGEN decode, transfer, or output.
+Run the probe on a GPU node, not only on a login node. If the accelerator is visible but performance
+does not improve, check whether the run is dominated by BGEN decode, transfer, or output. See
+[GPU and SLURM](gpu-and-slurm.md) for batch-job examples.
 
 ## Resume Does Not Reuse Existing Output
 
@@ -72,7 +65,7 @@ when you need stronger validation of existing chunks.
 
 ## Documentation Build Fails
 
-Install and build through the project recipes:
+Documentation builds are part of the development workflow:
 
 ```bash
 uv sync --group docs

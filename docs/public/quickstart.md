@@ -1,18 +1,20 @@
 # Quickstart
 
-These examples use the local fixture-data conventions from the repository. Paths under `data/` are local and git-ignored.
+These examples assume you installed `g` with [Installation](installation.md) and are running commands
+from the repository checkout. Replace the paths with your own BGEN, phenotype, covariate, and
+upstream REGENIE Step 1 prediction files.
 
-## Prepare Example Data
+## Inputs You Need
 
-```bash
-just setup-data
-```
+`g` runs REGENIE Step 2. It does not run REGENIE Step 1.
 
-For binary examples:
-
-```bash
-just setup-binary-baseline
-```
+- `--bgen`: BGEN genotype file.
+- `--sample`: Oxford sample file when samples are not embedded or when you need explicit sample IDs.
+- `--phenoFile`: Phenotype table.
+- `--phenoCol` or `--phenoColList`: Phenotype column names.
+- `--covarFile` and `--covarColList`: Covariates when your model uses them.
+- `--pred`: Step 1 prediction list produced by upstream `regenie`.
+- `--out`: Output prefix. `g` writes a run directory next to this prefix.
 
 ## Quantitative Step 2
 
@@ -20,14 +22,15 @@ just setup-binary-baseline
 uv run g regenie \
   --step 2 \
   --qt \
-  --bgen data/1kg_chr22_full.bgen \
-  --sample data/1kg_chr22_full.sample \
-  --phenoFile data/pheno_cont.txt \
+  --bgen /path/to/genotypes.bgen \
+  --sample /path/to/genotypes.sample \
+  --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_continuous \
-  --covarFile data/covariates.txt \
+  --covarFile /path/to/covariates.tsv \
   --covarColList age,sex \
-  --pred data/baselines/regenie_step1_qt_pred.list \
-  --out data/example_regenie2 \
+  --pred /path/to/regenie_step1_qt_pred.list \
+  --out /path/to/output/g_quantitative_regenie2 \
+  --g-device cpu \
   --g-output-format parquet
 ```
 
@@ -37,14 +40,15 @@ uv run g regenie \
 uv run g regenie \
   --step 2 \
   --bt \
-  --bgen data/1kg_chr22_full.bgen \
-  --sample data/1kg_chr22_full.sample \
-  --phenoFile data/pheno_bin.txt \
+  --bgen /path/to/genotypes.bgen \
+  --sample /path/to/genotypes.sample \
+  --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_binary \
-  --covarFile data/covariates.txt \
+  --covarFile /path/to/covariates.tsv \
   --covarColList age,sex \
-  --pred data/baselines/regenie_step1_pred.list \
-  --out data/example_regenie2_binary_score \
+  --pred /path/to/regenie_step1_pred.list \
+  --out /path/to/output/g_binary_score_regenie2 \
+  --g-device cpu \
   --g-output-format parquet
 ```
 
@@ -54,21 +58,45 @@ uv run g regenie \
 uv run g regenie \
   --step 2 \
   --bt \
-  --bgen data/1kg_chr22_full.bgen \
-  --sample data/1kg_chr22_full.sample \
-  --phenoFile data/pheno_bin.txt \
+  --bgen /path/to/genotypes.bgen \
+  --sample /path/to/genotypes.sample \
+  --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_binary \
-  --covarFile data/covariates.txt \
+  --covarFile /path/to/covariates.tsv \
   --covarColList age,sex \
-  --pred data/baselines/regenie_step1_pred.list \
+  --pred /path/to/regenie_step1_pred.list \
   --firth \
   --approx \
   --pThresh 0.01 \
-  --out data/example_regenie2_binary_firth \
+  --out /path/to/output/g_binary_firth_regenie2 \
+  --g-device cpu \
   --g-output-format parquet
 ```
 
 Approximate Firth is implemented but numerically sensitive. Use equivalent statistical modes when comparing results against upstream REGENIE.
+
+See [Algorithm](algorithm.md) for the quantitative, binary score-test, and
+approximate-Firth formulas behind these commands.
+
+## GPU Execution
+
+Install the GPU dependency group first, then change the device:
+
+```bash
+uv run g regenie \
+  --step 2 \
+  --qt \
+  --bgen /path/to/genotypes.bgen \
+  --sample /path/to/genotypes.sample \
+  --phenoFile /path/to/phenotypes.tsv \
+  --phenoCol phenotype_continuous \
+  --pred /path/to/regenie_step1_qt_pred.list \
+  --out /path/to/output/g_gpu_regenie2 \
+  --g-device gpu
+```
+
+Submit GPU commands on a GPU node or through your scheduler. See [GPU and SLURM](gpu-and-slurm.md)
+for cluster notes.
 
 ## REGENIE Text Output
 
@@ -79,22 +107,28 @@ tab-separated `final.regenie` file for workflow compatibility:
 uv run g regenie \
   --step 2 \
   --qt \
-  --bgen data/1kg_chr22_full.bgen \
-  --sample data/1kg_chr22_full.sample \
-  --phenoFile data/pheno_cont.txt \
+  --bgen /path/to/genotypes.bgen \
+  --sample /path/to/genotypes.sample \
+  --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_continuous \
-  --pred data/baselines/regenie_step1_qt_pred.list \
-  --out data/example_regenie2_text \
+  --pred /path/to/regenie_step1_qt_pred.list \
+  --out /path/to/output/g_regenie_text \
   --g-output-format regenie
 ```
 
-## Direct Executable
+## Repository Fixture Data
 
-The direct console script is also available:
+Developers and evaluators can generate local 1000 Genomes chromosome 22 fixture data with repository
+recipes:
 
 ```bash
-g-regenie --step 2 --qt --bgen ... --phenoFile ... --phenoCol ... --pred ... --out ...
+just setup-data
+just setup-binary-baseline
 ```
+
+These commands require the development tooling described in
+[Development Installation](installation.md#development-installation). Fixture paths under `data/`
+are local and git-ignored.
 
 ## Output
 
