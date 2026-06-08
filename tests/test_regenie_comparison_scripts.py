@@ -1445,6 +1445,72 @@ def test_deep_profile_artifact_manifest_records_tools_and_skips(tmp_path: Path) 
     assert manifest["skipped_profiles"] == summary_payload["deep_profiles"]["sampling_profiles"]
 
 
+def test_deep_profile_scalene_command_uses_run_subcommand(tmp_path: Path) -> None:
+    tool_status = deep_profile.ProfilerToolStatus(
+        tool_name="scalene",
+        enabled=True,
+        available=True,
+        executable_path="/usr/bin/uv",
+        notes="scalene will run through uv.",
+    )
+    profile_script_path = tmp_path / "profile_child.py"
+    output_path = tmp_path / "profile.scalene.json"
+
+    command_arguments = deep_profile.build_scalene_command_arguments(
+        tool_status=tool_status,
+        output_path=output_path,
+        profile_script_path=profile_script_path,
+    )
+
+    assert command_arguments == [
+        "/usr/bin/uv",
+        "run",
+        "--no-sync",
+        "--with",
+        "scalene",
+        "scalene",
+        "run",
+        "--outfile",
+        str(output_path),
+        str(profile_script_path),
+    ]
+
+
+def test_deep_profile_memray_command_uses_project_environment(tmp_path: Path) -> None:
+    tool_status = deep_profile.ProfilerToolStatus(
+        tool_name="memray",
+        enabled=True,
+        available=True,
+        executable_path="/usr/bin/uv",
+        notes="memray will run through uv.",
+    )
+    profile_script_path = tmp_path / "profile_child.py"
+    output_path = tmp_path / "profile.memray.bin"
+
+    command_arguments = deep_profile.build_memray_command_arguments(
+        tool_status=tool_status,
+        output_path=output_path,
+        profile_script_path=profile_script_path,
+    )
+
+    assert command_arguments == [
+        "/usr/bin/uv",
+        "run",
+        "--no-sync",
+        "--with",
+        "memray",
+        "python",
+        "-m",
+        "memray",
+        "run",
+        "--force",
+        "--native",
+        "--output",
+        str(output_path),
+        str(profile_script_path),
+    ]
+
+
 def test_deep_profile_logging_perturbation_rows_compare_against_off() -> None:
     rows = deep_profile.build_logging_perturbation_rows(
         [

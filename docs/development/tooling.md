@@ -255,6 +255,10 @@ just install-profiling-tools
 
 Nsight Systems (`nsys`) and Nsight Compute (`ncu`) are not installed by this
 recipe; use a local NVIDIA install or module when available on the GPU node.
+Scalene and Memray are Python profilers, so the harness runs them through
+`uv run --no-sync --with ...` when they are not importable in the project
+environment. This keeps JAX, Polars, and the installed `g` package visible to
+the profiled child process.
 The harness records missing or permission-blocked profilers as skipped results
 instead of failing the campaign.
 
@@ -298,9 +302,11 @@ The full run writes:
 - `deep_profiles/*.speedscope.json`: py-spy sampling profiles when `py-spy` is
   installed.
 - `deep_profiles/*.scalene.json`: Scalene CPU/memory profile output when
-  `tool.enable_scalene=true` and `scalene` is installed.
+  `tool.enable_scalene=true` and either Scalene is importable or `uv` can inject
+  it with `--with scalene`.
 - `deep_profiles/*.memray.bin`: Memray allocation traces when
-  `tool.enable_memray=true` and `memray` is installed.
+  `tool.enable_memray=true` and either Memray is importable or `uv` can inject
+  it with `--with memray`.
 - `deep_profiles/*_nsys.*`: Nsight Systems reports when
   `tool.enable_nsight_systems=true` and `nsys` is available.
 - `deep_profiles/*_ncu.*`: Nsight Compute reports when

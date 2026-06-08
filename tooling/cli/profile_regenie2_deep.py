@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import importlib.util
 import json
 import logging
 import os
@@ -327,12 +328,52 @@ def build_output_directory(arguments: ProfileArguments) -> Path:
     return arguments.output_parent / f"landau_deep_{arguments.chromosome_label}_{timestamp}"
 
 
+def python_module_is_available(module_name: str) -> bool:
+    """Return whether a module is importable in the active Python environment."""
+    return importlib.util.find_spec(module_name) is not None
+
+
+def build_uv_injected_profiler_status(
+    *,
+    tool_name: str,
+    executable_name: str,
+    module_name: str,
+    enabled: bool,
+) -> ProfilerToolStatus:
+    """Build availability for Python profilers that must see project dependencies."""
+    if python_module_is_available(module_name):
+        return ProfilerToolStatus(
+            tool_name=tool_name,
+            enabled=enabled,
+            available=True,
+            executable_path=sys.executable,
+            notes=f"{module_name} is importable in the project Python environment.",
+        )
+    uv_executable_path = shutil.which("uv")
+    if uv_executable_path is not None:
+        return ProfilerToolStatus(
+            tool_name=tool_name,
+            enabled=enabled,
+            available=True,
+            executable_path=uv_executable_path,
+            notes=(
+                f"{executable_name} will run through uv --no-sync --with {module_name} "
+                "to preserve the project Python environment."
+            ),
+        )
+    return ProfilerToolStatus(
+        tool_name=tool_name,
+        enabled=enabled,
+        available=False,
+        executable_path=None,
+        notes=f"{module_name} is not importable in the project Python environment and uv is not on PATH.",
+    )
+
+
 def build_profiler_tool_status(arguments: ProfileArguments) -> dict[str, ProfilerToolStatus]:
     """Build profiler tool availability records for the current host."""
     optional_executable_tools = {
         "py_spy": ("py-spy", arguments.enable_py_spy),
-        "scalene": ("scalene", arguments.enable_scalene),
-        "memray": ("memray", arguments.enable_memray),
         "linux_perf": ("perf", arguments.enable_linux_perf),
         "nsight_systems": ("nsys", arguments.enable_nsight_systems),
         "nsight_compute": ("ncu", arguments.enable_nsight_compute),
@@ -365,6 +406,18 @@ def build_profiler_tool_status(arguments: ProfileArguments) -> dict[str, Profile
             available=shutil.which("cargo") is not None,
             executable_path=shutil.which("cargo"),
             notes="Rust Criterion benches run through cargo.",
+        ),
+        "scalene": build_uv_injected_profiler_status(
+            tool_name="scalene",
+            executable_name="scalene",
+            module_name="scalene",
+            enabled=arguments.enable_scalene,
+        ),
+        "memray": build_uv_injected_profiler_status(
+            tool_name="memray",
+            executable_name="memray",
+            module_name="memray",
+            enabled=arguments.enable_memray,
         ),
     }
     for tool_name, (executable_name, enabled) in optional_executable_tools.items():
@@ -902,6 +955,92 @@ def write_inline_python_profile_script(command_arguments: list[str], script_path
         raise ValueError(message)
     script_path.write_text(command_arguments[2], encoding="utf-8")
     return script_path
+
+
+def executable_name(executable_path: str | None) -> str:
+    """Return the command basename for an optional executable path."""
+    if executable_path is None:
+        return ""
+    return Path(executable_path).name
+
+
+def build_scalene_command_arguments(
+    *,
+    tool_status: ProfilerToolStatus,
+    output_path: Path,
+    profile_script_path: Path,
+) -> list[str]:
+    """Build a Scalene command that preserves project dependencies."""
+    if tool_status.executable_path == sys.executable:
+        return [
+            sys.executable,
+            "-m",
+            "scalene",
+            "run",
+            "--outfile",
+            str(output_path),
+            str(profile_script_path),
+        ]
+    if executable_name(tool_status.executable_path) == "uv":
+        return [
+            tool_status.executable_path or "uv",
+            "run",
+            "--no-sync",
+            "--with",
+            "scalene",
+            "scalene",
+            "run",
+            "--outfile",
+            str(output_path),
+            str(profile_script_path),
+        ]
+    return [
+        tool_status.executable_path or "scalene",
+        "run",
+        "--outfile",
+        str(output_path),
+        str(profile_script_path),
+    ]
+
+
+def build_memray_command_arguments(
+    *,
+    tool_status: ProfilerToolStatus,
+    output_path: Path,
+    profile_script_path: Path,
+) -> list[str]:
+    """Build a Memray command that preserves project dependencies."""
+    memray_arguments = [
+        "-m",
+        "memray",
+        "run",
+        "--force",
+        "--native",
+        "--output",
+        str(output_path),
+        str(profile_script_path),
+    ]
+    if tool_status.executable_path == sys.executable:
+        return [sys.executable, *memray_arguments]
+    if executable_name(tool_status.executable_path) == "uv":
+        return [
+            tool_status.executable_path or "uv",
+            "run",
+            "--no-sync",
+            "--with",
+            "memray",
+            "python",
+            *memray_arguments,
+        ]
+    return [
+        tool_status.executable_path or "memray",
+        "run",
+        "--force",
+        "--native",
+        "--output",
+        str(output_path),
+        str(profile_script_path),
+    ]
 
 
 def append_skipped_executable_profile(
@@ -1950,13 +2089,11 @@ def run_deep_profiles(
                 implementation="Scalene",
                 trait_type=candidate.trait_type,
                 device=candidate.device,
-                command_arguments=[
-                    scalene_status.executable_path or "scalene",
-                    "--json",
-                    "--outfile",
-                    str(scalene_json_path),
-                    str(profile_script_path),
-                ],
+                command_arguments=build_scalene_command_arguments(
+                    tool_status=scalene_status,
+                    output_path=scalene_json_path,
+                    profile_script_path=profile_script_path,
+                ),
                 environment_overrides=base_profile_environment,
                 log_directory=output_directory / "logs",
             )
@@ -1979,13 +2116,11 @@ def run_deep_profiles(
                 implementation="Memray",
                 trait_type=candidate.trait_type,
                 device=candidate.device,
-                command_arguments=[
-                    memray_status.executable_path or "memray",
-                    "run",
-                    "--output",
-                    str(memray_output_path),
-                    str(profile_script_path),
-                ],
+                command_arguments=build_memray_command_arguments(
+                    tool_status=memray_status,
+                    output_path=memray_output_path,
+                    profile_script_path=profile_script_path,
+                ),
                 environment_overrides=base_profile_environment,
                 log_directory=output_directory / "logs",
             )

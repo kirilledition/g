@@ -151,8 +151,10 @@ also accept the same overrides when run directly with `uv run --no-sync python
   `scalene`, `memray`, `xprof`, `samply`, and `flamegraph`.
 - Use when: preparing this machine for the deepest app profiling campaign.
 - Notes: Nsight Systems and Nsight Compute are not installed by this recipe; use
-  local NVIDIA tooling or cluster modules when available. The profile harness
-  records missing optional tools as skipped profiler results.
+  local NVIDIA tooling or cluster modules when available. Scalene and Memray can
+  also be injected through `uv run --no-sync --with ...` so they run in the
+  project environment. The profile harness records missing optional tools as
+  skipped profiler results.
 
 ### `install-perf-extension`
 
