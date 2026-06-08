@@ -21,6 +21,21 @@
   width: 1.2rem;
 }
 
+.md-typeset .arithmatex {
+  overflow-x: auto;
+}
+
+.md-typeset .arithmatex mjx-container[display="true"] {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.md-typeset .mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 1.2rem 0;
+}
+
 @keyframes g-section-scroll-spin {
   to {
     transform: rotate(360deg);
