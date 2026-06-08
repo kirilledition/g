@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 import typing
@@ -1445,6 +1446,143 @@ def test_deep_profile_artifact_manifest_records_tools_and_skips(tmp_path: Path) 
     assert manifest["skipped_profiles"] == summary_payload["deep_profiles"]["sampling_profiles"]
 
 
+def test_deep_profile_bounded_regenie_baseline_uses_extract_list(tmp_path: Path) -> None:
+    data_directory = tmp_path / "data"
+    baseline_directory = data_directory / "baselines"
+    baseline_directory.mkdir(parents=True)
+    bgen_path = data_directory / "1kg_chr22_full.bgen"
+    bgen_path.write_text("", encoding="utf-8")
+    pvar_path = data_directory / "1kg_chr22_full.pvar"
+    pvar_path.write_text(
+        "#CHROM POS ID REF ALT\n22 100 rs1 A G\n22 200 rs2 C T\n22 300 rs3 G A\n",
+        encoding="utf-8",
+    )
+    baseline_paths = dataclasses.replace(
+        baseline_benchmark.build_baseline_paths(),
+        data_directory=data_directory,
+        baseline_directory=baseline_directory,
+        bed_prefix=data_directory / "1kg_chr22_full",
+        bgen_path=bgen_path,
+        sample_path=data_directory / "1kg_chr22_full.sample",
+        continuous_phenotype_path=data_directory / "pheno_cont.txt",
+        binary_phenotype_path=data_directory / "pheno_bin.txt",
+        covariate_path=data_directory / "covariates.txt",
+        regenie_prediction_list_path=baseline_directory / "regenie_step1_pred.list",
+        regenie_qt_prediction_list_path=baseline_directory / "regenie_step1_qt_pred.list",
+    )
+    arguments = deep_profile.build_arguments_from_overrides(
+        [
+            f"tool.output_dir={tmp_path / 'profile'}",
+            "tool.variant_limit=2",
+        ]
+    )
+
+    scope = deep_profile.build_regenie_baseline_scope(
+        arguments=arguments,
+        baseline_paths=baseline_paths,
+        output_directory=tmp_path / "profile",
+    )
+    deep_profile.write_regenie_baseline_extract_file(scope)
+    command_arguments = deep_profile.build_regenie_step2_command(
+        trait_type="quantitative",
+        regenie_executable="regenie",
+        baseline_paths=baseline_paths,
+        output_prefix=tmp_path / "profile" / "headline_runs" / "baseline",
+        baseline_scope=scope,
+    )
+
+    assert scope.status == deep_profile.RegenieBaselineScopeStatus.BOUNDED
+    assert scope.selected_variant_count == 2
+    assert scope.extract_path is not None
+    assert scope.extract_path.read_text(encoding="utf-8") == "rs1\nrs2\n"
+    assert "--extract" in command_arguments
+    assert str(scope.extract_path) in command_arguments
+
+
+def test_deep_profile_manifest_records_regenie_commands_and_inputs(tmp_path: Path) -> None:
+    output_directory = tmp_path / "profile"
+    output_directory.mkdir()
+    command_arguments = [
+        "regenie",
+        "--step",
+        "2",
+        "--bgen",
+        "data/input.bgen",
+        "--sample",
+        "data/input.sample",
+        "--phenoFile",
+        "data/pheno.txt",
+        "--covarFile",
+        "data/covar.txt",
+        "--pred",
+        "data/pred.list",
+        "--extract",
+        "data/extract.txt",
+        "--out",
+        "data/out",
+    ]
+    summary_payload = {
+        "preflight": {"input_file_sizes": {"data/input.bgen": 123}},
+        "setup_results": [],
+        "headline_results": [
+            dataclasses.asdict(
+                deep_profile.AggregateResult(
+                    name="headline_regenie_quantitative",
+                    implementation="regenie",
+                    trait_type="quantitative",
+                    device="external_cpu",
+                    status="success",
+                    trial_count=1,
+                    warmup_count=0,
+                    median_wall_time_seconds=1.0,
+                    mean_wall_time_seconds=1.0,
+                    min_wall_time_seconds=1.0,
+                    max_wall_time_seconds=1.0,
+                    standard_deviation_seconds=0.0,
+                    rows_per_second=10.0,
+                    trials=[
+                        deep_profile.TrialResult(
+                            name="headline_regenie_quantitative_trial00",
+                            implementation="regenie",
+                            trait_type="quantitative",
+                            device="external_cpu",
+                            status="success",
+                            wall_time_seconds=1.0,
+                            output_row_count=10,
+                            stdout_log_path="stdout.log",
+                            stderr_log_path="stderr.log",
+                            command_arguments=command_arguments,
+                            environment_overrides={},
+                        )
+                    ],
+                )
+            )
+        ],
+        "regenie_baseline_scope": {"status": "bounded"},
+    }
+
+    manifest = deep_profile.collect_artifact_manifest(
+        output_directory=output_directory,
+        profiler_tool_status={},
+        summary_payload=summary_payload,
+    )
+
+    baseline_command = manifest["regenie_baseline_commands"][0]
+    assert baseline_command["name"] == "headline_regenie_quantitative_trial00"
+    assert baseline_command["binary"] is not None
+    assert baseline_command["command_arguments"] == command_arguments
+    assert baseline_command["input_files"] == [
+        "data/covar.txt",
+        "data/extract.txt",
+        "data/input.bgen",
+        "data/input.sample",
+        "data/pheno.txt",
+        "data/pred.list",
+    ]
+    assert manifest["input_files"] == [{"path": "data/input.bgen", "size_bytes": 123}]
+    assert manifest["regenie_baseline_scope"] == {"status": "bounded"}
+
+
 def test_deep_profile_scalene_command_uses_run_subcommand(tmp_path: Path) -> None:
     tool_status = deep_profile.ProfilerToolStatus(
         tool_name="scalene",
@@ -1772,6 +1910,64 @@ def test_deep_profile_runtime_comparison_uses_regenie_baseline() -> None:
     comparison = comparisons["headline_g_quantitative_gpu_vs_regenie_quantitative"]
     assert comparison["speedup_ratio"] == 4.0
     assert comparison["absolute_delta_seconds"] == -7.5
+
+
+def test_deep_profile_runtime_comparison_notes_separate_unsupported_and_failed(tmp_path: Path) -> None:
+    unsupported_regenie = deep_profile.unsupported_aggregate_result(
+        name="headline_regenie_quantitative",
+        trait_type="quantitative",
+        device="external_cpu",
+        log_directory=tmp_path / "logs",
+        notes="REGENIE executable is unavailable.",
+    )
+    failed_regenie_trial = deep_profile.TrialResult(
+        name="headline_regenie_binary_trial00",
+        implementation="regenie",
+        trait_type="binary",
+        device="external_cpu",
+        status="failed",
+        wall_time_seconds=1.0,
+        output_row_count=None,
+        stdout_log_path="stdout.log",
+        stderr_log_path="stderr.log",
+        command_arguments=["regenie"],
+        environment_overrides={},
+        notes="Command exited with code 1.",
+    )
+    failed_regenie = deep_profile.aggregate_trial_results(
+        name="headline_regenie_binary",
+        implementation="regenie",
+        trait_type="binary",
+        device="external_cpu",
+        warmup_count=0,
+        trial_results=[failed_regenie_trial],
+    )
+    g_quantitative = deep_profile.AggregateResult(
+        name="headline_g_quantitative_gpu",
+        implementation="g",
+        trait_type="quantitative",
+        device="gpu",
+        status="success",
+        trial_count=1,
+        warmup_count=0,
+        median_wall_time_seconds=2.0,
+        mean_wall_time_seconds=2.0,
+        min_wall_time_seconds=2.0,
+        max_wall_time_seconds=2.0,
+        standard_deviation_seconds=0.0,
+        rows_per_second=10.0,
+        trials=[],
+    )
+    g_binary = dataclasses.replace(g_quantitative, name="headline_g_binary_gpu", trait_type="binary")
+
+    notes = deep_profile.build_runtime_comparison_notes([unsupported_regenie, failed_regenie, g_quantitative, g_binary])
+
+    assert len(notes.unsupported) == 1
+    assert "unsupported" in notes.unsupported[0]
+    assert "REGENIE executable is unavailable" in notes.unsupported[0]
+    assert len(notes.failed) == 1
+    assert "did not produce a measured runtime" in notes.failed[0]
+    assert "Command exited with code 1" in notes.failed[0]
 
 
 def test_quantitative_step2_comparison_uses_full_variant_identity_when_available(tmp_path: Path) -> None:

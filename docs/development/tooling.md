@@ -246,6 +246,15 @@ optional profiler availability and skipped-tool reasons:
 just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
 ```
 
+Use the REGENIE-focused dry run when planning paired original or patched
+REGENIE comparisons:
+
+```bash
+just profile-regenie2-deep-dry-run \
+  tool.include_regenie_baseline=true \
+  tool.output_dir=data/profiles/regenie_pair_plan
+```
+
 Install optional user-local profiler tools before a deep campaign when the host
 does not already provide them:
 
@@ -347,6 +356,25 @@ Useful overrides:
 - `tool.rust_benchmarks=[bgen_read]`: limit Rust Criterion benches.
 - `tool.include_regenie_baseline=true`: also run original REGENIE headline
   trials when `regenie` is available.
+- `tool.regenie_executable=/path/to/regenie`: use a specific original or
+  patched REGENIE binary instead of `REGENIE_BIN`/`regenie`.
+- `tool.regenie_baseline_trait_types=[quantitative,binary]`: choose which
+  REGENIE traits get paired baseline trials. The default is the faster
+  quantitative pair.
+- `tool.regenie_baseline_trials=1`: keep paired REGENIE runtime evidence small;
+  increase only for dedicated baseline campaigns.
+- `tool.regenie_baseline_variant_limit=1000`: override the baseline bound. When
+  unset, bounded smoke runs reuse `tool.variant_limit`; the harness writes a
+  REGENIE `--extract` list from the first variants in the matching `.pvar` or
+  `.bim` file so the original REGENIE run is comparable to `g`'s first-N
+  variant workload.
+
+The summary separates successful direct ratios from unsupported comparisons
+such as disabled baselines, missing REGENIE binaries, or missing `.pvar`/`.bim`
+metadata for bounded pairs. Failed comparisons are reserved for attempted runs
+that did not produce measured runtimes. `artifact_manifest.json` records the
+baseline commands, resolved binaries, input files, generated extract lists, and
+baseline scope used for the run.
 
 ### chr10 Binary And Linear Step 2 Matrix
 

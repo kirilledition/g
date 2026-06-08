@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import dataclasses
+import enum
 import hashlib
 import importlib.util
 import json
@@ -64,6 +65,11 @@ class ProfileArguments:
         variant_limit: Optional variant cap for smoke runs.
         dry_run: Whether to write a profile plan without running workloads.
         include_regenie_baseline: Whether headline trials include original REGENIE.
+        regenie_executable: Optional original or patched REGENIE executable for baseline runs.
+        regenie_baseline_trait_types: Comma-separated REGENIE baseline trait types.
+        regenie_baseline_variant_limit: Optional baseline variant cap. Defaults to variant_limit when unset.
+        regenie_baseline_warmups: Warmup count for original REGENIE baseline trials.
+        regenie_baseline_trials: Measured count for original REGENIE baseline trials.
         smoke: Whether to use the reduced smoke campaign.
         skip_deep_profiles: Whether to skip sampling and trace profiles.
         enable_jax_trace: Whether deep profiles capture JAX profiler traces.
@@ -113,6 +119,11 @@ class ProfileArguments:
     variant_limit: int | None
     dry_run: bool
     include_regenie_baseline: bool
+    regenie_executable: str | None
+    regenie_baseline_trait_types: str
+    regenie_baseline_variant_limit: int | None
+    regenie_baseline_warmups: int
+    regenie_baseline_trials: int
     smoke: bool
     skip_deep_profiles: bool
     enable_jax_trace: bool
@@ -258,6 +269,8 @@ class ProfilePlan:
         profiler_modes: Profiler modes requested by config.
         profiler_tools: Profiler tool availability records.
         logging_perturbation_cases: Planned telemetry/logging perturbation cases.
+        regenie_baseline_scope: Planned original REGENIE baseline scope.
+        regenie_baseline_commands: Planned original REGENIE baseline commands.
         rust_benchmark_commands: Rust Criterion benchmark commands.
         notes: Human-readable plan notes.
 
@@ -269,8 +282,56 @@ class ProfilePlan:
     profiler_modes: dict[str, bool]
     profiler_tools: dict[str, dict[str, object]]
     logging_perturbation_cases: list[dict[str, object]]
+    regenie_baseline_scope: dict[str, object] | None
+    regenie_baseline_commands: list[dict[str, object]]
     rust_benchmark_commands: list[list[str]]
     notes: list[str]
+
+
+class RegenieBaselineScopeStatus(enum.StrEnum):
+    """Status for original REGENIE baseline workload scoping."""
+
+    FULL = "full"
+    BOUNDED = "bounded"
+    UNSUPPORTED = "unsupported"
+
+
+@dataclasses.dataclass(frozen=True)
+class RegenieBaselineScope:
+    """Original REGENIE baseline workload scope.
+
+    Attributes:
+        status: Whether the baseline is full, bounded, or unsupported.
+        variant_limit: Requested bounded variant count.
+        extract_path: Extract-list path used for bounded REGENIE trials.
+        metadata_path: Variant metadata file used to build the extract list.
+        selected_variant_count: Number of variants selected for a bounded run.
+        variant_identifiers: Selected variant identifiers, omitted from serialized reports.
+        notes: Human-readable scoping notes.
+
+    """
+
+    status: RegenieBaselineScopeStatus
+    variant_limit: int | None
+    extract_path: Path | None
+    metadata_path: Path | None
+    selected_variant_count: int | None
+    variant_identifiers: tuple[str, ...]
+    notes: str
+
+
+@dataclasses.dataclass(frozen=True)
+class RuntimeComparisonNotes:
+    """Non-success runtime comparison details.
+
+    Attributes:
+        unsupported: Comparisons skipped because no compatible baseline was available.
+        failed: Comparisons where at least one paired run failed.
+
+    """
+
+    unsupported: list[str]
+    failed: list[str]
 
 
 def resolve_repo_path(value: typing.Any) -> Path:
@@ -320,12 +381,61 @@ def parse_string_list(raw_values: str) -> tuple[str, ...]:
     return parsed_values
 
 
+def parse_regenie_baseline_trait_types(raw_values: str) -> tuple[str, ...]:
+    """Parse and validate original REGENIE baseline trait types."""
+    trait_types = parse_string_list(raw_values)
+    valid_trait_types = {"quantitative", "binary"}
+    invalid_trait_types = sorted(set(trait_types) - valid_trait_types)
+    if invalid_trait_types:
+        message = f"Unsupported REGENIE baseline trait types: {', '.join(invalid_trait_types)}"
+        raise ValueError(message)
+    return trait_types
+
+
 def build_output_directory(arguments: ProfileArguments) -> Path:
     """Resolve the campaign output directory."""
     if arguments.output_dir is not None:
         return arguments.output_dir
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return arguments.output_parent / f"landau_deep_{arguments.chromosome_label}_{timestamp}"
+
+
+def configured_regenie_executable(arguments: ProfileArguments) -> str:
+    """Return the configured original or patched REGENIE executable name."""
+    if arguments.regenie_executable is not None:
+        return arguments.regenie_executable
+    return os.environ.get("REGENIE_BIN", "regenie")
+
+
+def executable_is_available(executable_name: str) -> bool:
+    """Return whether a command or explicit executable path is available."""
+    executable_path = Path(executable_name)
+    if executable_path.is_absolute() or executable_path.parent != Path():
+        return executable_path.exists() and os.access(executable_path, os.X_OK)
+    return shutil.which(executable_name) is not None
+
+
+def resolve_available_regenie_executable(arguments: ProfileArguments) -> str | None:
+    """Resolve REGENIE for optional baseline runs without failing the campaign."""
+    executable_name = configured_regenie_executable(arguments)
+    if executable_is_available(executable_name):
+        return executable_name
+    return None
+
+
+def resolved_binary_path(executable_name: str | None) -> str | None:
+    """Resolve a command name to an absolute executable path when possible."""
+    if executable_name is None:
+        return None
+    executable_path = Path(executable_name)
+    if executable_path.is_absolute() or executable_path.parent != Path():
+        if executable_path.exists():
+            return str(executable_path.resolve())
+        return executable_name
+    resolved_path = shutil.which(executable_name)
+    if resolved_path is not None:
+        return resolved_path
+    return executable_name
 
 
 def python_module_is_available(module_name: str) -> bool:
@@ -439,11 +549,102 @@ def serialize_profiler_tool_status(tool_status: dict[str, ProfilerToolStatus]) -
     return {tool_name: dataclasses.asdict(status) for tool_name, status in sorted(tool_status.items())}
 
 
+def serialize_regenie_baseline_scope(scope: RegenieBaselineScope) -> dict[str, object]:
+    """Serialize baseline scope without embedding long extract lists."""
+    return {
+        "status": scope.status.value,
+        "variant_limit": scope.variant_limit,
+        "extract_path": str(scope.extract_path) if scope.extract_path is not None else None,
+        "metadata_path": str(scope.metadata_path) if scope.metadata_path is not None else None,
+        "selected_variant_count": scope.selected_variant_count,
+        "notes": scope.notes,
+    }
+
+
+def command_input_paths(command_arguments: list[str]) -> list[str]:
+    """Extract input file paths from a REGENIE command line."""
+    input_flags = {"--bgen", "--sample", "--phenoFile", "--covarFile", "--pred", "--extract"}
+    input_paths: list[str] = []
+    argument_index = 0
+    while argument_index < len(command_arguments):
+        argument = command_arguments[argument_index]
+        if argument in input_flags and argument_index + 1 < len(command_arguments):
+            input_paths.append(command_arguments[argument_index + 1])
+            argument_index += 2
+            continue
+        if argument == "--bed" and argument_index + 1 < len(command_arguments):
+            bed_prefix = Path(command_arguments[argument_index + 1])
+            input_paths.extend(str(bed_prefix.with_suffix(suffix)) for suffix in (".bed", ".bim", ".fam"))
+            argument_index += 2
+            continue
+        argument_index += 1
+    return sorted(set(input_paths))
+
+
+def build_command_manifest(command_name: str, status: str, command_arguments: list[str]) -> dict[str, object]:
+    """Build manifest metadata for one baseline command."""
+    executable_name = command_arguments[0] if command_arguments else None
+    return {
+        "name": command_name,
+        "status": status,
+        "binary": resolved_binary_path(executable_name),
+        "command_arguments": command_arguments,
+        "input_files": command_input_paths(command_arguments),
+    }
+
+
+def collect_summary_baseline_commands(summary_payload: dict[str, typing.Any] | None) -> list[dict[str, object]]:
+    """Collect actual baseline commands from a run summary payload."""
+    if summary_payload is None:
+        return []
+    command_manifests: list[dict[str, object]] = []
+    result_groups = [
+        typing.cast("list[dict[str, typing.Any]]", summary_payload.get("setup_results", [])),
+        typing.cast("list[dict[str, typing.Any]]", summary_payload.get("headline_results", [])),
+    ]
+    for result_group in result_groups:
+        for result_payload in result_group:
+            trial_payloads = typing.cast("list[dict[str, typing.Any]]", result_payload.get("trials", []))
+            if not trial_payloads:
+                trial_payloads = [result_payload]
+            for trial_payload in trial_payloads:
+                if trial_payload.get("implementation") != "regenie":
+                    continue
+                command_manifests.append(
+                    build_command_manifest(
+                        command_name=str(trial_payload.get("name", "")),
+                        status=str(trial_payload.get("status", "")),
+                        command_arguments=[str(value) for value in trial_payload.get("command_arguments", [])],
+                    )
+                )
+    return command_manifests
+
+
+def collect_manifest_input_files(
+    *,
+    profile_plan: ProfilePlan | None,
+    summary_payload: dict[str, typing.Any] | None,
+) -> list[dict[str, object]]:
+    """Collect profile input files for the artifact manifest."""
+    if summary_payload is not None:
+        preflight_payload = typing.cast("dict[str, typing.Any]", summary_payload.get("preflight", {}))
+        file_sizes = typing.cast("dict[str, int]", preflight_payload.get("input_file_sizes", {}))
+        if file_sizes:
+            return [
+                {"path": path, "size_bytes": size_bytes}
+                for path, size_bytes in sorted(file_sizes.items(), key=lambda item: item[0])
+            ]
+    if profile_plan is None:
+        return []
+    return [{"path": input_path, "size_bytes": None} for input_path in profile_plan.required_inputs]
+
+
 def collect_artifact_manifest(
     *,
     output_directory: Path,
     profiler_tool_status: dict[str, ProfilerToolStatus],
     summary_payload: dict[str, typing.Any] | None = None,
+    profile_plan: ProfilePlan | None = None,
 ) -> dict[str, typing.Any]:
     """Build a structured artifact manifest for one profile campaign."""
     artifact_paths = sorted(
@@ -458,11 +659,21 @@ def collect_artifact_manifest(
             "list[dict[str, typing.Any]]", deep_profile_results.get("sampling_profiles", [])
         )
         skipped_profiles = [profile for profile in sampling_profiles if profile.get("status") == "skipped"]
+    baseline_commands = collect_summary_baseline_commands(summary_payload)
+    regenie_baseline_scope = None
+    if summary_payload is not None:
+        regenie_baseline_scope = summary_payload.get("regenie_baseline_scope")
+    if profile_plan is not None:
+        baseline_commands = profile_plan.regenie_baseline_commands
+        regenie_baseline_scope = profile_plan.regenie_baseline_scope
     return {
         "schema_version": 1,
         "generated_at": datetime.now(UTC).isoformat(),
         "output_directory": str(output_directory),
         "profiler_tools": serialize_profiler_tool_status(profiler_tool_status),
+        "input_files": collect_manifest_input_files(profile_plan=profile_plan, summary_payload=summary_payload),
+        "regenie_baseline_scope": regenie_baseline_scope,
+        "regenie_baseline_commands": baseline_commands,
         "artifact_paths": artifact_paths,
         "skipped_profiles": skipped_profiles,
     }
@@ -473,12 +684,14 @@ def write_artifact_manifest(
     output_directory: Path,
     profiler_tool_status: dict[str, ProfilerToolStatus],
     summary_payload: dict[str, typing.Any] | None = None,
+    profile_plan: ProfilePlan | None = None,
 ) -> None:
     """Write the profile artifact manifest."""
     manifest = collect_artifact_manifest(
         output_directory=output_directory,
         profiler_tool_status=profiler_tool_status,
         summary_payload=summary_payload,
+        profile_plan=profile_plan,
     )
     (output_directory / "artifact_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
@@ -520,7 +733,10 @@ def dirty_diff_sha256() -> str:
     return hashlib.sha256(completed_process.stdout).hexdigest()
 
 
-def collect_environment_metadata(baseline_paths: typing.Any) -> dict[str, typing.Any]:
+def collect_environment_metadata(
+    baseline_paths: typing.Any,
+    regenie_executable: str | None = None,
+) -> dict[str, typing.Any]:
     """Collect reproducibility metadata for a profiling campaign."""
     input_paths = [
         baseline_paths.bgen_path,
@@ -552,7 +768,7 @@ def collect_environment_metadata(baseline_paths: typing.Any) -> dict[str, typing
         "jax": command_output([sys.executable, "-c", "import jax; print(jax.__version__); print(jax.devices())"]),
         "rustc": command_output(["rustc", "--version"]),
         "cargo": command_output(["cargo", "--version"]),
-        "regenie": command_output(["regenie", "--version"]),
+        "regenie": command_output([regenie_executable or "regenie", "--version"]),
         "hardware": dataclasses.asdict(baseline_benchmark.collect_hardware_summary()),
         "environment": relevant_environment,
         "input_file_sizes": file_sizes,
@@ -605,19 +821,161 @@ def replace_command_output_prefix(command_arguments: list[str], output_prefix: P
     return updated_arguments
 
 
+def variant_metadata_candidate_paths(baseline_paths: baseline_benchmark.BaselinePaths) -> list[Path]:
+    """Return metadata files that can provide BGEN-order variant identifiers."""
+    return [
+        baseline_paths.bgen_path.with_suffix(".pvar"),
+        baseline_paths.bed_prefix.with_suffix(".bim"),
+    ]
+
+
+def read_pvar_variant_identifiers(metadata_path: Path, variant_limit: int) -> tuple[str, ...]:
+    """Read the first variant identifiers from a PVAR file."""
+    variant_identifiers: list[str] = []
+    identifier_index = 2
+    with metadata_path.open(encoding="utf-8") as metadata_file:
+        for raw_line in metadata_file:
+            line = raw_line.strip()
+            if not line or line.startswith("##"):
+                continue
+            columns = line.split()
+            if columns[0].startswith("#"):
+                header_columns = [column.lstrip("#") for column in columns]
+                if "ID" in header_columns:
+                    identifier_index = header_columns.index("ID")
+                continue
+            if len(columns) <= identifier_index:
+                continue
+            variant_identifier = columns[identifier_index]
+            if variant_identifier and variant_identifier != ".":
+                variant_identifiers.append(variant_identifier)
+            if len(variant_identifiers) >= variant_limit:
+                break
+    return tuple(variant_identifiers)
+
+
+def read_bim_variant_identifiers(metadata_path: Path, variant_limit: int) -> tuple[str, ...]:
+    """Read the first variant identifiers from a BIM file."""
+    variant_identifiers: list[str] = []
+    with metadata_path.open(encoding="utf-8") as metadata_file:
+        for raw_line in metadata_file:
+            columns = raw_line.strip().split()
+            if len(columns) < 2:
+                continue
+            variant_identifier = columns[1]
+            if variant_identifier and variant_identifier != ".":
+                variant_identifiers.append(variant_identifier)
+            if len(variant_identifiers) >= variant_limit:
+                break
+    return tuple(variant_identifiers)
+
+
+def read_variant_identifiers(metadata_path: Path, variant_limit: int) -> tuple[str, ...]:
+    """Read first variant identifiers from a supported metadata file."""
+    if metadata_path.suffix == ".pvar":
+        return read_pvar_variant_identifiers(metadata_path, variant_limit)
+    if metadata_path.suffix == ".bim":
+        return read_bim_variant_identifiers(metadata_path, variant_limit)
+    message = f"Unsupported variant metadata file: {metadata_path}"
+    raise ValueError(message)
+
+
+def build_regenie_baseline_scope(
+    *,
+    arguments: ProfileArguments,
+    baseline_paths: baseline_benchmark.BaselinePaths,
+    output_directory: Path,
+) -> RegenieBaselineScope:
+    """Build original REGENIE workload scope for direct paired comparisons."""
+    variant_limit = arguments.regenie_baseline_variant_limit
+    if variant_limit is None:
+        variant_limit = arguments.variant_limit
+    if variant_limit is None:
+        return RegenieBaselineScope(
+            status=RegenieBaselineScopeStatus.FULL,
+            variant_limit=None,
+            extract_path=None,
+            metadata_path=None,
+            selected_variant_count=None,
+            variant_identifiers=(),
+            notes="Original REGENIE baseline uses the full configured BGEN workload.",
+        )
+    if variant_limit <= 0:
+        return RegenieBaselineScope(
+            status=RegenieBaselineScopeStatus.UNSUPPORTED,
+            variant_limit=variant_limit,
+            extract_path=None,
+            metadata_path=None,
+            selected_variant_count=None,
+            variant_identifiers=(),
+            notes="Bounded REGENIE baseline requires a positive variant limit.",
+        )
+    for metadata_path in variant_metadata_candidate_paths(baseline_paths):
+        if not metadata_path.exists():
+            continue
+        variant_identifiers = read_variant_identifiers(metadata_path, variant_limit)
+        if variant_identifiers:
+            extract_path = output_directory / "headline_runs" / f"regenie_first_{len(variant_identifiers)}_variants.txt"
+            return RegenieBaselineScope(
+                status=RegenieBaselineScopeStatus.BOUNDED,
+                variant_limit=variant_limit,
+                extract_path=extract_path,
+                metadata_path=metadata_path,
+                selected_variant_count=len(variant_identifiers),
+                variant_identifiers=variant_identifiers,
+                notes=(
+                    "Original REGENIE baseline is bounded with an --extract list derived from the first "
+                    f"{len(variant_identifiers)} variants in {metadata_path}."
+                ),
+            )
+    metadata_paths = ", ".join(str(path) for path in variant_metadata_candidate_paths(baseline_paths))
+    return RegenieBaselineScope(
+        status=RegenieBaselineScopeStatus.UNSUPPORTED,
+        variant_limit=variant_limit,
+        extract_path=None,
+        metadata_path=None,
+        selected_variant_count=None,
+        variant_identifiers=(),
+        notes=f"Bounded REGENIE baseline needs a .pvar or .bim metadata file; checked {metadata_paths}.",
+    )
+
+
+def write_regenie_baseline_extract_file(scope: RegenieBaselineScope) -> None:
+    """Write the REGENIE extract list for a bounded baseline scope."""
+    if scope.status != RegenieBaselineScopeStatus.BOUNDED or scope.extract_path is None:
+        return
+    scope.extract_path.parent.mkdir(parents=True, exist_ok=True)
+    scope.extract_path.write_text("\n".join(scope.variant_identifiers) + "\n", encoding="utf-8")
+
+
+def apply_regenie_baseline_scope(
+    command_arguments: list[str],
+    baseline_scope: RegenieBaselineScope,
+) -> list[str]:
+    """Apply bounded baseline filters to a REGENIE command."""
+    updated_arguments = list(command_arguments)
+    if baseline_scope.extract_path is not None:
+        updated_arguments.extend(["--extract", str(baseline_scope.extract_path)])
+    return updated_arguments
+
+
 def build_regenie_step2_command(
     *,
     trait_type: str,
     regenie_executable: str,
     baseline_paths: typing.Any,
     output_prefix: Path,
+    baseline_scope: RegenieBaselineScope,
 ) -> list[str]:
     """Build one original REGENIE step 2 command with an isolated output prefix."""
     if trait_type == "binary":
         base_command = baseline_benchmark.build_regenie_step2_command(regenie_executable, baseline_paths)
     else:
         base_command = baseline_benchmark.build_regenie_step2_continuous_command(regenie_executable, baseline_paths)
-    return replace_command_output_prefix(base_command, output_prefix)
+    return apply_regenie_baseline_scope(
+        replace_command_output_prefix(base_command, output_prefix),
+        baseline_scope,
+    )
 
 
 def build_queue_depth_values(writer_thread_count: int, queue_depth_multipliers: tuple[int, ...]) -> tuple[int, ...]:
@@ -948,6 +1306,42 @@ def skipped_profile_result(
     )
 
 
+def unsupported_aggregate_result(
+    *,
+    name: str,
+    trait_type: str,
+    device: str,
+    log_directory: Path,
+    notes: str,
+) -> AggregateResult:
+    """Build an unsupported aggregate result and persist the reason."""
+    trial_result = skipped_profile_result(
+        name=f"{name}_unsupported",
+        implementation="regenie",
+        trait_type=trait_type,
+        device=device,
+        log_directory=log_directory,
+        notes=notes,
+    )
+    unsupported_trial_result = dataclasses.replace(trial_result, status="unsupported")
+    return AggregateResult(
+        name=name,
+        implementation="regenie",
+        trait_type=trait_type,
+        device=device,
+        status="unsupported",
+        trial_count=1,
+        warmup_count=0,
+        median_wall_time_seconds=None,
+        mean_wall_time_seconds=None,
+        min_wall_time_seconds=None,
+        max_wall_time_seconds=None,
+        standard_deviation_seconds=None,
+        rows_per_second=None,
+        trials=[unsupported_trial_result],
+    )
+
+
 def write_inline_python_profile_script(command_arguments: list[str], script_path: Path) -> Path:
     """Write an inline Python command to a script file for external profilers."""
     if len(command_arguments) < 3 or command_arguments[0] != sys.executable or command_arguments[1] != "-c":
@@ -1166,6 +1560,7 @@ def run_regenie_trial(
     baseline_paths: typing.Any,
     output_directory: Path,
     log_directory: Path,
+    baseline_scope: RegenieBaselineScope,
 ) -> TrialResult:
     """Run one original REGENIE step 2 trial."""
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -1176,6 +1571,7 @@ def run_regenie_trial(
         regenie_executable=regenie_executable,
         baseline_paths=baseline_paths,
         output_prefix=output_prefix,
+        baseline_scope=baseline_scope,
     )
     result = run_logged_command(
         name=name,
@@ -1311,10 +1707,12 @@ def run_repeated_regenie_trials(
     baseline_paths: typing.Any,
     output_directory: Path,
     log_directory: Path,
+    baseline_scope: RegenieBaselineScope,
     warmup_count: int,
     trial_count: int,
 ) -> AggregateResult:
     """Warm and measure original REGENIE step 2."""
+    write_regenie_baseline_extract_file(baseline_scope)
     for warmup_index in range(warmup_count):
         run_regenie_trial(
             name=f"{name}_warmup{warmup_index:02d}",
@@ -1323,6 +1721,7 @@ def run_repeated_regenie_trials(
             baseline_paths=baseline_paths,
             output_directory=output_directory,
             log_directory=log_directory,
+            baseline_scope=baseline_scope,
         )
     trial_results = [
         run_regenie_trial(
@@ -1332,6 +1731,7 @@ def run_repeated_regenie_trials(
             baseline_paths=baseline_paths,
             output_directory=output_directory,
             log_directory=log_directory,
+            baseline_scope=baseline_scope,
         )
         for trial_index in range(trial_count)
     ]
@@ -1519,6 +1919,7 @@ def run_headline_trials(
     arguments: ProfileArguments,
     baseline_paths: typing.Any,
     regenie_executable: str | None,
+    regenie_baseline_scope: RegenieBaselineScope,
     winners: dict[str, AggregateResult],
     output_directory: Path,
     cache_directory: Path,
@@ -1526,10 +1927,35 @@ def run_headline_trials(
     """Run headline original REGENIE and winning g configurations."""
     headline_results: list[AggregateResult] = []
     if arguments.include_regenie_baseline:
+        regenie_trait_types = parse_regenie_baseline_trait_types(arguments.regenie_baseline_trait_types)
         if regenie_executable is None:
-            message = "Original REGENIE baseline was requested, but no executable was resolved."
-            raise RuntimeError(message)
-        for trait_type in ("quantitative", "binary"):
+            for trait_type in regenie_trait_types:
+                headline_results.append(
+                    unsupported_aggregate_result(
+                        name=f"headline_regenie_{trait_type}",
+                        trait_type=trait_type,
+                        device="external_cpu",
+                        log_directory=output_directory / "logs",
+                        notes=(
+                            "Original REGENIE baseline was requested, but no executable was resolved from "
+                            f"{configured_regenie_executable(arguments)!r}."
+                        ),
+                    )
+                )
+        elif regenie_baseline_scope.status == RegenieBaselineScopeStatus.UNSUPPORTED:
+            for trait_type in regenie_trait_types:
+                headline_results.append(
+                    unsupported_aggregate_result(
+                        name=f"headline_regenie_{trait_type}",
+                        trait_type=trait_type,
+                        device="external_cpu",
+                        log_directory=output_directory / "logs",
+                        notes=regenie_baseline_scope.notes,
+                    )
+                )
+        for trait_type in regenie_trait_types:
+            if regenie_executable is None or regenie_baseline_scope.status == RegenieBaselineScopeStatus.UNSUPPORTED:
+                continue
             headline_results.append(
                 run_repeated_regenie_trials(
                     name=f"headline_regenie_{trait_type}",
@@ -1538,8 +1964,9 @@ def run_headline_trials(
                     baseline_paths=baseline_paths,
                     output_directory=output_directory / "headline_runs",
                     log_directory=output_directory / "logs",
-                    warmup_count=arguments.headline_warmups,
-                    trial_count=arguments.headline_trials,
+                    baseline_scope=regenie_baseline_scope,
+                    warmup_count=arguments.regenie_baseline_warmups,
+                    trial_count=arguments.regenie_baseline_trials,
                 )
             )
     for winner_key, winner in sorted(winners.items()):
@@ -1612,6 +2039,34 @@ def build_runtime_comparisons(aggregate_results: list[AggregateResult]) -> dict[
                 "absolute_delta_seconds": result.median_wall_time_seconds - baseline.median_wall_time_seconds,
             }
     return comparisons
+
+
+def build_runtime_comparison_notes(aggregate_results: list[AggregateResult]) -> RuntimeComparisonNotes:
+    """Build explicit non-success direct comparison notes."""
+    unsupported: list[str] = []
+    failed: list[str] = []
+    regenie_results = {result.trait_type: result for result in aggregate_results if result.implementation == "regenie"}
+    for g_result in aggregate_results:
+        if g_result.implementation != "g":
+            continue
+        comparison_name = f"{g_result.name}_vs_regenie_{g_result.trait_type}"
+        regenie_result = regenie_results.get(g_result.trait_type)
+        if regenie_result is None:
+            unsupported.append(f"{comparison_name}: no original REGENIE baseline was scheduled for this trait.")
+            continue
+        if regenie_result.status == "unsupported":
+            notes = next((trial.notes for trial in regenie_result.trials if trial.notes), None)
+            suffix = f" {notes}" if notes is not None else ""
+            unsupported.append(f"{comparison_name}: original REGENIE baseline is unsupported.{suffix}")
+            continue
+        if regenie_result.median_wall_time_seconds is None:
+            notes = next((trial.notes for trial in regenie_result.trials if trial.notes), None)
+            suffix = f" {notes}" if notes is not None else ""
+            failed.append(f"{comparison_name}: original REGENIE baseline did not produce a measured runtime.{suffix}")
+            continue
+        if g_result.median_wall_time_seconds is None:
+            failed.append(f"{comparison_name}: g result did not produce a measured runtime.")
+    return RuntimeComparisonNotes(unsupported=unsupported, failed=failed)
 
 
 REGENIE_STAGE_GROUPS: dict[str, tuple[str, ...]] = {
@@ -1817,6 +2272,8 @@ def build_summary_markdown(
     stage_totals: dict[str, float],
     stage_comparison_rows: list[dict[str, float | str]],
     algorithmic_findings: list[str],
+    comparison_notes: RuntimeComparisonNotes | None = None,
+    regenie_baseline_scope: RegenieBaselineScope | None = None,
     logging_perturbation_results: list[dict[str, typing.Any]] | None = None,
 ) -> str:
     """Build the human-readable campaign summary."""
@@ -1837,6 +2294,8 @@ def build_summary_markdown(
             f"{format_optional_float(result.rows_per_second)} |"
         )
     lines.extend(["", "## Runtime Comparisons", ""])
+    lines.append("### Successful")
+    lines.append("")
     if comparisons:
         for comparison_name, comparison in comparisons.items():
             lines.append(
@@ -1845,6 +2304,32 @@ def build_summary_markdown(
             )
     else:
         lines.append("- No successful direct comparisons were available.")
+    comparison_details = comparison_notes or RuntimeComparisonNotes(unsupported=[], failed=[])
+    lines.extend(["", "### Unsupported", ""])
+    if comparison_details.unsupported:
+        for note in comparison_details.unsupported:
+            lines.append(f"- {note}")
+    else:
+        lines.append("- No unsupported direct comparisons were recorded.")
+    lines.extend(["", "### Failed", ""])
+    if comparison_details.failed:
+        for note in comparison_details.failed:
+            lines.append(f"- {note}")
+    else:
+        lines.append("- No failed direct comparisons were recorded.")
+    lines.extend(["", "## REGENIE Baseline Scope", ""])
+    if regenie_baseline_scope is None:
+        lines.append("- Original REGENIE baseline scope was not requested.")
+    else:
+        lines.append(f"- Status: `{regenie_baseline_scope.status.value}`")
+        lines.append(f"- Variant limit: `{regenie_baseline_scope.variant_limit}`")
+        if regenie_baseline_scope.extract_path is not None:
+            lines.append(f"- Extract list: `{regenie_baseline_scope.extract_path}`")
+        if regenie_baseline_scope.metadata_path is not None:
+            lines.append(f"- Variant metadata: `{regenie_baseline_scope.metadata_path}`")
+        if regenie_baseline_scope.selected_variant_count is not None:
+            lines.append(f"- Selected variants: `{regenie_baseline_scope.selected_variant_count}`")
+        lines.append(f"- Notes: {regenie_baseline_scope.notes}")
     lines.extend(["", "## Stage Comparisons", ""])
     if stage_comparison_rows:
         lines.append(
@@ -2362,6 +2847,8 @@ def apply_smoke_overrides(arguments: ProfileArguments) -> ProfileArguments:
         finalist_trials=1,
         headline_warmups=0,
         headline_trials=1,
+        regenie_baseline_warmups=0,
+        regenie_baseline_trials=1,
     )
 
 
@@ -2394,6 +2881,15 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileArgument
         variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
         dry_run=bool(tool_values["dry_run"]),
         include_regenie_baseline=bool(tool_values["include_regenie_baseline"]),
+        regenie_executable=(
+            None if tool_values.get("regenie_executable") is None else str(tool_values["regenie_executable"])
+        ),
+        regenie_baseline_trait_types=tooling_hydra_arguments.comma_join(tool_values["regenie_baseline_trait_types"]),
+        regenie_baseline_variant_limit=tooling_hydra_arguments.integer_or_none(
+            tool_values.get("regenie_baseline_variant_limit")
+        ),
+        regenie_baseline_warmups=int(tool_values["regenie_baseline_warmups"]),
+        regenie_baseline_trials=int(tool_values["regenie_baseline_trials"]),
         smoke=bool(tool_values["smoke"]),
         skip_deep_profiles=bool(tool_values["skip_deep_profiles"]),
         enable_jax_trace=bool(tool_values["enable_jax_trace"]),
@@ -2490,6 +2986,32 @@ def build_profile_plan(
                 smoke=arguments.smoke,
             )
         ]
+    regenie_baseline_scope = None
+    regenie_baseline_commands: list[dict[str, object]] = []
+    if arguments.include_regenie_baseline:
+        scope = build_regenie_baseline_scope(
+            arguments=arguments,
+            baseline_paths=baseline_paths,
+            output_directory=output_directory,
+        )
+        regenie_baseline_scope = serialize_regenie_baseline_scope(scope)
+        if scope.status != RegenieBaselineScopeStatus.UNSUPPORTED:
+            regenie_executable = configured_regenie_executable(arguments)
+            for trait_type in parse_regenie_baseline_trait_types(arguments.regenie_baseline_trait_types):
+                command_arguments = build_regenie_step2_command(
+                    trait_type=trait_type,
+                    regenie_executable=regenie_executable,
+                    baseline_paths=baseline_paths,
+                    output_prefix=output_directory / "headline_runs" / f"headline_regenie_{trait_type}_trial00",
+                    baseline_scope=scope,
+                )
+                regenie_baseline_commands.append(
+                    build_command_manifest(
+                        command_name=f"headline_regenie_{trait_type}_trial00",
+                        status="planned",
+                        command_arguments=command_arguments,
+                    )
+                )
     notes = [
         "Dry run only: no workloads, profilers, or setup commands were executed.",
         "Real runs generate summary.json, summary.md, preflight.json, subprocess logs, stage timings, "
@@ -2499,6 +3021,8 @@ def build_profile_plan(
         notes.append("Deep profiler captures are disabled by tool.skip_deep_profiles=true.")
     if not arguments.include_regenie_baseline:
         notes.append("Original REGENIE headline trials are disabled by tool.include_regenie_baseline=false.")
+    elif regenie_baseline_scope is not None:
+        notes.append(str(regenie_baseline_scope["notes"]))
     return ProfilePlan(
         chromosome_label=arguments.chromosome_label,
         output_directory=str(output_directory),
@@ -2506,6 +3030,8 @@ def build_profile_plan(
         profiler_modes=profiler_modes,
         profiler_tools=profiler_tools,
         logging_perturbation_cases=logging_perturbation_cases,
+        regenie_baseline_scope=regenie_baseline_scope,
+        regenie_baseline_commands=regenie_baseline_commands,
         rust_benchmark_commands=rust_benchmark_commands,
         notes=notes,
     )
@@ -2543,6 +3069,19 @@ def write_profile_plan(plan: ProfilePlan, output_directory: Path) -> None:
     lines.extend(["", "## Inputs And Step 1 Prediction Lists", ""])
     for input_path in plan.required_inputs:
         lines.append(f"- `{input_path}`")
+    lines.extend(["", "## REGENIE Baseline Scope", ""])
+    if plan.regenie_baseline_scope is None:
+        lines.append("- Original REGENIE baseline profiling is disabled.")
+    else:
+        for key, value in plan.regenie_baseline_scope.items():
+            lines.append(f"- `{key}`: `{value}`")
+    lines.extend(["", "## REGENIE Baseline Commands", ""])
+    if plan.regenie_baseline_commands:
+        for command_manifest in plan.regenie_baseline_commands:
+            command_arguments = typing.cast("list[str]", command_manifest["command_arguments"])
+            lines.append(f"- `{command_manifest['name']}`: `{shlex.join(command_arguments)}`")
+    else:
+        lines.append("- No REGENIE baseline commands are planned.")
     lines.extend(["", "## Rust Benchmark Commands", ""])
     if plan.rust_benchmark_commands:
         for command_arguments in plan.rust_benchmark_commands:
@@ -2570,6 +3109,11 @@ def run_tool(arguments: ProfileArguments) -> None:
     logger.info("Writing profile artifacts under %s", output_directory)
     baseline_paths = build_baseline_paths(arguments)
     profiler_tool_status = build_profiler_tool_status(arguments)
+    regenie_baseline_scope = build_regenie_baseline_scope(
+        arguments=arguments,
+        baseline_paths=baseline_paths,
+        output_directory=output_directory,
+    )
     if arguments.dry_run:
         profile_plan = build_profile_plan(
             arguments=arguments,
@@ -2580,6 +3124,7 @@ def run_tool(arguments: ProfileArguments) -> None:
         write_artifact_manifest(
             output_directory=output_directory,
             profiler_tool_status=profiler_tool_status,
+            profile_plan=profile_plan,
         )
         logger.info("Wrote dry-run profile plan under %s", output_directory)
         return
@@ -2593,13 +3138,23 @@ def run_tool(arguments: ProfileArguments) -> None:
     regenie_executable: str | None = None
     setup_results: list[TrialResult] = []
     if arguments.include_regenie_baseline:
-        regenie_executable = baseline_benchmark.resolve_required_executable("REGENIE_BIN", "regenie")
-        logger.info("Ensuring REGENIE step 1 prediction lists")
-        setup_results = ensure_prediction_lists(
-            baseline_paths=baseline_paths,
-            regenie_executable=regenie_executable,
-            log_directory=log_directory,
-        )
+        regenie_executable = resolve_available_regenie_executable(arguments)
+        if regenie_executable is not None:
+            logger.info("Ensuring REGENIE step 1 prediction lists")
+            setup_results = ensure_prediction_lists(
+                baseline_paths=baseline_paths,
+                regenie_executable=regenie_executable,
+                log_directory=log_directory,
+            )
+        elif missing_prediction_list_paths:
+            formatted_paths = "\n".join(str(path) for path in missing_prediction_list_paths)
+            message = (
+                "Step 1 prediction lists are required before g runs and REGENIE setup cannot run because "
+                f"{configured_regenie_executable(arguments)!r} is unavailable:\n{formatted_paths}"
+            )
+            raise FileNotFoundError(message)
+        else:
+            logger.warning("Original REGENIE baseline requested, but executable is unavailable")
     elif missing_prediction_list_paths:
         formatted_paths = "\n".join(str(path) for path in missing_prediction_list_paths)
         message = f"Step 1 prediction lists are required when REGENIE setup is disabled:\n{formatted_paths}"
@@ -2607,7 +3162,7 @@ def run_tool(arguments: ProfileArguments) -> None:
     else:
         logger.info("Using existing REGENIE step 1 prediction lists")
     logger.info("Collecting preflight metadata")
-    preflight_metadata = collect_environment_metadata(baseline_paths)
+    preflight_metadata = collect_environment_metadata(baseline_paths, regenie_executable)
     (output_directory / "preflight.json").write_text(json.dumps(preflight_metadata, indent=2) + "\n", encoding="utf-8")
 
     logger.info("Running BGEN reader pre-sweep")
@@ -2629,6 +3184,7 @@ def run_tool(arguments: ProfileArguments) -> None:
         arguments=arguments,
         baseline_paths=baseline_paths,
         regenie_executable=regenie_executable,
+        regenie_baseline_scope=regenie_baseline_scope,
         winners=winners,
         output_directory=output_directory,
         cache_directory=cache_directory,
@@ -2654,6 +3210,7 @@ def run_tool(arguments: ProfileArguments) -> None:
         cache_directory=cache_directory,
     )
     comparisons = build_runtime_comparisons(headline_results)
+    comparison_notes = build_runtime_comparison_notes(headline_results)
     stage_totals = collect_stage_totals(headline_results)
     stage_comparison_rows = build_stage_comparison_rows(headline_results)
     algorithmic_findings = build_algorithmic_findings(stage_comparison_rows)
@@ -2663,7 +3220,9 @@ def run_tool(arguments: ProfileArguments) -> None:
         "bgen_summaries": [dataclasses.asdict(summary) for summary in bgen_summaries],
         "winners": {key: dataclasses.asdict(value) for key, value in winners.items()},
         "headline_results": [dataclasses.asdict(result) for result in headline_results],
+        "regenie_baseline_scope": serialize_regenie_baseline_scope(regenie_baseline_scope),
         "comparisons": comparisons,
+        "runtime_comparison_notes": dataclasses.asdict(comparison_notes),
         "stage_totals": stage_totals,
         "stage_comparisons": stage_comparison_rows,
         "algorithmic_findings": algorithmic_findings,
@@ -2675,6 +3234,8 @@ def run_tool(arguments: ProfileArguments) -> None:
         build_summary_markdown(
             aggregate_results=headline_results,
             comparisons=comparisons,
+            comparison_notes=comparison_notes,
+            regenie_baseline_scope=regenie_baseline_scope,
             stage_totals=stage_totals,
             stage_comparison_rows=stage_comparison_rows,
             algorithmic_findings=algorithmic_findings,
