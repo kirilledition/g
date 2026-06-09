@@ -59,6 +59,51 @@ Configure these team issue labels:
 - `optimization`: performance, throughput, memory, or efficiency optimization
   work.
 - `simd`: SIMD or vectorization-specific optimization work.
+- `codex-spark`: optional queue label for easy or routine tasks intended for a
+  Spark-backed Symphony daemon.
+- `codex-frontier`: optional queue label for tasks that should wait for a
+  frontier-model Symphony daemon.
+
+## Codex Model Routing
+
+`just symphony-run` starts Codex app-server with explicit model settings. The
+repo default is:
+
+```text
+SYMPHONY_CODEX_MODEL=gpt-5.3-codex-spark
+SYMPHONY_CODEX_REASONING_EFFORT=xhigh
+```
+
+Override those variables in the shell or `~/.config/g-symphony/env` to toggle
+the daemon back to the frontier model:
+
+```bash
+export SYMPHONY_CODEX_MODEL='gpt-5.5'
+export SYMPHONY_CODEX_REASONING_EFFORT='xhigh'
+```
+
+Symphony's current workflow schema has one static `codex.command` per daemon.
+It does not switch models dynamically from a Linear label inside a running
+daemon. To route by task label, run separate daemon instances with an extra
+required label:
+
+```bash
+SYMPHONY_CODEX_QUEUE_LABEL=codex-spark \
+  SYMPHONY_CODEX_MODEL=gpt-5.3-codex-spark \
+  SYMPHONY_CODEX_REASONING_EFFORT=xhigh \
+  SYMPHONY_PORT=4000 \
+  just symphony-run
+
+SYMPHONY_CODEX_QUEUE_LABEL=codex-frontier \
+  SYMPHONY_CODEX_MODEL=gpt-5.5 \
+  SYMPHONY_CODEX_REASONING_EFFORT=xhigh \
+  SYMPHONY_PORT=4001 \
+  just symphony-run
+```
+
+With `SYMPHONY_CODEX_QUEUE_LABEL` set, the rendered workflow requires both
+`symphony` and that queue label. Do not run an unlabelled catch-all daemon at
+the same time if you want strict Spark/frontier separation.
 
 ## Resource-Heavy Activation
 
@@ -182,6 +227,9 @@ chmod 700 ~/.config/g-symphony
 cat > ~/.config/g-symphony/env <<'EOF'
 export LINEAR_API_KEY='replace-with-your-token'
 export LINEAR_PROJECT_SLUG='replace-with-your-project-slug'
+export SYMPHONY_CODEX_MODEL='gpt-5.3-codex-spark'
+export SYMPHONY_CODEX_REASONING_EFFORT='xhigh'
+# export SYMPHONY_CODEX_QUEUE_LABEL='codex-spark'
 EOF
 chmod 600 ~/.config/g-symphony/env
 ```

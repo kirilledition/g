@@ -228,11 +228,41 @@ symphony-run:
       echo "LINEAR_PROJECT_SLUG contains unexpected characters." >&2
       exit 1
     fi
+    symphony_codex_model="${SYMPHONY_CODEX_MODEL:-gpt-5.3-codex-spark}"
+    symphony_codex_reasoning_effort="${SYMPHONY_CODEX_REASONING_EFFORT:-xhigh}"
+    symphony_codex_queue_label="${SYMPHONY_CODEX_QUEUE_LABEL:-}"
+    if [[ ! "${symphony_codex_model}" =~ ^[A-Za-z0-9._:-]+$ ]]; then
+      echo "SYMPHONY_CODEX_MODEL contains unexpected characters." >&2
+      exit 1
+    fi
+    case "${symphony_codex_reasoning_effort}" in
+      low|medium|high|xhigh) ;;
+      *)
+        echo "SYMPHONY_CODEX_REASONING_EFFORT must be one of: low, medium, high, xhigh." >&2
+        exit 1
+        ;;
+    esac
+    if [[ -n "${symphony_codex_queue_label}" && ! "${symphony_codex_queue_label}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+      echo "SYMPHONY_CODEX_QUEUE_LABEL contains unexpected characters." >&2
+      exit 1
+    fi
 
     mkdir -p "{{symphony_worktree_root}}"
     runtime_workflow="${SYMPHONY_RUNTIME_WORKFLOW:-/tmp/g-symphony-${USER:-user}.WORKFLOW.md}"
     escaped_project_slug="$(printf '%s' "${LINEAR_PROJECT_SLUG}" | sed 's/[#&\\]/\\&/g')"
-    sed "s#__LINEAR_PROJECT_SLUG__#${escaped_project_slug}#g" WORKFLOW.md > "${runtime_workflow}"
+    escaped_codex_model="$(printf '%s' "${symphony_codex_model}" | sed 's/[#&\\]/\\&/g')"
+    escaped_codex_reasoning_effort="$(printf '%s' "${symphony_codex_reasoning_effort}" | sed 's/[#&\\]/\\&/g')"
+    codex_queue_label_line=""
+    if [[ -n "${symphony_codex_queue_label}" ]]; then
+      codex_queue_label_line="    - ${symphony_codex_queue_label}"
+    fi
+    escaped_codex_queue_label_line="$(printf '%s' "${codex_queue_label_line}" | sed 's/[#&\\]/\\&/g')"
+    sed \
+      -e "s#__LINEAR_PROJECT_SLUG__#${escaped_project_slug}#g" \
+      -e "s#__SYMPHONY_CODEX_MODEL__#${escaped_codex_model}#g" \
+      -e "s#__SYMPHONY_CODEX_REASONING_EFFORT__#${escaped_codex_reasoning_effort}#g" \
+      -e "s#__SYMPHONY_CODEX_QUEUE_LABEL_LINE__#${escaped_codex_queue_label_line}#g" \
+      WORKFLOW.md > "${runtime_workflow}"
 
     cd "{{symphony_elixir_dir}}"
     exec mise exec -- ./bin/symphony \

@@ -5,6 +5,7 @@ tracker:
   project_slug: "__LINEAR_PROJECT_SLUG__"
   required_labels:
     - symphony
+__SYMPHONY_CODEX_QUEUE_LABEL_LINE__
   active_states:
     - Todo
     - In Progress
@@ -60,7 +61,7 @@ agent:
   max_turns: 20
   max_retry_backoff_ms: 300000
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config web_search=live app-server
+  command: codex --config shell_environment_policy.inherit=all --config web_search=live --config 'model="__SYMPHONY_CODEX_MODEL__"' --config 'model_reasoning_effort="__SYMPHONY_CODEX_REASONING_EFFORT__"' app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_timeout_ms: 14400000
@@ -109,6 +110,9 @@ No description provided.
 - Keep work scoped to the Linear issue; file a follow-up Linear issue for meaningful out-of-scope findings.
 - Operate autonomously unless missing credentials, permissions, data, or cluster resources block completion.
 - Codex subagents are allowed when useful; keep subagent work inside the current issue scope and worktree.
+- The daemon's Codex model is selected at startup. Treat `codex-spark` and
+  `codex-frontier` labels as queue-routing labels for operators, not as a
+  per-turn model override inside an already running agent.
 - Only issues tagged `symphony` are dispatch candidates. Treat other labels as routing hints, not hard requirements.
 - Only issues tagged `task-generator` may create new `symphony`-dispatchable Linear issues. Other issues may create backlog follow-ups without the `symphony` label.
 - Use the Linear MCP tools for Linear issue reads, writes, searches, comments, labels, and generated tasks. Avoid raw Linear HTTP/API requests unless MCP is unavailable.

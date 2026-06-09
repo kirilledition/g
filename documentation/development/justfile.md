@@ -209,7 +209,11 @@ also accept the same overrides when run directly with `uv run --no-sync python
 ### `symphony-run`
 
 - Inputs: same credentials and Symphony checkout as `symphony-doctor`, plus
-  `WORKFLOW.md`.
+  `WORKFLOW.md`. Optional model routing inputs:
+  `SYMPHONY_CODEX_MODEL` (default `gpt-5.3-codex-spark`),
+  `SYMPHONY_CODEX_REASONING_EFFORT` (default `xhigh`), and
+  `SYMPHONY_CODEX_QUEUE_LABEL` (adds a second required Linear label such as
+  `codex-spark` or `codex-frontier`).
 - Output: rendered runtime workflow and a foreground Symphony daemon process.
 - Use when: running the Linear-backed unattended agent workflow for this repo.
 
