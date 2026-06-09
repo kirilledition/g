@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import typing
 from pathlib import Path
@@ -39,6 +40,38 @@ def test_regenie_command_builders_shape() -> None:
     assert "--qt" in command_specs[2][3]
     assert command_specs[3][0] == "regenie_step2_quantitative"
     assert "--pred" in command_specs[3][3]
+
+
+def test_run_logged_command_marks_nvidia_counter_permission_as_skipped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(*arguments: typing.Any, **keyword_arguments: typing.Any) -> subprocess.CompletedProcess[str]:
+        del arguments, keyword_arguments
+        return subprocess.CompletedProcess(
+            args=["ncu"],
+            returncode=1,
+            stdout="",
+            stderr="==ERROR== ERR_NVGPUCTRPERM - restricted counters\n",
+        )
+
+    monkeypatch.setattr(deep_profile.subprocess, "run", fake_run)
+
+    result = deep_profile.run_logged_command(
+        name="profile_binary_gpu_ncu",
+        implementation="Nsight Compute",
+        trait_type="binary",
+        device="gpu",
+        command_arguments=["ncu", "uv", "run", "--no-sync", "python", "-c", "print('x')"],
+        environment_overrides={},
+        log_directory=tmp_path,
+    )
+
+    assert result.status == "skipped"
+    assert result.notes is not None
+    assert "performance counter access" in result.notes
+    stderr_text = Path(result.stderr_log_path).read_text(encoding="utf-8")
+    assert stderr_text == "==ERROR== ERR_NVGPUCTRPERM - restricted counters\n"
 
 
 def test_bgen_reader_benchmark_parses_sweep_lists() -> None:
@@ -1511,6 +1544,52 @@ def test_deep_profile_memray_command_uses_project_environment(tmp_path: Path) ->
     ]
 
 
+def test_deep_profile_external_profile_commands_use_isolated_outputs(tmp_path: Path) -> None:
+    baseline_paths = baseline_benchmark.build_baseline_paths()
+    candidate = deep_profile.Step2Candidate(
+        trait_type="binary",
+        device="gpu",
+        chunk_size=8192,
+        staging_depth=1,
+        output_writer_thread_count=4,
+        output_writer_queue_depth=8,
+        bgen_decode_tile_variant_count=128,
+        rayon_thread_count=2,
+        firth_batch_size=64,
+    )
+
+    scalene_command = deep_profile.build_external_profile_command(
+        baseline_paths=baseline_paths,
+        candidate=candidate,
+        winner_key="binary_gpu",
+        profile_key="scalene",
+        profile_directory=tmp_path,
+        cache_directory=tmp_path / "jax_cache",
+        variant_limit=1000,
+    )
+    memray_command = deep_profile.build_external_profile_command(
+        baseline_paths=baseline_paths,
+        candidate=candidate,
+        winner_key="binary_gpu",
+        profile_key="memray",
+        profile_directory=tmp_path,
+        cache_directory=tmp_path / "jax_cache",
+        variant_limit=1000,
+    )
+
+    scalene_script = scalene_command.script_path.read_text(encoding="utf-8")
+    memray_script = memray_command.script_path.read_text(encoding="utf-8")
+
+    assert scalene_command.script_path.name == "binary_gpu_scalene_profiler_child.py"
+    assert memray_command.script_path.name == "binary_gpu_memray_profiler_child.py"
+    assert str(tmp_path / "profile_binary_gpu_scalene") in scalene_script
+    assert str(tmp_path / "profile_binary_gpu_memray") in memray_script
+    assert str(tmp_path / "profile_binary_gpu_memray") not in scalene_script
+    assert str(tmp_path / "profile_binary_gpu_scalene") not in memray_script
+    assert str(tmp_path / "binary_gpu_scalene_stage_timings.json") in scalene_script
+    assert str(tmp_path / "binary_gpu_memray_stage_timings.json") in memray_script
+
+
 def test_deep_profile_logging_perturbation_rows_compare_against_off() -> None:
     rows = deep_profile.build_logging_perturbation_rows(
         [
@@ -1602,6 +1681,7 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         [
             f"tool.output_dir={tmp_path / 'profile'}",
             "tool.variant_limit=1000",
+            "tool.enable_nsight_systems=true",
         ]
     )
     logged_commands: list[tuple[str, list[str]]] = []
@@ -1664,7 +1744,7 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         return {"command": command_arguments, "returncode": 0, "stdout": "profile\n", "stderr": ""}
 
     def fake_which(command_name: str) -> str | None:
-        if command_name in {"cargo", "py-spy", "perf"}:
+        if command_name in {"cargo", "py-spy", "perf", "nsys"}:
             return f"/usr/bin/{command_name}"
         return None
 
@@ -1683,14 +1763,18 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
 
     implementations = [implementation for implementation, _command in logged_commands]
     assert jax_profile_names == ["profile_binary_gpu_jax"]
-    assert implementations == ["cProfile", "py-spy", "perf"]
+    assert implementations == ["cProfile", "py-spy", "Nsight Systems", "perf"]
     assert metadata_commands[:2] == [
         ["cargo", "bench", "--bench", "bgen_read"],
         ["cargo", "bench", "--bench", "preprocess"],
     ]
     assert any(command[0].endswith("py-spy") and "--format" in command for _implementation, command in logged_commands)
+    assert any(
+        command[0].endswith("nsys") and "--sample=none" in command and "--cpuctxsw=none" in command
+        for _implementation, command in logged_commands
+    )
     assert any(command[0].endswith("perf") and "record" in command for _implementation, command in logged_commands)
-    assert len(results["sampling_profiles"]) == 4
+    assert len(results["sampling_profiles"]) == 5
 
 
 def test_deep_profile_aggregates_trial_results() -> None:

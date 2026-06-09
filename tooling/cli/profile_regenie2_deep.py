@@ -273,6 +273,22 @@ class ProfilePlan:
     notes: list[str]
 
 
+@dataclasses.dataclass(frozen=True)
+class ExternalProfileCommand:
+    """Child command materialized for one external profiler.
+
+    Attributes:
+        command_arguments: Child command arguments consumed by the profiler.
+        environment_overrides: Child environment overrides.
+        script_path: Materialized Python script path for profiler CLIs that need a file.
+
+    """
+
+    command_arguments: list[str]
+    environment_overrides: dict[str, str]
+    script_path: Path
+
+
 def resolve_repo_path(value: typing.Any) -> Path:
     """Resolve a path relative to the repository root."""
     return tooling_paths.resolve_repo_relative_path(Path(str(value)), REPOSITORY_ROOT)
@@ -890,10 +906,17 @@ def run_logged_command(
     wall_time_seconds = time.perf_counter() - start_time
     stdout_log_path.write_text(completed_process.stdout, encoding="utf-8")
     stderr_log_path.write_text(completed_process.stderr, encoding="utf-8")
+    permission_block_note = permission_blocked_profiler_note(
+        stdout=completed_process.stdout,
+        stderr=completed_process.stderr,
+    )
     status = "success" if completed_process.returncode == 0 else "failed"
     notes = None
+    if permission_block_note is not None:
+        status = "skipped"
+        notes = permission_block_note
     if completed_process.returncode != 0:
-        notes = completed_process.stderr.strip() or completed_process.stdout.strip()
+        notes = notes or completed_process.stderr.strip() or completed_process.stdout.strip()
     logger.info(
         "Finished %s with status=%s in %.3fs",
         name,
@@ -914,6 +937,18 @@ def run_logged_command(
         environment_overrides=environment_overrides,
         notes=notes,
     )
+
+
+def permission_blocked_profiler_note(*, stdout: str, stderr: str) -> str | None:
+    """Return an actionable note for known profiler permission failures."""
+    combined_output = f"{stderr}\n{stdout}"
+    if "ERR_NVGPUCTRPERM" in combined_output:
+        return (
+            "Nsight Compute connected to the CUDA process, but the NVIDIA driver restricts GPU performance "
+            "counter access to admin users. Ask the cluster administrator to allow non-admin GPU performance "
+            "counters on the GPU nodes, or keep using Nsight Systems/JAX traces for CUDA timelines."
+        )
+    return None
 
 
 def skipped_profile_result(
@@ -955,6 +990,42 @@ def write_inline_python_profile_script(command_arguments: list[str], script_path
         raise ValueError(message)
     script_path.write_text(command_arguments[2], encoding="utf-8")
     return script_path
+
+
+def build_external_profile_command(
+    *,
+    baseline_paths: typing.Any,
+    candidate: Step2Candidate,
+    winner_key: str,
+    profile_key: str,
+    profile_directory: Path,
+    cache_directory: Path,
+    variant_limit: int | None,
+) -> ExternalProfileCommand:
+    """Build an isolated child command for one external profiler pass."""
+    stage_timing_path = profile_directory / f"{winner_key}_{profile_key}_stage_timings.json"
+    command_arguments = build_g_step2_child_command(
+        baseline_paths=baseline_paths,
+        candidate=candidate,
+        output_prefix=profile_directory / f"profile_{winner_key}_{profile_key}",
+        variant_limit=variant_limit,
+        cache_directory=cache_directory,
+        stage_timing_path=stage_timing_path,
+    )
+    script_path = write_inline_python_profile_script(
+        command_arguments,
+        profile_directory / f"{winner_key}_{profile_key}_profiler_child.py",
+    )
+    environment_overrides = build_g_trial_environment(
+        candidate=candidate,
+        cache_directory=cache_directory,
+        stage_timing_path=stage_timing_path,
+    )
+    return ExternalProfileCommand(
+        command_arguments=command_arguments,
+        environment_overrides=environment_overrides,
+        script_path=script_path,
+    )
 
 
 def executable_name(executable_path: str | None) -> str:
@@ -1997,24 +2068,16 @@ def run_deep_profiles(
                 memory_profile_path=memory_profile_path,
             )
             results["sampling_profiles"].append(dataclasses.asdict(profile_result))
-        base_profile_command_arguments = build_g_step2_child_command(
-            baseline_paths=baseline_paths,
-            candidate=candidate,
-            output_prefix=profile_directory / f"profile_{winner_key}_profiler",
-            variant_limit=arguments.variant_limit,
-            cache_directory=cache_directory,
-            stage_timing_path=profile_directory / f"{winner_key}_profiler_stage_timings.json",
-        )
-        base_profile_environment = build_g_trial_environment(
-            candidate=candidate,
-            cache_directory=cache_directory,
-            stage_timing_path=profile_directory / f"{winner_key}_profiler_stage_timings.json",
-        )
-        profile_script_path = write_inline_python_profile_script(
-            base_profile_command_arguments,
-            profile_directory / f"{winner_key}_profiler_child.py",
-        )
         if arguments.enable_python_cprofile:
+            profile_command = build_external_profile_command(
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                winner_key=winner_key,
+                profile_key="cprofile",
+                profile_directory=profile_directory,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+            )
             cprofile_output_path = profile_directory / f"{winner_key}.cprofile"
             cprofile_text_path = profile_directory / f"{winner_key}.cprofile.txt"
             cprofile_result = run_logged_command(
@@ -2028,9 +2091,9 @@ def run_deep_profiles(
                     "cProfile",
                     "-o",
                     str(cprofile_output_path),
-                    str(profile_script_path),
+                    str(profile_command.script_path),
                 ],
-                environment_overrides=base_profile_environment,
+                environment_overrides=profile_command.environment_overrides,
                 log_directory=output_directory / "logs",
             )
             results["sampling_profiles"].append(dataclasses.asdict(cprofile_result))
@@ -2049,6 +2112,15 @@ def run_deep_profiles(
                 cprofile_text_path.write_text(cprofile_text_result["stdout"], encoding="utf-8")
         py_spy_status = profiler_tool_status["py_spy"]
         if arguments.enable_py_spy and py_spy_status.available:
+            profile_command = build_external_profile_command(
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                winner_key=winner_key,
+                profile_key="py_spy",
+                profile_directory=profile_directory,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+            )
             speedscope_path = profile_directory / f"{winner_key}.speedscope.json"
             command_arguments = [
                 py_spy_status.executable_path or "py-spy",
@@ -2058,7 +2130,7 @@ def run_deep_profiles(
                 "--output",
                 str(speedscope_path),
                 "--",
-                *base_profile_command_arguments,
+                *profile_command.command_arguments,
             ]
             append_logged_profile_result(
                 results=results,
@@ -2067,7 +2139,7 @@ def run_deep_profiles(
                 trait_type=candidate.trait_type,
                 device=candidate.device,
                 command_arguments=command_arguments,
-                environment_overrides=base_profile_environment,
+                environment_overrides=profile_command.environment_overrides,
                 log_directory=output_directory / "logs",
             )
         elif arguments.enable_py_spy:
@@ -2082,6 +2154,15 @@ def run_deep_profiles(
             )
         scalene_status = profiler_tool_status["scalene"]
         if arguments.enable_scalene and scalene_status.available:
+            profile_command = build_external_profile_command(
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                winner_key=winner_key,
+                profile_key="scalene",
+                profile_directory=profile_directory,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+            )
             scalene_json_path = profile_directory / f"{winner_key}.scalene.json"
             append_logged_profile_result(
                 results=results,
@@ -2092,9 +2173,9 @@ def run_deep_profiles(
                 command_arguments=build_scalene_command_arguments(
                     tool_status=scalene_status,
                     output_path=scalene_json_path,
-                    profile_script_path=profile_script_path,
+                    profile_script_path=profile_command.script_path,
                 ),
-                environment_overrides=base_profile_environment,
+                environment_overrides=profile_command.environment_overrides,
                 log_directory=output_directory / "logs",
             )
         elif arguments.enable_scalene:
@@ -2109,6 +2190,15 @@ def run_deep_profiles(
             )
         memray_status = profiler_tool_status["memray"]
         if arguments.enable_memray and memray_status.available:
+            profile_command = build_external_profile_command(
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                winner_key=winner_key,
+                profile_key="memray",
+                profile_directory=profile_directory,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+            )
             memray_output_path = profile_directory / f"{winner_key}.memray.bin"
             append_logged_profile_result(
                 results=results,
@@ -2119,9 +2209,9 @@ def run_deep_profiles(
                 command_arguments=build_memray_command_arguments(
                     tool_status=memray_status,
                     output_path=memray_output_path,
-                    profile_script_path=profile_script_path,
+                    profile_script_path=profile_command.script_path,
                 ),
-                environment_overrides=base_profile_environment,
+                environment_overrides=profile_command.environment_overrides,
                 log_directory=output_directory / "logs",
             )
         elif arguments.enable_memray:
@@ -2136,6 +2226,15 @@ def run_deep_profiles(
             )
         nsight_systems_status = profiler_tool_status["nsight_systems"]
         if arguments.enable_nsight_systems and nsight_systems_status.available:
+            profile_command = build_external_profile_command(
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                winner_key=winner_key,
+                profile_key="nsys",
+                profile_directory=profile_directory,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+            )
             nsight_report_prefix = profile_directory / f"{winner_key}_nsys"
             append_logged_profile_result(
                 results=results,
@@ -2147,13 +2246,15 @@ def run_deep_profiles(
                     nsight_systems_status.executable_path or "nsys",
                     "profile",
                     "--trace=cuda,cudnn,cublas,osrt,nvtx",
+                    "--sample=none",
+                    "--cpuctxsw=none",
                     "--stats=true",
                     "--force-overwrite=true",
                     "--output",
                     str(nsight_report_prefix),
-                    *base_profile_command_arguments,
+                    *profile_command.command_arguments,
                 ],
-                environment_overrides=base_profile_environment,
+                environment_overrides=profile_command.environment_overrides,
                 log_directory=output_directory / "logs",
             )
         elif arguments.enable_nsight_systems:
@@ -2168,6 +2269,15 @@ def run_deep_profiles(
             )
         nsight_compute_status = profiler_tool_status["nsight_compute"]
         if arguments.enable_nsight_compute and nsight_compute_status.available:
+            profile_command = build_external_profile_command(
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                winner_key=winner_key,
+                profile_key="ncu",
+                profile_directory=profile_directory,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+            )
             nsight_compute_report_path = profile_directory / f"{winner_key}_ncu"
             append_logged_profile_result(
                 results=results,
@@ -2183,9 +2293,9 @@ def run_deep_profiles(
                     "default",
                     "--export",
                     str(nsight_compute_report_path),
-                    *base_profile_command_arguments,
+                    *profile_command.command_arguments,
                 ],
-                environment_overrides=base_profile_environment,
+                environment_overrides=profile_command.environment_overrides,
                 log_directory=output_directory / "logs",
             )
         elif arguments.enable_nsight_compute:
@@ -2200,6 +2310,15 @@ def run_deep_profiles(
             )
         perf_status = profiler_tool_status["linux_perf"]
         if arguments.enable_linux_perf and perf_status.available:
+            profile_command = build_external_profile_command(
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                winner_key=winner_key,
+                profile_key="perf",
+                profile_directory=profile_directory,
+                cache_directory=cache_directory,
+                variant_limit=arguments.variant_limit,
+            )
             perf_path = profile_directory / f"{winner_key}.perf.data"
             command_arguments = [
                 perf_status.executable_path or "perf",
@@ -2208,7 +2327,7 @@ def run_deep_profiles(
                 "-o",
                 str(perf_path),
                 "--",
-                *base_profile_command_arguments,
+                *profile_command.command_arguments,
             ]
             append_logged_profile_result(
                 results=results,
@@ -2217,7 +2336,7 @@ def run_deep_profiles(
                 trait_type=candidate.trait_type,
                 device=candidate.device,
                 command_arguments=command_arguments,
-                environment_overrides=base_profile_environment,
+                environment_overrides=profile_command.environment_overrides,
                 log_directory=output_directory / "logs",
             )
         elif arguments.enable_linux_perf:
