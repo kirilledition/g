@@ -798,6 +798,8 @@ def compute_compact_sparse_firth_variantwise_fixed_batches(
     offset_batches = offset_matrix.reshape((batch_count, firth_batch_size, -1))
     active_carrier_slot_mask_batches = active_carrier_slot_mask.reshape((batch_count, firth_batch_size, -1))
     active_mask_batches = active_mask.reshape((batch_count, firth_batch_size))
+    full_null_deviance_batches = full_null_deviance.reshape((batch_count, firth_batch_size))
+    null_failed_mask_batches = null_failed_mask.reshape((batch_count, firth_batch_size))
     empty_firth_variant_result = regenie2_binary_firth_types.build_empty_firth_variant_result(firth_batch_size)
 
     def compute_firth_batch(
@@ -830,15 +832,15 @@ def compute_compact_sparse_firth_variantwise_fixed_batches(
         def run_active_batch(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
             return jax.vmap(
                 fit_variant,
-                in_axes=(0, 0, 0, 0, None, 0, None),
+                in_axes=(0, 0, 0, 0, 0, 0, 0),
             )(
                 phenotype_batches[batch_index],
                 genotype_batches[batch_index],
                 offset_batches[batch_index],
                 active_carrier_slot_mask_batches[batch_index],
-                full_null_deviance,
+                full_null_deviance_batches[batch_index],
                 ~active_mask_batches[batch_index],
-                null_failed_mask,
+                null_failed_mask_batches[batch_index],
             )
 
         batch_result = jax.lax.cond(
@@ -1046,8 +1048,8 @@ def compute_firth_variantwise_fixed_batches(
             dense_lane_mask = active_mask & (~compact_sparse_lane_mask)
             dense_stream_plan = build_firth_lane_stream_plan(dense_lane_mask)
             compact_stream_plan = build_firth_lane_stream_plan(compact_sparse_lane_mask)
-            empty_fallback_result = regenie2_binary_firth_types.build_empty_firth_variant_result(
-                firth_batch_size
+            dense_fallback_result = regenie2_binary_firth_types.build_empty_firth_variant_result(
+                dense_stream_plan.active_mask.shape[0]
             )
             empty_result = regenie2_binary_firth_types.build_empty_firth_variant_result(active_mask.shape[0])
             dense_stream_has_lanes = dense_stream_plan.active_count > 0
@@ -1091,7 +1093,7 @@ def compute_firth_variantwise_fixed_batches(
             dense_result = jax.lax.cond(
                 dense_stream_has_lanes,
                 compute_dense_stream,
-                lambda _: empty_fallback_result,
+                lambda _: dense_fallback_result,
                 operand=None,
             )
 
@@ -1150,10 +1152,14 @@ def compute_firth_variantwise_fixed_batches(
                     kernel_config=kernel_config,
                 )
 
+            compact_fallback_result = regenie2_binary_firth_types.build_empty_firth_variant_result(
+                compact_stream_plan.active_mask.shape[0]
+            )
+
             compact_result = jax.lax.cond(
                 compact_stream_has_lanes,
                 compute_compact_stream,
-                lambda _: empty_fallback_result,
+                lambda _: compact_fallback_result,
                 operand=None,
             )
 
@@ -1249,8 +1255,8 @@ def compute_firth_multi_variantwise_fixed_batches(
             dense_lane_mask = active_mask & (~compact_sparse_lane_mask)
             dense_stream_plan = build_firth_lane_stream_plan(dense_lane_mask)
             compact_stream_plan = build_firth_lane_stream_plan(compact_sparse_lane_mask)
-            empty_fallback_result = regenie2_binary_firth_types.build_empty_firth_variant_result(
-                firth_batch_size
+            dense_fallback_result = regenie2_binary_firth_types.build_empty_firth_variant_result(
+                dense_stream_plan.active_mask.shape[0]
             )
             empty_result = regenie2_binary_firth_types.build_empty_firth_variant_result(active_mask.shape[0])
             dense_stream_has_lanes = dense_stream_plan.active_count > 0
@@ -1291,7 +1297,7 @@ def compute_firth_multi_variantwise_fixed_batches(
             dense_result = jax.lax.cond(
                 dense_stream_has_lanes,
                 compute_dense_stream,
-                lambda _: empty_fallback_result,
+                lambda _: dense_fallback_result,
                 operand=None,
             )
 
@@ -1348,10 +1354,14 @@ def compute_firth_multi_variantwise_fixed_batches(
                     kernel_config=kernel_config,
                 )
 
+            compact_fallback_result = regenie2_binary_firth_types.build_empty_firth_variant_result(
+                compact_stream_plan.active_mask.shape[0]
+            )
+
             compact_result = jax.lax.cond(
                 compact_stream_has_lanes,
                 compute_compact_stream,
-                lambda _: empty_fallback_result,
+                lambda _: compact_fallback_result,
                 operand=None,
             )
 
