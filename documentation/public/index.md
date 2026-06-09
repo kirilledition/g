@@ -31,8 +31,8 @@
 
 The published site is split by audience:
 
-- `docs/public/` contains user-facing guidance and is the best starting point for running `g`.
-- `docs/development/` contains development-team guidance, architecture notes, style rules, and automation documentation.
-- `docs/scratchpad/` contains internal work products such as learning notes, review-derived notes, and historical profiling summaries.
+- `documentation/public/` contains user-facing guidance and is the best starting point for running `g`.
+- `documentation/development/` contains development-team guidance, architecture notes, style rules, and automation documentation.
+- `documentation/scratchpad/` contains internal work products such as learning notes, review-derived notes, and historical profiling summaries.
 
 Development documentation starts at [Development](../development/index.md). Internal scratchpad material starts at [Scratchpad](../scratchpad/index.md).

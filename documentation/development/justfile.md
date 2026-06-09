@@ -473,7 +473,7 @@ GWAS_ENGINE_SLURM_CPUS_PER_TASK=72 \
   tool.trusted_no_missing_diploid=false
 ```
 
-Use the `Benchmark Artifact Analysis Recipes` section in `docs/development/tooling.md` for
+Use the `Benchmark Artifact Analysis Recipes` section in `documentation/development/tooling.md` for
 the common `jq` commands that summarize manifests, old benchmark reports, hot
 benchmark summaries, profile stage timings, and JSONL progress logs.
 

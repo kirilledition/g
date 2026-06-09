@@ -4,7 +4,7 @@ This section contains internal work products created while developing `g`.
 These pages preserve useful context, but they are not the primary user guide and
 should not be treated as the current public contract.
 
-Use `docs/public/` for user-facing guidance and `docs/development/` for active
+Use `documentation/public/` for user-facing guidance and `documentation/development/` for active
 development-team documentation.
 
 ## Contents

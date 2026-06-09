@@ -4,23 +4,23 @@ on:
   push:
     branches: [main]
     paths:
-      - docs/**
+      - documentation/**
       - zensical.toml
       - pyproject.toml
       - uv.lock
       - Justfile
       - .github/workflows/docs.yml
-      - "!docs/scratchpad/**"
+      - "!documentation/scratchpad/**"
   pull_request:
     branches: [main]
     paths:
-      - docs/**
+      - documentation/**
       - zensical.toml
       - pyproject.toml
       - uv.lock
       - Justfile
       - .github/workflows/docs.yml
-      - "!docs/scratchpad/**"
+      - "!documentation/scratchpad/**"
 
 concurrency:
   group: docs-${{ github.event.pull_request.number || github.ref }}
@@ -67,7 +67,7 @@ jobs:
         if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v4
         with:
-          path: site
+          path: documentation_rendered_website
 
   deploy:
     name: deploy

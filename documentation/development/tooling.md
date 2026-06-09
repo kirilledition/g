@@ -4,7 +4,7 @@ This guide documents the repository-local `tooling/` package: what it contains,
 how to run the tools, which Hydra profiles are saved, and how to extend the
 tooling system.
 
-The short architecture note is in `docs/development/dev-tooling-architecture.md`. This file
+The short architecture note is in `documentation/development/dev-tooling-architecture.md`. This file
 is the operational reference.
 
 ## Scope
@@ -189,7 +189,7 @@ just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
 just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
 ```
 
-The full Justfile command reference is `docs/development/justfile.md`. It covers recipe
+The full Justfile command reference is `documentation/development/justfile.md`. It covers recipe
 inputs, outputs, and when to use each command.
 
 Hydra-backed Justfile recipes accept trailing Hydra overrides. Use this form for

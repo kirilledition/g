@@ -35,7 +35,7 @@ default: help
 
 # Show available recipes and command-reference location
 help:
-    @printf 'GWAS Engine command reference: docs/development/justfile.md\n\n'
+    @printf 'GWAS Engine command reference: documentation/development/justfile.md\n\n'
     @just --list --unsorted
 
 # --- Data Preparation ---
@@ -195,7 +195,7 @@ symphony-doctor:
 docs-serve:
     uv run --group docs zensical serve
 
-# Build the Zensical documentation site into site/
+# Build the Zensical documentation site into documentation_rendered_website/
 docs-build:
     uv run --group docs zensical build --clean
 

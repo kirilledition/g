@@ -29,7 +29,7 @@ Performance discovery is not allowed to:
 ## Login-Node-Safe Preparation
 
 On the gauss login node, keep work limited to repository inspection, issue
-bookkeeping, small docs/code reads, and dry-run or plan-only commands. The
+bookkeeping, small documentation/code reads, and dry-run or plan-only commands. The
 following command is safe and is the first check when choosing an existing
 recipe:
 
@@ -37,7 +37,7 @@ recipe:
 just help
 ```
 
-Use `docs/development/justfile.md`, `docs/public/gpu-and-slurm.md`, and the issue validation
+Use `documentation/development/justfile.md`, `documentation/public/gpu-and-slurm.md`, and the issue validation
 section to choose a profiling recipe. Do not run a workload merely because a
 recipe exists.
 
@@ -182,7 +182,7 @@ generation.
 
 Generated performance issues must include the parent identifier and URL, the
 baseline signal, suspected bottleneck, proposed change, validation command, and
-non-goals. Use the generated issue template in `docs/development/symphony.md`, adding the
+non-goals. Use the generated issue template in `documentation/development/symphony.md`, adding the
 performance-specific fields under `Background` when necessary.
 
 ## Completion Checklist
