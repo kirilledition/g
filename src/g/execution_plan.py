@@ -112,6 +112,30 @@ class PhenotypeRunPlan:
 
 
 @dataclass(frozen=True)
+class PhenotypeComputeGroup:
+    """Planned phenotype group that can share one compute delivery.
+
+    Attributes:
+        group_mode: Grouping mode selected by planning or alignment.
+        phenotype_indices: Zero-based phenotype indices in run/output order.
+        phenotype_names: Phenotype names in compute order.
+        sample_mode: Sample handling semantics for this group.
+        sample_set_fingerprint: Stable sample-set fingerprint when alignment is available.
+        covariate_design_fingerprint: Stable covariate design fingerprint when alignment is available.
+        prediction_alignment_fingerprint: Stable prediction alignment fingerprint when available.
+
+    """
+
+    group_mode: types.PhenotypeComputeGroupMode
+    phenotype_indices: tuple[int, ...]
+    phenotype_names: tuple[str, ...]
+    sample_mode: types.MultiPhenotypeSampleMode
+    sample_set_fingerprint: str | None = None
+    covariate_design_fingerprint: str | None = None
+    prediction_alignment_fingerprint: str | None = None
+
+
+@dataclass(frozen=True)
 class RegenieExecutionPlan:
     """Complete immutable execution plan for one REGENIE-compatible request.
 
@@ -123,6 +147,7 @@ class RegenieExecutionPlan:
         covariate_path: Optional covariate table path.
         covariate_names: Optional covariate column names.
         phenotype_run_plans: Per-phenotype output and manifest plans.
+        phenotype_compute_groups: Planned phenotype compute groups.
         binary_correction_plan: Normalized binary fallback settings.
         kernel_config: Engine kernel and batching settings.
         output_plan: Output materialization settings.
@@ -137,6 +162,7 @@ class RegenieExecutionPlan:
     covariate_path: Path | None
     covariate_names: tuple[str, ...] | None
     phenotype_run_plans: tuple[PhenotypeRunPlan, ...]
+    phenotype_compute_groups: tuple[PhenotypeComputeGroup, ...]
     binary_correction_plan: types.BinaryCorrectionPlan
     kernel_config: KernelConfig
     output_plan: OutputPlan
@@ -240,6 +266,10 @@ def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> Regeni
         )
         for phenotype_index, phenotype_name in enumerate(regenie_config.input.pheno_columns, start=1)
     )
+    phenotype_compute_groups = build_phenotype_compute_groups(
+        phenotype_names=tuple(phenotype_run_plan.phenotype_name for phenotype_run_plan in phenotype_run_plans),
+        multi_phenotype_sample_mode=kernel_config.multi_phenotype_sample_mode,
+    )
     return RegenieExecutionPlan(
         association_mode=association_mode,
         genotype_source_config=source.build_bgen_source_config(
@@ -251,6 +281,7 @@ def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> Regeni
         covariate_path=regenie_config.input.covar_file,
         covariate_names=regenie_config.input.covar_columns or None,
         phenotype_run_plans=phenotype_run_plans,
+        phenotype_compute_groups=phenotype_compute_groups,
         binary_correction_plan=(
             normalize_binary_correction_config(regenie_config.binary)
             if regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
@@ -259,6 +290,45 @@ def build_regenie_execution_plan(regenie_config: config.RegenieConfig) -> Regeni
         kernel_config=kernel_config,
         output_plan=output_plan,
         stage_timings_json=regenie_config.g_diagnostics.stage_timings_json,
+    )
+
+
+def build_phenotype_compute_groups(
+    *,
+    phenotype_names: tuple[str, ...],
+    multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode,
+) -> tuple[PhenotypeComputeGroup, ...]:
+    """Build config-time phenotype compute groups."""
+    if not phenotype_names:
+        message = "At least one phenotype is required for execution planning."
+        raise ValueError(message)
+    if len(phenotype_names) == 1:
+        return (
+            PhenotypeComputeGroup(
+                group_mode=types.PhenotypeComputeGroupMode.SINGLE_PHENOTYPE,
+                phenotype_indices=(0,),
+                phenotype_names=phenotype_names,
+                sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+            ),
+        )
+    phenotype_indices = tuple(range(len(phenotype_names)))
+    if multi_phenotype_sample_mode == types.MultiPhenotypeSampleMode.COMPLETE_CASE:
+        return (
+            PhenotypeComputeGroup(
+                group_mode=types.PhenotypeComputeGroupMode.COMPLETE_CASE,
+                phenotype_indices=phenotype_indices,
+                phenotype_names=phenotype_names,
+                sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+            ),
+        )
+    return tuple(
+        PhenotypeComputeGroup(
+            group_mode=types.PhenotypeComputeGroupMode.PER_PHENOTYPE_COMPATIBLE,
+            phenotype_indices=(phenotype_index,),
+            phenotype_names=(phenotype_name,),
+            sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        )
+        for phenotype_index, phenotype_name in enumerate(phenotype_names)
     )
 
 

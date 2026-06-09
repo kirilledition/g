@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
+import hashlib
 import logging
 import time
 import typing
@@ -13,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 
-from g import _core, types
+from g import _core, execution_plan, types
 from g.engine import shutdown, timing, trusted_validation
 
 logger = logging.getLogger(__name__)
@@ -141,12 +142,14 @@ class NativeBgenGroupedRunInput:
     """One native-planned group of compatible per-phenotype run inputs.
 
     Attributes:
+        compute_group: Planned phenotype group with resolved compatibility fingerprints.
         phenotype_indices: Original phenotype indices included in this group.
         run_input: Multi-trait run input for the compatible phenotype group.
         prediction_source: Native multi-trait prediction source aligned to the group.
 
     """
 
+    compute_group: execution_plan.PhenotypeComputeGroup
     phenotype_indices: tuple[int, ...]
     run_input: NativeBgenMultiRunInput
     prediction_source: MultiRegeniePredictionSourceProtocol
@@ -182,6 +185,10 @@ def build_native_bgen_multi_run_input(
 def build_native_bgen_grouped_run_inputs(
     native_grouped_aligned_sample_data: _core.NativeGroupedAlignedSampleData,
     prediction_sources: list[_core.MultiRegeniePredictionSource],
+    *,
+    prediction_list_path: Path | None = None,
+    planned_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None = None,
+    alignment_config: SampleAlignmentConfigProtocol | None = None,
 ) -> tuple[NativeBgenGroupedRunInput, ...]:
     """Build Python/JAX views over native grouped per-phenotype alignment data."""
     if len(native_grouped_aligned_sample_data.groups) != len(prediction_sources):
@@ -197,14 +204,172 @@ def build_native_bgen_grouped_run_inputs(
         prediction_sources,
         strict=True,
     ):
+        phenotype_indices = tuple(int(phenotype_index) for phenotype_index in native_group.phenotype_indices)
+        run_input = build_native_bgen_multi_run_input(native_group.aligned_sample_data)
+        compute_group = build_resolved_phenotype_compute_group(
+            phenotype_indices=phenotype_indices,
+            run_input=run_input,
+            prediction_list_path=prediction_list_path,
+            planned_compute_groups=planned_compute_groups,
+            alignment_config=alignment_config,
+        )
         grouped_run_inputs.append(
             NativeBgenGroupedRunInput(
-                phenotype_indices=tuple(int(phenotype_index) for phenotype_index in native_group.phenotype_indices),
-                run_input=build_native_bgen_multi_run_input(native_group.aligned_sample_data),
+                compute_group=compute_group,
+                phenotype_indices=compute_group.phenotype_indices,
+                run_input=run_input,
                 prediction_source=prediction_source,
             )
         )
     return tuple(grouped_run_inputs)
+
+
+def build_resolved_phenotype_compute_group(
+    *,
+    phenotype_indices: tuple[int, ...],
+    run_input: NativeBgenMultiRunInput,
+    prediction_list_path: Path | None,
+    planned_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
+    alignment_config: SampleAlignmentConfigProtocol | None,
+) -> execution_plan.PhenotypeComputeGroup:
+    """Build one alignment-resolved per-phenotype compute group."""
+    planned_names_by_index = build_planned_phenotype_names_by_index(planned_compute_groups)
+    if planned_names_by_index:
+        phenotype_names = tuple(planned_names_by_index[phenotype_index] for phenotype_index in phenotype_indices)
+    else:
+        phenotype_names = run_input.phenotype_names
+    sample_set_fingerprint = fingerprint_sample_set(run_input)
+    return execution_plan.PhenotypeComputeGroup(
+        group_mode=types.PhenotypeComputeGroupMode.PER_PHENOTYPE_COMPATIBLE,
+        phenotype_indices=phenotype_indices,
+        phenotype_names=phenotype_names,
+        sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+        sample_set_fingerprint=sample_set_fingerprint,
+        covariate_design_fingerprint=fingerprint_covariate_design(run_input),
+        prediction_alignment_fingerprint=fingerprint_prediction_alignment(
+            prediction_list_path=prediction_list_path,
+            phenotype_names=phenotype_names,
+            sample_set_fingerprint=sample_set_fingerprint,
+            alignment_config=alignment_config,
+        ),
+    )
+
+
+def build_resolved_complete_case_phenotype_compute_group(
+    *,
+    run_input: NativeBgenMultiRunInput,
+    prediction_list_path: Path,
+    planned_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...],
+    alignment_config: SampleAlignmentConfigProtocol | None,
+) -> execution_plan.PhenotypeComputeGroup:
+    """Build the alignment-resolved complete-case compute group."""
+    planned_compute_group = find_complete_case_compute_group(planned_compute_groups)
+    sample_set_fingerprint = fingerprint_sample_set(run_input)
+    return execution_plan.PhenotypeComputeGroup(
+        group_mode=types.PhenotypeComputeGroupMode.COMPLETE_CASE,
+        phenotype_indices=planned_compute_group.phenotype_indices,
+        phenotype_names=planned_compute_group.phenotype_names,
+        sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+        sample_set_fingerprint=sample_set_fingerprint,
+        covariate_design_fingerprint=fingerprint_covariate_design(run_input),
+        prediction_alignment_fingerprint=fingerprint_prediction_alignment(
+            prediction_list_path=prediction_list_path,
+            phenotype_names=planned_compute_group.phenotype_names,
+            sample_set_fingerprint=sample_set_fingerprint,
+            alignment_config=alignment_config,
+        ),
+    )
+
+
+def find_complete_case_compute_group(
+    planned_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...],
+) -> execution_plan.PhenotypeComputeGroup:
+    """Return the planned complete-case compute group."""
+    for planned_compute_group in planned_compute_groups:
+        if planned_compute_group.group_mode == types.PhenotypeComputeGroupMode.COMPLETE_CASE:
+            return planned_compute_group
+    message = "A complete-case phenotype compute group is required for complete-case execution."
+    raise ValueError(message)
+
+
+def build_planned_phenotype_names_by_index(
+    planned_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
+) -> dict[int, str]:
+    """Build a lookup from planned phenotype indices to names."""
+    if planned_compute_groups is None:
+        return {}
+    planned_names_by_index: dict[int, str] = {}
+    for planned_compute_group in planned_compute_groups:
+        for phenotype_index, phenotype_name in zip(
+            planned_compute_group.phenotype_indices,
+            planned_compute_group.phenotype_names,
+            strict=True,
+        ):
+            planned_names_by_index[phenotype_index] = phenotype_name
+    return planned_names_by_index
+
+
+def fingerprint_sample_set(run_input: NativeBgenMultiRunInput) -> str:
+    """Build a stable fingerprint for the aligned sample set."""
+    fingerprint_hash = hashlib.sha256()
+    update_fingerprint(fingerprint_hash, "sample-set-v1")
+    update_array_fingerprint(fingerprint_hash, run_input.sample_indices)
+    update_string_sequence_fingerprint(fingerprint_hash, run_input.family_identifiers)
+    update_string_sequence_fingerprint(fingerprint_hash, run_input.individual_identifiers)
+    return fingerprint_hash.hexdigest()
+
+
+def fingerprint_covariate_design(run_input: NativeBgenMultiRunInput) -> str:
+    """Build a stable fingerprint for the aligned covariate design."""
+    fingerprint_hash = hashlib.sha256()
+    update_fingerprint(fingerprint_hash, "covariate-design-v1")
+    update_string_sequence_fingerprint(
+        fingerprint_hash, tuple(run_input.native_multi_aligned_sample_data.covariate_names)
+    )
+    update_array_fingerprint(fingerprint_hash, run_input.covariate_matrix)
+    return fingerprint_hash.hexdigest()
+
+
+def fingerprint_prediction_alignment(
+    *,
+    prediction_list_path: Path | None,
+    phenotype_names: tuple[str, ...],
+    sample_set_fingerprint: str,
+    alignment_config: SampleAlignmentConfigProtocol | None,
+) -> str | None:
+    """Build a stable fingerprint for the prediction alignment contract."""
+    if prediction_list_path is None:
+        return None
+    fingerprint_hash = hashlib.sha256()
+    update_fingerprint(fingerprint_hash, "prediction-alignment-v1")
+    update_fingerprint(fingerprint_hash, str(prediction_list_path))
+    update_fingerprint(fingerprint_hash, resolve_sample_key_mode(alignment_config).value)
+    update_fingerprint(fingerprint_hash, sample_set_fingerprint)
+    update_string_sequence_fingerprint(fingerprint_hash, phenotype_names)
+    return fingerprint_hash.hexdigest()
+
+
+def update_array_fingerprint(fingerprint_hash: typing.Any, array: npt.NDArray[typing.Any]) -> None:
+    """Update a fingerprint with array shape, dtype, and bytes."""
+    contiguous_array = np.ascontiguousarray(array)
+    update_fingerprint(fingerprint_hash, str(contiguous_array.dtype))
+    update_fingerprint(fingerprint_hash, repr(tuple(int(axis_length) for axis_length in contiguous_array.shape)))
+    fingerprint_hash.update(contiguous_array.tobytes(order="C"))
+
+
+def update_string_sequence_fingerprint(fingerprint_hash: typing.Any, values: tuple[str, ...]) -> None:
+    """Update a fingerprint with a sequence of strings."""
+    update_fingerprint(fingerprint_hash, str(len(values)))
+    for value in values:
+        update_fingerprint(fingerprint_hash, value)
+
+
+def update_fingerprint(fingerprint_hash: typing.Any, value: str) -> None:
+    """Update a fingerprint with one length-prefixed string."""
+    encoded_value = value.encode("utf-8")
+    fingerprint_hash.update(str(len(encoded_value)).encode("ascii"))
+    fingerprint_hash.update(b":")
+    fingerprint_hash.update(encoded_value)
 
 
 def resolve_sample_key_mode(alignment_config: SampleAlignmentConfigProtocol | None) -> types.SampleKeyMode:
@@ -326,6 +491,7 @@ def load_native_bgen_grouped_run_inputs(
     covariate_names: tuple[str, ...] | None,
     is_binary_trait: bool,
     alignment_config: SampleAlignmentConfigProtocol | None = None,
+    planned_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None = None,
 ) -> tuple[NativeBgenGroupedRunInput, ...]:
     """Load native grouped per-phenotype samples and JAX compute inputs."""
     native_grouped_aligned_sample_data = engine.align_grouped_sample_data(
@@ -344,7 +510,13 @@ def load_native_bgen_grouped_run_inputs(
         native_grouped_aligned_sample_data,
         sample_key_mode=resolve_sample_key_mode(alignment_config).value,
     )
-    return build_native_bgen_grouped_run_inputs(native_grouped_aligned_sample_data, prediction_sources)
+    return build_native_bgen_grouped_run_inputs(
+        native_grouped_aligned_sample_data,
+        prediction_sources,
+        prediction_list_path=prediction_list_path,
+        planned_compute_groups=planned_compute_groups,
+        alignment_config=alignment_config,
+    )
 
 
 def build_regenie_prediction_source(

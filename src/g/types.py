@@ -169,6 +169,14 @@ class MultiPhenotypeSampleMode(enum.StrEnum):
     COMPLETE_CASE = "complete-case"
 
 
+class PhenotypeComputeGroupMode(enum.StrEnum):
+    """Planning mode for one phenotype compute group."""
+
+    SINGLE_PHENOTYPE = "single-phenotype"
+    COMPLETE_CASE = "complete-case"
+    PER_PHENOTYPE_COMPATIBLE = "per-phenotype-compatible"
+
+
 class NullLogisticNonconvergencePolicy(enum.StrEnum):
     """Host policy for binary null-logistic non-convergence."""
 
