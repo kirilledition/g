@@ -1,5 +1,9 @@
 # Algorithm
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Canonical public algorithm and result-interpretation reference | BGEN-backed REGENIE Step 2 quantitative, binary score, and binary approximate-Firth modes in this checkout | Public interface and compute maintainers |
+
 `g` runs BGEN-backed REGENIE Step 2 association scans. It tests one marker at a
 time while using chromosome-specific leave-one-chromosome-out (LOCO)
 predictions from REGENIE Step 1 as fixed adjustment terms. It does not fit

@@ -162,7 +162,7 @@ commands.
 
 ## Repository Rules
 
-- Read `AGENTS.md` and `documentation/development/STYLEGUIDE.md` before editing code.
+- Read `AGENTS.md` and `documentation/development/style-guide.md` before editing code.
 - Use `uv` for Python dependency management.
 - Use `just` for project commands.
 - Use full-word variable names, strict type coverage, module-qualified imports, dataclass return containers, and Google-style docstrings without type duplication.

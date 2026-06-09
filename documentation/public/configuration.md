@@ -1,6 +1,20 @@
 # Configuration
 
-`g` accepts TOML configuration files that use the same option names as the CLI, grouped by section.
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Canonical user-facing TOML reference | `--config`, `g config`, effective configs, and config/CLI merge semantics | Public interface |
+
+`g` accepts TOML configuration files that use the same option names as the CLI,
+grouped by section. The live schema is defined in `src/g/interface/toml_schema.py`
+and the packaged defaults live in `src/g/config.default.toml`.
+
+Use this page for merge behavior and layout. Use the checked-out code for the
+current default values:
+
+```bash
+uv run g config init
+uv run g config explain
+```
 
 ## Merge Order
 
@@ -12,99 +26,207 @@ packaged defaults in src/g/config.default.toml
         < explicit CLI flags
 ```
 
-An explicit CLI flag overrides both the packaged default and the TOML file.
+Only explicit CLI flags override the TOML layer. An omitted CLI flag does not
+reset a value from the TOML file. For boolean values, use negative CLI forms such
+as `--no-g-resume` when you need to override a TOML `true` value.
 
-For how statistical and runtime parameters change the Step 2 algorithm, see
-[Algorithm](algorithm.md).
+Every `g regenie` run writes an `effective_config.toml` for each phenotype run.
+That file is the resolved runtime configuration after defaults, TOML, and CLI
+overrides have been applied.
 
-## Create and Validate a Config
+## Create And Validate
 
 ```bash
 uv run g config init --out regenie.toml
 uv run g config validate regenie.toml
 ```
 
-Run with a config and override one value:
+Run with a config and override selected values:
 
 ```bash
-uv run g regenie --config regenie.toml --g-device cpu
+uv run g regenie \
+  --config regenie.toml \
+  --phenoCol phenotype_b \
+  --out /path/to/output/phenotype_b \
+  --g-device gpu
 ```
 
-## Minimal Quantitative Example
+## Required Runtime Fields
+
+Packaged defaults cover runtime knobs, but a real Step 2 scan still needs
+run-specific input and output fields.
+
+| Field | TOML path | CLI equivalent | Required when |
+| --- | --- | --- | --- |
+| Genotype source | `[input].bgen` | `--bgen` | Always. |
+| Phenotype table | `[input].phenoFile` | `--phenoFile` | Always. |
+| Phenotype columns | `[input].phenoCol` or `[input].phenoColList` | `--phenoCol`, `--phenoColList` | Always. |
+| Step 1 prediction list | `[input].pred` | `--pred` | Always. |
+| Output prefix | `[output].out` | `--out` | Always. |
+| Sample file | `[input].sample` | `--sample` | When BGEN sample IDs are absent or unsuitable. |
+| Covariate table and columns | `[input].covarFile`, `[input].covarCol`, `[input].covarColList` | `--covarFile`, `--covarCol`, `--covarColList` | When the model includes covariates. |
+
+`[trait].step` must resolve to `2`. REGENIE Step 1 is not implemented.
+
+## Minimal Quantitative Config
+
+This example intentionally omits mutable runtime defaults such as block size,
+writer counts, and numerical thresholds. They come from
+`src/g/config.default.toml` unless overridden.
 
 ```toml
 [input]
-bgen = "data/1kg_chr22_full.bgen"
-sample = "data/1kg_chr22_full.sample"
-phenoFile = "data/pheno_cont.txt"
+bgen = "/path/to/genotypes.bgen"
+sample = "/path/to/genotypes.sample"
+phenoFile = "/path/to/phenotypes.tsv"
 phenoCol = "phenotype_continuous"
-covarFile = "data/covariates.txt"
+covarFile = "/path/to/covariates.tsv"
 covarColList = "age,sex"
-pred = "data/baselines/regenie_step1_qt_pred.list"
+pred = "/path/to/regenie_step1_qt_pred.list"
 
 [trait]
 step = 2
 qt = true
-bt = false
-bsize = 8192
 
 [output]
-out = "data/example_regenie2"
-
-[g.compute]
-device = "cpu"
-staging-depth = 1
-trusted-bgen-validation-mode = "cache_on_miss"
-sample-key-mode = "iid"
-
-[g.output]
-format = "parquet"
-resume = false
-resume-mode = "fast"
-
-[g.diagnostics]
-telemetry = "progress"
-log-stderr = true
+out = "/path/to/output/g_quantitative_regenie2"
 ```
 
-## Trace Telemetry Caps
-
-Trace telemetry is bounded by default. In trace mode, the Rust-owned JSONL
-stream writes at most `trace-event-cap = 1000000` completed events unless you
-raise the cap or set it to `0`.
+## Minimal Binary Approximate-Firth Config
 
 ```toml
-[g.diagnostics]
-telemetry = "trace"
-trace-event-cap = 5000000
-log-lossy = true
-```
+[input]
+bgen = "/path/to/genotypes.bgen"
+sample = "/path/to/genotypes.sample"
+phenoFile = "/path/to/phenotypes.tsv"
+phenoCol = "phenotype_binary"
+covarFile = "/path/to/covariates.tsv"
+covarColList = "age,sex"
+pred = "/path/to/regenie_step1_pred.list"
 
-With `log-lossy = true`, events after the cap are dropped. With
-`log-lossy = false`, exceeding the cap fails clearly and tells you to raise
-`--g-trace-event-cap` or set it to `0` for an intentional deep trace. The cap
-applies only to `telemetry = "trace"`; progress and profile modes are not
-constrained by it.
+[trait]
+step = 2
+bt = true
+
+[binary]
+firth = true
+approx = true
+pThresh = 0.01
+
+[output]
+out = "/path/to/output/g_binary_firth_regenie2"
+```
 
 ## Sections
 
-| Section | Typical contents |
+| Section | Purpose |
 | --- | --- |
-| `[input]` | Genotype, sample, phenotype, covariate, and prediction paths |
-| `[trait]` | Step, trait mode, block size, and thread request |
-| `[binary]` | Binary correction and Firth fallback settings |
-| `[output]` | User output prefix |
-| `[g.compute]` | Device, batching, BGEN validation, numeric, and JAX settings |
-| `[g.output]` | Writer, format, finalization, and resume settings |
-| `[g.diagnostics]` | Telemetry, logging, progress, and trace settings |
+| `[input]` | Genotype, sample, phenotype, covariate, prediction-list paths, and selected columns. |
+| `[filters]` | Recognized but unsupported REGENIE keep/remove/extract/exclude options. |
+| `[trait]` | Step, quantitative/binary mode, block size, and thread request. |
+| `[binary]` | Binary fallback flags, Firth mode, p-value threshold, and SPA recognition. |
+| `[output]` | User-facing output prefix. |
+| `[g.compute]` | Engine runtime, sample semantics, BGEN validation, JAX, numerical, and approximate-Firth tuning. |
+| `[g.output]` | Chunk format, writer settings, Parquet finalization, and resume controls. |
+| `[g.diagnostics]` | Telemetry, logging, progress, profile, and trace controls. |
+| `[metadata]` | Optional user metadata accepted by the TOML parser but not treated as a `g regenie` option. |
 
-`[g.output].format` accepts `parquet` (default), `arrow`, or `regenie`. Use
-`regenie` for REGENIE Step 2-compatible tab-separated text output with a
-`final.regenie` artifact.
+Unknown keys are rejected. Unsupported recognized options are also rejected when
+they are set to active values.
 
-`[g.compute].result-in-flight-limit` and
-`[g.compute].dosage-buffer-limit` are optional tuning overrides for pipeline
-profiling. Omit them for the default derived capacity of `staging-depth + 1`;
-increase them only with measured benefit from stage timing queue metrics.
+## CLI To TOML Mapping
 
-For implementation details behind the configuration model, see [Configuration and CLI Architecture](../development/configuration_cli_architecture.md).
+REGENIE-style CLI names keep their spelling in TOML:
+
+| CLI | TOML |
+| --- | --- |
+| `--bgen PATH` | `[input] bgen = "PATH"` |
+| `--sample PATH` | `[input] sample = "PATH"` |
+| `--phenoFile PATH` | `[input] phenoFile = "PATH"` |
+| `--phenoCol NAME` | `[input] phenoCol = "NAME"` or `phenoCol = ["A", "B"]` |
+| `--phenoColList A,B` | `[input] phenoColList = "A,B"` |
+| `--covarFile PATH` | `[input] covarFile = "PATH"` |
+| `--covarCol NAME` | `[input] covarCol = "NAME"` or `covarCol = ["A", "B"]` |
+| `--covarColList A,B` | `[input] covarColList = "A,B"` |
+| `--pred PATH` | `[input] pred = "PATH"` |
+| `--step 2` | `[trait] step = 2` |
+| `--qt`, `--no-qt` | `[trait] qt = true` or `false` |
+| `--bt`, `--no-bt` | `[trait] bt = true` or `false` |
+| `--bsize N` | `[trait] bsize = N` |
+| `--threads N` | `[trait] threads = N` |
+| `--out PATH` | `[output] out = "PATH"` |
+| `--firth`, `--no-firth` | `[binary] firth = true` or `false` |
+| `--approx`, `--no-approx` | `[binary] approx = true` or `false` |
+| `--pThresh VALUE` | `[binary] pThresh = VALUE` |
+| `--firth-se`, `--no-firth-se` | `[binary] firth-se = true` or `false` |
+
+`g`-specific CLI flags drop the leading `g-` inside the `[g.*]` namespace:
+
+| CLI | TOML |
+| --- | --- |
+| `--g-device gpu` | `[g.compute] device = "gpu"` |
+| `--g-staging-depth N` | `[g.compute] staging-depth = N` |
+| `--g-trusted-no-missing-diploid` | `[g.compute] trusted-no-missing-diploid = true` |
+| `--g-trusted-bgen-validation-mode cache_on_miss` | `[g.compute] trusted-bgen-validation-mode = "cache_on_miss"` |
+| `--g-sample-key-mode fid_iid` | `[g.compute] sample-key-mode = "fid_iid"` |
+| `--g-multi-phenotype-sample-mode complete-case` | `[g.compute] multi-phenotype-sample-mode = "complete-case"` |
+| `--g-jax-cache-dir PATH` | `[g.compute] jax-cache-dir = "PATH"` |
+| `--g-output-format parquet` | `[g.output] format = "parquet"` |
+| `--g-writer-threads N` | `[g.output] writer-threads = N` |
+| `--g-output-chunks-per-arrow-file N` | `[g.output] chunks-per-arrow-file = N` |
+| `--g-resume` | `[g.output] resume = true` |
+| `--g-resume-mode strict` | `[g.output] resume-mode = "strict"` |
+| `--g-finalize-parquet` | `[g.output] finalize-parquet = true` |
+| `--g-telemetry profile` | `[g.diagnostics] telemetry = "profile"` |
+| `--g-log-dir PATH` | `[g.diagnostics] log-dir = "PATH"` |
+| `--g-log-stderr`, `--no-g-log-stderr` | `[g.diagnostics] log-stderr = true` or `false` |
+| `--g-trace-event-cap N` | `[g.diagnostics] trace-event-cap = N` |
+
+Use `uv run g config explain <option>` for exact accepted values. For example:
+
+```bash
+uv run g config explain g-output-format
+uv run g config explain g-trusted-bgen-validation-mode
+```
+
+## Trait And Column Semantics
+
+`phenoCol` and `phenoColList` are mutually exclusive after normalization. Use
+one repeated/list form for phenotype columns. `covarCol` and `covarColList` have
+the same rule.
+
+Trait mode is resolved from `qt` and `bt`:
+
+- Both true in the same config layer is an error.
+- `bt = true` selects binary mode.
+- Otherwise quantitative mode is selected by the merged config.
+- Binary-only options are rejected when the final trait type is quantitative.
+
+## Effective Config And Manifest
+
+Each phenotype output run writes:
+
+```text
+effective_config.toml
+run_manifest.json
+```
+
+`effective_config.toml` is the final merged config. `run_manifest.json` records
+execution-plan-affecting inputs and settings, file fingerprints, sample/variant
+counts, output writer settings, and committed chunks. Resume compares the
+requested run against this manifest before reusing chunks.
+
+See [Resume and Manifest](resume-and-manifest.md) for resume modes and
+compatibility checks.
+
+## Defaults Policy
+
+Do not copy mutable defaults into runbooks unless they are generated from the
+current checkout. The authoritative sources are:
+
+- `src/g/config.default.toml` for packaged defaults.
+- `uv run g config init` for a starter config rendered by the current code.
+- `uv run g config explain <option>` for option metadata.
+
+For implementation rules behind this interface, see
+[Configuration Frontend](../development/configuration-frontend.md).

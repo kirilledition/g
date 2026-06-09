@@ -46,6 +46,14 @@ Use `--frozen` when you want `uv` to enforce the checked-in lockfile without cha
 uv sync --python 3.14 --no-dev --frozen
 ```
 
+First checks after install:
+
+```bash
+uv run g --help
+uv run g config init
+uv run g config explain bgen
+```
+
 ## GPU Install From Source
 
 First make sure the cluster node or workstation has a compatible NVIDIA driver. Then install the
@@ -99,7 +107,8 @@ For a GPU run, use the same command with `--g-device gpu` and submit it on a GPU
 login node.
 
 See [Quickstart](quickstart.md) for quantitative and binary command examples, [CLI](cli.md) for
-supported flags, and [Input and Output](input-output.md) for file and artifact expectations.
+supported flags, [Input Files](input-files.md) for input contracts, and
+[Output Files](output-files.md) for artifact expectations.
 
 ## Linux Cluster Without Root
 
@@ -158,8 +167,8 @@ Development workflows use `just`, development dependency groups, local checks, a
 repository's SLURM wrappers. Start with the development documentation instead of the consumer flow:
 
 - [Development](../development/index.md)
-- [No-Nix Development](../development/NO_NIX_DEVELOPMENT.md)
-- [Ubuntu SLURM Development](../development/UBUNTU_SLURM_DEVELOPMENT.md)
+- [No-Nix Development](../development/no-nix-development.md)
+- [Server Gauss SLURM](../development/server-gauss-slurm.md)
 
 Common development setup:
 

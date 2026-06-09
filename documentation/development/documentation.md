@@ -6,7 +6,9 @@ This repository keeps documentation in three directories:
 - `documentation/development/` contains development-team guidance, architecture notes, style rules, tooling references, and automation workflows.
 - `documentation/scratchpad/` contains internal work products created while developing, such as learning notes, review-derived notes, profiling summaries, and historical investigation output.
 
-All three directories can be published by Zensical. The site navigation labels each section so a reader can distinguish public product guidance from development-team material and scratchpad history.
+Public and development pages are in the primary Zensical navigation. Scratchpad
+pages remain under `documentation/scratchpad/` for direct-path local reference
+and may be stale.
 
 ## Local Build
 
@@ -26,7 +28,7 @@ The site is configured in `zensical.toml`.
 
 - `docs_dir = "documentation"` keeps all three documentation sections publishable.
 - `site_dir = "documentation_rendered_website"` keeps generated output in the ignored local build directory.
-- `nav` controls section names and ordering. Keep page order explicit because it is the source of truth for previous/next links and same-section continuous scrolling.
+- `nav` controls section names and ordering. Keep page order explicit because it is the source of truth for previous/next links and same-section continuous scrolling. Do not add scratchpad pages to the primary nav unless the page has been promoted or clearly marked internal.
 - `extra_css` and `extra_javascript` load the repository documentation assets used for same-section continuous scrolling.
 - `[project.extra]` contains Zensical extras, including `generator = false` to suppress the generator notice in the footer.
 - `[project.theme]` controls the Zensical theme. Change `variant` for the base visual treatment, update `features` for navigation, search, and content actions, and keep `logo` and `favicon` pointed at the sparkle assets under `documentation/assets/images/`.

@@ -42,7 +42,7 @@ The audit created these bounded Linear follow-ups:
 ## Configuration
 
 The live configuration contract is documented in
-[Configuration and CLI Architecture](../development/configuration_cli_architecture.md).
+[Configuration Frontend](../development/configuration-frontend.md).
 Historical config rewrite and msgspec migration notes reduced to these rules:
 
 - `config.default.toml` owns user-tunable defaults.
