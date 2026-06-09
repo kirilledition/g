@@ -798,8 +798,10 @@ def compute_compact_sparse_firth_variantwise_fixed_batches(
     offset_batches = offset_matrix.reshape((batch_count, firth_batch_size, -1))
     active_carrier_slot_mask_batches = active_carrier_slot_mask.reshape((batch_count, firth_batch_size, -1))
     active_mask_batches = active_mask.reshape((batch_count, firth_batch_size))
-    full_null_deviance_batches = full_null_deviance.reshape((batch_count, firth_batch_size))
-    null_failed_mask_batches = null_failed_mask.reshape((batch_count, firth_batch_size))
+    full_null_deviance_vector = jnp.broadcast_to(full_null_deviance, active_mask.shape)
+    null_failed_mask_vector = jnp.broadcast_to(null_failed_mask, active_mask.shape)
+    full_null_deviance_batches = full_null_deviance_vector.reshape((batch_count, firth_batch_size))
+    null_failed_mask_batches = null_failed_mask_vector.reshape((batch_count, firth_batch_size))
     empty_firth_variant_result = regenie2_binary_firth_types.build_empty_firth_variant_result(firth_batch_size)
 
     def compute_firth_batch(
