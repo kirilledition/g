@@ -1092,6 +1092,59 @@ def test_single_trait_firth_overflow_uses_separate_variant_major_dispatch(
     np.testing.assert_array_equal(np.asarray(result.log10_p_value), np.full(3, 2.0, dtype=np.float32))
 
 
+def test_single_trait_firth_overflow_uses_candidate_count_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called_dispatchers: list[int] = []
+    score_result = build_score_result_with_extra_codes(
+        (
+            types.BinaryExtraCode.FIRTH.value,
+            types.BinaryExtraCode.FIRTH.value,
+            types.BinaryExtraCode.FIRTH.value,
+            types.BinaryExtraCode.FIRTH.value,
+            types.BinaryExtraCode.FIRTH.value,
+            types.BinaryExtraCode.SCORE.value,
+            types.BinaryExtraCode.SCORE.value,
+            types.BinaryExtraCode.SCORE.value,
+            types.BinaryExtraCode.SCORE.value,
+            types.BinaryExtraCode.SCORE.value,
+        )
+    )
+
+    def fail_common_dispatch(**_: object) -> regenie2_binary_result.Regenie2BinaryChunkResult:
+        msg = "common bounded dispatcher should not handle overflow candidates"
+        raise AssertionError(msg)
+
+    def record_overflow_dispatch(**kwargs: object) -> regenie2_binary_result.Regenie2BinaryChunkResult:
+        called_dispatchers.append(typing.cast("int", kwargs["overflow_candidate_capacity"]))
+        return regenie2_binary_result.expand_score_result_with_empty_firth_diagnostics(score_result)
+
+    monkeypatch.setattr(
+        regenie2_binary_variant_major_correction,
+        "apply_device_candidate_corrections_firth_variant_major_with_device_dispatch",
+        fail_common_dispatch,
+    )
+    monkeypatch.setattr(
+        regenie2_binary_variant_major_correction,
+        "apply_device_candidate_corrections_firth_variant_major_with_overflow_dispatch",
+        record_overflow_dispatch,
+    )
+
+    result = regenie2_binary_variant_major_correction.apply_device_candidate_corrections_firth_variant_major(
+        chromosome_state=typing.cast("regenie2_binary_state.Regenie2BinaryChromosomeState", object()),
+        genotype_matrix_by_variant=jnp.ones((10, 4), dtype=jnp.float32),
+        result=score_result,
+        correction_plan=APPROXIMATE_FIRTH_PLAN,
+        kernel_config=replace_binary_kernel_config(
+            build_default_binary_kernel_config(),
+            firth_candidate={"candidate_capacity": 1},
+        ),
+    )
+
+    assert called_dispatchers == [5]
+    np.testing.assert_array_equal(np.asarray(result.extra_code), np.asarray(score_result.extra_code))
+
+
 def test_single_trait_firth_overflow_uses_separate_packed8_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

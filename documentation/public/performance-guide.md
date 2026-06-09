@@ -96,6 +96,17 @@ Multi-phenotype quantitative runs can amortize BGEN decode and process startup
 when sample semantics allow it. Use `per-phenotype` for separate-run semantics
 and `complete-case` only when the shared complete-case intersection is intended.
 
+As a practical rule of thumb:
+
+- `per-phenotype` maximizes per-trait usable samples and is the conservative
+  choice when missingness differs by phenotype.
+- `complete-case` tends to reduce repeated alignment work because one shared mask
+  is used across traits, but it can reduce sample size for each trait and change
+  statistics when missingness differs.
+
+If speed is the only concern, test both modes on a small representative subset
+before changing production scripts.
+
 ## Output Choices
 
 | Format | Use when |

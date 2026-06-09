@@ -141,3 +141,10 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 * Use the **Google Python Style Guide** format for docstrings.  
 * **Rule: Omit types in docstrings.** Since types are strictly enforced in the function signature, duplicating them in the docstring creates maintenance overhead.  
 * Detail Args:, Returns:, and Raises: with descriptions only.
+
+### **PyO3 Native Stub Maintenance**
+
+* Keep `src/g/_core.pyi` aligned with the exported Rust API in `src/python/mod.rs` and `src/python/config/mod.rs`.
+* Update the stub whenever Rust `#[pyclass]`, `#[pyfunction]`, `add_class`, or `add_function` changes touch argument or return types used by Python callers.
+* Run `uv run python scripts/check_pyo3_stub.py` (or `just check-core-stub`) before reviewing Rust/native-facing type updates.
+* Treat `just check` failures from `check-core-stub` as mandatory follow-up work when modifying native API exports.

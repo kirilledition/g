@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
+import pyarrow as pa
 import pyarrow.ipc
 import pyarrow.parquet as pq
 import pytest
@@ -38,6 +39,23 @@ EXPECTED_FINAL_COLUMNS = [
 EXPECTED_CHUNK_COLUMNS = [
     *EXPECTED_FINAL_COLUMNS,
 ]
+STEP2_OUTPUT_SCHEMA_FIELDS: tuple[tuple[str, pa.DataType], ...] = (
+    ("CHROM", pa.string()),
+    ("GENPOS", pa.int64()),
+    ("ID", pa.string()),
+    ("ALLELE0", pa.string()),
+    ("ALLELE1", pa.string()),
+    ("A1FREQ", pa.float32()),
+    ("INFO", pa.float32()),
+    ("N", pa.int32()),
+    ("TEST", pa.string()),
+    ("BETA", pa.float32()),
+    ("SE", pa.float32()),
+    ("CHISQ", pa.float32()),
+    ("LOG10P", pa.float32()),
+    ("EXTRA", pa.string()),
+)
+STEP2_SCHEMA_COLUMN_NAMES = tuple(column_name for column_name, _ in STEP2_OUTPUT_SCHEMA_FIELDS)
 TEST_DATA_DIRECTORY = Path(__file__).resolve().parent / "data" / "bgen"
 HAPLOTYPES_BGEN_PATH = TEST_DATA_DIRECTORY / "haplotypes.bgen"
 
@@ -111,6 +129,15 @@ class NativeChunkCaptureCallback:
     def require_chunk_stats(self) -> _core.ChunkStats:
         assert self.chunk_stats is not None
         return self.chunk_stats
+
+
+def assert_step2_output_schema_contract(schema: pa.Schema) -> None:
+    """Assert the public Step 2 output schema contract for association outputs."""
+    assert schema.names == list(STEP2_SCHEMA_COLUMN_NAMES)
+    for column_name, expected_data_type in STEP2_OUTPUT_SCHEMA_FIELDS:
+        actual_field = schema.field(column_name)
+        assert actual_field.type == expected_data_type
+        assert actual_field.nullable is True
 
 
 def write_native_chunks(
@@ -1276,6 +1303,59 @@ def test_chunk_arrow_schema_is_shared_between_linear_and_binary(tmp_path: Path) 
     assert linear_schema.names == EXPECTED_CHUNK_COLUMNS
     assert linear_schema.field("INFO").nullable
     assert linear_schema.field("EXTRA").nullable
+
+
+@pytest.mark.parametrize(
+    ("association_mode", "extra_code_value"),
+    (
+        (AssociationMode.REGENIE2_LINEAR, None),
+        (AssociationMode.REGENIE2_BINARY, types.BinaryExtraCode.TEST_FAIL.value),
+    ),
+)
+@pytest.mark.parametrize("output_format", (types.OutputFormat.ARROW, types.OutputFormat.PARQUET))
+def test_regenie2_step2_output_schema_contract(
+    tmp_path: Path,
+    association_mode: AssociationMode,
+    extra_code_value: int | None,
+    output_format: types.OutputFormat,
+) -> None:
+    """Assert stable schema contract for Step 2 final and intermediate outputs."""
+    run_directory = tmp_path / f"{association_mode.value}-{output_format.value}"
+    current_header = build_test_header(
+        tmp_path,
+        association_mode=association_mode,
+        output_format=output_format,
+    )
+    prepared_output_run = output.prepare_output_run(
+        output_root=run_directory,
+        association_mode=association_mode,
+        output_format=output_format,
+        resume=False,
+    )
+    initialize_test_output_run(prepared_output_run, current_header)
+    output_run_paths = prepared_output_run.output_run_paths
+
+    write_native_chunks(
+        output_run_paths,
+        association_mode,
+        output_format=output_format,
+        extra_code_value=extra_code_value,
+    )
+
+    for chunk_path in output.iter_sorted_chunk_file_paths(output_run_paths.chunks_directory):
+        if output_format == types.OutputFormat.ARROW:
+            chunk_schema = pyarrow.ipc.open_file(chunk_path).schema
+        else:
+            chunk_schema = pq.ParquetFile(chunk_path).schema_arrow
+        assert_step2_output_schema_contract(chunk_schema)
+
+    final_parquet_path = output.finalize_chunks_to_parquet(
+        output_run_paths,
+        association_mode,
+        output_format=output_format,
+    )
+    final_parquet_schema = pq.ParquetFile(final_parquet_path).schema_arrow
+    assert_step2_output_schema_contract(final_parquet_schema)
 
 
 def test_finalize_chunks_to_parquet_projects_technical_columns_away(tmp_path: Path) -> None:

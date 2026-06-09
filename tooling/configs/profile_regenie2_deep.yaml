@@ -48,6 +48,12 @@ tool:
   enable_linux_perf: true
   enable_nsight_systems: false
   enable_nsight_compute: false
+  py_spy_timeout_seconds: 1800
+  scalene_timeout_seconds: 1800
+  memray_timeout_seconds: 1800
+  linux_perf_timeout_seconds: 1200
+  nsight_systems_timeout_seconds: 1800
+  nsight_compute_timeout_seconds: 1800
   enable_rust_criterion: true
   enable_logging_perturbation: true
   rust_benchmarks:

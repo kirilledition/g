@@ -10,12 +10,16 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
+import g.engine.callbacks.binary as callback_binary
+import g.engine.callbacks.grouped as callback_grouped
+import g.engine.callbacks.linear as callback_linear
+import g.engine.callbacks.shared as callback_shared
 from g import _core, execution_plan, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import config as regenie2_linear_config
-from g.engine import backend_planner, callbacks, native_dispatch, preflight, telemetry, timing
+from g.engine import backend_planner, native_dispatch, preflight, telemetry, timing
 from g.io import output
 
 if typing.TYPE_CHECKING:
@@ -681,7 +685,7 @@ def build_single_trait_callback(
 ) -> object:
     """Build the association-specific single-trait callback."""
     if context.is_binary_trait:
-        return callbacks.BinaryRegenie2PipelineCallback(
+        return callback_binary.BinaryRegenie2PipelineCallback(
             run_input=run_input,
             prediction_source=prediction_source,
             writer_session=writer_session,
@@ -695,7 +699,7 @@ def build_single_trait_callback(
             stage_timing_recorder=context.stage_timing_recorder,
             telemetry_session=context.telemetry_session,
         )
-    return callbacks.LinearRegenie2PipelineCallback(
+    return callback_linear.LinearRegenie2PipelineCallback(
         run_input=run_input,
         prediction_source=prediction_source,
         writer_session=writer_session,
@@ -1535,7 +1539,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
         for grouped_run_input in grouped_run_inputs
     )
     group_fanouts = tuple(
-        callbacks.MultiPhenotypeGroupFanout(
+        callback_shared.MultiPhenotypeGroupFanout(
             callback=prepared_delivery.callback,
             sample_position_array=build_group_sample_position_array(
                 union_sample_indices=union_sample_indices,
@@ -1560,7 +1564,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
         run_input=union_run_input,
         committed_chunk_identifiers=intersect_committed_chunk_identifier_sets(committed_chunk_identifier_sets),
         writer_sessions=writer_sessions,
-        callback=callbacks.GroupedMultiPhenotypeFanoutCallback(group_fanouts),
+        callback=callback_grouped.GroupedMultiPhenotypeFanoutCallback(group_fanouts),
         stage_timing_recorder=context.stage_timing_recorder,
         variant_major_packed8_probability_pairs=False,
         pipeline_label="Grouped per-phenotype union native BGEN",
@@ -1644,7 +1648,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
     writer_session_tuple = writer_sessions.writer_sessions
     if context.is_binary_trait:
         binary_kernel_config = require_binary_kernel_config(context.binary_kernel_config)
-        callback = callbacks.MultiBinaryRegenie2PipelineCallback(
+        callback = callback_binary.MultiBinaryRegenie2PipelineCallback(
             run_input=run_input,
             prediction_source=prediction_source,
             writer_sessions=writer_session_tuple,
@@ -1660,7 +1664,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
             telemetry_session=context.telemetry_session,
         )
     else:
-        callback = callbacks.MultiLinearRegenie2PipelineCallback(
+        callback = callback_linear.MultiLinearRegenie2PipelineCallback(
             run_input=run_input,
             prediction_source=prediction_source,
             writer_sessions=writer_session_tuple,

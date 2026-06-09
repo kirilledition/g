@@ -137,6 +137,12 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
     assert arguments.max_subprocess_runs == 1000
     assert arguments.max_major_profiler_runs == 64
     assert arguments.allow_over_budget is False
+    assert arguments.py_spy_timeout_seconds == 1800
+    assert arguments.scalene_timeout_seconds == 1800
+    assert arguments.memray_timeout_seconds == 1800
+    assert arguments.linux_perf_timeout_seconds == 1200
+    assert arguments.nsight_systems_timeout_seconds == 1800
+    assert arguments.nsight_compute_timeout_seconds == 1800
     assert campaign_budget.workload_keys == (
         "quantitative_cpu",
         "quantitative_gpu",
@@ -189,6 +195,24 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
         ]
     )
     assert off_arguments.stage_timing_mode == deep_profile.ProfileStageTimingMode.OFF
+
+
+def test_deep_profile_smoke_overrides_profiler_timeouts(tmp_path: Path) -> None:
+    base_arguments = deep_profile.build_arguments_from_overrides(
+        [
+            f"tool.output_dir={tmp_path / 'profile'}",
+            "tool.dry_run=true",
+            "tool.smoke=true",
+        ]
+    )
+    arguments = deep_profile.apply_smoke_overrides(base_arguments)
+
+    assert arguments.py_spy_timeout_seconds == 15
+    assert arguments.scalene_timeout_seconds == 15
+    assert arguments.memray_timeout_seconds == 15
+    assert arguments.linux_perf_timeout_seconds == 15
+    assert arguments.nsight_systems_timeout_seconds == 15
+    assert arguments.nsight_compute_timeout_seconds == 15
 
 
 def test_deep_profile_budget_respects_workload_subset_and_bounded_grid(tmp_path: Path) -> None:

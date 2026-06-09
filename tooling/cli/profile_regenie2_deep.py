@@ -182,6 +182,12 @@ class ProfileArguments:
         enable_linux_perf: Whether deep profiles capture Linux perf native stack data when available.
         enable_nsight_systems: Whether deep profiles capture Nsight Systems CUDA timelines when available.
         enable_nsight_compute: Whether deep profiles capture Nsight Compute kernel reports when available.
+        py_spy_timeout_seconds: Timeout seconds for optional py-spy profiler execution.
+        scalene_timeout_seconds: Timeout seconds for optional Scalene profiler execution.
+        memray_timeout_seconds: Timeout seconds for optional Memray profiler execution.
+        linux_perf_timeout_seconds: Timeout seconds for optional Linux perf execution.
+        nsight_systems_timeout_seconds: Timeout seconds for optional Nsight Systems execution.
+        nsight_compute_timeout_seconds: Timeout seconds for optional Nsight Compute execution.
         enable_rust_criterion: Whether deep profiles run Rust Criterion benches.
         enable_logging_perturbation: Whether the profile runs telemetry/logging perturbation trials.
         rust_benchmarks: Comma-separated Rust Criterion benchmark names.
@@ -243,6 +249,12 @@ class ProfileArguments:
     enable_linux_perf: bool
     enable_nsight_systems: bool
     enable_nsight_compute: bool
+    py_spy_timeout_seconds: int
+    scalene_timeout_seconds: int
+    memray_timeout_seconds: int
+    linux_perf_timeout_seconds: int
+    nsight_systems_timeout_seconds: int
+    nsight_compute_timeout_seconds: int
     enable_rust_criterion: bool
     enable_logging_perturbation: bool
     rust_benchmarks: str
@@ -2215,6 +2227,7 @@ def run_logged_command(
     command_arguments: list[str],
     environment_overrides: dict[str, str],
     log_directory: Path,
+    timeout_seconds: int | None = None,
 ) -> TrialResult:
     """Run one command and persist stdout/stderr logs."""
     log_directory.mkdir(parents=True, exist_ok=True)
@@ -2224,28 +2237,49 @@ def run_logged_command(
     environment.update(environment_overrides)
     logger.info("Starting %s profiler/workload command", name)
     logger.debug("Command for %s: %s", name, shlex.join(command_arguments))
+    if timeout_seconds is not None:
+        logger.debug("Timeout for %s set to %.1fs", name, float(timeout_seconds))
     start_time = time.perf_counter()
-    completed_process = subprocess.run(
-        command_arguments,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
-    wall_time_seconds = time.perf_counter() - start_time
-    stdout_log_path.write_text(completed_process.stdout, encoding="utf-8")
-    stderr_log_path.write_text(completed_process.stderr, encoding="utf-8")
-    permission_block_note = permission_blocked_profiler_note(
-        stdout=completed_process.stdout,
-        stderr=completed_process.stderr,
-    )
-    status = "success" if completed_process.returncode == 0 else "failed"
+    command_stdout = ""
+    command_stderr = ""
+    status = "success"
     notes = None
+    timeout_reached = False
+    try:
+        completed_process = subprocess.run(
+            command_arguments,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=timeout_seconds,
+        )
+        command_stdout = completed_process.stdout or ""
+        command_stderr = completed_process.stderr or ""
+        status = "success" if completed_process.returncode == 0 else "failed"
+        if completed_process.returncode != 0:
+            notes = completed_process.stderr.strip() or completed_process.stdout.strip()
+    except subprocess.TimeoutExpired as error:
+        timeout_reached = True
+        command_stdout = error.stdout or ""
+        command_stderr = error.stderr or ""
+        notes = (
+            f"{name} timed out after {float(timeout_seconds or 0):.3f}s with no completion "
+            f"(limit={timeout_seconds}s)."
+        )
+        status = "failed"
+    wall_time_seconds = time.perf_counter() - start_time
+    stdout_log_path.write_text(command_stdout, encoding="utf-8")
+    stderr_log_path.write_text(command_stderr, encoding="utf-8")
+    permission_block_note = permission_blocked_profiler_note(
+        stdout=command_stdout,
+        stderr=command_stderr,
+    )
     if permission_block_note is not None:
         status = "skipped"
         notes = permission_block_note
-    if completed_process.returncode != 0:
-        notes = notes or completed_process.stderr.strip() or completed_process.stdout.strip()
+    if notes is None and not timeout_reached:
+        notes = command_stderr.strip() or command_stdout.strip()
     logger.info(
         "Finished %s with status=%s in %.3fs",
         name,
@@ -2549,6 +2583,7 @@ def append_logged_profile_result(
     log_directory: Path,
     run_paths: DeepProfilerRunPaths,
     profiler_artifact_path: Path | None,
+    timeout_seconds: int | None = None,
 ) -> None:
     """Run and append one external profiler result."""
     results["sampling_profiles"].append(
@@ -2562,6 +2597,7 @@ def append_logged_profile_result(
                     command_arguments=command_arguments,
                     environment_overrides=environment_overrides,
                     log_directory=log_directory,
+                    timeout_seconds=timeout_seconds,
                 ),
                 run_paths=run_paths,
                 profiler_artifact_path=profiler_artifact_path,
@@ -4622,6 +4658,7 @@ def run_deep_profiles(
                 log_directory=output_directory / "logs",
                 run_paths=py_spy_child_command.run_paths,
                 profiler_artifact_path=speedscope_path,
+                timeout_seconds=arguments.py_spy_timeout_seconds,
             )
         elif arguments.enable_py_spy:
             append_skipped_executable_profile(
@@ -4660,6 +4697,7 @@ def run_deep_profiles(
                 log_directory=output_directory / "logs",
                 run_paths=scalene_child_command.run_paths,
                 profiler_artifact_path=scalene_json_path,
+                timeout_seconds=arguments.scalene_timeout_seconds,
             )
         elif arguments.enable_scalene:
             append_skipped_executable_profile(
@@ -4698,6 +4736,7 @@ def run_deep_profiles(
                 log_directory=output_directory / "logs",
                 run_paths=memray_child_command.run_paths,
                 profiler_artifact_path=memray_output_path,
+                timeout_seconds=arguments.memray_timeout_seconds,
             )
         elif arguments.enable_memray:
             append_skipped_executable_profile(
@@ -4743,6 +4782,7 @@ def run_deep_profiles(
                 log_directory=output_directory / "logs",
                 run_paths=nsight_systems_child_command.run_paths,
                 profiler_artifact_path=nsight_report_prefix,
+                timeout_seconds=arguments.nsight_systems_timeout_seconds,
             )
         elif arguments.enable_nsight_systems:
             append_skipped_executable_profile(
@@ -4786,6 +4826,7 @@ def run_deep_profiles(
                 log_directory=output_directory / "logs",
                 run_paths=nsight_compute_child_command.run_paths,
                 profiler_artifact_path=nsight_compute_report_path,
+                timeout_seconds=arguments.nsight_compute_timeout_seconds,
             )
         elif arguments.enable_nsight_compute:
             append_skipped_executable_profile(
@@ -4829,6 +4870,7 @@ def run_deep_profiles(
                 log_directory=output_directory / "logs",
                 run_paths=perf_child_command.run_paths,
                 profiler_artifact_path=perf_path,
+                timeout_seconds=arguments.linux_perf_timeout_seconds,
             )
         elif arguments.enable_linux_perf:
             append_skipped_executable_profile(
@@ -4975,6 +5017,12 @@ def apply_smoke_overrides(arguments: ProfileArguments) -> ProfileArguments:
         headline_trials=1,
         regenie_baseline_warmups=0,
         regenie_baseline_trials=1,
+        py_spy_timeout_seconds=15,
+        scalene_timeout_seconds=15,
+        memray_timeout_seconds=15,
+        linux_perf_timeout_seconds=15,
+        nsight_systems_timeout_seconds=15,
+        nsight_compute_timeout_seconds=15,
     )
 
 
@@ -5034,6 +5082,12 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileArgument
         enable_linux_perf=bool(tool_values["enable_linux_perf"]),
         enable_nsight_systems=bool(tool_values["enable_nsight_systems"]),
         enable_nsight_compute=bool(tool_values["enable_nsight_compute"]),
+        py_spy_timeout_seconds=int(tool_values["py_spy_timeout_seconds"]),
+        scalene_timeout_seconds=int(tool_values["scalene_timeout_seconds"]),
+        memray_timeout_seconds=int(tool_values["memray_timeout_seconds"]),
+        linux_perf_timeout_seconds=int(tool_values["linux_perf_timeout_seconds"]),
+        nsight_systems_timeout_seconds=int(tool_values["nsight_systems_timeout_seconds"]),
+        nsight_compute_timeout_seconds=int(tool_values["nsight_compute_timeout_seconds"]),
         enable_rust_criterion=bool(tool_values["enable_rust_criterion"]),
         enable_logging_perturbation=bool(tool_values["enable_logging_perturbation"]),
         rust_benchmarks=tooling_hydra_arguments.comma_join(tool_values["rust_benchmarks"]),

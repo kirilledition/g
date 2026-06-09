@@ -75,6 +75,39 @@ def test_run_logged_command_marks_nvidia_counter_permission_as_skipped(
     assert stderr_text == "==ERROR== ERR_NVGPUCTRPERM - restricted counters\n"
 
 
+def test_run_logged_command_marks_timeout_as_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(*arguments: typing.Any, **keyword_arguments: typing.Any) -> typing.NoReturn:
+        del arguments, keyword_arguments
+        raise subprocess.TimeoutExpired(
+            cmd=["python", "-c", "print('running')"],
+            timeout=1,
+            output="partial output",
+            stderr="partial error",
+        )
+
+    monkeypatch.setattr(deep_profile.subprocess, "run", fake_run)
+
+    result = deep_profile.run_logged_command(
+        name="profile_binary_gpu_py_spy",
+        implementation="py-spy",
+        trait_type="binary",
+        device="gpu",
+        command_arguments=["py-spy", "record", "--format", "speedscope", "--output", "test.json", "--", "sleep", "30"],
+        environment_overrides={},
+        log_directory=tmp_path,
+        timeout_seconds=1,
+    )
+
+    assert result.status == "failed"
+    assert result.notes is not None
+    assert "timed out" in result.notes
+    assert "partial output" == Path(result.stdout_log_path).read_text(encoding="utf-8")
+    assert "partial error" == Path(result.stderr_log_path).read_text(encoding="utf-8")
+
+
 def test_bgen_reader_benchmark_parses_sweep_lists() -> None:
     assert bgen_reader_benchmark.parse_optional_int_list("8192,16384") == [8192, 16384]
     assert bgen_reader_benchmark.parse_optional_int_list("default,4") == [None, 4]
@@ -2233,7 +2266,7 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
             "tool.enable_nsight_systems=true",
         ]
     )
-    logged_commands: list[tuple[str, list[str]]] = []
+    logged_commands: list[tuple[str, list[str], int | None]] = []
     metadata_commands: list[list[str]] = []
     jax_profile_names: list[str] = []
 
@@ -2273,6 +2306,7 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
             (
                 str(keyword_arguments["implementation"]),
                 [str(value) for value in typing.cast("list[object]", keyword_arguments["command_arguments"])],
+                typing.cast("int | None", keyword_arguments.get("timeout_seconds")),
             )
         )
         return deep_profile.TrialResult(
@@ -2320,19 +2354,37 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         cache_directory=tmp_path / "profile" / "jax_cache",
     )
 
-    implementations = [implementation for implementation, _command in logged_commands]
+    implementations = [implementation for implementation, _command, _timeout_seconds in logged_commands]
     assert jax_profile_names == ["profile_binary_gpu_jax"]
     assert implementations == ["cProfile", "py-spy", "Scalene", "Memray", "Nsight Systems", "perf"]
     assert metadata_commands[:2] == [
         ["cargo", "bench", "--bench", "bgen_read"],
         ["cargo", "bench", "--bench", "preprocess"],
     ]
-    assert any(command[0].endswith("py-spy") and "--format" in command for _implementation, command in logged_commands)
+    timeout_seconds_by_implementation = {
+        implementation: timeout_seconds
+        for implementation, _command, timeout_seconds in logged_commands
+        if timeout_seconds is not None
+    }
+    assert timeout_seconds_by_implementation == {
+        "py-spy": 1800,
+        "Scalene": 1800,
+        "Memray": 1800,
+        "Nsight Systems": 1800,
+        "perf": 1200,
+    }
+    assert any(
+        command[0].endswith("py-spy") and "--format" in command
+        for _implementation, command, _timeout_seconds in logged_commands
+    )
     assert any(
         command[0].endswith("nsys") and "--sample=none" in command and "--cpuctxsw=none" in command
-        for _implementation, command in logged_commands
+        for _implementation, command, _timeout_seconds in logged_commands
     )
-    assert any(command[0].endswith("perf") and "record" in command for _implementation, command in logged_commands)
+    assert any(
+        command[0].endswith("perf") and "record" in command
+        for _implementation, command, _timeout_seconds in logged_commands
+    )
     profile_directory = tmp_path / "profile" / "deep_profiles"
     sampling_profiles = typing.cast("list[dict[str, object]]", results["sampling_profiles"])
     sampling_profile_by_name = {str(profile["name"]): profile for profile in sampling_profiles}
@@ -2363,6 +2415,132 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
     }
     assert len(application_output_run_directories) == 7
     assert len(results["sampling_profiles"]) == 7
+
+
+def test_deep_profile_deep_profiles_continue_after_timed_out_profiler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    baseline_paths = baseline_benchmark.build_baseline_paths()
+    candidate = deep_profile.Step2Candidate(
+        trait_type="binary",
+        device="gpu",
+        chunk_size=8192,
+        staging_depth=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
+        output_writer_thread_count=4,
+        output_writer_queue_depth=8,
+        bgen_decode_tile_variant_count=128,
+        rayon_thread_count=2,
+        firth_batch_size=64,
+    )
+    winner_command = deep_profile.build_g_step2_child_command(
+        baseline_paths=baseline_paths,
+        candidate=candidate,
+        output_prefix=tmp_path / "winner",
+        variant_limit=1000,
+    )
+    winner = deep_profile.AggregateResult(
+        name="binary_gpu",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        status="success",
+        trial_count=1,
+        warmup_count=0,
+        median_wall_time_seconds=1.0,
+        mean_wall_time_seconds=1.0,
+        min_wall_time_seconds=1.0,
+        max_wall_time_seconds=1.0,
+        standard_deviation_seconds=0.0,
+        rows_per_second=1000.0,
+        trials=[
+            deep_profile.TrialResult(
+                name="binary_gpu",
+                implementation="g",
+                trait_type="binary",
+                device="gpu",
+                status="success",
+                wall_time_seconds=1.0,
+                output_row_count=1000,
+                stdout_log_path="stdout.log",
+                stderr_log_path="stderr.log",
+                command_arguments=winner_command,
+                environment_overrides={},
+            )
+        ],
+    )
+    arguments = deep_profile.build_arguments_from_overrides(
+        [
+            f"tool.output_dir={tmp_path / 'profile'}",
+            "tool.variant_limit=1000",
+            "tool.enable_rust_criterion=false",
+            "tool.enable_jax_trace=false",
+            "tool.enable_jax_memory_profile=false",
+            "tool.enable_python_cprofile=false",
+            "tool.enable_py_spy=true",
+            "tool.enable_scalene=true",
+            "tool.enable_memray=false",
+            "tool.enable_linux_perf=false",
+            "tool.enable_nsight_systems=false",
+            "tool.enable_nsight_compute=false",
+            "tool.py_spy_timeout_seconds=1",
+        ]
+    )
+    logged_profiles: list[str] = []
+
+    def fake_run_logged_command(**keyword_arguments: typing.Any) -> deep_profile.TrialResult:
+        name = str(keyword_arguments["name"])
+        logged_profiles.append(name)
+        return deep_profile.TrialResult(
+            name=name,
+            implementation=str(keyword_arguments["implementation"]),
+            trait_type=str(keyword_arguments["trait_type"]),
+            device=str(keyword_arguments["device"]),
+            status="failed" if name == "profile_binary_gpu_py_spy" else "success",
+            wall_time_seconds=1.0,
+            output_row_count=None,
+            stdout_log_path="stdout.log",
+            stderr_log_path="stderr.log",
+            command_arguments=typing.cast("list[str]", keyword_arguments["command_arguments"]),
+            environment_overrides=typing.cast("dict[str, str]", keyword_arguments["environment_overrides"]),
+            notes="Command timed out" if name == "profile_binary_gpu_py_spy" else None,
+        )
+
+    def fake_command_output(
+        command_arguments: list[str],
+        environment_overrides: dict[str, str] | None = None,
+    ) -> dict[str, typing.Any]:
+        del command_arguments
+        del environment_overrides
+        return {"command": [], "returncode": 0, "stdout": "", "stderr": ""}
+
+    def fake_which(command_name: str) -> str | None:
+        if command_name in {"py-spy", "uv"}:
+            return f"/usr/bin/{command_name}"
+        return None
+
+    def fake_python_module_is_available(module_name: str) -> bool:
+        del module_name
+        return False
+
+    monkeypatch.setattr(deep_profile, "run_logged_command", fake_run_logged_command)
+    monkeypatch.setattr(deep_profile, "command_output", fake_command_output)
+    monkeypatch.setattr(deep_profile.shutil, "which", fake_which)
+    monkeypatch.setattr(deep_profile, "python_module_is_available", fake_python_module_is_available)
+
+    results = deep_profile.run_deep_profiles(
+        arguments=arguments,
+        baseline_paths=baseline_paths,
+        winners={"binary_gpu": winner},
+        output_directory=tmp_path / "profile",
+        cache_directory=tmp_path / "profile" / "jax_cache",
+    )
+
+    sampling_profiles = typing.cast("list[dict[str, object]]", results["sampling_profiles"])
+    profiles_by_name = {str(profile["name"]): profile for profile in sampling_profiles}
+    assert logged_profiles == ["profile_binary_gpu_py_spy", "profile_binary_gpu_scalene"]
+    assert profiles_by_name["profile_binary_gpu_py_spy"]["status"] == "failed"
+    assert profiles_by_name["profile_binary_gpu_scalene"]["status"] == "success"
+    assert "timed out" in typing.cast("str", profiles_by_name["profile_binary_gpu_py_spy"]["notes"])
 
 
 def test_deep_profile_aggregates_trial_results() -> None:
