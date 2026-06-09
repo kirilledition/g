@@ -24,6 +24,7 @@ optional TOML file, and explicit CLI overrides.
 - BGEN, sample, phenotype, covariate, and prediction-list file fingerprints;
 - phenotype name, covariate names, sample count, variant count, chunk size, and
   variant limit;
+- selected association backend such as `jax_dosage` or `jax_packed8`;
 - binary correction plan and binary kernel settings when applicable;
 - trusted BGEN policy, sample-key mode, JAX device/precision policy, dtype
   choices, and multi-phenotype sample mode;
@@ -74,6 +75,7 @@ Common mismatch causes:
 - changed BGEN, sample, phenotype, covariate, or prediction-list file;
 - changed phenotype or covariate columns;
 - changed trait mode, binary correction plan, or Firth settings;
+- changed selected association backend;
 - changed sample-key mode or multi-phenotype sample mode;
 - changed chunk size, variant limit, output format, writer grouping, or schema
   version;

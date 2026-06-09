@@ -15,7 +15,7 @@ from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import config as regenie2_linear_config
-from g.engine import callbacks, native_dispatch, preflight, telemetry, timing
+from g.engine import backend_planner, callbacks, native_dispatch, preflight, telemetry, timing
 from g.io import output
 
 if typing.TYPE_CHECKING:
@@ -88,6 +88,7 @@ class Regenie2PipelineContext:
         score_dtype: Score-test compute dtype.
         firth_dtype: Firth compute dtype.
         gpu_genotype_format: Native genotype delivery format.
+        backend_plan: Concrete backend selected for association execution.
         correction_plan: Binary correction settings.
         binary_kernel_config: Resolved binary kernel config when binary.
         linear_numerical_config: Resolved linear numerical config when quantitative.
@@ -113,6 +114,7 @@ class Regenie2PipelineContext:
     score_dtype: types.FloatingPointDtype
     firth_dtype: types.FloatingPointDtype
     gpu_genotype_format: types.GpuGenotypeFormat
+    backend_plan: backend_planner.AssociationBackendPlan
     correction_plan: types.BinaryCorrectionPlan
     binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None
     linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None
@@ -124,7 +126,7 @@ class Regenie2PipelineContext:
     @property
     def uses_packed8_genotypes(self) -> bool:
         """Return whether native delivery should use packed8 probability pairs."""
-        return self.gpu_genotype_format == types.GpuGenotypeFormat.PACKED8
+        return self.backend_plan.uses_variant_major_packed8_delivery
 
     @property
     def effective_trusted_no_missing_diploid(self) -> bool:
@@ -234,6 +236,11 @@ def build_regenie2_pipeline_context(
         resolved_stage_timing_recorder = timing.build_stage_timing_recorder()
     else:
         resolved_stage_timing_recorder = stage_timing_recorder
+    backend_plan = backend_planner.plan_association_backend(
+        association_mode=association_mode,
+        jax_device=jax_device,
+        gpu_genotype_format=gpu_genotype_format,
+    )
     return Regenie2PipelineContext(
         association_mode=association_mode,
         genotype_source_config=genotype_source_config,
@@ -250,6 +257,7 @@ def build_regenie2_pipeline_context(
         score_dtype=score_dtype,
         firth_dtype=firth_dtype,
         gpu_genotype_format=gpu_genotype_format,
+        backend_plan=backend_plan,
         correction_plan=correction_plan,
         binary_kernel_config=binary_kernel_config,
         linear_numerical_config=linear_numerical_config,
@@ -270,6 +278,18 @@ def open_pipeline_bgen_engine(
     """Open the native BGEN engine and emit shared telemetry."""
     engine_start_time = time.perf_counter()
     logger.debug("Opening native BGEN engine for %s pipeline.", pipeline_label)
+    if context.telemetry_session is not None:
+        telemetry_fields: dict[str, typing.Any] = {
+            "association_mode": context.association_mode.value,
+            "association_backend_kind": context.backend_plan.backend_kind.value,
+            "device": context.backend_plan.jax_device.value,
+            "genotype_format": context.backend_plan.genotype_format.value,
+        }
+        if phenotype_name is not None:
+            telemetry_fields["phenotype"] = phenotype_name
+        if phenotype_count is not None:
+            telemetry_fields["phenotype_count"] = phenotype_count
+        context.telemetry_session.log_event("association_backend_selected", **telemetry_fields)
     engine = native_dispatch.build_bgen_run_engine(
         genotype_source_config=context.genotype_source_config,
         chunk_size=context.chunk_size,
@@ -287,6 +307,7 @@ def open_pipeline_bgen_engine(
     if context.telemetry_session is not None:
         telemetry_fields: dict[str, typing.Any] = {
             "association_mode": context.association_mode.value,
+            "association_backend_kind": context.backend_plan.backend_kind.value,
             "sample_count": int(engine.sample_count),
             "variant_count": int(engine.variant_count),
         }
@@ -310,6 +331,7 @@ def build_pipeline_manifest_header(
     """Build the current manifest header for one output run."""
     return output.build_current_run_manifest_header(
         association_mode=context.association_mode,
+        association_backend_kind=context.backend_plan.backend_kind,
         bgen_path=context.genotype_source_config.source_path,
         sample_path=context.genotype_source_config.resolved_sample_path,
         phenotype_path=context.phenotype_path,

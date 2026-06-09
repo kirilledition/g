@@ -127,6 +127,7 @@ forces device synchronization just to log.
 Safe production events include:
 
 - run start, config resolution, and execution-plan preparation
+- association backend selection, including the stable `association_backend_kind`
 - JAX runtime setup choices, including platform, cache directory, XLA auxiliary
   cache mode, transfer guard, and GPU validation
 - preflight completion
@@ -137,6 +138,11 @@ Safe production events include:
 
 Never log per sample, per genotype, per probability byte, full phenotype
 values, covariate matrices, genotype arrays, or large sample ID lists.
+
+`association_backend_selected` is emitted before native BGEN delivery opens for
+a run or phenotype group. It records `association_mode`,
+`association_backend_kind`, requested `device`, and `genotype_format`. Current
+backend kinds are `jax_dosage` and `jax_packed8`.
 
 ### Profile
 

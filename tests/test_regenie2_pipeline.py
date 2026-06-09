@@ -689,6 +689,66 @@ def build_native_run_input() -> native_dispatch.NativeBgenRunInput:
     )
 
 
+def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
+    telemetry_session = RecordingTelemetrySession()
+    pipeline_options = build_default_pipeline_runtime_options()
+    writer_settings = regenie2_pipeline.build_output_writer_settings(
+        finalize_parquet=False,
+        writer_thread_count=pipeline_options.writer_thread_count,
+        writer_queue_depth=pipeline_options.writer_queue_depth,
+        chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
+        parquet_compression=pipeline_options.parquet_compression,
+        arrow_compression=types.ArrowCompression.ZSTD,
+        output_format=types.OutputFormat.PARQUET,
+    )
+    context = regenie2_pipeline.build_regenie2_pipeline_context(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        phenotype_path=Path("phenotype.tsv"),
+        prediction_list_path=Path("pred.list"),
+        covariate_path=None,
+        chunk_size=32,
+        variant_limit=None,
+        trusted_no_missing_diploid=False,
+        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
+        bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
+        jax_device=types.Device.GPU,
+        jax_matmul_precision=None,
+        score_dtype=pipeline_options.score_dtype,
+        firth_dtype=pipeline_options.firth_dtype,
+        gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
+        correction_plan=types.BinaryCorrectionPlan(),
+        binary_kernel_config=None,
+        linear_numerical_config=None,
+        writer_settings=writer_settings,
+        stage_timing_recorder=None,
+        telemetry_session=typing.cast("typing.Any", telemetry_session),
+        alignment_config=None,
+    )
+    engine = FakeRunEngine("study.bgen", chunk_size=32, trusted_no_missing_diploid=True)
+
+    with patch("g.engine.regenie2_pipeline.native_dispatch.build_bgen_run_engine", return_value=engine):
+        opened_engine = regenie2_pipeline.open_pipeline_bgen_engine(
+            context=context,
+            pipeline_label="linear",
+            phenotype_name="trait",
+        )
+
+    assert opened_engine is engine
+    assert telemetry_session.events[0] == (
+        "association_backend_selected",
+        {
+            "association_mode": "regenie2_linear",
+            "association_backend_kind": "jax_packed8",
+            "device": "gpu",
+            "genotype_format": "packed8",
+            "phenotype": "trait",
+        },
+    )
+    assert telemetry_session.events[1][0] == "bgen_engine_opened"
+    assert telemetry_session.events[1][1]["association_backend_kind"] == "jax_packed8"
+
+
 def build_native_run_input_with_alignment(
     *,
     phenotype_name: str,
@@ -2854,8 +2914,9 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_session,
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header", return_value={"header": "current"}
-        ),
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            return_value={"header": "current"},
+        ) as mock_manifest_header,
         patch(
             "g.engine.regenie2_pipeline.output.initialize_output_run",
             side_effect=lambda **kwargs: (
@@ -2919,6 +2980,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert prediction_source.phenotype_name == "trait"
     assert prediction_source.native_aligned_sample_data is run_input.native_aligned_sample_data
     assert prediction_source.sample_key_mode == "iid"
+    assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_DOSAGE
 
 
 def test_single_trait_preflight_failure_does_not_initialize_output_or_writer(tmp_path: Path) -> None:
@@ -3031,6 +3093,7 @@ def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
     assert isinstance(callback, callbacks.LinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [0, 64]
+    assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_PACKED8
     assert mock_manifest_header.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
     assert mock_manifest_header.call_args.kwargs["trusted_no_missing_diploid"] is True
 
@@ -3199,8 +3262,9 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_session,
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header", return_value={"header": "current"}
-        ),
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            return_value={"header": "current"},
+        ) as mock_manifest_header,
         patch(
             "g.engine.regenie2_pipeline.output.initialize_output_run",
             side_effect=lambda **kwargs: (
@@ -3253,6 +3317,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     assert callback.kernel_config is kernel_config
     assert committed_chunk_identifiers == [0, 64]
     assert mock_preflight.call_args.kwargs["variant_limit"] == 100
+    assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_DOSAGE
 
 
 def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> None:
@@ -3372,6 +3437,7 @@ def test_binary_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
     assert isinstance(callback, callbacks.BinaryRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [0, 64]
+    assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_PACKED8
     assert mock_manifest_header.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
     assert mock_manifest_header.call_args.kwargs["trusted_no_missing_diploid"] is True
 
