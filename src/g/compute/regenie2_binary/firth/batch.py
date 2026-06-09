@@ -797,9 +797,7 @@ def compute_compact_sparse_firth_variantwise_fixed_batches(
     genotype_batches = genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
     offset_batches = offset_matrix.reshape((batch_count, firth_batch_size, -1))
     active_carrier_slot_mask_batches = active_carrier_slot_mask.reshape((batch_count, firth_batch_size, -1))
-    full_null_deviance_batches = full_null_deviance.reshape((batch_count, firth_batch_size))
     active_mask_batches = active_mask.reshape((batch_count, firth_batch_size))
-    null_failed_mask_batches = null_failed_mask.reshape((batch_count, firth_batch_size))
     empty_firth_variant_result = regenie2_binary_firth_types.build_empty_firth_variant_result(firth_batch_size)
 
     def compute_firth_batch(
@@ -830,14 +828,17 @@ def compute_compact_sparse_firth_variantwise_fixed_batches(
             )
 
         def run_active_batch(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
-            return jax.vmap(fit_variant, in_axes=(0, 0, 0, 0, 0, 0, 0))(
+            return jax.vmap(
+                fit_variant,
+                in_axes=(0, 0, 0, 0, None, 0, None),
+            )(
                 phenotype_batches[batch_index],
                 genotype_batches[batch_index],
                 offset_batches[batch_index],
                 active_carrier_slot_mask_batches[batch_index],
-                full_null_deviance_batches[batch_index],
+                full_null_deviance,
                 ~active_mask_batches[batch_index],
-                null_failed_mask_batches[batch_index],
+                null_failed_mask,
             )
 
         batch_result = jax.lax.cond(
@@ -1063,7 +1064,11 @@ def compute_firth_variantwise_fixed_batches(
                 sparse_correction_mask=jnp.take(sparse_correction_mask, dense_stream_plan.lane_indices, axis=0),
                 fallback_count=dense_stream_plan.active_count,
                 firth_batch_size=firth_batch_size,
-                null_penalized_log_likelihood=null_penalized_log_likelihood,
+                null_penalized_log_likelihood=jnp.take(
+                    null_penalized_log_likelihood,
+                    dense_stream_plan.lane_indices,
+                    axis=0,
+                ),
                 kernel_config=kernel_config,
             )
 
@@ -1105,18 +1110,12 @@ def compute_firth_variantwise_fixed_batches(
                 genotype_matrix_by_variant=jnp.asarray(compact_genotype_matrix, dtype=jnp.float64),
                 offset_matrix=compact_offset_matrix,
                 active_carrier_slot_mask=compact_carrier_slot_mask,
-                full_null_deviance=jnp.full(
-                    (active_mask.shape[0],),
-                    jnp.asarray(full_null_deviance, dtype=jnp.float64),
-                    dtype=jnp.float64,
-                ),
+                full_null_deviance=jnp.asarray(full_null_deviance, dtype=jnp.float64),
                 active_mask=compact_stream_plan.active_mask,
                 fallback_count=compact_stream_plan.active_count,
                 firth_batch_size=firth_batch_size,
-                null_failed_mask=jnp.full(
-                    (active_mask.shape[0],),
-                    ~jnp.isfinite(null_penalized_log_likelihood),
-                    dtype=jnp.bool_,
+                null_failed_mask=~jnp.isfinite(
+                    jnp.take(null_penalized_log_likelihood, compact_stream_plan.lane_indices, axis=0),
                 ),
                 kernel_config=kernel_config,
             )
