@@ -1,4 +1,8 @@
-# Telemetry And Logging
+# Telemetry
+
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Development contract | Run telemetry, logging, trace streams, profile summaries, and terminal lifecycle rendering | Runtime maintainers |
 
 `g` has one run-level diagnostics surface. Python builds lifecycle, progress,
 and profile payloads, while Rust owns the physical JSONL writer queue used by
@@ -231,7 +235,7 @@ g regenie \
   --bt \
   --g-telemetry profile \
   --g-log-dir results/binary-profile.g/logs \
-  --g-log-stderr false
+  --no-g-log-stderr
 ```
 
 Focused trace:

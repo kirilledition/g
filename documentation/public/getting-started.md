@@ -35,6 +35,8 @@ Prepare or locate the files that a REGENIE Step 2 run needs:
 - REGENIE Step 1 prediction list from upstream `regenie`.
 
 Then follow [Quickstart](quickstart.md) for concrete CPU and GPU command shapes.
+Use [Input Files](input-files.md), [Output Files](output-files.md), and
+[Resume and Manifest](resume-and-manifest.md) when you need exact contracts.
 
 ## Development Setup
 

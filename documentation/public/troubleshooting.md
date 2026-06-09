@@ -1,66 +1,145 @@
 # Troubleshooting
 
-This page lists common issues and the first checks to run.
+This page lists common failures and the first checks to run.
 
-## `g regenie` Rejects an Option
+## Check First
+
+Run these before debugging a full GWAS command:
+
+```bash
+uv run g --help
+uv run g regenie --help
+uv run g-regenie --help
+```
+
+This experimental Rust CLI/config branch does not expose the previous
+`g config init`, `g config validate`, or `g config explain` helper commands.
+
+For GPU runs, check the target node:
+
+```bash
+hostname
+uv run python -c "import jax; print(jax.devices())"
+```
+
+For input-dependent failures, confirm the required files exist and are non-empty:
+
+```bash
+test -s /path/to/genotypes.bgen
+test -s /path/to/phenotypes.tsv
+test -s /path/to/regenie_step1_pred.list
+```
+
+## `g regenie` Rejects An Option
 
 Check `uv run g regenie --help` for the currently supported CLI surface on this
-experimental Rust frontend branch. REGENIE flags that are absent from help are
-not accepted yet.
+experimental Rust frontend branch. Familiar REGENIE flags that are absent from
+help are not accepted yet.
 
 Common absent flags include `--bed`, `--pgen`, `--keep`, `--remove`,
 `--extract`, `--exclude`, `--catCovarList`, `--test`, `--t2e`, and `--spa`.
 
+See [Compatibility](compatibility.md) for the supported and unsupported surface.
+
 ## Missing Step 1 Predictions
 
-`g` does not implement REGENIE Step 1. Produce prediction lists with upstream `regenie` and pass the list through `--pred`.
+`g` does not implement REGENIE Step 1. Produce prediction lists with upstream
+`regenie` and pass the list through `--pred`.
 
 For repository fixture-data examples, use the development recipes listed in
 [Quickstart](quickstart.md#repository-fixture-data).
 
 ## Sample Alignment Fails
 
-Check that phenotype and covariate tables contain `IID`. If using `--g-sample-key-mode fid_iid`, also check `FID`.
+Check:
 
-Rules:
+- phenotype and covariate tables contain `IID`;
+- tables also contain `FID` when `--sample_key_mode fid_iid` is used;
+- `iid` mode has globally unique non-empty IIDs;
+- `fid_iid` mode has unique `(FID, IID)` pairs;
+- binary phenotypes use REGENIE-style `1 = control`, `2 = case` coding;
+- selected phenotype and covariate columns are present and spelled exactly.
 
-- `iid` mode requires globally unique non-empty IIDs.
-- `fid_iid` mode requires unique `(FID, IID)` pairs.
-- Binary phenotypes should use REGENIE-style `1` and `2` coding.
+See [Input Files](input-files.md#sample-identity).
 
 ## BGEN Trusted Fast Path Issues
 
 Start with the default validation mode:
 
 ```bash
---g-trusted-bgen-validation-mode cache_on_miss
+--trusted_bgen_validation_mode cache_on_miss
 ```
 
-Use `force_validate` when validating a file or cache state. Use `assume_validated` only for expert workflows where the input has already been checked.
+Use `force_validate` when validating a file or cache state. Use
+`assume_validated` only for expert workflows where the exact input has already
+been checked.
+
+If trusted mode fails, rerun without:
+
+```bash
+--trusted_no_missing_diploid
+```
+
+and compare whether the failure is specific to the optimized path.
 
 ## GPU Is Not Used
 
-Probe JAX first:
+Probe JAX on the same kind of node where the scan runs:
 
 ```bash
 uv run python -c "import jax; print(jax.devices())"
 ```
 
-Run the probe on a GPU node, not only on a login node. If the accelerator is visible but performance
-does not improve, check whether the run is dominated by BGEN decode, transfer, or output. See
-[GPU and SLURM](gpu-and-slurm.md) for batch-job examples.
+Common causes:
+
+- command ran on a login node without NVIDIA devices;
+- GPU dependency group was not installed;
+- NVIDIA driver and installed JAX CUDA extra are incompatible;
+- scheduler job did not request or receive a GPU;
+- command passed `--device cpu` through CLI or config.
+
+If the accelerator is visible but performance does not improve, check whether
+BGEN decode, transfer, or output dominate. See [GPU and Clusters](gpu-and-clusters.md)
+and [Performance Guide](performance-guide.md).
 
 ## Resume Does Not Reuse Existing Output
 
-Every resumable run writes `run_manifest.json` and `effective_config.toml`. Resume only when the manifest and execution-plan-affecting inputs still match.
+Every resumable run writes `run_manifest.json` and `effective_config.toml`.
+Resume only when the manifest and execution-plan-affecting inputs still match.
 
-Use:
+Use strict validation when in doubt:
 
 ```bash
---g-resume --g-resume-mode strict
+--resume --resume_mode strict
 ```
 
-when you need stronger validation of existing chunks.
+Common causes:
+
+- no `run_manifest.json` exists;
+- the output run directory exists but was not produced by the same analysis;
+- a source file changed size or modification time;
+- a trait, covariate, binary correction, output, dtype, or sample-key option
+  changed.
+
+See [Resume and Manifest](resume-and-manifest.md).
+
+## Output Looks Missing
+
+`--out` is a prefix. The default run root is:
+
+```text
+<out>.g/
+```
+
+Look for per-phenotype directories such as:
+
+```text
+trait_0001_phenotype.regenie2_linear.run/
+trait_0001_phenotype.regenie2_binary.run/
+```
+
+Parquet output uses `parts/`; Arrow output uses `chunks/`; REGENIE text output
+uses `regenie/` plus `final.regenie`. See [Output Files](output-files.md).
 
 ## Documentation Build Fails
 
@@ -71,4 +150,6 @@ uv sync --group docs
 just docs-build
 ```
 
-The generated `documentation_rendered_website/` directory is ignored by git and can be removed when you need a clean local rebuild.
+Most failures are stale Markdown links or pages missing from `zensical.toml`.
+The generated `documentation_rendered_website/` directory is ignored by git and
+can be removed when you need a clean local rebuild.

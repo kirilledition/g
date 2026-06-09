@@ -299,16 +299,42 @@ does not already provide them:
 
 ```bash
 just install-profiling-tools
+just install-nsight-tools
 ```
 
-Nsight Systems (`nsys`) and Nsight Compute (`ncu`) are not installed by this
-recipe; use a local NVIDIA install or module when available on the GPU node.
+`install-profiling-tools` installs Python and native sampling profilers through
+`uv tool` and Cargo. `install-nsight-tools` installs the Nsight Systems (`nsys`)
+and Nsight Compute (`ncu`) CLIs without root by reading NVIDIA's CUDA package
+index, verifying package SHA256 digests, and extracting the `.deb` payloads into
+`.tools/nsight`. It links `nsys` and `ncu` into `.tools/bin`, which
+`scripts/server_env.sh` already puts on `PATH`.
+On gauss/landau the recipe defaults `ncu` to the CUDA 12.2-compatible Nsight
+Compute package because `landau` advertises driver CUDA compatibility 12.2, and
+it reads NVIDIA's Ubuntu 22.04 CUDA package index because the Ubuntu 24.04 index
+does not carry the older 12.2 Nsight Compute package. Override
+`GWAS_ENGINE_NSIGHT_COMPUTE_CUDA_VERSION` only when the GPU node driver changes,
+and override `GWAS_ENGINE_CUDA_REPOSITORY_URL` only when changing the NVIDIA
+package index used for rootless archive extraction. This is separate from
+whether JAX can run on the GPU: JAX can execute with the installed runtime stack
+while a newer `ncu` can still fail during profiler injection if it requires a
+newer driver generation.
+If `ncu` reports `ERR_NVGPUCTRPERM`, the profiler connected to CUDA but the
+node driver restricts GPU performance counters to admin users. The profile
+harness records that pass as skipped with an actionable note; collecting Nsight
+Compute metrics requires the cluster administrator to allow non-admin GPU
+performance counters on the GPU nodes.
 Scalene and Memray are Python profilers, so the harness runs them through
 `uv run --no-sync --with ...` when they are not importable in the project
 environment. This keeps JAX, Polars, and the installed `g` package visible to
 the profiled child process.
 The harness records missing or permission-blocked profilers as skipped results
 instead of failing the campaign.
+On the gauss/landau environment, `nsys status -e` reports Linux kernel paranoid
+level `4`, so CPU sampling and CPU context-switch collection are unavailable to
+unprivileged users. The harness therefore runs Nsight Systems with
+`--sample=none --cpuctxsw=none` and uses it as a CUDA/CUDNN/CUBLAS/OSRT/NVTX
+timeline pass. Use py-spy, Scalene, cProfile, and Linux perf where available
+for CPU-side views.
 
 Run a small end-to-end smoke profile before spending a full SLURM allocation:
 

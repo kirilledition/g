@@ -1,8 +1,9 @@
 # Development
 
-Use `uv` for dependency management and `just` for project commands.
+Use `uv` for dependency management and `just` for project commands. Run
+`just help` before choosing a task-specific recipe.
 
-## Setup
+## Start Here
 
 ```bash
 just bootstrap
@@ -16,11 +17,20 @@ just bootstrap-gpu
 just doctor-jax
 ```
 
-For server-specific setup, see [Ubuntu SLURM Development](UBUNTU_SLURM_DEVELOPMENT.md). For reduced-toolchain local setup, see [No-Nix Development](NO_NIX_DEVELOPMENT.md).
+Server-specific CPU/GPU routing, SLURM nodes, caches, and environment variables
+belong in [Server Gauss SLURM](server-gauss-slurm.md). Reduced-toolchain local
+setup belongs in [No-Nix Development](no-nix-development.md).
 
-## Checks
+## Common Checks
 
-Common checks:
+Login-node-safe local checks:
+
+```bash
+just check-local
+just test-local-focused
+```
+
+Repository-wide checks:
 
 ```bash
 just format
@@ -28,28 +38,9 @@ just lint
 just typecheck
 ```
 
-Reduced-toolchain local checks:
-
-```bash
-just check-local
-just test-local
-just test-local-focused
-```
-
-Full CPU validation belongs on a CPU SLURM node on the gauss server:
-
-```bash
-just slurm-cpu-check
-just slurm-cpu-test
-just slurm-cpu-test-full
-just slurm-cpu-rust-build
-just slurm-cpu-rust-test
-```
-
-`just check` and `just test` remain available as direct recipes, but do not run
-the full versions on a login node when they will compile Rust dependencies or
-execute the large Python suite. Use [Ubuntu SLURM Development](UBUNTU_SLURM_DEVELOPMENT.md)
-for the CPU/GPU routing rules and allocation environment variables.
+Full CPU validation, GPU validation, large test suites, and native builds should
+run through the appropriate local or SLURM workflow for the current host. See
+[Testing and Parity](testing-and-parity.md) and [Server Gauss SLURM](server-gauss-slurm.md).
 
 ## Documentation
 
@@ -60,24 +51,32 @@ just docs-serve
 just docs-build
 ```
 
-When changing user-facing CLI behavior, configuration, input/output contracts, runtime behavior, performance assumptions, or deployment workflow, update the relevant page under `documentation/public/` in the same branch. When changing development workflows or docs infrastructure, update the relevant page under `documentation/development/`. Run `just docs-build` before finishing documentation changes.
+When changing user-facing CLI behavior, configuration, input/output contracts,
+runtime behavior, performance assumptions, or deployment workflow, update the
+relevant page under `documentation/public/` in the same branch. When changing
+development workflows or docs infrastructure, update the relevant page under
+`documentation/development/`.
 
-Generated `documentation_rendered_website/` output is local build output and is not committed.
+Generated `documentation_rendered_website/` output is local build output and is
+not committed.
 
-See [Documentation Operations](documentation.md) for publishing setup, theme configuration, GitHub Pages settings, and documentation workflow behavior.
+See [Documentation Operations](documentation.md) for publishing setup, theme
+configuration, GitHub Pages settings, and documentation workflow behavior.
 
-## Coding Rules
+## Development Contracts
 
-Follow [Style Guide](STYLEGUIDE.md). Important project rules include:
+| Topic | Page |
+| --- | --- |
+| Code style and review rules | [Style Guide](style-guide.md) |
+| Architecture map | [Architecture](architecture.md) |
+| CLI/TOML/Python configuration frontend | [Configuration Frontend](configuration-frontend.md) |
+| Native BGEN, sample, output, and manifest boundaries | [Native I/O](native-io.md) |
+| JAX quantitative, binary, and Firth kernels | [Compute Kernels](compute-kernels.md) |
+| Testing, correctness, and parity expectations | [Testing and Parity](testing-and-parity.md) |
+| Benchmark taxonomy and protocols | [Benchmarking](benchmarking.md) |
+| Telemetry and logging architecture | [Telemetry](telemetry.md) |
+| Development tooling | [Tooling](tooling.md) |
+| Justfile recipes | [Justfile Command Reference](justfile.md) |
+| Roadmap | [Roadmap](roadmap.md) |
 
-- full-word variable names;
-- strict type coverage;
-- module-qualified imports by default;
-- dataclasses instead of bare tuples for structured returns;
-- Google-style docstrings without duplicated type information.
-
-## Task and Worktree Notes
-
-Symphony work happens in issue-specific worktrees under `/mnt/beegfs/kirill/Projects/g-worktrees/symphony`. Keep changes scoped to the Linear issue and do not commit `data/`, `results/`, local caches, logs, build artifacts, or generated benchmark outputs.
-
-See [Symphony](symphony.md) for Linear-backed multi-agent orchestration.
+Internal scratchpad notes are direct-path development material and may be stale.

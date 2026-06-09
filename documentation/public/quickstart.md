@@ -16,6 +16,16 @@ upstream REGENIE Step 1 prediction files.
 - `--pred`: Step 1 prediction list produced by upstream `regenie`.
 - `--out`: Output prefix. `g` writes a run directory next to this prefix.
 
+Before running, check:
+
+```bash
+uv run g regenie --help
+test -s /path/to/genotypes.bgen
+test -s /path/to/regenie_step1_pred.list
+```
+
+For exact file contracts, see [Input Files](input-files.md).
+
 ## Quantitative Step 2
 
 ```bash
@@ -95,7 +105,7 @@ uv run g regenie \
   --g-device gpu
 ```
 
-Submit GPU commands on a GPU node or through your scheduler. See [GPU and SLURM](gpu-and-slurm.md)
+Submit GPU commands on a GPU node or through your scheduler. See [GPU and Clusters](gpu-and-clusters.md)
 for cluster notes.
 
 ## REGENIE Text Output
@@ -132,4 +142,5 @@ are local and git-ignored.
 
 ## Output
 
-Successful runs print the run directory. See [Input and Output](input-output.md) for the generated layout and schema.
+Successful runs print the run directory. See [Output Files](output-files.md) for generated
+layout and schema, and [Resume and Manifest](resume-and-manifest.md) for restart behavior.

@@ -1,0 +1,68 @@
+# Compatibility
+
+This page is the canonical public compatibility and scope reference.
+
+`g` is pre-release. Backward compatibility is not guaranteed until a stable
+release line exists.
+
+## Supported Surface
+
+| Area | Status |
+| --- | --- |
+| REGENIE Step 2 quantitative traits | Supported with `--step 2 --qt`. |
+| REGENIE Step 2 binary score test | Supported with `--step 2 --bt`. |
+| Binary approximate Firth fallback | Supported with `--bt --firth --approx`; parity and performance remain sensitive. |
+| BGEN 1.2 input | Supported. |
+| Oxford `.sample` files | Supported. |
+| Embedded BGEN sample identifiers | Supported when compatible with sample-key mode. |
+| Multiple phenotypes | Supported with per-phenotype semantics by default. |
+| Output formats | Arrow, Parquet dataset parts, optional finalized Parquet, and REGENIE Step 2-style text. |
+| GPU execution | Supported through JAX when the environment exposes a compatible accelerator. |
+| TOML config | Supported through `--config` and `g config`. |
+| Python API | Supported as a small execution wrapper; see [Python API](api-python.md). |
+
+## Not Implemented
+
+| Area | Behavior |
+| --- | --- |
+| REGENIE Step 1 | Not implemented. Use upstream `regenie` and pass `--pred`. |
+| PLINK BED input | `--bed` is recognized and rejected. |
+| PLINK2 PGEN input | `--pgen` is recognized and rejected. |
+| Sample/variant filters | `--keep`, `--remove`, `--extract`, and `--exclude` are recognized and rejected. |
+| Categorical covariates | `--catCovarList` is recognized and rejected. |
+| SPA fallback | `--spa` is recognized and rejected. |
+| Exact Firth without `--approx` | Recognized and rejected. |
+| Alternative tests and time-to-event traits | `--test` and `--t2e` are recognized and rejected. |
+
+Recognized unsupported flags fail loudly so REGENIE command migration does not
+silently drop scientific intent.
+
+## REGENIE Command Migration
+
+Supported commands are intentionally close to REGENIE Step 2:
+
+```bash
+g regenie --step 2 --qt --bgen ... --phenoFile ... --phenoCol ... --pred ... --out ...
+g-regenie --step 2 --bt --bgen ... --phenoFile ... --phenoCol ... --pred ... --out ...
+```
+
+Important migration limits:
+
+- Replace Step 1 commands with upstream `regenie`, not `g`.
+- Keep BGEN Step 2 inputs; BED/PGEN Step 2 inputs are not accepted.
+- Compare equivalent statistical modes only. A binary score-only `g` run should
+  not be compared to upstream REGENIE output that used approximate Firth.
+- REGENIE text output is selected with `--g-output-format regenie`; Arrow and
+  Parquet are the performance-oriented defaults for this engine.
+
+## Versioning Expectations
+
+Until the project declares a stable release:
+
+- CLI and TOML behavior in the current checkout is authoritative.
+- Defaults can change; use `src/g/config.default.toml` and `g config init` for
+  the exact current values.
+- Output schema changes are guarded by manifest/schema versions but may still
+  evolve.
+- Performance assumptions are workload-dependent and should be re-measured on
+  the target machine.

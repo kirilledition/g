@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import subprocess
 import sys
 import typing
 from pathlib import Path
@@ -40,6 +41,38 @@ def test_regenie_command_builders_shape() -> None:
     assert "--qt" in command_specs[2][3]
     assert command_specs[3][0] == "regenie_step2_quantitative"
     assert "--pred" in command_specs[3][3]
+
+
+def test_run_logged_command_marks_nvidia_counter_permission_as_skipped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(*arguments: typing.Any, **keyword_arguments: typing.Any) -> subprocess.CompletedProcess[str]:
+        del arguments, keyword_arguments
+        return subprocess.CompletedProcess(
+            args=["ncu"],
+            returncode=1,
+            stdout="",
+            stderr="==ERROR== ERR_NVGPUCTRPERM - restricted counters\n",
+        )
+
+    monkeypatch.setattr(deep_profile.subprocess, "run", fake_run)
+
+    result = deep_profile.run_logged_command(
+        name="profile_binary_gpu_ncu",
+        implementation="Nsight Compute",
+        trait_type="binary",
+        device="gpu",
+        command_arguments=["ncu", "uv", "run", "--no-sync", "python", "-c", "print('x')"],
+        environment_overrides={},
+        log_directory=tmp_path,
+    )
+
+    assert result.status == "skipped"
+    assert result.notes is not None
+    assert "performance counter access" in result.notes
+    stderr_text = Path(result.stderr_log_path).read_text(encoding="utf-8")
+    assert stderr_text == "==ERROR== ERR_NVGPUCTRPERM - restricted counters\n"
 
 
 def test_bgen_reader_benchmark_parses_sweep_lists() -> None:
@@ -2197,6 +2230,7 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
             "tool.variant_limit=1000",
             "tool.enable_scalene=true",
             "tool.enable_memray=true",
+            "tool.enable_nsight_systems=true",
         ]
     )
     logged_commands: list[tuple[str, list[str]]] = []
@@ -2264,7 +2298,7 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         return {"command": command_arguments, "returncode": 0, "stdout": "profile\n", "stderr": ""}
 
     def fake_which(command_name: str) -> str | None:
-        if command_name in {"cargo", "py-spy", "perf", "uv"}:
+        if command_name in {"cargo", "py-spy", "perf", "uv", "nsys"}:
             return f"/usr/bin/{command_name}"
         return None
 
@@ -2288,12 +2322,16 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
 
     implementations = [implementation for implementation, _command in logged_commands]
     assert jax_profile_names == ["profile_binary_gpu_jax"]
-    assert implementations == ["cProfile", "py-spy", "Scalene", "Memray", "perf"]
+    assert implementations == ["cProfile", "py-spy", "Scalene", "Memray", "Nsight Systems", "perf"]
     assert metadata_commands[:2] == [
         ["cargo", "bench", "--bench", "bgen_read"],
         ["cargo", "bench", "--bench", "preprocess"],
     ]
     assert any(command[0].endswith("py-spy") and "--format" in command for _implementation, command in logged_commands)
+    assert any(
+        command[0].endswith("nsys") and "--sample=none" in command and "--cpuctxsw=none" in command
+        for _implementation, command in logged_commands
+    )
     assert any(command[0].endswith("perf") and "record" in command for _implementation, command in logged_commands)
     profile_directory = tmp_path / "profile" / "deep_profiles"
     sampling_profiles = typing.cast("list[dict[str, object]]", results["sampling_profiles"])
@@ -2303,6 +2341,7 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         "py_spy": "binary_gpu.speedscope.json",
         "scalene": "binary_gpu.scalene.json",
         "memray": "binary_gpu.memray.bin",
+        "nsys": "binary_gpu_nsys",
         "perf": "binary_gpu.perf.data",
     }
     for profiler_suffix, artifact_name in expected_profiler_artifacts.items():
@@ -2322,8 +2361,8 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         for profile in sampling_profiles
         if profile.get("application_output_run_directory") is not None
     }
-    assert len(application_output_run_directories) == 6
-    assert len(results["sampling_profiles"]) == 6
+    assert len(application_output_run_directories) == 7
+    assert len(results["sampling_profiles"]) == 7
 
 
 def test_deep_profile_aggregates_trial_results() -> None:

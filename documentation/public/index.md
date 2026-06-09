@@ -1,38 +1,39 @@
 # g Documentation
 
-`g` is a pre-release GWAS engine focused on BGEN-backed REGENIE Step 2 association scans. It exposes a REGENIE-style CLI, TOML configuration, and a Python API while using Rust for native file handling and JAX for quantitative and binary association kernels.
+`g` is a pre-release GWAS engine focused on BGEN-backed REGENIE Step 2
+association scans. It exposes a REGENIE-style CLI, TOML configuration, and a
+Python API while using Rust for native file handling and JAX for quantitative
+and binary association kernels.
 
-`g` does not implement REGENIE Step 1. Use upstream `regenie` to produce Step 1 prediction lists, then use `g` for Step 2 scans.
-
-## Current Scope
-
-| Area | Status |
-| --- | --- |
-| Quantitative REGENIE Step 2 (`--qt`) | Primary supported workflow |
-| Binary score-test Step 2 (`--bt`) | Supported, evolving |
-| Binary approximate Firth fallback (`--bt --firth --approx`) | Implemented, parity and performance sensitive |
-| REGENIE Step 1 | Not implemented |
-| BGEN 1.2 input | Supported |
-| BED/PGEN input | Recognized, not implemented |
-| Output | Arrow chunks and Parquet run outputs |
-| GPU execution | Supported through JAX when the environment is configured |
+`g` does not implement REGENIE Step 1. Use upstream `regenie` to produce Step 1
+prediction lists, then use `g` for Step 2 scans.
 
 ## Start Here
 
-- [Getting Started](getting-started.md) explains the shortest path from install to a first scan.
-- [Installation](installation.md) covers source-checkout installation for CPU, GPU, clusters, and development.
-- [Quickstart](quickstart.md) shows quantitative, binary, and approximate-Firth examples.
-- [Algorithm](algorithm.md) explains the mathematical Step 2 models, parameter effects, and output statistics.
-- [CLI](cli.md) and [Configuration](configuration.md) document the main user interface.
-- [Input and Output](input-output.md) describes file expectations and run artifacts.
-- [GPU and SLURM](gpu-and-slurm.md) covers accelerator and generic cluster job notes.
+- [Getting Started](getting-started.md) gives the shortest orientation from
+  install to first run.
+- [Installation](installation.md) covers CPU, GPU, cluster, and development
+  setup paths.
+- [Quickstart](quickstart.md) shows quantitative, binary, approximate-Firth,
+  GPU, and REGENIE-text command examples.
+- [Compatibility](compatibility.md) lists supported and recognized-but-unsupported
+  REGENIE behavior.
 
-## Documentation Sections
+## Reference Pages
 
-The published site is split by audience:
+| Topic | Canonical page |
+| --- | --- |
+| CLI grammar, flags, boolean semantics, and exit behavior | [CLI](cli.md) |
+| TOML sections, merge order, effective config, and defaults policy | [Configuration](configuration.md) |
+| Genotype, sample, phenotype, covariate, and prediction files | [Input Files](input-files.md) |
+| Run directories, output formats, schema, and telemetry files | [Output Files](output-files.md) |
+| Resume modes, manifest compatibility, and graceful interruption | [Resume and Manifest](resume-and-manifest.md) |
+| Public Python wrapper | [Python API](api-python.md) |
+| Statistical models and result interpretation | [Algorithm](algorithm.md) |
+| GPU, cluster, and SLURM operation | [GPU and Clusters](gpu-and-clusters.md) |
+| Performance tuning and measurement | [Performance Guide](performance-guide.md) |
+| Common failures and first checks | [Troubleshooting](troubleshooting.md) |
 
-- `documentation/public/` contains user-facing guidance and is the best starting point for running `g`.
-- `documentation/development/` contains development-team guidance, architecture notes, style rules, and automation documentation.
-- `documentation/scratchpad/` contains internal work products such as learning notes, review-derived notes, and historical profiling summaries.
-
-Development documentation starts at [Development](../development/index.md). Internal scratchpad material starts at [Scratchpad](../scratchpad/index.md).
+Development-team documentation starts at [Development](../development/index.md).
+Internal scratchpad notes are kept under `documentation/scratchpad/` and may be
+stale.

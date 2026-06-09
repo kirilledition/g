@@ -29,7 +29,7 @@ finishing documentation changes.
 
 ## **Coding Standards (Strictly Enforced)**
 
-**You must strictly adhere to the rules defined in [styleguide](documentation/development/STYLEGUIDE.md).** Do not write code without reading it. Key highlights include:
+**You must strictly adhere to the rules defined in [styleguide](documentation/development/style-guide.md).** Do not write code without reading it. Key highlights include:
 
 * 100% strict type coverage.  
 * Full-word variable names only.  

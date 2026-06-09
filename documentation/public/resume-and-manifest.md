@@ -1,0 +1,106 @@
+# Resume And Manifest
+
+This page is the canonical user-facing reference for resumable output runs.
+
+For output layout and schemas, see [Output Files](output-files.md). For config
+merge behavior, see [Configuration](configuration.md).
+
+## Per-Phenotype Metadata
+
+Every phenotype output run writes:
+
+```text
+effective_config.toml
+run_manifest.json
+```
+
+`effective_config.toml` is the final merged config after packaged defaults, the
+optional TOML file, and explicit CLI overrides.
+
+`run_manifest.json` records execution-plan-affecting state, including:
+
+- manifest and output schema versions;
+- association mode;
+- BGEN, sample, phenotype, covariate, and prediction-list file fingerprints;
+- phenotype name, covariate names, sample count, variant count, chunk size, and
+  variant limit;
+- binary correction plan and binary kernel settings when applicable;
+- trusted BGEN policy, sample-key mode, JAX device/precision policy, dtype
+  choices, and multi-phenotype sample mode;
+- output writer settings;
+- committed chunk identifiers and chunk file metadata;
+- final output paths after finalization.
+
+The manifest is the resume authority. It is intentionally stricter than a file
+name check.
+
+## Starting A New Run
+
+Without `--g-resume`, `g` refuses to reuse a non-empty output run directory:
+
+```text
+Output run directory '<path>' already exists and is not empty. Use --resume or choose a new output path.
+```
+
+Choose a new `--out` prefix, delete stale local output intentionally, or run
+with `--g-resume` when the existing manifest belongs to the same planned run.
+
+## Resume Controls
+
+```bash
+--g-resume
+--g-resume-mode fast
+--g-resume-mode strict
+```
+
+| Mode | Behavior |
+| --- | --- |
+| `fast` | Trust committed chunk identifiers recorded in `run_manifest.json` after manifest compatibility passes. |
+| `strict` | Reconcile manifest chunk commits with chunk files on disk before resuming. |
+
+Use `fast` for normal interruption recovery. Use `strict` after manual file
+movement, storage failures, or any situation where the manifest and chunk files
+might disagree.
+
+## Compatibility Checks
+
+Resume first requires an existing `run_manifest.json`. It then compares the
+current requested run against manifest fields that affect results or output
+interpretation. A mismatch fails with a message naming the first incompatible
+manifest field.
+
+Common mismatch causes:
+
+- changed BGEN, sample, phenotype, covariate, or prediction-list file;
+- changed phenotype or covariate columns;
+- changed trait mode, binary correction plan, or Firth settings;
+- changed sample-key mode or multi-phenotype sample mode;
+- changed chunk size, variant limit, output format, writer grouping, or schema
+  version;
+- changed JAX precision/dtype or trusted BGEN policy.
+
+Resume is not a way to combine different analyses into one output directory.
+
+## Graceful Interruption
+
+During `g regenie`, the first SIGINT or SIGTERM requests graceful shutdown. The
+engine flushes queued chunks, saves committed output for resume, prints an
+interruption message, and exits with `128 + signal_number` such as `130` for
+SIGINT.
+
+After that, rerun the same command with:
+
+```bash
+--g-resume --g-resume-mode strict
+```
+
+or use `fast` when the previous interruption was clean and storage is trusted.
+
+## Finalization And Resume
+
+Chunked output is the resumable unit. Final artifacts such as `final.parquet`
+and `final.regenie` are derived from committed chunks at successful completion
+or finalization time.
+
+If a run is interrupted before finalization, resume the chunked run first and
+let the engine complete finalization after all chunks are committed.

@@ -37,7 +37,7 @@ recipe:
 just help
 ```
 
-Use `documentation/development/justfile.md`, `documentation/public/gpu-and-slurm.md`, and the issue validation
+Use `documentation/development/justfile.md`, `documentation/public/gpu-and-clusters.md`, and the issue validation
 section to choose a profiling recipe. Do not run a workload merely because a
 recipe exists.
 

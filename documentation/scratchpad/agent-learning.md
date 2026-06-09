@@ -9,9 +9,8 @@ context without keeping stale task lists in the docs tree.
 The June 2026 task-doc audit found that most historical plans were already
 implemented:
 
-- Configuration defaults now come from `src/g/config.default.toml`, option
-  metadata lives in Rust `OptionSpec`, and TOML loading is owned by the Rust
-  frontend.
+- Configuration defaults now come from a packaged TOML file, and the active
+  `rust-cli-config-pyo3` branch moves CLI/config ownership into Rust.
 - Native grouped alignment, prediction-source grouping, telemetry stream
   ownership, trusted packed8 decode improvements, output streaming, and setup
   reuse work have landed.
@@ -42,14 +41,16 @@ The audit created these bounded Linear follow-ups:
 ## Configuration
 
 The live configuration contract is documented in
-[Configuration and CLI Architecture](../development/configuration_cli_architecture.md).
-Historical config rewrite notes reduced to these rules:
+[Configuration Frontend](../development/configuration-frontend.md). Historical
+config rewrite notes reduce to these rules for the Rust frontend branch:
 
-- `config.default.toml` owns user-tunable defaults.
-- Rust `OptionSpec` owns canonical CLI names, config sections, value types,
-  choices, support level, and default policy.
-- Rust decodes TOML, overlays defaults, user TOML, and CLI/Python overrides,
-  then exposes resolved PyO3 config objects to Python.
+- `src/interface/config.default.toml` owns user-tunable defaults.
+- Rust owns CLI parsing, TOML decoding, config layering, default loading,
+  validation, effective TOML serialization, and PyO3 config objects.
+- `src/interface/partial.rs` defines the typed partial TOML surface with Serde,
+  optional fields, aliases, and unknown-key rejection.
+- `src/interface/overlay.rs` decodes provenance and overlays defaults, user
+  TOML, and CLI/Python overrides before resolving complete config data.
 - Runtime subsystems should receive resolved `RegenieConfig` or
   `ExecutionPlan` values, not raw CLI dictionaries, environment variables, or
   packaged default views.
@@ -58,10 +59,14 @@ Historical config rewrite notes reduced to these rules:
 
 ## Native Boundaries
 
-The stable ownership split is:
+The active Rust frontend ownership split is:
 
 ```text
 Rust:
+  CLI parsing
+  TOML decoding and default overlay
+  config validation and effective TOML serialization
+  PyO3 config objects
   BGEN decode/preprocessing
   sample, covariate, phenotype, and prediction alignment primitives
   output writing/finalization
@@ -69,8 +74,7 @@ Rust:
   low-overhead telemetry streams
 
 Python:
-  public API
-  CLI/TOML/config normalization
+  public API shim
   execution planning
   JAX runtime setup
   high-level orchestration
@@ -109,8 +113,7 @@ surface. Durable constraints from the completed work:
 - Sparse masks are modifiers for already-selected Firth lanes, not candidate
   selectors.
 - Larger Firth batch/capacity sweeps did not justify changing the current
-  defaults: `firth-batch-size = 1024` and
-  `firth-candidate-capacity = 2048`.
+  defaults: `firth_batch_size = 1024` and `firth_candidate_capacity = 2048`.
 - Binary null logistic non-convergence fails by default; warning mode is an
   explicit opt-in.
 - Invalid binary score statistics should emit NaN public statistics, not
@@ -179,6 +182,5 @@ uv run ruff check src tests
 . scripts/server_env.sh && cargo test --test rust_python_bindings --quiet
 ```
 
-GPU work must run through SLURM on `landau`. Use `--stage-timing-mode off` for
-production throughput and `--stage-timing-mode exact` for synchronized stage
-attribution.
+GPU work must run through SLURM on `landau`. Use production timing defaults for
+throughput and exact stage attribution only when investigating timings.

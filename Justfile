@@ -5,6 +5,8 @@ set shell := ["bash", "-cu"]
 data_dir := env_var_or_default('GWAS_ENGINE_DATA_DIR', 'data')
 python_version := env_var_or_default('GWAS_ENGINE_PYTHON_VERSION', '3.14')
 tools_dir := env_var_or_default('GWAS_ENGINE_TOOLS_DIR', '.tools')
+cuda_repository_url := env_var_or_default('GWAS_ENGINE_CUDA_REPOSITORY_URL', 'https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64')
+nsight_compute_cuda_version := env_var_or_default('GWAS_ENGINE_NSIGHT_COMPUTE_CUDA_VERSION', '12.2')
 regenie_patched_source_dir := env_var_or_default('GWAS_ENGINE_REGENIE_PATCHED_SOURCE_DIR', 'reference/regenie-patched')
 regenie_patched_output_dir := env_var_or_default('GWAS_ENGINE_REGENIE_PATCHED_OUTPUT_DIR', '.tools/regenie-patched/native')
 slurm_gpu_node := env_var_or_default('GWAS_ENGINE_GPU_NODE', 'landau')
@@ -127,6 +129,10 @@ install-profiling-tools:
     {{ server_env }} && uv tool install memray
     {{ server_env }} && uv tool install xprof
     {{ server_env }} && cargo install --locked samply flamegraph
+
+# Install Nsight Systems and Nsight Compute into the repo-local tool directory
+install-nsight-tools:
+    {{ server_env }} && uv run --no-project python scripts/install_nsight_tools.py --repository-url {{ cuda_repository_url }} --nsight-compute-cuda-version {{ nsight_compute_cuda_version }}
 
 # Check local toolchain prerequisites for development on the current host
 doctor:

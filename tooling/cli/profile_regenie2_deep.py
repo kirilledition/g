@@ -2235,10 +2235,17 @@ def run_logged_command(
     wall_time_seconds = time.perf_counter() - start_time
     stdout_log_path.write_text(completed_process.stdout, encoding="utf-8")
     stderr_log_path.write_text(completed_process.stderr, encoding="utf-8")
+    permission_block_note = permission_blocked_profiler_note(
+        stdout=completed_process.stdout,
+        stderr=completed_process.stderr,
+    )
     status = "success" if completed_process.returncode == 0 else "failed"
     notes = None
+    if permission_block_note is not None:
+        status = "skipped"
+        notes = permission_block_note
     if completed_process.returncode != 0:
-        notes = completed_process.stderr.strip() or completed_process.stdout.strip()
+        notes = notes or completed_process.stderr.strip() or completed_process.stdout.strip()
     logger.info(
         "Finished %s with status=%s in %.3fs",
         name,
@@ -2259,6 +2266,18 @@ def run_logged_command(
         environment_overrides=environment_overrides,
         notes=notes,
     )
+
+
+def permission_blocked_profiler_note(*, stdout: str, stderr: str) -> str | None:
+    """Return an actionable note for known profiler permission failures."""
+    combined_output = f"{stderr}\n{stdout}"
+    if "ERR_NVGPUCTRPERM" in combined_output:
+        return (
+            "Nsight Compute connected to the CUDA process, but the NVIDIA driver restricts GPU performance "
+            "counter access to admin users. Ask the cluster administrator to allow non-admin GPU performance "
+            "counters on the GPU nodes, or keep using Nsight Systems/JAX traces for CUDA timelines."
+        )
+    return None
 
 
 def skipped_profile_result(
@@ -4712,6 +4731,8 @@ def run_deep_profiles(
                     nsight_systems_status.executable_path or "nsys",
                     "profile",
                     "--trace=cuda,cudnn,cublas,osrt,nvtx",
+                    "--sample=none",
+                    "--cpuctxsw=none",
                     "--stats=true",
                     "--force-overwrite=true",
                     "--output",

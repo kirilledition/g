@@ -1,5 +1,9 @@
 # Architecture
 
+| Status | Applies to | Owner |
+| --- | --- | --- |
+| Durable implementation map | `src/g`, Rust native modules, and public execution flow | Development maintainers |
+
 `g` separates the user interface, execution plan, native I/O, JAX kernels, and output writer so performance-sensitive behavior is explicit.
 
 ## High-level Flow
@@ -66,8 +70,9 @@ src/python/                      PyO3 config/runtime bindings and logging bridge
 
 More detailed internal notes:
 
-- [Configuration and CLI Architecture](configuration_cli_architecture.md)
-- [Agent Learning](../scratchpad/agent-learning.md)
-- [Linear REGENIE Step 2 Learning](../scratchpad/linear-regenie-step2-learning.md)
-- [Binary REGENIE Step 2 Learning](../scratchpad/binary-regenie-step2-learning.md)
+- [Configuration Frontend](configuration-frontend.md)
+- [Native I/O](native-io.md)
+- [Compute Kernels](compute-kernels.md)
+- [Testing and Parity](testing-and-parity.md)
+- [Benchmarking](benchmarking.md)
 - [SIMD Optimization Reference](simd-optimization-reference.md)

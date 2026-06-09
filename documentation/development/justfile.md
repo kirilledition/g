@@ -150,11 +150,26 @@ also accept the same overrides when run directly with `uv run --no-sync python
 - Output: optional user-local profiler CLIs for deep app profiling: `py-spy`,
   `scalene`, `memray`, `xprof`, `samply`, and `flamegraph`.
 - Use when: preparing this machine for the deepest app profiling campaign.
-- Notes: Nsight Systems and Nsight Compute are not installed by this recipe; use
-  local NVIDIA tooling or cluster modules when available. Scalene and Memray can
-  also be injected through `uv run --no-sync --with ...` so they run in the
-  project environment. The profile harness records missing optional tools as
-  skipped profiler results.
+- Notes: Scalene and Memray can also be injected through
+  `uv run --no-sync --with ...` so they run in the project environment. The
+  profile harness records missing optional tools as skipped profiler results.
+
+### `install-nsight-tools`
+
+- Inputs: internet access, `dpkg-deb`, writable `GWAS_ENGINE_TOOLS_DIR`, and an
+  Ubuntu CUDA package repository for the current host.
+- Output: repo-local Nsight Systems and Nsight Compute CLI tools. The recipe
+  extracts NVIDIA `.deb` payloads under `.tools/nsight` and links `nsys` and
+  `ncu` into `.tools/bin`.
+- Use when: enabling `tool.enable_nsight_systems=true` or
+  `tool.enable_nsight_compute=true` for app profiling without root access.
+- Notes: the installer reads the current NVIDIA CUDA package index, picks the
+  newest matching Nsight Systems package, picks an Nsight Compute package
+  compatible with `GWAS_ENGINE_NSIGHT_COMPUTE_CUDA_VERSION` when set, verifies
+  SHA256 digests from the index, and does not install system packages. On the
+  gauss/landau setup the recipe defaults that compatibility version to `12.2`
+  and uses NVIDIA's Ubuntu 22.04 CUDA package index by default because it still
+  contains the CUDA 12.2-era Nsight Compute package.
 
 ### `install-perf-extension`
 
