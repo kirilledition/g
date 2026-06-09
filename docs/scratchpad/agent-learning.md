@@ -10,8 +10,8 @@ The June 2026 task-doc audit found that most historical plans were already
 implemented:
 
 - Configuration defaults now come from `src/g/config.default.toml`, option
-  metadata lives in `OptionSpec`, and typed TOML loading is implemented with
-  `msgspec`.
+  metadata lives in Rust `OptionSpec`, and TOML loading is owned by the Rust
+  frontend.
 - Native grouped alignment, prediction-source grouping, telemetry stream
   ownership, trusted packed8 decode improvements, output streaming, and setup
   reuse work have landed.
@@ -43,15 +43,13 @@ The audit created these bounded Linear follow-ups:
 
 The live configuration contract is documented in
 [Configuration and CLI Architecture](../development/configuration_cli_architecture.md).
-Historical config rewrite and msgspec migration notes reduced to these rules:
+Historical config rewrite notes reduced to these rules:
 
 - `config.default.toml` owns user-tunable defaults.
-- `OptionSpec` owns public option metadata, TOML paths, CLI flags, support
-  level, and default policy.
-- `src/g/interface/toml_schema.py` defines the typed TOML surface with
-  `msgspec.Struct`, `msgspec.UNSET`, field renames, and unknown-key rejection.
-- `src/g/interface/config_layers.py` decodes typed layers, overlays defaults,
-  user TOML, and CLI/Python overrides, then flattens through `OptionSpec`.
+- Rust `OptionSpec` owns canonical CLI names, config sections, value types,
+  choices, support level, and default policy.
+- Rust decodes TOML, overlays defaults, user TOML, and CLI/Python overrides,
+  then exposes resolved PyO3 config objects to Python.
 - Runtime subsystems should receive resolved `RegenieConfig` or
   `ExecutionPlan` values, not raw CLI dictionaries, environment variables, or
   packaged default views.

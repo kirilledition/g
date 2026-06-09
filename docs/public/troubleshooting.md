@@ -4,10 +4,12 @@ This page lists common issues and the first checks to run.
 
 ## `g regenie` Rejects an Option
 
-Some REGENIE-style options are recognized but not implemented. BED/PGEN input, SPA, categorical covariate flags, and exact Firth without `--approx` are current examples.
-
 Check `uv run g regenie --help` for the currently supported CLI surface on this
-experimental Rust frontend branch.
+experimental Rust frontend branch. REGENIE flags that are absent from help are
+not accepted yet.
+
+Common absent flags include `--bed`, `--pgen`, `--keep`, `--remove`,
+`--extract`, `--exclude`, `--catCovarList`, `--test`, `--t2e`, and `--spa`.
 
 ## Missing Step 1 Predictions
 

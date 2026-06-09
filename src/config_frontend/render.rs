@@ -6,11 +6,21 @@ use super::{
     load_default_option_catalog_data, option_registry,
 };
 
+/// Write a deterministic effective TOML file for a resolved config.
+///
+/// # Errors
+///
+/// Returns an error when serialization fails or the target path cannot be written.
 pub fn write_toml(config: &RegenieConfigData, path: &Path) -> ConfigResult<()> {
     fs::write(path, dumps_toml(config)?)
         .map_err(|error| ConfigError::new(format!("Failed to write TOML config {}: {error}", path.display())))
 }
 
+/// Serialize a resolved config to deterministic TOML.
+///
+/// # Errors
+///
+/// Returns an error when default metadata cannot be loaded.
 pub fn dumps_toml(config: &RegenieConfigData) -> ConfigResult<String> {
     let sections = build_toml_sections(config)?;
     let mut lines = Vec::new();
@@ -39,6 +49,19 @@ type TomlSectionValues = Vec<(String, TomlOutputValue)>;
 type TomlSections = Vec<(String, TomlSectionValues)>;
 
 fn build_toml_sections(config: &RegenieConfigData) -> ConfigResult<TomlSections> {
+    Ok(vec![
+        ("input".to_string(), build_input_section(config)),
+        ("trait".to_string(), build_trait_section(config)),
+        ("binary".to_string(), build_binary_section(config)),
+        ("output".to_string(), build_output_section(config)),
+        ("g.compute".to_string(), build_g_compute_section(config)),
+        ("g.output".to_string(), build_g_output_section(config)),
+        ("g.diagnostics".to_string(), build_diagnostics_section(config)),
+        ("metadata".to_string(), build_metadata_section()?),
+    ])
+}
+
+fn build_input_section(config: &RegenieConfigData) -> TomlSectionValues {
     let mut input_section = Vec::new();
     push_optional_string(&mut input_section, "bgen", config.input.bgen.as_ref());
     push_optional_string(&mut input_section, "sample", config.input.sample.as_ref());
@@ -55,28 +78,62 @@ fn build_toml_sections(config: &RegenieConfigData) -> ConfigResult<TomlSections>
         input_section.push(("covarColList".to_string(), TomlOutputValue::String(config.input.covar_columns.join(","))));
     }
     push_optional_string(&mut input_section, "pred", config.input.pred.as_ref());
+    input_section
+}
 
-    let binary_section = if config.trait_config.trait_type == "binary" {
+fn build_trait_section(config: &RegenieConfigData) -> TomlSectionValues {
+    vec![
+        ("step".to_string(), TomlOutputValue::Integer(config.trait_config.step)),
+        ("qt".to_string(), TomlOutputValue::Boolean(config.trait_config.trait_type == "quantitative")),
+        ("bt".to_string(), TomlOutputValue::Boolean(config.trait_config.trait_type == "binary")),
+        ("bsize".to_string(), TomlOutputValue::Integer(config.trait_config.bsize)),
+    ]
+    .into_iter()
+    .chain(config.trait_config.threads.map(|threads| ("threads".to_string(), TomlOutputValue::Integer(threads))))
+    .collect()
+}
+
+fn build_binary_section(config: &RegenieConfigData) -> TomlSectionValues {
+    if config.trait_config.trait_type == "binary" {
         vec![
             ("firth".to_string(), TomlOutputValue::Boolean(config.binary.firth)),
             ("approx".to_string(), TomlOutputValue::Boolean(config.binary.approx)),
-            ("spa".to_string(), TomlOutputValue::Boolean(config.binary.spa)),
             ("pThresh".to_string(), TomlOutputValue::Float(config.binary.p_threshold)),
             ("firth-se".to_string(), TomlOutputValue::Boolean(config.binary.firth_se)),
         ]
     } else {
         Vec::new()
-    };
+    }
+}
 
+fn build_output_section(config: &RegenieConfigData) -> TomlSectionValues {
     let mut output_section = Vec::new();
     push_optional_string(&mut output_section, "out", config.g_output.out.as_ref());
+    output_section
+}
 
+fn build_g_compute_section(config: &RegenieConfigData) -> TomlSectionValues {
     let mut g_compute_section = vec![
         ("device".to_string(), TomlOutputValue::String(config.g_compute.device.clone())),
         ("staging-depth".to_string(), TomlOutputValue::Integer(config.g_compute.staging_depth)),
     ];
     push_optional_integer(&mut g_compute_section, "variant-limit", config.g_compute.variant_limit);
-    g_compute_section.extend([
+    g_compute_section.extend(build_g_compute_core_values(config));
+    g_compute_section.extend(build_firth_compute_values(config));
+    g_compute_section.extend(build_null_firth_compute_values(config));
+    g_compute_section.extend(build_genotype_compute_values(config));
+    push_optional_string(&mut g_compute_section, "jax-cache-dir", config.g_compute.jax_cache_dir.as_ref());
+    push_optional_string(
+        &mut g_compute_section,
+        "jax-matmul-precision",
+        config.g_compute.jax_matmul_precision.as_ref(),
+    );
+    g_compute_section.extend(build_jax_compute_values(config));
+    g_compute_section
+}
+
+fn build_g_compute_core_values(config: &RegenieConfigData) -> TomlSectionValues {
+    vec![
         (
             "trusted-no-missing-diploid".to_string(),
             TomlOutputValue::Boolean(config.g_compute.trusted_no_missing_diploid),
@@ -115,6 +172,11 @@ fn build_toml_sections(config: &RegenieConfigData) -> ConfigResult<TomlSections>
             "linear-relative-variance-tolerance".to_string(),
             TomlOutputValue::Float(config.g_compute.linear_relative_variance_tolerance),
         ),
+    ]
+}
+
+fn build_firth_compute_values(config: &RegenieConfigData) -> TomlSectionValues {
+    vec![
         ("firth-maximum-iterations".to_string(), TomlOutputValue::Integer(config.g_compute.firth_maximum_iterations)),
         ("firth-gradient-tolerance".to_string(), TomlOutputValue::Float(config.g_compute.firth_gradient_tolerance)),
         (
@@ -152,6 +214,11 @@ fn build_toml_sections(config: &RegenieConfigData) -> ConfigResult<TomlSections>
             TomlOutputValue::Float(config.g_compute.firth_sparse_carrier_dosage_threshold),
         ),
         ("firth-step-halving-scale".to_string(), TomlOutputValue::Float(config.g_compute.firth_step_halving_scale)),
+    ]
+}
+
+fn build_null_firth_compute_values(config: &RegenieConfigData) -> TomlSectionValues {
+    vec![
         (
             "null-firth-maximum-iterations".to_string(),
             TomlOutputValue::Integer(config.g_compute.null_firth_maximum_iterations),
@@ -180,6 +247,11 @@ fn build_toml_sections(config: &RegenieConfigData) -> ConfigResult<TomlSections>
             "null-firth-step-halving-scale".to_string(),
             TomlOutputValue::Float(config.g_compute.null_firth_step_halving_scale),
         ),
+    ]
+}
+
+fn build_genotype_compute_values(config: &RegenieConfigData) -> TomlSectionValues {
+    vec![
         ("use-block-firth-math".to_string(), TomlOutputValue::Boolean(config.g_compute.use_block_firth_math)),
         (
             "bgen-decode-tile-variant-count".to_string(),
@@ -188,14 +260,11 @@ fn build_toml_sections(config: &RegenieConfigData) -> ConfigResult<TomlSections>
         ("gpu-genotype-format".to_string(), TomlOutputValue::String(config.g_compute.gpu_genotype_format.clone())),
         ("score-dtype".to_string(), TomlOutputValue::String(config.g_compute.score_dtype.clone())),
         ("firth-dtype".to_string(), TomlOutputValue::String(config.g_compute.firth_dtype.clone())),
-    ]);
-    push_optional_string(&mut g_compute_section, "jax-cache-dir", config.g_compute.jax_cache_dir.as_ref());
-    push_optional_string(
-        &mut g_compute_section,
-        "jax-matmul-precision",
-        config.g_compute.jax_matmul_precision.as_ref(),
-    );
-    g_compute_section.extend([
+    ]
+}
+
+fn build_jax_compute_values(config: &RegenieConfigData) -> TomlSectionValues {
+    vec![
         ("jax-persistent-cache".to_string(), TomlOutputValue::Boolean(config.g_compute.jax_persistent_cache)),
         (
             "jax-persistent-cache-min-entry-size-bytes".to_string(),
@@ -207,8 +276,10 @@ fn build_toml_sections(config: &RegenieConfigData) -> ConfigResult<TomlSections>
         ),
         ("jax-xla-autotune-cache".to_string(), TomlOutputValue::Boolean(config.g_compute.jax_xla_autotune_cache)),
         ("jax-transfer-guard".to_string(), TomlOutputValue::Boolean(config.g_compute.jax_transfer_guard)),
-    ]);
+    ]
+}
 
+fn build_g_output_section(config: &RegenieConfigData) -> TomlSectionValues {
     let mut g_output_section = vec![("format".to_string(), TomlOutputValue::String(config.g_output.format.clone()))];
     push_optional_string(&mut g_output_section, "output-run-directory", config.g_output.output_run_directory.as_ref());
     g_output_section.extend([
@@ -221,7 +292,10 @@ fn build_toml_sections(config: &RegenieConfigData) -> ConfigResult<TomlSections>
         ("resume-mode".to_string(), TomlOutputValue::String(config.g_output.resume_mode.clone())),
         ("finalize-parquet".to_string(), TomlOutputValue::Boolean(config.g_output.finalize_parquet)),
     ]);
+    g_output_section
+}
 
+fn build_diagnostics_section(config: &RegenieConfigData) -> TomlSectionValues {
     let mut diagnostics_section =
         vec![("telemetry".to_string(), TomlOutputValue::String(config.g_diagnostics.telemetry.clone()))];
     push_optional_string(&mut diagnostics_section, "log-dir", config.g_diagnostics.log_dir.as_ref());
@@ -258,38 +332,16 @@ fn build_toml_sections(config: &RegenieConfigData) -> ConfigResult<TomlSections>
         ("include-source-location".to_string(), TomlOutputValue::Boolean(config.g_diagnostics.include_source_location)),
         ("include-span-events".to_string(), TomlOutputValue::Boolean(config.g_diagnostics.include_span_events)),
     ]);
+    diagnostics_section
+}
 
+fn build_metadata_section() -> ConfigResult<TomlSectionValues> {
     Ok(vec![
-        ("input".to_string(), input_section),
         (
-            "trait".to_string(),
-            vec![
-                ("step".to_string(), TomlOutputValue::Integer(config.trait_config.step)),
-                ("qt".to_string(), TomlOutputValue::Boolean(config.trait_config.trait_type == "quantitative")),
-                ("bt".to_string(), TomlOutputValue::Boolean(config.trait_config.trait_type == "binary")),
-                ("bsize".to_string(), TomlOutputValue::Integer(config.trait_config.bsize)),
-            ]
-            .into_iter()
-            .chain(
-                config.trait_config.threads.map(|threads| ("threads".to_string(), TomlOutputValue::Integer(threads))),
-            )
-            .collect(),
+            "default-config-hash".to_string(),
+            TomlOutputValue::String(load_default_option_catalog_data()?.default_config_hash.clone()),
         ),
-        ("binary".to_string(), binary_section),
-        ("output".to_string(), output_section),
-        ("g.compute".to_string(), g_compute_section),
-        ("g.output".to_string(), g_output_section),
-        ("g.diagnostics".to_string(), diagnostics_section),
-        (
-            "metadata".to_string(),
-            vec![
-                (
-                    "default-config-hash".to_string(),
-                    TomlOutputValue::String(load_default_option_catalog_data()?.default_config_hash.clone()),
-                ),
-                ("option-schema-version".to_string(), TomlOutputValue::Integer(OPTION_SCHEMA_VERSION)),
-            ],
-        ),
+        ("option-schema-version".to_string(), TomlOutputValue::Integer(OPTION_SCHEMA_VERSION)),
     ])
 }
 
@@ -318,35 +370,41 @@ fn format_toml_value(value: &TomlOutputValue) -> String {
     }
 }
 
+#[must_use]
 pub fn format_toml_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// Build a starter TOML template from defaults and required placeholders.
+///
+/// # Errors
+///
+/// Returns an error when packaged defaults or option metadata cannot be loaded.
 pub fn build_template() -> ConfigResult<String> {
     let default_catalog = load_default_option_catalog_data()?;
     let mut lines = Vec::new();
-    lines.extend(build_commented_section("input")?);
+    lines.extend(build_commented_section("input"));
     lines.push(String::new());
-    lines.extend(build_commented_section("output")?);
+    lines.extend(build_commented_section("output"));
     lines.push(String::new());
     append_raw_template_sections(&mut lines, &default_catalog.raw_toml);
     Ok(format!("{}\n", lines.join("\n").trim_end()))
 }
 
-fn build_commented_section(section_name: &str) -> ConfigResult<Vec<String>> {
+fn build_commented_section(section_name: &str) -> Vec<String> {
     let mut placeholder_lines = vec![format!("[{section_name}]")];
-    for option_spec in &option_registry()?.specs {
+    for option_spec in option_registry().specs {
         if option_spec.section != section_name {
             continue;
         }
         if !matches!(option_spec.default_policy, DefaultPolicy::RequiredAtRuntime | DefaultPolicy::AbsentIsNone) {
             continue;
         }
-        if let Some(placeholder_value) = template_placeholder_for_option(&option_spec.name) {
-            placeholder_lines.push(format!("# {} = {placeholder_value}", format_toml_key(&option_spec.toml_key)));
+        if let Some(placeholder_value) = template_placeholder_for_option(option_spec.cli_name) {
+            placeholder_lines.push(format!("# {} = {placeholder_value}", format_toml_key(option_spec.config_key())));
         }
     }
-    Ok(placeholder_lines)
+    placeholder_lines
 }
 
 fn template_placeholder_for_option(option_name: &str) -> Option<String> {

@@ -1,24 +1,15 @@
-#![allow(
-    clippy::missing_errors_doc,
-    clippy::module_name_repetitions,
-    clippy::must_use_candidate,
-    clippy::similar_names,
-    clippy::struct_excessive_bools,
-    clippy::too_many_lines
-)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Write as _};
 use std::fs;
-use std::mem::MaybeUninit;
 use std::path::Path;
 use std::sync::OnceLock;
 
 use sha2::{Digest, Sha256};
-use toml_spanner::{Arena, Array, DateTime, Item, Table, Value};
+use toml::Value;
 
 mod cli;
 mod metadata;
+mod options;
 mod render;
 mod validation;
 
@@ -32,14 +23,12 @@ pub use validation::{
 
 use metadata::{OptionValueType, option_registry};
 use validation::{
-    reject_missing_resolved_default_options, reject_quantitative_binary_only_options, reject_unsupported_options,
-    validate_unknown_options,
+    reject_missing_resolved_default_options, reject_quantitative_binary_only_options, validate_unknown_options,
 };
 
 const DEFAULT_CONFIG_TOML: &str = include_str!("../g/config.default.toml");
-const OPTION_METADATA_JSON: &str = include_str!("../config_options.json");
 const OPTION_SCHEMA_VERSION: i64 = 1;
-const QUANTITATIVE_BINARY_ONLY_OPTION_NAMES: &[&str] = &["firth", "approx", "firth-se", "spa", "pThresh"];
+const QUANTITATIVE_BINARY_ONLY_OPTION_NAMES: &[&str] = &["firth", "approx", "firth-se", "pThresh"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigError {
@@ -51,6 +40,7 @@ impl ConfigError {
         Self { message: message.into() }
     }
 
+    #[must_use]
     pub fn message(&self) -> &str {
         &self.message
     }
@@ -99,10 +89,12 @@ pub struct TomlConfigLayer {
 }
 
 impl TomlConfigLayer {
+    #[must_use]
     pub fn toml_config(&self) -> &OptionTable {
         &self.toml_config
     }
 
+    #[must_use]
     pub fn explicit_options(&self) -> &BTreeSet<String> {
         &self.explicit_options
     }
@@ -117,12 +109,17 @@ pub struct DefaultOptionCatalogData {
 
 static DEFAULT_CATALOG: OnceLock<Result<DefaultOptionCatalogData, ConfigError>> = OnceLock::new();
 
+/// Load and validate the packaged default option catalog.
+///
+/// # Errors
+///
+/// Returns an error when the packaged TOML defaults or JSON option metadata are invalid.
 pub fn load_default_option_catalog_data() -> ConfigResult<&'static DefaultOptionCatalogData> {
     DEFAULT_CATALOG
         .get_or_init(|| {
             let toml_config = parse_toml_document(DEFAULT_CONFIG_TOML, "config.default.toml")?;
             validate_toml_schema(&toml_config, "config.default.toml")?;
-            let normalized_options = flatten_toml_mapping(&toml_config)?;
+            let normalized_options = flatten_toml_mapping(&toml_config);
             validate_default_catalog(&normalized_options)?;
             let default_config_hash = build_default_config_hash(&toml_config)?;
             Ok(DefaultOptionCatalogData { raw_toml: toml_config, normalized_options, default_config_hash })
@@ -132,10 +129,10 @@ pub fn load_default_option_catalog_data() -> ConfigResult<&'static DefaultOption
 }
 
 fn validate_default_catalog(normalized_options: &OptionTable) -> ConfigResult<()> {
-    let registry = option_registry()?;
+    let registry = option_registry();
     let unknown_option_names = normalized_options
         .keys()
-        .filter(|option_name| registry.get_by_name(option_name).is_none())
+        .filter(|option_name| registry.get_by_cli_name(option_name).is_none())
         .cloned()
         .collect::<Vec<_>>();
     if !unknown_option_names.is_empty() {
@@ -149,9 +146,9 @@ fn validate_default_catalog(normalized_options: &OptionTable) -> ConfigResult<()
         .specs
         .iter()
         .filter(|option_spec| {
-            option_spec.default_policy == DefaultPolicy::Value && !normalized_options.contains_key(&option_spec.name)
+            option_spec.default_policy == DefaultPolicy::Value && !normalized_options.contains_key(option_spec.cli_name)
         })
-        .map(|option_spec| option_spec.name.clone())
+        .map(|option_spec| option_spec.cli_name.to_string())
         .collect::<Vec<_>>();
     if !missing_default_names.is_empty() {
         return Err(ConfigError::new(format!(
@@ -164,12 +161,10 @@ fn validate_default_catalog(normalized_options: &OptionTable) -> ConfigResult<()
         .specs
         .iter()
         .filter(|option_spec| {
-            matches!(
-                option_spec.default_policy,
-                DefaultPolicy::RequiredAtRuntime | DefaultPolicy::Unsupported | DefaultPolicy::Derived
-            ) && normalized_options.contains_key(&option_spec.name)
+            option_spec.default_policy == DefaultPolicy::RequiredAtRuntime
+                && normalized_options.contains_key(option_spec.cli_name)
         })
-        .map(|option_spec| option_spec.name.clone())
+        .map(|option_spec| option_spec.cli_name.to_string())
         .collect::<Vec<_>>();
     if !invalid_default_names.is_empty() {
         return Err(ConfigError::new(format!(
@@ -216,58 +211,44 @@ fn json_value_from_option_table(table: &OptionTable) -> serde_json::Value {
 }
 
 fn parse_toml_document(toml_text: &str, source: &str) -> ConfigResult<OptionTable> {
-    let arena = Arena::new();
-    let parsed_document = toml_spanner::parse(toml_text, &arena)
+    let parsed_table = toml::from_str::<toml::Table>(toml_text)
         .map_err(|error| ConfigError::new(format!("Invalid TOML config {source}: {error}")))?;
-    Ok(table_from_toml_spanner_table(parsed_document.table()))
+    Ok(table_from_toml_table(parsed_table))
 }
 
-fn option_value_from_toml_item(item: &Item<'_>) -> OptionValue {
-    match item.value() {
-        Value::String(value) => OptionValue::String(value.to_string()),
-        Value::Integer(value) => match value.as_i64() {
-            Some(value) => OptionValue::Integer(value),
-            None => OptionValue::String(value.as_i128().to_string()),
-        },
-        Value::Float(value) => OptionValue::Float(*value),
-        Value::Boolean(value) => OptionValue::Boolean(*value),
+fn option_value_from_toml_value(value: Value) -> OptionValue {
+    match value {
+        Value::String(value) => OptionValue::String(value),
+        Value::Integer(value) => OptionValue::Integer(value),
+        Value::Float(value) => OptionValue::Float(value),
+        Value::Boolean(value) => OptionValue::Boolean(value),
         Value::Array(array) => option_value_from_toml_array(array),
-        Value::Table(table) => OptionValue::Table(table_from_toml_spanner_table(table)),
-        Value::DateTime(value) => OptionValue::String(date_time_string(value)),
+        Value::Table(table) => OptionValue::Table(table_from_toml_table(table)),
+        Value::Datetime(value) => OptionValue::String(value.to_string()),
     }
 }
 
-fn option_value_from_toml_array(array: &Array<'_>) -> OptionValue {
-    if array.iter().all(|item| matches!(item.value(), Value::Table(_))) {
-        return OptionValue::List(
-            array.iter().map(|item| format_option_value(&option_value_from_toml_item(item))).collect(),
-        );
-    }
-    OptionValue::List(array.iter().map(string_from_toml_item).collect())
+fn option_value_from_toml_array(array: Vec<Value>) -> OptionValue {
+    OptionValue::List(array.into_iter().map(option_value_string_from_toml_value).collect())
 }
 
-fn string_from_toml_item(item: &Item<'_>) -> String {
-    match item.value() {
-        Value::String(value) => value.to_string(),
-        Value::Integer(value) => value.as_i128().to_string(),
+fn option_value_string_from_toml_value(value: Value) -> String {
+    match value {
+        Value::String(value) => value,
+        Value::Integer(value) => value.to_string(),
         Value::Float(value) => value.to_string(),
         Value::Boolean(value) => value.to_string(),
-        Value::Array(_) | Value::Table(_) => format_option_value(&option_value_from_toml_item(item)),
-        Value::DateTime(value) => date_time_string(value),
+        Value::Array(_) | Value::Table(_) => format_option_value(&option_value_from_toml_value(value)),
+        Value::Datetime(value) => value.to_string(),
     }
 }
 
-fn date_time_string(value: &DateTime) -> String {
-    let mut buffer = MaybeUninit::uninit();
-    value.format(&mut buffer).to_string()
-}
-
-fn table_from_toml_spanner_table(table: &Table<'_>) -> OptionTable {
-    table.iter().map(|(key, item)| (key.name.to_string(), option_value_from_toml_item(item))).collect()
+fn table_from_toml_table(table: toml::Table) -> OptionTable {
+    table.into_iter().map(|(key, value)| (key, option_value_from_toml_value(value))).collect()
 }
 
 fn validate_toml_schema(table: &OptionTable, source: &str) -> ConfigResult<()> {
-    let registry = option_registry()?;
+    let registry = option_registry();
     for (section_name, section_value) in table {
         if section_name == "metadata" {
             continue;
@@ -292,7 +273,7 @@ fn validate_toml_schema(table: &OptionTable, source: &str) -> ConfigResult<()> {
 }
 
 fn validate_g_toml_schema(g_value: &OptionValue, source: &str) -> ConfigResult<()> {
-    let registry = option_registry()?;
+    let registry = option_registry();
     let Some(g_table) = g_value.as_table() else {
         return Err(ConfigError::new(format!("Invalid TOML config {source}: expected [g] to be a table.")));
     };
@@ -332,21 +313,26 @@ fn validate_toml_option_value(option_spec: &OptionSpec, option_value: &OptionVal
         };
         return Err(ConfigError::new(format!(
             "Invalid TOML config {source}: Expected `{expected_type}` for {}.",
-            option_spec.name
+            option_spec.cli_name
         )));
     }
     if !option_spec.accepted_values.is_empty() {
-        let value = string_value(option_value, &option_spec.name)?;
-        if !option_spec.accepted_values.iter().any(|accepted_value| accepted_value == &value) {
+        let value = string_value(option_value, option_spec.cli_name)?;
+        if !option_spec.accepted_values.contains(&value.as_str()) {
             return Err(ConfigError::new(format!(
                 "Invalid TOML config {source}: invalid value {value:?} for --{}.",
-                option_spec.name
+                option_spec.cli_name
             )));
         }
     }
     Ok(())
 }
 
+/// Decode an optional TOML config path into an explicit config layer.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or the TOML content is invalid.
 pub fn decode_toml_file_layer(path: Option<&Path>) -> ConfigResult<TomlConfigLayer> {
     let Some(config_path) = path else {
         return Ok(TomlConfigLayer { toml_config: OptionTable::new(), explicit_options: BTreeSet::new() });
@@ -354,17 +340,24 @@ pub fn decode_toml_file_layer(path: Option<&Path>) -> ConfigResult<TomlConfigLay
     let toml_text = fs::read_to_string(config_path)
         .map_err(|error| ConfigError::new(format!("Failed to read TOML config {}: {error}", config_path.display())))?;
     let toml_config = decode_toml_text(&toml_text, &config_path.display().to_string())?;
-    let explicit_options = flatten_toml_mapping(&toml_config)?.into_keys().collect();
+    let explicit_options = flatten_toml_mapping(&toml_config).into_keys().collect();
     Ok(TomlConfigLayer { toml_config, explicit_options })
 }
 
+/// Decode and validate a TOML document.
+///
+/// # Errors
+///
+/// Returns an error when parsing fails or the document does not match the supported schema.
 pub fn decode_toml_text(toml_text: &str, source: &str) -> ConfigResult<OptionTable> {
     let toml_config = parse_toml_document(toml_text, source)?;
     validate_toml_schema(&toml_config, source)?;
     Ok(toml_config)
 }
 
-pub fn flatten_toml_mapping(raw_options: &OptionTable) -> ConfigResult<OptionTable> {
+/// Flatten TOML-shaped sections into canonical option names.
+#[must_use]
+pub fn flatten_toml_mapping(raw_options: &OptionTable) -> OptionTable {
     let mut flattened_options = OptionTable::new();
     for (section_name, section_value) in raw_options {
         if section_name == "metadata" {
@@ -372,79 +365,72 @@ pub fn flatten_toml_mapping(raw_options: &OptionTable) -> ConfigResult<OptionTab
         }
         if let Some(section_table) = section_value.as_table() {
             if section_name == "g" {
-                flattened_options.extend(flatten_g_toml_section(section_table)?);
+                flattened_options.extend(flatten_g_toml_section(section_table));
             } else {
-                flattened_options.extend(flatten_toml_section(section_name, section_table)?);
+                flattened_options.extend(flatten_toml_section(section_name, section_table));
             }
         } else {
             flattened_options.insert(section_name.clone(), section_value.clone());
         }
     }
-    Ok(flattened_options)
+    flattened_options
 }
 
-fn flatten_g_toml_section(raw_g_options: &OptionTable) -> ConfigResult<OptionTable> {
+fn flatten_g_toml_section(raw_g_options: &OptionTable) -> OptionTable {
     let mut flattened_options = OptionTable::new();
     for (section_name, section_value) in raw_g_options {
         if let Some(section_table) = section_value.as_table() {
-            flattened_options.extend(flatten_toml_section(&format!("g.{section_name}"), section_table)?);
+            flattened_options.extend(flatten_toml_section(&format!("g.{section_name}"), section_table));
         } else {
             flattened_options.insert(format!("g.{section_name}"), section_value.clone());
         }
     }
-    Ok(flattened_options)
+    flattened_options
 }
 
-fn flatten_toml_section(section_name: &str, section_options: &OptionTable) -> ConfigResult<OptionTable> {
-    let registry = option_registry()?;
+fn flatten_toml_section(section_name: &str, section_options: &OptionTable) -> OptionTable {
+    let registry = option_registry();
     let mut flattened_options = OptionTable::new();
     for (toml_key, option_value) in section_options {
         if let Some(option_spec) = registry.get_by_toml_path(section_name, toml_key) {
-            flattened_options.insert(option_spec.name.clone(), option_value.clone());
+            flattened_options.insert(option_spec.cli_name.to_string(), option_value.clone());
         } else {
             flattened_options.insert(format!("{section_name}.{toml_key}"), option_value.clone());
         }
     }
-    Ok(flattened_options)
+    flattened_options
 }
 
-pub fn normalize_option_name(option_name: &str) -> ConfigResult<String> {
-    let registry = option_registry()?;
-    if option_name == "trait_type" || registry.get_by_name(option_name).is_some() {
-        return Ok(option_name.to_string());
-    }
-    if let Some(option_spec) = registry.get_by_destination(option_name) {
-        return Ok(option_spec.name.clone());
-    }
-    if let Some(option_spec) = registry.get_by_python_alias(option_name) {
-        return Ok(option_spec.name.clone());
-    }
-    if option_name.starts_with("g_") {
-        return Ok(option_name.replace('_', "-"));
-    }
-    Ok(option_name.to_string())
+/// Normalize a CLI or TOML option name into its canonical CLI name.
+#[must_use]
+pub fn normalize_option_name(option_name: &str) -> String {
+    option_name.to_string()
 }
 
+/// Convert a flat or TOML-shaped option dictionary into a TOML config layer.
+///
+/// # Errors
+///
+/// Returns an error when an option is unknown or has an invalid value for its schema.
 pub fn option_dictionary_to_toml_config_layer(
     raw_options: &OptionTable,
     source: &str,
 ) -> ConfigResult<TomlConfigLayer> {
-    let normalized_options = normalize_option_dictionary(raw_options)?;
-    let registry = option_registry()?;
+    let normalized_options = normalize_option_dictionary(raw_options);
+    let registry = option_registry();
     let mut toml_mapping = OptionTable::new();
 
     for (option_name, option_value) in &normalized_options {
-        if !option_value.is_explicit_some() || option_name == "trait_type" {
+        if !option_value.is_explicit_some() {
             continue;
         }
-        let Some(option_spec) = registry.get_by_name(option_name) else {
+        let Some(option_spec) = registry.get_by_cli_name(option_name) else {
             return Err(ConfigError::new(format!("Unknown g regenie option: {option_name}")));
         };
         let coerced_value = coerce_option_value(option_value, option_spec)?;
         set_toml_option_value(&mut toml_mapping, option_spec, coerced_value);
     }
 
-    apply_trait_type_alias(&mut toml_mapping, normalized_options.get("trait_type"))?;
     validate_toml_schema(&toml_mapping, source)?;
     let explicit_options = normalized_options
         .iter()
@@ -454,10 +440,12 @@ pub fn option_dictionary_to_toml_config_layer(
     Ok(TomlConfigLayer { toml_config: toml_mapping, explicit_options })
 }
 
-pub fn normalize_option_dictionary(raw_options: &OptionTable) -> ConfigResult<OptionTable> {
-    flatten_toml_mapping(raw_options)?
+/// Normalize a full option dictionary into canonical option names.
+#[must_use]
+pub fn normalize_option_dictionary(raw_options: &OptionTable) -> OptionTable {
+    flatten_toml_mapping(raw_options)
         .into_iter()
-        .map(|(option_name, option_value)| normalize_option_name(&option_name).map(|name| (name, option_value)))
+        .map(|(option_name, option_value)| (normalize_option_name(&option_name), option_value))
         .collect()
 }
 
@@ -466,26 +454,19 @@ fn coerce_option_value(option_value: &OptionValue, option_spec: &OptionSpec) -> 
         return Ok(coerce_string_list_value(option_value));
     }
     if !option_spec.accepted_values.is_empty() {
-        let value = string_value(option_value, &option_spec.name)?;
-        if !option_spec.accepted_values.iter().any(|accepted_value| accepted_value == &value) {
-            return Err(ConfigError::new(format!("Invalid value for --{}: {value:?}.", option_spec.name)));
+        let value = string_value(option_value, option_spec.cli_name)?;
+        if !option_spec.accepted_values.contains(&value.as_str()) {
+            return Err(ConfigError::new(format!("Invalid value for --{}: {value:?}.", option_spec.cli_name)));
         }
         return Ok(OptionValue::String(value));
     }
     match option_spec.value_type {
         OptionValueType::String | OptionValueType::Path => {
-            Ok(OptionValue::String(string_value(option_value, &option_spec.name)?))
+            Ok(OptionValue::String(string_value(option_value, option_spec.cli_name)?))
         }
-        OptionValueType::Integer => Ok(OptionValue::Integer(integer_value(option_value, &option_spec.name)?)),
-        OptionValueType::Float => Ok(OptionValue::Float(float_value(option_value, &option_spec.name)?)),
-        OptionValueType::Boolean => match boolean_value(option_value, &option_spec.name) {
-            Ok(value) => Ok(OptionValue::Boolean(value)),
-            Err(error) if option_spec.support_level == SupportLevel::RecognizedUnsupported => {
-                let _ = error;
-                Ok(OptionValue::Boolean(true))
-            }
-            Err(error) => Err(error),
-        },
+        OptionValueType::Integer => Ok(OptionValue::Integer(integer_value(option_value, option_spec.cli_name)?)),
+        OptionValueType::Float => Ok(OptionValue::Float(float_value(option_value, option_spec.cli_name)?)),
+        OptionValueType::Boolean => Ok(OptionValue::Boolean(boolean_value(option_value, option_spec.cli_name)?)),
     }
 }
 
@@ -511,46 +492,16 @@ fn set_toml_option_value(toml_mapping: &mut OptionTable, option_spec: &OptionSpe
         let section_entry =
             namespace_table.entry(section_name.to_string()).or_insert_with(|| OptionValue::Table(OptionTable::new()));
         if let OptionValue::Table(section_table) = section_entry {
-            section_table.insert(option_spec.toml_key.clone(), option_value);
+            section_table.insert(option_spec.config_key().to_string(), option_value);
         }
         return;
     }
 
     let section_entry =
-        toml_mapping.entry(option_spec.section.clone()).or_insert_with(|| OptionValue::Table(OptionTable::new()));
+        toml_mapping.entry(option_spec.section.to_string()).or_insert_with(|| OptionValue::Table(OptionTable::new()));
     if let OptionValue::Table(section_table) = section_entry {
-        section_table.insert(option_spec.toml_key.clone(), option_value);
+        section_table.insert(option_spec.config_key().to_string(), option_value);
     }
-}
-
-fn apply_trait_type_alias(toml_mapping: &mut OptionTable, raw_trait_type: Option<&OptionValue>) -> ConfigResult<()> {
-    let Some(raw_value) = raw_trait_type else {
-        return Ok(());
-    };
-    if !raw_value.is_explicit_some() {
-        return Ok(());
-    }
-    let trait_type = string_value(raw_value, "trait_type")?;
-    let trait_entry = toml_mapping.entry("trait".to_string()).or_insert_with(|| OptionValue::Table(OptionTable::new()));
-    let OptionValue::Table(trait_table) = trait_entry else {
-        return Ok(());
-    };
-    match trait_type.as_str() {
-        "quantitative" => {
-            trait_table.insert("qt".to_string(), OptionValue::Boolean(true));
-            trait_table.insert("bt".to_string(), OptionValue::Boolean(false));
-        }
-        "binary" => {
-            trait_table.insert("qt".to_string(), OptionValue::Boolean(false));
-            trait_table.insert("bt".to_string(), OptionValue::Boolean(true));
-        }
-        _ => {
-            return Err(ConfigError::new(format!(
-                "Invalid trait_type value {trait_type:?}; expected 'quantitative' or 'binary'."
-            )));
-        }
-    }
-    Ok(())
 }
 
 fn overlay_toml_configs(base_config: &OptionTable, override_config: &OptionTable) -> OptionTable {
@@ -592,12 +543,12 @@ fn reject_layer_trait_flag_conflict(toml_config: &OptionTable) -> ConfigResult<(
 }
 
 fn apply_trait_flag_layer_precedence(merged_config: &mut OptionTable, override_config: &OptionTable) {
-    let override_qt = get_bool(override_config, "trait", "qt").ok().flatten();
-    let override_bt = get_bool(override_config, "trait", "bt").ok().flatten();
-    if override_qt == Some(true) {
+    let override_quantitative_trait = get_bool(override_config, "trait", "qt").ok().flatten();
+    let override_binary_trait = get_bool(override_config, "trait", "bt").ok().flatten();
+    if override_quantitative_trait == Some(true) {
         set_nested_value(merged_config, "trait", "bt", OptionValue::Boolean(false));
     }
-    if override_bt == Some(true) {
+    if override_binary_trait == Some(true) {
         set_nested_value(merged_config, "trait", "qt", OptionValue::Boolean(false));
     }
 }
@@ -610,29 +561,44 @@ fn set_nested_value(toml_config: &mut OptionTable, section_name: &str, key: &str
     }
 }
 
+/// Load packaged defaults as an unvalidated runtime config object.
+///
+/// # Errors
+///
+/// Returns an error when packaged defaults are malformed.
 pub fn load_packaged_config_data() -> ConfigResult<RegenieConfigData> {
     let explicit_options = BTreeSet::new();
     build_runtime_config_from_toml_config(&load_default_option_catalog_data()?.raw_toml, &explicit_options)
 }
 
+/// Resolve a config from explicit Python option values.
+///
+/// # Errors
+///
+/// Returns an error when options are invalid or the resolved config fails validation.
 pub fn from_options(raw_options: &OptionTable) -> ConfigResult<RegenieConfigData> {
     let explicit_layer = option_dictionary_to_toml_config_layer(raw_options, "Python options")?;
     from_toml_config_layers(&load_default_option_catalog_data()?.raw_toml, [explicit_layer])
 }
 
+/// Resolve a config from a TOML file path.
+///
+/// # Errors
+///
+/// Returns an error when the TOML file is invalid or the resolved config fails validation.
 pub fn from_toml_path(path: &Path) -> ConfigResult<RegenieConfigData> {
     let toml_layer = decode_toml_file_layer(Some(path))?;
     from_toml_config_layers(&load_default_option_catalog_data()?.raw_toml, [toml_layer])
 }
 
 fn from_toml_config(toml_config: &OptionTable, explicit_options: &BTreeSet<String>) -> ConfigResult<RegenieConfigData> {
-    let config = build_runtime_config_from_toml_config(toml_config, explicit_options)?;
-    let normalized_options = flatten_toml_mapping(toml_config)?;
+    let mut config = build_runtime_config_from_toml_config(toml_config, explicit_options)?;
+    let normalized_options = flatten_toml_mapping(toml_config);
     reject_quantitative_binary_only_options(explicit_options, &config.trait_config.trait_type)?;
-    reject_unsupported_options(&normalized_options)?;
     validate_unknown_options(&normalized_options)?;
     reject_missing_resolved_default_options(&normalized_options)?;
     validate_config(&config)?;
+    config.is_validated = true;
     Ok(config)
 }
 
@@ -656,6 +622,7 @@ pub struct TraitConfigData {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[expect(clippy::struct_excessive_bools, reason = "Runtime config mirrors public REGENIE boolean flags.")]
 pub struct BinaryConfigData {
     pub firth: bool,
     pub approx: bool,
@@ -665,6 +632,7 @@ pub struct BinaryConfigData {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[expect(clippy::struct_excessive_bools, reason = "Runtime config mirrors public --g-* boolean options.")]
 pub struct GComputeConfigData {
     pub device: String,
     pub staging_depth: i64,
@@ -733,6 +701,7 @@ pub struct GOutputConfigData {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[expect(clippy::struct_excessive_bools, reason = "Diagnostics config mirrors public --g-* boolean options.")]
 pub struct GDiagnosticsConfigData {
     pub telemetry: String,
     pub log_dir: Option<String>,
@@ -761,352 +730,503 @@ pub struct RegenieConfigData {
     pub g_output: GOutputConfigData,
     pub g_diagnostics: GDiagnosticsConfigData,
     pub explicit_options: BTreeSet<String>,
+    pub is_validated: bool,
 }
 
 fn build_runtime_config_from_toml_config(
     toml_config: &OptionTable,
     explicit_options: &BTreeSet<String>,
 ) -> ConfigResult<RegenieConfigData> {
-    let trait_type = resolve_configured_toml_trait_type(toml_config)?;
-    let pheno_columns = resolve_exclusive_column_values(toml_config, "input", "phenoCol", "phenoColList")?;
-    let covar_columns = resolve_exclusive_column_values(toml_config, "input", "covarCol", "covarColList")?;
-
     Ok(RegenieConfigData {
-        input: InputConfigData {
-            bgen: get_string(toml_config, "input", "bgen")?,
-            sample: get_string(toml_config, "input", "sample")?,
-            pheno_file: get_string(toml_config, "input", "phenoFile")?,
-            pheno_columns,
-            covar_file: get_string(toml_config, "input", "covarFile")?,
-            covar_columns,
-            pred: get_string(toml_config, "input", "pred")?,
-        },
-        trait_config: TraitConfigData {
-            step: required_i64(toml_config, "trait", "step", "step")?,
-            trait_type,
-            bsize: required_i64(toml_config, "trait", "bsize", "bsize")?,
-            threads: get_i64(toml_config, "trait", "threads")?,
-        },
-        binary: BinaryConfigData {
-            firth: required_bool(toml_config, "binary", "firth", "firth")?,
-            approx: required_bool(toml_config, "binary", "approx", "approx")?,
-            spa: get_bool(toml_config, "binary", "spa")?.unwrap_or(false),
-            p_threshold: required_f64(toml_config, "binary", "pThresh", "pThresh")?,
-            firth_se: required_bool(toml_config, "binary", "firth-se", "firth-se")?,
-        },
-        g_compute: GComputeConfigData {
-            device: required_string(toml_config, "g.compute", "device", "g-device")?,
-            staging_depth: required_i64(toml_config, "g.compute", "staging-depth", "g-staging-depth")?,
-            variant_limit: get_i64(toml_config, "g.compute", "variant-limit")?,
-            trusted_no_missing_diploid: required_bool(
-                toml_config,
-                "g.compute",
-                "trusted-no-missing-diploid",
-                "g-trusted-no-missing-diploid",
-            )?,
-            trusted_bgen_validation_mode: required_string(
-                toml_config,
-                "g.compute",
-                "trusted-bgen-validation-mode",
-                "g-trusted-bgen-validation-mode",
-            )?,
-            sample_key_mode: required_string(toml_config, "g.compute", "sample-key-mode", "g-sample-key-mode")?,
-            multi_phenotype_sample_mode: required_string(
-                toml_config,
-                "g.compute",
-                "multi-phenotype-sample-mode",
-                "g-multi-phenotype-sample-mode",
-            )?,
-            firth_batch_size: required_i64(toml_config, "g.compute", "firth-batch-size", "g-firth-batch-size")?,
-            firth_candidate_capacity: required_i64(
-                toml_config,
-                "g.compute",
-                "firth-candidate-capacity",
-                "g-firth-candidate-capacity",
-            )?,
-            binary_null_maximum_iterations: required_i64(
-                toml_config,
-                "g.compute",
-                "binary-null-maximum-iterations",
-                "g-binary-null-maximum-iterations",
-            )?,
-            binary_null_coefficient_tolerance: required_f64(
-                toml_config,
-                "g.compute",
-                "binary-null-coefficient-tolerance",
-                "g-binary-null-coefficient-tolerance",
-            )?,
-            null_logistic_nonconvergence_policy: required_string(
-                toml_config,
-                "g.compute",
-                "null-logistic-nonconvergence",
-                "g-null-logistic-nonconvergence",
-            )?,
-            binary_minimum_probability: required_f64(
-                toml_config,
-                "g.compute",
-                "binary-minimum-probability",
-                "g-binary-minimum-probability",
-            )?,
-            binary_minimum_variance: required_f64(
-                toml_config,
-                "g.compute",
-                "binary-minimum-variance",
-                "g-binary-minimum-variance",
-            )?,
-            binary_relative_variance_tolerance: required_f64(
-                toml_config,
-                "g.compute",
-                "binary-relative-variance-tolerance",
-                "g-binary-relative-variance-tolerance",
-            )?,
-            linear_minimum_variance: required_f64(
-                toml_config,
-                "g.compute",
-                "linear-minimum-variance",
-                "g-linear-minimum-variance",
-            )?,
-            linear_relative_variance_tolerance: required_f64(
-                toml_config,
-                "g.compute",
-                "linear-relative-variance-tolerance",
-                "g-linear-relative-variance-tolerance",
-            )?,
-            firth_maximum_iterations: required_i64(
-                toml_config,
-                "g.compute",
-                "firth-maximum-iterations",
-                "g-firth-maximum-iterations",
-            )?,
-            firth_gradient_tolerance: required_f64(
-                toml_config,
-                "g.compute",
-                "firth-gradient-tolerance",
-                "g-firth-gradient-tolerance",
-            )?,
-            firth_coefficient_tolerance: required_f64(
-                toml_config,
-                "g.compute",
-                "firth-coefficient-tolerance",
-                "g-firth-coefficient-tolerance",
-            )?,
-            firth_likelihood_tolerance: required_f64(
-                toml_config,
-                "g.compute",
-                "firth-likelihood-tolerance",
-                "g-firth-likelihood-tolerance",
-            )?,
-            firth_maximum_step_size: required_f64(
-                toml_config,
-                "g.compute",
-                "firth-maximum-step-size",
-                "g-firth-maximum-step-size",
-            )?,
-            firth_pseudo_maximum_iterations: required_i64(
-                toml_config,
-                "g.compute",
-                "firth-pseudo-maximum-iterations",
-                "g-firth-pseudo-maximum-iterations",
-            )?,
-            firth_pseudo_inner_maximum_iterations: required_i64(
-                toml_config,
-                "g.compute",
-                "firth-pseudo-inner-maximum-iterations",
-                "g-firth-pseudo-inner-maximum-iterations",
-            )?,
-            firth_newton_raphson_zero_start_iterations: required_i64(
-                toml_config,
-                "g.compute",
-                "firth-newton-raphson-zero-start-iterations",
-                "g-firth-newton-raphson-zero-start-iterations",
-            )?,
-            firth_line_search_maximum_attempts: required_i64(
-                toml_config,
-                "g.compute",
-                "firth-line-search-maximum-attempts",
-                "g-firth-line-search-maximum-attempts",
-            )?,
-            firth_step_halving_maximum_attempts: required_i64(
-                toml_config,
-                "g.compute",
-                "firth-step-halving-maximum-attempts",
-                "g-firth-step-halving-maximum-attempts",
-            )?,
-            firth_initial_response_scale: required_f64(
-                toml_config,
-                "g.compute",
-                "firth-initial-response-scale",
-                "g-firth-initial-response-scale",
-            )?,
-            firth_sparse_carrier_dosage_threshold: required_f64(
-                toml_config,
-                "g.compute",
-                "firth-sparse-carrier-dosage-threshold",
-                "g-firth-sparse-carrier-dosage-threshold",
-            )?,
-            firth_step_halving_scale: required_f64(
-                toml_config,
-                "g.compute",
-                "firth-step-halving-scale",
-                "g-firth-step-halving-scale",
-            )?,
-            null_firth_maximum_iterations: required_i64(
-                toml_config,
-                "g.compute",
-                "null-firth-maximum-iterations",
-                "g-null-firth-maximum-iterations",
-            )?,
-            null_firth_gradient_tolerance: required_f64(
-                toml_config,
-                "g.compute",
-                "null-firth-gradient-tolerance",
-                "g-null-firth-gradient-tolerance",
-            )?,
-            null_firth_maximum_step_size: required_f64(
-                toml_config,
-                "g.compute",
-                "null-firth-maximum-step-size",
-                "g-null-firth-maximum-step-size",
-            )?,
-            null_firth_fallback_iteration_multiplier: required_i64(
-                toml_config,
-                "g.compute",
-                "null-firth-fallback-iteration-multiplier",
-                "g-null-firth-fallback-iteration-multiplier",
-            )?,
-            null_firth_fallback_step_divisor: required_f64(
-                toml_config,
-                "g.compute",
-                "null-firth-fallback-step-divisor",
-                "g-null-firth-fallback-step-divisor",
-            )?,
-            null_firth_line_search_maximum_attempts: required_i64(
-                toml_config,
-                "g.compute",
-                "null-firth-line-search-maximum-attempts",
-                "g-null-firth-line-search-maximum-attempts",
-            )?,
-            null_firth_step_halving_scale: required_f64(
-                toml_config,
-                "g.compute",
-                "null-firth-step-halving-scale",
-                "g-null-firth-step-halving-scale",
-            )?,
-            use_block_firth_math: required_bool(
-                toml_config,
-                "g.compute",
-                "use-block-firth-math",
-                "g-use-block-firth-math",
-            )?,
-            bgen_decode_tile_variant_count: required_i64(
-                toml_config,
-                "g.compute",
-                "bgen-decode-tile-variant-count",
-                "g-bgen-decode-tile-variant-count",
-            )?,
-            gpu_genotype_format: required_string(
-                toml_config,
-                "g.compute",
-                "gpu-genotype-format",
-                "g-gpu-genotype-format",
-            )?,
-            score_dtype: required_string(toml_config, "g.compute", "score-dtype", "g-score-dtype")?,
-            firth_dtype: required_string(toml_config, "g.compute", "firth-dtype", "g-firth-dtype")?,
-            jax_cache_dir: get_string(toml_config, "g.compute", "jax-cache-dir")?,
-            jax_matmul_precision: get_string(toml_config, "g.compute", "jax-matmul-precision")?,
-            jax_persistent_cache: required_bool(
-                toml_config,
-                "g.compute",
-                "jax-persistent-cache",
-                "g-jax-persistent-cache",
-            )?,
-            jax_persistent_cache_min_entry_size_bytes: required_i64(
-                toml_config,
-                "g.compute",
-                "jax-persistent-cache-min-entry-size-bytes",
-                "g-jax-persistent-cache-min-entry-size-bytes",
-            )?,
-            jax_persistent_cache_min_compile_time_seconds: required_i64(
-                toml_config,
-                "g.compute",
-                "jax-persistent-cache-min-compile-time-seconds",
-                "g-jax-persistent-cache-min-compile-time-seconds",
-            )?,
-            jax_xla_autotune_cache: required_bool(
-                toml_config,
-                "g.compute",
-                "jax-xla-autotune-cache",
-                "g-jax-xla-autotune-cache",
-            )?,
-            jax_transfer_guard: required_bool(toml_config, "g.compute", "jax-transfer-guard", "g-jax-transfer-guard")?,
-        },
-        g_output: GOutputConfigData {
-            out: get_string(toml_config, "output", "out")?,
-            format: required_string(toml_config, "g.output", "format", "g-output-format")?,
-            output_run_directory: get_string(toml_config, "g.output", "output-run-directory")?,
-            writer_threads: required_i64(toml_config, "g.output", "writer-threads", "g-writer-threads")?,
-            writer_queue_depth: required_i64(toml_config, "g.output", "writer-queue-depth", "g-writer-queue-depth")?,
-            chunks_per_arrow_file: required_i64(
-                toml_config,
-                "g.output",
-                "chunks-per-arrow-file",
-                "g-output-chunks-per-arrow-file",
-            )?,
-            arrow_compression: required_string(
-                toml_config,
-                "g.output",
-                "arrow-compression",
-                "g-output-arrow-compression",
-            )?,
-            parquet_compression: required_string(
-                toml_config,
-                "g.output",
-                "parquet-compression",
-                "g-output-parquet-compression",
-            )?,
-            resume: required_bool(toml_config, "g.output", "resume", "g-resume")?,
-            resume_mode: required_string(toml_config, "g.output", "resume-mode", "g-resume-mode")?,
-            finalize_parquet: required_bool(toml_config, "g.output", "finalize-parquet", "g-finalize-parquet")?,
-        },
-        g_diagnostics: GDiagnosticsConfigData {
-            telemetry: required_string(toml_config, "g.diagnostics", "telemetry", "g-telemetry")?,
-            log_dir: get_string(toml_config, "g.diagnostics", "log-dir")?,
-            stage_timings_json: get_string(toml_config, "g.diagnostics", "stage-timings-json")?,
-            log_filter: required_string(toml_config, "g.diagnostics", "log-filter", "g-log-filter")?,
-            log_file: get_string(toml_config, "g.diagnostics", "log-file")?,
-            log_stderr: required_bool(toml_config, "g.diagnostics", "log-stderr", "g-log-stderr")?,
-            progress_interval_seconds: required_f64(
-                toml_config,
-                "g.diagnostics",
-                "progress-interval-seconds",
-                "g-progress-interval-seconds",
-            )?,
-            progress_interval_chunks: required_i64(
-                toml_config,
-                "g.diagnostics",
-                "progress-interval-chunks",
-                "g-progress-interval-chunks",
-            )?,
-            profile_summary_json: get_string(toml_config, "g.diagnostics", "profile-summary-json")?,
-            trace_file: get_string(toml_config, "g.diagnostics", "trace-file")?,
-            trace_filter: required_string(toml_config, "g.diagnostics", "trace-filter", "g-trace-filter")?,
-            trace_event_cap: required_i64(toml_config, "g.diagnostics", "trace-event-cap", "g-trace-event-cap")?,
-            log_queue_size: required_i64(toml_config, "g.diagnostics", "log-queue-size", "g-log-queue-size")?,
-            log_lossy: required_bool(toml_config, "g.diagnostics", "log-lossy", "g-log-lossy")?,
-            include_source_location: required_bool(
-                toml_config,
-                "g.diagnostics",
-                "include-source-location",
-                "g-include-source-location",
-            )?,
-            include_span_events: required_bool(
-                toml_config,
-                "g.diagnostics",
-                "include-span-events",
-                "g-include-span-events",
-            )?,
-        },
+        input: build_input_config(toml_config)?,
+        trait_config: build_trait_config(toml_config)?,
+        binary: build_binary_config(toml_config)?,
+        g_compute: build_g_compute_config(toml_config)?,
+        g_output: build_g_output_config(toml_config)?,
+        g_diagnostics: build_g_diagnostics_config(toml_config)?,
         explicit_options: explicit_options.clone(),
+        is_validated: false,
+    })
+}
+
+fn build_input_config(toml_config: &OptionTable) -> ConfigResult<InputConfigData> {
+    Ok(InputConfigData {
+        bgen: get_string(toml_config, "input", "bgen")?,
+        sample: get_string(toml_config, "input", "sample")?,
+        pheno_file: get_string(toml_config, "input", "phenoFile")?,
+        pheno_columns: resolve_exclusive_column_values(toml_config, "input", "phenoCol", "phenoColList")?,
+        covar_file: get_string(toml_config, "input", "covarFile")?,
+        covar_columns: resolve_exclusive_column_values(toml_config, "input", "covarCol", "covarColList")?,
+        pred: get_string(toml_config, "input", "pred")?,
+    })
+}
+
+fn build_trait_config(toml_config: &OptionTable) -> ConfigResult<TraitConfigData> {
+    let trait_type = resolve_configured_toml_trait_type(toml_config)?;
+    Ok(TraitConfigData {
+        step: required_i64(toml_config, "trait", "step", "step")?,
+        trait_type,
+        bsize: required_i64(toml_config, "trait", "bsize", "bsize")?,
+        threads: get_i64(toml_config, "trait", "threads")?,
+    })
+}
+
+fn build_binary_config(toml_config: &OptionTable) -> ConfigResult<BinaryConfigData> {
+    Ok(BinaryConfigData {
+        firth: required_bool(toml_config, "binary", "firth", "firth")?,
+        approx: required_bool(toml_config, "binary", "approx", "approx")?,
+        spa: false,
+        p_threshold: required_f64(toml_config, "binary", "pThresh", "pThresh")?,
+        firth_se: required_bool(toml_config, "binary", "firth-se", "firth-se")?,
+    })
+}
+
+struct ComputeCoreFields {
+    device: String,
+    staging_depth: i64,
+    variant_limit: Option<i64>,
+    trusted_no_missing_diploid: bool,
+    trusted_bgen_validation_mode: String,
+    sample_key_mode: String,
+    multi_phenotype_sample_mode: String,
+    firth_batch_size: i64,
+    firth_candidate_capacity: i64,
+    binary_null_maximum_iterations: i64,
+    binary_null_coefficient_tolerance: f64,
+    null_logistic_nonconvergence_policy: String,
+    binary_minimum_probability: f64,
+    binary_minimum_variance: f64,
+    binary_relative_variance_tolerance: f64,
+    linear_minimum_variance: f64,
+    linear_relative_variance_tolerance: f64,
+}
+
+struct FirthComputeFields {
+    maximum_iterations: i64,
+    gradient_tolerance: f64,
+    coefficient_tolerance: f64,
+    likelihood_tolerance: f64,
+    maximum_step_size: f64,
+    pseudo_maximum_iterations: i64,
+    pseudo_inner_maximum_iterations: i64,
+    newton_raphson_zero_start_iterations: i64,
+    line_search_maximum_attempts: i64,
+    step_halving_maximum_attempts: i64,
+    initial_response_scale: f64,
+    sparse_carrier_dosage_threshold: f64,
+    step_halving_scale: f64,
+}
+
+struct NullFirthComputeFields {
+    maximum_iterations: i64,
+    gradient_tolerance: f64,
+    maximum_step_size: f64,
+    fallback_iteration_multiplier: i64,
+    fallback_step_divisor: f64,
+    line_search_maximum_attempts: i64,
+    step_halving_scale: f64,
+}
+
+struct GenotypeComputeFields {
+    use_block_firth_math: bool,
+    bgen_decode_tile_variant_count: i64,
+    gpu_genotype_format: String,
+    score_dtype: String,
+    firth_dtype: String,
+}
+
+struct JaxComputeFields {
+    cache_dir: Option<String>,
+    matmul_precision: Option<String>,
+    persistent_cache: bool,
+    persistent_cache_min_entry_size_bytes: i64,
+    persistent_cache_min_compile_time_seconds: i64,
+    xla_autotune_cache: bool,
+    transfer_guard: bool,
+}
+
+fn build_g_compute_config(toml_config: &OptionTable) -> ConfigResult<GComputeConfigData> {
+    let core = build_compute_core_fields(toml_config)?;
+    let firth = build_firth_compute_fields(toml_config)?;
+    let null_firth = build_null_firth_compute_fields(toml_config)?;
+    let genotype = build_genotype_compute_fields(toml_config)?;
+    let jax = build_jax_compute_fields(toml_config)?;
+    Ok(GComputeConfigData {
+        device: core.device,
+        staging_depth: core.staging_depth,
+        variant_limit: core.variant_limit,
+        trusted_no_missing_diploid: core.trusted_no_missing_diploid,
+        trusted_bgen_validation_mode: core.trusted_bgen_validation_mode,
+        sample_key_mode: core.sample_key_mode,
+        multi_phenotype_sample_mode: core.multi_phenotype_sample_mode,
+        firth_batch_size: core.firth_batch_size,
+        firth_candidate_capacity: core.firth_candidate_capacity,
+        binary_null_maximum_iterations: core.binary_null_maximum_iterations,
+        binary_null_coefficient_tolerance: core.binary_null_coefficient_tolerance,
+        null_logistic_nonconvergence_policy: core.null_logistic_nonconvergence_policy,
+        binary_minimum_probability: core.binary_minimum_probability,
+        binary_minimum_variance: core.binary_minimum_variance,
+        binary_relative_variance_tolerance: core.binary_relative_variance_tolerance,
+        linear_minimum_variance: core.linear_minimum_variance,
+        linear_relative_variance_tolerance: core.linear_relative_variance_tolerance,
+        firth_maximum_iterations: firth.maximum_iterations,
+        firth_gradient_tolerance: firth.gradient_tolerance,
+        firth_coefficient_tolerance: firth.coefficient_tolerance,
+        firth_likelihood_tolerance: firth.likelihood_tolerance,
+        firth_maximum_step_size: firth.maximum_step_size,
+        firth_pseudo_maximum_iterations: firth.pseudo_maximum_iterations,
+        firth_pseudo_inner_maximum_iterations: firth.pseudo_inner_maximum_iterations,
+        firth_newton_raphson_zero_start_iterations: firth.newton_raphson_zero_start_iterations,
+        firth_line_search_maximum_attempts: firth.line_search_maximum_attempts,
+        firth_step_halving_maximum_attempts: firth.step_halving_maximum_attempts,
+        firth_initial_response_scale: firth.initial_response_scale,
+        firth_sparse_carrier_dosage_threshold: firth.sparse_carrier_dosage_threshold,
+        firth_step_halving_scale: firth.step_halving_scale,
+        null_firth_maximum_iterations: null_firth.maximum_iterations,
+        null_firth_gradient_tolerance: null_firth.gradient_tolerance,
+        null_firth_maximum_step_size: null_firth.maximum_step_size,
+        null_firth_fallback_iteration_multiplier: null_firth.fallback_iteration_multiplier,
+        null_firth_fallback_step_divisor: null_firth.fallback_step_divisor,
+        null_firth_line_search_maximum_attempts: null_firth.line_search_maximum_attempts,
+        null_firth_step_halving_scale: null_firth.step_halving_scale,
+        use_block_firth_math: genotype.use_block_firth_math,
+        bgen_decode_tile_variant_count: genotype.bgen_decode_tile_variant_count,
+        gpu_genotype_format: genotype.gpu_genotype_format,
+        score_dtype: genotype.score_dtype,
+        firth_dtype: genotype.firth_dtype,
+        jax_cache_dir: jax.cache_dir,
+        jax_matmul_precision: jax.matmul_precision,
+        jax_persistent_cache: jax.persistent_cache,
+        jax_persistent_cache_min_entry_size_bytes: jax.persistent_cache_min_entry_size_bytes,
+        jax_persistent_cache_min_compile_time_seconds: jax.persistent_cache_min_compile_time_seconds,
+        jax_xla_autotune_cache: jax.xla_autotune_cache,
+        jax_transfer_guard: jax.transfer_guard,
+    })
+}
+
+fn build_compute_core_fields(toml_config: &OptionTable) -> ConfigResult<ComputeCoreFields> {
+    Ok(ComputeCoreFields {
+        device: required_string(toml_config, "g.compute", "device", "g-device")?,
+        staging_depth: required_i64(toml_config, "g.compute", "staging-depth", "g-staging-depth")?,
+        variant_limit: get_i64(toml_config, "g.compute", "variant-limit")?,
+        trusted_no_missing_diploid: required_bool(
+            toml_config,
+            "g.compute",
+            "trusted-no-missing-diploid",
+            "g-trusted-no-missing-diploid",
+        )?,
+        trusted_bgen_validation_mode: required_string(
+            toml_config,
+            "g.compute",
+            "trusted-bgen-validation-mode",
+            "g-trusted-bgen-validation-mode",
+        )?,
+        sample_key_mode: required_string(toml_config, "g.compute", "sample-key-mode", "g-sample-key-mode")?,
+        multi_phenotype_sample_mode: required_string(
+            toml_config,
+            "g.compute",
+            "multi-phenotype-sample-mode",
+            "g-multi-phenotype-sample-mode",
+        )?,
+        firth_batch_size: required_i64(toml_config, "g.compute", "firth-batch-size", "g-firth-batch-size")?,
+        firth_candidate_capacity: required_i64(
+            toml_config,
+            "g.compute",
+            "firth-candidate-capacity",
+            "g-firth-candidate-capacity",
+        )?,
+        binary_null_maximum_iterations: required_i64(
+            toml_config,
+            "g.compute",
+            "binary-null-maximum-iterations",
+            "g-binary-null-maximum-iterations",
+        )?,
+        binary_null_coefficient_tolerance: required_f64(
+            toml_config,
+            "g.compute",
+            "binary-null-coefficient-tolerance",
+            "g-binary-null-coefficient-tolerance",
+        )?,
+        null_logistic_nonconvergence_policy: required_string(
+            toml_config,
+            "g.compute",
+            "null-logistic-nonconvergence",
+            "g-null-logistic-nonconvergence",
+        )?,
+        binary_minimum_probability: required_f64(
+            toml_config,
+            "g.compute",
+            "binary-minimum-probability",
+            "g-binary-minimum-probability",
+        )?,
+        binary_minimum_variance: required_f64(
+            toml_config,
+            "g.compute",
+            "binary-minimum-variance",
+            "g-binary-minimum-variance",
+        )?,
+        binary_relative_variance_tolerance: required_f64(
+            toml_config,
+            "g.compute",
+            "binary-relative-variance-tolerance",
+            "g-binary-relative-variance-tolerance",
+        )?,
+        linear_minimum_variance: required_f64(
+            toml_config,
+            "g.compute",
+            "linear-minimum-variance",
+            "g-linear-minimum-variance",
+        )?,
+        linear_relative_variance_tolerance: required_f64(
+            toml_config,
+            "g.compute",
+            "linear-relative-variance-tolerance",
+            "g-linear-relative-variance-tolerance",
+        )?,
+    })
+}
+
+fn build_firth_compute_fields(toml_config: &OptionTable) -> ConfigResult<FirthComputeFields> {
+    Ok(FirthComputeFields {
+        maximum_iterations: required_i64(
+            toml_config,
+            "g.compute",
+            "firth-maximum-iterations",
+            "g-firth-maximum-iterations",
+        )?,
+        gradient_tolerance: required_f64(
+            toml_config,
+            "g.compute",
+            "firth-gradient-tolerance",
+            "g-firth-gradient-tolerance",
+        )?,
+        coefficient_tolerance: required_f64(
+            toml_config,
+            "g.compute",
+            "firth-coefficient-tolerance",
+            "g-firth-coefficient-tolerance",
+        )?,
+        likelihood_tolerance: required_f64(
+            toml_config,
+            "g.compute",
+            "firth-likelihood-tolerance",
+            "g-firth-likelihood-tolerance",
+        )?,
+        maximum_step_size: required_f64(
+            toml_config,
+            "g.compute",
+            "firth-maximum-step-size",
+            "g-firth-maximum-step-size",
+        )?,
+        pseudo_maximum_iterations: required_i64(
+            toml_config,
+            "g.compute",
+            "firth-pseudo-maximum-iterations",
+            "g-firth-pseudo-maximum-iterations",
+        )?,
+        pseudo_inner_maximum_iterations: required_i64(
+            toml_config,
+            "g.compute",
+            "firth-pseudo-inner-maximum-iterations",
+            "g-firth-pseudo-inner-maximum-iterations",
+        )?,
+        newton_raphson_zero_start_iterations: required_i64(
+            toml_config,
+            "g.compute",
+            "firth-newton-raphson-zero-start-iterations",
+            "g-firth-newton-raphson-zero-start-iterations",
+        )?,
+        line_search_maximum_attempts: required_i64(
+            toml_config,
+            "g.compute",
+            "firth-line-search-maximum-attempts",
+            "g-firth-line-search-maximum-attempts",
+        )?,
+        step_halving_maximum_attempts: required_i64(
+            toml_config,
+            "g.compute",
+            "firth-step-halving-maximum-attempts",
+            "g-firth-step-halving-maximum-attempts",
+        )?,
+        initial_response_scale: required_f64(
+            toml_config,
+            "g.compute",
+            "firth-initial-response-scale",
+            "g-firth-initial-response-scale",
+        )?,
+        sparse_carrier_dosage_threshold: required_f64(
+            toml_config,
+            "g.compute",
+            "firth-sparse-carrier-dosage-threshold",
+            "g-firth-sparse-carrier-dosage-threshold",
+        )?,
+        step_halving_scale: required_f64(
+            toml_config,
+            "g.compute",
+            "firth-step-halving-scale",
+            "g-firth-step-halving-scale",
+        )?,
+    })
+}
+
+fn build_null_firth_compute_fields(toml_config: &OptionTable) -> ConfigResult<NullFirthComputeFields> {
+    Ok(NullFirthComputeFields {
+        maximum_iterations: required_i64(
+            toml_config,
+            "g.compute",
+            "null-firth-maximum-iterations",
+            "g-null-firth-maximum-iterations",
+        )?,
+        gradient_tolerance: required_f64(
+            toml_config,
+            "g.compute",
+            "null-firth-gradient-tolerance",
+            "g-null-firth-gradient-tolerance",
+        )?,
+        maximum_step_size: required_f64(
+            toml_config,
+            "g.compute",
+            "null-firth-maximum-step-size",
+            "g-null-firth-maximum-step-size",
+        )?,
+        fallback_iteration_multiplier: required_i64(
+            toml_config,
+            "g.compute",
+            "null-firth-fallback-iteration-multiplier",
+            "g-null-firth-fallback-iteration-multiplier",
+        )?,
+        fallback_step_divisor: required_f64(
+            toml_config,
+            "g.compute",
+            "null-firth-fallback-step-divisor",
+            "g-null-firth-fallback-step-divisor",
+        )?,
+        line_search_maximum_attempts: required_i64(
+            toml_config,
+            "g.compute",
+            "null-firth-line-search-maximum-attempts",
+            "g-null-firth-line-search-maximum-attempts",
+        )?,
+        step_halving_scale: required_f64(
+            toml_config,
+            "g.compute",
+            "null-firth-step-halving-scale",
+            "g-null-firth-step-halving-scale",
+        )?,
+    })
+}
+
+fn build_genotype_compute_fields(toml_config: &OptionTable) -> ConfigResult<GenotypeComputeFields> {
+    Ok(GenotypeComputeFields {
+        use_block_firth_math: required_bool(
+            toml_config,
+            "g.compute",
+            "use-block-firth-math",
+            "g-use-block-firth-math",
+        )?,
+        bgen_decode_tile_variant_count: required_i64(
+            toml_config,
+            "g.compute",
+            "bgen-decode-tile-variant-count",
+            "g-bgen-decode-tile-variant-count",
+        )?,
+        gpu_genotype_format: required_string(toml_config, "g.compute", "gpu-genotype-format", "g-gpu-genotype-format")?,
+        score_dtype: required_string(toml_config, "g.compute", "score-dtype", "g-score-dtype")?,
+        firth_dtype: required_string(toml_config, "g.compute", "firth-dtype", "g-firth-dtype")?,
+    })
+}
+
+fn build_jax_compute_fields(toml_config: &OptionTable) -> ConfigResult<JaxComputeFields> {
+    Ok(JaxComputeFields {
+        cache_dir: get_string(toml_config, "g.compute", "jax-cache-dir")?,
+        matmul_precision: get_string(toml_config, "g.compute", "jax-matmul-precision")?,
+        persistent_cache: required_bool(toml_config, "g.compute", "jax-persistent-cache", "g-jax-persistent-cache")?,
+        persistent_cache_min_entry_size_bytes: required_i64(
+            toml_config,
+            "g.compute",
+            "jax-persistent-cache-min-entry-size-bytes",
+            "g-jax-persistent-cache-min-entry-size-bytes",
+        )?,
+        persistent_cache_min_compile_time_seconds: required_i64(
+            toml_config,
+            "g.compute",
+            "jax-persistent-cache-min-compile-time-seconds",
+            "g-jax-persistent-cache-min-compile-time-seconds",
+        )?,
+        xla_autotune_cache: required_bool(
+            toml_config,
+            "g.compute",
+            "jax-xla-autotune-cache",
+            "g-jax-xla-autotune-cache",
+        )?,
+        transfer_guard: required_bool(toml_config, "g.compute", "jax-transfer-guard", "g-jax-transfer-guard")?,
+    })
+}
+
+fn build_g_output_config(toml_config: &OptionTable) -> ConfigResult<GOutputConfigData> {
+    Ok(GOutputConfigData {
+        out: get_string(toml_config, "output", "out")?,
+        format: required_string(toml_config, "g.output", "format", "g-output-format")?,
+        output_run_directory: get_string(toml_config, "g.output", "output-run-directory")?,
+        writer_threads: required_i64(toml_config, "g.output", "writer-threads", "g-writer-threads")?,
+        writer_queue_depth: required_i64(toml_config, "g.output", "writer-queue-depth", "g-writer-queue-depth")?,
+        chunks_per_arrow_file: required_i64(
+            toml_config,
+            "g.output",
+            "chunks-per-arrow-file",
+            "g-output-chunks-per-arrow-file",
+        )?,
+        arrow_compression: required_string(toml_config, "g.output", "arrow-compression", "g-output-arrow-compression")?,
+        parquet_compression: required_string(
+            toml_config,
+            "g.output",
+            "parquet-compression",
+            "g-output-parquet-compression",
+        )?,
+        resume: required_bool(toml_config, "g.output", "resume", "g-resume")?,
+        resume_mode: required_string(toml_config, "g.output", "resume-mode", "g-resume-mode")?,
+        finalize_parquet: required_bool(toml_config, "g.output", "finalize-parquet", "g-finalize-parquet")?,
+    })
+}
+
+fn build_g_diagnostics_config(toml_config: &OptionTable) -> ConfigResult<GDiagnosticsConfigData> {
+    Ok(GDiagnosticsConfigData {
+        telemetry: required_string(toml_config, "g.diagnostics", "telemetry", "g-telemetry")?,
+        log_dir: get_string(toml_config, "g.diagnostics", "log-dir")?,
+        stage_timings_json: get_string(toml_config, "g.diagnostics", "stage-timings-json")?,
+        log_filter: required_string(toml_config, "g.diagnostics", "log-filter", "g-log-filter")?,
+        log_file: get_string(toml_config, "g.diagnostics", "log-file")?,
+        log_stderr: required_bool(toml_config, "g.diagnostics", "log-stderr", "g-log-stderr")?,
+        progress_interval_seconds: required_f64(
+            toml_config,
+            "g.diagnostics",
+            "progress-interval-seconds",
+            "g-progress-interval-seconds",
+        )?,
+        progress_interval_chunks: required_i64(
+            toml_config,
+            "g.diagnostics",
+            "progress-interval-chunks",
+            "g-progress-interval-chunks",
+        )?,
+        profile_summary_json: get_string(toml_config, "g.diagnostics", "profile-summary-json")?,
+        trace_file: get_string(toml_config, "g.diagnostics", "trace-file")?,
+        trace_filter: required_string(toml_config, "g.diagnostics", "trace-filter", "g-trace-filter")?,
+        trace_event_cap: required_i64(toml_config, "g.diagnostics", "trace-event-cap", "g-trace-event-cap")?,
+        log_queue_size: required_i64(toml_config, "g.diagnostics", "log-queue-size", "g-log-queue-size")?,
+        log_lossy: required_bool(toml_config, "g.diagnostics", "log-lossy", "g-log-lossy")?,
+        include_source_location: required_bool(
+            toml_config,
+            "g.diagnostics",
+            "include-source-location",
+            "g-include-source-location",
+        )?,
+        include_span_events: required_bool(
+            toml_config,
+            "g.diagnostics",
+            "include-span-events",
+            "g-include-span-events",
+        )?,
     })
 }
 
@@ -1114,6 +1234,11 @@ fn resolve_configured_toml_trait_type(toml_config: &OptionTable) -> ConfigResult
     normalize_trait_type(get_bool(toml_config, "trait", "qt")?, get_bool(toml_config, "trait", "bt")?)
 }
 
+/// Resolve REGENIE trait flags into the normalized runtime trait type.
+///
+/// # Errors
+///
+/// Returns an error when both quantitative and binary trait flags are enabled.
 pub fn normalize_trait_type(qt: Option<bool>, bt: Option<bool>) -> ConfigResult<String> {
     if qt == Some(true) && bt == Some(true) {
         return Err(ConfigError::new("--qt and --bt are mutually exclusive."));

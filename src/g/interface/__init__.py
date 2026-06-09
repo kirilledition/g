@@ -1,8 +1,7 @@
 """REGENIE-compatible public interface layer."""
 
-from g.interface import config, options
+from g.interface import config
 
 __all__ = [
     "config",
-    "options",
 ]

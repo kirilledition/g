@@ -76,7 +76,10 @@ names the cap and stream path.
 
 ## Unsupported Options
 
-Unsupported REGENIE options, such as `--bed`, `--pgen`, categorical covariate
-flags, `--spa`, and exact Firth without `--approx`, fail instead of being
-silently ignored. Treat that as an intentional guardrail while the supported
-surface is still narrow.
+`uv run g regenie --help` is the authoritative list of supported flags on this
+experimental Rust frontend branch. Familiar REGENIE flags that are not listed
+there are not accepted yet.
+
+Common absent flags include `--bed`, `--pgen`, `--keep`, `--remove`,
+`--extract`, `--exclude`, `--catCovarList`, `--test`, `--t2e`, and `--spa`.
+Use BGEN Step 2 inputs with the listed flags until those modes are implemented.

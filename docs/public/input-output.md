@@ -7,7 +7,7 @@ This page summarizes the file contracts that are currently user-facing. Details 
 - BGEN 1.2 is the active supported genotype source.
 - `.sample` files are supported.
 - Embedded BGEN sample identifiers are supported when available.
-- BED and PGEN options are recognized but not implemented.
+- BED and PGEN CLI/TOML options are not accepted on this branch.
 
 The trusted fast path is controlled by:
 

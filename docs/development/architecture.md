@@ -25,7 +25,6 @@ src/g/
   api.py                         public Python API
   cli.py                         thin Python dispatcher into the Rust CLI frontend
   interface/
-    options.py                   Python compatibility metadata for CLI/TOML/Python names
     config.py                    compatibility wrappers around Rust-owned config objects
   execution_plan.py              immutable normalized run plans
   runner.py                      runtime orchestration, telemetry, dispatch, artifacts
@@ -49,7 +48,7 @@ src/g/
 ## Native Runtime
 
 ```text
-src/config_frontend/             Rust CLI/config frontend, clap, toml-spanner
+src/config_frontend/             Rust CLI/config frontend, clap, toml/Serde, option specs
 src/genotype/                    BGEN mmap/index/decode/preprocess/profile
 src/sample.rs                    sample/phenotype/covariate alignment
 src/output/                      Arrow IPC chunks, Parquet finalization, manifests
@@ -60,7 +59,7 @@ src/python/                      PyO3 config/runtime bindings and logging bridge
 
 - No Python DataFrame library in the core execution path.
 - No hidden runtime constants inside JAX kernels when they affect compiled shapes.
-- Unsupported REGENIE flags should fail loudly.
+- Unsupported REGENIE flags should stay out of the CLI/config schema until implemented.
 - Run manifests protect resume correctness.
 - Profiling should be structured and reproducible.
 - Performance work should be benchmarked end to end.

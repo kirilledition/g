@@ -2,8 +2,9 @@ use std::path::Path;
 
 use clap::{Arg, ArgAction, Command, error::ErrorKind};
 
+use super::validation::validate_existing_input_paths;
 use super::{
-    ConfigError, ConfigResult, OptionTable, OptionValue, RegenieConfigData, SupportLevel, decode_toml_file_layer,
+    ConfigError, ConfigResult, OptionTable, OptionValue, RegenieConfigData, decode_toml_file_layer,
     from_toml_config_layers, load_default_option_catalog_data, option_dictionary_to_toml_config_layer, option_registry,
 };
 
@@ -25,6 +26,7 @@ impl CliOutcomeData {
     }
 }
 
+#[must_use]
 pub fn dispatch_cli(args: &[String], direct_regenie: bool) -> CliOutcomeData {
     match dispatch_cli_result(args, direct_regenie) {
         Ok(outcome) => outcome,
@@ -55,6 +57,7 @@ fn dispatch_regenie_command(args: &[String], program_name: &str) -> ConfigResult
     let toml_layer = decode_toml_file_layer(config_path.as_deref().map(Path::new))?;
     let cli_layer = option_dictionary_to_toml_config_layer(&cli_options, "CLI options")?;
     let config = from_toml_config_layers(&load_default_option_catalog_data()?.raw_toml, [toml_layer, cli_layer])?;
+    validate_existing_input_paths(&config)?;
     Ok(CliOutcomeData::config(config))
 }
 
@@ -65,7 +68,7 @@ struct ParsedRegenieCli {
 }
 
 fn parse_regenie_cli(args: &[String]) -> ConfigResult<ParsedRegenieCli> {
-    let registry = option_registry()?;
+    let registry = option_registry();
     let mut clap_arguments = Vec::with_capacity(args.len() + 1);
     clap_arguments.push("g-regenie".to_string());
     clap_arguments.extend(args.iter().cloned());
@@ -81,25 +84,25 @@ fn parse_regenie_cli(args: &[String]) -> ConfigResult<ParsedRegenieCli> {
 
     let config_path = matches.get_one::<String>("config").cloned();
     let mut cli_options = OptionTable::new();
-    for option_spec in &registry.specs {
+    for option_spec in registry.specs {
         if option_spec.is_flag {
-            if matches.get_flag(&option_spec.name) {
-                cli_options.insert(option_spec.name.clone(), OptionValue::Boolean(true));
+            if matches.get_flag(option_spec.cli_name) {
+                cli_options.insert(option_spec.cli_name.to_string(), OptionValue::Boolean(true));
             }
-            let negative_name = format!("no-{}", option_spec.name);
+            let negative_name = format!("no-{}", option_spec.cli_name);
             if matches.get_flag(&negative_name) {
-                cli_options.insert(option_spec.name.clone(), OptionValue::Boolean(false));
+                cli_options.insert(option_spec.cli_name.to_string(), OptionValue::Boolean(false));
             }
             continue;
         }
         if option_spec.multiple {
-            if let Some(values) = matches.get_many::<String>(&option_spec.name) {
-                cli_options.insert(option_spec.name.clone(), OptionValue::List(values.cloned().collect()));
+            if let Some(values) = matches.get_many::<String>(option_spec.cli_name) {
+                cli_options.insert(option_spec.cli_name.to_string(), OptionValue::List(values.cloned().collect()));
             }
             continue;
         }
-        if let Some(value) = matches.get_one::<String>(&option_spec.name) {
-            cli_options.insert(option_spec.name.clone(), OptionValue::String(value.clone()));
+        if let Some(value) = matches.get_one::<String>(option_spec.cli_name) {
+            cli_options.insert(option_spec.cli_name.to_string(), OptionValue::String(value.clone()));
         }
     }
 
@@ -112,36 +115,32 @@ fn build_regenie_clap_command(program_name: &str) -> Command {
         .disable_version_flag(true)
         .arg(Arg::new("config").long("config").help("TOML config file.").num_args(1).action(ArgAction::Set));
 
-    if let Ok(registry) = option_registry() {
-        for option_spec in &registry.specs {
-            let hide_option = option_spec.support_level == SupportLevel::RecognizedUnsupported;
-            if option_spec.is_flag {
-                command = command.arg(
-                    Arg::new(leak_string(option_spec.name.clone()))
-                        .long(leak_string(option_spec.name.clone()))
-                        .help(leak_string(option_spec.help_text.clone()))
-                        .hide(hide_option)
-                        .action(ArgAction::SetTrue),
-                );
-                let negative_name = format!("no-{}", option_spec.name);
-                command = command.arg(
-                    Arg::new(leak_string(negative_name.clone()))
-                        .long(leak_string(negative_name))
-                        .hide(true)
-                        .action(ArgAction::SetTrue),
-                );
-                continue;
-            }
-            let action = if option_spec.multiple { ArgAction::Append } else { ArgAction::Set };
+    let registry = option_registry();
+    for option_spec in registry.specs {
+        if option_spec.is_flag {
             command = command.arg(
-                Arg::new(leak_string(option_spec.name.clone()))
-                    .long(leak_string(option_spec.name.clone()))
-                    .help(leak_string(option_spec.help_text.clone()))
-                    .hide(hide_option)
-                    .num_args(1)
-                    .action(action),
+                Arg::new(option_spec.cli_name)
+                    .long(option_spec.cli_name)
+                    .help(option_spec.help_text)
+                    .action(ArgAction::SetTrue),
             );
+            let negative_name = format!("no-{}", option_spec.cli_name);
+            command = command.arg(
+                Arg::new(leak_string(negative_name.clone()))
+                    .long(leak_string(negative_name))
+                    .hide(true)
+                    .action(ArgAction::SetTrue),
+            );
+            continue;
         }
+        let action = if option_spec.multiple { ArgAction::Append } else { ArgAction::Set };
+        command = command.arg(
+            Arg::new(option_spec.cli_name)
+                .long(option_spec.cli_name)
+                .help(option_spec.help_text)
+                .num_args(1)
+                .action(action),
+        );
     }
     command
 }
@@ -150,15 +149,27 @@ fn leak_string(value: String) -> &'static str {
     Box::leak(value.into_boxed_str())
 }
 
-pub fn explain_option(name: &str) -> ConfigResult<String> {
-    let Some(option_spec) = option_registry()?.get_by_name(name) else {
-        return Err(ConfigError::new(format!("Unknown option: {name}")));
+/// Return a user-facing explanation for one option.
+///
+/// # Errors
+///
+/// Returns an error when the option name is unknown.
+pub fn explain_option(cli_name: &str) -> ConfigResult<String> {
+    let Some(option_spec) = option_registry().get_by_cli_name(cli_name) else {
+        return Err(ConfigError::new(format!("Unknown option: {cli_name}")));
     };
-    Ok(format!("{}: {}. {}", option_spec.name, option_spec.support_level.as_str(), option_spec.help_text))
+    Ok(format!("{}: {}. {}", option_spec.cli_name, option_spec.support_level.as_str(), option_spec.help_text))
 }
 
-pub fn iter_explanations() -> ConfigResult<Vec<String>> {
-    option_registry()?.specs.iter().map(|option_spec| explain_option(&option_spec.name)).collect()
+#[must_use]
+pub fn iter_explanations() -> Vec<String> {
+    option_registry()
+        .specs
+        .iter()
+        .map(|option_spec| {
+            format!("{}: {}. {}", option_spec.cli_name, option_spec.support_level.as_str(), option_spec.help_text)
+        })
+        .collect()
 }
 
 fn root_help(program_name: &str) -> String {

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import functools
-import os
 import typing
-from pathlib import Path
 
 import g._core
 from g import types
+
+if typing.TYPE_CHECKING:
+    from pathlib import Path
 
 InputConfig = g._core.InputConfig
 TraitConfig = g._core.TraitConfig
@@ -18,7 +19,7 @@ GOutputConfig = g._core.GOutputConfig
 GDiagnosticsConfig = g._core.GDiagnosticsConfig
 RegenieConfig = g._core.RegenieConfig
 
-QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "spa", "pThresh")
+QUANTITATIVE_BINARY_ONLY_OPTION_NAMES = ("firth", "approx", "firth-se", "pThresh")
 
 
 def split_name_list(raw_names: str | typing.Iterable[str] | None) -> tuple[str, ...]:
@@ -65,6 +66,8 @@ def load_toml(path: Path) -> RegenieConfig:
 
 def validate_config(config: RegenieConfig) -> None:
     """Validate a complete normalized config."""
+    if config.is_validated:
+        return
     g._core.validate_regenie_config(config)
 
 
@@ -83,49 +86,31 @@ def build_template() -> str:
     return g._core.build_config_template()
 
 
-def validate_positive_integer(option_name: str, value: int) -> None:
-    """Validate that an integer config value is positive."""
-    if value <= 0:
-        message = f"{option_name} must be positive."
-        raise ValueError(message)
+def explain_option(name: str) -> str:
+    """Return the Rust-owned explanation for a config option."""
+    return g._core.explain_config_option(name)
 
 
-def validate_non_negative_integer(option_name: str, value: int) -> None:
-    """Validate that an integer config value is non-negative."""
-    if value < 0:
-        message = f"{option_name} must be non-negative."
-        raise ValueError(message)
+def iter_explanations() -> tuple[str, ...]:
+    """Return Rust-owned explanations for all config options."""
+    return tuple(g._core.iter_config_explanations())
 
 
-def validate_positive_float(option_name: str, value: float) -> None:
-    """Validate that a floating-point config value is positive."""
-    if value <= 0.0:
-        message = f"{option_name} must be positive."
-        raise ValueError(message)
+def decode_toml_mapping(toml_data: bytes | str, *, source: str) -> dict[str, typing.Any]:
+    """Decode TOML into built-in containers through Rust."""
+    return g._core.decode_config_toml_mapping(toml_data, source)
 
 
-def validate_probability_floor(option_name: str, value: float) -> None:
-    """Validate that a probability floor remains below a symmetric midpoint."""
-    validate_positive_float(option_name, value)
-    if value >= 0.5:
-        message = f"{option_name} must be less than 0.5."
-        raise ValueError(message)
+def flatten_toml_mapping(raw_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
+    """Flatten TOML-shaped sections into canonical option names through Rust."""
+    return g._core.flatten_config_toml_mapping(raw_options)
 
 
-def format_toml_value(value: typing.Any) -> str:
-    """Format one TOML value."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int | float):
-        return str(value)
-    if isinstance(value, Path):
-        return format_toml_string(os.fspath(value))
-    if isinstance(value, list | tuple):
-        return f"[{', '.join(format_toml_value(item_value) for item_value in value)}]"
-    return format_toml_string(str(value))
+def normalize_option_name(option_name: str) -> str:
+    """Map Pythonic names to canonical option names through Rust."""
+    return g._core.normalize_config_option_name(option_name)
 
 
-def format_toml_string(value: str) -> str:
-    """Format a TOML basic string."""
-    escaped_value = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped_value}"'
+def normalize_option_dictionary(raw_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
+    """Normalize option names through Rust."""
+    return g._core.normalize_config_option_dictionary(raw_options)

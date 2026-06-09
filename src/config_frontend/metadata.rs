@@ -1,25 +1,24 @@
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
+
+use super::options;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SupportLevel {
     Supported,
-    RecognizedUnsupported,
     GExtension,
-    DeprecatedAlias,
 }
 
 impl SupportLevel {
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Supported => "supported",
-            Self::RecognizedUnsupported => "recognized_unsupported",
             Self::GExtension => "g_extension",
-            Self::DeprecatedAlias => "deprecated_alias",
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum OptionValueType {
     String,
     Integer,
@@ -28,75 +27,71 @@ pub(super) enum OptionValueType {
     Path,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DefaultPolicy {
     Value,
     AbsentIsNone,
     RequiredAtRuntime,
-    Derived,
-    Unsupported,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug)]
 pub struct OptionSpec {
-    pub name: String,
-    pub(super) destination: String,
+    pub cli_name: &'static str,
     pub(super) support_level: SupportLevel,
-    pub(super) section: String,
-    pub(super) help_text: String,
+    pub(super) section: &'static str,
+    pub(super) help_text: &'static str,
     pub(super) value_type: OptionValueType,
     pub(super) multiple: bool,
     pub(super) is_flag: bool,
-    pub(super) accepted_values: Vec<String>,
-    pub(super) toml_key: String,
+    pub(super) accepted_values: &'static [&'static str],
     pub(super) default_policy: DefaultPolicy,
-    pub(super) python_aliases: Vec<String>,
+}
+
+impl OptionSpec {
+    pub(super) fn config_key(&self) -> &'static str {
+        if self.section == "g.output"
+            && let Some(config_key) = self.cli_name.strip_prefix("g-output-")
+        {
+            return config_key;
+        }
+        if self.section.starts_with("g.") {
+            return self.cli_name.strip_prefix("g-").unwrap_or(self.cli_name);
+        }
+        self.cli_name
+    }
 }
 
 #[derive(Clone, Debug)]
 pub(super) struct OptionRegistry {
-    pub(super) specs: Vec<OptionSpec>,
-    by_name: BTreeMap<String, usize>,
-    by_destination: BTreeMap<String, usize>,
-    by_python_alias: BTreeMap<String, usize>,
-    by_toml_path: BTreeMap<(String, String), usize>,
+    pub(super) specs: &'static [OptionSpec],
+    by_cli_name: BTreeMap<&'static str, usize>,
+    by_toml_path: BTreeMap<&'static str, BTreeMap<&'static str, usize>>,
 }
 
 impl OptionRegistry {
-    fn new(specs: Vec<OptionSpec>) -> Self {
-        let mut by_name = BTreeMap::new();
-        let mut by_destination = BTreeMap::new();
-        let mut by_python_alias = BTreeMap::new();
+    fn new(specs: &'static [OptionSpec]) -> Self {
+        let mut by_cli_name = BTreeMap::new();
         let mut by_toml_path = BTreeMap::new();
 
         for (spec_index, option_spec) in specs.iter().enumerate() {
-            by_name.insert(option_spec.name.clone(), spec_index);
-            by_destination.insert(option_spec.destination.clone(), spec_index);
-            by_toml_path.insert((option_spec.section.clone(), option_spec.toml_key.clone()), spec_index);
-            for python_alias in &option_spec.python_aliases {
-                by_python_alias.insert(python_alias.clone(), spec_index);
-            }
+            by_cli_name.insert(option_spec.cli_name, spec_index);
+            by_toml_path
+                .entry(option_spec.section)
+                .or_insert_with(BTreeMap::new)
+                .insert(option_spec.config_key(), spec_index);
         }
 
-        Self { specs, by_name, by_destination, by_python_alias, by_toml_path }
+        Self { specs, by_cli_name, by_toml_path }
     }
 
-    pub(super) fn get_by_name(&self, option_name: &str) -> Option<&OptionSpec> {
-        self.by_name.get(option_name).and_then(|option_index| self.specs.get(*option_index))
-    }
-
-    pub(super) fn get_by_destination(&self, option_name: &str) -> Option<&OptionSpec> {
-        self.by_destination.get(option_name).and_then(|option_index| self.specs.get(*option_index))
-    }
-
-    pub(super) fn get_by_python_alias(&self, option_name: &str) -> Option<&OptionSpec> {
-        self.by_python_alias.get(option_name).and_then(|option_index| self.specs.get(*option_index))
+    pub(super) fn get_by_cli_name(&self, option_name: &str) -> Option<&OptionSpec> {
+        self.by_cli_name.get(option_name).and_then(|option_index| self.specs.get(*option_index))
     }
 
     pub(super) fn get_by_toml_path(&self, section_name: &str, toml_key: &str) -> Option<&OptionSpec> {
         self.by_toml_path
-            .get(&(section_name.to_string(), toml_key.to_string()))
+            .get(section_name)
+            .and_then(|section_options| section_options.get(toml_key))
             .and_then(|option_index| self.specs.get(*option_index))
     }
 
@@ -106,34 +101,13 @@ impl OptionRegistry {
             .filter(|option_spec| {
                 matches!(option_spec.support_level, SupportLevel::Supported | SupportLevel::GExtension)
             })
-            .map(|option_spec| option_spec.name.clone())
-            .collect()
-    }
-
-    pub(super) fn unsupported_option_names(&self) -> BTreeSet<String> {
-        self.specs
-            .iter()
-            .filter(|option_spec| option_spec.support_level == SupportLevel::RecognizedUnsupported)
-            .map(|option_spec| option_spec.name.clone())
+            .map(|option_spec| option_spec.cli_name.to_string())
             .collect()
     }
 }
 
-static OPTION_REGISTRY: OnceLock<Result<OptionRegistry, ConfigError>> = OnceLock::new();
+static OPTION_REGISTRY: OnceLock<OptionRegistry> = OnceLock::new();
 
-pub(super) fn option_registry() -> ConfigResult<&'static OptionRegistry> {
-    OPTION_REGISTRY
-        .get_or_init(|| {
-            let specs = serde_json::from_str::<Vec<OptionSpec>>(OPTION_METADATA_JSON)
-                .map_err(|error| ConfigError::new(format!("Invalid packaged option metadata: {error}")))?;
-            Ok(OptionRegistry::new(specs))
-        })
-        .as_ref()
-        .map_err(Clone::clone)
+pub(super) fn option_registry() -> &'static OptionRegistry {
+    OPTION_REGISTRY.get_or_init(|| OptionRegistry::new(options::OPTION_SPECS))
 }
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::OnceLock;
-
-use serde::Deserialize;
-
-use super::{ConfigError, ConfigResult, OPTION_METADATA_JSON};

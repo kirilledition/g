@@ -1,13 +1,3 @@
-#![allow(
-    clippy::missing_errors_doc,
-    clippy::module_name_repetitions,
-    clippy::elidable_lifetime_names,
-    clippy::needless_pass_by_value,
-    clippy::ref_option,
-    clippy::too_many_lines,
-    clippy::unnecessary_wraps
-)]
-
 use std::path::Path;
 
 use pyo3::basic::CompareOp;
@@ -130,40 +120,41 @@ impl CliOutcome {
 #[pymethods]
 impl InputConfig {
     #[getter]
-    fn bgen<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.bgen)
+    fn bgen(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.bgen.as_ref())
     }
 
     #[getter]
-    fn sample<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.sample)
+    fn sample(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.sample.as_ref())
     }
 
     #[getter]
-    fn pheno_file<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.pheno_file)
+    fn pheno_file(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.pheno_file.as_ref())
     }
 
     #[getter]
-    fn pheno_columns<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn pheno_columns(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         string_tuple(py, &self.data.pheno_columns)
     }
 
     #[getter]
-    fn covar_file<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.covar_file)
+    fn covar_file(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.covar_file.as_ref())
     }
 
     #[getter]
-    fn covar_columns<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn covar_columns(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         string_tuple(py, &self.data.covar_columns)
     }
 
     #[getter]
-    fn pred<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.pred)
+    fn pred(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.pred.as_ref())
     }
 
+    #[expect(clippy::needless_pass_by_value, reason = "PyO3 __richcmp__ requires owned PyRef extraction.")]
     fn __richcmp__(&self, other: PyRef<'_, Self>, operation: CompareOp) -> bool {
         compare_bool(self.data == other.data, operation)
     }
@@ -177,7 +168,7 @@ impl TraitConfig {
     }
 
     #[getter]
-    fn trait_type<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn trait_type(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "RegenieTraitType", &self.data.trait_type)
     }
 
@@ -191,6 +182,7 @@ impl TraitConfig {
         self.data.threads
     }
 
+    #[expect(clippy::needless_pass_by_value, reason = "PyO3 __richcmp__ requires owned PyRef extraction.")]
     fn __richcmp__(&self, other: PyRef<'_, Self>, operation: CompareOp) -> bool {
         compare_bool(self.data == other.data, operation)
     }
@@ -223,6 +215,7 @@ impl BinaryConfig {
         self.data.firth_se
     }
 
+    #[expect(clippy::needless_pass_by_value, reason = "PyO3 __richcmp__ requires owned PyRef extraction.")]
     fn __richcmp__(&self, other: PyRef<'_, Self>, operation: CompareOp) -> bool {
         compare_bool(self.data == other.data, operation)
     }
@@ -231,7 +224,7 @@ impl BinaryConfig {
 #[pymethods]
 impl GComputeConfig {
     #[getter]
-    fn device<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn device(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "Device", &self.data.device)
     }
 
@@ -251,17 +244,17 @@ impl GComputeConfig {
     }
 
     #[getter]
-    fn trusted_bgen_validation_mode<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn trusted_bgen_validation_mode(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "TrustedBgenValidationMode", &self.data.trusted_bgen_validation_mode)
     }
 
     #[getter]
-    fn sample_key_mode<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn sample_key_mode(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "SampleKeyMode", &self.data.sample_key_mode)
     }
 
     #[getter]
-    fn multi_phenotype_sample_mode<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn multi_phenotype_sample_mode(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "MultiPhenotypeSampleMode", &self.data.multi_phenotype_sample_mode)
     }
 
@@ -286,7 +279,7 @@ impl GComputeConfig {
     }
 
     #[getter]
-    fn null_logistic_nonconvergence_policy<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn null_logistic_nonconvergence_policy(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "NullLogisticNonconvergencePolicy", &self.data.null_logistic_nonconvergence_policy)
     }
 
@@ -426,28 +419,28 @@ impl GComputeConfig {
     }
 
     #[getter]
-    fn gpu_genotype_format<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn gpu_genotype_format(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "GpuGenotypeFormat", &self.data.gpu_genotype_format)
     }
 
     #[getter]
-    fn score_dtype<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn score_dtype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "FloatingPointDtype", &self.data.score_dtype)
     }
 
     #[getter]
-    fn firth_dtype<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn firth_dtype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "FloatingPointDtype", &self.data.firth_dtype)
     }
 
     #[getter]
-    fn jax_cache_dir<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.jax_cache_dir)
+    fn jax_cache_dir(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.jax_cache_dir.as_ref())
     }
 
     #[getter]
-    fn jax_matmul_precision<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_enum_value(py, "JaxMatmulPrecision", &self.data.jax_matmul_precision)
+    fn jax_matmul_precision(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_enum_value(py, "JaxMatmulPrecision", self.data.jax_matmul_precision.as_ref())
     }
 
     #[getter]
@@ -475,6 +468,7 @@ impl GComputeConfig {
         self.data.jax_transfer_guard
     }
 
+    #[expect(clippy::needless_pass_by_value, reason = "PyO3 __richcmp__ requires owned PyRef extraction.")]
     fn __richcmp__(&self, other: PyRef<'_, Self>, operation: CompareOp) -> bool {
         compare_bool(self.data == other.data, operation)
     }
@@ -483,18 +477,18 @@ impl GComputeConfig {
 #[pymethods]
 impl GOutputConfig {
     #[getter]
-    fn out<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.out)
+    fn out(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.out.as_ref())
     }
 
     #[getter]
-    fn format<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn format(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "OutputFormat", &self.data.format)
     }
 
     #[getter]
-    fn output_run_directory<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.output_run_directory)
+    fn output_run_directory(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.output_run_directory.as_ref())
     }
 
     #[getter]
@@ -513,12 +507,12 @@ impl GOutputConfig {
     }
 
     #[getter]
-    fn arrow_compression<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn arrow_compression(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "ArrowCompression", &self.data.arrow_compression)
     }
 
     #[getter]
-    fn parquet_compression<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn parquet_compression(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "ParquetCompression", &self.data.parquet_compression)
     }
 
@@ -528,7 +522,7 @@ impl GOutputConfig {
     }
 
     #[getter]
-    fn resume_mode<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn resume_mode(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "ResumeMode", &self.data.resume_mode)
     }
 
@@ -537,6 +531,7 @@ impl GOutputConfig {
         self.data.finalize_parquet
     }
 
+    #[expect(clippy::needless_pass_by_value, reason = "PyO3 __richcmp__ requires owned PyRef extraction.")]
     fn __richcmp__(&self, other: PyRef<'_, Self>, operation: CompareOp) -> bool {
         compare_bool(self.data == other.data, operation)
     }
@@ -545,18 +540,18 @@ impl GOutputConfig {
 #[pymethods]
 impl GDiagnosticsConfig {
     #[getter]
-    fn telemetry<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn telemetry(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         enum_value(py, "TelemetryMode", &self.data.telemetry)
     }
 
     #[getter]
-    fn log_dir<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.log_dir)
+    fn log_dir(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.log_dir.as_ref())
     }
 
     #[getter]
-    fn stage_timings_json<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.stage_timings_json)
+    fn stage_timings_json(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.stage_timings_json.as_ref())
     }
 
     #[getter]
@@ -565,8 +560,8 @@ impl GDiagnosticsConfig {
     }
 
     #[getter]
-    fn log_file<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.log_file)
+    fn log_file(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.log_file.as_ref())
     }
 
     #[getter]
@@ -585,13 +580,13 @@ impl GDiagnosticsConfig {
     }
 
     #[getter]
-    fn profile_summary_json<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.profile_summary_json)
+    fn profile_summary_json(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.profile_summary_json.as_ref())
     }
 
     #[getter]
-    fn trace_file<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        optional_path(py, &self.data.trace_file)
+    fn trace_file(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        optional_path(py, self.data.trace_file.as_ref())
     }
 
     #[getter]
@@ -624,6 +619,7 @@ impl GDiagnosticsConfig {
         self.data.include_span_events
     }
 
+    #[expect(clippy::needless_pass_by_value, reason = "PyO3 __richcmp__ requires owned PyRef extraction.")]
     fn __richcmp__(&self, other: PyRef<'_, Self>, operation: CompareOp) -> bool {
         compare_bool(self.data == other.data, operation)
     }
@@ -678,16 +674,22 @@ impl RegenieConfig {
     }
 
     #[getter]
-    fn explicit_options<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    fn explicit_options(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let values = self.data.explicit_options.iter().cloned().collect::<Vec<_>>();
         let builtins = PyModule::import(py, "builtins")?;
         builtins.getattr("frozenset")?.call1((values,)).map(Bound::unbind)
+    }
+
+    #[getter]
+    fn is_validated(&self) -> bool {
+        self.data.is_validated
     }
 
     fn to_toml(&self) -> PyResult<String> {
         config_frontend::dumps_toml(&self.data).map_err(config_error_to_py)
     }
 
+    #[expect(clippy::needless_pass_by_value, reason = "PyO3 __richcmp__ requires owned PyRef extraction.")]
     fn __richcmp__(&self, other: PyRef<'_, Self>, operation: CompareOp) -> bool {
         compare_bool(regenie_config_data_equal(&self.data, &other.data), operation)
     }
@@ -711,7 +713,7 @@ impl CliOutcome {
     }
 
     #[getter]
-    fn config<'py>(&self, py: Python<'py>) -> Py<PyAny> {
+    fn config(&self, py: Python<'_>) -> Py<PyAny> {
         self.data.config.clone().map_or_else(
             || py.None(),
             |config| Py::new(py, RegenieConfig::new(config)).expect("config allocation").into_any(),
@@ -748,6 +750,9 @@ fn write_config_toml(config: &RegenieConfig, path: &Bound<'_, PyAny>) -> PyResul
 
 #[pyfunction]
 fn validate_regenie_config(config: &RegenieConfig) -> PyResult<()> {
+    if config.data().is_validated {
+        return Ok(());
+    }
     config_frontend::validate_config(config.data()).map_err(config_error_to_py)
 }
 
@@ -762,39 +767,39 @@ fn explain_config_option(name: &str) -> PyResult<String> {
 }
 
 #[pyfunction]
-fn iter_config_explanations() -> PyResult<Vec<String>> {
-    config_frontend::iter_explanations().map_err(config_error_to_py)
+fn iter_config_explanations() -> Vec<String> {
+    config_frontend::iter_explanations()
 }
 
 #[pyfunction]
-fn decode_config_toml_mapping<'py>(py: Python<'py>, toml_data: &Bound<'_, PyAny>, source: &str) -> PyResult<Py<PyAny>> {
+fn decode_config_toml_mapping(py: Python<'_>, toml_data: &Bound<'_, PyAny>, source: &str) -> PyResult<Py<PyAny>> {
     let toml_text = text_from_py_bytes_or_string(toml_data)?;
     let option_table = config_frontend::decode_toml_text(&toml_text, source).map_err(config_error_to_py)?;
     option_table_to_py_dict(py, &option_table)
 }
 
 #[pyfunction]
-fn flatten_config_toml_mapping<'py>(py: Python<'py>, raw_options: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+fn flatten_config_toml_mapping(py: Python<'_>, raw_options: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let option_table = option_table_from_py_mapping(raw_options)?;
-    let flattened_options = config_frontend::flatten_toml_mapping(&option_table).map_err(config_error_to_py)?;
+    let flattened_options = config_frontend::flatten_toml_mapping(&option_table);
     option_table_to_py_dict(py, &flattened_options)
 }
 
 #[pyfunction]
-fn normalize_config_option_name(option_name: &str) -> PyResult<String> {
-    config_frontend::normalize_option_name(option_name).map_err(config_error_to_py)
+fn normalize_config_option_name(option_name: &str) -> String {
+    config_frontend::normalize_option_name(option_name)
 }
 
 #[pyfunction]
-fn normalize_config_option_dictionary<'py>(py: Python<'py>, raw_options: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+fn normalize_config_option_dictionary(py: Python<'_>, raw_options: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let option_table = option_table_from_py_mapping(raw_options)?;
-    let normalized_options = config_frontend::normalize_option_dictionary(&option_table).map_err(config_error_to_py)?;
+    let normalized_options = config_frontend::normalize_option_dictionary(&option_table);
     option_table_to_py_dict(py, &normalized_options)
 }
 
 #[pyfunction]
-fn option_dictionary_to_config_toml_layer<'py>(
-    py: Python<'py>,
+fn option_dictionary_to_config_toml_layer(
+    py: Python<'_>,
     raw_options: &Bound<'_, PyAny>,
     source: &str,
 ) -> PyResult<Py<PyAny>> {
@@ -809,6 +814,7 @@ fn option_dictionary_to_config_toml_layer<'py>(
 }
 
 #[pyfunction]
+#[expect(clippy::needless_pass_by_value, reason = "PyO3 extracts Python list arguments into owned Vec values.")]
 fn dispatch_cli(args: Vec<String>, direct_regenie: bool) -> CliOutcome {
     CliOutcome::new(config_frontend::dispatch_cli(&args, direct_regenie))
 }
@@ -857,6 +863,7 @@ fn regenie_config_data_equal(left: &RegenieConfigData, right: &RegenieConfigData
         && left.g_diagnostics == right.g_diagnostics
 }
 
+#[expect(clippy::needless_pass_by_value, reason = "Result::map_err passes owned errors to the adapter.")]
 fn config_error_to_py(error: config_frontend::ConfigError) -> PyErr {
     PyValueError::new_err(error.to_string())
 }

@@ -8,11 +8,11 @@ This page defines how `g` exposes configuration to users and how developers must
 2. **Reproducibility:** every run should be representable as a TOML config, every CLI option should be overrideable from TOML, and every run should write an effective config and manifest.
 
 On the experimental Rust CLI/config branch, the authoritative frontend lives in
-Rust. `clap` parses `g regenie` and `g-regenie`, `toml-spanner` decodes TOML,
-Rust overlays packaged defaults with TOML and explicit CLI/Python options,
-validates the effective configuration, and exposes PyO3 config objects to
-Python. Python keeps the JAX/runtime layer and treats those objects as immutable
-runtime inputs.
+Rust. `clap` parses `g regenie` and `g-regenie`, the `toml` crate decodes TOML
+through Serde-backed values. Rust overlays packaged defaults with TOML and
+explicit CLI/Python options, validates the effective configuration, and exposes
+PyO3 config objects to Python. Python keeps the JAX/runtime layer and treats
+those objects as immutable runtime inputs.
 
 The production flow is:
 
@@ -41,20 +41,21 @@ The Rust frontend is split by responsibility:
 
 ```text
 src/config_frontend/
-  mod.rs        option layering, runtime config construction, validation
+  mod.rs        option layering and runtime config construction
   cli.rs        clap command construction and dispatch
-  metadata.rs   option metadata registry loaded from config_options.json
+  metadata.rs   option metadata structs, registry, and derived config keys
+  options.rs    static supported option table; CLI names are canonical
   render.rs     deterministic effective TOML and template rendering
+  validation.rs resolved config and CLI path validation
 
 src/python/config/
   mod.rs        PyO3 config classes and registered config functions
   conversion.rs Python/Rust value conversion helpers
 ```
 
-`src/g/interface/config.py` and `src/g/interface/config_layers.py` are
-compatibility shims. They should delegate parsing, flattening, normalization,
-default loading, validation, and effective TOML behavior to Rust instead of
-reimplementing a second config engine in Python.
+`src/g/interface/config.py` is a compatibility shim. It should delegate parsing,
+flattening, normalization, default loading, validation, and effective TOML
+behavior to Rust instead of reimplementing a second config engine in Python.
 
 ---
 
@@ -158,12 +159,17 @@ Rules:
 - Binary default is score-only.
 - `--firth --approx` enables approximate-Firth fallback.
 - Exact `--firth` without `--approx` must fail loudly unless implemented and parity-tested.
-- `--spa` must fail loudly unless implemented and parity-tested.
 - Binary-only flags should be rejected for quantitative runs.
 
-### 1.3 Recognized-but-unsupported REGENIE flags
+### 1.3 Unsupported REGENIE flags
 
-Some REGENIE flags should be recognized so migration errors are clear, but rejected if unsupported. Examples:
+The supported CLI/config surface is the set of options registered in the Rust
+metadata and shown by `g regenie --help`. Do not register hidden options only
+to customize unsupported-flag errors. Familiar REGENIE flags that are not
+listed in help should remain ordinary unknown options until their behavior is
+implemented and parity-tested.
+
+Common absent flags:
 
 ```text
 --bed
@@ -176,12 +182,6 @@ Some REGENIE flags should be recognized so migration errors are clear, but rejec
 --test
 --t2e
 --spa
-```
-
-Unsupported recognized flags must never be ignored. They should produce an error like:
-
-```text
---pgen is a valid REGENIE option, but g currently supports BGEN Step 2 only. Use --bgen.
 ```
 
 ### 1.4 `g`-specific flags
@@ -424,7 +424,9 @@ Every run should write:
 
 ## 3. Python API behavior
 
-The Python API should mirror CLI/TOML semantics. It should accept canonical option names and Pythonic aliases, but normalize them through the same code path as CLI and TOML.
+The Python API should mirror CLI/TOML semantics. Option dictionaries use
+canonical CLI names without leading dashes; Pythonic aliases are not accepted on
+this experimental branch.
 
 ```python
 import g
@@ -452,7 +454,10 @@ artifacts = g.regenie.from_options({
 })
 ```
 
-Pythonic aliases such as `pheno_file`, `pheno_col`, `p_threshold`, and `g_device` may be accepted for convenience, but the canonical name remains the REGENIE/CLI-style option name.
+Python option dictionaries use the same canonical CLI-style names as `g regenie`,
+for example `phenoFile`, `phenoCol`, `pThresh`, and `g-device`. Pythonic aliases
+such as `pheno_file`, `p_threshold`, and `g_device` are intentionally not part of
+this experimental frontend.
 
 ---
 
@@ -463,8 +468,8 @@ Pythonic aliases such as `pheno_file`, `pheno_col`, `p_threshold`, and `g_device
 Configuration-related code is organized around these pieces:
 
 ```text
-src/g/interface/options.py
-  OptionSpec registry: names, support level, sections, CLI flags, types, choices, help text.
+src/config_frontend/options.rs
+  Static OptionSpec table: canonical CLI name, support level, section, type, choices, and help text.
 
 src/g/config.default.toml
   Packaged default values for configurable parameters.
@@ -486,16 +491,21 @@ src/g/types.py
 
 `OptionSpec` describes an option:
 
-- user-facing name
-- Python destination name
+- canonical CLI name
 - TOML section
 - support level
 - help text
-- CLI flags
 - value type
 - accepted values
 - whether it is repeated
 - whether it is a boolean flag
+
+The stored name is always the CLI spelling without leading `--`. TOML keys are
+derived from that name and the section:
+
+- REGENIE options use the CLI name directly, such as `phenoFile` or `pThresh`.
+- `g.compute` and `g.diagnostics` keys strip the leading `g-`.
+- `g.output` keys strip `g-output-` when present, otherwise the leading `g-`.
 
 It should not become the main owner of default values. Defaults belong in the packaged default TOML when the option is user-configurable.
 
@@ -586,16 +596,15 @@ execution-plan hash from normalized plan fields
 
 Use this checklist.
 
-1. Add an `OptionSpec` to the supported REGENIE options in `src/g/interface/options.py`.
+1. Add an `OptionSpec` to `src/config_frontend/options.rs`.
 2. Use the REGENIE name exactly, including mixed case such as `phenoFile` or `pThresh`.
-3. Add Rust CLI flag metadata only if the generated long flag would be wrong.
-4. Add a default to `src/g/config.default.toml` if the option has a meaningful default.
-5. Add parsing/mapping in the Rust config frontend if the option affects `RegenieConfig`.
-6. Add validation if it has constraints or incompatibilities.
-7. Add it to `ExecutionPlan` if the engine needs it.
-8. Add it to the run manifest if it affects outputs, statistics, resume compatibility, or performance semantics.
-9. Add CLI/TOML/Python tests.
-10. Update docs.
+3. Add a default to `src/g/config.default.toml` if the option has a meaningful default.
+4. Add mapping in the Rust config frontend if the option affects `RegenieConfig`.
+5. Add validation if it has constraints or incompatibilities.
+6. Add it to `ExecutionPlan` if the engine needs it.
+7. Add it to the run manifest if it affects outputs, statistics, resume compatibility, or performance semantics.
+8. Add CLI/TOML/Python tests once the API is stable.
+9. Update docs.
 
 Example naming:
 
@@ -609,19 +618,18 @@ TOML:
 
 Python options:
   {"pThresh": 0.01}
-  {"p_threshold": 0.01}  # optional alias
 ```
 
-### 4.6 Adding a new recognized-but-unsupported REGENIE option
+### 4.6 Adding support for an absent REGENIE option
 
-Use this when the flag exists in REGENIE but `g` does not implement it yet.
+Use this when the flag exists in REGENIE and `g` is ready to implement it.
 
-1. Add an `OptionSpec` with `support_level = RECOGNIZED_UNSUPPORTED`.
+1. Add an `OptionSpec` with `support_level = SUPPORTED`.
 2. Use the exact REGENIE name.
-3. Add a clear error message in unsupported-option validation if the generic error is not good enough.
-4. Add a test proving the option is recognized and rejected.
+3. Add TOML decoding, defaults or required-runtime policy, validation, and effective TOML rendering.
+4. Add tests proving the option is accepted and affects runtime behavior correctly.
 
-Do not ignore unsupported options.
+Do not add metadata for unsupported options only to customize their error text.
 
 ### 4.7 Adding a new `g`-specific option
 
@@ -632,9 +640,9 @@ Use this checklist.
    - `g.compute` for runtime/engine/JAX/native compute settings
    - `g.output` for output/writer/resume settings
    - `g.diagnostics` for logging/telemetry/profiling settings
-3. Add an `OptionSpec` in `G_OPTIONS`.
+3. Add an `OptionSpec` to `src/config_frontend/options.rs`.
 4. Add a default to `src/g/config.default.toml` if it has a default.
-5. Add mapping to `RegenieConfig` in `config.py` if needed.
+5. Add mapping to `RegenieConfig` in the Rust config frontend if needed.
 6. Add to `ExecutionPlan` if the engine uses it.
 7. Add to the run manifest if it affects results, output layout, resume safety, or performance reproducibility.
 8. Add tests for CLI, TOML, and Python option-dict forms.
@@ -654,7 +662,6 @@ Internal canonical option:
 
 Python option dictionary:
   {"g-bgen-decode-tile-variant-count": 128}
-  {"g_bgen_decode_tile_variant_count": 128}  # optional alias
 ```
 
 ### 4.8 Adding a new configurable Rust runtime value
@@ -745,7 +752,7 @@ CLI overrides TOML when explicitly supplied.
 An omitted CLI flag does not override TOML.
 Negative boolean flags override TOML true values.
 Invalid values fail clearly.
-Recognized unsupported values fail clearly.
+Unsupported REGENIE flags fail as ordinary unknown options until implemented.
 Effective config includes the resolved value.
 Manifest includes the value when relevant.
 ```
@@ -780,11 +787,11 @@ The current implementation already has the core pieces:
 
 ```text
 OptionSpec registry
-default policy and TOML path metadata
-Rust Clap generation from OptionSpec metadata
+default policy and derived TOML config keys
+Rust clap generation from OptionSpec metadata
 packaged config.default.toml
 validated default catalog hash
-TOML/CLI/Python normalization
+TOML/CLI/Python option layering
 RegenieConfig
 ExecutionPlan
 manifest validation
@@ -815,7 +822,7 @@ For developers:
 Do not add ad hoc flags.
 Do not add scattered defaults.
 Do not let Rust own independent user-tunable defaults.
-Do not ignore unsupported REGENIE options.
+Do not register unsupported REGENIE options.
 Do not introduce g-specific options without --g- on CLI.
 Do not bypass RegenieConfig and ExecutionPlan.
 Do add OptionSpec, default TOML entries, validation, manifest fields, and tests for every new parameter.

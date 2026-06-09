@@ -1,35 +1,14 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use super::{
-    ConfigError, ConfigResult, DefaultPolicy, OptionTable, OptionValue, QUANTITATIVE_BINARY_ONLY_OPTION_NAMES,
-    RegenieConfigData, load_packaged_config_data, option_registry,
+    ConfigError, ConfigResult, DefaultPolicy, OptionTable, QUANTITATIVE_BINARY_ONLY_OPTION_NAMES, RegenieConfigData,
+    load_packaged_config_data, option_registry,
 };
 
-pub(super) fn reject_unsupported_options(normalized_options: &OptionTable) -> ConfigResult<()> {
-    for option_name in option_registry()?.unsupported_option_names() {
-        if let Some(option_value) = normalized_options.get(&option_name)
-            && option_value.is_explicit_some()
-            && option_value != &OptionValue::Boolean(false)
-        {
-            let message = match option_name.as_str() {
-                "pgen" => "--pgen is a valid REGENIE option, but g currently supports BGEN Step 2 only. Use --bgen."
-                    .to_string(),
-                "bed" => "--bed is a valid REGENIE option, but g currently supports BGEN Step 2 only. Use --bgen."
-                    .to_string(),
-                "spa" => "--spa is a valid REGENIE option, but g does not yet implement SPA fallback.".to_string(),
-                _ => format!("--{option_name} is a valid REGENIE option, but g does not currently support it."),
-            };
-            return Err(ConfigError::new(message));
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn validate_unknown_options(normalized_options: &OptionTable) -> ConfigResult<()> {
-    let registry = option_registry()?;
-    let mut known_options = registry.supported_option_names();
-    known_options.extend(registry.unsupported_option_names());
-    known_options.insert("trait_type".to_string());
+    let registry = option_registry();
+    let known_options = registry.supported_option_names();
     for option_name in normalized_options.keys() {
         if !known_options.contains(option_name) {
             return Err(ConfigError::new(format!("Unknown g regenie option: {option_name}")));
@@ -39,9 +18,9 @@ pub(super) fn validate_unknown_options(normalized_options: &OptionTable) -> Conf
 }
 
 pub(super) fn reject_missing_resolved_default_options(normalized_options: &OptionTable) -> ConfigResult<()> {
-    if let Some(missing_option_name) = option_registry()?.specs.iter().find_map(|option_spec| {
-        (option_spec.default_policy == DefaultPolicy::Value && !normalized_options.contains_key(&option_spec.name))
-            .then_some(option_spec.name.clone())
+    if let Some(missing_option_name) = option_registry().specs.iter().find_map(|option_spec| {
+        (option_spec.default_policy == DefaultPolicy::Value && !normalized_options.contains_key(option_spec.cli_name))
+            .then_some(option_spec.cli_name.to_string())
     }) {
         return Err(ConfigError::new(format!(
             "Default config is missing required default option {missing_option_name:?}."
@@ -65,13 +44,56 @@ pub(super) fn reject_quantitative_binary_only_options(
     raise_for_quantitative_binary_only_options(&binary_only_option_names)
 }
 
+/// Validate a resolved runtime config before execution.
+///
+/// # Errors
+///
+/// Returns an error when required inputs are missing, options are inconsistent, or unsupported modes are requested.
 pub fn validate_config(config: &RegenieConfigData) -> ConfigResult<()> {
+    validate_trait_config(config)?;
+    validate_required_input_config(config)?;
+    validate_compute_config(config)?;
+    validate_output_config(config)?;
+    validate_binary_config(config)?;
+    Ok(())
+}
+
+pub(super) fn validate_existing_input_paths(config: &RegenieConfigData) -> ConfigResult<()> {
+    validate_existing_path("--bgen", config.input.bgen.as_ref())?;
+    validate_existing_path("--sample", config.input.sample.as_ref())?;
+    validate_existing_path("--phenoFile", config.input.pheno_file.as_ref())?;
+    validate_existing_path("--covarFile", config.input.covar_file.as_ref())?;
+    validate_existing_path("--pred", config.input.pred.as_ref())?;
+    Ok(())
+}
+
+fn validate_existing_path(option_name: &str, path: Option<&String>) -> ConfigResult<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    if !Path::new(path).exists() {
+        return Err(ConfigError::new(format!("{option_name} path does not exist: {path}.")));
+    }
+    Ok(())
+}
+
+fn validate_trait_config(config: &RegenieConfigData) -> ConfigResult<()> {
     if config.trait_config.step == 1 {
         return Err(ConfigError::new("--step 1 is recognized, but g currently supports REGENIE Step 2 only."));
     }
     if config.trait_config.step != 2 {
         return Err(ConfigError::new("g regenie requires --step 2."));
     }
+    if config.trait_config.bsize <= 0 {
+        return Err(ConfigError::new("--bsize must be positive."));
+    }
+    if config.trait_config.threads.is_some_and(|threads| threads <= 0) {
+        return Err(ConfigError::new("--threads must be positive when provided."));
+    }
+    Ok(())
+}
+
+fn validate_required_input_config(config: &RegenieConfigData) -> ConfigResult<()> {
     if config.input.bgen.is_none() {
         return Err(ConfigError::new("Exactly one genotype source is required; currently only --bgen is supported."));
     }
@@ -88,12 +110,10 @@ pub fn validate_config(config: &RegenieConfigData) -> ConfigResult<()> {
     if config.g_output.out.is_none() {
         return Err(ConfigError::new("--out is required."));
     }
-    if config.trait_config.bsize <= 0 {
-        return Err(ConfigError::new("--bsize must be positive."));
-    }
-    if config.trait_config.threads.is_some_and(|threads| threads <= 0) {
-        return Err(ConfigError::new("--threads must be positive when provided."));
-    }
+    Ok(())
+}
+
+fn validate_compute_config(config: &RegenieConfigData) -> ConfigResult<()> {
     validate_positive_integer("--g-staging-depth", config.g_compute.staging_depth)?;
     if config.g_compute.variant_limit.is_some_and(|variant_limit| variant_limit <= 0) {
         return Err(ConfigError::new("--g-variant-limit must be positive when provided."));
@@ -165,6 +185,10 @@ pub fn validate_config(config: &RegenieConfigData) -> ConfigResult<()> {
         return Err(ConfigError::new("--g-firth-dtype currently supports float64 only."));
     }
     validate_quantitative_binary_config(config)?;
+    Ok(())
+}
+
+fn validate_output_config(config: &RegenieConfigData) -> ConfigResult<()> {
     validate_positive_integer("--g-writer-threads", config.g_output.writer_threads)?;
     validate_positive_integer("--g-writer-queue-depth", config.g_output.writer_queue_depth)?;
     validate_positive_integer("--g-output-chunks-per-arrow-file", config.g_output.chunks_per_arrow_file)?;
@@ -172,6 +196,10 @@ pub fn validate_config(config: &RegenieConfigData) -> ConfigResult<()> {
     validate_positive_integer("--g-progress-interval-chunks", config.g_diagnostics.progress_interval_chunks)?;
     validate_non_negative_integer("--g-trace-event-cap", config.g_diagnostics.trace_event_cap)?;
     validate_positive_integer("--g-log-queue-size", config.g_diagnostics.log_queue_size)?;
+    Ok(())
+}
+
+fn validate_binary_config(config: &RegenieConfigData) -> ConfigResult<()> {
     if !(0.0..1.0).contains(&config.binary.p_threshold) || config.binary.p_threshold == 0.0 {
         return Err(ConfigError::new("--pThresh must be in (0, 1)."));
     }
@@ -213,9 +241,6 @@ fn validate_quantitative_binary_config(config: &RegenieConfigData) -> ConfigResu
     if config.binary.firth_se || config.explicit_options.contains("firth-se") {
         binary_only_option_names.push("firth-se");
     }
-    if config.binary.spa || config.explicit_options.contains("spa") {
-        binary_only_option_names.push("spa");
-    }
     if config.binary.p_threshold.to_bits() != load_packaged_config_data()?.binary.p_threshold.to_bits()
         || config.explicit_options.contains("pThresh")
     {
@@ -235,6 +260,11 @@ fn raise_for_quantitative_binary_only_options(option_names: &[&str]) -> ConfigRe
     )))
 }
 
+/// Validate that an integer option is positive.
+///
+/// # Errors
+///
+/// Returns an error when `value` is less than or equal to zero.
 pub fn validate_positive_integer(option_name: &str, value: i64) -> ConfigResult<()> {
     if value <= 0 {
         return Err(ConfigError::new(format!("{option_name} must be positive.")));
@@ -242,6 +272,11 @@ pub fn validate_positive_integer(option_name: &str, value: i64) -> ConfigResult<
     Ok(())
 }
 
+/// Validate that an integer option is non-negative.
+///
+/// # Errors
+///
+/// Returns an error when `value` is negative.
 pub fn validate_non_negative_integer(option_name: &str, value: i64) -> ConfigResult<()> {
     if value < 0 {
         return Err(ConfigError::new(format!("{option_name} must be non-negative.")));
@@ -249,6 +284,11 @@ pub fn validate_non_negative_integer(option_name: &str, value: i64) -> ConfigRes
     Ok(())
 }
 
+/// Validate that a floating-point option is positive.
+///
+/// # Errors
+///
+/// Returns an error when `value` is less than or equal to zero.
 pub fn validate_positive_float(option_name: &str, value: f64) -> ConfigResult<()> {
     if value <= 0.0 {
         return Err(ConfigError::new(format!("{option_name} must be positive.")));
@@ -256,6 +296,11 @@ pub fn validate_positive_float(option_name: &str, value: f64) -> ConfigResult<()
     Ok(())
 }
 
+/// Validate that a probability floor is positive and below the symmetric midpoint.
+///
+/// # Errors
+///
+/// Returns an error when `value` is not positive or is greater than or equal to 0.5.
 pub fn validate_probability_floor(option_name: &str, value: f64) -> ConfigResult<()> {
     validate_positive_float(option_name, value)?;
     if value >= 0.5 {

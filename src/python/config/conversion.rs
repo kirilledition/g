@@ -72,7 +72,7 @@ pub(super) fn text_from_py_bytes_or_string(value: &Bound<'_, PyAny>) -> PyResult
     py_string(value)
 }
 
-pub(super) fn option_table_to_py_dict<'py>(py: Python<'py>, option_table: &OptionTable) -> PyResult<Py<PyAny>> {
+pub(super) fn option_table_to_py_dict(py: Python<'_>, option_table: &OptionTable) -> PyResult<Py<PyAny>> {
     let dictionary = PyDict::new(py);
     for (key, value) in option_table {
         dictionary.set_item(key, option_value_to_py_object(py, value)?)?;
@@ -80,7 +80,7 @@ pub(super) fn option_table_to_py_dict<'py>(py: Python<'py>, option_table: &Optio
     Ok(dictionary.into_any().unbind())
 }
 
-fn option_value_to_py_object<'py>(py: Python<'py>, option_value: &OptionValue) -> PyResult<Py<PyAny>> {
+fn option_value_to_py_object(py: Python<'_>, option_value: &OptionValue) -> PyResult<Py<PyAny>> {
     match option_value {
         OptionValue::None => Ok(py.None()),
         OptionValue::String(value) => Ok(PyString::new(py, value).into_any().unbind()),
@@ -99,34 +99,30 @@ pub(super) fn path_to_string(path: &Bound<'_, PyAny>) -> PyResult<String> {
     py_string(path)
 }
 
-pub(super) fn optional_path<'py>(py: Python<'py>, value: &Option<String>) -> PyResult<Py<PyAny>> {
+pub(super) fn optional_path(py: Python<'_>, value: Option<&String>) -> PyResult<Py<PyAny>> {
     match value {
         Some(path_text) => path_value(py, path_text),
         None => Ok(py.None()),
     }
 }
 
-fn path_value<'py>(py: Python<'py>, value: &str) -> PyResult<Py<PyAny>> {
+fn path_value(py: Python<'_>, value: &str) -> PyResult<Py<PyAny>> {
     let pathlib = PyModule::import(py, "pathlib")?;
     pathlib.getattr("Path")?.call1((value,)).map(Bound::unbind)
 }
 
-pub(super) fn enum_value<'py>(py: Python<'py>, enum_name: &str, value: &str) -> PyResult<Py<PyAny>> {
+pub(super) fn enum_value(py: Python<'_>, enum_name: &str, value: &str) -> PyResult<Py<PyAny>> {
     let types_module = PyModule::import(py, "g.types")?;
     types_module.getattr(enum_name)?.call1((value,)).map(Bound::unbind)
 }
 
-pub(super) fn optional_enum_value<'py>(
-    py: Python<'py>,
-    enum_name: &str,
-    value: &Option<String>,
-) -> PyResult<Py<PyAny>> {
+pub(super) fn optional_enum_value(py: Python<'_>, enum_name: &str, value: Option<&String>) -> PyResult<Py<PyAny>> {
     match value {
         Some(value) => enum_value(py, enum_name, value),
         None => Ok(py.None()),
     }
 }
 
-pub(super) fn string_tuple<'py>(py: Python<'py>, values: &[String]) -> PyResult<Py<PyAny>> {
+pub(super) fn string_tuple(py: Python<'_>, values: &[String]) -> PyResult<Py<PyAny>> {
     Ok(PyTuple::new(py, values)?.into_any().unbind())
 }
