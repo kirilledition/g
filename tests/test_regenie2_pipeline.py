@@ -551,6 +551,141 @@ def test_binary_chunk_diagnostics_are_detailed_only_for_exact_timing() -> None:
     )
 
 
+def test_binary_compute_preprocessed_chunk_defers_diagnostics_until_worker_consumption() -> None:
+    callback = callbacks.BinaryRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        correction_plan=types.BinaryCorrectionPlan(),
+        kernel_config=build_default_binary_kernel_config(),
+        stage_timing_recorder=timing.StageTimingRecorder(),
+    )
+    chunk_stats = typing.cast("typing.Any", SparseOnlyChunkStats())
+    chromosome_state = build_binary_chromosome_state()
+    result = regenie2_binary_result.Regenie2BinaryScoreChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        extra_code=jnp.asarray(
+            [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.SCORE.value],
+            dtype=jnp.int32,
+        ),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    variant_metadata = build_native_metadata()
+    with (
+        patch(
+            "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
+            return_value=chromosome_state,
+        ),
+        patch(
+            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state",
+            return_value=result,
+        ) as _,
+        patch.object(callback, "enqueue_binary_result_for_write") as mock_enqueue,
+        patch("g.compute.regenie2_binary.api.count_binary_chunk_diagnostics") as mock_count,
+    ):
+        callback.compute_preprocessed_chunk(
+            variant_metadata=variant_metadata,
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=chunk_stats,
+        )
+
+    mock_count.assert_not_called()
+    mock_enqueue.assert_called_once()
+    assert mock_enqueue.call_args.kwargs["binary_chunk_diagnostics"] is None
+
+
+def test_binary_compute_preprocessed_chunk_collects_diagnostics_only_for_exact_timing() -> None:
+    callback = callbacks.BinaryRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        correction_plan=types.BinaryCorrectionPlan(),
+        kernel_config=build_default_binary_kernel_config(),
+        stage_timing_recorder=timing.StageTimingRecorder(exact_stage_timings=True),
+    )
+    chunk_stats = typing.cast("typing.Any", SparseOnlyChunkStats())
+    chromosome_state = build_binary_chromosome_state()
+    result = regenie2_binary_result.Regenie2BinaryScoreChunkResult(
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        extra_code=jnp.asarray(
+            [types.BinaryExtraCode.SCORE.value, types.BinaryExtraCode.SCORE.value],
+            dtype=jnp.int32,
+        ),
+        valid_mask=jnp.asarray([True, True]),
+    )
+    variant_metadata = build_native_metadata()
+    diagnostics = SimpleNamespace(score_test_candidate_count=2, firth_candidate_count=0, firth_iteration_min=0)
+    with (
+        patch(
+            "g.compute.regenie2_binary.api.prepare_regenie2_binary_chromosome_state",
+            return_value=chromosome_state,
+        ),
+        patch(
+            "g.compute.regenie2_binary.api.compute_regenie2_binary_chunk_from_chromosome_state",
+            return_value=result,
+        ) as _,
+        patch.object(callback, "enqueue_binary_result_for_write") as mock_enqueue,
+        patch(
+            "g.compute.regenie2_binary.api.count_binary_chunk_diagnostics",
+            return_value=diagnostics,
+        ) as mock_count,
+    ):
+        callback.compute_preprocessed_chunk(
+            variant_metadata=variant_metadata,
+            genotype_matrix=np.ones((2, 2), dtype=np.float32),
+            chunk_stats=chunk_stats,
+        )
+
+    mock_count.assert_called_once_with(result)
+    mock_enqueue.assert_called_once()
+    assert mock_enqueue.call_args.kwargs["binary_chunk_diagnostics"] is diagnostics
+
+
+def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> None:
+    callback = callbacks.BinaryRegenie2PipelineCallback(
+        run_input=build_native_run_input(),
+        prediction_source=FakePredictionSource(),
+        writer_session=FakeWriterSession(),
+        correction_plan=types.BinaryCorrectionPlan(),
+        kernel_config=build_default_binary_kernel_config(),
+    )
+    callback.result_queue = queue.Queue(maxsize=2)
+    diagnostics = SimpleNamespace(score_test_candidate_count=2)
+    work_item = callbacks.Regenie2ResultWriteWorkItem(
+        metadata=build_native_metadata(),
+        chunk_stats=typing.cast("typing.Any", ExplodingChunkStats()),
+        beta=jnp.asarray([0.1, 0.2], dtype=jnp.float32),
+        standard_error=jnp.asarray([0.3, 0.4], dtype=jnp.float32),
+        chi_squared=jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        log10_p_value=jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+        extra_code=jnp.asarray([types.BinaryExtraCode.SCORE.value], dtype=jnp.int32),
+        host_dosage_buffer=None,
+        release_in_flight_slot=False,
+        binary_chunk_diagnostics=diagnostics,
+    )
+    callback.result_queue.put_nowait(work_item)
+    callback.result_queue.put_nowait(None)
+    with (
+        patch(
+            "g.engine.callbacks.write_regenie2_native_chunk_with_optional_timing",
+        ) as mock_write,
+        patch("g.engine.callbacks.record_binary_chunk_diagnostics_from_count") as mock_record,
+    ):
+        callback.consume_result_write_items()
+
+    mock_write.assert_called_once()
+    mock_record.assert_called_once_with(
+        stage_timing_recorder=None,
+        diagnostics=diagnostics,
+    )
+
+
 class FakeRunEngine:
     instances: typing.ClassVar[list[FakeRunEngine]] = []
 
