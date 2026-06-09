@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use _core::genotype::bgen::{BgenReaderCore, CompressionType, set_bgen_decode_tile_variant_count};
 use _core::genotype::common::{ChunkStats, GenotypeReaderCore, VariantMetadataColumns};
 use _core::genotype::preprocess;
+use _core::interface::{
+    dispatch_cli, dumps_toml, from_options, from_toml_path, load_packaged_config_data, validate_config_for_run,
+};
 use _core::output::{OutputWriterSession, scan_committed_chunk_identifiers, validate_strict_manifest_chunks};
 use _core::pipeline::Regenie2RunEngineCore;
 use _core::regenie::{MultiPredictionSource, PredictionError, PredictionSource};
@@ -13,6 +16,7 @@ use _core::sample::{
     AlignmentInputs, MultiAlignmentInputs, SampleKeyMode, align_multi_sample_data,
     align_multi_sample_data_from_sample_file, align_sample_data, align_sample_data_from_sample_file,
 };
+use toml::{Table, Value};
 
 static NEXT_FIXTURE_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -173,6 +177,43 @@ fn append_bgen_string(bytes: &mut Vec<u8>, value: &str) {
     let value_length = u16::try_from(value.len()).expect("BGEN string length fits u16");
     bytes.extend_from_slice(&value_length.to_le_bytes());
     bytes.extend_from_slice(value.as_bytes());
+}
+
+fn interface_minimal_paths(fixture: &FixtureDirectory, stem: &str) -> (String, String, String) {
+    let bgen_path = fixture.write_file(&format!("{stem}-input.bgen"), "bgen");
+    let phenotype_path = fixture.write_file(&format!("{stem}-phenotypes.tsv"), "FID IID trait\n0 0 1.0\n");
+    let pred_path = fixture.write_file(&format!("{stem}-predictions.list"), "trait predictions.bin\n");
+    (
+        bgen_path.display().to_string(),
+        phenotype_path.display().to_string(),
+        pred_path.display().to_string(),
+    )
+}
+
+fn build_minimal_regenie_options(
+    bgen_path: &str,
+    pheno_path: &str,
+    pred_path: &str,
+    output_path: &str,
+) -> Table {
+    let mut trait_options = Table::new();
+    trait_options.insert("step".into(), Value::Integer(2));
+    trait_options.insert("qt".into(), Value::Boolean(true));
+
+    let mut input_options = Table::new();
+    input_options.insert("bgen".into(), Value::String(bgen_path.to_string()));
+    input_options.insert("phenoFile".into(), Value::String(pheno_path.to_string()));
+    input_options.insert("phenoCol".into(), Value::String("trait".to_string()));
+    input_options.insert("pred".into(), Value::String(pred_path.to_string()));
+
+    let mut output_options = Table::new();
+    output_options.insert("out".into(), Value::String(output_path.to_string()));
+
+    let mut options = Table::new();
+    options.insert("trait".into(), Value::Table(trait_options));
+    options.insert("input".into(), Value::Table(input_options));
+    options.insert("output".into(), Value::Table(output_options));
+    options
 }
 
 fn bgen_variant_payload(
@@ -1486,4 +1527,157 @@ fn prediction_sources_cover_file_header_alignment_and_matrix_errors() {
     )
     .expect("multi prediction source should load");
     assert_matches!(multi_source.chromosome_prediction_matrix("X"), Err(PredictionError::MissingChromosome { .. }));
+}
+
+#[test]
+fn dispatch_cli_root_and_unknown_command_coverage() {
+    let root = dispatch_cli(&[], false);
+    assert_eq!(root.exit_code, 2);
+    assert!(root.stdout.contains("Usage: g <COMMAND> [OPTIONS]"));
+    assert!(root.stderr.is_empty());
+
+    let help = dispatch_cli(&["--help".to_string()], false);
+    assert_eq!(help.exit_code, 0);
+    assert!(help.stdout.contains("Commands:"));
+    assert!(help.stderr.is_empty());
+
+    let unknown = dispatch_cli(&["status".to_string()], false);
+    assert_eq!(unknown.exit_code, 2);
+    assert_eq!(unknown.stderr, "No such command: status\n");
+}
+
+#[test]
+fn dispatch_cli_resolves_a_valid_regenie_command() {
+    let fixture = FixtureDirectory::new("interface-dispatch");
+    let (bgen_path, phenotype_path, pred_path) = interface_minimal_paths(&fixture, "dispatch");
+    let output_path = fixture.path.join("run-output").display().to_string();
+
+    let outcome = dispatch_cli(
+        &[
+            "regenie".to_string(),
+            "--qt".to_string(),
+            "--bgen".to_string(),
+            bgen_path.clone(),
+            "--phenoFile".to_string(),
+            phenotype_path.clone(),
+            "--phenoCol".to_string(),
+            "trait".to_string(),
+            "--pred".to_string(),
+            pred_path.clone(),
+            "--out".to_string(),
+            output_path.clone(),
+        ],
+        false,
+    );
+    assert_eq!(outcome.exit_code, 0);
+    assert!(outcome.stderr.is_empty());
+    let config = outcome.config.expect("dispatch should return a resolved config");
+    assert_eq!(config.input.bgen.as_ref(), Some(&bgen_path));
+    assert_eq!(config.input.pheno_file.as_ref(), Some(&phenotype_path));
+    assert_eq!(config.input.pheno_columns, vec!["trait".to_string()]);
+    assert_eq!(config.input.pred.as_ref(), Some(&pred_path));
+    assert_eq!(config.g_output.out.as_ref(), Some(&output_path));
+
+    let direct_outcome = dispatch_cli(
+        &[
+            "--qt".to_string(),
+            "--bgen".to_string(),
+            bgen_path,
+            "--phenoFile".to_string(),
+            phenotype_path,
+            "--phenoCol".to_string(),
+            "trait".to_string(),
+            "--pred".to_string(),
+            pred_path,
+            "--out".to_string(),
+            fixture.path.join("direct-run-output").display().to_string(),
+        ],
+        true,
+    );
+    assert_eq!(direct_outcome.exit_code, 0);
+}
+
+#[test]
+fn dispatch_cli_rejects_conflicting_binary_flags() {
+    let fixture = FixtureDirectory::new("interface-conflict");
+    let (bgen_path, phenotype_path, pred_path) = interface_minimal_paths(&fixture, "conflicting");
+    let outcome = dispatch_cli(
+        &[
+            "regenie".to_string(),
+            "--qt".to_string(),
+            "--bgen".to_string(),
+            bgen_path,
+            "--phenoFile".to_string(),
+            phenotype_path,
+            "--phenoCol".to_string(),
+            "trait".to_string(),
+            "--pred".to_string(),
+            pred_path,
+            "--out".to_string(),
+            fixture.path.join("out").display().to_string(),
+            "--firth".to_string(),
+            "--no-firth".to_string(),
+        ],
+        false,
+    );
+    assert_eq!(outcome.exit_code, 1);
+    assert!(outcome.stderr.contains("--firth and --no-firth cannot be used together"));
+}
+
+#[test]
+fn from_options_reports_conflicting_phenotype_column_specifications() {
+    let fixture = FixtureDirectory::new("interface-option-conflict");
+    let (bgen_path, phenotype_path, pred_path) = interface_minimal_paths(&fixture, "option-conflict");
+    let mut options = build_minimal_regenie_options(&bgen_path, &phenotype_path, &pred_path, "out");
+    let input_layer = options
+        .get_mut("input")
+        .and_then(Value::as_table_mut)
+        .expect("options should include an input layer");
+    input_layer.insert("phenoColList".into(), Value::String("trait".to_string()));
+    let error = from_options(&options).expect_err("phenoCol and phenoColList should conflict");
+    assert!(error.to_string().contains("Use only one of pheno_columns, pheno_col, or pheno_col_list."));
+}
+
+#[test]
+fn validate_config_for_run_reports_nonexistent_file_paths() {
+    let fixture = FixtureDirectory::new("interface-run-validation");
+    let (bgen_path, phenotype_path, _pred_path) = interface_minimal_paths(&fixture, "validate");
+    let mut options =
+        build_minimal_regenie_options(&bgen_path, &phenotype_path, "valid_predictions.list", "out");
+    let input_layer = options
+        .get_mut("input")
+        .and_then(Value::as_table_mut)
+        .expect("options should include an input layer");
+    input_layer.insert("pred".into(), Value::String(fixture.path.join("missing-predictions.list").display().to_string()));
+    let config = from_options(&options).expect("options should parse before runtime path validation");
+    let path_error = validate_config_for_run(&config).expect_err("missing --pred path should fail");
+    assert!(path_error.to_string().contains("--pred path does not exist"));
+}
+
+#[test]
+fn from_toml_path_round_trip_preserves_resolved_runtime_values() {
+    let fixture = FixtureDirectory::new("interface-toml-roundtrip");
+    let (bgen_path, phenotype_path, pred_path) = interface_minimal_paths(&fixture, "toml");
+    let output_path = fixture.path.join("toml-output").display().to_string();
+    let config = from_options(
+        &build_minimal_regenie_options(&bgen_path, &phenotype_path, &pred_path, &output_path),
+    )
+    .expect("options should build a resolved config");
+    let output_toml = dumps_toml(&config).expect("resolved config should serialize");
+    let roundtrip_path = fixture.write_file("resolved.toml", &output_toml);
+    let roundtrip = from_toml_path(&roundtrip_path).expect("roundtrip toml should parse");
+    assert_eq!(roundtrip.input, config.input);
+    assert_eq!(roundtrip.g_output, config.g_output);
+    assert_eq!(roundtrip.trait_config, config.trait_config);
+}
+
+#[test]
+fn load_packaged_config_data_loads_base_runtime_options() {
+    let packaged = load_packaged_config_data().expect("packaged defaults should load");
+    assert_eq!(packaged.trait_config.step, 2);
+    assert_eq!(packaged.trait_config.bsize.get(), 16_384);
+    assert_eq!(packaged.g_output.writer_threads.get(), 4);
+    assert!(!packaged.binary.firth);
+    assert!(!packaged.binary.approx);
+    assert!(packaged.input.bgen.is_none());
 }
