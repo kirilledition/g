@@ -1554,6 +1554,46 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.acquire_dosage_buffer_with_shape(expected_shape, np.uint8),
         )
 
+    @staticmethod
+    def _dosage_buffer_owner(dosage_buffer: HostGenotypeBuffer) -> HostGenotypeBuffer:
+        """Return the base owner array for a dosage buffer view."""
+        dosage_buffer_owner = dosage_buffer
+        dosage_buffer_base = dosage_buffer_owner.base
+        while isinstance(dosage_buffer_base, np.ndarray):
+            dosage_buffer_owner = dosage_buffer_base
+            dosage_buffer_base = dosage_buffer_owner.base
+        return dosage_buffer_owner
+
+    @staticmethod
+    def _dosage_buffer_shape_is_compatible(
+        buffered_shape: tuple[int, ...],
+        expected_shape: tuple[int, ...],
+    ) -> bool:
+        """Return whether one buffer shape can satisfy another request by slicing."""
+        if len(buffered_shape) != len(expected_shape):
+            return False
+        return all(buffered_dim >= expected_dim for buffered_dim, expected_dim in zip(buffered_shape, expected_shape))
+
+    @classmethod
+    def _acquire_reused_dosage_buffer(
+        cls,
+        dosage_buffer: HostGenotypeBuffer,
+        expected_shape: tuple[int, ...],
+        dtype: npt.DTypeLike,
+    ) -> HostGenotypeBuffer | None:
+        """Return a reused buffer if dtype/shape constraints are met, else None."""
+        if dosage_buffer.dtype != dtype:
+            return None
+        if dosage_buffer.shape == expected_shape:
+            return dosage_buffer
+        if not cls._dosage_buffer_shape_is_compatible(dosage_buffer.shape, expected_shape):
+            return None
+        slices = tuple(slice(0, dimension_size) for dimension_size in expected_shape)
+        return typing.cast(
+            "HostGenotypeBuffer",
+            dosage_buffer[slices],
+        )
+
     def acquire_dosage_buffer_with_shape(
         self,
         expected_shape: tuple[int, ...],
@@ -1564,13 +1604,18 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.raise_worker_error_if_present()
             with contextlib.suppress(queue.Empty):
                 dosage_buffer = self.free_dosage_buffers.get_nowait()
-                if dosage_buffer.shape == expected_shape and dosage_buffer.dtype == dtype:
+                reused_dosage_buffer = self._acquire_reused_dosage_buffer(
+                    dosage_buffer,
+                    expected_shape=expected_shape,
+                    dtype=dtype,
+                )
+                if reused_dosage_buffer is not None:
                     self.record_queue_operation(
                         queue_name="dosage_buffer_pool",
                         operation_name="reuse",
                         observed_queue=self.free_dosage_buffers,
                     )
-                    return dosage_buffer
+                    return reused_dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
                 if self.dosage_buffer_count < self.dosage_buffer_limit:
                     return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
@@ -1588,23 +1633,29 @@ class NativeBgenCallbackRunner(abc.ABC):
                     start_time=buffer_wait_start_time,
                     blocked=True,
                 )
-                if dosage_buffer.shape == expected_shape and dosage_buffer.dtype == dtype:
+                reused_dosage_buffer = self._acquire_reused_dosage_buffer(
+                    dosage_buffer,
+                    expected_shape=expected_shape,
+                    dtype=dtype,
+                )
+                if reused_dosage_buffer is not None:
                     self.record_queue_operation(
                         queue_name="dosage_buffer_pool",
                         operation_name="reuse",
                         observed_queue=self.free_dosage_buffers,
                     )
-                    return dosage_buffer
+                    return reused_dosage_buffer
                 self.discard_dosage_buffer_slot(dosage_buffer)
                 if self.dosage_buffer_count < self.dosage_buffer_limit:
                     return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
 
     def release_dosage_buffer(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Return a processed host dosage buffer to the reusable pool."""
-        if id(dosage_buffer) not in self.dosage_buffer_identifiers:
+        dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
+        if id(dosage_buffer_owner) not in self.dosage_buffer_identifiers:
             return
         try:
-            self.free_dosage_buffers.put_nowait(dosage_buffer)
+            self.free_dosage_buffers.put_nowait(dosage_buffer_owner)
             self.record_queue_operation(
                 queue_name="dosage_buffer_pool",
                 operation_name="return",
@@ -1659,7 +1710,9 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> HostGenotypeBuffer | None:
         """Return a host dosage buffer reference when it belongs to the reusable pool."""
         if isinstance(dosage_buffer, np.ndarray):
-            return typing.cast("HostGenotypeBuffer", dosage_buffer)
+            dosage_buffer_owner = self._dosage_buffer_owner(dosage_buffer)
+            if id(dosage_buffer_owner) in self.dosage_buffer_identifiers:
+                return dosage_buffer_owner
         return None
 
     def release_result_work_item_buffer(

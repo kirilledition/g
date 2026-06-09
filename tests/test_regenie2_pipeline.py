@@ -1212,6 +1212,26 @@ def test_native_callback_runner_reuses_and_replaces_host_dosage_buffers() -> Non
     assert id(blocked_replacement) in limited_callback.dosage_buffer_identifiers
 
 
+def test_native_callback_runner_reuses_larger_host_dosage_buffer_as_view() -> None:
+    callback = ManualCallbackRunner()
+
+    oversized_buffer = callback.allocate_dosage_buffer_with_shape((4, 5), np.float32)
+    callback.release_dosage_buffer(oversized_buffer)
+    sliced_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    assert sliced_buffer.shape == (2, 3)
+    assert np.shares_memory(sliced_buffer, oversized_buffer)
+    assert sliced_buffer.base is oversized_buffer
+    assert callback.dosage_buffer_count == 1
+
+    releasable_sliced_buffer = callback.get_releasable_dosage_buffer(sliced_buffer)
+    assert releasable_sliced_buffer is not None
+    assert releasable_sliced_buffer is oversized_buffer
+
+    callback.release_dosage_buffer(sliced_buffer)
+    restored_buffer = callback.acquire_dosage_buffer(sample_count=4, variant_count=5)
+    assert restored_buffer is oversized_buffer
+
+
 def test_native_callback_runner_ignores_unowned_host_dosage_buffers() -> None:
     callback = ManualCallbackRunner()
 
