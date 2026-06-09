@@ -858,11 +858,23 @@ def apply_device_candidate_corrections_firth_variant_major(
     )
     if stage_duration_recorder is not None:
         stage_duration_recorder("firth_candidate_dispatch_plan", capacity_plan_start_time)
-    candidate_count = int(
-        jax.device_get(jnp.sum(result.extra_code == types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32))
-    )
-    if candidate_count > capacity_plan.bounded_candidate_capacity:
-        return apply_device_candidate_corrections_firth_variant_major_with_overflow_dispatch(
+    candidate_count = jnp.sum(result.extra_code == types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32)
+    return jax.lax.cond(
+        candidate_count <= capacity_plan.bounded_candidate_capacity,
+        lambda _: apply_device_candidate_corrections_firth_variant_major_with_device_dispatch(
+            chromosome_state=chromosome_state,
+            genotype_matrix_by_variant=genotype_matrix_by_variant,
+            result=result,
+            correction_plan=correction_plan,
+            tiny_candidate_capacity=capacity_plan.tiny_candidate_capacity,
+            small_candidate_capacity=capacity_plan.small_candidate_capacity,
+            bounded_candidate_capacity=capacity_plan.bounded_candidate_capacity,
+            sparse_candidate_mask=sparse_candidate_mask,
+            dosage_sum=dosage_sum,
+            observation_count=observation_count,
+            kernel_config=kernel_config,
+        ),
+        lambda _: apply_device_candidate_corrections_firth_variant_major_with_overflow_dispatch(
             chromosome_state=chromosome_state,
             genotype_matrix_by_variant=genotype_matrix_by_variant,
             result=result,
@@ -872,19 +884,8 @@ def apply_device_candidate_corrections_firth_variant_major(
             dosage_sum=dosage_sum,
             observation_count=observation_count,
             kernel_config=kernel_config,
-        )
-    return apply_device_candidate_corrections_firth_variant_major_with_device_dispatch(
-        chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
-        result=result,
-        correction_plan=correction_plan,
-        tiny_candidate_capacity=capacity_plan.tiny_candidate_capacity,
-        small_candidate_capacity=capacity_plan.small_candidate_capacity,
-        bounded_candidate_capacity=capacity_plan.bounded_candidate_capacity,
-        sparse_candidate_mask=sparse_candidate_mask,
-        dosage_sum=dosage_sum,
-        observation_count=observation_count,
-        kernel_config=kernel_config,
+        ),
+        operand=None,
     )
 
 
@@ -911,11 +912,24 @@ def apply_device_candidate_corrections_firth_packed8(
     )
     if stage_duration_recorder is not None:
         stage_duration_recorder("firth_candidate_dispatch_plan", capacity_plan_start_time)
-    candidate_count = int(
-        jax.device_get(jnp.sum(result.extra_code == types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32))
-    )
-    if candidate_count > capacity_plan.bounded_candidate_capacity:
-        return apply_device_candidate_corrections_firth_packed8_with_overflow_dispatch(
+    candidate_count = jnp.sum(result.extra_code == types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32)
+    return jax.lax.cond(
+        candidate_count <= capacity_plan.bounded_candidate_capacity,
+        lambda _: apply_device_candidate_corrections_firth_packed8_with_device_dispatch(
+            chromosome_state=chromosome_state,
+            packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+            result=result,
+            correction_plan=correction_plan,
+            tiny_candidate_capacity=capacity_plan.tiny_candidate_capacity,
+            small_candidate_capacity=capacity_plan.small_candidate_capacity,
+            bounded_candidate_capacity=capacity_plan.bounded_candidate_capacity,
+            sparse_candidate_mask=sparse_candidate_mask,
+            dosage_sum=dosage_sum,
+            observation_count=observation_count,
+            score_dtype=score_dtype,
+            kernel_config=kernel_config,
+        ),
+        lambda _: apply_device_candidate_corrections_firth_packed8_with_overflow_dispatch(
             chromosome_state=chromosome_state,
             packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
             result=result,
@@ -926,20 +940,8 @@ def apply_device_candidate_corrections_firth_packed8(
             observation_count=observation_count,
             score_dtype=score_dtype,
             kernel_config=kernel_config,
-        )
-    return apply_device_candidate_corrections_firth_packed8_with_device_dispatch(
-        chromosome_state=chromosome_state,
-        packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
-        result=result,
-        correction_plan=correction_plan,
-        tiny_candidate_capacity=capacity_plan.tiny_candidate_capacity,
-        small_candidate_capacity=capacity_plan.small_candidate_capacity,
-        bounded_candidate_capacity=capacity_plan.bounded_candidate_capacity,
-        sparse_candidate_mask=sparse_candidate_mask,
-        dosage_sum=dosage_sum,
-        observation_count=observation_count,
-        score_dtype=score_dtype,
-        kernel_config=kernel_config,
+        ),
+        operand=None,
     )
 
 
@@ -967,11 +969,23 @@ def apply_device_candidate_corrections_multi_firth_variant_major(
     )
     if stage_duration_recorder is not None:
         stage_duration_recorder("firth_candidate_dispatch_plan", capacity_plan_start_time)
-    candidate_count = int(
-        jax.device_get(jnp.sum(result.extra_code == types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32))
-    )
-    if candidate_count > capacity_plan.bounded_candidate_capacity:
-        return apply_device_candidate_corrections_multi_firth_variant_major_with_overflow_dispatch(
+    candidate_count = jnp.sum(result.extra_code == types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32)
+    return jax.lax.cond(
+        candidate_count <= capacity_plan.bounded_candidate_capacity,
+        lambda _: apply_device_candidate_corrections_multi_firth_variant_major_with_device_dispatch(
+            chromosome_state=chromosome_state,
+            genotype_matrix_by_variant=genotype_matrix_by_variant,
+            result=result,
+            correction_plan=correction_plan,
+            tiny_candidate_capacity=capacity_plan.tiny_candidate_capacity,
+            small_candidate_capacity=capacity_plan.small_candidate_capacity,
+            bounded_candidate_capacity=capacity_plan.bounded_candidate_capacity,
+            sparse_candidate_mask=sparse_candidate_mask,
+            dosage_sum=dosage_sum,
+            observation_count=observation_count,
+            kernel_config=kernel_config,
+        ),
+        lambda _: apply_device_candidate_corrections_multi_firth_variant_major_with_overflow_dispatch(
             chromosome_state=chromosome_state,
             genotype_matrix_by_variant=genotype_matrix_by_variant,
             result=result,
@@ -981,19 +995,8 @@ def apply_device_candidate_corrections_multi_firth_variant_major(
             dosage_sum=dosage_sum,
             observation_count=observation_count,
             kernel_config=kernel_config,
-        )
-    return apply_device_candidate_corrections_multi_firth_variant_major_with_device_dispatch(
-        chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
-        result=result,
-        correction_plan=correction_plan,
-        tiny_candidate_capacity=capacity_plan.tiny_candidate_capacity,
-        small_candidate_capacity=capacity_plan.small_candidate_capacity,
-        bounded_candidate_capacity=capacity_plan.bounded_candidate_capacity,
-        sparse_candidate_mask=sparse_candidate_mask,
-        dosage_sum=dosage_sum,
-        observation_count=observation_count,
-        kernel_config=kernel_config,
+        ),
+        operand=None,
     )
 
 
@@ -1022,11 +1025,24 @@ def apply_device_candidate_corrections_multi_firth_packed8(
     )
     if stage_duration_recorder is not None:
         stage_duration_recorder("firth_candidate_dispatch_plan", capacity_plan_start_time)
-    candidate_count = int(
-        jax.device_get(jnp.sum(result.extra_code == types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32))
-    )
-    if candidate_count > capacity_plan.bounded_candidate_capacity:
-        return apply_device_candidate_corrections_multi_firth_packed8_with_overflow_dispatch(
+    candidate_count = jnp.sum(result.extra_code == types.BinaryExtraCode.FIRTH.value, dtype=jnp.int32)
+    return jax.lax.cond(
+        candidate_count <= capacity_plan.bounded_candidate_capacity,
+        lambda _: apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
+            chromosome_state=chromosome_state,
+            packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+            result=result,
+            correction_plan=correction_plan,
+            tiny_candidate_capacity=capacity_plan.tiny_candidate_capacity,
+            small_candidate_capacity=capacity_plan.small_candidate_capacity,
+            bounded_candidate_capacity=capacity_plan.bounded_candidate_capacity,
+            sparse_candidate_mask=sparse_candidate_mask,
+            dosage_sum=dosage_sum,
+            observation_count=observation_count,
+            score_dtype=score_dtype,
+            kernel_config=kernel_config,
+        ),
+        lambda _: apply_device_candidate_corrections_multi_firth_packed8_with_overflow_dispatch(
             chromosome_state=chromosome_state,
             packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
             result=result,
@@ -1037,20 +1053,8 @@ def apply_device_candidate_corrections_multi_firth_packed8(
             observation_count=observation_count,
             score_dtype=score_dtype,
             kernel_config=kernel_config,
-        )
-    return apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
-        chromosome_state=chromosome_state,
-        packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
-        result=result,
-        correction_plan=correction_plan,
-        tiny_candidate_capacity=capacity_plan.tiny_candidate_capacity,
-        small_candidate_capacity=capacity_plan.small_candidate_capacity,
-        bounded_candidate_capacity=capacity_plan.bounded_candidate_capacity,
-        sparse_candidate_mask=sparse_candidate_mask,
-        dosage_sum=dosage_sum,
-        observation_count=observation_count,
-        score_dtype=score_dtype,
-        kernel_config=kernel_config,
+        ),
+        operand=None,
     )
 
 

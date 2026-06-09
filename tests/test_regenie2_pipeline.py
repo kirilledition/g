@@ -60,6 +60,31 @@ def build_default_pipeline_runtime_options() -> PipelineRuntimeOptions:
     )
 
 
+def test_build_phenotype_compute_groups_distinguishes_sample_modes() -> None:
+    per_phenotype_groups = execution_plan.build_phenotype_compute_groups(
+        phenotype_names=("trait_a", "trait_b"),
+        multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+    )
+    complete_case_groups = execution_plan.build_phenotype_compute_groups(
+        phenotype_names=("trait_a", "trait_b"),
+        multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+    )
+    single_phenotype_groups = execution_plan.build_phenotype_compute_groups(
+        phenotype_names=("trait_a",),
+        multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+    )
+
+    assert tuple(group.phenotype_indices for group in per_phenotype_groups) == ((0,), (1,))
+    assert tuple(group.group_mode for group in per_phenotype_groups) == (
+        types.PhenotypeComputeGroupMode.PER_PHENOTYPE_COMPATIBLE,
+        types.PhenotypeComputeGroupMode.PER_PHENOTYPE_COMPATIBLE,
+    )
+    assert len(complete_case_groups) == 1
+    assert complete_case_groups[0].phenotype_indices == (0, 1)
+    assert complete_case_groups[0].group_mode == types.PhenotypeComputeGroupMode.COMPLETE_CASE
+    assert single_phenotype_groups[0].group_mode == types.PhenotypeComputeGroupMode.SINGLE_PHENOTYPE
+
+
 class FakePredictionSource:
     instances: typing.ClassVar[list[FakePredictionSource]] = []
 
@@ -689,6 +714,66 @@ def build_native_run_input() -> native_dispatch.NativeBgenRunInput:
     )
 
 
+def test_open_pipeline_bgen_engine_records_selected_backend_telemetry() -> None:
+    telemetry_session = RecordingTelemetrySession()
+    pipeline_options = build_default_pipeline_runtime_options()
+    writer_settings = regenie2_pipeline.build_output_writer_settings(
+        finalize_parquet=False,
+        writer_thread_count=pipeline_options.writer_thread_count,
+        writer_queue_depth=pipeline_options.writer_queue_depth,
+        chunks_per_arrow_file=pipeline_options.chunks_per_arrow_file,
+        parquet_compression=pipeline_options.parquet_compression,
+        arrow_compression=types.ArrowCompression.ZSTD,
+        output_format=types.OutputFormat.PARQUET,
+    )
+    context = regenie2_pipeline.build_regenie2_pipeline_context(
+        association_mode=types.AssociationMode.REGENIE2_LINEAR,
+        genotype_source_config=source.build_bgen_source_config(Path("study.bgen")),
+        phenotype_path=Path("phenotype.tsv"),
+        prediction_list_path=Path("pred.list"),
+        covariate_path=None,
+        chunk_size=32,
+        variant_limit=None,
+        trusted_no_missing_diploid=False,
+        trusted_bgen_validation_mode=types.TrustedBgenValidationMode.CACHE_ON_MISS,
+        bgen_decode_tile_variant_count=pipeline_options.bgen_decode_tile_variant_count,
+        jax_device=types.Device.GPU,
+        jax_matmul_precision=None,
+        score_dtype=pipeline_options.score_dtype,
+        firth_dtype=pipeline_options.firth_dtype,
+        gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
+        correction_plan=types.BinaryCorrectionPlan(),
+        binary_kernel_config=None,
+        linear_numerical_config=None,
+        writer_settings=writer_settings,
+        stage_timing_recorder=None,
+        telemetry_session=typing.cast("typing.Any", telemetry_session),
+        alignment_config=None,
+    )
+    engine = FakeRunEngine("study.bgen", chunk_size=32, trusted_no_missing_diploid=True)
+
+    with patch("g.engine.regenie2_pipeline.native_dispatch.build_bgen_run_engine", return_value=engine):
+        opened_engine = regenie2_pipeline.open_pipeline_bgen_engine(
+            context=context,
+            pipeline_label="linear",
+            phenotype_name="trait",
+        )
+
+    assert opened_engine is engine
+    assert telemetry_session.events[0] == (
+        "association_backend_selected",
+        {
+            "association_mode": "regenie2_linear",
+            "association_backend_kind": "jax_packed8",
+            "device": "gpu",
+            "genotype_format": "packed8",
+            "phenotype": "trait",
+        },
+    )
+    assert telemetry_session.events[1][0] == "bgen_engine_opened"
+    assert telemetry_session.events[1][1]["association_backend_kind"] == "jax_packed8"
+
+
 def build_native_run_input_with_alignment(
     *,
     phenotype_name: str,
@@ -735,16 +820,24 @@ def build_grouped_run_input_from_single_trait_inputs(
         covariate_matrix=np.asarray(first_run_input.covariate_matrix, dtype=np.float32),
         is_binary_trait=first_run_input.is_binary_trait,
     )
+    run_input = native_dispatch.NativeBgenMultiRunInput(
+        native_multi_aligned_sample_data=typing.cast("typing.Any", native_multi_aligned_sample_data),
+        phenotype_names=phenotype_names,
+        sample_indices=np.ascontiguousarray(native_multi_aligned_sample_data.sample_indices, dtype=np.int64),
+        phenotype_matrix=np.asarray(native_multi_aligned_sample_data.phenotype_matrix, dtype=np.float32),
+        covariate_matrix=np.asarray(native_multi_aligned_sample_data.covariate_matrix, dtype=np.float32),
+        is_binary_trait=native_multi_aligned_sample_data.is_binary_trait,
+    )
     return native_dispatch.NativeBgenGroupedRunInput(
-        phenotype_indices=phenotype_indices,
-        run_input=native_dispatch.NativeBgenMultiRunInput(
-            native_multi_aligned_sample_data=typing.cast("typing.Any", native_multi_aligned_sample_data),
-            phenotype_names=phenotype_names,
-            sample_indices=np.ascontiguousarray(native_multi_aligned_sample_data.sample_indices, dtype=np.int64),
-            phenotype_matrix=np.asarray(native_multi_aligned_sample_data.phenotype_matrix, dtype=np.float32),
-            covariate_matrix=np.asarray(native_multi_aligned_sample_data.covariate_matrix, dtype=np.float32),
-            is_binary_trait=native_multi_aligned_sample_data.is_binary_trait,
+        compute_group=native_dispatch.build_resolved_phenotype_compute_group(
+            phenotype_indices=phenotype_indices,
+            run_input=run_input,
+            prediction_list_path=Path("pred.list"),
+            planned_compute_groups=None,
+            alignment_config=None,
         ),
+        phenotype_indices=phenotype_indices,
+        run_input=run_input,
         prediction_source=FakePredictionSource(),
     )
 
@@ -768,6 +861,28 @@ def build_native_multi_run_input() -> native_dispatch.NativeBgenMultiRunInput:
         covariate_matrix=np.asarray([[1.0], [1.0]], dtype=np.float32),
         is_binary_trait=False,
     )
+
+
+def test_complete_case_compute_group_resolution_adds_alignment_fingerprints() -> None:
+    run_input = build_native_multi_run_input()
+    planned_compute_groups = execution_plan.build_phenotype_compute_groups(
+        phenotype_names=("trait_a", "trait_b"),
+        multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+    )
+
+    compute_group = native_dispatch.build_resolved_complete_case_phenotype_compute_group(
+        run_input=run_input,
+        prediction_list_path=Path("pred.list"),
+        planned_compute_groups=planned_compute_groups,
+        alignment_config=None,
+    )
+
+    assert compute_group.group_mode == types.PhenotypeComputeGroupMode.COMPLETE_CASE
+    assert compute_group.phenotype_indices == (0, 1)
+    assert compute_group.phenotype_names == ("trait_a", "trait_b")
+    assert compute_group.sample_set_fingerprint is not None
+    assert compute_group.covariate_design_fingerprint is not None
+    assert compute_group.prediction_alignment_fingerprint is not None
 
 
 def build_native_metadata() -> typing.Any:
@@ -1210,6 +1325,26 @@ def test_native_callback_runner_reuses_and_replaces_host_dosage_buffers() -> Non
     assert id(first_limited_buffer) not in limited_callback.dosage_buffer_identifiers
     assert id(second_limited_buffer) in limited_callback.dosage_buffer_identifiers
     assert id(blocked_replacement) in limited_callback.dosage_buffer_identifiers
+
+
+def test_native_callback_runner_reuses_larger_host_dosage_buffer_as_view() -> None:
+    callback = ManualCallbackRunner()
+
+    oversized_buffer = callback.allocate_dosage_buffer_with_shape((4, 5), np.float32)
+    callback.release_dosage_buffer(oversized_buffer)
+    sliced_buffer = callback.acquire_dosage_buffer(sample_count=2, variant_count=3)
+    assert sliced_buffer.shape == (2, 3)
+    assert np.shares_memory(sliced_buffer, oversized_buffer)
+    assert sliced_buffer.base is oversized_buffer
+    assert callback.dosage_buffer_count == 1
+
+    releasable_sliced_buffer = callback.get_releasable_dosage_buffer(sliced_buffer)
+    assert releasable_sliced_buffer is not None
+    assert releasable_sliced_buffer is oversized_buffer
+
+    callback.release_dosage_buffer(sliced_buffer)
+    restored_buffer = callback.acquire_dosage_buffer(sample_count=4, variant_count=5)
+    assert restored_buffer is oversized_buffer
 
 
 def test_native_callback_runner_ignores_unowned_host_dosage_buffers() -> None:
@@ -2854,8 +2989,9 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_session,
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header", return_value={"header": "current"}
-        ),
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            return_value={"header": "current"},
+        ) as mock_manifest_header,
         patch(
             "g.engine.regenie2_pipeline.output.initialize_output_run",
             side_effect=lambda **kwargs: (
@@ -2919,6 +3055,7 @@ def test_run_linear_bgen_pipeline_invokes_native_engine_and_writer() -> None:
     assert prediction_source.phenotype_name == "trait"
     assert prediction_source.native_aligned_sample_data is run_input.native_aligned_sample_data
     assert prediction_source.sample_key_mode == "iid"
+    assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_DOSAGE
 
 
 def test_single_trait_preflight_failure_does_not_initialize_output_or_writer(tmp_path: Path) -> None:
@@ -3031,6 +3168,7 @@ def test_linear_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
     assert isinstance(callback, callbacks.LinearRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [0, 64]
+    assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_PACKED8
     assert mock_manifest_header.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
     assert mock_manifest_header.call_args.kwargs["trusted_no_missing_diploid"] is True
 
@@ -3199,8 +3337,9 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
             side_effect=lambda *args, **kwargs: preparation_order.append("writer") or writer_session,
         ),
         patch(
-            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header", return_value={"header": "current"}
-        ),
+            "g.engine.regenie2_pipeline.output.build_current_run_manifest_header",
+            return_value={"header": "current"},
+        ) as mock_manifest_header,
         patch(
             "g.engine.regenie2_pipeline.output.initialize_output_run",
             side_effect=lambda **kwargs: (
@@ -3253,6 +3392,7 @@ def test_binary_pipeline_invokes_variant_major_engine_for_trusted_bgen() -> None
     assert callback.kernel_config is kernel_config
     assert committed_chunk_identifiers == [0, 64]
     assert mock_preflight.call_args.kwargs["variant_limit"] == 100
+    assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_DOSAGE
 
 
 def test_binary_pipeline_invokes_variant_major_engine_for_untrusted_bgen() -> None:
@@ -3372,6 +3512,7 @@ def test_binary_pipeline_invokes_packed8_engine_and_forces_trusted_validation() 
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
     assert isinstance(callback, callbacks.BinaryRegenie2PipelineCallback)
     assert committed_chunk_identifiers == [0, 64]
+    assert mock_manifest_header.call_args.kwargs["association_backend_kind"] == types.AssociationBackendKind.JAX_PACKED8
     assert mock_manifest_header.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
     assert mock_manifest_header.call_args.kwargs["trusted_no_missing_diploid"] is True
 
@@ -3707,6 +3848,10 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
     FakeRunEngine.instances.clear()
     writer_sessions = [FakeWriterSession(), FakeWriterSession()]
     run_input = build_native_multi_run_input()
+    planned_compute_groups = execution_plan.build_phenotype_compute_groups(
+        phenotype_names=("trait_a", "trait_b"),
+        multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+    )
     pipeline_options = build_default_pipeline_runtime_options()
 
     with (
@@ -3715,7 +3860,10 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
             "g.engine.native_dispatch.trusted_validation.validate_trusted_bgen_with_cache",
             side_effect=lambda *, engine, bgen_path, validation_mode: engine.validate_trusted_no_missing_diploid(),
         ),
-        patch("g.engine.native_dispatch.load_native_bgen_multi_run_input", return_value=run_input),
+        patch(
+            "g.engine.native_dispatch.load_native_bgen_multi_run_input",
+            return_value=run_input,
+        ) as mock_load_native_multi_run_input,
         patch(
             "g.engine.native_dispatch.build_multi_regenie_prediction_source",
             return_value=FakePredictionSource(),
@@ -3759,9 +3907,11 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
             firth_dtype=pipeline_options.firth_dtype,
             gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
             sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+            phenotype_compute_groups=planned_compute_groups,
         )
 
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+    assert mock_load_native_multi_run_input.call_args.kwargs["phenotype_names"] == ("trait_a", "trait_b")
     engine = FakeRunEngine.instances[0]
     assert engine.trusted_no_missing_diploid is True
     assert engine.validation_count == 1
@@ -3785,6 +3935,10 @@ def test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifest
 def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
     FakeRunEngine.instances.clear()
     writer_sessions = [FakeWriterSession(), FakeWriterSession()]
+    planned_compute_groups = execution_plan.build_phenotype_compute_groups(
+        phenotype_names=("trait_a", "trait_b"),
+        multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+    )
     run_inputs = (
         build_native_run_input_with_alignment(
             phenotype_name="trait_a",
@@ -3811,7 +3965,10 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
     with (
         patch("g.engine.native_dispatch._core.Regenie2RunEngine", FakeRunEngine),
         patch("g.engine.native_dispatch._core.MultiRegeniePredictionSource", FakePredictionSource),
-        patch("g.engine.native_dispatch.load_native_bgen_grouped_run_inputs", return_value=grouped_run_inputs),
+        patch(
+            "g.engine.native_dispatch.load_native_bgen_grouped_run_inputs",
+            return_value=grouped_run_inputs,
+        ) as mock_load_grouped_run_inputs,
         patch("g.engine.regenie2_pipeline.run_multi_preflight") as mock_run_multi_preflight,
         patch(
             "g.engine.regenie2_pipeline.output.create_output_writer_session",
@@ -3852,9 +4009,11 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
             score_dtype=pipeline_options.score_dtype,
             firth_dtype=pipeline_options.firth_dtype,
             sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+            phenotype_compute_groups=planned_compute_groups,
         )
 
     assert final_paths == (Path("results/final.parquet"), Path("results/final.parquet"))
+    assert mock_load_grouped_run_inputs.call_args.kwargs["planned_compute_groups"] == planned_compute_groups
     assert len(FakeRunEngine.instances) == 1
     engine = FakeRunEngine.instances[0]
     assert len(engine.run_call_arguments) == 1
@@ -3862,6 +4021,11 @@ def test_grouped_per_phenotype_pipeline_batches_identical_alignments() -> None:
     np.testing.assert_array_equal(sample_indices, np.asarray([1, 0], dtype=np.int64))
     assert isinstance(callback, callbacks.MultiLinearRegenie2PipelineCallback)
     assert callback.run_input.phenotype_names == ("trait_a", "trait_b")
+    assert grouped_run_inputs[0].compute_group.phenotype_indices == (0, 1)
+    assert grouped_run_inputs[0].compute_group.phenotype_names == ("trait_a", "trait_b")
+    assert grouped_run_inputs[0].compute_group.sample_set_fingerprint is not None
+    assert grouped_run_inputs[0].compute_group.covariate_design_fingerprint is not None
+    assert grouped_run_inputs[0].compute_group.prediction_alignment_fingerprint is not None
     assert committed_chunk_identifiers == []
     assert mock_run_multi_preflight.call_args.kwargs["run_input"].phenotype_names == ("trait_a", "trait_b")
     assert tuple(call.kwargs["multi_phenotype_sample_mode"] for call in mock_build_header.call_args_list) == (

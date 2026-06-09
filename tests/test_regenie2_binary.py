@@ -463,6 +463,23 @@ def require_multi_binary_chunk_result(
     return result
 
 
+def _build_marker_score_result(
+    result: regenie2_binary_result.Regenie2BinaryScoreChunkResult,
+    *,
+    marker: float,
+) -> regenie2_binary_result.Regenie2BinaryChunkResult:
+    """Build a diagnostic result carrying a branch marker value."""
+    marked = regenie2_binary_result.Regenie2BinaryScoreChunkResult(
+        beta=result.beta,
+        standard_error=result.standard_error,
+        chi_squared=result.chi_squared,
+        log10_p_value=jnp.full_like(result.log10_p_value, marker),
+        extra_code=result.extra_code,
+        valid_mask=result.valid_mask,
+    )
+    return regenie2_binary_result.expand_score_result_with_empty_firth_diagnostics(marked)
+
+
 def compute_reference_multi_binary_score_test_chunk_variant_major(
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
@@ -1035,7 +1052,6 @@ def test_multi_firth_candidate_capacity_plan_scales_tiers_by_trait_count() -> No
 def test_single_trait_firth_overflow_uses_separate_variant_major_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    called_dispatchers: list[str] = []
     score_result = build_score_result_with_extra_codes(
         (
             types.BinaryExtraCode.FIRTH.value,
@@ -1044,19 +1060,17 @@ def test_single_trait_firth_overflow_uses_separate_variant_major_dispatch(
         )
     )
 
-    def fail_common_dispatch(**_: object) -> regenie2_binary_result.Regenie2BinaryChunkResult:
-        msg = "common bounded dispatcher should not handle overflow candidates"
-        raise AssertionError(msg)
-
     def record_overflow_dispatch(**kwargs: object) -> regenie2_binary_result.Regenie2BinaryChunkResult:
-        called_dispatchers.append("overflow")
         assert kwargs["overflow_candidate_capacity"] == 3
-        return regenie2_binary_result.expand_score_result_with_empty_firth_diagnostics(score_result)
+        return _build_marker_score_result(score_result, marker=2.0)
+
+    def record_common_dispatch(**_: object) -> regenie2_binary_result.Regenie2BinaryChunkResult:
+        return _build_marker_score_result(score_result, marker=1.0)
 
     monkeypatch.setattr(
         regenie2_binary_variant_major_correction,
         "apply_device_candidate_corrections_firth_variant_major_with_device_dispatch",
-        fail_common_dispatch,
+        record_common_dispatch,
     )
     monkeypatch.setattr(
         regenie2_binary_variant_major_correction,
@@ -1075,8 +1089,7 @@ def test_single_trait_firth_overflow_uses_separate_variant_major_dispatch(
         ),
     )
 
-    assert called_dispatchers == ["overflow"]
-    np.testing.assert_array_equal(np.asarray(result.extra_code), np.asarray(score_result.extra_code))
+    np.testing.assert_array_equal(np.asarray(result.log10_p_value), np.full(3, 2.0, dtype=np.float32))
 
 
 def test_single_trait_firth_overflow_uses_candidate_count_capacity(
@@ -1135,7 +1148,6 @@ def test_single_trait_firth_overflow_uses_candidate_count_capacity(
 def test_single_trait_firth_overflow_uses_separate_packed8_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    called_dispatchers: list[str] = []
     score_result = build_score_result_with_extra_codes(
         (
             types.BinaryExtraCode.FIRTH.value,
@@ -1144,19 +1156,17 @@ def test_single_trait_firth_overflow_uses_separate_packed8_dispatch(
         )
     )
 
-    def fail_common_dispatch(**_: object) -> regenie2_binary_result.Regenie2BinaryChunkResult:
-        msg = "common packed8 dispatcher should not handle overflow candidates"
-        raise AssertionError(msg)
-
     def record_overflow_dispatch(**kwargs: object) -> regenie2_binary_result.Regenie2BinaryChunkResult:
-        called_dispatchers.append("overflow")
         assert kwargs["overflow_candidate_capacity"] == 3
-        return regenie2_binary_result.expand_score_result_with_empty_firth_diagnostics(score_result)
+        return _build_marker_score_result(score_result, marker=2.0)
+
+    def record_common_dispatch(**_: object) -> regenie2_binary_result.Regenie2BinaryChunkResult:
+        return _build_marker_score_result(score_result, marker=1.0)
 
     monkeypatch.setattr(
         regenie2_binary_variant_major_correction,
         "apply_device_candidate_corrections_firth_packed8_with_device_dispatch",
-        fail_common_dispatch,
+        record_common_dispatch,
     )
     monkeypatch.setattr(
         regenie2_binary_variant_major_correction,
@@ -1175,8 +1185,7 @@ def test_single_trait_firth_overflow_uses_separate_packed8_dispatch(
         ),
     )
 
-    assert called_dispatchers == ["overflow"]
-    np.testing.assert_array_equal(np.asarray(result.extra_code), np.asarray(score_result.extra_code))
+    np.testing.assert_array_equal(np.asarray(result.log10_p_value), np.full(3, 2.0, dtype=np.float32))
 
 
 def test_firth_candidate_device_dispatch_records_profile_stage() -> None:

@@ -1215,6 +1215,13 @@ def test_default_multi_phenotype_plan_dispatches_grouped_multi_phenotype_run() -
     mock_multi_pipeline.assert_called_once()
     assert mock_multi_pipeline.call_args.kwargs["sample_mode"] == types.MultiPhenotypeSampleMode.PER_PHENOTYPE
     assert mock_multi_pipeline.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.DOSAGE
+    assert mock_multi_pipeline.call_args.kwargs["phenotype_compute_groups"] == plan.phenotype_compute_groups
+    assert tuple(group.group_mode for group in plan.phenotype_compute_groups) == (
+        types.PhenotypeComputeGroupMode.PER_PHENOTYPE_COMPATIBLE,
+        types.PhenotypeComputeGroupMode.PER_PHENOTYPE_COMPATIBLE,
+    )
+    assert tuple(group.phenotype_indices for group in plan.phenotype_compute_groups) == ((0,), (1,))
+    assert tuple(group.phenotype_names for group in plan.phenotype_compute_groups) == (("one",), ("two",))
 
 
 def test_multi_phenotype_plan_dispatch_forwards_packed8_genotype_format() -> None:
@@ -1255,6 +1262,12 @@ def test_multi_phenotype_plan_dispatch_forwards_packed8_genotype_format() -> Non
 
     assert mock_multi_pipeline.call_args.kwargs["gpu_genotype_format"] == types.GpuGenotypeFormat.PACKED8
     assert mock_multi_pipeline.call_args.kwargs["sample_mode"] == types.MultiPhenotypeSampleMode.COMPLETE_CASE
+    assert mock_multi_pipeline.call_args.kwargs["phenotype_compute_groups"] == plan.phenotype_compute_groups
+    assert len(plan.phenotype_compute_groups) == 1
+    compute_group = plan.phenotype_compute_groups[0]
+    assert compute_group.group_mode == types.PhenotypeComputeGroupMode.COMPLETE_CASE
+    assert compute_group.phenotype_indices == (0, 1)
+    assert compute_group.phenotype_names == ("one", "two")
 
 
 def test_multi_run_plan_forwards_existing_manifests() -> None:
