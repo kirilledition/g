@@ -457,6 +457,12 @@ Useful overrides:
   passes for representative winners.
 - `tool.enable_nsight_compute=true`: run optional Nsight Compute kernel reports;
   use this only after a hot kernel is identified because it is intrusive.
+- `tool.py_spy_timeout_seconds=1800`: limit optional py-spy wall-clock run time.
+- `tool.scalene_timeout_seconds=1800`: limit optional Scalene wall-clock run time.
+- `tool.memray_timeout_seconds=1800`: limit optional Memray wall-clock run time.
+- `tool.linux_perf_timeout_seconds=1200`: limit optional perf wall-clock run time.
+- `tool.nsight_systems_timeout_seconds=1800`: limit optional Nsight Systems wall-clock run time.
+- `tool.nsight_compute_timeout_seconds=1800`: limit optional Nsight Compute wall-clock run time.
 - `tool.enable_logging_perturbation=false`: skip telemetry/logging perturbation
   trials when reproducing a narrower benchmark.
 - `tool.workload_keys=[binary_cpu,binary_gpu]`: tune only selected `g`
