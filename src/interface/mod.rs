@@ -19,7 +19,7 @@ pub use resolve::{from_options, from_toml_path};
 pub use serialization::{dumps_toml, write_toml};
 pub use validation::validate_config;
 
-const DEFAULT_CONFIG_TOML: &str = include_str!("../g/config.default.toml");
+const DEFAULT_CONFIG_TOML: &str = include_str!("config.default.toml");
 const OPTION_SCHEMA_VERSION: i64 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

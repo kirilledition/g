@@ -50,7 +50,7 @@ python-source = "src"
 cache-keys = [
     { file = "pyproject.toml" },
     { file = "src/**/*.rs" },
-    { file = "src/g/config.default.toml" },
+    { file = "src/interface/config.default.toml" },
     { file = "Cargo.toml" },
     { file = "Cargo.lock" },
 ]

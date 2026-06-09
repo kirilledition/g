@@ -1,14 +1,13 @@
 [trait]
 step = 2
-qt = true
-bt = false
+trait_type = "quantitative"
 bsize = 16384
 
 [binary]
 firth = false
 approx = false
-pThresh = 0.05
-firth-se = false
+p_threshold = 0.05
+firth_se = false
 
 [compute]
 device = "cpu"
