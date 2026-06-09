@@ -256,7 +256,7 @@ def test_warm_regenie2_linear_bgen_cache_executes_full_and_tail_shapes(
         "compute_regenie2_linear_chunk_from_chromosome_state_variant_major",
         fake_compute_linear_chunk,
     )
-    monkeypatch.setattr(warm_cache.callbacks, "block_until_ready", fake_block_until_ready)
+    monkeypatch.setattr(warm_cache.callback_diagnostics, "block_until_ready", fake_block_until_ready)
 
     report = warm_cache.warm_regenie2_linear_bgen_cache(
         genotype_source_config=source.GenotypeSourceConfig(Path("input.bgen"), Path("input.sample")),
@@ -354,7 +354,7 @@ def test_warm_regenie2_binary_bgen_cache_executes_with_resolved_kernel_config(
         "compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
         fake_compute_binary_chunk,
     )
-    monkeypatch.setattr(warm_cache.callbacks, "block_until_ready", lambda _: None)
+    monkeypatch.setattr(warm_cache.callback_diagnostics, "block_until_ready", lambda _: None)
 
     report = warm_cache.warm_regenie2_binary_bgen_cache(
         genotype_source_config=source.GenotypeSourceConfig(Path("input.bgen"), Path("input.sample")),
@@ -461,7 +461,7 @@ def test_warm_regenie2_binary_packed8_cache_executes_donating_score_entrypoint(
         "compute_regenie2_binary_chunk_from_chromosome_state_variant_major",
         forbidden_variant_major_chunk,
     )
-    monkeypatch.setattr(warm_cache.callbacks, "block_until_ready", lambda _: None)
+    monkeypatch.setattr(warm_cache.callback_diagnostics, "block_until_ready", lambda _: None)
 
     report = warm_cache.warm_regenie2_binary_bgen_cache(
         genotype_source_config=source.GenotypeSourceConfig(Path("input.bgen"), Path("input.sample")),

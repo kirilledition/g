@@ -9,11 +9,13 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+import g.engine.callbacks.diagnostics as callback_diagnostics
+import g.engine.callbacks.transfers as callback_transfers
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import api as regenie2_linear
-from g.engine import callbacks, native_dispatch
+from g.engine import native_dispatch
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -297,8 +299,8 @@ def warm_regenie2_linear_bgen_cache(
         alignment_config=alignment_config,
     )
     chromosome = first_engine_chromosome(engine)
-    covariate_matrix = callbacks.put_compute_array_on_device(run_input.covariate_matrix)
-    phenotype_vector = callbacks.put_compute_array_on_device(run_input.phenotype_vector)
+    covariate_matrix = callback_transfers.put_compute_array_on_device(run_input.covariate_matrix)
+    phenotype_vector = callback_transfers.put_compute_array_on_device(run_input.phenotype_vector)
     regenie_state = regenie2_linear.prepare_regenie2_linear_state(
         covariate_matrix=covariate_matrix,
         phenotype_vector=phenotype_vector,
@@ -343,7 +345,7 @@ def warm_regenie2_linear_bgen_cache(
                 genotype_imputed_dosage_square_sum=native_stats.imputed_dosage_square_sum,
                 score_dtype=score_dtype,
             )
-        callbacks.block_until_ready(result.log10_p_value)
+        callback_diagnostics.block_until_ready(result.log10_p_value)
     signatures = tuple(
         build_linear_warm_cache_signature(
             shape=shape,
@@ -398,8 +400,8 @@ def warm_regenie2_binary_bgen_cache(
         alignment_config=alignment_config,
     )
     chromosome = first_engine_chromosome(engine)
-    covariate_matrix = callbacks.put_compute_array_on_device(run_input.covariate_matrix)
-    phenotype_vector = callbacks.put_compute_array_on_device(run_input.phenotype_vector)
+    covariate_matrix = callback_transfers.put_compute_array_on_device(run_input.covariate_matrix)
+    phenotype_vector = callback_transfers.put_compute_array_on_device(run_input.phenotype_vector)
     regenie_state = regenie2_binary.prepare_regenie2_binary_state(
         covariate_matrix=covariate_matrix,
         phenotype_vector=phenotype_vector,
@@ -470,7 +472,7 @@ def warm_regenie2_binary_bgen_cache(
                 observation_count=native_stats.observation_count,
                 score_dtype=score_dtype,
             )
-        callbacks.block_until_ready(result.log10_p_value)
+        callback_diagnostics.block_until_ready(result.log10_p_value)
     signatures = tuple(
         build_binary_warm_cache_signature(
             shape=shape,

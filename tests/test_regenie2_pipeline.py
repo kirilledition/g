@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from g import execution_plan, types
+from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import state as regenie2_binary_state
@@ -656,7 +657,10 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
         kernel_config=build_default_binary_kernel_config(),
     )
     callback.result_queue = queue.Queue(maxsize=2)
-    diagnostics = SimpleNamespace(score_test_candidate_count=2)
+    diagnostics = typing.cast(
+        "regenie2_binary.BinaryChunkDiagnostics",
+        SimpleNamespace(score_test_candidate_count=2),
+    )
     work_item = callbacks.Regenie2ResultWriteWorkItem(
         metadata=build_native_metadata(),
         chunk_stats=typing.cast("typing.Any", ExplodingChunkStats()),
@@ -673,9 +677,9 @@ def test_binary_result_worker_records_deferred_diagnostics_from_work_item() -> N
     callback.result_queue.put_nowait(None)
     with (
         patch(
-            "g.engine.callbacks.write_regenie2_native_chunk_with_optional_timing",
+            "g.engine.callbacks.runtime.write_regenie2_native_chunk_with_optional_timing",
         ) as mock_write,
-        patch("g.engine.callbacks.record_binary_chunk_diagnostics_from_count") as mock_record,
+        patch("g.engine.callbacks.runtime.record_binary_chunk_diagnostics_from_count") as mock_record,
     ):
         callback.consume_result_write_items()
 
@@ -1580,7 +1584,7 @@ def test_stop_result_worker_raises_when_live_worker_leaves_full_queue() -> None:
 
     try:
         with (
-            patch("g.engine.callbacks.RESULT_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
+            patch("g.engine.callbacks.runtime.RESULT_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
             np.testing.assert_raises_regex(callbacks.NativeBgenWorkerShutdownError, "blocked-result-worker"),
         ):
             callback.stop_result_worker()
@@ -1603,7 +1607,7 @@ def test_stop_dosage_worker_raises_when_live_worker_leaves_full_queue() -> None:
 
     try:
         with (
-            patch("g.engine.callbacks.DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
+            patch("g.engine.callbacks.runtime.DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
             np.testing.assert_raises_regex(callbacks.NativeBgenWorkerShutdownError, "blocked-dosage-worker"),
         ):
             callback.stop_dosage_worker()
@@ -1622,7 +1626,7 @@ def test_join_result_worker_raises_when_worker_does_not_stop() -> None:
 
     try:
         with (
-            patch("g.engine.callbacks.RESULT_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
+            patch("g.engine.callbacks.runtime.RESULT_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
             np.testing.assert_raises_regex(callbacks.NativeBgenWorkerShutdownError, "stuck-result-worker"),
         ):
             callback.join_result_worker()
@@ -1641,7 +1645,7 @@ def test_join_dosage_worker_raises_when_worker_does_not_stop() -> None:
 
     try:
         with (
-            patch("g.engine.callbacks.DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
+            patch("g.engine.callbacks.runtime.DOSAGE_WORKER_JOIN_TIMEOUT_SECONDS", 0.0),
             np.testing.assert_raises_regex(callbacks.NativeBgenWorkerShutdownError, "stuck-dosage-worker"),
         ):
             callback.join_dosage_worker()
@@ -1944,7 +1948,7 @@ def test_linear_callback_does_not_block_chunk_compute_without_timing() -> None:
             "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ),
-        patch("g.engine.callbacks.block_until_ready") as mock_block_until_ready,
+        patch("g.engine.callbacks.transfers.block_until_ready") as mock_block_until_ready,
     ):
         callback.compute_linear_result(
             variant_metadata=build_native_metadata(),
@@ -1982,7 +1986,7 @@ def test_linear_callback_records_aggregate_chunk_timing_without_blocking() -> No
             "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ),
-        patch("g.engine.callbacks.block_until_ready") as mock_block_until_ready,
+        patch("g.engine.callbacks.transfers.block_until_ready") as mock_block_until_ready,
     ):
         callback.compute_linear_result(
             variant_metadata=build_native_metadata(),
@@ -2023,7 +2027,7 @@ def test_linear_callback_blocks_chunk_compute_with_exact_timing() -> None:
             "g.compute.regenie2_linear.api.compute_regenie2_linear_chunk_from_chromosome_state",
             return_value=result,
         ),
-        patch("g.engine.callbacks.block_until_ready") as mock_block_until_ready,
+        patch("g.engine.callbacks.transfers.block_until_ready") as mock_block_until_ready,
     ):
         callback.compute_linear_result(
             variant_metadata=build_native_metadata(),
