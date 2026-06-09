@@ -69,6 +69,10 @@ format and options.
 input fingerprints, output writer settings, committed chunks, schema versions,
 and finalization metadata.
 
+The immutable execution plan includes `association_backend.kind` so resume and
+review tooling can distinguish `jax_dosage` and `jax_packed8` execution without
+inferring from lower-level genotype or device fields.
+
 Resume modes:
 
 - `fast` trusts manifest committed chunks after compatibility validation;

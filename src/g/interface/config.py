@@ -20,7 +20,7 @@ GOutputConfig = g._core.GOutputConfig
 GDiagnosticsConfig = g._core.GDiagnosticsConfig
 RegenieConfig = g._core.RegenieConfig
 
-PYTHON_OPTION_TARGETS = {
+FLAT_OPTION_SECTIONS: dict[str, tuple[str, str]] = {
     "bgen": ("input", "bgen"),
     "sample": ("input", "sample"),
     "phenoFile": ("input", "phenoFile"),
@@ -44,6 +44,16 @@ PYTHON_OPTION_TARGETS = {
     "out": ("output", "out"),
     "format": ("output", "format"),
     "output_run_directory": ("output", "output_run_directory"),
+    "g-output-format": ("output", "format"),
+    "g-output-run-directory": ("output", "output_run_directory"),
+    "g-writer-threads": ("output", "writer_threads"),
+    "g-writer-queue-depth": ("output", "writer_queue_depth"),
+    "g-output-chunks-per-arrow-file": ("output", "chunks_per_arrow_file"),
+    "g-output-arrow-compression": ("output", "arrow_compression"),
+    "g-output-parquet-compression": ("output", "parquet_compression"),
+    "g-resume": ("output", "resume"),
+    "g-resume-mode": ("output", "resume_mode"),
+    "g-finalize-parquet": ("output", "finalize_parquet"),
     "g-device": ("compute", "device"),
     "g-staging-depth": ("compute", "staging_depth"),
     "g-result-in-flight-limit": ("compute", "result_in_flight_limit"),
@@ -95,16 +105,6 @@ PYTHON_OPTION_TARGETS = {
     "g-jax-persistent-cache-min-compile-time-seconds": ("compute", "jax_persistent_cache_min_compile_time_seconds"),
     "g-jax-xla-autotune-cache": ("compute", "jax_xla_autotune_cache"),
     "g-jax-transfer-guard": ("compute", "jax_transfer_guard"),
-    "g-output-format": ("output", "format"),
-    "g-output-run-directory": ("output", "output_run_directory"),
-    "g-writer-threads": ("output", "writer_threads"),
-    "g-writer-queue-depth": ("output", "writer_queue_depth"),
-    "g-output-chunks-per-arrow-file": ("output", "chunks_per_arrow_file"),
-    "g-output-arrow-compression": ("output", "arrow_compression"),
-    "g-output-parquet-compression": ("output", "parquet_compression"),
-    "g-resume": ("output", "resume"),
-    "g-resume-mode": ("output", "resume_mode"),
-    "g-finalize-parquet": ("output", "finalize_parquet"),
     "g-telemetry": ("diagnostics", "telemetry"),
     "g-log-dir": ("diagnostics", "log_dir"),
     "g-stage-timings-json": ("diagnostics", "stage_timings_json"),
@@ -149,32 +149,29 @@ BOOLEAN_FALSE_VALUES = frozenset(("0", "false", "no", "off"))
 NATIVE_CONFIG_SECTION_NAMES = frozenset(("input", "trait", "binary", "compute", "output", "diagnostics", "metadata"))
 
 
-def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
-    """Build a normalized config from Python option dictionaries."""
-    return g._core.config_from_options(build_toml_options_from_python_options(raw_options))
-
-
-def build_toml_options_from_python_options(
-    raw_options: typing.Mapping[str, typing.Any],
-) -> dict[str, typing.Any]:
-    """Convert legacy flat Python options into the native TOML option shape."""
-    if all(option_name in NATIVE_CONFIG_SECTION_NAMES for option_name in raw_options):
-        return dict(raw_options)
-    toml_options: dict[str, typing.Any] = {}
+def normalize_python_options(raw_options: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
+    """Normalize flat Python option dictionaries into native TOML sections."""
+    normalized_options: dict[str, typing.Any] = {}
     for option_name, option_value in raw_options.items():
+        option_target = FLAT_OPTION_SECTIONS.get(option_name)
+        if option_target is None:
+            if option_name in NATIVE_CONFIG_SECTION_NAMES:
+                normalized_options[option_name] = option_value
+                continue
+            if isinstance(option_value, collections.abc.Mapping):
+                message = f"Unknown g regenie option: {flatten_unknown_option_name(option_name, option_value)}"
+            else:
+                message = f"Unknown g regenie option: {option_name}"
+            raise ValueError(message)
         if option_value is None:
             continue
-        if isinstance(option_value, collections.abc.Mapping):
-            message = f"Unknown g regenie option: {flatten_unknown_option_name(option_name, option_value)}"
-            raise ValueError(message)
-        target = PYTHON_OPTION_TARGETS.get(option_name)
-        if target is None:
-            message = f"Unknown g regenie option: {option_name}"
-            raise ValueError(message)
-        section_name, field_name = target
-        section_options = toml_options.setdefault(section_name, {})
-        section_options[field_name] = normalize_python_option_value(option_name, option_value)
-    return toml_options
+        section_name, section_option_name = option_target
+        section_options = normalized_options.setdefault(section_name, {})
+        if not isinstance(section_options, dict):
+            normalized_options[option_name] = option_value
+            continue
+        section_options[section_option_name] = normalize_python_option_value(option_name, option_value)
+    return normalized_options
 
 
 def normalize_python_option_value(option_name: str, option_value: typing.Any) -> typing.Any:
@@ -205,74 +202,106 @@ def flatten_unknown_option_name(option_name: str, option_value: collections.abc.
 
 
 def split_name_list(value: str | None) -> tuple[str, ...]:
-    """Split a comma-delimited option value into names."""
+    """Split a comma-delimited REGENIE name list."""
     if value is None:
         return ()
     return tuple(name.strip() for name in value.split(",") if name.strip())
 
 
 def optional_string(value: object | None) -> str | None:
-    """Return a string representation for optional Python options."""
+    """Normalize optional string-like config values."""
     if value is None:
         return None
     return str(value)
 
 
 def normalize_option_name(option_name: str) -> str:
-    """Normalize a legacy Python option name."""
-    option_name_aliases = {
+    """Normalize legacy Python option aliases to CLI-style names."""
+    legacy_option_names = {
         "g_null_logistic_nonconvergence_policy": "g-null-logistic-nonconvergence",
     }
-    return option_name_aliases.get(option_name, option_name)
+    return legacy_option_names.get(option_name, option_name)
 
 
-def normalize_trait_type(*, qt: bool, bt: bool) -> types.RegenieTraitType:
-    """Normalize legacy quantitative and binary trait flags."""
-    if qt and bt:
-        message = "--qt and --bt are mutually exclusive"
+def normalize_trait_type(
+    *,
+    qt: bool | None = None,
+    bt: bool | None = None,
+    trait_type: types.RegenieTraitType | str | None = None,
+) -> types.RegenieTraitType:
+    """Normalize quantitative/binary trait selectors."""
+    if qt is True and bt is True:
+        message = "--qt and --bt are mutually exclusive."
         raise ValueError(message)
-    if bt:
+    if bt is True:
         return types.RegenieTraitType.BINARY
-    return types.RegenieTraitType.QUANTITATIVE
+    if qt is True:
+        return types.RegenieTraitType.QUANTITATIVE
+    if trait_type is None:
+        return types.RegenieTraitType.QUANTITATIVE
+    return types.RegenieTraitType(trait_type)
 
 
-def flatten_toml_mapping(toml_mapping: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
-    """Flatten legacy TOML-style mappings into Python option names."""
+def flatten_toml_mapping(raw_mapping: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
+    """Flatten TOML-shaped config mappings into Python option names."""
     flattened_options: dict[str, typing.Any] = {}
-    for option_name, option_value in toml_mapping.items():
-        if option_name == "g" and isinstance(option_value, collections.abc.Mapping):
-            flatten_g_toml_mapping(flattened_options, option_value)
-        elif isinstance(option_value, collections.abc.Mapping):
-            for nested_name, nested_value in flatten_toml_mapping(option_value).items():
-                flattened_options[f"{option_name}.{nested_name}"] = nested_value
+    for key, value in raw_mapping.items():
+        if key == "g" and isinstance(value, collections.abc.Mapping):
+            flatten_g_section(value, flattened_options)
+        elif isinstance(value, collections.abc.Mapping):
+            flatten_mapping_section(prefix=key, raw_mapping=value, flattened_options=flattened_options)
         else:
-            flattened_options[option_name] = option_value
+            flattened_options[key] = value
     return flattened_options
 
 
-def flatten_g_toml_mapping(
+def flatten_g_section(
+    raw_mapping: typing.Mapping[str, typing.Any],
     flattened_options: dict[str, typing.Any],
-    toml_mapping: collections.abc.Mapping[str, typing.Any],
 ) -> None:
-    """Flatten legacy nested g-specific TOML options."""
-    section_prefixes = {
-        "compute": "g",
-        "output": "g-output",
-        "diagnostics": "g",
-    }
-    for section_name, section_value in toml_mapping.items():
-        if not isinstance(section_value, collections.abc.Mapping):
-            flattened_options[f"g.{section_name}"] = section_value
-            continue
-        section_prefix = section_prefixes.get(section_name, f"g.{section_name}")
-        for field_name, field_value in section_value.items():
-            flattened_options[f"{section_prefix}-{field_name}"] = field_value
+    """Flatten a `[g.*]` TOML section into `g-*` Python options."""
+    for key, value in raw_mapping.items():
+        if key == "compute" and isinstance(value, collections.abc.Mapping):
+            for option_name, option_value in value.items():
+                flattened_options[f"g-{option_name.replace('_', '-')}"] = option_value
+        elif key == "output" and isinstance(value, collections.abc.Mapping):
+            for option_name, option_value in value.items():
+                flattened_options[f"g-output-{option_name.replace('_', '-')}"] = option_value
+        elif key == "diagnostics" and isinstance(value, collections.abc.Mapping):
+            for option_name, option_value in value.items():
+                flattened_options[f"g-{option_name.replace('_', '-')}"] = option_value
+        else:
+            flattened_options[f"g.{key}"] = value
 
 
-def regenie_config_explicit_options(regenie_config: RegenieConfig) -> frozenset[str]:
-    """Return legacy explicit option provenance when unavailable from native config."""
-    del regenie_config
+def flatten_mapping_section(
+    *,
+    prefix: str,
+    raw_mapping: typing.Mapping[str, typing.Any],
+    flattened_options: dict[str, typing.Any],
+) -> None:
+    """Flatten an unknown TOML section using dotted keys."""
+    for key, value in raw_mapping.items():
+        flattened_key = f"{prefix}.{key}"
+        if isinstance(value, collections.abc.Mapping):
+            flatten_mapping_section(prefix=flattened_key, raw_mapping=value, flattened_options=flattened_options)
+        else:
+            flattened_options[flattened_key] = value
+
+
+def from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig:
+    """Build a normalized config from Python option dictionaries."""
+    return g._core.config_from_options(normalize_python_options(raw_options))
+
+
+def explicit_options(config: RegenieConfig) -> frozenset[str]:
+    """Return explicit legacy option names when available."""
+    del config
     return frozenset()
+
+
+typing.cast("typing.Any", RegenieConfig).from_options = staticmethod(from_options)
+typing.cast("typing.Any", RegenieConfig).explicit_options = property(explicit_options)
 
 
 @functools.cache
@@ -306,7 +335,3 @@ def write_toml(config: RegenieConfig, path: Path | str) -> None:
 def dumps_toml(config: RegenieConfig) -> str:
     """Serialize a configuration to TOML."""
     return g._core.dumps_config_toml(config)
-
-
-setattr(RegenieConfig, "from_options", staticmethod(from_options))
-setattr(RegenieConfig, "explicit_options", property(regenie_config_explicit_options))

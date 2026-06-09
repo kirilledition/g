@@ -18,6 +18,13 @@ class AssociationMode(enum.StrEnum):
     REGENIE2_BINARY = "regenie2_binary"
 
 
+class AssociationBackendKind(enum.StrEnum):
+    """Concrete backend selected for association execution."""
+
+    JAX_DOSAGE = "jax_dosage"
+    JAX_PACKED8 = "jax_packed8"
+
+
 class ResumeMode(enum.StrEnum):
     """Resume validation mode."""
 

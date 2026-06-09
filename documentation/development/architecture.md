@@ -36,6 +36,7 @@ src/g/
   jax_setup.py                   order-sensitive JAX config mutation and GPU validation
   runtime_paths.py               node-local and cluster path policy
   engine/
+    backend_planner.py           association backend selection before dispatch
     regenie2_pipeline.py         native-driven BGEN pipeline wrappers
     callbacks.py                 JAX callback workers and result materialization
     native_dispatch.py           Rust bridge for engine/alignment/predictions
