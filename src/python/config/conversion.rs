@@ -88,7 +88,7 @@ pub(super) fn enum_value(py: Python<'_>, enum_name: &str, value: &str) -> PyResu
     types_module.getattr(enum_name)?.call1((value,)).map(Bound::unbind)
 }
 
-pub(super) fn optional_enum_value(py: Python<'_>, enum_name: &str, value: Option<&String>) -> PyResult<Py<PyAny>> {
+pub(super) fn optional_enum_value(py: Python<'_>, enum_name: &str, value: Option<&str>) -> PyResult<Py<PyAny>> {
     match value {
         Some(value) => enum_value(py, enum_name, value),
         None => Ok(py.None()),

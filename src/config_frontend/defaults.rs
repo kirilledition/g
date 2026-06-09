@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::sync::OnceLock;
 
@@ -34,7 +33,7 @@ pub(crate) fn load_default_config_data() -> ConfigResult<&'static DefaultConfigD
 ///
 /// Returns an error when the packaged default TOML cannot be decoded.
 pub fn load_packaged_config_data() -> ConfigResult<RegenieConfigData> {
-    resolve_partial_config(load_default_config_data()?.partial_config.clone(), BTreeSet::default(), false)
+    resolve_partial_config(load_default_config_data()?.partial_config.clone(), false)
 }
 
 fn build_default_config_hash(default_toml_text: &str) -> String {

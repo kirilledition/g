@@ -3,6 +3,7 @@ use std::path::Path;
 
 use super::data::RegenieConfigData;
 use super::defaults::load_packaged_config_data;
+use super::domain::{DeviceValue, FloatingPointDtypeValue, GpuGenotypeFormatValue, RegenieTraitTypeValue};
 use super::{ConfigError, ConfigResult};
 
 /// Validate a resolved runtime config before execution.
@@ -69,10 +70,12 @@ fn validate_required_input_config(config: &RegenieConfigData) -> ConfigResult<()
 }
 
 fn validate_compute_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    if config.g_compute.gpu_genotype_format == "packed8" && config.g_compute.device != "gpu" {
+    if config.g_compute.gpu_genotype_format == GpuGenotypeFormatValue::Packed8
+        && config.g_compute.device != DeviceValue::Gpu
+    {
         return Err(ConfigError::new("--gpu_genotype_format=packed8 requires --device=gpu."));
     }
-    if config.g_compute.firth_dtype != "float64" {
+    if config.g_compute.firth_dtype != FloatingPointDtypeValue::Float64 {
         return Err(ConfigError::new("--firth_dtype currently supports float64 only."));
     }
     validate_quantitative_binary_config(config)?;
@@ -105,23 +108,21 @@ fn validate_unique_phenotype_names(phenotype_names: &[String]) -> ConfigResult<(
 }
 
 fn validate_quantitative_binary_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    if config.trait_config.trait_type != "quantitative" {
+    if config.trait_config.trait_type != RegenieTraitTypeValue::Quantitative {
         return Ok(());
     }
     let mut binary_only_option_names = Vec::new();
-    if config.binary.firth || config.explicit_options.contains("firth") {
+    if config.binary.firth {
         binary_only_option_names.push("firth");
     }
-    if config.binary.approx || config.explicit_options.contains("approx") {
+    if config.binary.approx {
         binary_only_option_names.push("approx");
     }
-    if config.binary.firth_se || config.explicit_options.contains("firth-se") {
-        binary_only_option_names.push("firth-se");
+    if config.binary.firth_se {
+        binary_only_option_names.push("firth_se");
     }
-    if config.binary.p_threshold.to_bits() != load_packaged_config_data()?.binary.p_threshold.to_bits()
-        || config.explicit_options.contains("pThresh")
-    {
-        binary_only_option_names.push("pThresh");
+    if config.binary.p_threshold.to_bits() != load_packaged_config_data()?.binary.p_threshold.to_bits() {
+        binary_only_option_names.push("p_threshold");
     }
     raise_for_quantitative_binary_only_options(&binary_only_option_names)
 }

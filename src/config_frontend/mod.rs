@@ -4,8 +4,6 @@ mod cli;
 mod data;
 mod defaults;
 mod domain;
-mod metadata;
-mod options;
 mod resolve;
 mod schema;
 mod serialization;

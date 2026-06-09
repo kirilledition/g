@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::num::NonZeroU32;
 
 use serde::Deserialize;
 
@@ -8,8 +8,8 @@ use super::data::{
 };
 use super::domain::{
     ArrowCompressionValue, DeviceValue, FloatingPointDtypeValue, GpuGenotypeFormatValue, JaxMatmulPrecisionValue,
-    MultiPhenotypeSampleModeValue, NameList, NonNegativeU32, NullLogisticNonconvergencePolicyValue, OutputFormatValue,
-    ParquetCompressionValue, PositiveF32, PositiveU32, Probability, ProbabilityFloor, ResumeModeValue,
+    MultiPhenotypeSampleModeValue, NameList, NullLogisticNonconvergencePolicyValue, OutputFormatValue,
+    ParquetCompressionValue, PositiveF32, Probability, ProbabilityFloor, RegenieTraitTypeValue, ResumeModeValue,
     SampleKeyModeValue, TelemetryModeValue, TrustedBgenValidationModeValue,
 };
 use super::{ConfigError, ConfigResult};
@@ -51,7 +51,7 @@ impl PartialConfig {
         Ok(())
     }
 
-    pub(crate) fn resolve(self, explicit_options: BTreeSet<String>) -> ConfigResult<RegenieConfigData> {
+    pub(crate) fn resolve(self) -> ConfigResult<RegenieConfigData> {
         Ok(RegenieConfigData {
             input: self.input.resolve()?,
             trait_config: self.trait_config.resolve()?,
@@ -59,7 +59,6 @@ impl PartialConfig {
             g_compute: self.compute.resolve()?,
             g_output: self.output.resolve()?,
             g_diagnostics: self.diagnostics.resolve()?,
-            explicit_options,
             is_validated: false,
         })
     }
@@ -72,11 +71,10 @@ impl PartialConfig {
     }
 
     fn apply_trait_flag_precedence(&mut self) {
-        if self.trait_config.qt == Some(true) {
-            self.trait_config.bt = Some(false);
-        }
         if self.trait_config.bt == Some(true) {
             self.trait_config.qt = Some(false);
+        } else if self.trait_config.qt == Some(true) {
+            self.trait_config.bt = Some(false);
         }
     }
 }
@@ -86,17 +84,19 @@ impl PartialConfig {
 pub(crate) struct PartialInputConfig {
     pub(crate) bgen: Option<String>,
     pub(crate) sample: Option<String>,
-    #[serde(rename = "phenoFile")]
+    #[serde(alias = "phenoFile")]
     pub(crate) pheno_file: Option<String>,
-    #[serde(rename = "phenoCol")]
+    pub(crate) pheno_columns: Option<NameList>,
+    #[serde(alias = "phenoCol")]
     pub(crate) pheno_col: Option<NameList>,
-    #[serde(rename = "phenoColList")]
+    #[serde(alias = "phenoColList")]
     pub(crate) pheno_col_list: Option<NameList>,
-    #[serde(rename = "covarFile")]
+    #[serde(alias = "covarFile")]
     pub(crate) covar_file: Option<String>,
-    #[serde(rename = "covarCol")]
+    pub(crate) covar_columns: Option<NameList>,
+    #[serde(alias = "covarCol")]
     pub(crate) covar_col: Option<NameList>,
-    #[serde(rename = "covarColList")]
+    #[serde(alias = "covarColList")]
     pub(crate) covar_col_list: Option<NameList>,
     pub(crate) pred: Option<String>,
 }
@@ -106,9 +106,11 @@ impl PartialInputConfig {
         overlay_option!(self, override_config, bgen);
         overlay_option!(self, override_config, sample);
         overlay_option!(self, override_config, pheno_file);
+        overlay_option!(self, override_config, pheno_columns);
         overlay_option!(self, override_config, pheno_col);
         overlay_option!(self, override_config, pheno_col_list);
         overlay_option!(self, override_config, covar_file);
+        overlay_option!(self, override_config, covar_columns);
         overlay_option!(self, override_config, covar_col);
         overlay_option!(self, override_config, covar_col_list);
         overlay_option!(self, override_config, pred);
@@ -119,9 +121,23 @@ impl PartialInputConfig {
             bgen: self.bgen,
             sample: self.sample,
             pheno_file: self.pheno_file,
-            pheno_columns: resolve_column_options(self.pheno_col, self.pheno_col_list, "phenoCol", "phenoColList")?,
+            pheno_columns: resolve_column_options(
+                self.pheno_columns,
+                self.pheno_col,
+                self.pheno_col_list,
+                "pheno_columns",
+                "pheno_col",
+                "pheno_col_list",
+            )?,
             covar_file: self.covar_file,
-            covar_columns: resolve_column_options(self.covar_col, self.covar_col_list, "covarCol", "covarColList")?,
+            covar_columns: resolve_column_options(
+                self.covar_columns,
+                self.covar_col,
+                self.covar_col_list,
+                "covar_columns",
+                "covar_col",
+                "covar_col_list",
+            )?,
             pred: self.pred,
         })
     }
@@ -131,15 +147,17 @@ impl PartialInputConfig {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct PartialTraitConfig {
     pub(crate) step: Option<u8>,
+    pub(crate) trait_type: Option<RegenieTraitTypeValue>,
     pub(crate) qt: Option<bool>,
     pub(crate) bt: Option<bool>,
-    pub(crate) bsize: Option<PositiveU32>,
-    pub(crate) threads: Option<PositiveU32>,
+    pub(crate) bsize: Option<NonZeroU32>,
+    pub(crate) threads: Option<NonZeroU32>,
 }
 
 impl PartialTraitConfig {
     fn overlay(&mut self, override_config: Self) {
         overlay_option!(self, override_config, step);
+        overlay_option!(self, override_config, trait_type);
         overlay_option!(self, override_config, qt);
         overlay_option!(self, override_config, bt);
         overlay_option!(self, override_config, bsize);
@@ -149,9 +167,9 @@ impl PartialTraitConfig {
     fn resolve(self) -> ConfigResult<TraitConfigData> {
         Ok(TraitConfigData {
             step: required("step", self.step)?,
-            trait_type: normalize_trait_type(self.qt, self.bt)?,
-            bsize: required("bsize", self.bsize)?.get(),
-            threads: self.threads.map(PositiveU32::get),
+            trait_type: normalize_trait_type(self.trait_type, self.qt, self.bt)?,
+            bsize: required("bsize", self.bsize)?,
+            threads: self.threads,
         })
     }
 }
@@ -161,9 +179,9 @@ impl PartialTraitConfig {
 pub(crate) struct PartialBinaryConfig {
     pub(crate) firth: Option<bool>,
     pub(crate) approx: Option<bool>,
-    #[serde(rename = "pThresh")]
+    #[serde(alias = "pThresh")]
     pub(crate) p_threshold: Option<Probability>,
-    #[serde(rename = "firth-se")]
+    #[serde(alias = "firth-se")]
     pub(crate) firth_se: Option<bool>,
 }
 
@@ -190,15 +208,15 @@ impl PartialBinaryConfig {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct PartialComputeConfig {
     pub(crate) device: Option<DeviceValue>,
-    pub(crate) staging_depth: Option<PositiveU32>,
-    pub(crate) variant_limit: Option<PositiveU32>,
+    pub(crate) staging_depth: Option<NonZeroU32>,
+    pub(crate) variant_limit: Option<NonZeroU32>,
     pub(crate) trusted_no_missing_diploid: Option<bool>,
     pub(crate) trusted_bgen_validation_mode: Option<TrustedBgenValidationModeValue>,
     pub(crate) sample_key_mode: Option<SampleKeyModeValue>,
     pub(crate) multi_phenotype_sample_mode: Option<MultiPhenotypeSampleModeValue>,
-    pub(crate) firth_batch_size: Option<PositiveU32>,
-    pub(crate) firth_candidate_capacity: Option<PositiveU32>,
-    pub(crate) binary_null_maximum_iterations: Option<PositiveU32>,
+    pub(crate) firth_batch_size: Option<NonZeroU32>,
+    pub(crate) firth_candidate_capacity: Option<NonZeroU32>,
+    pub(crate) binary_null_maximum_iterations: Option<NonZeroU32>,
     pub(crate) binary_null_coefficient_tolerance: Option<PositiveF32>,
     pub(crate) null_logistic_nonconvergence_policy: Option<NullLogisticNonconvergencePolicyValue>,
     pub(crate) binary_minimum_probability: Option<ProbabilityFloor>,
@@ -206,28 +224,28 @@ pub(crate) struct PartialComputeConfig {
     pub(crate) binary_relative_variance_tolerance: Option<PositiveF32>,
     pub(crate) linear_minimum_variance: Option<PositiveF32>,
     pub(crate) linear_relative_variance_tolerance: Option<PositiveF32>,
-    pub(crate) firth_maximum_iterations: Option<PositiveU32>,
+    pub(crate) firth_maximum_iterations: Option<NonZeroU32>,
     pub(crate) firth_gradient_tolerance: Option<PositiveF32>,
     pub(crate) firth_coefficient_tolerance: Option<PositiveF32>,
     pub(crate) firth_likelihood_tolerance: Option<PositiveF32>,
     pub(crate) firth_maximum_step_size: Option<PositiveF32>,
-    pub(crate) firth_pseudo_maximum_iterations: Option<PositiveU32>,
-    pub(crate) firth_pseudo_inner_maximum_iterations: Option<PositiveU32>,
-    pub(crate) firth_newton_raphson_zero_start_iterations: Option<PositiveU32>,
-    pub(crate) firth_line_search_maximum_attempts: Option<PositiveU32>,
-    pub(crate) firth_step_halving_maximum_attempts: Option<PositiveU32>,
+    pub(crate) firth_pseudo_maximum_iterations: Option<NonZeroU32>,
+    pub(crate) firth_pseudo_inner_maximum_iterations: Option<NonZeroU32>,
+    pub(crate) firth_newton_raphson_zero_start_iterations: Option<NonZeroU32>,
+    pub(crate) firth_line_search_maximum_attempts: Option<NonZeroU32>,
+    pub(crate) firth_step_halving_maximum_attempts: Option<NonZeroU32>,
     pub(crate) firth_initial_response_scale: Option<PositiveF32>,
     pub(crate) firth_sparse_carrier_dosage_threshold: Option<PositiveF32>,
     pub(crate) firth_step_halving_scale: Option<PositiveF32>,
-    pub(crate) null_firth_maximum_iterations: Option<PositiveU32>,
+    pub(crate) null_firth_maximum_iterations: Option<NonZeroU32>,
     pub(crate) null_firth_gradient_tolerance: Option<PositiveF32>,
     pub(crate) null_firth_maximum_step_size: Option<PositiveF32>,
-    pub(crate) null_firth_fallback_iteration_multiplier: Option<PositiveU32>,
+    pub(crate) null_firth_fallback_iteration_multiplier: Option<NonZeroU32>,
     pub(crate) null_firth_fallback_step_divisor: Option<PositiveF32>,
-    pub(crate) null_firth_line_search_maximum_attempts: Option<PositiveU32>,
+    pub(crate) null_firth_line_search_maximum_attempts: Option<NonZeroU32>,
     pub(crate) null_firth_step_halving_scale: Option<PositiveF32>,
     pub(crate) use_block_firth_math: Option<bool>,
-    pub(crate) bgen_decode_tile_variant_count: Option<PositiveU32>,
+    pub(crate) bgen_decode_tile_variant_count: Option<NonZeroU32>,
     pub(crate) gpu_genotype_format: Option<GpuGenotypeFormatValue>,
     pub(crate) score_dtype: Option<FloatingPointDtypeValue>,
     pub(crate) firth_dtype: Option<FloatingPointDtypeValue>,
@@ -235,7 +253,7 @@ pub(crate) struct PartialComputeConfig {
     pub(crate) jax_matmul_precision: Option<JaxMatmulPrecisionValue>,
     pub(crate) jax_persistent_cache: Option<bool>,
     pub(crate) jax_persistent_cache_min_entry_size_bytes: Option<i64>,
-    pub(crate) jax_persistent_cache_min_compile_time_seconds: Option<NonNegativeU32>,
+    pub(crate) jax_persistent_cache_min_compile_time_seconds: Option<u32>,
     pub(crate) jax_xla_autotune_cache: Option<bool>,
     pub(crate) jax_transfer_guard: Option<bool>,
 }
@@ -354,24 +372,19 @@ impl PartialComputeConfig {
 
     fn resolve_core_fields(&self) -> ConfigResult<ResolvedComputeCoreFields> {
         Ok(ResolvedComputeCoreFields {
-            device: required("device", self.device)?.as_str().to_string(),
-            staging_depth: required("staging_depth", self.staging_depth)?.get(),
-            variant_limit: self.variant_limit.map(PositiveU32::get),
+            device: required("device", self.device)?,
+            staging_depth: required("staging_depth", self.staging_depth)?,
+            variant_limit: self.variant_limit,
             trusted_no_missing_diploid: required("trusted_no_missing_diploid", self.trusted_no_missing_diploid)?,
-            trusted_bgen_validation_mode: required("trusted_bgen_validation_mode", self.trusted_bgen_validation_mode)?
-                .as_str()
-                .to_string(),
-            sample_key_mode: required("sample_key_mode", self.sample_key_mode)?.as_str().to_string(),
-            multi_phenotype_sample_mode: required("multi_phenotype_sample_mode", self.multi_phenotype_sample_mode)?
-                .as_str()
-                .to_string(),
-            firth_batch_size: required("firth_batch_size", self.firth_batch_size)?.get(),
-            firth_candidate_capacity: required("firth_candidate_capacity", self.firth_candidate_capacity)?.get(),
+            trusted_bgen_validation_mode: required("trusted_bgen_validation_mode", self.trusted_bgen_validation_mode)?,
+            sample_key_mode: required("sample_key_mode", self.sample_key_mode)?,
+            multi_phenotype_sample_mode: required("multi_phenotype_sample_mode", self.multi_phenotype_sample_mode)?,
+            firth_batch_size: required("firth_batch_size", self.firth_batch_size)?,
+            firth_candidate_capacity: required("firth_candidate_capacity", self.firth_candidate_capacity)?,
             binary_null_maximum_iterations: required(
                 "binary_null_maximum_iterations",
                 self.binary_null_maximum_iterations,
-            )?
-            .get(),
+            )?,
             binary_null_coefficient_tolerance: required(
                 "binary_null_coefficient_tolerance",
                 self.binary_null_coefficient_tolerance,
@@ -380,9 +393,7 @@ impl PartialComputeConfig {
             null_logistic_nonconvergence_policy: required(
                 "null_logistic_nonconvergence_policy",
                 self.null_logistic_nonconvergence_policy,
-            )?
-            .as_str()
-            .to_string(),
+            )?,
             binary_minimum_probability: required("binary_minimum_probability", self.binary_minimum_probability)?.get(),
             binary_minimum_variance: required("binary_minimum_variance", self.binary_minimum_variance)?.get(),
             binary_relative_variance_tolerance: required(
@@ -401,7 +412,7 @@ impl PartialComputeConfig {
 
     fn resolve_firth_fields(&self) -> ConfigResult<ResolvedFirthFields> {
         Ok(ResolvedFirthFields {
-            maximum_iterations: required("firth_maximum_iterations", self.firth_maximum_iterations)?.get(),
+            maximum_iterations: required("firth_maximum_iterations", self.firth_maximum_iterations)?,
             gradient_tolerance: required("firth_gradient_tolerance", self.firth_gradient_tolerance)?.get(),
             coefficient_tolerance: required("firth_coefficient_tolerance", self.firth_coefficient_tolerance)?.get(),
             likelihood_tolerance: required("firth_likelihood_tolerance", self.firth_likelihood_tolerance)?.get(),
@@ -409,28 +420,23 @@ impl PartialComputeConfig {
             pseudo_maximum_iterations: required(
                 "firth_pseudo_maximum_iterations",
                 self.firth_pseudo_maximum_iterations,
-            )?
-            .get(),
+            )?,
             pseudo_inner_maximum_iterations: required(
                 "firth_pseudo_inner_maximum_iterations",
                 self.firth_pseudo_inner_maximum_iterations,
-            )?
-            .get(),
+            )?,
             newton_raphson_zero_start_iterations: required(
                 "firth_newton_raphson_zero_start_iterations",
                 self.firth_newton_raphson_zero_start_iterations,
-            )?
-            .get(),
+            )?,
             line_search_maximum_attempts: required(
                 "firth_line_search_maximum_attempts",
                 self.firth_line_search_maximum_attempts,
-            )?
-            .get(),
+            )?,
             step_halving_maximum_attempts: required(
                 "firth_step_halving_maximum_attempts",
                 self.firth_step_halving_maximum_attempts,
-            )?
-            .get(),
+            )?,
             initial_response_scale: required("firth_initial_response_scale", self.firth_initial_response_scale)?.get(),
             sparse_carrier_dosage_threshold: required(
                 "firth_sparse_carrier_dosage_threshold",
@@ -443,21 +449,19 @@ impl PartialComputeConfig {
 
     fn resolve_null_firth_fields(&self) -> ConfigResult<ResolvedNullFirthFields> {
         Ok(ResolvedNullFirthFields {
-            maximum_iterations: required("null_firth_maximum_iterations", self.null_firth_maximum_iterations)?.get(),
+            maximum_iterations: required("null_firth_maximum_iterations", self.null_firth_maximum_iterations)?,
             gradient_tolerance: required("null_firth_gradient_tolerance", self.null_firth_gradient_tolerance)?.get(),
             maximum_step_size: required("null_firth_maximum_step_size", self.null_firth_maximum_step_size)?.get(),
             fallback_iteration_multiplier: required(
                 "null_firth_fallback_iteration_multiplier",
                 self.null_firth_fallback_iteration_multiplier,
-            )?
-            .get(),
+            )?,
             fallback_step_divisor: required("null_firth_fallback_step_divisor", self.null_firth_fallback_step_divisor)?
                 .get(),
             line_search_maximum_attempts: required(
                 "null_firth_line_search_maximum_attempts",
                 self.null_firth_line_search_maximum_attempts,
-            )?
-            .get(),
+            )?,
             step_halving_scale: required("null_firth_step_halving_scale", self.null_firth_step_halving_scale)?.get(),
         })
     }
@@ -468,18 +472,17 @@ impl PartialComputeConfig {
             bgen_decode_tile_variant_count: required(
                 "bgen_decode_tile_variant_count",
                 self.bgen_decode_tile_variant_count,
-            )?
-            .get(),
-            gpu_genotype_format: required("gpu_genotype_format", self.gpu_genotype_format)?.as_str().to_string(),
-            score_dtype: required("score_dtype", self.score_dtype)?.as_str().to_string(),
-            firth_dtype: required("firth_dtype", self.firth_dtype)?.as_str().to_string(),
+            )?,
+            gpu_genotype_format: required("gpu_genotype_format", self.gpu_genotype_format)?,
+            score_dtype: required("score_dtype", self.score_dtype)?,
+            firth_dtype: required("firth_dtype", self.firth_dtype)?,
         })
     }
 
     fn resolve_jax_fields(&self) -> ConfigResult<ResolvedJaxFields> {
         Ok(ResolvedJaxFields {
             cache_dir: self.jax_cache_dir.clone(),
-            matmul_precision: self.jax_matmul_precision.map(|value| value.as_str().to_string()),
+            matmul_precision: self.jax_matmul_precision,
             persistent_cache: required("jax_persistent_cache", self.jax_persistent_cache)?,
             persistent_cache_min_entry_size_bytes: required(
                 "jax_persistent_cache_min_entry_size_bytes",
@@ -488,8 +491,7 @@ impl PartialComputeConfig {
             persistent_cache_min_compile_time_seconds: required(
                 "jax_persistent_cache_min_compile_time_seconds",
                 self.jax_persistent_cache_min_compile_time_seconds,
-            )?
-            .get(),
+            )?,
             xla_autotune_cache: required("jax_xla_autotune_cache", self.jax_xla_autotune_cache)?,
             transfer_guard: required("jax_transfer_guard", self.jax_transfer_guard)?,
         })
@@ -497,18 +499,18 @@ impl PartialComputeConfig {
 }
 
 struct ResolvedComputeCoreFields {
-    device: String,
-    staging_depth: u32,
-    variant_limit: Option<u32>,
+    device: DeviceValue,
+    staging_depth: NonZeroU32,
+    variant_limit: Option<NonZeroU32>,
     trusted_no_missing_diploid: bool,
-    trusted_bgen_validation_mode: String,
-    sample_key_mode: String,
-    multi_phenotype_sample_mode: String,
-    firth_batch_size: u32,
-    firth_candidate_capacity: u32,
-    binary_null_maximum_iterations: u32,
+    trusted_bgen_validation_mode: TrustedBgenValidationModeValue,
+    sample_key_mode: SampleKeyModeValue,
+    multi_phenotype_sample_mode: MultiPhenotypeSampleModeValue,
+    firth_batch_size: NonZeroU32,
+    firth_candidate_capacity: NonZeroU32,
+    binary_null_maximum_iterations: NonZeroU32,
     binary_null_coefficient_tolerance: f32,
-    null_logistic_nonconvergence_policy: String,
+    null_logistic_nonconvergence_policy: NullLogisticNonconvergencePolicyValue,
     binary_minimum_probability: f32,
     binary_minimum_variance: f32,
     binary_relative_variance_tolerance: f32,
@@ -517,42 +519,42 @@ struct ResolvedComputeCoreFields {
 }
 
 struct ResolvedFirthFields {
-    maximum_iterations: u32,
+    maximum_iterations: NonZeroU32,
     gradient_tolerance: f32,
     coefficient_tolerance: f32,
     likelihood_tolerance: f32,
     maximum_step_size: f32,
-    pseudo_maximum_iterations: u32,
-    pseudo_inner_maximum_iterations: u32,
-    newton_raphson_zero_start_iterations: u32,
-    line_search_maximum_attempts: u32,
-    step_halving_maximum_attempts: u32,
+    pseudo_maximum_iterations: NonZeroU32,
+    pseudo_inner_maximum_iterations: NonZeroU32,
+    newton_raphson_zero_start_iterations: NonZeroU32,
+    line_search_maximum_attempts: NonZeroU32,
+    step_halving_maximum_attempts: NonZeroU32,
     initial_response_scale: f32,
     sparse_carrier_dosage_threshold: f32,
     step_halving_scale: f32,
 }
 
 struct ResolvedNullFirthFields {
-    maximum_iterations: u32,
+    maximum_iterations: NonZeroU32,
     gradient_tolerance: f32,
     maximum_step_size: f32,
-    fallback_iteration_multiplier: u32,
+    fallback_iteration_multiplier: NonZeroU32,
     fallback_step_divisor: f32,
-    line_search_maximum_attempts: u32,
+    line_search_maximum_attempts: NonZeroU32,
     step_halving_scale: f32,
 }
 
 struct ResolvedGenotypeFields {
     use_block_firth_math: bool,
-    bgen_decode_tile_variant_count: u32,
-    gpu_genotype_format: String,
-    score_dtype: String,
-    firth_dtype: String,
+    bgen_decode_tile_variant_count: NonZeroU32,
+    gpu_genotype_format: GpuGenotypeFormatValue,
+    score_dtype: FloatingPointDtypeValue,
+    firth_dtype: FloatingPointDtypeValue,
 }
 
 struct ResolvedJaxFields {
     cache_dir: Option<String>,
-    matmul_precision: Option<String>,
+    matmul_precision: Option<JaxMatmulPrecisionValue>,
     persistent_cache: bool,
     persistent_cache_min_entry_size_bytes: i64,
     persistent_cache_min_compile_time_seconds: u32,
@@ -566,9 +568,9 @@ pub(crate) struct PartialOutputConfig {
     pub(crate) out: Option<String>,
     pub(crate) format: Option<OutputFormatValue>,
     pub(crate) output_run_directory: Option<String>,
-    pub(crate) writer_threads: Option<PositiveU32>,
-    pub(crate) writer_queue_depth: Option<PositiveU32>,
-    pub(crate) chunks_per_arrow_file: Option<PositiveU32>,
+    pub(crate) writer_threads: Option<NonZeroU32>,
+    pub(crate) writer_queue_depth: Option<NonZeroU32>,
+    pub(crate) chunks_per_arrow_file: Option<NonZeroU32>,
     pub(crate) arrow_compression: Option<ArrowCompressionValue>,
     pub(crate) parquet_compression: Option<ParquetCompressionValue>,
     pub(crate) resume: Option<bool>,
@@ -594,15 +596,15 @@ impl PartialOutputConfig {
     fn resolve(self) -> ConfigResult<GOutputConfigData> {
         Ok(GOutputConfigData {
             out: self.out,
-            format: required("format", self.format)?.as_str().to_string(),
+            format: required("format", self.format)?,
             output_run_directory: self.output_run_directory,
-            writer_threads: required("writer_threads", self.writer_threads)?.get(),
-            writer_queue_depth: required("writer_queue_depth", self.writer_queue_depth)?.get(),
-            chunks_per_arrow_file: required("chunks_per_arrow_file", self.chunks_per_arrow_file)?.get(),
-            arrow_compression: required("arrow_compression", self.arrow_compression)?.as_str().to_string(),
-            parquet_compression: required("parquet_compression", self.parquet_compression)?.as_str().to_string(),
+            writer_threads: required("writer_threads", self.writer_threads)?,
+            writer_queue_depth: required("writer_queue_depth", self.writer_queue_depth)?,
+            chunks_per_arrow_file: required("chunks_per_arrow_file", self.chunks_per_arrow_file)?,
+            arrow_compression: required("arrow_compression", self.arrow_compression)?,
+            parquet_compression: required("parquet_compression", self.parquet_compression)?,
             resume: required("resume", self.resume)?,
-            resume_mode: required("resume_mode", self.resume_mode)?.as_str().to_string(),
+            resume_mode: required("resume_mode", self.resume_mode)?,
             finalize_parquet: required("finalize_parquet", self.finalize_parquet)?,
         })
     }
@@ -618,12 +620,12 @@ pub(crate) struct PartialDiagnosticsConfig {
     pub(crate) log_file: Option<String>,
     pub(crate) log_stderr: Option<bool>,
     pub(crate) progress_interval_seconds: Option<PositiveF32>,
-    pub(crate) progress_interval_chunks: Option<PositiveU32>,
+    pub(crate) progress_interval_chunks: Option<NonZeroU32>,
     pub(crate) profile_summary_json: Option<String>,
     pub(crate) trace_file: Option<String>,
     pub(crate) trace_filter: Option<String>,
-    pub(crate) trace_event_cap: Option<NonNegativeU32>,
-    pub(crate) log_queue_size: Option<PositiveU32>,
+    pub(crate) trace_event_cap: Option<u32>,
+    pub(crate) log_queue_size: Option<NonZeroU32>,
     pub(crate) log_lossy: Option<bool>,
     pub(crate) include_source_location: Option<bool>,
     pub(crate) include_span_events: Option<bool>,
@@ -651,19 +653,19 @@ impl PartialDiagnosticsConfig {
 
     fn resolve(self) -> ConfigResult<GDiagnosticsConfigData> {
         Ok(GDiagnosticsConfigData {
-            telemetry: required("telemetry", self.telemetry)?.as_str().to_string(),
+            telemetry: required("telemetry", self.telemetry)?,
             log_dir: self.log_dir,
             stage_timings_json: self.stage_timings_json,
             log_filter: required("log_filter", self.log_filter)?,
             log_file: self.log_file,
             log_stderr: required("log_stderr", self.log_stderr)?,
             progress_interval_seconds: required("progress_interval_seconds", self.progress_interval_seconds)?.get(),
-            progress_interval_chunks: required("progress_interval_chunks", self.progress_interval_chunks)?.get(),
+            progress_interval_chunks: required("progress_interval_chunks", self.progress_interval_chunks)?,
             profile_summary_json: self.profile_summary_json,
             trace_file: self.trace_file,
             trace_filter: required("trace_filter", self.trace_filter)?,
-            trace_event_cap: required("trace_event_cap", self.trace_event_cap)?.get(),
-            log_queue_size: required("log_queue_size", self.log_queue_size)?.get(),
+            trace_event_cap: required("trace_event_cap", self.trace_event_cap)?,
+            log_queue_size: required("log_queue_size", self.log_queue_size)?,
             log_lossy: required("log_lossy", self.log_lossy)?,
             include_source_location: required("include_source_location", self.include_source_location)?,
             include_span_events: required("include_span_events", self.include_span_events)?,
@@ -676,27 +678,46 @@ fn required<ValueType>(option_name: &str, value: Option<ValueType>) -> ConfigRes
 }
 
 fn resolve_column_options(
+    canonical_columns: Option<NameList>,
     repeated_columns: Option<NameList>,
     list_columns: Option<NameList>,
+    canonical_option_name: &str,
     repeated_option_name: &str,
     list_option_name: &str,
 ) -> ConfigResult<Vec<String>> {
+    let canonical_values = canonical_columns.map(NameList::into_vec).unwrap_or_default();
     let repeated_values = repeated_columns.map(NameList::into_vec).unwrap_or_default();
     let list_values = list_columns.map(NameList::into_vec).unwrap_or_default();
-    if !repeated_values.is_empty() && !list_values.is_empty() {
+    let provided_option_count = usize::from(!canonical_values.is_empty())
+        + usize::from(!repeated_values.is_empty())
+        + usize::from(!list_values.is_empty());
+    if provided_option_count > 1 {
         return Err(ConfigError::new(format!(
-            "Use either --{repeated_option_name} or --{list_option_name}, not both."
+            "Use only one of {canonical_option_name}, {repeated_option_name}, or {list_option_name}."
         )));
     }
-    if repeated_values.is_empty() { Ok(list_values) } else { Ok(repeated_values) }
+    if !canonical_values.is_empty() {
+        return Ok(canonical_values);
+    }
+    if !repeated_values.is_empty() {
+        return Ok(repeated_values);
+    }
+    Ok(list_values)
 }
 
-pub(crate) fn normalize_trait_type(qt: Option<bool>, bt: Option<bool>) -> ConfigResult<String> {
+pub(crate) fn normalize_trait_type(
+    trait_type: Option<RegenieTraitTypeValue>,
+    qt: Option<bool>,
+    bt: Option<bool>,
+) -> ConfigResult<RegenieTraitTypeValue> {
     if qt == Some(true) && bt == Some(true) {
         return Err(ConfigError::new("--qt and --bt are mutually exclusive."));
     }
     if bt == Some(true) {
-        return Ok("binary".to_string());
+        return Ok(RegenieTraitTypeValue::Binary);
     }
-    Ok("quantitative".to_string())
+    if qt == Some(true) {
+        return Ok(RegenieTraitTypeValue::Quantitative);
+    }
+    Ok(trait_type.unwrap_or(RegenieTraitTypeValue::Quantitative))
 }

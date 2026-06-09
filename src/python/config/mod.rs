@@ -168,17 +168,17 @@ impl TraitConfig {
 
     #[getter]
     fn trait_type(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "RegenieTraitType", &self.data.trait_type)
+        enum_value(py, "RegenieTraitType", self.data.trait_type.as_str())
     }
 
     #[getter]
     fn bsize(&self) -> i64 {
-        i64::from(self.data.bsize)
+        i64::from(self.data.bsize.get())
     }
 
     #[getter]
     fn threads(&self) -> Option<i64> {
-        self.data.threads.map(i64::from)
+        self.data.threads.map(|value| i64::from(value.get()))
     }
 
     #[expect(clippy::needless_pass_by_value, reason = "PyO3 __richcmp__ requires owned PyRef extraction.")]
@@ -224,17 +224,17 @@ impl BinaryConfig {
 impl GComputeConfig {
     #[getter]
     fn device(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "Device", &self.data.device)
+        enum_value(py, "Device", self.data.device.as_str())
     }
 
     #[getter]
     fn staging_depth(&self) -> i64 {
-        i64::from(self.data.staging_depth)
+        i64::from(self.data.staging_depth.get())
     }
 
     #[getter]
     fn variant_limit(&self) -> Option<i64> {
-        self.data.variant_limit.map(i64::from)
+        self.data.variant_limit.map(|value| i64::from(value.get()))
     }
 
     #[getter]
@@ -244,32 +244,32 @@ impl GComputeConfig {
 
     #[getter]
     fn trusted_bgen_validation_mode(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "TrustedBgenValidationMode", &self.data.trusted_bgen_validation_mode)
+        enum_value(py, "TrustedBgenValidationMode", self.data.trusted_bgen_validation_mode.as_str())
     }
 
     #[getter]
     fn sample_key_mode(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "SampleKeyMode", &self.data.sample_key_mode)
+        enum_value(py, "SampleKeyMode", self.data.sample_key_mode.as_str())
     }
 
     #[getter]
     fn multi_phenotype_sample_mode(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "MultiPhenotypeSampleMode", &self.data.multi_phenotype_sample_mode)
+        enum_value(py, "MultiPhenotypeSampleMode", self.data.multi_phenotype_sample_mode.as_str())
     }
 
     #[getter]
     fn firth_batch_size(&self) -> i64 {
-        i64::from(self.data.firth_batch_size)
+        i64::from(self.data.firth_batch_size.get())
     }
 
     #[getter]
     fn firth_candidate_capacity(&self) -> i64 {
-        i64::from(self.data.firth_candidate_capacity)
+        i64::from(self.data.firth_candidate_capacity.get())
     }
 
     #[getter]
     fn binary_null_maximum_iterations(&self) -> i64 {
-        i64::from(self.data.binary_null_maximum_iterations)
+        i64::from(self.data.binary_null_maximum_iterations.get())
     }
 
     #[getter]
@@ -279,7 +279,7 @@ impl GComputeConfig {
 
     #[getter]
     fn null_logistic_nonconvergence_policy(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "NullLogisticNonconvergencePolicy", &self.data.null_logistic_nonconvergence_policy)
+        enum_value(py, "NullLogisticNonconvergencePolicy", self.data.null_logistic_nonconvergence_policy.as_str())
     }
 
     #[getter]
@@ -309,7 +309,7 @@ impl GComputeConfig {
 
     #[getter]
     fn firth_maximum_iterations(&self) -> i64 {
-        i64::from(self.data.firth_maximum_iterations)
+        i64::from(self.data.firth_maximum_iterations.get())
     }
 
     #[getter]
@@ -334,27 +334,27 @@ impl GComputeConfig {
 
     #[getter]
     fn firth_pseudo_maximum_iterations(&self) -> i64 {
-        i64::from(self.data.firth_pseudo_maximum_iterations)
+        i64::from(self.data.firth_pseudo_maximum_iterations.get())
     }
 
     #[getter]
     fn firth_pseudo_inner_maximum_iterations(&self) -> i64 {
-        i64::from(self.data.firth_pseudo_inner_maximum_iterations)
+        i64::from(self.data.firth_pseudo_inner_maximum_iterations.get())
     }
 
     #[getter]
     fn firth_newton_raphson_zero_start_iterations(&self) -> i64 {
-        i64::from(self.data.firth_newton_raphson_zero_start_iterations)
+        i64::from(self.data.firth_newton_raphson_zero_start_iterations.get())
     }
 
     #[getter]
     fn firth_line_search_maximum_attempts(&self) -> i64 {
-        i64::from(self.data.firth_line_search_maximum_attempts)
+        i64::from(self.data.firth_line_search_maximum_attempts.get())
     }
 
     #[getter]
     fn firth_step_halving_maximum_attempts(&self) -> i64 {
-        i64::from(self.data.firth_step_halving_maximum_attempts)
+        i64::from(self.data.firth_step_halving_maximum_attempts.get())
     }
 
     #[getter]
@@ -374,7 +374,7 @@ impl GComputeConfig {
 
     #[getter]
     fn null_firth_maximum_iterations(&self) -> i64 {
-        i64::from(self.data.null_firth_maximum_iterations)
+        i64::from(self.data.null_firth_maximum_iterations.get())
     }
 
     #[getter]
@@ -389,7 +389,7 @@ impl GComputeConfig {
 
     #[getter]
     fn null_firth_fallback_iteration_multiplier(&self) -> i64 {
-        i64::from(self.data.null_firth_fallback_iteration_multiplier)
+        i64::from(self.data.null_firth_fallback_iteration_multiplier.get())
     }
 
     #[getter]
@@ -399,7 +399,7 @@ impl GComputeConfig {
 
     #[getter]
     fn null_firth_line_search_maximum_attempts(&self) -> i64 {
-        i64::from(self.data.null_firth_line_search_maximum_attempts)
+        i64::from(self.data.null_firth_line_search_maximum_attempts.get())
     }
 
     #[getter]
@@ -414,22 +414,22 @@ impl GComputeConfig {
 
     #[getter]
     fn bgen_decode_tile_variant_count(&self) -> i64 {
-        i64::from(self.data.bgen_decode_tile_variant_count)
+        i64::from(self.data.bgen_decode_tile_variant_count.get())
     }
 
     #[getter]
     fn gpu_genotype_format(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "GpuGenotypeFormat", &self.data.gpu_genotype_format)
+        enum_value(py, "GpuGenotypeFormat", self.data.gpu_genotype_format.as_str())
     }
 
     #[getter]
     fn score_dtype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "FloatingPointDtype", &self.data.score_dtype)
+        enum_value(py, "FloatingPointDtype", self.data.score_dtype.as_str())
     }
 
     #[getter]
     fn firth_dtype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "FloatingPointDtype", &self.data.firth_dtype)
+        enum_value(py, "FloatingPointDtype", self.data.firth_dtype.as_str())
     }
 
     #[getter]
@@ -439,7 +439,11 @@ impl GComputeConfig {
 
     #[getter]
     fn jax_matmul_precision(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        optional_enum_value(py, "JaxMatmulPrecision", self.data.jax_matmul_precision.as_ref())
+        optional_enum_value(
+            py,
+            "JaxMatmulPrecision",
+            self.data.jax_matmul_precision.as_ref().map(|value| value.as_str()),
+        )
     }
 
     #[getter]
@@ -482,7 +486,7 @@ impl GOutputConfig {
 
     #[getter]
     fn format(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "OutputFormat", &self.data.format)
+        enum_value(py, "OutputFormat", self.data.format.as_str())
     }
 
     #[getter]
@@ -492,27 +496,27 @@ impl GOutputConfig {
 
     #[getter]
     fn writer_threads(&self) -> i64 {
-        i64::from(self.data.writer_threads)
+        i64::from(self.data.writer_threads.get())
     }
 
     #[getter]
     fn writer_queue_depth(&self) -> i64 {
-        i64::from(self.data.writer_queue_depth)
+        i64::from(self.data.writer_queue_depth.get())
     }
 
     #[getter]
     fn chunks_per_arrow_file(&self) -> i64 {
-        i64::from(self.data.chunks_per_arrow_file)
+        i64::from(self.data.chunks_per_arrow_file.get())
     }
 
     #[getter]
     fn arrow_compression(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "ArrowCompression", &self.data.arrow_compression)
+        enum_value(py, "ArrowCompression", self.data.arrow_compression.as_str())
     }
 
     #[getter]
     fn parquet_compression(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "ParquetCompression", &self.data.parquet_compression)
+        enum_value(py, "ParquetCompression", self.data.parquet_compression.as_str())
     }
 
     #[getter]
@@ -522,7 +526,7 @@ impl GOutputConfig {
 
     #[getter]
     fn resume_mode(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "ResumeMode", &self.data.resume_mode)
+        enum_value(py, "ResumeMode", self.data.resume_mode.as_str())
     }
 
     #[getter]
@@ -540,7 +544,7 @@ impl GOutputConfig {
 impl GDiagnosticsConfig {
     #[getter]
     fn telemetry(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "TelemetryMode", &self.data.telemetry)
+        enum_value(py, "TelemetryMode", self.data.telemetry.as_str())
     }
 
     #[getter]
@@ -575,7 +579,7 @@ impl GDiagnosticsConfig {
 
     #[getter]
     fn progress_interval_chunks(&self) -> i64 {
-        i64::from(self.data.progress_interval_chunks)
+        i64::from(self.data.progress_interval_chunks.get())
     }
 
     #[getter]
@@ -600,7 +604,7 @@ impl GDiagnosticsConfig {
 
     #[getter]
     fn log_queue_size(&self) -> i64 {
-        i64::from(self.data.log_queue_size)
+        i64::from(self.data.log_queue_size.get())
     }
 
     #[getter]
@@ -670,13 +674,6 @@ impl RegenieConfig {
     #[getter]
     fn g_diagnostics(&self) -> GDiagnosticsConfig {
         GDiagnosticsConfig::new(self.data.g_diagnostics.clone())
-    }
-
-    #[getter]
-    fn explicit_options(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let values = self.data.explicit_options.iter().cloned().collect::<Vec<_>>();
-        let builtins = PyModule::import(py, "builtins")?;
-        builtins.getattr("frozenset")?.call1((values,)).map(Bound::unbind)
     }
 
     #[getter]
