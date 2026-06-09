@@ -132,5 +132,5 @@ Performance implications:
 
 For full definitions and implementation details, see
 [Algorithm > Multi-Phenotype Behavior](algorithm.md#multi-phenotype-behavior) and
-[Configuration](configuration.md#runtime-cli-and-toml-mapping) for the exact
+[Configuration](configuration.md#cli-to-toml-mapping) for the exact
 setting name in CLI and TOML.

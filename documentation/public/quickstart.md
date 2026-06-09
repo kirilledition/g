@@ -136,7 +136,7 @@ uv run g regenie \
 
 To see runtime knobs for this setting in config, use
 `[compute] multi_phenotype_sample_mode` via
-[Configuration](configuration.md#runtime-cli-and-toml-mapping).
+[Configuration](configuration.md#cli-to-toml-mapping).
 
 When validating this choice, compare `sampleCount` and run manifest metadata in
 the output `run_manifest.json` files alongside statistical results.
