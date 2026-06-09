@@ -52,13 +52,13 @@ pub(super) fn reject_quantitative_binary_only_options(
 pub fn validate_config(config: &RegenieConfigData) -> ConfigResult<()> {
     validate_trait_config(config)?;
     validate_required_input_config(config)?;
+    validate_existing_input_paths(config)?;
     validate_compute_config(config)?;
-    validate_output_config(config)?;
     validate_binary_config(config)?;
     Ok(())
 }
 
-pub(super) fn validate_existing_input_paths(config: &RegenieConfigData) -> ConfigResult<()> {
+fn validate_existing_input_paths(config: &RegenieConfigData) -> ConfigResult<()> {
     validate_existing_path("--bgen", config.input.bgen.as_ref())?;
     validate_existing_path("--sample", config.input.sample.as_ref())?;
     validate_existing_path("--phenoFile", config.input.pheno_file.as_ref())?;
@@ -84,12 +84,6 @@ fn validate_trait_config(config: &RegenieConfigData) -> ConfigResult<()> {
     if config.trait_config.step != 2 {
         return Err(ConfigError::new("g regenie requires --step 2."));
     }
-    if config.trait_config.bsize <= 0 {
-        return Err(ConfigError::new("--bsize must be positive."));
-    }
-    if config.trait_config.threads.is_some_and(|threads| threads <= 0) {
-        return Err(ConfigError::new("--threads must be positive when provided."));
-    }
     Ok(())
 }
 
@@ -114,67 +108,6 @@ fn validate_required_input_config(config: &RegenieConfigData) -> ConfigResult<()
 }
 
 fn validate_compute_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    validate_positive_integer("--staging_depth", config.g_compute.staging_depth)?;
-    if config.g_compute.variant_limit.is_some_and(|variant_limit| variant_limit <= 0) {
-        return Err(ConfigError::new("--variant_limit must be positive when provided."));
-    }
-    validate_positive_integer("--firth_batch_size", config.g_compute.firth_batch_size)?;
-    validate_positive_integer("--firth_candidate_capacity", config.g_compute.firth_candidate_capacity)?;
-    validate_positive_integer("--binary_null_maximum_iterations", config.g_compute.binary_null_maximum_iterations)?;
-    validate_positive_float("--binary_null_coefficient_tolerance", config.g_compute.binary_null_coefficient_tolerance)?;
-    validate_probability_floor("--binary_minimum_probability", config.g_compute.binary_minimum_probability)?;
-    validate_positive_float("--binary_minimum_variance", config.g_compute.binary_minimum_variance)?;
-    validate_positive_float(
-        "--binary_relative_variance_tolerance",
-        config.g_compute.binary_relative_variance_tolerance,
-    )?;
-    validate_positive_float("--linear_minimum_variance", config.g_compute.linear_minimum_variance)?;
-    validate_positive_float(
-        "--linear_relative_variance_tolerance",
-        config.g_compute.linear_relative_variance_tolerance,
-    )?;
-    validate_positive_integer("--firth_maximum_iterations", config.g_compute.firth_maximum_iterations)?;
-    validate_positive_float("--firth_gradient_tolerance", config.g_compute.firth_gradient_tolerance)?;
-    validate_positive_float("--firth_coefficient_tolerance", config.g_compute.firth_coefficient_tolerance)?;
-    validate_positive_float("--firth_likelihood_tolerance", config.g_compute.firth_likelihood_tolerance)?;
-    validate_positive_float("--firth_maximum_step_size", config.g_compute.firth_maximum_step_size)?;
-    validate_positive_integer("--firth_pseudo_maximum_iterations", config.g_compute.firth_pseudo_maximum_iterations)?;
-    validate_positive_integer(
-        "--firth_pseudo_inner_maximum_iterations",
-        config.g_compute.firth_pseudo_inner_maximum_iterations,
-    )?;
-    validate_positive_integer(
-        "--firth_newton_raphson_zero_start_iterations",
-        config.g_compute.firth_newton_raphson_zero_start_iterations,
-    )?;
-    validate_positive_integer(
-        "--firth_line_search_maximum_attempts",
-        config.g_compute.firth_line_search_maximum_attempts,
-    )?;
-    validate_positive_integer(
-        "--firth_step_halving_maximum_attempts",
-        config.g_compute.firth_step_halving_maximum_attempts,
-    )?;
-    validate_positive_float("--firth_initial_response_scale", config.g_compute.firth_initial_response_scale)?;
-    validate_positive_float(
-        "--firth_sparse_carrier_dosage_threshold",
-        config.g_compute.firth_sparse_carrier_dosage_threshold,
-    )?;
-    validate_positive_float("--firth_step_halving_scale", config.g_compute.firth_step_halving_scale)?;
-    validate_positive_integer("--null_firth_maximum_iterations", config.g_compute.null_firth_maximum_iterations)?;
-    validate_positive_float("--null_firth_gradient_tolerance", config.g_compute.null_firth_gradient_tolerance)?;
-    validate_positive_float("--null_firth_maximum_step_size", config.g_compute.null_firth_maximum_step_size)?;
-    validate_positive_integer(
-        "--null_firth_fallback_iteration_multiplier",
-        config.g_compute.null_firth_fallback_iteration_multiplier,
-    )?;
-    validate_positive_float("--null_firth_fallback_step_divisor", config.g_compute.null_firth_fallback_step_divisor)?;
-    validate_positive_integer(
-        "--null_firth_line_search_maximum_attempts",
-        config.g_compute.null_firth_line_search_maximum_attempts,
-    )?;
-    validate_positive_float("--null_firth_step_halving_scale", config.g_compute.null_firth_step_halving_scale)?;
-    validate_positive_integer("--bgen_decode_tile_variant_count", config.g_compute.bgen_decode_tile_variant_count)?;
     if config.g_compute.gpu_genotype_format == "packed8" && config.g_compute.device != "gpu" {
         return Err(ConfigError::new("--gpu_genotype_format=packed8 requires --device=gpu."));
     }
@@ -185,19 +118,8 @@ fn validate_compute_config(config: &RegenieConfigData) -> ConfigResult<()> {
     Ok(())
 }
 
-fn validate_output_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    validate_positive_integer("--writer_threads", config.g_output.writer_threads)?;
-    validate_positive_integer("--writer_queue_depth", config.g_output.writer_queue_depth)?;
-    validate_positive_integer("--chunks_per_arrow_file", config.g_output.chunks_per_arrow_file)?;
-    validate_positive_float("--progress_interval_seconds", config.g_diagnostics.progress_interval_seconds)?;
-    validate_positive_integer("--progress_interval_chunks", config.g_diagnostics.progress_interval_chunks)?;
-    validate_non_negative_integer("--trace_event_cap", config.g_diagnostics.trace_event_cap)?;
-    validate_positive_integer("--log_queue_size", config.g_diagnostics.log_queue_size)?;
-    Ok(())
-}
-
 fn validate_binary_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    if !(0.0..1.0).contains(&config.binary.p_threshold) || config.binary.p_threshold == 0.0 {
+    if !(0.0..1.0).contains(&config.binary.p_threshold) {
         return Err(ConfigError::new("--pThresh must be in (0, 1)."));
     }
     if config.binary.firth && !config.binary.approx {
@@ -255,53 +177,4 @@ fn raise_for_quantitative_binary_only_options(option_names: &[&str]) -> ConfigRe
     Err(ConfigError::new(format!(
         "{formatted_option_names} can only be used with --bt; omit binary-only options when using --qt."
     )))
-}
-
-/// Validate that an integer option is positive.
-///
-/// # Errors
-///
-/// Returns an error when `value` is less than or equal to zero.
-pub fn validate_positive_integer(option_name: &str, value: i64) -> ConfigResult<()> {
-    if value <= 0 {
-        return Err(ConfigError::new(format!("{option_name} must be positive.")));
-    }
-    Ok(())
-}
-
-/// Validate that an integer option is non-negative.
-///
-/// # Errors
-///
-/// Returns an error when `value` is negative.
-pub fn validate_non_negative_integer(option_name: &str, value: i64) -> ConfigResult<()> {
-    if value < 0 {
-        return Err(ConfigError::new(format!("{option_name} must be non-negative.")));
-    }
-    Ok(())
-}
-
-/// Validate that a floating-point option is positive.
-///
-/// # Errors
-///
-/// Returns an error when `value` is less than or equal to zero.
-pub fn validate_positive_float(option_name: &str, value: f64) -> ConfigResult<()> {
-    if value <= 0.0 {
-        return Err(ConfigError::new(format!("{option_name} must be positive.")));
-    }
-    Ok(())
-}
-
-/// Validate that a probability floor is positive and below the symmetric midpoint.
-///
-/// # Errors
-///
-/// Returns an error when `value` is not positive or is greater than or equal to 0.5.
-pub fn validate_probability_floor(option_name: &str, value: f64) -> ConfigResult<()> {
-    validate_positive_float(option_name, value)?;
-    if value >= 0.5 {
-        return Err(ConfigError::new(format!("{option_name} must be less than 0.5.")));
-    }
-    Ok(())
 }

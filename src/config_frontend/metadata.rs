@@ -28,6 +28,16 @@ pub(super) enum OptionValueType {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ValueConstraint {
+    Any,
+    PositiveInteger,
+    NonNegativeInteger,
+    PositiveFloat,
+    Probability,
+    ProbabilityFloor,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DefaultPolicy {
     Value,
     AbsentIsNone,
@@ -45,6 +55,56 @@ pub struct OptionSpec {
     pub(super) is_flag: bool,
     pub(super) accepted_values: &'static [&'static str],
     pub(super) default_policy: DefaultPolicy,
+}
+
+impl OptionSpec {
+    pub(super) fn value_constraint(&self) -> ValueConstraint {
+        match self.cli_name {
+            "bsize"
+            | "threads"
+            | "staging_depth"
+            | "variant_limit"
+            | "firth_batch_size"
+            | "firth_candidate_capacity"
+            | "binary_null_maximum_iterations"
+            | "firth_maximum_iterations"
+            | "firth_pseudo_maximum_iterations"
+            | "firth_pseudo_inner_maximum_iterations"
+            | "firth_newton_raphson_zero_start_iterations"
+            | "firth_line_search_maximum_attempts"
+            | "firth_step_halving_maximum_attempts"
+            | "null_firth_maximum_iterations"
+            | "null_firth_fallback_iteration_multiplier"
+            | "null_firth_line_search_maximum_attempts"
+            | "bgen_decode_tile_variant_count"
+            | "writer_threads"
+            | "writer_queue_depth"
+            | "chunks_per_arrow_file"
+            | "progress_interval_chunks"
+            | "log_queue_size" => ValueConstraint::PositiveInteger,
+            "trace_event_cap" | "jax_persistent_cache_min_compile_time_seconds" => ValueConstraint::NonNegativeInteger,
+            "binary_null_coefficient_tolerance"
+            | "binary_minimum_variance"
+            | "binary_relative_variance_tolerance"
+            | "linear_minimum_variance"
+            | "linear_relative_variance_tolerance"
+            | "firth_gradient_tolerance"
+            | "firth_coefficient_tolerance"
+            | "firth_likelihood_tolerance"
+            | "firth_maximum_step_size"
+            | "firth_initial_response_scale"
+            | "firth_sparse_carrier_dosage_threshold"
+            | "firth_step_halving_scale"
+            | "null_firth_gradient_tolerance"
+            | "null_firth_maximum_step_size"
+            | "null_firth_fallback_step_divisor"
+            | "null_firth_step_halving_scale"
+            | "progress_interval_seconds" => ValueConstraint::PositiveFloat,
+            "pThresh" => ValueConstraint::Probability,
+            "binary_minimum_probability" => ValueConstraint::ProbabilityFloor,
+            _ => ValueConstraint::Any,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

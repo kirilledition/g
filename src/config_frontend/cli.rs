@@ -1,11 +1,11 @@
 use std::path::Path;
 
-use clap::{Arg, ArgAction, Command, error::ErrorKind};
+use clap::{Arg, ArgAction, Command, builder::ValueParser, error::ErrorKind};
 
-use super::validation::validate_existing_input_paths;
 use super::{
-    ConfigError, ConfigResult, OptionTable, OptionValue, RegenieConfigData, decode_toml_file_layer,
-    from_toml_config_layers, load_default_option_catalog_data, option_dictionary_to_toml_config_layer, option_registry,
+    ConfigError, ConfigResult, OptionSpec, OptionTable, OptionValue, OptionValueType, RegenieConfigData,
+    decode_toml_file_layer, from_toml_config_layers, load_default_option_catalog_data,
+    option_dictionary_to_toml_config_layer, option_registry, validate_cli_option_text,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -57,7 +57,6 @@ fn dispatch_regenie_command(args: &[String], program_name: &str) -> ConfigResult
     let toml_layer = decode_toml_file_layer(config_path.as_deref().map(Path::new))?;
     let cli_layer = option_dictionary_to_toml_config_layer(&cli_options, "CLI options")?;
     let config = from_toml_config_layers(&load_default_option_catalog_data()?.raw_toml, [toml_layer, cli_layer])?;
-    validate_existing_input_paths(&config)?;
     Ok(CliOutcomeData::config(config))
 }
 
@@ -134,15 +133,26 @@ fn build_regenie_clap_command(program_name: &str) -> Command {
             continue;
         }
         let action = if option_spec.multiple { ArgAction::Append } else { ArgAction::Set };
-        command = command.arg(
-            Arg::new(option_spec.cli_name)
-                .long(option_spec.cli_name)
-                .help(option_spec.help_text)
-                .num_args(1)
-                .action(action),
-        );
+        let mut argument = Arg::new(option_spec.cli_name)
+            .long(option_spec.cli_name)
+            .help(option_spec.help_text)
+            .num_args(1)
+            .action(action)
+            .value_parser(cli_value_parser(option_spec));
+        if matches!(option_spec.value_type, OptionValueType::Integer | OptionValueType::Float) {
+            argument = argument.allow_negative_numbers(true);
+        }
+        command = command.arg(argument);
     }
     command
+}
+
+fn cli_value_parser(option_spec: &'static OptionSpec) -> ValueParser {
+    ValueParser::new(move |raw_value: &str| -> Result<String, String> {
+        validate_cli_option_text(option_spec, raw_value)
+            .map(|()| raw_value.to_string())
+            .map_err(|error| error.message().to_string())
+    })
 }
 
 fn leak_string(value: String) -> &'static str {

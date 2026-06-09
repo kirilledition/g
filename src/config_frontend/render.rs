@@ -38,7 +38,7 @@ pub fn dumps_toml(config: &RegenieConfigData) -> ConfigResult<String> {
 enum TomlOutputValue {
     String(String),
     Integer(i64),
-    Float(f64),
+    Float(f32),
     Boolean(bool),
 }
 
@@ -79,13 +79,18 @@ fn build_input_section(config: &RegenieConfigData) -> TomlSectionValues {
 
 fn build_trait_section(config: &RegenieConfigData) -> TomlSectionValues {
     vec![
-        ("step".to_string(), TomlOutputValue::Integer(config.trait_config.step)),
+        ("step".to_string(), TomlOutputValue::Integer(i64::from(config.trait_config.step))),
         ("qt".to_string(), TomlOutputValue::Boolean(config.trait_config.trait_type == "quantitative")),
         ("bt".to_string(), TomlOutputValue::Boolean(config.trait_config.trait_type == "binary")),
-        ("bsize".to_string(), TomlOutputValue::Integer(config.trait_config.bsize)),
+        ("bsize".to_string(), TomlOutputValue::Integer(i64::from(config.trait_config.bsize))),
     ]
     .into_iter()
-    .chain(config.trait_config.threads.map(|threads| ("threads".to_string(), TomlOutputValue::Integer(threads))))
+    .chain(
+        config
+            .trait_config
+            .threads
+            .map(|threads| ("threads".to_string(), TomlOutputValue::Integer(i64::from(threads)))),
+    )
     .collect()
 }
 
@@ -112,9 +117,9 @@ fn build_output_section(config: &RegenieConfigData) -> TomlSectionValues {
 fn build_compute_section(config: &RegenieConfigData) -> TomlSectionValues {
     let mut compute_section = vec![
         ("device".to_string(), TomlOutputValue::String(config.g_compute.device.clone())),
-        ("staging_depth".to_string(), TomlOutputValue::Integer(config.g_compute.staging_depth)),
+        ("staging_depth".to_string(), TomlOutputValue::Integer(i64::from(config.g_compute.staging_depth))),
     ];
-    push_optional_integer(&mut compute_section, "variant_limit", config.g_compute.variant_limit);
+    push_optional_unsigned_integer(&mut compute_section, "variant_limit", config.g_compute.variant_limit);
     compute_section.extend(build_compute_core_values(config));
     compute_section.extend(build_firth_compute_values(config));
     compute_section.extend(build_null_firth_compute_values(config));
@@ -140,11 +145,14 @@ fn build_compute_core_values(config: &RegenieConfigData) -> TomlSectionValues {
             "multi_phenotype_sample_mode".to_string(),
             TomlOutputValue::String(config.g_compute.multi_phenotype_sample_mode.clone()),
         ),
-        ("firth_batch_size".to_string(), TomlOutputValue::Integer(config.g_compute.firth_batch_size)),
-        ("firth_candidate_capacity".to_string(), TomlOutputValue::Integer(config.g_compute.firth_candidate_capacity)),
+        ("firth_batch_size".to_string(), TomlOutputValue::Integer(i64::from(config.g_compute.firth_batch_size))),
+        (
+            "firth_candidate_capacity".to_string(),
+            TomlOutputValue::Integer(i64::from(config.g_compute.firth_candidate_capacity)),
+        ),
         (
             "binary_null_maximum_iterations".to_string(),
-            TomlOutputValue::Integer(config.g_compute.binary_null_maximum_iterations),
+            TomlOutputValue::Integer(i64::from(config.g_compute.binary_null_maximum_iterations)),
         ),
         (
             "binary_null_coefficient_tolerance".to_string(),
@@ -170,7 +178,10 @@ fn build_compute_core_values(config: &RegenieConfigData) -> TomlSectionValues {
 
 fn build_firth_compute_values(config: &RegenieConfigData) -> TomlSectionValues {
     vec![
-        ("firth_maximum_iterations".to_string(), TomlOutputValue::Integer(config.g_compute.firth_maximum_iterations)),
+        (
+            "firth_maximum_iterations".to_string(),
+            TomlOutputValue::Integer(i64::from(config.g_compute.firth_maximum_iterations)),
+        ),
         ("firth_gradient_tolerance".to_string(), TomlOutputValue::Float(config.g_compute.firth_gradient_tolerance)),
         (
             "firth_coefficient_tolerance".to_string(),
@@ -180,23 +191,23 @@ fn build_firth_compute_values(config: &RegenieConfigData) -> TomlSectionValues {
         ("firth_maximum_step_size".to_string(), TomlOutputValue::Float(config.g_compute.firth_maximum_step_size)),
         (
             "firth_pseudo_maximum_iterations".to_string(),
-            TomlOutputValue::Integer(config.g_compute.firth_pseudo_maximum_iterations),
+            TomlOutputValue::Integer(i64::from(config.g_compute.firth_pseudo_maximum_iterations)),
         ),
         (
             "firth_pseudo_inner_maximum_iterations".to_string(),
-            TomlOutputValue::Integer(config.g_compute.firth_pseudo_inner_maximum_iterations),
+            TomlOutputValue::Integer(i64::from(config.g_compute.firth_pseudo_inner_maximum_iterations)),
         ),
         (
             "firth_newton_raphson_zero_start_iterations".to_string(),
-            TomlOutputValue::Integer(config.g_compute.firth_newton_raphson_zero_start_iterations),
+            TomlOutputValue::Integer(i64::from(config.g_compute.firth_newton_raphson_zero_start_iterations)),
         ),
         (
             "firth_line_search_maximum_attempts".to_string(),
-            TomlOutputValue::Integer(config.g_compute.firth_line_search_maximum_attempts),
+            TomlOutputValue::Integer(i64::from(config.g_compute.firth_line_search_maximum_attempts)),
         ),
         (
             "firth_step_halving_maximum_attempts".to_string(),
-            TomlOutputValue::Integer(config.g_compute.firth_step_halving_maximum_attempts),
+            TomlOutputValue::Integer(i64::from(config.g_compute.firth_step_halving_maximum_attempts)),
         ),
         (
             "firth_initial_response_scale".to_string(),
@@ -214,7 +225,7 @@ fn build_null_firth_compute_values(config: &RegenieConfigData) -> TomlSectionVal
     vec![
         (
             "null_firth_maximum_iterations".to_string(),
-            TomlOutputValue::Integer(config.g_compute.null_firth_maximum_iterations),
+            TomlOutputValue::Integer(i64::from(config.g_compute.null_firth_maximum_iterations)),
         ),
         (
             "null_firth_gradient_tolerance".to_string(),
@@ -226,7 +237,7 @@ fn build_null_firth_compute_values(config: &RegenieConfigData) -> TomlSectionVal
         ),
         (
             "null_firth_fallback_iteration_multiplier".to_string(),
-            TomlOutputValue::Integer(config.g_compute.null_firth_fallback_iteration_multiplier),
+            TomlOutputValue::Integer(i64::from(config.g_compute.null_firth_fallback_iteration_multiplier)),
         ),
         (
             "null_firth_fallback_step_divisor".to_string(),
@@ -234,7 +245,7 @@ fn build_null_firth_compute_values(config: &RegenieConfigData) -> TomlSectionVal
         ),
         (
             "null_firth_line_search_maximum_attempts".to_string(),
-            TomlOutputValue::Integer(config.g_compute.null_firth_line_search_maximum_attempts),
+            TomlOutputValue::Integer(i64::from(config.g_compute.null_firth_line_search_maximum_attempts)),
         ),
         (
             "null_firth_step_halving_scale".to_string(),
@@ -248,7 +259,7 @@ fn build_genotype_compute_values(config: &RegenieConfigData) -> TomlSectionValue
         ("use_block_firth_math".to_string(), TomlOutputValue::Boolean(config.g_compute.use_block_firth_math)),
         (
             "bgen_decode_tile_variant_count".to_string(),
-            TomlOutputValue::Integer(config.g_compute.bgen_decode_tile_variant_count),
+            TomlOutputValue::Integer(i64::from(config.g_compute.bgen_decode_tile_variant_count)),
         ),
         ("gpu_genotype_format".to_string(), TomlOutputValue::String(config.g_compute.gpu_genotype_format.clone())),
         ("score_dtype".to_string(), TomlOutputValue::String(config.g_compute.score_dtype.clone())),
@@ -265,7 +276,7 @@ fn build_jax_compute_values(config: &RegenieConfigData) -> TomlSectionValues {
         ),
         (
             "jax_persistent_cache_min_compile_time_seconds".to_string(),
-            TomlOutputValue::Integer(config.g_compute.jax_persistent_cache_min_compile_time_seconds),
+            TomlOutputValue::Integer(i64::from(config.g_compute.jax_persistent_cache_min_compile_time_seconds)),
         ),
         ("jax_xla_autotune_cache".to_string(), TomlOutputValue::Boolean(config.g_compute.jax_xla_autotune_cache)),
         ("jax_transfer_guard".to_string(), TomlOutputValue::Boolean(config.g_compute.jax_transfer_guard)),
@@ -276,9 +287,12 @@ fn build_output_runtime_values(config: &RegenieConfigData) -> TomlSectionValues 
     let mut output_values = vec![("format".to_string(), TomlOutputValue::String(config.g_output.format.clone()))];
     push_optional_string(&mut output_values, "output_run_directory", config.g_output.output_run_directory.as_ref());
     output_values.extend([
-        ("writer_threads".to_string(), TomlOutputValue::Integer(config.g_output.writer_threads)),
-        ("writer_queue_depth".to_string(), TomlOutputValue::Integer(config.g_output.writer_queue_depth)),
-        ("chunks_per_arrow_file".to_string(), TomlOutputValue::Integer(config.g_output.chunks_per_arrow_file)),
+        ("writer_threads".to_string(), TomlOutputValue::Integer(i64::from(config.g_output.writer_threads))),
+        ("writer_queue_depth".to_string(), TomlOutputValue::Integer(i64::from(config.g_output.writer_queue_depth))),
+        (
+            "chunks_per_arrow_file".to_string(),
+            TomlOutputValue::Integer(i64::from(config.g_output.chunks_per_arrow_file)),
+        ),
         ("arrow_compression".to_string(), TomlOutputValue::String(config.g_output.arrow_compression.clone())),
         ("parquet_compression".to_string(), TomlOutputValue::String(config.g_output.parquet_compression.clone())),
         ("resume".to_string(), TomlOutputValue::Boolean(config.g_output.resume)),
@@ -308,7 +322,7 @@ fn build_diagnostics_section(config: &RegenieConfigData) -> TomlSectionValues {
         ),
         (
             "progress_interval_chunks".to_string(),
-            TomlOutputValue::Integer(config.g_diagnostics.progress_interval_chunks),
+            TomlOutputValue::Integer(i64::from(config.g_diagnostics.progress_interval_chunks)),
         ),
     ]);
     push_optional_string(
@@ -319,8 +333,8 @@ fn build_diagnostics_section(config: &RegenieConfigData) -> TomlSectionValues {
     push_optional_string(&mut diagnostics_section, "trace_file", config.g_diagnostics.trace_file.as_ref());
     diagnostics_section.extend([
         ("trace_filter".to_string(), TomlOutputValue::String(config.g_diagnostics.trace_filter.clone())),
-        ("trace_event_cap".to_string(), TomlOutputValue::Integer(config.g_diagnostics.trace_event_cap)),
-        ("log_queue_size".to_string(), TomlOutputValue::Integer(config.g_diagnostics.log_queue_size)),
+        ("trace_event_cap".to_string(), TomlOutputValue::Integer(i64::from(config.g_diagnostics.trace_event_cap))),
+        ("log_queue_size".to_string(), TomlOutputValue::Integer(i64::from(config.g_diagnostics.log_queue_size))),
         ("log_lossy".to_string(), TomlOutputValue::Boolean(config.g_diagnostics.log_lossy)),
         ("include_source_location".to_string(), TomlOutputValue::Boolean(config.g_diagnostics.include_source_location)),
         ("include_span_events".to_string(), TomlOutputValue::Boolean(config.g_diagnostics.include_span_events)),
@@ -344,9 +358,9 @@ fn push_optional_string(section_values: &mut Vec<(String, TomlOutputValue)>, key
     }
 }
 
-fn push_optional_integer(section_values: &mut Vec<(String, TomlOutputValue)>, key: &str, value: Option<i64>) {
+fn push_optional_unsigned_integer(section_values: &mut Vec<(String, TomlOutputValue)>, key: &str, value: Option<u32>) {
     if let Some(value) = value {
-        section_values.push((key.to_string(), TomlOutputValue::Integer(value)));
+        section_values.push((key.to_string(), TomlOutputValue::Integer(i64::from(value))));
     }
 }
 

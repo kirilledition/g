@@ -164,7 +164,7 @@ impl InputConfig {
 impl TraitConfig {
     #[getter]
     fn step(&self) -> i64 {
-        self.data.step
+        i64::from(self.data.step)
     }
 
     #[getter]
@@ -174,12 +174,12 @@ impl TraitConfig {
 
     #[getter]
     fn bsize(&self) -> i64 {
-        self.data.bsize
+        i64::from(self.data.bsize)
     }
 
     #[getter]
     fn threads(&self) -> Option<i64> {
-        self.data.threads
+        self.data.threads.map(i64::from)
     }
 
     #[expect(clippy::needless_pass_by_value, reason = "PyO3 __richcmp__ requires owned PyRef extraction.")]
@@ -207,7 +207,7 @@ impl BinaryConfig {
 
     #[getter]
     fn p_threshold(&self) -> f64 {
-        self.data.p_threshold
+        f64::from(self.data.p_threshold)
     }
 
     #[getter]
@@ -230,12 +230,12 @@ impl GComputeConfig {
 
     #[getter]
     fn staging_depth(&self) -> i64 {
-        self.data.staging_depth
+        i64::from(self.data.staging_depth)
     }
 
     #[getter]
     fn variant_limit(&self) -> Option<i64> {
-        self.data.variant_limit
+        self.data.variant_limit.map(i64::from)
     }
 
     #[getter]
@@ -260,22 +260,22 @@ impl GComputeConfig {
 
     #[getter]
     fn firth_batch_size(&self) -> i64 {
-        self.data.firth_batch_size
+        i64::from(self.data.firth_batch_size)
     }
 
     #[getter]
     fn firth_candidate_capacity(&self) -> i64 {
-        self.data.firth_candidate_capacity
+        i64::from(self.data.firth_candidate_capacity)
     }
 
     #[getter]
     fn binary_null_maximum_iterations(&self) -> i64 {
-        self.data.binary_null_maximum_iterations
+        i64::from(self.data.binary_null_maximum_iterations)
     }
 
     #[getter]
     fn binary_null_coefficient_tolerance(&self) -> f64 {
-        self.data.binary_null_coefficient_tolerance
+        f64::from(self.data.binary_null_coefficient_tolerance)
     }
 
     #[getter]
@@ -285,127 +285,127 @@ impl GComputeConfig {
 
     #[getter]
     fn binary_minimum_probability(&self) -> f64 {
-        self.data.binary_minimum_probability
+        f64::from(self.data.binary_minimum_probability)
     }
 
     #[getter]
     fn binary_minimum_variance(&self) -> f64 {
-        self.data.binary_minimum_variance
+        f64::from(self.data.binary_minimum_variance)
     }
 
     #[getter]
     fn binary_relative_variance_tolerance(&self) -> f64 {
-        self.data.binary_relative_variance_tolerance
+        f64::from(self.data.binary_relative_variance_tolerance)
     }
 
     #[getter]
     fn linear_minimum_variance(&self) -> f64 {
-        self.data.linear_minimum_variance
+        f64::from(self.data.linear_minimum_variance)
     }
 
     #[getter]
     fn linear_relative_variance_tolerance(&self) -> f64 {
-        self.data.linear_relative_variance_tolerance
+        f64::from(self.data.linear_relative_variance_tolerance)
     }
 
     #[getter]
     fn firth_maximum_iterations(&self) -> i64 {
-        self.data.firth_maximum_iterations
+        i64::from(self.data.firth_maximum_iterations)
     }
 
     #[getter]
     fn firth_gradient_tolerance(&self) -> f64 {
-        self.data.firth_gradient_tolerance
+        f64::from(self.data.firth_gradient_tolerance)
     }
 
     #[getter]
     fn firth_coefficient_tolerance(&self) -> f64 {
-        self.data.firth_coefficient_tolerance
+        f64::from(self.data.firth_coefficient_tolerance)
     }
 
     #[getter]
     fn firth_likelihood_tolerance(&self) -> f64 {
-        self.data.firth_likelihood_tolerance
+        f64::from(self.data.firth_likelihood_tolerance)
     }
 
     #[getter]
     fn firth_maximum_step_size(&self) -> f64 {
-        self.data.firth_maximum_step_size
+        f64::from(self.data.firth_maximum_step_size)
     }
 
     #[getter]
     fn firth_pseudo_maximum_iterations(&self) -> i64 {
-        self.data.firth_pseudo_maximum_iterations
+        i64::from(self.data.firth_pseudo_maximum_iterations)
     }
 
     #[getter]
     fn firth_pseudo_inner_maximum_iterations(&self) -> i64 {
-        self.data.firth_pseudo_inner_maximum_iterations
+        i64::from(self.data.firth_pseudo_inner_maximum_iterations)
     }
 
     #[getter]
     fn firth_newton_raphson_zero_start_iterations(&self) -> i64 {
-        self.data.firth_newton_raphson_zero_start_iterations
+        i64::from(self.data.firth_newton_raphson_zero_start_iterations)
     }
 
     #[getter]
     fn firth_line_search_maximum_attempts(&self) -> i64 {
-        self.data.firth_line_search_maximum_attempts
+        i64::from(self.data.firth_line_search_maximum_attempts)
     }
 
     #[getter]
     fn firth_step_halving_maximum_attempts(&self) -> i64 {
-        self.data.firth_step_halving_maximum_attempts
+        i64::from(self.data.firth_step_halving_maximum_attempts)
     }
 
     #[getter]
     fn firth_initial_response_scale(&self) -> f64 {
-        self.data.firth_initial_response_scale
+        f64::from(self.data.firth_initial_response_scale)
     }
 
     #[getter]
     fn firth_sparse_carrier_dosage_threshold(&self) -> f64 {
-        self.data.firth_sparse_carrier_dosage_threshold
+        f64::from(self.data.firth_sparse_carrier_dosage_threshold)
     }
 
     #[getter]
     fn firth_step_halving_scale(&self) -> f64 {
-        self.data.firth_step_halving_scale
+        f64::from(self.data.firth_step_halving_scale)
     }
 
     #[getter]
     fn null_firth_maximum_iterations(&self) -> i64 {
-        self.data.null_firth_maximum_iterations
+        i64::from(self.data.null_firth_maximum_iterations)
     }
 
     #[getter]
     fn null_firth_gradient_tolerance(&self) -> f64 {
-        self.data.null_firth_gradient_tolerance
+        f64::from(self.data.null_firth_gradient_tolerance)
     }
 
     #[getter]
     fn null_firth_maximum_step_size(&self) -> f64 {
-        self.data.null_firth_maximum_step_size
+        f64::from(self.data.null_firth_maximum_step_size)
     }
 
     #[getter]
     fn null_firth_fallback_iteration_multiplier(&self) -> i64 {
-        self.data.null_firth_fallback_iteration_multiplier
+        i64::from(self.data.null_firth_fallback_iteration_multiplier)
     }
 
     #[getter]
     fn null_firth_fallback_step_divisor(&self) -> f64 {
-        self.data.null_firth_fallback_step_divisor
+        f64::from(self.data.null_firth_fallback_step_divisor)
     }
 
     #[getter]
     fn null_firth_line_search_maximum_attempts(&self) -> i64 {
-        self.data.null_firth_line_search_maximum_attempts
+        i64::from(self.data.null_firth_line_search_maximum_attempts)
     }
 
     #[getter]
     fn null_firth_step_halving_scale(&self) -> f64 {
-        self.data.null_firth_step_halving_scale
+        f64::from(self.data.null_firth_step_halving_scale)
     }
 
     #[getter]
@@ -415,7 +415,7 @@ impl GComputeConfig {
 
     #[getter]
     fn bgen_decode_tile_variant_count(&self) -> i64 {
-        self.data.bgen_decode_tile_variant_count
+        i64::from(self.data.bgen_decode_tile_variant_count)
     }
 
     #[getter]
@@ -455,7 +455,7 @@ impl GComputeConfig {
 
     #[getter]
     fn jax_persistent_cache_min_compile_time_seconds(&self) -> i64 {
-        self.data.jax_persistent_cache_min_compile_time_seconds
+        i64::from(self.data.jax_persistent_cache_min_compile_time_seconds)
     }
 
     #[getter]
@@ -493,17 +493,17 @@ impl GOutputConfig {
 
     #[getter]
     fn writer_threads(&self) -> i64 {
-        self.data.writer_threads
+        i64::from(self.data.writer_threads)
     }
 
     #[getter]
     fn writer_queue_depth(&self) -> i64 {
-        self.data.writer_queue_depth
+        i64::from(self.data.writer_queue_depth)
     }
 
     #[getter]
     fn chunks_per_arrow_file(&self) -> i64 {
-        self.data.chunks_per_arrow_file
+        i64::from(self.data.chunks_per_arrow_file)
     }
 
     #[getter]
@@ -571,12 +571,12 @@ impl GDiagnosticsConfig {
 
     #[getter]
     fn progress_interval_seconds(&self) -> f64 {
-        self.data.progress_interval_seconds
+        f64::from(self.data.progress_interval_seconds)
     }
 
     #[getter]
     fn progress_interval_chunks(&self) -> i64 {
-        self.data.progress_interval_chunks
+        i64::from(self.data.progress_interval_chunks)
     }
 
     #[getter]
@@ -596,12 +596,12 @@ impl GDiagnosticsConfig {
 
     #[getter]
     fn trace_event_cap(&self) -> i64 {
-        self.data.trace_event_cap
+        i64::from(self.data.trace_event_cap)
     }
 
     #[getter]
     fn log_queue_size(&self) -> i64 {
-        self.data.log_queue_size
+        i64::from(self.data.log_queue_size)
     }
 
     #[getter]

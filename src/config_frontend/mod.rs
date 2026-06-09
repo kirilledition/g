@@ -16,12 +16,9 @@ mod validation;
 pub use cli::{CliOutcomeData, dispatch_cli, explain_option, iter_explanations};
 pub use metadata::{DefaultPolicy, OptionSpec, SupportLevel};
 pub use render::{dumps_toml, format_toml_string, write_toml};
-pub use validation::{
-    validate_config, validate_non_negative_integer, validate_positive_float, validate_positive_integer,
-    validate_probability_floor,
-};
+pub use validation::validate_config;
 
-use metadata::{OptionValueType, option_registry};
+use metadata::{OptionValueType, ValueConstraint, option_registry};
 use validation::{
     reject_missing_resolved_default_options, reject_quantitative_binary_only_options, validate_unknown_options,
 };
@@ -299,6 +296,58 @@ fn validate_toml_option_value(option_spec: &OptionSpec, option_value: &OptionVal
             )));
         }
     }
+    validate_option_value_constraint(option_spec, option_value)?;
+    Ok(())
+}
+
+pub(super) fn validate_option_value_constraint(
+    option_spec: &OptionSpec,
+    option_value: &OptionValue,
+) -> ConfigResult<()> {
+    match option_spec.value_constraint() {
+        ValueConstraint::Any => Ok(()),
+        ValueConstraint::PositiveInteger => {
+            let value = integer_value(option_value, option_spec.cli_name)?;
+            if value <= 0 {
+                return Err(ConfigError::new(format!("--{} must be positive.", option_spec.cli_name)));
+            }
+            u32::try_from(value).map_err(|_| ConfigError::new(format!("--{} is too large.", option_spec.cli_name)))?;
+            Ok(())
+        }
+        ValueConstraint::NonNegativeInteger => {
+            let value = integer_value(option_value, option_spec.cli_name)?;
+            if value < 0 {
+                return Err(ConfigError::new(format!("--{} must be non-negative.", option_spec.cli_name)));
+            }
+            u32::try_from(value).map_err(|_| ConfigError::new(format!("--{} is too large.", option_spec.cli_name)))?;
+            Ok(())
+        }
+        ValueConstraint::PositiveFloat => {
+            let value = f32_value(option_value, option_spec.cli_name)?;
+            validate_positive_finite_float(option_spec.cli_name, value)
+        }
+        ValueConstraint::Probability => {
+            let value = f32_value(option_value, option_spec.cli_name)?;
+            if !value.is_finite() || !(0.0..1.0).contains(&value) {
+                return Err(ConfigError::new(format!("--{} must be in (0, 1).", option_spec.cli_name)));
+            }
+            Ok(())
+        }
+        ValueConstraint::ProbabilityFloor => {
+            let value = f32_value(option_value, option_spec.cli_name)?;
+            validate_positive_finite_float(option_spec.cli_name, value)?;
+            if value >= 0.5 {
+                return Err(ConfigError::new(format!("--{} must be less than 0.5.", option_spec.cli_name)));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_positive_finite_float(option_name: &str, value: f32) -> ConfigResult<()> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(ConfigError::new(format!("--{option_name} must be positive.")));
+    }
     Ok(())
 }
 
@@ -411,21 +460,29 @@ fn coerce_option_value(option_value: &OptionValue, option_spec: &OptionSpec) -> 
     if option_spec.multiple {
         return Ok(coerce_string_list_value(option_value));
     }
-    if !option_spec.accepted_values.is_empty() {
+    let coerced_value = if option_spec.accepted_values.is_empty() {
+        match option_spec.value_type {
+            OptionValueType::String | OptionValueType::Path => {
+                OptionValue::String(string_value(option_value, option_spec.cli_name)?)
+            }
+            OptionValueType::Integer => OptionValue::Integer(integer_value(option_value, option_spec.cli_name)?),
+            OptionValueType::Float => OptionValue::Float(float_value(option_value, option_spec.cli_name)?),
+            OptionValueType::Boolean => OptionValue::Boolean(boolean_value(option_value, option_spec.cli_name)?),
+        }
+    } else {
         let value = string_value(option_value, option_spec.cli_name)?;
         if !option_spec.accepted_values.contains(&value.as_str()) {
             return Err(ConfigError::new(format!("Invalid value for --{}: {value:?}.", option_spec.cli_name)));
         }
-        return Ok(OptionValue::String(value));
-    }
-    match option_spec.value_type {
-        OptionValueType::String | OptionValueType::Path => {
-            Ok(OptionValue::String(string_value(option_value, option_spec.cli_name)?))
-        }
-        OptionValueType::Integer => Ok(OptionValue::Integer(integer_value(option_value, option_spec.cli_name)?)),
-        OptionValueType::Float => Ok(OptionValue::Float(float_value(option_value, option_spec.cli_name)?)),
-        OptionValueType::Boolean => Ok(OptionValue::Boolean(boolean_value(option_value, option_spec.cli_name)?)),
-    }
+        OptionValue::String(value)
+    };
+    validate_option_value_constraint(option_spec, &coerced_value)?;
+    Ok(coerced_value)
+}
+
+pub(super) fn validate_cli_option_text(option_spec: &OptionSpec, raw_value: &str) -> ConfigResult<()> {
+    let option_value = OptionValue::String(raw_value.to_string());
+    coerce_option_value(&option_value, option_spec).map(|_| ())
 }
 
 fn coerce_string_list_value(option_value: &OptionValue) -> OptionValue {
@@ -559,10 +616,10 @@ pub struct InputConfigData {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TraitConfigData {
-    pub step: i64,
+    pub step: u8,
     pub trait_type: String,
-    pub bsize: i64,
-    pub threads: Option<i64>,
+    pub bsize: u32,
+    pub threads: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -571,7 +628,7 @@ pub struct BinaryConfigData {
     pub firth: bool,
     pub approx: bool,
     pub spa: bool,
-    pub p_threshold: f64,
+    pub p_threshold: f32,
     pub firth_se: bool,
 }
 
@@ -579,44 +636,44 @@ pub struct BinaryConfigData {
 #[expect(clippy::struct_excessive_bools, reason = "Runtime config mirrors public g-specific boolean options.")]
 pub struct GComputeConfigData {
     pub device: String,
-    pub staging_depth: i64,
-    pub variant_limit: Option<i64>,
+    pub staging_depth: u32,
+    pub variant_limit: Option<u32>,
     pub trusted_no_missing_diploid: bool,
     pub trusted_bgen_validation_mode: String,
     pub sample_key_mode: String,
     pub multi_phenotype_sample_mode: String,
-    pub firth_batch_size: i64,
-    pub firth_candidate_capacity: i64,
-    pub binary_null_maximum_iterations: i64,
-    pub binary_null_coefficient_tolerance: f64,
+    pub firth_batch_size: u32,
+    pub firth_candidate_capacity: u32,
+    pub binary_null_maximum_iterations: u32,
+    pub binary_null_coefficient_tolerance: f32,
     pub null_logistic_nonconvergence_policy: String,
-    pub binary_minimum_probability: f64,
-    pub binary_minimum_variance: f64,
-    pub binary_relative_variance_tolerance: f64,
-    pub linear_minimum_variance: f64,
-    pub linear_relative_variance_tolerance: f64,
-    pub firth_maximum_iterations: i64,
-    pub firth_gradient_tolerance: f64,
-    pub firth_coefficient_tolerance: f64,
-    pub firth_likelihood_tolerance: f64,
-    pub firth_maximum_step_size: f64,
-    pub firth_pseudo_maximum_iterations: i64,
-    pub firth_pseudo_inner_maximum_iterations: i64,
-    pub firth_newton_raphson_zero_start_iterations: i64,
-    pub firth_line_search_maximum_attempts: i64,
-    pub firth_step_halving_maximum_attempts: i64,
-    pub firth_initial_response_scale: f64,
-    pub firth_sparse_carrier_dosage_threshold: f64,
-    pub firth_step_halving_scale: f64,
-    pub null_firth_maximum_iterations: i64,
-    pub null_firth_gradient_tolerance: f64,
-    pub null_firth_maximum_step_size: f64,
-    pub null_firth_fallback_iteration_multiplier: i64,
-    pub null_firth_fallback_step_divisor: f64,
-    pub null_firth_line_search_maximum_attempts: i64,
-    pub null_firth_step_halving_scale: f64,
+    pub binary_minimum_probability: f32,
+    pub binary_minimum_variance: f32,
+    pub binary_relative_variance_tolerance: f32,
+    pub linear_minimum_variance: f32,
+    pub linear_relative_variance_tolerance: f32,
+    pub firth_maximum_iterations: u32,
+    pub firth_gradient_tolerance: f32,
+    pub firth_coefficient_tolerance: f32,
+    pub firth_likelihood_tolerance: f32,
+    pub firth_maximum_step_size: f32,
+    pub firth_pseudo_maximum_iterations: u32,
+    pub firth_pseudo_inner_maximum_iterations: u32,
+    pub firth_newton_raphson_zero_start_iterations: u32,
+    pub firth_line_search_maximum_attempts: u32,
+    pub firth_step_halving_maximum_attempts: u32,
+    pub firth_initial_response_scale: f32,
+    pub firth_sparse_carrier_dosage_threshold: f32,
+    pub firth_step_halving_scale: f32,
+    pub null_firth_maximum_iterations: u32,
+    pub null_firth_gradient_tolerance: f32,
+    pub null_firth_maximum_step_size: f32,
+    pub null_firth_fallback_iteration_multiplier: u32,
+    pub null_firth_fallback_step_divisor: f32,
+    pub null_firth_line_search_maximum_attempts: u32,
+    pub null_firth_step_halving_scale: f32,
     pub use_block_firth_math: bool,
-    pub bgen_decode_tile_variant_count: i64,
+    pub bgen_decode_tile_variant_count: u32,
     pub gpu_genotype_format: String,
     pub score_dtype: String,
     pub firth_dtype: String,
@@ -624,7 +681,7 @@ pub struct GComputeConfigData {
     pub jax_matmul_precision: Option<String>,
     pub jax_persistent_cache: bool,
     pub jax_persistent_cache_min_entry_size_bytes: i64,
-    pub jax_persistent_cache_min_compile_time_seconds: i64,
+    pub jax_persistent_cache_min_compile_time_seconds: u32,
     pub jax_xla_autotune_cache: bool,
     pub jax_transfer_guard: bool,
 }
@@ -634,9 +691,9 @@ pub struct GOutputConfigData {
     pub out: Option<String>,
     pub format: String,
     pub output_run_directory: Option<String>,
-    pub writer_threads: i64,
-    pub writer_queue_depth: i64,
-    pub chunks_per_arrow_file: i64,
+    pub writer_threads: u32,
+    pub writer_queue_depth: u32,
+    pub chunks_per_arrow_file: u32,
     pub arrow_compression: String,
     pub parquet_compression: String,
     pub resume: bool,
@@ -653,13 +710,13 @@ pub struct GDiagnosticsConfigData {
     pub log_filter: String,
     pub log_file: Option<String>,
     pub log_stderr: bool,
-    pub progress_interval_seconds: f64,
-    pub progress_interval_chunks: i64,
+    pub progress_interval_seconds: f32,
+    pub progress_interval_chunks: u32,
     pub profile_summary_json: Option<String>,
     pub trace_file: Option<String>,
     pub trace_filter: String,
-    pub trace_event_cap: i64,
-    pub log_queue_size: i64,
+    pub trace_event_cap: u32,
+    pub log_queue_size: u32,
     pub log_lossy: bool,
     pub include_source_location: bool,
     pub include_span_events: bool,
@@ -708,10 +765,10 @@ fn build_input_config(toml_config: &OptionTable) -> ConfigResult<InputConfigData
 fn build_trait_config(toml_config: &OptionTable) -> ConfigResult<TraitConfigData> {
     let trait_type = resolve_configured_toml_trait_type(toml_config)?;
     Ok(TraitConfigData {
-        step: required_i64(toml_config, "trait", "step", "step")?,
+        step: required_u8(toml_config, "trait", "step", "step")?,
         trait_type,
-        bsize: required_i64(toml_config, "trait", "bsize", "bsize")?,
-        threads: get_i64(toml_config, "trait", "threads")?,
+        bsize: required_u32(toml_config, "trait", "bsize", "bsize")?,
+        threads: get_u32(toml_config, "trait", "threads")?,
     })
 }
 
@@ -720,60 +777,60 @@ fn build_binary_config(toml_config: &OptionTable) -> ConfigResult<BinaryConfigDa
         firth: required_bool(toml_config, "binary", "firth", "firth")?,
         approx: required_bool(toml_config, "binary", "approx", "approx")?,
         spa: false,
-        p_threshold: required_f64(toml_config, "binary", "pThresh", "pThresh")?,
+        p_threshold: required_f32(toml_config, "binary", "pThresh", "pThresh")?,
         firth_se: required_bool(toml_config, "binary", "firth-se", "firth-se")?,
     })
 }
 
 struct ComputeCoreFields {
     device: String,
-    staging_depth: i64,
-    variant_limit: Option<i64>,
+    staging_depth: u32,
+    variant_limit: Option<u32>,
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: String,
     sample_key_mode: String,
     multi_phenotype_sample_mode: String,
-    firth_batch_size: i64,
-    firth_candidate_capacity: i64,
-    binary_null_maximum_iterations: i64,
-    binary_null_coefficient_tolerance: f64,
+    firth_batch_size: u32,
+    firth_candidate_capacity: u32,
+    binary_null_maximum_iterations: u32,
+    binary_null_coefficient_tolerance: f32,
     null_logistic_nonconvergence_policy: String,
-    binary_minimum_probability: f64,
-    binary_minimum_variance: f64,
-    binary_relative_variance_tolerance: f64,
-    linear_minimum_variance: f64,
-    linear_relative_variance_tolerance: f64,
+    binary_minimum_probability: f32,
+    binary_minimum_variance: f32,
+    binary_relative_variance_tolerance: f32,
+    linear_minimum_variance: f32,
+    linear_relative_variance_tolerance: f32,
 }
 
 struct FirthComputeFields {
-    maximum_iterations: i64,
-    gradient_tolerance: f64,
-    coefficient_tolerance: f64,
-    likelihood_tolerance: f64,
-    maximum_step_size: f64,
-    pseudo_maximum_iterations: i64,
-    pseudo_inner_maximum_iterations: i64,
-    newton_raphson_zero_start_iterations: i64,
-    line_search_maximum_attempts: i64,
-    step_halving_maximum_attempts: i64,
-    initial_response_scale: f64,
-    sparse_carrier_dosage_threshold: f64,
-    step_halving_scale: f64,
+    maximum_iterations: u32,
+    gradient_tolerance: f32,
+    coefficient_tolerance: f32,
+    likelihood_tolerance: f32,
+    maximum_step_size: f32,
+    pseudo_maximum_iterations: u32,
+    pseudo_inner_maximum_iterations: u32,
+    newton_raphson_zero_start_iterations: u32,
+    line_search_maximum_attempts: u32,
+    step_halving_maximum_attempts: u32,
+    initial_response_scale: f32,
+    sparse_carrier_dosage_threshold: f32,
+    step_halving_scale: f32,
 }
 
 struct NullFirthComputeFields {
-    maximum_iterations: i64,
-    gradient_tolerance: f64,
-    maximum_step_size: f64,
-    fallback_iteration_multiplier: i64,
-    fallback_step_divisor: f64,
-    line_search_maximum_attempts: i64,
-    step_halving_scale: f64,
+    maximum_iterations: u32,
+    gradient_tolerance: f32,
+    maximum_step_size: f32,
+    fallback_iteration_multiplier: u32,
+    fallback_step_divisor: f32,
+    line_search_maximum_attempts: u32,
+    step_halving_scale: f32,
 }
 
 struct GenotypeComputeFields {
     use_block_firth_math: bool,
-    bgen_decode_tile_variant_count: i64,
+    bgen_decode_tile_variant_count: u32,
     gpu_genotype_format: String,
     score_dtype: String,
     firth_dtype: String,
@@ -784,7 +841,7 @@ struct JaxComputeFields {
     matmul_precision: Option<String>,
     persistent_cache: bool,
     persistent_cache_min_entry_size_bytes: i64,
-    persistent_cache_min_compile_time_seconds: i64,
+    persistent_cache_min_compile_time_seconds: u32,
     xla_autotune_cache: bool,
     transfer_guard: bool,
 }
@@ -851,8 +908,8 @@ fn build_g_compute_config(toml_config: &OptionTable) -> ConfigResult<GComputeCon
 fn build_compute_core_fields(toml_config: &OptionTable) -> ConfigResult<ComputeCoreFields> {
     Ok(ComputeCoreFields {
         device: required_string(toml_config, "compute", "device", "device")?,
-        staging_depth: required_i64(toml_config, "compute", "staging_depth", "staging_depth")?,
-        variant_limit: get_i64(toml_config, "compute", "variant_limit")?,
+        staging_depth: required_u32(toml_config, "compute", "staging_depth", "staging_depth")?,
+        variant_limit: get_u32(toml_config, "compute", "variant_limit")?,
         trusted_no_missing_diploid: required_bool(
             toml_config,
             "compute",
@@ -872,20 +929,20 @@ fn build_compute_core_fields(toml_config: &OptionTable) -> ConfigResult<ComputeC
             "multi_phenotype_sample_mode",
             "multi_phenotype_sample_mode",
         )?,
-        firth_batch_size: required_i64(toml_config, "compute", "firth_batch_size", "firth_batch_size")?,
-        firth_candidate_capacity: required_i64(
+        firth_batch_size: required_u32(toml_config, "compute", "firth_batch_size", "firth_batch_size")?,
+        firth_candidate_capacity: required_u32(
             toml_config,
             "compute",
             "firth_candidate_capacity",
             "firth_candidate_capacity",
         )?,
-        binary_null_maximum_iterations: required_i64(
+        binary_null_maximum_iterations: required_u32(
             toml_config,
             "compute",
             "binary_null_maximum_iterations",
             "binary_null_maximum_iterations",
         )?,
-        binary_null_coefficient_tolerance: required_f64(
+        binary_null_coefficient_tolerance: required_f32(
             toml_config,
             "compute",
             "binary_null_coefficient_tolerance",
@@ -897,31 +954,31 @@ fn build_compute_core_fields(toml_config: &OptionTable) -> ConfigResult<ComputeC
             "null_logistic_nonconvergence_policy",
             "null_logistic_nonconvergence_policy",
         )?,
-        binary_minimum_probability: required_f64(
+        binary_minimum_probability: required_f32(
             toml_config,
             "compute",
             "binary_minimum_probability",
             "binary_minimum_probability",
         )?,
-        binary_minimum_variance: required_f64(
+        binary_minimum_variance: required_f32(
             toml_config,
             "compute",
             "binary_minimum_variance",
             "binary_minimum_variance",
         )?,
-        binary_relative_variance_tolerance: required_f64(
+        binary_relative_variance_tolerance: required_f32(
             toml_config,
             "compute",
             "binary_relative_variance_tolerance",
             "binary_relative_variance_tolerance",
         )?,
-        linear_minimum_variance: required_f64(
+        linear_minimum_variance: required_f32(
             toml_config,
             "compute",
             "linear_minimum_variance",
             "linear_minimum_variance",
         )?,
-        linear_relative_variance_tolerance: required_f64(
+        linear_relative_variance_tolerance: required_f32(
             toml_config,
             "compute",
             "linear_relative_variance_tolerance",
@@ -932,74 +989,74 @@ fn build_compute_core_fields(toml_config: &OptionTable) -> ConfigResult<ComputeC
 
 fn build_firth_compute_fields(toml_config: &OptionTable) -> ConfigResult<FirthComputeFields> {
     Ok(FirthComputeFields {
-        maximum_iterations: required_i64(
+        maximum_iterations: required_u32(
             toml_config,
             "compute",
             "firth_maximum_iterations",
             "firth_maximum_iterations",
         )?,
-        gradient_tolerance: required_f64(
+        gradient_tolerance: required_f32(
             toml_config,
             "compute",
             "firth_gradient_tolerance",
             "firth_gradient_tolerance",
         )?,
-        coefficient_tolerance: required_f64(
+        coefficient_tolerance: required_f32(
             toml_config,
             "compute",
             "firth_coefficient_tolerance",
             "firth_coefficient_tolerance",
         )?,
-        likelihood_tolerance: required_f64(
+        likelihood_tolerance: required_f32(
             toml_config,
             "compute",
             "firth_likelihood_tolerance",
             "firth_likelihood_tolerance",
         )?,
-        maximum_step_size: required_f64(toml_config, "compute", "firth_maximum_step_size", "firth_maximum_step_size")?,
-        pseudo_maximum_iterations: required_i64(
+        maximum_step_size: required_f32(toml_config, "compute", "firth_maximum_step_size", "firth_maximum_step_size")?,
+        pseudo_maximum_iterations: required_u32(
             toml_config,
             "compute",
             "firth_pseudo_maximum_iterations",
             "firth_pseudo_maximum_iterations",
         )?,
-        pseudo_inner_maximum_iterations: required_i64(
+        pseudo_inner_maximum_iterations: required_u32(
             toml_config,
             "compute",
             "firth_pseudo_inner_maximum_iterations",
             "firth_pseudo_inner_maximum_iterations",
         )?,
-        newton_raphson_zero_start_iterations: required_i64(
+        newton_raphson_zero_start_iterations: required_u32(
             toml_config,
             "compute",
             "firth_newton_raphson_zero_start_iterations",
             "firth_newton_raphson_zero_start_iterations",
         )?,
-        line_search_maximum_attempts: required_i64(
+        line_search_maximum_attempts: required_u32(
             toml_config,
             "compute",
             "firth_line_search_maximum_attempts",
             "firth_line_search_maximum_attempts",
         )?,
-        step_halving_maximum_attempts: required_i64(
+        step_halving_maximum_attempts: required_u32(
             toml_config,
             "compute",
             "firth_step_halving_maximum_attempts",
             "firth_step_halving_maximum_attempts",
         )?,
-        initial_response_scale: required_f64(
+        initial_response_scale: required_f32(
             toml_config,
             "compute",
             "firth_initial_response_scale",
             "firth_initial_response_scale",
         )?,
-        sparse_carrier_dosage_threshold: required_f64(
+        sparse_carrier_dosage_threshold: required_f32(
             toml_config,
             "compute",
             "firth_sparse_carrier_dosage_threshold",
             "firth_sparse_carrier_dosage_threshold",
         )?,
-        step_halving_scale: required_f64(
+        step_halving_scale: required_f32(
             toml_config,
             "compute",
             "firth_step_halving_scale",
@@ -1010,43 +1067,43 @@ fn build_firth_compute_fields(toml_config: &OptionTable) -> ConfigResult<FirthCo
 
 fn build_null_firth_compute_fields(toml_config: &OptionTable) -> ConfigResult<NullFirthComputeFields> {
     Ok(NullFirthComputeFields {
-        maximum_iterations: required_i64(
+        maximum_iterations: required_u32(
             toml_config,
             "compute",
             "null_firth_maximum_iterations",
             "null_firth_maximum_iterations",
         )?,
-        gradient_tolerance: required_f64(
+        gradient_tolerance: required_f32(
             toml_config,
             "compute",
             "null_firth_gradient_tolerance",
             "null_firth_gradient_tolerance",
         )?,
-        maximum_step_size: required_f64(
+        maximum_step_size: required_f32(
             toml_config,
             "compute",
             "null_firth_maximum_step_size",
             "null_firth_maximum_step_size",
         )?,
-        fallback_iteration_multiplier: required_i64(
+        fallback_iteration_multiplier: required_u32(
             toml_config,
             "compute",
             "null_firth_fallback_iteration_multiplier",
             "null_firth_fallback_iteration_multiplier",
         )?,
-        fallback_step_divisor: required_f64(
+        fallback_step_divisor: required_f32(
             toml_config,
             "compute",
             "null_firth_fallback_step_divisor",
             "null_firth_fallback_step_divisor",
         )?,
-        line_search_maximum_attempts: required_i64(
+        line_search_maximum_attempts: required_u32(
             toml_config,
             "compute",
             "null_firth_line_search_maximum_attempts",
             "null_firth_line_search_maximum_attempts",
         )?,
-        step_halving_scale: required_f64(
+        step_halving_scale: required_f32(
             toml_config,
             "compute",
             "null_firth_step_halving_scale",
@@ -1058,7 +1115,7 @@ fn build_null_firth_compute_fields(toml_config: &OptionTable) -> ConfigResult<Nu
 fn build_genotype_compute_fields(toml_config: &OptionTable) -> ConfigResult<GenotypeComputeFields> {
     Ok(GenotypeComputeFields {
         use_block_firth_math: required_bool(toml_config, "compute", "use_block_firth_math", "use_block_firth_math")?,
-        bgen_decode_tile_variant_count: required_i64(
+        bgen_decode_tile_variant_count: required_u32(
             toml_config,
             "compute",
             "bgen_decode_tile_variant_count",
@@ -1081,7 +1138,7 @@ fn build_jax_compute_fields(toml_config: &OptionTable) -> ConfigResult<JaxComput
             "jax_persistent_cache_min_entry_size_bytes",
             "jax_persistent_cache_min_entry_size_bytes",
         )?,
-        persistent_cache_min_compile_time_seconds: required_i64(
+        persistent_cache_min_compile_time_seconds: required_u32(
             toml_config,
             "compute",
             "jax_persistent_cache_min_compile_time_seconds",
@@ -1097,9 +1154,9 @@ fn build_g_output_config(toml_config: &OptionTable) -> ConfigResult<GOutputConfi
         out: get_string(toml_config, "output", "out")?,
         format: required_string(toml_config, "output", "format", "format")?,
         output_run_directory: get_string(toml_config, "output", "output_run_directory")?,
-        writer_threads: required_i64(toml_config, "output", "writer_threads", "writer_threads")?,
-        writer_queue_depth: required_i64(toml_config, "output", "writer_queue_depth", "writer_queue_depth")?,
-        chunks_per_arrow_file: required_i64(toml_config, "output", "chunks_per_arrow_file", "chunks_per_arrow_file")?,
+        writer_threads: required_u32(toml_config, "output", "writer_threads", "writer_threads")?,
+        writer_queue_depth: required_u32(toml_config, "output", "writer_queue_depth", "writer_queue_depth")?,
+        chunks_per_arrow_file: required_u32(toml_config, "output", "chunks_per_arrow_file", "chunks_per_arrow_file")?,
         arrow_compression: required_string(toml_config, "output", "arrow_compression", "arrow_compression")?,
         parquet_compression: required_string(toml_config, "output", "parquet_compression", "parquet_compression")?,
         resume: required_bool(toml_config, "output", "resume", "resume")?,
@@ -1116,13 +1173,13 @@ fn build_g_diagnostics_config(toml_config: &OptionTable) -> ConfigResult<GDiagno
         log_filter: required_string(toml_config, "diagnostics", "log_filter", "log_filter")?,
         log_file: get_string(toml_config, "diagnostics", "log_file")?,
         log_stderr: required_bool(toml_config, "diagnostics", "log_stderr", "log_stderr")?,
-        progress_interval_seconds: required_f64(
+        progress_interval_seconds: required_f32(
             toml_config,
             "diagnostics",
             "progress_interval_seconds",
             "progress_interval_seconds",
         )?,
-        progress_interval_chunks: required_i64(
+        progress_interval_chunks: required_u32(
             toml_config,
             "diagnostics",
             "progress_interval_chunks",
@@ -1131,8 +1188,8 @@ fn build_g_diagnostics_config(toml_config: &OptionTable) -> ConfigResult<GDiagno
         profile_summary_json: get_string(toml_config, "diagnostics", "profile_summary_json")?,
         trace_file: get_string(toml_config, "diagnostics", "trace_file")?,
         trace_filter: required_string(toml_config, "diagnostics", "trace_filter", "trace_filter")?,
-        trace_event_cap: required_i64(toml_config, "diagnostics", "trace_event_cap", "trace_event_cap")?,
-        log_queue_size: required_i64(toml_config, "diagnostics", "log_queue_size", "log_queue_size")?,
+        trace_event_cap: required_u32(toml_config, "diagnostics", "trace_event_cap", "trace_event_cap")?,
+        log_queue_size: required_u32(toml_config, "diagnostics", "log_queue_size", "log_queue_size")?,
         log_lossy: required_bool(toml_config, "diagnostics", "log_lossy", "log_lossy")?,
         include_source_location: required_bool(
             toml_config,
@@ -1224,12 +1281,27 @@ fn required_i64(toml_config: &OptionTable, section_name: &str, key: &str, option
         .ok_or_else(|| ConfigError::new(format!("Default config is missing required default option {option_name:?}.")))
 }
 
-fn get_f64(toml_config: &OptionTable, section_name: &str, key: &str) -> ConfigResult<Option<f64>> {
-    get_option_value(toml_config, section_name, key).map(|value| float_value(value, key)).transpose()
+fn get_u32(toml_config: &OptionTable, section_name: &str, key: &str) -> ConfigResult<Option<u32>> {
+    get_option_value(toml_config, section_name, key).map(|value| u32_value(value, key)).transpose()
 }
 
-fn required_f64(toml_config: &OptionTable, section_name: &str, key: &str, option_name: &str) -> ConfigResult<f64> {
-    get_f64(toml_config, section_name, key)?
+fn required_u32(toml_config: &OptionTable, section_name: &str, key: &str, option_name: &str) -> ConfigResult<u32> {
+    get_u32(toml_config, section_name, key)?
+        .ok_or_else(|| ConfigError::new(format!("Default config is missing required default option {option_name:?}.")))
+}
+
+fn required_u8(toml_config: &OptionTable, section_name: &str, key: &str, option_name: &str) -> ConfigResult<u8> {
+    let value =
+        get_option_value(toml_config, section_name, key).map(|option_value| u8_value(option_value, key)).transpose()?;
+    value.ok_or_else(|| ConfigError::new(format!("Default config is missing required default option {option_name:?}.")))
+}
+
+fn get_f32(toml_config: &OptionTable, section_name: &str, key: &str) -> ConfigResult<Option<f32>> {
+    get_option_value(toml_config, section_name, key).map(|value| f32_value(value, key)).transpose()
+}
+
+fn required_f32(toml_config: &OptionTable, section_name: &str, key: &str, option_name: &str) -> ConfigResult<f32> {
+    get_f32(toml_config, section_name, key)?
         .ok_or_else(|| ConfigError::new(format!("Default config is missing required default option {option_name:?}.")))
 }
 
@@ -1268,6 +1340,18 @@ fn integer_value(option_value: &OptionValue, option_name: &str) -> ConfigResult<
     }
 }
 
+fn u32_value(option_value: &OptionValue, option_name: &str) -> ConfigResult<u32> {
+    let value = integer_value(option_value, option_name)?;
+    u32::try_from(value)
+        .map_err(|_| ConfigError::new(format!("Integer option value for {option_name} is out of range.")))
+}
+
+fn u8_value(option_value: &OptionValue, option_name: &str) -> ConfigResult<u8> {
+    let value = u32_value(option_value, option_name)?;
+    u8::try_from(value)
+        .map_err(|_| ConfigError::new(format!("Integer option value for {option_name} is out of range.")))
+}
+
 fn float_value(option_value: &OptionValue, option_name: &str) -> ConfigResult<f64> {
     match option_value {
         OptionValue::Integer(value) => value
@@ -1280,6 +1364,18 @@ fn float_value(option_value: &OptionValue, option_name: &str) -> ConfigResult<f6
             .map_err(|_| ConfigError::new(format!("Float option value for {option_name} must be a number."))),
         _ => Err(ConfigError::new(format!("Float option value for {option_name} must be a number."))),
     }
+}
+
+fn f32_value(option_value: &OptionValue, option_name: &str) -> ConfigResult<f32> {
+    let value = float_value(option_value, option_name)?;
+    let narrowed_value = value
+        .to_string()
+        .parse::<f32>()
+        .map_err(|_| ConfigError::new(format!("Float option value for {option_name} must fit in float32.")))?;
+    if !narrowed_value.is_finite() {
+        return Err(ConfigError::new(format!("Float option value for {option_name} must be finite.")));
+    }
+    Ok(narrowed_value)
 }
 
 fn boolean_value(option_value: &OptionValue, _option_name: &str) -> ConfigResult<bool> {
