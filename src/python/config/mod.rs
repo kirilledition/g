@@ -757,11 +757,6 @@ fn validate_regenie_config(config: &RegenieConfig) -> PyResult<()> {
 }
 
 #[pyfunction]
-fn build_config_template() -> PyResult<String> {
-    config_frontend::build_template().map_err(config_error_to_py)
-}
-
-#[pyfunction]
 fn explain_config_option(name: &str) -> PyResult<String> {
     config_frontend::explain_option(name).map_err(config_error_to_py)
 }
@@ -834,7 +829,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(dumps_config_toml, module)?)?;
     module.add_function(wrap_pyfunction!(write_config_toml, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config, module)?)?;
-    module.add_function(wrap_pyfunction!(build_config_template, module)?)?;
     module.add_function(wrap_pyfunction!(explain_config_option, module)?)?;
     module.add_function(wrap_pyfunction!(iter_config_explanations, module)?)?;
     module.add_function(wrap_pyfunction!(decode_config_toml_mapping, module)?)?;

@@ -180,7 +180,7 @@ def resolve_output_run_root(regenie_config: config.RegenieConfig) -> Path:
 
 
 def resolve_telemetry_paths(regenie_config: config.RegenieConfig) -> TelemetryPaths:
-    """Resolve diagnostics paths using documented log-dir defaults."""
+    """Resolve diagnostics paths using documented log_dir defaults."""
     diagnostics_config = regenie_config.g_diagnostics
     log_dir = diagnostics_config.log_dir
     if log_dir is None and diagnostics_config.telemetry != types.TelemetryMode.OFF:
@@ -221,7 +221,7 @@ def resolve_telemetry_stream_file(
     if telemetry_mode == types.TelemetryMode.OFF:
         return None
     if log_file is not None and trace_file is not None and not paths_refer_to_same_file(log_file, trace_file):
-        message = "g-log-file and g-trace-file both configure the unified telemetry stream; use one path."
+        message = "log_file and trace_file both configure the unified telemetry stream; use one path."
         raise ValueError(message)
     if log_file is not None:
         return log_file

@@ -114,88 +114,85 @@ fn validate_required_input_config(config: &RegenieConfigData) -> ConfigResult<()
 }
 
 fn validate_compute_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    validate_positive_integer("--g-staging-depth", config.g_compute.staging_depth)?;
+    validate_positive_integer("--staging_depth", config.g_compute.staging_depth)?;
     if config.g_compute.variant_limit.is_some_and(|variant_limit| variant_limit <= 0) {
-        return Err(ConfigError::new("--g-variant-limit must be positive when provided."));
+        return Err(ConfigError::new("--variant_limit must be positive when provided."));
     }
-    validate_positive_integer("--g-firth-batch-size", config.g_compute.firth_batch_size)?;
-    validate_positive_integer("--g-firth-candidate-capacity", config.g_compute.firth_candidate_capacity)?;
-    validate_positive_integer("--g-binary-null-maximum-iterations", config.g_compute.binary_null_maximum_iterations)?;
+    validate_positive_integer("--firth_batch_size", config.g_compute.firth_batch_size)?;
+    validate_positive_integer("--firth_candidate_capacity", config.g_compute.firth_candidate_capacity)?;
+    validate_positive_integer("--binary_null_maximum_iterations", config.g_compute.binary_null_maximum_iterations)?;
+    validate_positive_float("--binary_null_coefficient_tolerance", config.g_compute.binary_null_coefficient_tolerance)?;
+    validate_probability_floor("--binary_minimum_probability", config.g_compute.binary_minimum_probability)?;
+    validate_positive_float("--binary_minimum_variance", config.g_compute.binary_minimum_variance)?;
     validate_positive_float(
-        "--g-binary-null-coefficient-tolerance",
-        config.g_compute.binary_null_coefficient_tolerance,
-    )?;
-    validate_probability_floor("--g-binary-minimum-probability", config.g_compute.binary_minimum_probability)?;
-    validate_positive_float("--g-binary-minimum-variance", config.g_compute.binary_minimum_variance)?;
-    validate_positive_float(
-        "--g-binary-relative-variance-tolerance",
+        "--binary_relative_variance_tolerance",
         config.g_compute.binary_relative_variance_tolerance,
     )?;
-    validate_positive_float("--g-linear-minimum-variance", config.g_compute.linear_minimum_variance)?;
+    validate_positive_float("--linear_minimum_variance", config.g_compute.linear_minimum_variance)?;
     validate_positive_float(
-        "--g-linear-relative-variance-tolerance",
+        "--linear_relative_variance_tolerance",
         config.g_compute.linear_relative_variance_tolerance,
     )?;
-    validate_positive_integer("--g-firth-maximum-iterations", config.g_compute.firth_maximum_iterations)?;
-    validate_positive_float("--g-firth-gradient-tolerance", config.g_compute.firth_gradient_tolerance)?;
-    validate_positive_float("--g-firth-coefficient-tolerance", config.g_compute.firth_coefficient_tolerance)?;
-    validate_positive_float("--g-firth-likelihood-tolerance", config.g_compute.firth_likelihood_tolerance)?;
-    validate_positive_float("--g-firth-maximum-step-size", config.g_compute.firth_maximum_step_size)?;
-    validate_positive_integer("--g-firth-pseudo-maximum-iterations", config.g_compute.firth_pseudo_maximum_iterations)?;
+    validate_positive_integer("--firth_maximum_iterations", config.g_compute.firth_maximum_iterations)?;
+    validate_positive_float("--firth_gradient_tolerance", config.g_compute.firth_gradient_tolerance)?;
+    validate_positive_float("--firth_coefficient_tolerance", config.g_compute.firth_coefficient_tolerance)?;
+    validate_positive_float("--firth_likelihood_tolerance", config.g_compute.firth_likelihood_tolerance)?;
+    validate_positive_float("--firth_maximum_step_size", config.g_compute.firth_maximum_step_size)?;
+    validate_positive_integer("--firth_pseudo_maximum_iterations", config.g_compute.firth_pseudo_maximum_iterations)?;
     validate_positive_integer(
-        "--g-firth-pseudo-inner-maximum-iterations",
+        "--firth_pseudo_inner_maximum_iterations",
         config.g_compute.firth_pseudo_inner_maximum_iterations,
     )?;
     validate_positive_integer(
-        "--g-firth-newton-raphson-zero-start-iterations",
+        "--firth_newton_raphson_zero_start_iterations",
         config.g_compute.firth_newton_raphson_zero_start_iterations,
     )?;
     validate_positive_integer(
-        "--g-firth-line-search-maximum-attempts",
+        "--firth_line_search_maximum_attempts",
         config.g_compute.firth_line_search_maximum_attempts,
     )?;
     validate_positive_integer(
-        "--g-firth-step-halving-maximum-attempts",
+        "--firth_step_halving_maximum_attempts",
         config.g_compute.firth_step_halving_maximum_attempts,
     )?;
-    validate_positive_float("--g-firth-initial-response-scale", config.g_compute.firth_initial_response_scale)?;
+    validate_positive_float("--firth_initial_response_scale", config.g_compute.firth_initial_response_scale)?;
     validate_positive_float(
-        "--g-firth-sparse-carrier-dosage-threshold",
+        "--firth_sparse_carrier_dosage_threshold",
         config.g_compute.firth_sparse_carrier_dosage_threshold,
     )?;
-    validate_positive_float("--g-firth-step-halving-scale", config.g_compute.firth_step_halving_scale)?;
-    validate_positive_integer("--g-null-firth-maximum-iterations", config.g_compute.null_firth_maximum_iterations)?;
-    validate_positive_float("--g-null-firth-gradient-tolerance", config.g_compute.null_firth_gradient_tolerance)?;
-    validate_positive_float("--g-null-firth-maximum-step-size", config.g_compute.null_firth_maximum_step_size)?;
+    validate_positive_float("--firth_step_halving_scale", config.g_compute.firth_step_halving_scale)?;
+    validate_positive_integer("--null_firth_maximum_iterations", config.g_compute.null_firth_maximum_iterations)?;
+    validate_positive_float("--null_firth_gradient_tolerance", config.g_compute.null_firth_gradient_tolerance)?;
+    validate_positive_float("--null_firth_maximum_step_size", config.g_compute.null_firth_maximum_step_size)?;
     validate_positive_integer(
-        "--g-null-firth-fallback-iteration-multiplier",
+        "--null_firth_fallback_iteration_multiplier",
         config.g_compute.null_firth_fallback_iteration_multiplier,
     )?;
-    validate_positive_float("--g-null-firth-fallback-step-divisor", config.g_compute.null_firth_fallback_step_divisor)?;
+    validate_positive_float("--null_firth_fallback_step_divisor", config.g_compute.null_firth_fallback_step_divisor)?;
     validate_positive_integer(
-        "--g-null-firth-line-search-maximum-attempts",
+        "--null_firth_line_search_maximum_attempts",
         config.g_compute.null_firth_line_search_maximum_attempts,
     )?;
-    validate_positive_float("--g-null-firth-step-halving-scale", config.g_compute.null_firth_step_halving_scale)?;
-    validate_positive_integer("--g-bgen-decode-tile-variant-count", config.g_compute.bgen_decode_tile_variant_count)?;
+    validate_positive_float("--null_firth_step_halving_scale", config.g_compute.null_firth_step_halving_scale)?;
+    validate_positive_integer("--bgen_decode_tile_variant_count", config.g_compute.bgen_decode_tile_variant_count)?;
     if config.g_compute.gpu_genotype_format == "packed8" && config.g_compute.device != "gpu" {
-        return Err(ConfigError::new("--g-gpu-genotype-format=packed8 requires --g-device=gpu."));
+        return Err(ConfigError::new("--gpu_genotype_format=packed8 requires --device=gpu."));
     }
     if config.g_compute.firth_dtype != "float64" {
-        return Err(ConfigError::new("--g-firth-dtype currently supports float64 only."));
+        return Err(ConfigError::new("--firth_dtype currently supports float64 only."));
     }
     validate_quantitative_binary_config(config)?;
     Ok(())
 }
 
 fn validate_output_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    validate_positive_integer("--g-writer-threads", config.g_output.writer_threads)?;
-    validate_positive_integer("--g-writer-queue-depth", config.g_output.writer_queue_depth)?;
-    validate_positive_integer("--g-output-chunks-per-arrow-file", config.g_output.chunks_per_arrow_file)?;
-    validate_positive_float("--g-progress-interval-seconds", config.g_diagnostics.progress_interval_seconds)?;
-    validate_positive_integer("--g-progress-interval-chunks", config.g_diagnostics.progress_interval_chunks)?;
-    validate_non_negative_integer("--g-trace-event-cap", config.g_diagnostics.trace_event_cap)?;
-    validate_positive_integer("--g-log-queue-size", config.g_diagnostics.log_queue_size)?;
+    validate_positive_integer("--writer_threads", config.g_output.writer_threads)?;
+    validate_positive_integer("--writer_queue_depth", config.g_output.writer_queue_depth)?;
+    validate_positive_integer("--chunks_per_arrow_file", config.g_output.chunks_per_arrow_file)?;
+    validate_positive_float("--progress_interval_seconds", config.g_diagnostics.progress_interval_seconds)?;
+    validate_positive_integer("--progress_interval_chunks", config.g_diagnostics.progress_interval_chunks)?;
+    validate_non_negative_integer("--trace_event_cap", config.g_diagnostics.trace_event_cap)?;
+    validate_positive_integer("--log_queue_size", config.g_diagnostics.log_queue_size)?;
     Ok(())
 }
 

@@ -224,8 +224,8 @@ impl TelemetryEventCapState {
         let event_cap = self.event_cap.unwrap_or(0);
         format!(
             "Trace telemetry event cap exceeded at {event_cap} events for {}. \
-             Increase --g-trace-event-cap or set --g-trace-event-cap 0 to disable the cap for intentional deep traces. \
-             Use --g-log-lossy to drop events after the cap instead of failing.",
+             Increase --trace_event_cap or set --trace_event_cap 0 to disable the cap for intentional deep traces. \
+             Use --log_lossy to drop events after the cap instead of failing.",
             self.path.display()
         )
     }
@@ -233,7 +233,7 @@ impl TelemetryEventCapState {
     fn cap_exceeded_drop_message(&self) -> String {
         let event_cap = self.event_cap.unwrap_or(0);
         format!(
-            "Trace telemetry event cap reached at {event_cap} events for {}; dropping additional trace events because g-log-lossy is enabled.",
+            "Trace telemetry event cap reached at {event_cap} events for {}; dropping additional trace events because log_lossy is enabled.",
             self.path.display()
         )
     }

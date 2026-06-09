@@ -10,79 +10,79 @@ approx = false
 pThresh = 0.05
 firth-se = false
 
-[g.compute]
+[compute]
 device = "cpu"
-staging-depth = 1
-trusted-no-missing-diploid = false
-trusted-bgen-validation-mode = "cache_on_miss"
-sample-key-mode = "iid"
-multi-phenotype-sample-mode = "per-phenotype"
-firth-batch-size = 1024
-firth-candidate-capacity = 2048
-binary-null-maximum-iterations = 50
-binary-null-coefficient-tolerance = 1.0e-6
-null-logistic-nonconvergence = "fail"
-binary-minimum-probability = 1.0e-6
-binary-minimum-variance = 1.0e-8
-binary-relative-variance-tolerance = 1.0e-6
-linear-minimum-variance = 1.0e-8
-linear-relative-variance-tolerance = 1.0e-6
-firth-maximum-iterations = 250
-firth-gradient-tolerance = 2.5e-4
-firth-coefficient-tolerance = 2.5e-4
-firth-likelihood-tolerance = 2.5e-4
-firth-maximum-step-size = 5.0
-firth-pseudo-maximum-iterations = 50
-firth-pseudo-inner-maximum-iterations = 25
-firth-newton-raphson-zero-start-iterations = 100
-firth-line-search-maximum-attempts = 25
-firth-step-halving-maximum-attempts = 12
-firth-initial-response-scale = 4.863891244002886
-firth-sparse-carrier-dosage-threshold = 1.0e-4
-firth-step-halving-scale = 0.5
-null-firth-maximum-iterations = 1000
-null-firth-gradient-tolerance = 50.0e-6
-null-firth-maximum-step-size = 25.0
-null-firth-fallback-iteration-multiplier = 5
-null-firth-fallback-step-divisor = 5.0
-null-firth-line-search-maximum-attempts = 25
-null-firth-step-halving-scale = 0.5
-use-block-firth-math = false
-bgen-decode-tile-variant-count = 64
-gpu-genotype-format = "dosage"
+staging_depth = 1
+trusted_no_missing_diploid = false
+trusted_bgen_validation_mode = "cache_on_miss"
+sample_key_mode = "iid"
+multi_phenotype_sample_mode = "per-phenotype"
+firth_batch_size = 1024
+firth_candidate_capacity = 2048
+binary_null_maximum_iterations = 50
+binary_null_coefficient_tolerance = 1.0e-6
+null_logistic_nonconvergence_policy = "fail"
+binary_minimum_probability = 1.0e-6
+binary_minimum_variance = 1.0e-8
+binary_relative_variance_tolerance = 1.0e-6
+linear_minimum_variance = 1.0e-8
+linear_relative_variance_tolerance = 1.0e-6
+firth_maximum_iterations = 250
+firth_gradient_tolerance = 2.5e-4
+firth_coefficient_tolerance = 2.5e-4
+firth_likelihood_tolerance = 2.5e-4
+firth_maximum_step_size = 5.0
+firth_pseudo_maximum_iterations = 50
+firth_pseudo_inner_maximum_iterations = 25
+firth_newton_raphson_zero_start_iterations = 100
+firth_line_search_maximum_attempts = 25
+firth_step_halving_maximum_attempts = 12
+firth_initial_response_scale = 4.863891244002886
+firth_sparse_carrier_dosage_threshold = 1.0e-4
+firth_step_halving_scale = 0.5
+null_firth_maximum_iterations = 1000
+null_firth_gradient_tolerance = 50.0e-6
+null_firth_maximum_step_size = 25.0
+null_firth_fallback_iteration_multiplier = 5
+null_firth_fallback_step_divisor = 5.0
+null_firth_line_search_maximum_attempts = 25
+null_firth_step_halving_scale = 0.5
+use_block_firth_math = false
+bgen_decode_tile_variant_count = 64
+gpu_genotype_format = "dosage"
 # Score-test kernels default to the float32 fast path. This is an internal
 # JAX compute dtype; public result statistics are still written as float32.
 # Use float64 only when parity or numerical debugging needs outweigh throughput.
-score-dtype = "float32"
+score_dtype = "float32"
 # Firth internals are parity-sensitive and currently require float64. Public
 # result statistics are still written as float32.
-firth-dtype = "float64"
-jax-persistent-cache = true
-jax-persistent-cache-min-entry-size-bytes = -1
-jax-persistent-cache-min-compile-time-seconds = 0
-jax-xla-autotune-cache = false
-jax-transfer-guard = false
+firth_dtype = "float64"
+jax_persistent_cache = true
+jax_persistent_cache_min_entry_size_bytes = -1
+jax_persistent_cache_min_compile_time_seconds = 0
+jax_xla_autotune_cache = false
+jax_transfer_guard = false
 
-[g.output]
+[output]
 format = "parquet"
-writer-threads = 4
-writer-queue-depth = 16
-chunks-per-arrow-file = 16
-arrow-compression = "zstd"
-parquet-compression = "none"
+writer_threads = 4
+writer_queue_depth = 16
+chunks_per_arrow_file = 16
+arrow_compression = "zstd"
+parquet_compression = "none"
 resume = false
-resume-mode = "fast"
-finalize-parquet = false
+resume_mode = "fast"
+finalize_parquet = false
 
-[g.diagnostics]
+[diagnostics]
 telemetry = "progress"
-log-filter = "info"
-log-stderr = true
-progress-interval-seconds = 5
-progress-interval-chunks = 10
-trace-filter = "g.native.bgen=trace,g.output=debug"
-trace-event-cap = 1000000
-log-queue-size = 65536
-log-lossy = true
-include-source-location = false
-include-span-events = false
+log_filter = "info"
+log_stderr = true
+progress_interval_seconds = 5
+progress_interval_chunks = 10
+trace_filter = "g.native.bgen=trace,g.output=debug"
+trace_event_cap = 1000000
+log_queue_size = 65536
+log_lossy = true
+include_source_location = false
+include_span_events = false

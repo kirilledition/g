@@ -15,7 +15,7 @@ mod validation;
 
 pub use cli::{CliOutcomeData, dispatch_cli, explain_option, iter_explanations};
 pub use metadata::{DefaultPolicy, OptionSpec, SupportLevel};
-pub use render::{build_template, dumps_toml, format_toml_string, write_toml};
+pub use render::{dumps_toml, format_toml_string, write_toml};
 pub use validation::{
     validate_config, validate_non_negative_integer, validate_positive_float, validate_positive_integer,
     validate_probability_floor,
@@ -253,10 +253,6 @@ fn validate_toml_schema(table: &OptionTable, source: &str) -> ConfigResult<()> {
         if section_name == "metadata" {
             continue;
         }
-        if section_name == "g" {
-            validate_g_toml_schema(section_value, source)?;
-            continue;
-        }
         let Some(section_table) = section_value.as_table() else {
             return Err(ConfigError::new(format!(
                 "Invalid TOML config {source}: expected [{section_name}] to be a table."
@@ -264,28 +260,6 @@ fn validate_toml_schema(table: &OptionTable, source: &str) -> ConfigResult<()> {
         };
         for (toml_key, option_value) in section_table {
             let Some(option_spec) = registry.get_by_toml_path(section_name, toml_key) else {
-                return Err(ConfigError::new(format!("Invalid TOML config {source}: unknown field `{toml_key}`.")));
-            };
-            validate_toml_option_value(option_spec, option_value, source)?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_g_toml_schema(g_value: &OptionValue, source: &str) -> ConfigResult<()> {
-    let registry = option_registry();
-    let Some(g_table) = g_value.as_table() else {
-        return Err(ConfigError::new(format!("Invalid TOML config {source}: expected [g] to be a table.")));
-    };
-    for (g_section_name, g_section_value) in g_table {
-        let full_section_name = format!("g.{g_section_name}");
-        let Some(g_section_table) = g_section_value.as_table() else {
-            return Err(ConfigError::new(format!(
-                "Invalid TOML config {source}: expected [{full_section_name}] to be a table."
-            )));
-        };
-        for (toml_key, option_value) in g_section_table {
-            let Some(option_spec) = registry.get_by_toml_path(&full_section_name, toml_key) else {
                 return Err(ConfigError::new(format!("Invalid TOML config {source}: unknown field `{toml_key}`.")));
             };
             validate_toml_option_value(option_spec, option_value, source)?;
@@ -364,25 +338,9 @@ pub fn flatten_toml_mapping(raw_options: &OptionTable) -> OptionTable {
             continue;
         }
         if let Some(section_table) = section_value.as_table() {
-            if section_name == "g" {
-                flattened_options.extend(flatten_g_toml_section(section_table));
-            } else {
-                flattened_options.extend(flatten_toml_section(section_name, section_table));
-            }
+            flattened_options.extend(flatten_toml_section(section_name, section_table));
         } else {
             flattened_options.insert(section_name.clone(), section_value.clone());
-        }
-    }
-    flattened_options
-}
-
-fn flatten_g_toml_section(raw_g_options: &OptionTable) -> OptionTable {
-    let mut flattened_options = OptionTable::new();
-    for (section_name, section_value) in raw_g_options {
-        if let Some(section_table) = section_value.as_table() {
-            flattened_options.extend(flatten_toml_section(&format!("g.{section_name}"), section_table));
-        } else {
-            flattened_options.insert(format!("g.{section_name}"), section_value.clone());
         }
     }
     flattened_options
@@ -483,24 +441,10 @@ fn coerce_string_list_value(option_value: &OptionValue) -> OptionValue {
 }
 
 fn set_toml_option_value(toml_mapping: &mut OptionTable, option_spec: &OptionSpec, option_value: OptionValue) {
-    if let Some((namespace_name, section_name)) = option_spec.section.split_once('.') {
-        let namespace_entry =
-            toml_mapping.entry(namespace_name.to_string()).or_insert_with(|| OptionValue::Table(OptionTable::new()));
-        let OptionValue::Table(namespace_table) = namespace_entry else {
-            return;
-        };
-        let section_entry =
-            namespace_table.entry(section_name.to_string()).or_insert_with(|| OptionValue::Table(OptionTable::new()));
-        if let OptionValue::Table(section_table) = section_entry {
-            section_table.insert(option_spec.config_key().to_string(), option_value);
-        }
-        return;
-    }
-
     let section_entry =
         toml_mapping.entry(option_spec.section.to_string()).or_insert_with(|| OptionValue::Table(OptionTable::new()));
     if let OptionValue::Table(section_table) = section_entry {
-        section_table.insert(option_spec.config_key().to_string(), option_value);
+        section_table.insert(option_spec.cli_name.to_string(), option_value);
     }
 }
 
@@ -632,7 +576,7 @@ pub struct BinaryConfigData {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-#[expect(clippy::struct_excessive_bools, reason = "Runtime config mirrors public --g-* boolean options.")]
+#[expect(clippy::struct_excessive_bools, reason = "Runtime config mirrors public g-specific boolean options.")]
 pub struct GComputeConfigData {
     pub device: String,
     pub staging_depth: i64,
@@ -701,7 +645,7 @@ pub struct GOutputConfigData {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-#[expect(clippy::struct_excessive_bools, reason = "Diagnostics config mirrors public --g-* boolean options.")]
+#[expect(clippy::struct_excessive_bools, reason = "Diagnostics config mirrors public g-specific boolean options.")]
 pub struct GDiagnosticsConfigData {
     pub telemetry: String,
     pub log_dir: Option<String>,
@@ -906,82 +850,82 @@ fn build_g_compute_config(toml_config: &OptionTable) -> ConfigResult<GComputeCon
 
 fn build_compute_core_fields(toml_config: &OptionTable) -> ConfigResult<ComputeCoreFields> {
     Ok(ComputeCoreFields {
-        device: required_string(toml_config, "g.compute", "device", "g-device")?,
-        staging_depth: required_i64(toml_config, "g.compute", "staging-depth", "g-staging-depth")?,
-        variant_limit: get_i64(toml_config, "g.compute", "variant-limit")?,
+        device: required_string(toml_config, "compute", "device", "device")?,
+        staging_depth: required_i64(toml_config, "compute", "staging_depth", "staging_depth")?,
+        variant_limit: get_i64(toml_config, "compute", "variant_limit")?,
         trusted_no_missing_diploid: required_bool(
             toml_config,
-            "g.compute",
-            "trusted-no-missing-diploid",
-            "g-trusted-no-missing-diploid",
+            "compute",
+            "trusted_no_missing_diploid",
+            "trusted_no_missing_diploid",
         )?,
         trusted_bgen_validation_mode: required_string(
             toml_config,
-            "g.compute",
-            "trusted-bgen-validation-mode",
-            "g-trusted-bgen-validation-mode",
+            "compute",
+            "trusted_bgen_validation_mode",
+            "trusted_bgen_validation_mode",
         )?,
-        sample_key_mode: required_string(toml_config, "g.compute", "sample-key-mode", "g-sample-key-mode")?,
+        sample_key_mode: required_string(toml_config, "compute", "sample_key_mode", "sample_key_mode")?,
         multi_phenotype_sample_mode: required_string(
             toml_config,
-            "g.compute",
-            "multi-phenotype-sample-mode",
-            "g-multi-phenotype-sample-mode",
+            "compute",
+            "multi_phenotype_sample_mode",
+            "multi_phenotype_sample_mode",
         )?,
-        firth_batch_size: required_i64(toml_config, "g.compute", "firth-batch-size", "g-firth-batch-size")?,
+        firth_batch_size: required_i64(toml_config, "compute", "firth_batch_size", "firth_batch_size")?,
         firth_candidate_capacity: required_i64(
             toml_config,
-            "g.compute",
-            "firth-candidate-capacity",
-            "g-firth-candidate-capacity",
+            "compute",
+            "firth_candidate_capacity",
+            "firth_candidate_capacity",
         )?,
         binary_null_maximum_iterations: required_i64(
             toml_config,
-            "g.compute",
-            "binary-null-maximum-iterations",
-            "g-binary-null-maximum-iterations",
+            "compute",
+            "binary_null_maximum_iterations",
+            "binary_null_maximum_iterations",
         )?,
         binary_null_coefficient_tolerance: required_f64(
             toml_config,
-            "g.compute",
-            "binary-null-coefficient-tolerance",
-            "g-binary-null-coefficient-tolerance",
+            "compute",
+            "binary_null_coefficient_tolerance",
+            "binary_null_coefficient_tolerance",
         )?,
         null_logistic_nonconvergence_policy: required_string(
             toml_config,
-            "g.compute",
-            "null-logistic-nonconvergence",
-            "g-null-logistic-nonconvergence",
+            "compute",
+            "null_logistic_nonconvergence_policy",
+            "null_logistic_nonconvergence_policy",
         )?,
         binary_minimum_probability: required_f64(
             toml_config,
-            "g.compute",
-            "binary-minimum-probability",
-            "g-binary-minimum-probability",
+            "compute",
+            "binary_minimum_probability",
+            "binary_minimum_probability",
         )?,
         binary_minimum_variance: required_f64(
             toml_config,
-            "g.compute",
-            "binary-minimum-variance",
-            "g-binary-minimum-variance",
+            "compute",
+            "binary_minimum_variance",
+            "binary_minimum_variance",
         )?,
         binary_relative_variance_tolerance: required_f64(
             toml_config,
-            "g.compute",
-            "binary-relative-variance-tolerance",
-            "g-binary-relative-variance-tolerance",
+            "compute",
+            "binary_relative_variance_tolerance",
+            "binary_relative_variance_tolerance",
         )?,
         linear_minimum_variance: required_f64(
             toml_config,
-            "g.compute",
-            "linear-minimum-variance",
-            "g-linear-minimum-variance",
+            "compute",
+            "linear_minimum_variance",
+            "linear_minimum_variance",
         )?,
         linear_relative_variance_tolerance: required_f64(
             toml_config,
-            "g.compute",
-            "linear-relative-variance-tolerance",
-            "g-linear-relative-variance-tolerance",
+            "compute",
+            "linear_relative_variance_tolerance",
+            "linear_relative_variance_tolerance",
         )?,
     })
 }
@@ -990,81 +934,76 @@ fn build_firth_compute_fields(toml_config: &OptionTable) -> ConfigResult<FirthCo
     Ok(FirthComputeFields {
         maximum_iterations: required_i64(
             toml_config,
-            "g.compute",
-            "firth-maximum-iterations",
-            "g-firth-maximum-iterations",
+            "compute",
+            "firth_maximum_iterations",
+            "firth_maximum_iterations",
         )?,
         gradient_tolerance: required_f64(
             toml_config,
-            "g.compute",
-            "firth-gradient-tolerance",
-            "g-firth-gradient-tolerance",
+            "compute",
+            "firth_gradient_tolerance",
+            "firth_gradient_tolerance",
         )?,
         coefficient_tolerance: required_f64(
             toml_config,
-            "g.compute",
-            "firth-coefficient-tolerance",
-            "g-firth-coefficient-tolerance",
+            "compute",
+            "firth_coefficient_tolerance",
+            "firth_coefficient_tolerance",
         )?,
         likelihood_tolerance: required_f64(
             toml_config,
-            "g.compute",
-            "firth-likelihood-tolerance",
-            "g-firth-likelihood-tolerance",
+            "compute",
+            "firth_likelihood_tolerance",
+            "firth_likelihood_tolerance",
         )?,
-        maximum_step_size: required_f64(
-            toml_config,
-            "g.compute",
-            "firth-maximum-step-size",
-            "g-firth-maximum-step-size",
-        )?,
+        maximum_step_size: required_f64(toml_config, "compute", "firth_maximum_step_size", "firth_maximum_step_size")?,
         pseudo_maximum_iterations: required_i64(
             toml_config,
-            "g.compute",
-            "firth-pseudo-maximum-iterations",
-            "g-firth-pseudo-maximum-iterations",
+            "compute",
+            "firth_pseudo_maximum_iterations",
+            "firth_pseudo_maximum_iterations",
         )?,
         pseudo_inner_maximum_iterations: required_i64(
             toml_config,
-            "g.compute",
-            "firth-pseudo-inner-maximum-iterations",
-            "g-firth-pseudo-inner-maximum-iterations",
+            "compute",
+            "firth_pseudo_inner_maximum_iterations",
+            "firth_pseudo_inner_maximum_iterations",
         )?,
         newton_raphson_zero_start_iterations: required_i64(
             toml_config,
-            "g.compute",
-            "firth-newton-raphson-zero-start-iterations",
-            "g-firth-newton-raphson-zero-start-iterations",
+            "compute",
+            "firth_newton_raphson_zero_start_iterations",
+            "firth_newton_raphson_zero_start_iterations",
         )?,
         line_search_maximum_attempts: required_i64(
             toml_config,
-            "g.compute",
-            "firth-line-search-maximum-attempts",
-            "g-firth-line-search-maximum-attempts",
+            "compute",
+            "firth_line_search_maximum_attempts",
+            "firth_line_search_maximum_attempts",
         )?,
         step_halving_maximum_attempts: required_i64(
             toml_config,
-            "g.compute",
-            "firth-step-halving-maximum-attempts",
-            "g-firth-step-halving-maximum-attempts",
+            "compute",
+            "firth_step_halving_maximum_attempts",
+            "firth_step_halving_maximum_attempts",
         )?,
         initial_response_scale: required_f64(
             toml_config,
-            "g.compute",
-            "firth-initial-response-scale",
-            "g-firth-initial-response-scale",
+            "compute",
+            "firth_initial_response_scale",
+            "firth_initial_response_scale",
         )?,
         sparse_carrier_dosage_threshold: required_f64(
             toml_config,
-            "g.compute",
-            "firth-sparse-carrier-dosage-threshold",
-            "g-firth-sparse-carrier-dosage-threshold",
+            "compute",
+            "firth_sparse_carrier_dosage_threshold",
+            "firth_sparse_carrier_dosage_threshold",
         )?,
         step_halving_scale: required_f64(
             toml_config,
-            "g.compute",
-            "firth-step-halving-scale",
-            "g-firth-step-halving-scale",
+            "compute",
+            "firth_step_halving_scale",
+            "firth_step_halving_scale",
         )?,
     })
 }
@@ -1073,160 +1012,135 @@ fn build_null_firth_compute_fields(toml_config: &OptionTable) -> ConfigResult<Nu
     Ok(NullFirthComputeFields {
         maximum_iterations: required_i64(
             toml_config,
-            "g.compute",
-            "null-firth-maximum-iterations",
-            "g-null-firth-maximum-iterations",
+            "compute",
+            "null_firth_maximum_iterations",
+            "null_firth_maximum_iterations",
         )?,
         gradient_tolerance: required_f64(
             toml_config,
-            "g.compute",
-            "null-firth-gradient-tolerance",
-            "g-null-firth-gradient-tolerance",
+            "compute",
+            "null_firth_gradient_tolerance",
+            "null_firth_gradient_tolerance",
         )?,
         maximum_step_size: required_f64(
             toml_config,
-            "g.compute",
-            "null-firth-maximum-step-size",
-            "g-null-firth-maximum-step-size",
+            "compute",
+            "null_firth_maximum_step_size",
+            "null_firth_maximum_step_size",
         )?,
         fallback_iteration_multiplier: required_i64(
             toml_config,
-            "g.compute",
-            "null-firth-fallback-iteration-multiplier",
-            "g-null-firth-fallback-iteration-multiplier",
+            "compute",
+            "null_firth_fallback_iteration_multiplier",
+            "null_firth_fallback_iteration_multiplier",
         )?,
         fallback_step_divisor: required_f64(
             toml_config,
-            "g.compute",
-            "null-firth-fallback-step-divisor",
-            "g-null-firth-fallback-step-divisor",
+            "compute",
+            "null_firth_fallback_step_divisor",
+            "null_firth_fallback_step_divisor",
         )?,
         line_search_maximum_attempts: required_i64(
             toml_config,
-            "g.compute",
-            "null-firth-line-search-maximum-attempts",
-            "g-null-firth-line-search-maximum-attempts",
+            "compute",
+            "null_firth_line_search_maximum_attempts",
+            "null_firth_line_search_maximum_attempts",
         )?,
         step_halving_scale: required_f64(
             toml_config,
-            "g.compute",
-            "null-firth-step-halving-scale",
-            "g-null-firth-step-halving-scale",
+            "compute",
+            "null_firth_step_halving_scale",
+            "null_firth_step_halving_scale",
         )?,
     })
 }
 
 fn build_genotype_compute_fields(toml_config: &OptionTable) -> ConfigResult<GenotypeComputeFields> {
     Ok(GenotypeComputeFields {
-        use_block_firth_math: required_bool(
-            toml_config,
-            "g.compute",
-            "use-block-firth-math",
-            "g-use-block-firth-math",
-        )?,
+        use_block_firth_math: required_bool(toml_config, "compute", "use_block_firth_math", "use_block_firth_math")?,
         bgen_decode_tile_variant_count: required_i64(
             toml_config,
-            "g.compute",
-            "bgen-decode-tile-variant-count",
-            "g-bgen-decode-tile-variant-count",
+            "compute",
+            "bgen_decode_tile_variant_count",
+            "bgen_decode_tile_variant_count",
         )?,
-        gpu_genotype_format: required_string(toml_config, "g.compute", "gpu-genotype-format", "g-gpu-genotype-format")?,
-        score_dtype: required_string(toml_config, "g.compute", "score-dtype", "g-score-dtype")?,
-        firth_dtype: required_string(toml_config, "g.compute", "firth-dtype", "g-firth-dtype")?,
+        gpu_genotype_format: required_string(toml_config, "compute", "gpu_genotype_format", "gpu_genotype_format")?,
+        score_dtype: required_string(toml_config, "compute", "score_dtype", "score_dtype")?,
+        firth_dtype: required_string(toml_config, "compute", "firth_dtype", "firth_dtype")?,
     })
 }
 
 fn build_jax_compute_fields(toml_config: &OptionTable) -> ConfigResult<JaxComputeFields> {
     Ok(JaxComputeFields {
-        cache_dir: get_string(toml_config, "g.compute", "jax-cache-dir")?,
-        matmul_precision: get_string(toml_config, "g.compute", "jax-matmul-precision")?,
-        persistent_cache: required_bool(toml_config, "g.compute", "jax-persistent-cache", "g-jax-persistent-cache")?,
+        cache_dir: get_string(toml_config, "compute", "jax_cache_dir")?,
+        matmul_precision: get_string(toml_config, "compute", "jax_matmul_precision")?,
+        persistent_cache: required_bool(toml_config, "compute", "jax_persistent_cache", "jax_persistent_cache")?,
         persistent_cache_min_entry_size_bytes: required_i64(
             toml_config,
-            "g.compute",
-            "jax-persistent-cache-min-entry-size-bytes",
-            "g-jax-persistent-cache-min-entry-size-bytes",
+            "compute",
+            "jax_persistent_cache_min_entry_size_bytes",
+            "jax_persistent_cache_min_entry_size_bytes",
         )?,
         persistent_cache_min_compile_time_seconds: required_i64(
             toml_config,
-            "g.compute",
-            "jax-persistent-cache-min-compile-time-seconds",
-            "g-jax-persistent-cache-min-compile-time-seconds",
+            "compute",
+            "jax_persistent_cache_min_compile_time_seconds",
+            "jax_persistent_cache_min_compile_time_seconds",
         )?,
-        xla_autotune_cache: required_bool(
-            toml_config,
-            "g.compute",
-            "jax-xla-autotune-cache",
-            "g-jax-xla-autotune-cache",
-        )?,
-        transfer_guard: required_bool(toml_config, "g.compute", "jax-transfer-guard", "g-jax-transfer-guard")?,
+        xla_autotune_cache: required_bool(toml_config, "compute", "jax_xla_autotune_cache", "jax_xla_autotune_cache")?,
+        transfer_guard: required_bool(toml_config, "compute", "jax_transfer_guard", "jax_transfer_guard")?,
     })
 }
 
 fn build_g_output_config(toml_config: &OptionTable) -> ConfigResult<GOutputConfigData> {
     Ok(GOutputConfigData {
         out: get_string(toml_config, "output", "out")?,
-        format: required_string(toml_config, "g.output", "format", "g-output-format")?,
-        output_run_directory: get_string(toml_config, "g.output", "output-run-directory")?,
-        writer_threads: required_i64(toml_config, "g.output", "writer-threads", "g-writer-threads")?,
-        writer_queue_depth: required_i64(toml_config, "g.output", "writer-queue-depth", "g-writer-queue-depth")?,
-        chunks_per_arrow_file: required_i64(
-            toml_config,
-            "g.output",
-            "chunks-per-arrow-file",
-            "g-output-chunks-per-arrow-file",
-        )?,
-        arrow_compression: required_string(toml_config, "g.output", "arrow-compression", "g-output-arrow-compression")?,
-        parquet_compression: required_string(
-            toml_config,
-            "g.output",
-            "parquet-compression",
-            "g-output-parquet-compression",
-        )?,
-        resume: required_bool(toml_config, "g.output", "resume", "g-resume")?,
-        resume_mode: required_string(toml_config, "g.output", "resume-mode", "g-resume-mode")?,
-        finalize_parquet: required_bool(toml_config, "g.output", "finalize-parquet", "g-finalize-parquet")?,
+        format: required_string(toml_config, "output", "format", "format")?,
+        output_run_directory: get_string(toml_config, "output", "output_run_directory")?,
+        writer_threads: required_i64(toml_config, "output", "writer_threads", "writer_threads")?,
+        writer_queue_depth: required_i64(toml_config, "output", "writer_queue_depth", "writer_queue_depth")?,
+        chunks_per_arrow_file: required_i64(toml_config, "output", "chunks_per_arrow_file", "chunks_per_arrow_file")?,
+        arrow_compression: required_string(toml_config, "output", "arrow_compression", "arrow_compression")?,
+        parquet_compression: required_string(toml_config, "output", "parquet_compression", "parquet_compression")?,
+        resume: required_bool(toml_config, "output", "resume", "resume")?,
+        resume_mode: required_string(toml_config, "output", "resume_mode", "resume_mode")?,
+        finalize_parquet: required_bool(toml_config, "output", "finalize_parquet", "finalize_parquet")?,
     })
 }
 
 fn build_g_diagnostics_config(toml_config: &OptionTable) -> ConfigResult<GDiagnosticsConfigData> {
     Ok(GDiagnosticsConfigData {
-        telemetry: required_string(toml_config, "g.diagnostics", "telemetry", "g-telemetry")?,
-        log_dir: get_string(toml_config, "g.diagnostics", "log-dir")?,
-        stage_timings_json: get_string(toml_config, "g.diagnostics", "stage-timings-json")?,
-        log_filter: required_string(toml_config, "g.diagnostics", "log-filter", "g-log-filter")?,
-        log_file: get_string(toml_config, "g.diagnostics", "log-file")?,
-        log_stderr: required_bool(toml_config, "g.diagnostics", "log-stderr", "g-log-stderr")?,
+        telemetry: required_string(toml_config, "diagnostics", "telemetry", "telemetry")?,
+        log_dir: get_string(toml_config, "diagnostics", "log_dir")?,
+        stage_timings_json: get_string(toml_config, "diagnostics", "stage_timings_json")?,
+        log_filter: required_string(toml_config, "diagnostics", "log_filter", "log_filter")?,
+        log_file: get_string(toml_config, "diagnostics", "log_file")?,
+        log_stderr: required_bool(toml_config, "diagnostics", "log_stderr", "log_stderr")?,
         progress_interval_seconds: required_f64(
             toml_config,
-            "g.diagnostics",
-            "progress-interval-seconds",
-            "g-progress-interval-seconds",
+            "diagnostics",
+            "progress_interval_seconds",
+            "progress_interval_seconds",
         )?,
         progress_interval_chunks: required_i64(
             toml_config,
-            "g.diagnostics",
-            "progress-interval-chunks",
-            "g-progress-interval-chunks",
+            "diagnostics",
+            "progress_interval_chunks",
+            "progress_interval_chunks",
         )?,
-        profile_summary_json: get_string(toml_config, "g.diagnostics", "profile-summary-json")?,
-        trace_file: get_string(toml_config, "g.diagnostics", "trace-file")?,
-        trace_filter: required_string(toml_config, "g.diagnostics", "trace-filter", "g-trace-filter")?,
-        trace_event_cap: required_i64(toml_config, "g.diagnostics", "trace-event-cap", "g-trace-event-cap")?,
-        log_queue_size: required_i64(toml_config, "g.diagnostics", "log-queue-size", "g-log-queue-size")?,
-        log_lossy: required_bool(toml_config, "g.diagnostics", "log-lossy", "g-log-lossy")?,
+        profile_summary_json: get_string(toml_config, "diagnostics", "profile_summary_json")?,
+        trace_file: get_string(toml_config, "diagnostics", "trace_file")?,
+        trace_filter: required_string(toml_config, "diagnostics", "trace_filter", "trace_filter")?,
+        trace_event_cap: required_i64(toml_config, "diagnostics", "trace_event_cap", "trace_event_cap")?,
+        log_queue_size: required_i64(toml_config, "diagnostics", "log_queue_size", "log_queue_size")?,
+        log_lossy: required_bool(toml_config, "diagnostics", "log_lossy", "log_lossy")?,
         include_source_location: required_bool(
             toml_config,
-            "g.diagnostics",
-            "include-source-location",
-            "g-include-source-location",
+            "diagnostics",
+            "include_source_location",
+            "include_source_location",
         )?,
-        include_span_events: required_bool(
-            toml_config,
-            "g.diagnostics",
-            "include-span-events",
-            "g-include-span-events",
-        )?,
+        include_span_events: required_bool(toml_config, "diagnostics", "include_span_events", "include_span_events")?,
     })
 }
 
@@ -1280,13 +1194,6 @@ pub fn split_name_list(raw_value: Option<&OptionValue>) -> Vec<String> {
 }
 
 fn get_section_table<'a>(toml_config: &'a OptionTable, section_name: &str) -> Option<&'a OptionTable> {
-    if let Some((namespace_name, nested_section_name)) = section_name.split_once('.') {
-        return toml_config
-            .get(namespace_name)
-            .and_then(OptionValue::as_table)
-            .and_then(|namespace_table| namespace_table.get(nested_section_name))
-            .and_then(OptionValue::as_table);
-    }
     toml_config.get(section_name).and_then(OptionValue::as_table)
 }
 

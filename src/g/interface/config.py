@@ -81,11 +81,6 @@ def dumps_toml(config: RegenieConfig) -> str:
     return g._core.dumps_config_toml(config)
 
 
-def build_template() -> str:
-    """Return a starter config with placeholders and packaged defaults."""
-    return g._core.build_config_template()
-
-
 def explain_option(name: str) -> str:
     """Return the Rust-owned explanation for a config option."""
     return g._core.explain_config_option(name)

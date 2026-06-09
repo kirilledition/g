@@ -47,20 +47,6 @@ pub struct OptionSpec {
     pub(super) default_policy: DefaultPolicy,
 }
 
-impl OptionSpec {
-    pub(super) fn config_key(&self) -> &'static str {
-        if self.section == "g.output"
-            && let Some(config_key) = self.cli_name.strip_prefix("g-output-")
-        {
-            return config_key;
-        }
-        if self.section.starts_with("g.") {
-            return self.cli_name.strip_prefix("g-").unwrap_or(self.cli_name);
-        }
-        self.cli_name
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(super) struct OptionRegistry {
     pub(super) specs: &'static [OptionSpec],
@@ -78,7 +64,7 @@ impl OptionRegistry {
             by_toml_path
                 .entry(option_spec.section)
                 .or_insert_with(BTreeMap::new)
-                .insert(option_spec.config_key(), spec_index);
+                .insert(option_spec.cli_name, spec_index);
         }
 
         Self { specs, by_cli_name, by_toml_path }
