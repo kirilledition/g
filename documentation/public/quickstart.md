@@ -40,8 +40,8 @@ uv run g regenie \
   --covarColList age,sex \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_quantitative_regenie2 \
-  --g-device cpu \
-  --g-output-format parquet
+  --device cpu \
+  --format parquet
 ```
 
 ## Binary Score Test
@@ -58,8 +58,8 @@ uv run g regenie \
   --covarColList age,sex \
   --pred /path/to/regenie_step1_pred.list \
   --out /path/to/output/g_binary_score_regenie2 \
-  --g-device cpu \
-  --g-output-format parquet
+  --device cpu \
+  --format parquet
 ```
 
 ## Binary Approximate Firth Fallback
@@ -79,8 +79,8 @@ uv run g regenie \
   --approx \
   --pThresh 0.01 \
   --out /path/to/output/g_binary_firth_regenie2 \
-  --g-device cpu \
-  --g-output-format parquet
+  --device cpu \
+  --format parquet
 ```
 
 Approximate Firth is implemented but numerically sensitive. Use equivalent statistical modes when comparing results against upstream REGENIE.
@@ -105,8 +105,8 @@ uv run g regenie \
   --covarColList age,sex,pc1,pc2 \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_multi_per_phenotype \
-  --g-device cpu \
-  --g-output-format parquet \
+  --device cpu \
+  --format parquet \
   --multi_phenotype_sample_mode per-phenotype
 ```
 
@@ -129,8 +129,8 @@ uv run g regenie \
   --covarColList age,sex,pc1,pc2 \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_multi_complete_case \
-  --g-device cpu \
-  --g-output-format parquet \
+  --device cpu \
+  --format parquet \
   --multi_phenotype_sample_mode complete-case
 ```
 
@@ -155,7 +155,7 @@ uv run g regenie \
   --phenoCol phenotype_continuous \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_gpu_regenie2 \
-  --g-device gpu
+  --device gpu
 ```
 
 Submit GPU commands on a GPU node or through your scheduler. See [GPU and Clusters](gpu-and-clusters.md)
@@ -163,7 +163,7 @@ for cluster notes.
 
 ## REGENIE Text Output
 
-Use `--g-output-format regenie` to write a REGENIE Step 2-compatible
+Use `--format regenie` to write a REGENIE Step 2-compatible
 tab-separated `final.regenie` file for workflow compatibility:
 
 ```bash
@@ -176,7 +176,7 @@ uv run g regenie \
   --phenoCol phenotype_continuous \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_regenie_text \
-  --g-output-format regenie
+  --format regenie
 ```
 
 ## Repository Fixture Data
