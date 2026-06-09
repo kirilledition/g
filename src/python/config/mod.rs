@@ -3,7 +3,7 @@ use std::path::Path;
 use pyo3::basic::CompareOp;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::PyModule;
 
 use crate::config_frontend::{
     self, BinaryConfigData, CliOutcomeData, GComputeConfigData, GDiagnosticsConfigData, GOutputConfigData,
@@ -13,8 +13,7 @@ use crate::config_frontend::{
 mod conversion;
 
 use conversion::{
-    enum_value, option_table_from_py_mapping, option_table_to_py_dict, optional_enum_value, optional_path,
-    path_to_string, string_tuple, text_from_py_bytes_or_string,
+    enum_value, optional_enum_value, optional_path, path_to_string, string_tuple, toml_table_from_py_mapping,
 };
 
 #[pyclass(name = "InputConfig", skip_from_py_object)]
@@ -723,7 +722,7 @@ impl CliOutcome {
 
 #[pyfunction]
 fn config_from_options(raw_options: &Bound<'_, PyAny>) -> PyResult<RegenieConfig> {
-    let option_table = option_table_from_py_mapping(raw_options)?;
+    let option_table = toml_table_from_py_mapping(raw_options)?;
     config_frontend::from_options(&option_table).map(RegenieConfig::new).map_err(config_error_to_py)
 }
 
@@ -757,58 +756,6 @@ fn validate_regenie_config(config: &RegenieConfig) -> PyResult<()> {
 }
 
 #[pyfunction]
-fn explain_config_option(name: &str) -> PyResult<String> {
-    config_frontend::explain_option(name).map_err(config_error_to_py)
-}
-
-#[pyfunction]
-fn iter_config_explanations() -> Vec<String> {
-    config_frontend::iter_explanations()
-}
-
-#[pyfunction]
-fn decode_config_toml_mapping(py: Python<'_>, toml_data: &Bound<'_, PyAny>, source: &str) -> PyResult<Py<PyAny>> {
-    let toml_text = text_from_py_bytes_or_string(toml_data)?;
-    let option_table = config_frontend::decode_toml_text(&toml_text, source).map_err(config_error_to_py)?;
-    option_table_to_py_dict(py, &option_table)
-}
-
-#[pyfunction]
-fn flatten_config_toml_mapping(py: Python<'_>, raw_options: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-    let option_table = option_table_from_py_mapping(raw_options)?;
-    let flattened_options = config_frontend::flatten_toml_mapping(&option_table);
-    option_table_to_py_dict(py, &flattened_options)
-}
-
-#[pyfunction]
-fn normalize_config_option_name(option_name: &str) -> String {
-    config_frontend::normalize_option_name(option_name)
-}
-
-#[pyfunction]
-fn normalize_config_option_dictionary(py: Python<'_>, raw_options: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-    let option_table = option_table_from_py_mapping(raw_options)?;
-    let normalized_options = config_frontend::normalize_option_dictionary(&option_table);
-    option_table_to_py_dict(py, &normalized_options)
-}
-
-#[pyfunction]
-fn option_dictionary_to_config_toml_layer(
-    py: Python<'_>,
-    raw_options: &Bound<'_, PyAny>,
-    source: &str,
-) -> PyResult<Py<PyAny>> {
-    let option_table = option_table_from_py_mapping(raw_options)?;
-    let config_layer =
-        config_frontend::option_dictionary_to_toml_config_layer(&option_table, source).map_err(config_error_to_py)?;
-    let layer_dictionary = PyDict::new(py);
-    layer_dictionary.set_item("toml_config", option_table_to_py_dict(py, config_layer.toml_config())?)?;
-    layer_dictionary
-        .set_item("explicit_options", config_layer.explicit_options().iter().cloned().collect::<Vec<_>>())?;
-    Ok(layer_dictionary.into_any().unbind())
-}
-
-#[pyfunction]
 #[expect(clippy::needless_pass_by_value, reason = "PyO3 extracts Python list arguments into owned Vec values.")]
 fn dispatch_cli(args: Vec<String>, direct_regenie: bool) -> CliOutcome {
     CliOutcome::new(config_frontend::dispatch_cli(&args, direct_regenie))
@@ -829,13 +776,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(dumps_config_toml, module)?)?;
     module.add_function(wrap_pyfunction!(write_config_toml, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config, module)?)?;
-    module.add_function(wrap_pyfunction!(explain_config_option, module)?)?;
-    module.add_function(wrap_pyfunction!(iter_config_explanations, module)?)?;
-    module.add_function(wrap_pyfunction!(decode_config_toml_mapping, module)?)?;
-    module.add_function(wrap_pyfunction!(flatten_config_toml_mapping, module)?)?;
-    module.add_function(wrap_pyfunction!(normalize_config_option_name, module)?)?;
-    module.add_function(wrap_pyfunction!(normalize_config_option_dictionary, module)?)?;
-    module.add_function(wrap_pyfunction!(option_dictionary_to_config_toml_layer, module)?)?;
     module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
     Ok(())
 }

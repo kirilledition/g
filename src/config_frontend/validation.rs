@@ -1,54 +1,15 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use super::{
-    ConfigError, ConfigResult, DefaultPolicy, OptionTable, QUANTITATIVE_BINARY_ONLY_OPTION_NAMES, RegenieConfigData,
-    load_packaged_config_data, option_registry,
-};
-
-pub(super) fn validate_unknown_options(normalized_options: &OptionTable) -> ConfigResult<()> {
-    let registry = option_registry();
-    let known_options = registry.supported_option_names();
-    for option_name in normalized_options.keys() {
-        if !known_options.contains(option_name) {
-            return Err(ConfigError::new(format!("Unknown g regenie option: {option_name}")));
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn reject_missing_resolved_default_options(normalized_options: &OptionTable) -> ConfigResult<()> {
-    if let Some(missing_option_name) = option_registry().specs.iter().find_map(|option_spec| {
-        (option_spec.default_policy == DefaultPolicy::Value && !normalized_options.contains_key(option_spec.cli_name))
-            .then_some(option_spec.cli_name.to_string())
-    }) {
-        return Err(ConfigError::new(format!(
-            "Default config is missing required default option {missing_option_name:?}."
-        )));
-    }
-    Ok(())
-}
-
-pub(super) fn reject_quantitative_binary_only_options(
-    explicit_options: &BTreeSet<String>,
-    trait_type: &str,
-) -> ConfigResult<()> {
-    if trait_type != "quantitative" {
-        return Ok(());
-    }
-    let binary_only_option_names = QUANTITATIVE_BINARY_ONLY_OPTION_NAMES
-        .iter()
-        .filter(|option_name| explicit_options.contains(**option_name))
-        .copied()
-        .collect::<Vec<_>>();
-    raise_for_quantitative_binary_only_options(&binary_only_option_names)
-}
+use super::data::RegenieConfigData;
+use super::defaults::load_packaged_config_data;
+use super::{ConfigError, ConfigResult};
 
 /// Validate a resolved runtime config before execution.
 ///
 /// # Errors
 ///
-/// Returns an error when required inputs are missing, options are inconsistent, or unsupported modes are requested.
+/// Returns an error when required inputs are missing, paths do not exist, or options conflict semantically.
 pub fn validate_config(config: &RegenieConfigData) -> ConfigResult<()> {
     validate_trait_config(config)?;
     validate_required_input_config(config)?;
@@ -119,9 +80,6 @@ fn validate_compute_config(config: &RegenieConfigData) -> ConfigResult<()> {
 }
 
 fn validate_binary_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    if !(0.0..1.0).contains(&config.binary.p_threshold) {
-        return Err(ConfigError::new("--pThresh must be in (0, 1)."));
-    }
     if config.binary.firth && !config.binary.approx {
         return Err(ConfigError::new("Exact --firth is not implemented yet. Use --firth --approx."));
     }

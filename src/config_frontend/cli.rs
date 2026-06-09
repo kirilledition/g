@@ -1,12 +1,13 @@
 use std::path::Path;
 
-use clap::{Arg, ArgAction, Command, builder::ValueParser, error::ErrorKind};
+use clap::{Arg, ArgAction, Command, builder::ValueParser};
+use toml::{Table, Value};
 
-use super::{
-    ConfigError, ConfigResult, OptionSpec, OptionTable, OptionValue, OptionValueType, RegenieConfigData,
-    decode_toml_file_layer, from_toml_config_layers, load_default_option_catalog_data,
-    option_dictionary_to_toml_config_layer, option_registry, validate_cli_option_text,
-};
+use super::data::RegenieConfigData;
+use super::domain::parse_cli_option_value;
+use super::metadata::{OptionSpec, OptionValueKind, option_registry};
+use super::resolve::{ConfigLayer, decode_toml_file_layer, resolve_config_layers, set_cli_option_value};
+use super::{ConfigError, ConfigResult};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CliOutcomeData {
@@ -53,59 +54,53 @@ fn dispatch_regenie_command(args: &[String], program_name: &str) -> ConfigResult
         let mut command = build_regenie_clap_command(program_name);
         return Ok(CliOutcomeData::output(0, command.render_help().to_string(), String::new()));
     }
-    let ParsedRegenieCli { config_path, cli_options } = parse_regenie_cli(args)?;
+    let ParsedRegenieCli { config_path, cli_layer } = parse_regenie_cli(args, program_name)?;
     let toml_layer = decode_toml_file_layer(config_path.as_deref().map(Path::new))?;
-    let cli_layer = option_dictionary_to_toml_config_layer(&cli_options, "CLI options")?;
-    let config = from_toml_config_layers(&load_default_option_catalog_data()?.raw_toml, [toml_layer, cli_layer])?;
+    let config = resolve_config_layers([toml_layer, cli_layer])?;
     Ok(CliOutcomeData::config(config))
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct ParsedRegenieCli {
     config_path: Option<String>,
-    cli_options: OptionTable,
+    cli_layer: ConfigLayer,
 }
 
-fn parse_regenie_cli(args: &[String]) -> ConfigResult<ParsedRegenieCli> {
+fn parse_regenie_cli(args: &[String], program_name: &str) -> ConfigResult<ParsedRegenieCli> {
     let registry = option_registry();
     let mut clap_arguments = Vec::with_capacity(args.len() + 1);
-    clap_arguments.push("g-regenie".to_string());
+    clap_arguments.push(program_name.to_string());
     clap_arguments.extend(args.iter().cloned());
-    let matches = match build_regenie_clap_command("g-regenie").try_get_matches_from(clap_arguments) {
-        Ok(matches) => matches,
-        Err(error) if error.kind() == ErrorKind::DisplayHelp => {
-            return Err(ConfigError::new(error.to_string()));
-        }
-        Err(error) => {
-            return Err(ConfigError::new(error.to_string()));
-        }
-    };
+    let matches = build_regenie_clap_command(program_name)
+        .try_get_matches_from(clap_arguments)
+        .map_err(|error| ConfigError::new(error.to_string()))?;
 
     let config_path = matches.get_one::<String>("config").cloned();
-    let mut cli_options = OptionTable::new();
+    let mut toml_table = Table::new();
     for option_spec in registry.specs {
         if option_spec.is_flag {
             if matches.get_flag(option_spec.cli_name) {
-                cli_options.insert(option_spec.cli_name.to_string(), OptionValue::Boolean(true));
+                set_cli_option_value(&mut toml_table, option_spec.cli_name, Value::Boolean(true))?;
             }
             let negative_name = format!("no-{}", option_spec.cli_name);
             if matches.get_flag(&negative_name) {
-                cli_options.insert(option_spec.cli_name.to_string(), OptionValue::Boolean(false));
+                set_cli_option_value(&mut toml_table, option_spec.cli_name, Value::Boolean(false))?;
             }
             continue;
         }
         if option_spec.multiple {
             if let Some(values) = matches.get_many::<String>(option_spec.cli_name) {
-                cli_options.insert(option_spec.cli_name.to_string(), OptionValue::List(values.cloned().collect()));
+                let toml_values = values.cloned().map(Value::String).collect::<Vec<_>>();
+                set_cli_option_value(&mut toml_table, option_spec.cli_name, Value::Array(toml_values))?;
             }
             continue;
         }
         if let Some(value) = matches.get_one::<String>(option_spec.cli_name) {
-            cli_options.insert(option_spec.cli_name.to_string(), OptionValue::String(value.clone()));
+            set_cli_option_value(&mut toml_table, option_spec.cli_name, cli_toml_value(option_spec, value)?)?;
         }
     }
 
-    Ok(ParsedRegenieCli { config_path, cli_options })
+    Ok(ParsedRegenieCli { config_path, cli_layer: ConfigLayer::from_toml_table(&toml_table, "CLI options")? })
 }
 
 fn build_regenie_clap_command(program_name: &str) -> Command {
@@ -114,8 +109,7 @@ fn build_regenie_clap_command(program_name: &str) -> Command {
         .disable_version_flag(true)
         .arg(Arg::new("config").long("config").help("TOML config file.").num_args(1).action(ArgAction::Set));
 
-    let registry = option_registry();
-    for option_spec in registry.specs {
+    for option_spec in option_registry().specs {
         if option_spec.is_flag {
             command = command.arg(
                 Arg::new(option_spec.cli_name)
@@ -139,7 +133,7 @@ fn build_regenie_clap_command(program_name: &str) -> Command {
             .num_args(1)
             .action(action)
             .value_parser(cli_value_parser(option_spec));
-        if matches!(option_spec.value_type, OptionValueType::Integer | OptionValueType::Float) {
+        if matches!(option_spec.value_kind, OptionValueKind::Integer | OptionValueKind::Float) {
             argument = argument.allow_negative_numbers(true);
         }
         command = command.arg(argument);
@@ -149,37 +143,31 @@ fn build_regenie_clap_command(program_name: &str) -> Command {
 
 fn cli_value_parser(option_spec: &'static OptionSpec) -> ValueParser {
     ValueParser::new(move |raw_value: &str| -> Result<String, String> {
-        validate_cli_option_text(option_spec, raw_value)
+        parse_cli_option_value(option_spec.cli_name, raw_value)
             .map(|()| raw_value.to_string())
             .map_err(|error| error.message().to_string())
     })
 }
 
+fn cli_toml_value(option_spec: &OptionSpec, raw_value: &str) -> ConfigResult<Value> {
+    match option_spec.value_kind {
+        OptionValueKind::String | OptionValueKind::Path => Ok(Value::String(raw_value.to_string())),
+        OptionValueKind::Integer => raw_value
+            .parse::<i64>()
+            .map(Value::Integer)
+            .map_err(|_| ConfigError::new(format!("Invalid value for --{}: {raw_value:?}.", option_spec.cli_name))),
+        OptionValueKind::Float => raw_value
+            .parse::<f64>()
+            .map(Value::Float)
+            .map_err(|_| ConfigError::new(format!("Invalid value for --{}: {raw_value:?}.", option_spec.cli_name))),
+        OptionValueKind::Boolean => {
+            Err(ConfigError::new(format!("Boolean option --{} must be passed as a flag.", option_spec.cli_name)))
+        }
+    }
+}
+
 fn leak_string(value: String) -> &'static str {
     Box::leak(value.into_boxed_str())
-}
-
-/// Return a user-facing explanation for one option.
-///
-/// # Errors
-///
-/// Returns an error when the option name is unknown.
-pub fn explain_option(cli_name: &str) -> ConfigResult<String> {
-    let Some(option_spec) = option_registry().get_by_cli_name(cli_name) else {
-        return Err(ConfigError::new(format!("Unknown option: {cli_name}")));
-    };
-    Ok(format!("{}: {}. {}", option_spec.cli_name, option_spec.support_level.as_str(), option_spec.help_text))
-}
-
-#[must_use]
-pub fn iter_explanations() -> Vec<String> {
-    option_registry()
-        .specs
-        .iter()
-        .map(|option_spec| {
-            format!("{}: {}. {}", option_spec.cli_name, option_spec.support_level.as_str(), option_spec.help_text)
-        })
-        .collect()
 }
 
 fn root_help(program_name: &str) -> String {
