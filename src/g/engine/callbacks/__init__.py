@@ -53,6 +53,7 @@ from g.engine.callbacks.diagnostics import (
     block_until_ready,
     enforce_null_logistic_nonconvergence_policy,
     record_binary_chunk_diagnostics,
+    record_binary_chunk_diagnostics_from_count,
 )
 from g.engine.callbacks.writers import (
     write_regenie2_native_chunk_with_optional_timing,
@@ -117,6 +118,7 @@ __all__ = [
     "block_until_ready",
     "enforce_null_logistic_nonconvergence_policy",
     "record_binary_chunk_diagnostics",
+    "record_binary_chunk_diagnostics_from_count",
     "write_regenie2_native_chunk_with_optional_timing",
     "write_regenie2_multi_native_chunk_with_optional_timing",
     "get_metadata_chromosome",
