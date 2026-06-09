@@ -22,7 +22,7 @@ CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.parquet$")
 REGENIE_PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.regenie$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
-RUN_MANIFEST_SCHEMA_VERSION = 6
+RUN_MANIFEST_SCHEMA_VERSION = 7
 OUTPUT_SCHEMA_VERSION = 1
 JAX_MATMUL_PRECISION_WHEN_UNSET = "float32"
 RESUME_POLICY = "manifest_committed_chunks"
@@ -181,6 +181,22 @@ def build_jax_policy_manifest(
     }
 
 
+def build_association_backend_manifest(
+    *,
+    association_backend_kind: types.AssociationBackendKind,
+    association_mode: types.AssociationMode,
+    jax_device: types.Device,
+    gpu_genotype_format: types.GpuGenotypeFormat,
+) -> dict[str, typing.Any]:
+    """Build manifest fields for the selected association backend."""
+    return {
+        "kind": association_backend_kind.value,
+        "association_mode": association_mode.value,
+        "device": jax_device.value,
+        "genotype_format": gpu_genotype_format.value,
+    }
+
+
 def build_output_writer_manifest(
     *,
     output_format: types.OutputFormat,
@@ -207,6 +223,7 @@ def build_output_writer_manifest(
 def build_current_run_manifest_header(
     *,
     association_mode: types.AssociationMode,
+    association_backend_kind: types.AssociationBackendKind,
     bgen_path: Path,
     sample_path: Path | None,
     phenotype_path: Path,
@@ -258,11 +275,18 @@ def build_current_run_manifest_header(
         device=jax_device,
         matmul_precision=jax_matmul_precision,
     )
+    association_backend_manifest = build_association_backend_manifest(
+        association_backend_kind=association_backend_kind,
+        association_mode=association_mode,
+        jax_device=jax_device,
+        gpu_genotype_format=gpu_genotype_format,
+    )
     execution_plan = normalize_execution_plan_value(
         {
             "manifest_schema_version": RUN_MANIFEST_SCHEMA_VERSION,
             "output_schema_version": OUTPUT_SCHEMA_VERSION,
             "association_mode": association_mode,
+            "association_backend": association_backend_manifest,
             "bgen": bgen_fingerprint,
             "sample": sample_fingerprint,
             "phenotype_file": phenotype_file_fingerprint,
@@ -293,6 +317,7 @@ def build_current_run_manifest_header(
         "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
         "output_schema_version": OUTPUT_SCHEMA_VERSION,
         "association_mode": str(association_mode),
+        "association_backend": association_backend_manifest,
         "bgen": bgen_fingerprint,
         "sample": sample_fingerprint,
         "phenotype_file": phenotype_file_fingerprint,

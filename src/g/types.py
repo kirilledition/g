@@ -18,6 +18,13 @@ class AssociationMode(enum.StrEnum):
     REGENIE2_BINARY = "regenie2_binary"
 
 
+class AssociationBackendKind(enum.StrEnum):
+    """Concrete backend selected for association execution."""
+
+    JAX_DOSAGE = "jax_dosage"
+    JAX_PACKED8 = "jax_packed8"
+
+
 class ResumeMode(enum.StrEnum):
     """Resume validation mode."""
 
@@ -167,6 +174,14 @@ class MultiPhenotypeSampleMode(enum.StrEnum):
 
     PER_PHENOTYPE = "per-phenotype"
     COMPLETE_CASE = "complete-case"
+
+
+class PhenotypeComputeGroupMode(enum.StrEnum):
+    """Planning mode for one phenotype compute group."""
+
+    SINGLE_PHENOTYPE = "single-phenotype"
+    COMPLETE_CASE = "complete-case"
+    PER_PHENOTYPE_COMPATIBLE = "per-phenotype-compatible"
 
 
 class NullLogisticNonconvergencePolicy(enum.StrEnum):

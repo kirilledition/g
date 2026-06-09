@@ -449,7 +449,7 @@ native_initialized = _core.initialize_output_run(
     native_prepared.run_directory,
     native_prepared.chunks_directory,
     None,
-    '{"schema_version":6,"execution_plan":{"chunk_size":2},"execution_plan_hash":"hash"}',
+    '{"schema_version":7,"execution_plan":{"chunk_size":2},"execution_plan_hash":"hash"}',
     False,
     "fast",
 )

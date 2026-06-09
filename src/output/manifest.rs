@@ -643,7 +643,7 @@ mod tests {
             &run_directory,
             &chunks_directory,
             None,
-            r#"{"schema_version":6,"execution_plan":{"chunk_size":2},"execution_plan_hash":"hash"}"#,
+            r#"{"schema_version":7,"execution_plan":{"chunk_size":2},"execution_plan_hash":"hash"}"#,
             false,
             OutputResumeMode::Fast,
         )
@@ -655,7 +655,7 @@ mod tests {
         let manifest = serde_json::from_str::<Value>(&manifest_json).expect("manifest should parse");
         assert_eq!(manifest.pointer("/command/interface").and_then(Value::as_str), Some("g regenie"));
         assert_eq!(manifest.pointer("/runtime/device").and_then(Value::as_str), Some("cpu"));
-        assert_eq!(manifest.get("schema_version").and_then(Value::as_i64), Some(6));
+        assert_eq!(manifest.get("schema_version").and_then(Value::as_i64), Some(7));
         assert_eq!(manifest.get("finalized").and_then(Value::as_bool), Some(false));
         assert_eq!(manifest.get("committed_chunks").and_then(Value::as_array).map(Vec::len), Some(0));
 
@@ -667,7 +667,7 @@ mod tests {
         let run_directory = create_test_directory();
         let chunks_directory = run_directory.join("chunks");
         std::fs::create_dir_all(&chunks_directory).expect("chunk directory should be created");
-        let manifest_json = r#"{"schema_version":6,"execution_plan":{"chunk_size":4},"execution_plan_hash":"old","committed_chunks":[]}"#;
+        let manifest_json = r#"{"schema_version":7,"execution_plan":{"chunk_size":4},"execution_plan_hash":"old","committed_chunks":[]}"#;
         write_run_manifest_json(&run_directory, manifest_json).expect("manifest should be written");
         let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
         let original_manifest_bytes = std::fs::read(&manifest_path).expect("manifest should be readable");
@@ -676,7 +676,7 @@ mod tests {
             &run_directory,
             &chunks_directory,
             Some(manifest_json),
-            r#"{"schema_version":6,"execution_plan":{"chunk_size":2},"execution_plan_hash":"new"}"#,
+            r#"{"schema_version":7,"execution_plan":{"chunk_size":2},"execution_plan_hash":"new"}"#,
             true,
             OutputResumeMode::Fast,
         )

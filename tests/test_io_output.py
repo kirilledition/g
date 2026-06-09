@@ -147,6 +147,7 @@ def build_test_header(
     tmp_path: Path,
     *,
     association_mode: AssociationMode = AssociationMode.REGENIE2_LINEAR,
+    association_backend_kind: types.AssociationBackendKind = types.AssociationBackendKind.JAX_DOSAGE,
     binary_kernel_config: typing.Any | None = None,
     gpu_genotype_format: types.GpuGenotypeFormat = types.GpuGenotypeFormat.DOSAGE,
     score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
@@ -162,6 +163,7 @@ def build_test_header(
         input_path.write_text(input_path.name, encoding="utf-8")
     return output.build_current_run_manifest_header(
         association_mode=association_mode,
+        association_backend_kind=association_backend_kind,
         bgen_path=bgen_path,
         sample_path=sample_path,
         phenotype_path=phenotype_path,
@@ -219,10 +221,26 @@ def test_current_run_manifest_records_result_statistic_output_dtype(tmp_path: Pa
 
 
 def test_current_run_manifest_records_gpu_genotype_format(tmp_path: Path) -> None:
-    current_header = build_test_header(tmp_path, gpu_genotype_format=types.GpuGenotypeFormat.PACKED8)
+    current_header = build_test_header(
+        tmp_path,
+        association_backend_kind=types.AssociationBackendKind.JAX_PACKED8,
+        gpu_genotype_format=types.GpuGenotypeFormat.PACKED8,
+    )
 
     assert current_header["gpu_genotype_format"] == "packed8"
     assert current_header["execution_plan"]["gpu_genotype_format"] == "packed8"
+    assert current_header["association_backend"] == {
+        "kind": "jax_packed8",
+        "association_mode": "regenie2_linear",
+        "device": "cpu",
+        "genotype_format": "packed8",
+    }
+    assert current_header["execution_plan"]["association_backend"] == {
+        "kind": "jax_packed8",
+        "association_mode": "regenie2_linear",
+        "device": "cpu",
+        "genotype_format": "packed8",
+    }
 
 
 def initialize_test_output_run(
@@ -1015,6 +1033,15 @@ def build_test_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConf
         ("trusted_bgen_validation_mode", "assume_validated"),
         ("sample_key_mode", "fid_iid"),
         ("output_schema_version", 2),
+        (
+            "association_backend",
+            {
+                "kind": "jax_packed8",
+                "association_mode": "regenie2_linear",
+                "device": "cpu",
+                "genotype_format": "packed8",
+            },
+        ),
         ("bgen_decode_tile_variant_count", 128),
         ("jax_policy", {"device": "gpu", "enable_x64": True, "matmul_precision": "highest"}),
         ("gpu_genotype_format", "packed8"),
@@ -1076,6 +1103,15 @@ def test_initialize_output_run_rejects_manifest_header_mismatch(
         ("binary_kernel_config", output.normalize_execution_plan_value(build_test_binary_kernel_config())),
         ("sample_key_mode", "fid_iid"),
         ("output_schema_version", 2),
+        (
+            "association_backend",
+            {
+                "kind": "jax_packed8",
+                "association_mode": "regenie2_linear",
+                "device": "cpu",
+                "genotype_format": "packed8",
+            },
+        ),
         ("trusted_no_missing_diploid", True),
         ("bgen_decode_tile_variant_count", 128),
         ("gpu_genotype_format", "packed8"),
