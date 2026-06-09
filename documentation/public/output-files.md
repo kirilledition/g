@@ -96,23 +96,44 @@ BED, or PGEN support.
 
 Arrow, Parquet, and REGENIE text outputs use the same public association fields:
 
-```text
-CHROM, GENPOS, ID, ALLELE0, ALLELE1, A1FREQ, INFO, N,
-TEST, BETA, SE, CHISQ, LOG10P, EXTRA
-```
+### Current Schema Contract (v1)
 
-Field summary:
+| Column | Arrow / Parquet type | Nullable | Unit | Meaning |
+| --- | --- | --- | --- | --- |
+| `CHROM` | `Utf8` | Yes | - | Variant chromosome label. |
+| `GENPOS` | `Int64` | Yes | base-pair index | Variant position. |
+| `ID` | `Utf8` | Yes | - | Variant identifier. |
+| `ALLELE0` | `Utf8` | Yes | - | Reference/first allele string. |
+| `ALLELE1` | `Utf8` | Yes | - | Alternate/second allele string. |
+| `A1FREQ` | `Float32` | Yes | allele frequency | Observed allele-one frequency after sample alignment. |
+| `INFO` | `Float32` | Yes | INFO score | Observed dosage INFO score. |
+| `N` | `Int32` | Yes | sample count | Number of observed genotypes used in statistics. |
+| `TEST` | `Utf8` | Yes | - | Test label (`ADD` for current Step 2 outputs). |
+| `BETA` | `Float32` | Yes | effect size | Estimated effect for `ALLELE1`. |
+| `SE` | `Float32` | Yes | effect size standard error | Standard error for `BETA`. |
+| `CHISQ` | `Float32` | Yes | chi-squared statistic | Score statistic (or equivalent Step 2 metric). |
+| `LOG10P` | `Float32` | Yes | -log10(p) | Association significance. |
+| `EXTRA` | `Utf8` | Yes | - | Text diagnostics (`TEST_FAIL` for failed diagnostics, null/NA otherwise). |
 
-| Field | Meaning |
-| --- | --- |
-| `CHROM`, `GENPOS`, `ID` | Variant identity from BGEN metadata. |
-| `ALLELE0`, `ALLELE1` | Reported alleles. Effects are for `ALLELE1` dosage. |
-| `A1FREQ` | Observed allele-one frequency after sample alignment. |
-| `INFO` | Observed dosage INFO score. |
-| `N` | Observed genotype count after sample alignment. |
-| `TEST` | Currently `ADD`. |
-| `BETA`, `SE`, `CHISQ`, `LOG10P` | Association statistics. |
-| `EXTRA` | Null/`NA` for ordinary rows; `TEST_FAIL` for failed binary statistic/correction rows. |
+The contract also applies to both `association_mode`s (`regenie2_linear`, `regenie2_binary`) and both output families (`arrow`, `parquet`).
+
+Current schema properties:
+
+- `output_schema_version`: `1`
+- Writer-level final Parquet metadata key `g.output.schema_version`: `1`
+- Column order is part of the contract for stable downstream parsing.
+- For `v1`, `TEST` is set to `ADD` for current Step 2 runs in both linear and binary modes; additional labels are reserved for future semantic changes.
+
+Compatibility policy:
+
+- **Additive-safe evolution only for contract extension**: new columns may only be appended
+  and must be clearly documented. Existing columns are fixed in name, order, and type
+  within version `1`.
+- **Breaking change is not allowed under version `1`**: any change in existing
+  column name, type, or nullability must bump `output_schema_version`.
+- **Future semantic changes** (e.g. new `TEST` labels or extra diagnostics payloads)
+  must be recorded in a new version policy and in this document before release.
+- **Column ordering**: adding columns is only compatible when new fields are appended at the end. Reordering or deletion is a breaking change and requires a schema version bump.
 
 Public result statistics are written as `float32` in the current output schema,
 even when an internal kernel uses wider precision for parity-sensitive work.
