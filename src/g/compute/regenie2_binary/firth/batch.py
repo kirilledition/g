@@ -1046,6 +1046,20 @@ def compute_firth_variantwise_fixed_batches(
             dense_lane_mask = active_mask & (~compact_sparse_lane_mask)
             dense_stream_plan = build_firth_lane_stream_plan(dense_lane_mask)
             compact_stream_plan = build_firth_lane_stream_plan(compact_sparse_lane_mask)
+            compact_null_failed_mask = (
+                ~jnp.isfinite(null_penalized_log_likelihood)
+                if null_penalized_log_likelihood.ndim == 0
+                else ~jnp.isfinite(jnp.take(null_penalized_log_likelihood, compact_stream_plan.lane_indices, axis=0))
+            )
+            dense_null_penalized_log_likelihood = (
+                null_penalized_log_likelihood
+                if null_penalized_log_likelihood.ndim == 0
+                else jnp.take(
+                    null_penalized_log_likelihood,
+                    dense_stream_plan.lane_indices,
+                    axis=0,
+                )
+            )
 
             dense_result = compute_firth_variantwise_fixed_batches_without_sparse_compaction(
                 covariate_matrix=covariate_matrix,
@@ -1064,11 +1078,7 @@ def compute_firth_variantwise_fixed_batches(
                 sparse_correction_mask=jnp.take(sparse_correction_mask, dense_stream_plan.lane_indices, axis=0),
                 fallback_count=dense_stream_plan.active_count,
                 firth_batch_size=firth_batch_size,
-                null_penalized_log_likelihood=jnp.take(
-                    null_penalized_log_likelihood,
-                    dense_stream_plan.lane_indices,
-                    axis=0,
-                ),
+                null_penalized_log_likelihood=dense_null_penalized_log_likelihood,
                 kernel_config=kernel_config,
             )
 
@@ -1114,9 +1124,7 @@ def compute_firth_variantwise_fixed_batches(
                 active_mask=compact_stream_plan.active_mask,
                 fallback_count=compact_stream_plan.active_count,
                 firth_batch_size=firth_batch_size,
-                null_failed_mask=~jnp.isfinite(
-                    jnp.take(null_penalized_log_likelihood, compact_stream_plan.lane_indices, axis=0),
-                ),
+                null_failed_mask=compact_null_failed_mask,
                 kernel_config=kernel_config,
             )
 
