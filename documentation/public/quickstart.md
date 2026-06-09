@@ -88,6 +88,59 @@ Approximate Firth is implemented but numerically sensitive. Use equivalent stati
 See [Algorithm](algorithm.md) for the quantitative, binary score-test, and
 approximate-Firth formulas behind these commands.
 
+## Multi-Phenotype Sample Modes
+
+You can request multiple traits in one run with repeated `--phenoCol` flags.
+
+```bash
+uv run g regenie \
+  --step 2 \
+  --qt \
+  --bgen /path/to/genotypes.bgen \
+  --sample /path/to/genotypes.sample \
+  --phenoFile /path/to/phenotypes.tsv \
+  --phenoCol phenotype_continuous_a \
+  --phenoCol phenotype_continuous_b \
+  --covarFile /path/to/covariates.tsv \
+  --covarColList age,sex,pc1,pc2 \
+  --pred /path/to/regenie_step1_qt_pred.list \
+  --out /path/to/output/g_multi_per_phenotype \
+  --g-device cpu \
+  --g-output-format parquet \
+  --multi_phenotype_sample_mode per-phenotype
+```
+
+That command is equivalent to running two separate commands with the same flags
+except one `--phenoCol` at a time (subject to random differences in I/O timing
+and scheduling).
+
+Use shared-sample mode when you explicitly want all traits on the same intersection:
+
+```bash
+uv run g regenie \
+  --step 2 \
+  --qt \
+  --bgen /path/to/genotypes.bgen \
+  --sample /path/to/genotypes.sample \
+  --phenoFile /path/to/phenotypes.tsv \
+  --phenoCol phenotype_continuous_a \
+  --phenoCol phenotype_continuous_b \
+  --covarFile /path/to/covariates.tsv \
+  --covarColList age,sex,pc1,pc2 \
+  --pred /path/to/regenie_step1_qt_pred.list \
+  --out /path/to/output/g_multi_complete_case \
+  --g-device cpu \
+  --g-output-format parquet \
+  --multi_phenotype_sample_mode complete-case
+```
+
+To see runtime knobs for this setting in config, use
+`[compute] multi_phenotype_sample_mode` via
+[Configuration](configuration.md#runtime-cli-and-toml-mapping).
+
+When validating this choice, compare `sampleCount` and run manifest metadata in
+the output `run_manifest.json` files alongside statistical results.
+
 ## GPU Execution
 
 Install the GPU dependency group first, then change the device:

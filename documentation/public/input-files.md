@@ -101,12 +101,36 @@ results even when the tested BGEN file is unchanged.
 
 ## Multi-Phenotype Sample Semantics
 
-`--g-multi-phenotype-sample-mode per-phenotype` keeps each phenotype on its own
-complete-case sample set. This matches separate single-phenotype semantics.
+`--multi_phenotype_sample_mode` controls how `g` aligns rows for multiple
+requested phenotypes:
 
-`--g-multi-phenotype-sample-mode complete-case` uses one shared complete-case
-intersection across all requested phenotypes. This can improve reuse but changes
-statistics when phenotype missingness differs.
+- `per-phenotype` (default): each phenotype uses its own complete-case sample set.
+  This is the statistical equivalent to running each phenotype in a separate
+  single-phenotype CLI run with identical options.
+- `complete-case`: all requested phenotypes share one intersection of complete
+  phenotype and covariate rows.
 
-See [Algorithm](algorithm.md#multi-phenotype-behavior) for the statistical
-consequences.
+This is a statistical choice, not only an execution strategy:
+
+- Use `per-phenotype` when you want each trait to be analyzed on its own largest
+  non-missing sample.
+- Use `complete-case` when you want all traits analyzed on the same cohort
+  (for strict per-trait comparability) or when missingness is nearly identical.
+
+`complete-case` can change test statistics when phenotype missingness differs across
+traits because it changes `sampleCount`, covariate projections, and LOCO alignment
+for every phenotype in the command. In that situation, this mode can bias or lose
+power for phenotypes with trait-specific missingness patterns.
+
+Performance implications:
+
+- `per-phenotype` may still group traits that share compatible complete-case
+  samples internally and therefore can reuse some startup and decode work.
+- `complete-case` usually increases sample-mask and projection reuse because one
+  shared sample intersection is computed once, but it can lower effective sample
+  size versus per-phenotype analysis.
+
+For full definitions and implementation details, see
+[Algorithm > Multi-Phenotype Behavior](algorithm.md#multi-phenotype-behavior) and
+[Configuration](configuration.md#runtime-cli-and-toml-mapping) for the exact
+setting name in CLI and TOML.
