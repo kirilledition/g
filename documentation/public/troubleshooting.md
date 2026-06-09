@@ -72,4 +72,4 @@ uv sync --group docs
 just docs-build
 ```
 
-The generated `site/` directory is ignored by git and can be removed when you need a clean local rebuild.
+The generated `documentation_rendered_website/` directory is ignored by git and can be removed when you need a clean local rebuild.

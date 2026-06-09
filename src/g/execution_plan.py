@@ -28,6 +28,8 @@ class KernelConfig:
         chunk_size: Variant block size.
         device: JAX device requested for execution.
         staging_depth: Native callback staging depth.
+        result_in_flight_limit: Optional cap for result chunks awaiting materialization.
+        dosage_buffer_limit: Optional cap for reusable native dosage decode buffers.
         variant_limit: Optional debug cap on variants.
         thread_count: Requested CPU thread count.
         bgen_decode_tile_variant_count: Native BGEN decode tile variant count.
@@ -44,6 +46,8 @@ class KernelConfig:
     chunk_size: int
     device: types.Device
     staging_depth: int
+    result_in_flight_limit: int | None
+    dosage_buffer_limit: int | None
     variant_limit: int | None
     thread_count: int | None
     bgen_decode_tile_variant_count: int
@@ -292,6 +296,8 @@ def build_kernel_config(regenie_config: config.RegenieConfig) -> KernelConfig:
         chunk_size=regenie_config.trait.bsize,
         device=regenie_config.g_compute.device,
         staging_depth=regenie_config.g_compute.staging_depth,
+        result_in_flight_limit=regenie_config.g_compute.result_in_flight_limit,
+        dosage_buffer_limit=regenie_config.g_compute.dosage_buffer_limit,
         variant_limit=regenie_config.g_compute.variant_limit,
         thread_count=regenie_config.trait.threads,
         bgen_decode_tile_variant_count=regenie_config.g_compute.bgen_decode_tile_variant_count,

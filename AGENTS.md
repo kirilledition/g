@@ -18,18 +18,18 @@ You are an AI coding assistant working on high-performance GPU-accelerated GWAS 
 * tests/: Pytest suite for mathematical regressions and correctness.  
 * scripts/: Dev-ops and preparation scripts (fetch\_1kg.py, benchmark.py).  
 * data/: Local git-ignored directory for 1KG variants and simulated phenotypes. **Never commit files in this directory.**  
-* docs/: Project documentation.
+* documentation/: Project documentation.
 
 ## **Documentation Rule**
 
 When changing user-facing CLI behavior, configuration, input/output contracts,
 runtime behavior, performance assumptions, or deployment workflow, update the
-relevant page under docs/ in the same branch. Run `just docs-build` before
+relevant page under documentation/ in the same branch. Run `just docs-build` before
 finishing documentation changes.
 
 ## **Coding Standards (Strictly Enforced)**
 
-**You must strictly adhere to the rules defined in [styleguide](docs/development/STYLEGUIDE.md).** Do not write code without reading it. Key highlights include:
+**You must strictly adhere to the rules defined in [styleguide](documentation/development/STYLEGUIDE.md).** Do not write code without reading it. Key highlights include:
 
 * 100% strict type coverage.  
 * Full-word variable names only.  

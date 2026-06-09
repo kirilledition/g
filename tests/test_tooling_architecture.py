@@ -106,10 +106,15 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
         ]
     )
     baseline_paths = deep_profile.build_baseline_paths(arguments)
+    campaign_budget = deep_profile.build_campaign_budget(
+        arguments=arguments,
+        output_directory=tmp_path / "profile",
+    )
     profile_plan = deep_profile.build_profile_plan(
         arguments=arguments,
         baseline_paths=baseline_paths,
         output_directory=tmp_path / "profile",
+        campaign_budget=campaign_budget,
     )
 
     assert arguments.chromosome_label == "chr22"
@@ -122,6 +127,39 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
     assert arguments.enable_python_cprofile is True
     assert arguments.enable_rust_criterion is True
     assert arguments.include_regenie_baseline is True
+    assert arguments.regenie_executable is None
+    assert arguments.regenie_baseline_trait_types == "quantitative"
+    assert arguments.regenie_baseline_variant_limit is None
+    assert arguments.regenie_baseline_warmups == 0
+    assert arguments.regenie_baseline_trials == 1
+    assert arguments.stage_timing_mode == deep_profile.ProfileStageTimingMode.EXACT
+    assert arguments.workload_keys == "quantitative_cpu,quantitative_gpu,binary_cpu,binary_gpu"
+    assert arguments.max_subprocess_runs == 1000
+    assert arguments.max_major_profiler_runs == 64
+    assert arguments.allow_over_budget is False
+    assert campaign_budget.workload_keys == (
+        "quantitative_cpu",
+        "quantitative_gpu",
+        "binary_cpu",
+        "binary_gpu",
+    )
+    assert campaign_budget.total_subprocess_run_count == 6335
+    assert campaign_budget.over_subprocess_budget is True
+    assert profile_plan.workload_keys == [
+        "quantitative_cpu",
+        "quantitative_gpu",
+        "binary_cpu",
+        "binary_gpu",
+    ]
+    assert [section.name for section in profile_plan.campaign_budget.sections] == [
+        "bgen_pre_sweep",
+        "tuning",
+        "finalists",
+        "headline_trials",
+        "deep_profilers",
+        "logging_perturbation",
+        "rust_criterion",
+    ]
     assert profile_plan.profiler_modes == {
         "regenie_baseline": True,
         "jax_trace": True,
@@ -137,11 +175,73 @@ def test_hydra_deep_profile_config_converts_to_tool_arguments(tmp_path: Path) ->
         "logging_perturbation": True,
     }
     assert profile_plan.logging_perturbation_cases
+    assert profile_plan.regenie_baseline_scope is not None
     assert "py_spy" in profile_plan.profiler_tools
     assert profile_plan.rust_benchmark_commands == [
         ["cargo", "bench", "--bench", "bgen_read"],
         ["cargo", "bench", "--bench", "preprocess"],
     ]
+    off_arguments = deep_profile.build_arguments_from_overrides(
+        [
+            f"tool.output_dir={tmp_path / 'profile-off'}",
+            "tool.dry_run=true",
+            "telemetry.stage_timing_mode=off",
+        ]
+    )
+    assert off_arguments.stage_timing_mode == deep_profile.ProfileStageTimingMode.OFF
+
+
+def test_deep_profile_budget_respects_workload_subset_and_bounded_grid(tmp_path: Path) -> None:
+    arguments = deep_profile.build_arguments_from_overrides(
+        [
+            f"tool.output_dir={tmp_path / 'profile'}",
+            "tool.dry_run=true",
+            "tool.include_regenie_baseline=false",
+            "tool.workload_keys=[binary_gpu]",
+            "tool.chunk_sizes=[2048,4096]",
+            "tool.staging_depths=[1,2]",
+            "tool.output_writer_thread_counts=[1,4]",
+            "tool.writer_queue_depth_multipliers=[1,2]",
+            "tool.firth_batch_sizes=[32]",
+            "tool.bgen_decode_tile_variant_counts=[64,128]",
+            "tool.rayon_thread_counts=[4,8]",
+            "tool.top_bgen_candidates=1",
+            "tool.top_finalists=2",
+            "tool.tuning_warmups=0",
+            "tool.tuning_trials=1",
+            "tool.finalist_warmups=0",
+            "tool.finalist_trials=2",
+            "tool.headline_warmups=0",
+            "tool.headline_trials=3",
+        ]
+    )
+
+    campaign_budget = deep_profile.build_campaign_budget(
+        arguments=arguments,
+        output_directory=tmp_path / "profile",
+    )
+    sections_by_name = {section.name: section for section in campaign_budget.sections}
+
+    assert campaign_budget.workload_keys == ("binary_gpu",)
+    assert campaign_budget.total_subprocess_run_count == 37
+    assert campaign_budget.over_subprocess_budget is False
+    assert sections_by_name["bgen_pre_sweep"].candidate_count == 4
+    assert sections_by_name["tuning"].candidate_count == 16
+    assert sections_by_name["finalists"].candidate_count == 2
+    assert sections_by_name["headline_trials"].subprocess_run_count == 3
+    assert sections_by_name["deep_profilers"].major_profiler_run_count == 4
+    assert sections_by_name["logging_perturbation"].subprocess_run_count == 4
+    assert sections_by_name["rust_criterion"].subprocess_run_count == 2
+
+
+def test_deep_profile_workload_selectors_expand_groups() -> None:
+    assert deep_profile.parse_profile_workload_keys("gpu") == (
+        deep_profile.ProfileWorkloadKey.QUANTITATIVE_GPU,
+        deep_profile.ProfileWorkloadKey.BINARY_GPU,
+    )
+    assert deep_profile.parse_profile_workload_keys("binary_cpu,binary_cpu") == (
+        deep_profile.ProfileWorkloadKey.BINARY_CPU,
+    )
 
 
 def test_hydra_tooling_config_converts_to_tool_arguments() -> None:

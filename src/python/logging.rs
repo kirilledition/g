@@ -122,7 +122,7 @@ impl TelemetryLineWriter {
 impl io::Write for TelemetryLineWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         if self.event_cap_state.event_cap.is_none() {
-            let event_count = buffer.iter().filter(|byte| **byte == b'\n').count();
+            let event_count = memchr::memchr_iter(b'\n', buffer).count();
             if event_count > 0 {
                 self.event_cap_state.written_event_count.fetch_add(event_count, Ordering::Relaxed);
             }
@@ -277,16 +277,16 @@ impl NativeTelemetrySession {
         let writer_guard =
             self.writer.lock().map_err(|_| PyRuntimeError::new_err("Telemetry writer mutex was poisoned."))?;
         if let Some(writer) = writer_guard.as_ref() {
-            return writer.counter_snapshot(None).into_py_dict(py);
+            return writer.counter_snapshot(None).to_py_dict(py);
         }
         let last_counter_snapshot = self
             .last_counter_snapshot
             .lock()
             .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
         let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
-            return TelemetryWriterCounterSnapshot::empty().into_py_dict(py);
+            return TelemetryWriterCounterSnapshot::empty().to_py_dict(py);
         };
-        counter_snapshot.into_py_dict(py)
+        counter_snapshot.to_py_dict(py)
     }
 
     pub fn finish<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -306,9 +306,9 @@ impl NativeTelemetrySession {
                 .lock()
                 .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
             let Some(counter_snapshot) = last_counter_snapshot.as_ref() else {
-                return TelemetryWriterCounterSnapshot::empty().into_py_dict(py);
+                return TelemetryWriterCounterSnapshot::empty().to_py_dict(py);
             };
-            return counter_snapshot.into_py_dict(py);
+            return counter_snapshot.to_py_dict(py);
         };
 
         let counter_snapshot = writer.counter_snapshot(Some(finish_flush_duration_seconds));
@@ -318,7 +318,7 @@ impl NativeTelemetrySession {
             .map_err(|_| PyRuntimeError::new_err("Telemetry counter snapshot mutex was poisoned."))?;
         *last_counter_snapshot = Some(counter_snapshot.clone());
         writer.fail_if_lossless_cap_exceeded()?;
-        counter_snapshot.into_py_dict(py)
+        counter_snapshot.to_py_dict(py)
     }
 }
 
@@ -337,7 +337,7 @@ impl TelemetryWriterCounterSnapshot {
         }
     }
 
-    fn into_py_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    fn to_py_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let counters = PyDict::new(py);
         counters.set_item("accepted_event_count", self.accepted_event_count)?;
         counters.set_item("written_event_count", self.written_event_count)?;

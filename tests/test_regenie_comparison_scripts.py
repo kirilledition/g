@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import subprocess
 import sys
@@ -465,6 +466,105 @@ def test_deep_profile_collects_regenie_and_g_stage_totals(tmp_path: Path) -> Non
     assert stage_totals["headline_regenie_quantitative:bgen_decode_impute_filter"] == 3.0
 
 
+def test_deep_profile_summarizes_jax_cache_and_compile_diagnostics(tmp_path: Path) -> None:
+    cache_directory = tmp_path / "jax_cache"
+    cache_directory.mkdir()
+    before_snapshot = deep_profile.collect_jax_cache_snapshot(cache_directory)
+    (cache_directory / "entry").write_bytes(b"cache")
+    after_snapshot = deep_profile.collect_jax_cache_snapshot(cache_directory)
+    stderr_path = tmp_path / "jax.stderr.log"
+    stderr_path.write_text(
+        "\n".join(
+            [
+                "Finished tracing + transforming score_kernel for pjit in 0.001 sec",
+                "Compiling score_kernel with global shapes and types",
+                "TRACING CACHE MISS at /tmp/model.py:10 (score_kernel):",
+                "Persistent compilation cache miss for score_kernel because no entry was found",
+                "Persistent compilation cache hit for score_kernel",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    diagnostics = deep_profile.build_jax_cache_diagnostics(
+        cache_directory=cache_directory,
+        child_reported_cache_directory=str(cache_directory),
+        persistent_cache_used=True,
+        before_snapshot=before_snapshot,
+        after_snapshot=after_snapshot,
+        stderr_log_path=str(stderr_path),
+    )
+    cold_trial = deep_profile.TrialResult(
+        name="headline_g_binary_gpu_warmup00",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        status="success",
+        wall_time_seconds=10.0,
+        output_row_count=10,
+        stdout_log_path="stdout0",
+        stderr_log_path=str(stderr_path),
+        command_arguments=[],
+        environment_overrides={},
+        jax_cache_diagnostics=diagnostics,
+    )
+    warm_trial = dataclasses.replace(
+        cold_trial,
+        name="headline_g_binary_gpu_trial00",
+        wall_time_seconds=5.0,
+        jax_cache_diagnostics=dataclasses.replace(
+            diagnostics,
+            file_count_delta=0,
+            size_bytes_delta=0,
+            compile_log_summary=deep_profile.JaxCompileLogSummary(
+                compilation_event_count=1,
+                persistent_cache_event_count=1,
+                persistent_cache_hit_count=1,
+                persistent_cache_miss_count=0,
+                tracing_cache_miss_count=0,
+                cache_miss_explanation_count=0,
+                sample_log_lines=[],
+            ),
+        ),
+    )
+
+    aggregate = deep_profile.aggregate_trial_results(
+        name="headline_g_binary_gpu",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        warmup_count=1,
+        trial_results=[warm_trial],
+        warmup_trials=[cold_trial],
+    )
+    summary = typing.cast("deep_profile.JaxColdWarmDiagnostics", aggregate.jax_cold_warm_summary)
+    collected_diagnostics = deep_profile.collect_jax_cache_diagnostics([aggregate])
+    markdown = deep_profile.build_summary_markdown(
+        aggregate_results=[aggregate],
+        comparisons={},
+        stage_totals={},
+        stage_comparison_rows=[],
+        algorithmic_findings=[],
+    )
+
+    assert diagnostics.file_count_delta == 1
+    assert diagnostics.size_bytes_delta == 5
+    assert diagnostics.compile_log_summary.compilation_event_count == 2
+    assert diagnostics.compile_log_summary.persistent_cache_hit_count == 1
+    assert diagnostics.compile_log_summary.persistent_cache_miss_count == 1
+    assert diagnostics.compile_log_summary.tracing_cache_miss_count == 1
+    assert summary.cold_trial_name == "headline_g_binary_gpu_warmup00"
+    assert summary.warm_trial_count == 1
+    assert summary.cold_to_warm_speedup_ratio == 2.0
+    assert summary.cold_cache_file_count_delta == 1
+    assert summary.warm_cache_file_count_delta == 0
+    assert summary.cold_tracing_cache_miss_count == 1
+    assert summary.warm_tracing_cache_miss_count == 0
+    assert collected_diagnostics["headline_g_binary_gpu"]["persistent_cache_used"] is True
+    assert "JAX Compile And Cache Diagnostics" in markdown
+    assert "headline_g_binary_gpu" in markdown
+
+
 def test_deep_profile_builds_stage_comparison_rows(tmp_path: Path) -> None:
     g_stage_path = tmp_path / "g.stage_timings.json"
     regenie_profile_path = tmp_path / "regenie.profile.json"
@@ -547,6 +647,211 @@ def test_deep_profile_builds_stage_comparison_rows(tmp_path: Path) -> None:
     assert bgen_row["g_seconds"] == 2.0
     assert bgen_row["g_speedup_ratio"] == 2.0
     assert any("BGEN delivery" in finding for finding in findings)
+
+
+def test_deep_profile_builds_binary_correction_diagnostics(tmp_path: Path) -> None:
+    stage_timing_path = tmp_path / "binary.stage_timings.json"
+    stage_timing_path.write_text(
+        json.dumps(
+            {
+                "stage_totals_seconds": {
+                    "jax_compute": 3.0,
+                    "output_write": 1.0,
+                },
+                "stage_counts": {
+                    "jax_compute": 2,
+                    "output_write": 1,
+                },
+                "chunk_stage_timings": [
+                    {
+                        "chunk_identifier": 10,
+                        "chromosome": "22",
+                        "variant_start_index": 0,
+                        "variant_stop_index": 2,
+                        "variant_count": 2,
+                        "stage_name": "jax_compute",
+                        "duration_seconds": 1.0,
+                    },
+                    {
+                        "chunk_identifier": 11,
+                        "chromosome": "22",
+                        "variant_start_index": 2,
+                        "variant_stop_index": 5,
+                        "variant_count": 3,
+                        "stage_name": "jax_compute",
+                        "duration_seconds": 2.0,
+                    },
+                ],
+                "binary_chunk_diagnostics": [
+                    {
+                        "score_test_candidate_count": 2,
+                        "firth_candidate_count": 1,
+                        "firth_iteration_min": 4,
+                        "firth_iteration_median": 4.0,
+                        "firth_iteration_max": 4,
+                        "firth_converged_count": 1,
+                        "firth_failed_count": 0,
+                        "firth_numerical_failure_count": 0,
+                        "firth_max_iteration_failure_count": 0,
+                        "firth_invalid_statistic_failure_count": 0,
+                        "firth_step_halving_failure_count": 0,
+                        "pseudo_firth_attempt_count": 1,
+                        "pseudo_firth_success_count": 1,
+                        "nr_zero_start_attempt_count": 0,
+                        "nr_zero_start_success_count": 0,
+                        "nr_warm_start_attempt_count": 0,
+                        "nr_warm_start_success_count": 0,
+                        "sparse_correction_count": 0,
+                        "dense_correction_count": 1,
+                    },
+                    {
+                        "score_test_candidate_count": 3,
+                        "firth_candidate_count": 2,
+                        "firth_iteration_min": 5,
+                        "firth_iteration_median": 6.0,
+                        "firth_iteration_max": 7,
+                        "firth_converged_count": 1,
+                        "firth_failed_count": 1,
+                        "firth_numerical_failure_count": 0,
+                        "firth_max_iteration_failure_count": 1,
+                        "firth_invalid_statistic_failure_count": 0,
+                        "firth_step_halving_failure_count": 0,
+                        "pseudo_firth_attempt_count": 2,
+                        "pseudo_firth_success_count": 1,
+                        "nr_zero_start_attempt_count": 1,
+                        "nr_zero_start_success_count": 0,
+                        "nr_warm_start_attempt_count": 1,
+                        "nr_warm_start_success_count": 1,
+                        "sparse_correction_count": 1,
+                        "dense_correction_count": 1,
+                    },
+                ],
+                "null_logistic_diagnostics": [
+                    {
+                        "chromosome": "22",
+                        "iteration_count": 3,
+                        "converged": 1,
+                        "firth_iteration_count": 2,
+                        "firth_convergence_reason_code": 0,
+                        "correction_method": "firth",
+                    }
+                ],
+                "queue_backpressure": [
+                    {
+                        "queue_name": "writer",
+                        "operation_name": "enqueue",
+                        "observation_count": 2,
+                        "max_depth": 4,
+                        "max_capacity": 8,
+                        "total_elapsed_seconds": 1.0,
+                        "total_blocked_seconds": 0.25,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    trial = deep_profile.TrialResult(
+        name="headline_g_binary_gpu_trial00",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        status="success",
+        wall_time_seconds=2.0,
+        output_row_count=10,
+        stdout_log_path="stdout",
+        stderr_log_path="stderr",
+        command_arguments=[],
+        environment_overrides={},
+        stage_timing_path=str(stage_timing_path),
+    )
+    headline = deep_profile.aggregate_trial_results(
+        name="headline_g_binary_gpu",
+        implementation="g",
+        trait_type="binary",
+        device="gpu",
+        warmup_count=0,
+        trial_results=[trial],
+    )
+    finalist = dataclasses.replace(headline, name="finalist_binary_gpu")
+
+    diagnostics = deep_profile.build_binary_correction_diagnostics(
+        headline_results=[headline],
+        finalist_results_by_key={"binary_gpu": [finalist]},
+        stage_timing_mode=deep_profile.ProfileStageTimingMode.EXACT,
+    )
+    headline_diagnostics = diagnostics["headline"]["headline_g_binary_gpu"]
+    finalist_diagnostics = diagnostics["finalists"]["binary_gpu"]["finalist_binary_gpu"]
+
+    assert headline_diagnostics["available"] is True
+    assert headline_diagnostics["candidate_counts"]["score_test"] == 5
+    assert headline_diagnostics["candidate_counts"]["firth"] == 3
+    assert headline_diagnostics["correction_outcome_counts"] == {
+        "corrected": 2,
+        "failed": 1,
+        "score_test_or_uncorrected": 2,
+    }
+    assert headline_diagnostics["failure_code_counts"]["max_iterations"] == 1
+    assert headline_diagnostics["firth_iteration_counts"] == {
+        "active_chunk_count": 2,
+        "minimum": 4.0,
+        "median_per_chunk_mean": 5.0,
+        "maximum": 7.0,
+    }
+    assert headline_diagnostics["correction_input_counts"] == {"sparse": 1, "dense": 2}
+    assert headline_diagnostics["fallback_density"]["firth_candidates_per_output_row"] == 0.3
+    assert headline_diagnostics["stage_counts"]["jax_compute"] == 2.0
+    assert headline_diagnostics["null_logistic"]["converged_count"] == 1
+    assert headline_diagnostics["queue_backpressure"][0]["blocked_fraction"] == 0.25
+    assert headline_diagnostics["chunk_outliers"][0]["chunk_index"] == 1
+    assert headline_diagnostics["chunk_outliers"][0]["chunk_identity"]["chunk_identifier"] == 11
+    assert finalist_diagnostics["available"] is True
+
+
+def test_deep_profile_binary_correction_diagnostics_report_stage_timing_off() -> None:
+    trial = deep_profile.TrialResult(
+        name="headline_g_binary_cpu_trial00",
+        implementation="g",
+        trait_type="binary",
+        device="cpu",
+        status="success",
+        wall_time_seconds=2.0,
+        output_row_count=10,
+        stdout_log_path="stdout",
+        stderr_log_path="stderr",
+        command_arguments=[],
+        environment_overrides={},
+        stage_timing_path=None,
+    )
+    headline = deep_profile.aggregate_trial_results(
+        name="headline_g_binary_cpu",
+        implementation="g",
+        trait_type="binary",
+        device="cpu",
+        warmup_count=0,
+        trial_results=[trial],
+    )
+
+    diagnostics = deep_profile.build_binary_correction_diagnostics(
+        headline_results=[headline],
+        finalist_results_by_key={},
+        stage_timing_mode=deep_profile.ProfileStageTimingMode.OFF,
+    )
+    markdown = deep_profile.build_summary_markdown(
+        aggregate_results=[headline],
+        comparisons={},
+        stage_totals={},
+        stage_comparison_rows=[],
+        algorithmic_findings=[],
+        binary_correction_diagnostics=diagnostics,
+    )
+    headline_diagnostics = diagnostics["headline"]["headline_g_binary_cpu"]
+
+    assert headline_diagnostics["available"] is False
+    assert headline_diagnostics["reason"] == "exact_stage_timings_disabled"
+    assert "## Binary Correction Diagnostics" in markdown
+    assert "telemetry.stage_timing_mode=off" in markdown
+    assert "unavailable: stage timing mode off" in markdown
 
 
 def test_deep_profile_algorithmic_findings_respect_speedup_direction() -> None:
@@ -912,6 +1217,63 @@ def test_fresh_process_benchmark_parser_accepts_output_writer_options() -> None:
     assert arguments.output_writer_thread_count == 2
 
 
+def test_fresh_process_benchmark_generates_multi_phenotype_inputs(tmp_path: Path) -> None:
+    data_directory = tmp_path / "data"
+    baseline_directory = data_directory / "baselines"
+    baseline_directory.mkdir(parents=True)
+    (data_directory / "pheno_cont.txt").write_text(
+        "FID\tIID\tphenotype_continuous\nF1\tI1\t1.5\nF2\tI2\t2.5\n",
+        encoding="utf-8",
+    )
+    (baseline_directory / "shared.loco").write_text("FID_IID F1_I1 F2_I2\n22 0.1 0.2\n", encoding="utf-8")
+    (baseline_directory / "regenie_step1_qt_pred.list").write_text(
+        "phenotype_continuous shared.loco\n",
+        encoding="utf-8",
+    )
+
+    benchmark_inputs = fresh_process_benchmark.prepare_benchmark_inputs(
+        data_directory=data_directory,
+        output_directory=tmp_path / "output",
+        phenotype_count=2,
+    )
+
+    assert benchmark_inputs.phenotype_names == ("phenotype_continuous_1", "phenotype_continuous_2")
+    assert benchmark_inputs.phenotype_path.read_text(encoding="utf-8") == (
+        "FID\tIID\tphenotype_continuous_1\tphenotype_continuous_2\nF1\tI1\t1.5\t1.5\nF2\tI2\t2.5\t2.5\n"
+    )
+    assert benchmark_inputs.prediction_list_path.read_text(encoding="utf-8") == (
+        f"phenotype_continuous_1 {baseline_directory / 'shared.loco'}\n"
+        f"phenotype_continuous_2 {baseline_directory / 'shared.loco'}\n"
+    )
+
+
+def test_fresh_process_benchmark_child_command_wires_multi_phenotype_options(tmp_path: Path) -> None:
+    benchmark_inputs = fresh_process_benchmark.BenchmarkInputs(
+        bgen_path=tmp_path / "input.bgen",
+        sample_path=tmp_path / "input.sample",
+        phenotype_path=tmp_path / "phenotypes.tsv",
+        phenotype_names=("trait_a", "trait_b"),
+        covariate_path=tmp_path / "covariates.tsv",
+        prediction_list_path=tmp_path / "pred.list",
+    )
+
+    command_arguments = fresh_process_benchmark.build_child_command(
+        benchmark_inputs=benchmark_inputs,
+        output_path=tmp_path / "out",
+        device="gpu",
+        chunk_size=2048,
+        finalize_parquet=True,
+        output_writer_thread_count=4,
+        stage_timing_path=tmp_path / "stage.json",
+        multi_phenotype_sample_mode="complete-case",
+    )
+    child_code = command_arguments[2]
+
+    assert "'phenoColList': 'trait_a,trait_b'" in child_code
+    assert "'g-multi-phenotype-sample-mode': 'complete-case'" in child_code
+    assert "'g-stage-timings-json':" in child_code
+
+
 def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
     trial_results = [
         fresh_process_benchmark.TrialResult(
@@ -944,6 +1306,52 @@ def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
     assert summary.mean_rows_per_second == 75.0
     assert summary.mean_chunk_bytes == 1536.0
     assert summary.mean_final_parquet_bytes == 768.0
+
+
+def test_fresh_process_benchmark_summary_tracks_startup_fields() -> None:
+    trial_results = [
+        fresh_process_benchmark.TrialResult(
+            trial_index=0,
+            wall_time_seconds=4.0,
+            output_path="out0",
+            output_row_count=100,
+            chunk_file_count=1,
+            chunk_bytes=128,
+            final_parquet_bytes=64,
+            mode="fresh_process",
+            phenotype_count=2,
+            child_wall_time_seconds=3.0,
+            stage_timing_path="stage0.json",
+        ),
+        fresh_process_benchmark.TrialResult(
+            trial_index=1,
+            wall_time_seconds=2.0,
+            output_path="out1",
+            output_row_count=100,
+            chunk_file_count=1,
+            chunk_bytes=128,
+            final_parquet_bytes=64,
+            mode="fresh_process",
+            phenotype_count=2,
+            child_wall_time_seconds=1.0,
+            stage_timing_path="stage1.json",
+        ),
+    ]
+
+    summary = fresh_process_benchmark.build_summary(
+        device="gpu",
+        chunk_size=2048,
+        finalize_parquet=True,
+        output_writer_thread_count=4,
+        warmup_count=1,
+        trial_results=trial_results,
+        mode="fresh_process",
+        phenotype_count=2,
+    )
+
+    assert summary.phenotype_count == 2
+    assert summary.mean_child_wall_time_seconds == 2.0
+    assert summary.stage_timing_paths == ["stage0.json", "stage1.json"]
 
 
 def test_binary_hot_benchmark_defaults_to_comparable_modes() -> None:
@@ -1392,6 +1800,8 @@ def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pyte
         device="gpu",
         chunk_size=8192,
         staging_depth=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
         output_writer_thread_count=4,
         output_writer_queue_depth=8,
         bgen_decode_tile_variant_count=128,
@@ -1403,12 +1813,27 @@ def test_deep_profile_builds_cache_environment(tmp_path: Path, monkeypatch: pyte
         cache_directory=tmp_path / "jax_cache",
         stage_timing_path=tmp_path / "stages.json",
     )
+    assert environment["JAX_LOGGING_LEVEL"] == "DEBUG"
+    assert environment["JAX_DEBUG_LOG_MODULES"] == "jax._src.compiler,jax._src.lru_cache"
     assert "JAX_COMPILATION_CACHE_DIR" not in environment
     assert "G_REGENIE2_STAGE_TIMINGS_JSON" not in environment
     assert "G_BGEN_DECODE_TILE_VARIANT_COUNT" not in environment
     assert "RAYON_NUM_THREADS" not in environment
     assert "G_REGENIE2_BINARY_FIRTH_BATCH_SIZE" not in environment
     assert "JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES" not in environment
+
+
+def test_deep_profile_arguments_can_focus_workload_grid() -> None:
+    arguments = deep_profile.build_arguments_from_overrides(
+        [
+            "tool.workload_keys=[binary_gpu]",
+        ]
+    )
+
+    assert arguments.workload_keys == "binary_gpu"
+    assert deep_profile.parse_profile_workload_keys(arguments.workload_keys) == (
+        deep_profile.ProfileWorkloadKey.BINARY_GPU,
+    )
 
 
 def test_deep_profile_child_command_contains_binary_controls() -> None:
@@ -1418,6 +1843,8 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
         device="cpu",
         chunk_size=4096,
         staging_depth=2,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
         output_writer_thread_count=1,
         output_writer_queue_depth=2,
         bgen_decode_tile_variant_count=None,
@@ -1437,6 +1864,9 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
     assert '"bsize": 4096' in command_text
     assert '"g-variant-limit": 1000' in command_text
     assert '"firth": True' in command_text
+    assert '"g-jax-persistent-cache": True' in command_text
+    assert "jax_explain_cache_misses" in command_text
+    assert "jax_log_compiles" in command_text
     assert "count_artifact_rows" in command_text
     assert "parts" in command_text
     assert "jax_probe_device_platform" in command_text
@@ -1462,7 +1892,20 @@ def test_deep_profile_artifact_manifest_records_tools_and_skips(tmp_path: Path) 
                     "name": "profile_binary_gpu_py_spy",
                     "status": "skipped",
                     "notes": "py-spy is not on PATH.",
-                }
+                },
+                {
+                    "name": "profile_binary_gpu_scalene",
+                    "implementation": "Scalene",
+                    "status": "failed",
+                    "profiler_artifact_path": str(output_directory / "deep_profiles" / "binary_gpu.scalene.json"),
+                    "application_output_prefix": str(output_directory / "deep_profiles" / "profile_binary_gpu_scalene"),
+                    "application_output_run_directory": str(
+                        output_directory / "deep_profiles" / "profile_binary_gpu_scalene.g"
+                    ),
+                    "stage_timing_path": str(
+                        output_directory / "deep_profiles" / "profile_binary_gpu_scalene.stage_timings.json"
+                    ),
+                },
             ]
         }
     }
@@ -1475,7 +1918,155 @@ def test_deep_profile_artifact_manifest_records_tools_and_skips(tmp_path: Path) 
 
     assert manifest["artifact_paths"] == ["summary.json"]
     assert manifest["profiler_tools"]["py_spy"]["available"] is False
-    assert manifest["skipped_profiles"] == summary_payload["deep_profiles"]["sampling_profiles"]
+    assert manifest["profiler_runs"] == [
+        {
+            "name": "profile_binary_gpu_scalene",
+            "implementation": "Scalene",
+            "status": "failed",
+            "profiler_artifact_path": "deep_profiles/binary_gpu.scalene.json",
+            "application_output_prefix": "deep_profiles/profile_binary_gpu_scalene",
+            "application_output_run_directory": "deep_profiles/profile_binary_gpu_scalene.g",
+            "stage_timing_path": "deep_profiles/profile_binary_gpu_scalene.stage_timings.json",
+        }
+    ]
+    assert manifest["skipped_profiles"] == [summary_payload["deep_profiles"]["sampling_profiles"][0]]
+
+
+def test_deep_profile_bounded_regenie_baseline_uses_extract_list(tmp_path: Path) -> None:
+    data_directory = tmp_path / "data"
+    baseline_directory = data_directory / "baselines"
+    baseline_directory.mkdir(parents=True)
+    bgen_path = data_directory / "1kg_chr22_full.bgen"
+    bgen_path.write_text("", encoding="utf-8")
+    pvar_path = data_directory / "1kg_chr22_full.pvar"
+    pvar_path.write_text(
+        "#CHROM POS ID REF ALT\n22 100 rs1 A G\n22 200 rs2 C T\n22 300 rs3 G A\n",
+        encoding="utf-8",
+    )
+    baseline_paths = dataclasses.replace(
+        baseline_benchmark.build_baseline_paths(),
+        data_directory=data_directory,
+        baseline_directory=baseline_directory,
+        bed_prefix=data_directory / "1kg_chr22_full",
+        bgen_path=bgen_path,
+        sample_path=data_directory / "1kg_chr22_full.sample",
+        continuous_phenotype_path=data_directory / "pheno_cont.txt",
+        binary_phenotype_path=data_directory / "pheno_bin.txt",
+        covariate_path=data_directory / "covariates.txt",
+        regenie_prediction_list_path=baseline_directory / "regenie_step1_pred.list",
+        regenie_qt_prediction_list_path=baseline_directory / "regenie_step1_qt_pred.list",
+    )
+    arguments = deep_profile.build_arguments_from_overrides(
+        [
+            f"tool.output_dir={tmp_path / 'profile'}",
+            "tool.variant_limit=2",
+        ]
+    )
+
+    scope = deep_profile.build_regenie_baseline_scope(
+        arguments=arguments,
+        baseline_paths=baseline_paths,
+        output_directory=tmp_path / "profile",
+    )
+    deep_profile.write_regenie_baseline_extract_file(scope)
+    command_arguments = deep_profile.build_regenie_step2_command(
+        trait_type="quantitative",
+        regenie_executable="regenie",
+        baseline_paths=baseline_paths,
+        output_prefix=tmp_path / "profile" / "headline_runs" / "baseline",
+        baseline_scope=scope,
+    )
+
+    assert scope.status == deep_profile.RegenieBaselineScopeStatus.BOUNDED
+    assert scope.selected_variant_count == 2
+    assert scope.extract_path is not None
+    assert scope.extract_path.read_text(encoding="utf-8") == "rs1\nrs2\n"
+    assert "--extract" in command_arguments
+    assert str(scope.extract_path) in command_arguments
+
+
+def test_deep_profile_manifest_records_regenie_commands_and_inputs(tmp_path: Path) -> None:
+    output_directory = tmp_path / "profile"
+    output_directory.mkdir()
+    command_arguments = [
+        "regenie",
+        "--step",
+        "2",
+        "--bgen",
+        "data/input.bgen",
+        "--sample",
+        "data/input.sample",
+        "--phenoFile",
+        "data/pheno.txt",
+        "--covarFile",
+        "data/covar.txt",
+        "--pred",
+        "data/pred.list",
+        "--extract",
+        "data/extract.txt",
+        "--out",
+        "data/out",
+    ]
+    summary_payload = {
+        "preflight": {"input_file_sizes": {"data/input.bgen": 123}},
+        "setup_results": [],
+        "headline_results": [
+            dataclasses.asdict(
+                deep_profile.AggregateResult(
+                    name="headline_regenie_quantitative",
+                    implementation="regenie",
+                    trait_type="quantitative",
+                    device="external_cpu",
+                    status="success",
+                    trial_count=1,
+                    warmup_count=0,
+                    median_wall_time_seconds=1.0,
+                    mean_wall_time_seconds=1.0,
+                    min_wall_time_seconds=1.0,
+                    max_wall_time_seconds=1.0,
+                    standard_deviation_seconds=0.0,
+                    rows_per_second=10.0,
+                    trials=[
+                        deep_profile.TrialResult(
+                            name="headline_regenie_quantitative_trial00",
+                            implementation="regenie",
+                            trait_type="quantitative",
+                            device="external_cpu",
+                            status="success",
+                            wall_time_seconds=1.0,
+                            output_row_count=10,
+                            stdout_log_path="stdout.log",
+                            stderr_log_path="stderr.log",
+                            command_arguments=command_arguments,
+                            environment_overrides={},
+                        )
+                    ],
+                )
+            )
+        ],
+        "regenie_baseline_scope": {"status": "bounded"},
+    }
+
+    manifest = deep_profile.collect_artifact_manifest(
+        output_directory=output_directory,
+        profiler_tool_status={},
+        summary_payload=summary_payload,
+    )
+
+    baseline_command = manifest["regenie_baseline_commands"][0]
+    assert baseline_command["name"] == "headline_regenie_quantitative_trial00"
+    assert baseline_command["binary"] is not None
+    assert baseline_command["command_arguments"] == command_arguments
+    assert baseline_command["input_files"] == [
+        "data/covar.txt",
+        "data/extract.txt",
+        "data/input.bgen",
+        "data/input.sample",
+        "data/pheno.txt",
+        "data/pred.list",
+    ]
+    assert manifest["input_files"] == [{"path": "data/input.bgen", "size_bytes": 123}]
+    assert manifest["regenie_baseline_scope"] == {"status": "bounded"}
 
 
 def test_deep_profile_scalene_command_uses_run_subcommand(tmp_path: Path) -> None:
@@ -1544,52 +2135,6 @@ def test_deep_profile_memray_command_uses_project_environment(tmp_path: Path) ->
     ]
 
 
-def test_deep_profile_external_profile_commands_use_isolated_outputs(tmp_path: Path) -> None:
-    baseline_paths = baseline_benchmark.build_baseline_paths()
-    candidate = deep_profile.Step2Candidate(
-        trait_type="binary",
-        device="gpu",
-        chunk_size=8192,
-        staging_depth=1,
-        output_writer_thread_count=4,
-        output_writer_queue_depth=8,
-        bgen_decode_tile_variant_count=128,
-        rayon_thread_count=2,
-        firth_batch_size=64,
-    )
-
-    scalene_command = deep_profile.build_external_profile_command(
-        baseline_paths=baseline_paths,
-        candidate=candidate,
-        winner_key="binary_gpu",
-        profile_key="scalene",
-        profile_directory=tmp_path,
-        cache_directory=tmp_path / "jax_cache",
-        variant_limit=1000,
-    )
-    memray_command = deep_profile.build_external_profile_command(
-        baseline_paths=baseline_paths,
-        candidate=candidate,
-        winner_key="binary_gpu",
-        profile_key="memray",
-        profile_directory=tmp_path,
-        cache_directory=tmp_path / "jax_cache",
-        variant_limit=1000,
-    )
-
-    scalene_script = scalene_command.script_path.read_text(encoding="utf-8")
-    memray_script = memray_command.script_path.read_text(encoding="utf-8")
-
-    assert scalene_command.script_path.name == "binary_gpu_scalene_profiler_child.py"
-    assert memray_command.script_path.name == "binary_gpu_memray_profiler_child.py"
-    assert str(tmp_path / "profile_binary_gpu_scalene") in scalene_script
-    assert str(tmp_path / "profile_binary_gpu_memray") in memray_script
-    assert str(tmp_path / "profile_binary_gpu_memray") not in scalene_script
-    assert str(tmp_path / "profile_binary_gpu_scalene") not in memray_script
-    assert str(tmp_path / "binary_gpu_scalene_stage_timings.json") in scalene_script
-    assert str(tmp_path / "binary_gpu_memray_stage_timings.json") in memray_script
-
-
 def test_deep_profile_logging_perturbation_rows_compare_against_off() -> None:
     rows = deep_profile.build_logging_perturbation_rows(
         [
@@ -1636,6 +2181,8 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         device="gpu",
         chunk_size=8192,
         staging_depth=1,
+        result_in_flight_limit=None,
+        dosage_buffer_limit=None,
         output_writer_thread_count=4,
         output_writer_queue_depth=8,
         bgen_decode_tile_variant_count=128,
@@ -1681,6 +2228,8 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         [
             f"tool.output_dir={tmp_path / 'profile'}",
             "tool.variant_limit=1000",
+            "tool.enable_scalene=true",
+            "tool.enable_memray=true",
             "tool.enable_nsight_systems=true",
         ]
     )
@@ -1690,13 +2239,15 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
 
     def fake_run_g_trial(**keyword_arguments: typing.Any) -> deep_profile.TrialResult:
         jax_profile_names.append(str(keyword_arguments["name"]))
+        output_prefix = typing.cast("Path", keyword_arguments["output_directory"]) / str(keyword_arguments["name"])
+        stage_timing_path = output_prefix.parent / f"{output_prefix.name}.stage_timings.json"
         profile_command = deep_profile.build_g_step2_child_command(
             baseline_paths=typing.cast("baseline_benchmark.BaselinePaths", keyword_arguments["baseline_paths"]),
             candidate=typing.cast("deep_profile.Step2Candidate", keyword_arguments["candidate"]),
-            output_prefix=typing.cast("Path", keyword_arguments["output_directory"]) / str(keyword_arguments["name"]),
+            output_prefix=output_prefix,
             variant_limit=typing.cast("int | None", keyword_arguments["variant_limit"]),
             cache_directory=typing.cast("Path", keyword_arguments["cache_directory"]),
-            stage_timing_path=typing.cast("Path | None", keyword_arguments.get("stage_timing_path")),
+            stage_timing_path=stage_timing_path,
             trace_directory=typing.cast("Path | None", keyword_arguments.get("trace_directory")),
             memory_profile_path=typing.cast("Path | None", keyword_arguments.get("memory_profile_path")),
         )
@@ -1712,6 +2263,9 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
             stderr_log_path="stderr.log",
             command_arguments=profile_command,
             environment_overrides={},
+            stage_timing_path=str(stage_timing_path),
+            application_output_prefix=str(output_prefix),
+            application_output_run_directory=str(deep_profile.build_application_output_run_directory(output_prefix)),
         )
 
     def fake_run_logged_command(**keyword_arguments: typing.Any) -> deep_profile.TrialResult:
@@ -1744,13 +2298,18 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         return {"command": command_arguments, "returncode": 0, "stdout": "profile\n", "stderr": ""}
 
     def fake_which(command_name: str) -> str | None:
-        if command_name in {"cargo", "py-spy", "perf", "nsys"}:
+        if command_name in {"cargo", "py-spy", "perf", "uv", "nsys"}:
             return f"/usr/bin/{command_name}"
         return None
+
+    def fake_python_module_is_available(module_name: str) -> bool:
+        del module_name
+        return False
 
     monkeypatch.setattr(deep_profile, "run_g_trial", fake_run_g_trial)
     monkeypatch.setattr(deep_profile, "run_logged_command", fake_run_logged_command)
     monkeypatch.setattr(deep_profile, "command_output", fake_command_output)
+    monkeypatch.setattr(deep_profile, "python_module_is_available", fake_python_module_is_available)
     monkeypatch.setattr(deep_profile.shutil, "which", fake_which)
 
     results = deep_profile.run_deep_profiles(
@@ -1763,7 +2322,7 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
 
     implementations = [implementation for implementation, _command in logged_commands]
     assert jax_profile_names == ["profile_binary_gpu_jax"]
-    assert implementations == ["cProfile", "py-spy", "Nsight Systems", "perf"]
+    assert implementations == ["cProfile", "py-spy", "Scalene", "Memray", "Nsight Systems", "perf"]
     assert metadata_commands[:2] == [
         ["cargo", "bench", "--bench", "bgen_read"],
         ["cargo", "bench", "--bench", "preprocess"],
@@ -1774,7 +2333,36 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         for _implementation, command in logged_commands
     )
     assert any(command[0].endswith("perf") and "record" in command for _implementation, command in logged_commands)
-    assert len(results["sampling_profiles"]) == 5
+    profile_directory = tmp_path / "profile" / "deep_profiles"
+    sampling_profiles = typing.cast("list[dict[str, object]]", results["sampling_profiles"])
+    sampling_profile_by_name = {str(profile["name"]): profile for profile in sampling_profiles}
+    expected_profiler_artifacts = {
+        "cprofile": "binary_gpu.cprofile",
+        "py_spy": "binary_gpu.speedscope.json",
+        "scalene": "binary_gpu.scalene.json",
+        "memray": "binary_gpu.memray.bin",
+        "nsys": "binary_gpu_nsys",
+        "perf": "binary_gpu.perf.data",
+    }
+    for profiler_suffix, artifact_name in expected_profiler_artifacts.items():
+        profile_name = f"profile_binary_gpu_{profiler_suffix}"
+        expected_stage_timing_path = profile_directory / f"{profile_name}.stage_timings.json"
+        profile_result = sampling_profile_by_name[profile_name]
+        assert profile_result["profiler_artifact_path"] == str(profile_directory / artifact_name)
+        assert profile_result["application_output_prefix"] == str(profile_directory / profile_name)
+        assert profile_result["application_output_run_directory"] == str(profile_directory / f"{profile_name}.g")
+        assert profile_result["stage_timing_path"] == str(expected_stage_timing_path)
+        script_text = (profile_directory / f"{profile_name}_child.py").read_text(encoding="utf-8")
+        assert f"\"out\": '{profile_directory / profile_name}'" in script_text
+        assert f"\"g-stage-timings-json\": '{expected_stage_timing_path}'" in script_text
+        assert "profile_binary_gpu_profiler" not in script_text
+    application_output_run_directories = {
+        str(profile["application_output_run_directory"])
+        for profile in sampling_profiles
+        if profile.get("application_output_run_directory") is not None
+    }
+    assert len(application_output_run_directories) == 7
+    assert len(results["sampling_profiles"]) == 7
 
 
 def test_deep_profile_aggregates_trial_results() -> None:
@@ -1856,6 +2444,64 @@ def test_deep_profile_runtime_comparison_uses_regenie_baseline() -> None:
     comparison = comparisons["headline_g_quantitative_gpu_vs_regenie_quantitative"]
     assert comparison["speedup_ratio"] == 4.0
     assert comparison["absolute_delta_seconds"] == -7.5
+
+
+def test_deep_profile_runtime_comparison_notes_separate_unsupported_and_failed(tmp_path: Path) -> None:
+    unsupported_regenie = deep_profile.unsupported_aggregate_result(
+        name="headline_regenie_quantitative",
+        trait_type="quantitative",
+        device="external_cpu",
+        log_directory=tmp_path / "logs",
+        notes="REGENIE executable is unavailable.",
+    )
+    failed_regenie_trial = deep_profile.TrialResult(
+        name="headline_regenie_binary_trial00",
+        implementation="regenie",
+        trait_type="binary",
+        device="external_cpu",
+        status="failed",
+        wall_time_seconds=1.0,
+        output_row_count=None,
+        stdout_log_path="stdout.log",
+        stderr_log_path="stderr.log",
+        command_arguments=["regenie"],
+        environment_overrides={},
+        notes="Command exited with code 1.",
+    )
+    failed_regenie = deep_profile.aggregate_trial_results(
+        name="headline_regenie_binary",
+        implementation="regenie",
+        trait_type="binary",
+        device="external_cpu",
+        warmup_count=0,
+        trial_results=[failed_regenie_trial],
+    )
+    g_quantitative = deep_profile.AggregateResult(
+        name="headline_g_quantitative_gpu",
+        implementation="g",
+        trait_type="quantitative",
+        device="gpu",
+        status="success",
+        trial_count=1,
+        warmup_count=0,
+        median_wall_time_seconds=2.0,
+        mean_wall_time_seconds=2.0,
+        min_wall_time_seconds=2.0,
+        max_wall_time_seconds=2.0,
+        standard_deviation_seconds=0.0,
+        rows_per_second=10.0,
+        trials=[],
+    )
+    g_binary = dataclasses.replace(g_quantitative, name="headline_g_binary_gpu", trait_type="binary")
+
+    notes = deep_profile.build_runtime_comparison_notes([unsupported_regenie, failed_regenie, g_quantitative, g_binary])
+
+    assert len(notes.unsupported) == 1
+    assert "unsupported" in notes.unsupported[0]
+    assert "REGENIE executable is unavailable" in notes.unsupported[0]
+    assert len(notes.failed) == 1
+    assert "did not produce a measured runtime" in notes.failed[0]
+    assert "Command exited with code 1" in notes.failed[0]
 
 
 def test_quantitative_step2_comparison_uses_full_variant_identity_when_available(tmp_path: Path) -> None:

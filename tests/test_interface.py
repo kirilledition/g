@@ -58,6 +58,8 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
         "out": "results/output",
         "g-device": "cpu",
         "g-staging-depth": 2,
+        "g-result-in-flight-limit": 5,
+        "g-dosage-buffer-limit": 6,
         "g-variant-limit": 100,
         "g-trusted-no-missing-diploid": True,
         "g-trusted-bgen-validation-mode": "assume_validated",
@@ -117,6 +119,8 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     regenie_config = config.RegenieConfig.from_options(raw_options)
 
     assert regenie_config.g_compute.trusted_bgen_validation_mode == types.TrustedBgenValidationMode.ASSUME_VALIDATED
+    assert regenie_config.g_compute.result_in_flight_limit == 5
+    assert regenie_config.g_compute.dosage_buffer_limit == 6
     assert regenie_config.g_compute.multi_phenotype_sample_mode == types.MultiPhenotypeSampleMode.COMPLETE_CASE
     assert regenie_config.g_compute.firth_batch_size == 8
     assert regenie_config.g_compute.firth_candidate_capacity == 16
@@ -510,6 +514,8 @@ def test_recognized_unsupported_options_use_specific_errors(option_name: str, er
         ({"out": None}, "--out is required"),
         ({"bsize": 0}, "--bsize must be positive"),
         ({"threads": 0}, "--threads must be positive"),
+        ({"g-result-in-flight-limit": 0}, "--g-result-in-flight-limit must be positive"),
+        ({"g-dosage-buffer-limit": 0}, "--g-dosage-buffer-limit must be positive"),
         ({"g-variant-limit": 0}, "--g-variant-limit must be positive"),
         ({"g-linear-minimum-variance": 0.0}, "--g-linear-minimum-variance must be positive"),
         (

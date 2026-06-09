@@ -424,6 +424,8 @@ def build_common_engine_arguments(
         "chunk_size": plan.kernel_config.chunk_size,
         "variant_limit": plan.kernel_config.variant_limit,
         "staging_depth": plan.kernel_config.staging_depth,
+        "result_in_flight_limit": plan.kernel_config.result_in_flight_limit,
+        "dosage_buffer_limit": plan.kernel_config.dosage_buffer_limit,
         "resume": plan.output_plan.resume,
         "resume_mode": plan.output_plan.resume_mode,
         "finalize_parquet": plan.output_plan.finalize_parquet,

@@ -29,7 +29,7 @@ Performance discovery is not allowed to:
 ## Login-Node-Safe Preparation
 
 On the gauss login node, keep work limited to repository inspection, issue
-bookkeeping, small docs/code reads, and dry-run or plan-only commands. The
+bookkeeping, small documentation/code reads, and dry-run or plan-only commands. The
 following command is safe and is the first check when choosing an existing
 recipe:
 
@@ -37,7 +37,7 @@ recipe:
 just help
 ```
 
-Use `docs/development/justfile.md`, `docs/public/gpu-and-slurm.md`, and the issue validation
+Use `documentation/development/justfile.md`, `documentation/public/gpu-and-slurm.md`, and the issue validation
 section to choose a profiling recipe. Do not run a workload merely because a
 recipe exists.
 
@@ -77,6 +77,22 @@ Keep profile, benchmark, and trace artifacts under ignored paths such as
    Connect the baseline to a specific hot function, stage, kernel, I/O phase,
    allocation site, synchronization point, or benchmark group. If the signal
    only says "the command is slow", keep the finding in discovery notes.
+
+   For startup findings, separate first-process costs from amortizable costs.
+   Python imports, JAX plugin discovery, backend initialization, and dynamic
+   library loading are unavoidable for a fresh Python process. Before proposing
+   import or backend changes, include either a same-process hot measurement or a
+   multi-phenotype measurement that shows the cost still matters after users can
+   batch work in one process. Use
+   `scripts/benchmark_regenie2_linear_fresh_process.py --same-process-trials`
+   for quantitative Step 2 startup questions.
+
+   GLA-43 measured this on 2026-06-09: fresh CPU median was 15.77s versus
+   6.79s for hot same-process CPU, and fresh GPU median was 22.51s versus
+   2.14s for hot same-process GPU. The production decision was to keep backend
+   validation intact and prefer batching/repeated API calls in one process over
+   import-boundary cleanup unless a future profile remains slow after this
+   amortization.
 
 4. Propose the smallest plausible change.
    Describe one implementation direction, the files likely to change, expected
@@ -166,7 +182,7 @@ generation.
 
 Generated performance issues must include the parent identifier and URL, the
 baseline signal, suspected bottleneck, proposed change, validation command, and
-non-goals. Use the generated issue template in `docs/development/symphony.md`, adding the
+non-goals. Use the generated issue template in `documentation/development/symphony.md`, adding the
 performance-specific fields under `Background` when necessary.
 
 ## Completion Checklist

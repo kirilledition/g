@@ -21,10 +21,10 @@ implemented:
   genotype products, chunk stats are bundled through PyO3, Firth candidate
   dispatch has tiny/small tiers, and sparse approximate Firth can use compact
   carrier lanes.
-- Firth candidate-count host synchronization was removed, multi-binary
-  approximate Firth is batched over flattened trait-variant lanes, and the
-  benchmark harness can sweep trait counts, storage modes, Firth batch sizes,
-  candidate capacities, and fallback densities.
+- Firth hot-path capacity selection uses fixed-shape tiny/small/bounded tiers,
+  multi-binary approximate Firth is batched over flattened trait-variant lanes,
+  and the benchmark harness can sweep trait counts, storage modes, Firth batch
+  sizes, candidate capacities, and fallback densities.
 
 The standalone task-plan documents were removed after their durable lessons were
 merged here. Current implementation work should be tracked in Linear, not as
@@ -98,8 +98,13 @@ microbenchmarks alone.
 Binary approximate Firth remains the most performance-sensitive scientific
 surface. Durable constraints from the completed work:
 
-- No runtime path should reintroduce host candidate-count synchronization.
-- Capacity selection is device-side bounded/overflow dispatch.
+- Keep the rare full-chunk overflow path in a separate executable. A 2026-06-09
+  GLA-42 attempt to fold bounded-vs-overflow routing into the common JAX
+  dispatch removed one scalar candidate-count synchronization, but regressed
+  chr22 binary headline performance because the common executable then carried
+  the full-chunk overflow branch.
+- Capacity selection inside the common executable should stay fixed-shape across
+  tiny, small, and bounded tiers.
 - Multi-binary capacity is based on flattened trait-variant lanes.
 - Single-trait and multi-trait correction paths must preserve the same overflow
   semantics and failure labels.

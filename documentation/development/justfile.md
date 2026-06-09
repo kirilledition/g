@@ -488,7 +488,7 @@ GWAS_ENGINE_SLURM_CPUS_PER_TASK=72 \
   tool.trusted_no_missing_diploid=false
 ```
 
-Use the `Benchmark Artifact Analysis Recipes` section in `docs/development/tooling.md` for
+Use the `Benchmark Artifact Analysis Recipes` section in `documentation/development/tooling.md` for
 the common `jq` commands that summarize manifests, old benchmark reports, hot
 benchmark summaries, profile stage timings, and JSONL progress logs.
 
@@ -583,10 +583,13 @@ GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
 
 - Inputs: installed perf extension, GPU access, fresh-process benchmark script
   inputs.
-- Output: REGENIE step 2 fresh-process GPU benchmark report.
-- Use when: measuring older linear fresh-process behavior. This recipe still
+- Output: REGENIE step 2 fresh-process GPU benchmark report. The underlying
+  script also accepts `--same-process-trials`, `--multi-phenotype-count`, and
+  `--emit-stage-timings` when run directly for startup-amortization studies.
+- Use when: measuring linear quantitative startup behavior. The recipe still
   uses a `scripts/` entrypoint rather than the new Hydra-backed `tooling/`
-  interface.
+  interface; run it through `just slurm-gpu-run` for custom same-process
+  options on `landau`.
 
 ### `benchmark-regenie2-linear-fresh-gpu-parquet`
 
@@ -723,8 +726,9 @@ just perf-compare results/perf/baseline.json results/perf/new.json
   `tooling.log` under the configured profile output directory.
 - Use when: checking the full app profiling plan before submitting a long run.
 - Notes: sets `tool.include_regenie_baseline=false`; existing step 1 prediction
-  lists must be present. The plan includes optional profiler availability and
-  logging perturbation cases.
+  lists must be present. The plan includes optional profiler availability,
+  logging perturbation cases, section-level candidate/case counts, subprocess
+  estimates, and budget-limit status.
 
 Example:
 
@@ -734,8 +738,8 @@ just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
 
 ### `profile-app-full-smoke *overrides`
 
-- Inputs: data, baseline tools, installed perf extension, GPU access, and
-  optional trailing Hydra overrides.
+- Inputs: data, baseline tools, GPU dependency group, installed perf extension,
+  GPU access, and optional trailing Hydra overrides.
 - Output: reduced full-profile artifacts under `data/profiles/landau_deep_*` or
   the configured `tool.output_dir`.
 - Use when: validating JAX trace, cProfile, py-spy, perf, stage-timing, and
@@ -760,12 +764,19 @@ just slurm-gpu-just profile-app-full-smoke tool.output_dir=data/profiles/app_pro
 - Use when: profiling the app end to end for bottleneck analysis.
 - Notes: sets `tool.include_regenie_baseline=false`; use
   `tool.include_regenie_baseline=true` only when external `regenie` is available.
+  The recipe applies the bounded 2026-06-08 full-profile grid by default: chunk
+  sizes `[2048,4096]`, staging depths `[1,2]`, writer counts `[1,4]`, queue
+  multipliers `[1,2]`, Firth batch `[32]`, BGEN tiles `[64,128]`, Rayon
+  `[4,8]`, top BGEN candidates `1`, top finalists `2`, and reduced trial
+  counts. Use `tool.workload_keys` to split by trait/device.
 
 The run captures JAX traces, JAX device-memory profiles, Python cProfile,
 py-spy speedscope profiles when available, optional Scalene/Memray/Nsight
 passes when enabled and available, Linux perf data when available, Rust
 Criterion benches, stage timings, telemetry/logging perturbation runs,
 subprocess logs, `artifact_manifest.json`, `summary.json`, and `summary.md`.
+The artifact manifest includes per-profiler artifact paths and isolated
+application output run directories so profiler reruns do not collide.
 
 Example:
 
@@ -780,18 +791,37 @@ just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
   explicit output directory is configured.
 - Use when: running the lower-level full profile harness on the current host.
 
+### `profile-regenie2-deep-dry-run *overrides`
+
+- Inputs: repository config only; workloads are not executed.
+- Output: `profile_plan.json`, `profile_plan.md`, and `artifact_manifest.json`.
+- Use when: inspecting paired original or patched REGENIE baseline commands and
+  input files before submitting bounded profiling work. The plan includes
+  candidate/case counts and subprocess estimates for BGEN pre-sweep, tuning,
+  finalists, headline trials, deep profilers, logging perturbation, and Rust
+  Criterion.
+
 ### `profile-regenie2-deep-smoke *overrides`
 
-- Inputs: same as `profile-regenie2-deep`.
+- Inputs: same as `profile-regenie2-deep`, plus the GPU dependency group for
+  GPU smoke cells.
 - Output: reduced deep-profile smoke artifacts.
-- Use when: validating only sweeps/headlines without deep profiler captures.
+- Use when: validating only sweeps/headlines without deep profiler captures or
+  Rust Criterion.
 
 ### `profile-regenie2-deep-landau *overrides`
 
 - Inputs: data, baseline tools, SLURM GPU access.
 - Output: long deep-profile campaign on `landau`; defaults to 12 hours, 8 CPUs,
   64G memory, and 1 GPU unless overridden through `GWAS_ENGINE_SLURM_*`.
-- Use when: running the lower-level full profile harness on the GPU node.
+- Use when: running the lower-level full profile harness on the GPU node. The
+  recipe applies the bounded 2026-06-08 full-profile grid by default: chunk
+  sizes `[2048,4096]`, staging depths `[1,2]`, writer counts `[1,4]`, queue
+  multipliers `[1,2]`, Firth batch `[32]`, BGEN tiles `[64,128]`, Rayon
+  `[4,8]`, top BGEN candidates `1`, top finalists `2`, and reduced trial
+  counts. Pass `tool.workload_keys=[binary_gpu]`,
+  `tool.workload_keys=[binary_cpu]`, `tool.workload_keys=[quantitative_gpu]`,
+  or `tool.workload_keys=[quantitative_cpu]` to split the campaign.
 
 ## Formatting, Linting, Type Checking, And Tests
 

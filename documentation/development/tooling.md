@@ -4,7 +4,7 @@ This guide documents the repository-local `tooling/` package: what it contains,
 how to run the tools, which Hydra profiles are saved, and how to extend the
 tooling system.
 
-The short architecture note is in `docs/development/dev-tooling-architecture.md`. This file
+The short architecture note is in `documentation/development/dev-tooling-architecture.md`. This file
 is the operational reference.
 
 ## Scope
@@ -135,7 +135,22 @@ JAX tracing.
 
 Runs the deep landau profiling campaign for original REGENIE and `g` REGENIE
 step 2. It includes BGEN pre-sweeps, candidate tuning, headline trials,
-optional perf/py-spy/cProfile/JAX trace runs, and a smoke mode.
+optional perf/py-spy/cProfile/JAX trace runs, and a smoke mode. Exact
+stage-timing runs add compact binary correction diagnostics to `summary.md` and
+machine-readable headline/finalist aggregates to `summary.json`; runs with
+`telemetry.stage_timing_mode=off` mark those diagnostics unavailable instead of
+emitting per-chunk timing artifacts.
+
+`scripts/benchmark_regenie2_linear_fresh_process.py`
+
+Benchmarks quantitative REGENIE step 2 startup behavior. By default it measures
+fresh Python child-process wall time, including interpreter startup, imports,
+JAX backend setup, and the run itself. Pass `--same-process-trials` to append a
+hot same-process section to the JSON report, `--multi-phenotype-count` to
+generate cloned quantitative traits for amortization measurements, and
+`--emit-stage-timings` to write per-trial stage timing JSON. Same-process trials
+disable telemetry output so repeated runs can share one process-global logging
+configuration.
 
 `tooling.cli.run_regenie2_matrix`
 
@@ -174,7 +189,7 @@ just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
 just profile-app-full-landau tool.output_dir=data/profiles/app_profile_current
 ```
 
-The full Justfile command reference is `docs/development/justfile.md`. It covers recipe
+The full Justfile command reference is `documentation/development/justfile.md`. It covers recipe
 inputs, outputs, and when to use each command.
 
 Hydra-backed Justfile recipes accept trailing Hydra overrides. Use this form for
@@ -240,11 +255,44 @@ step 1 prediction lists must be present.
 
 Start with a dry run. This writes `profile_plan.json` and `profile_plan.md`
 without running workloads. It also writes `artifact_manifest.json`, including
-optional profiler availability and skipped-tool reasons:
+optional profiler availability, skipped-tool reasons, and the campaign budget
+estimate:
 
 ```bash
 just profile-app-full-dry-run tool.output_dir=data/profiles/app_profile_plan
 ```
+
+Use the REGENIE-focused dry run when planning paired original or patched
+REGENIE comparisons:
+
+```bash
+just profile-regenie2-deep-dry-run \
+  tool.include_regenie_baseline=true \
+  tool.output_dir=data/profiles/regenie_pair_plan
+```
+
+The plan reports section-level candidate/case counts and subprocess estimates
+for BGEN pre-sweep, tuning, finalists, headline trials, deep profilers, logging
+perturbation, and Rust Criterion. Non-dry runs fail before input validation when
+the estimate exceeds `tool.max_subprocess_runs` or
+`tool.max_major_profiler_runs`. Use `tool.allow_over_budget=true` only for an
+intentional large campaign submitted to the correct SLURM node.
+
+Split independent trait/device sweeps with `tool.workload_keys`. The accepted
+selectors are `all`, `quantitative`, `binary`, `cpu`, `gpu`, and the concrete
+workload keys `quantitative_cpu`, `quantitative_gpu`, `binary_cpu`, and
+`binary_gpu`:
+
+```bash
+just profile-regenie2-deep-dry-run \
+  tool.workload_keys=[binary_gpu] \
+  tool.output_dir=data/profiles/binary_gpu_plan
+```
+
+When original REGENIE baselines are enabled, `tool.regenie_baseline_trait_types`
+is filtered to the selected workload traits. For example, a `binary_gpu` run
+does not schedule a default quantitative REGENIE baseline unless the selected
+workloads include a quantitative key.
 
 Install optional user-local profiler tools before a deep campaign when the host
 does not already provide them:
@@ -257,9 +305,9 @@ just install-nsight-tools
 `install-profiling-tools` installs Python and native sampling profilers through
 `uv tool` and Cargo. `install-nsight-tools` installs the Nsight Systems (`nsys`)
 and Nsight Compute (`ncu`) CLIs without root by reading NVIDIA's CUDA package
-index for the current Ubuntu repository, verifying package SHA256 digests, and
-extracting the `.deb` payloads into `.tools/nsight`. It links `nsys` and `ncu`
-into `.tools/bin`, which `scripts/server_env.sh` already puts on `PATH`.
+index, verifying package SHA256 digests, and extracting the `.deb` payloads into
+`.tools/nsight`. It links `nsys` and `ncu` into `.tools/bin`, which
+`scripts/server_env.sh` already puts on `PATH`.
 On gauss/landau the recipe defaults `ncu` to the CUDA 12.2-compatible Nsight
 Compute package because `landau` advertises driver CUDA compatibility 12.2, and
 it reads NVIDIA's Ubuntu 22.04 CUDA package index because the Ubuntu 24.04 index
@@ -298,6 +346,37 @@ The smoke recipe sets `tool.enable_rust_criterion=false` so it validates the
 JAX/Python/native-profiler workflow without spending time in Criterion. The
 full `profile-app-full-landau` recipe keeps Criterion enabled.
 
+The `profile-app-full-landau` and `profile-regenie2-deep-landau` recipes use a
+bounded 12-hour `landau` default instead of the broad exploratory grid. This is
+the practical recipe used for the successful `data/profiles/deep-20260608-final-full`
+campaign:
+
+```bash
+just profile-app-full-landau \
+  tool.output_dir=data/profiles/deep-20260608-final-full \
+  tool.chunk_sizes=[2048,4096] \
+  tool.staging_depths=[1,2] \
+  tool.output_writer_thread_counts=[1,4] \
+  tool.writer_queue_depth_multipliers=[1,2] \
+  tool.firth_batch_sizes=[32] \
+  tool.bgen_decode_tile_variant_counts=[64,128] \
+  tool.rayon_thread_counts=[4,8] \
+  tool.top_bgen_candidates=1 \
+  tool.top_finalists=2 \
+  tool.tuning_warmups=0 \
+  tool.tuning_trials=1 \
+  tool.finalist_warmups=0 \
+  tool.finalist_trials=2 \
+  tool.headline_warmups=0 \
+  tool.headline_trials=3
+```
+
+With all four workload keys selected and original REGENIE disabled, this plan is
+about 130 subprocess runs and 18 major profiler or Criterion runs. Override
+`tool.workload_keys` to split the same bounded campaign across multiple jobs,
+for example `tool.workload_keys=[binary_gpu]` on one node and
+`tool.workload_keys=[quantitative_gpu]` on another.
+
 Run the full profile bundle on `landau`:
 
 ```bash
@@ -308,12 +387,17 @@ The full run writes:
 
 - `tooling.log`: phase-level progress for long-running jobs.
 - `preflight.json`: git, hardware, JAX, Rust, CUDA, REGENIE, and input metadata.
-- `summary.json`: structured run results, comparisons, stage totals, and
-  profiler metadata.
-- `summary.md`: human-readable bottleneck report.
-- `artifact_manifest.json`: artifact list, profiler availability, and skipped
-  profiler reasons.
+- `summary.json`: structured run results, comparisons, JAX cache diagnostics,
+  stage totals, binary correction diagnostics, and profiler metadata.
+- `summary.md`: human-readable bottleneck report with compact binary correction
+  diagnostic tables plus a JAX compile/cache table with cold-versus-warm
+  subprocess timing, persistent-cache path and use, cache file/byte deltas, and
+  parsed compile/cache hit/miss log counts.
+- `artifact_manifest.json`: artifact list, profiler availability, per-profiler
+  artifact and application output paths, and skipped profiler reasons.
 - `logs/*.stdout.log` and `logs/*.stderr.log`: subprocess logs.
+  `g` subprocess stderr logs enable documented JAX persistent-cache DEBUG
+  logging and compile logging for cache-hit and cache-miss diagnostics.
 - `bgen_sweep/bgen_sweep.json`: native BGEN reader pre-sweep.
 - `tuning_*.json`: candidate tuning grids and finalists.
 - `headline_runs/`: winning `g` outputs, plus original REGENIE outputs when
@@ -339,12 +423,11 @@ The full run writes:
   `tool.enable_nsight_compute=true` and `ncu` is available.
 - `deep_profiles/*.perf.data`: Linux perf native stack profiles when `perf` is
   available.
-- `deep_profiles/*_profiler_child.py` and
-  `deep_profiles/*_stage_timings.json`: isolated child scripts and stage timing
-  files for each external profiler pass. External profilers use separate app
-  output prefixes such as `profile_binary_gpu_scalene` and
-  `profile_binary_gpu_memray`, so one profiler cannot leave output files that
-  cause the next profiler to fail.
+- `deep_profiles/profile_*_<profiler>.g/`: isolated application output run
+  directories for profiler-wrapped child processes. Each profiler gets its own
+  output root and `profile_*_<profiler>.stage_timings.json`, while the primary
+  profiler artifacts above keep stable names such as `*.scalene.json` and
+  `*.memray.bin`.
 - Rust Criterion output for `bgen_read` and `preprocess` when
   `tool.enable_rust_criterion=true`.
 
@@ -376,9 +459,52 @@ Useful overrides:
   use this only after a hot kernel is identified because it is intrusive.
 - `tool.enable_logging_perturbation=false`: skip telemetry/logging perturbation
   trials when reproducing a narrower benchmark.
+- `tool.workload_keys=[binary_cpu,binary_gpu]`: tune only selected `g`
+  trait/device workloads. Defaults to all four quantitative/binary CPU/GPU
+  workloads.
+- `tool.result_in_flight_limits=[default,4]`: include explicit result
+  in-flight slot limits in the candidate grid. `default` keeps the runtime
+  derived capacity of `staging_depth + 1`.
+- `tool.dosage_buffer_limits=[default,4]`: include explicit reusable native
+  dosage buffer pool limits in the candidate grid. `default` keeps the runtime
+  derived capacity of `staging_depth + 1`.
 - `tool.rust_benchmarks=[bgen_read]`: limit Rust Criterion benches.
 - `tool.include_regenie_baseline=true`: also run original REGENIE headline
   trials when `regenie` is available.
+- `tool.regenie_executable=/path/to/regenie`: use a specific original or
+  patched REGENIE binary instead of `REGENIE_BIN`/`regenie`.
+- `tool.regenie_baseline_trait_types=[quantitative,binary]`: choose which
+  REGENIE traits get paired baseline trials. The default is the faster
+  quantitative pair.
+- `tool.regenie_baseline_trials=1`: keep paired REGENIE runtime evidence small;
+  increase only for dedicated baseline campaigns.
+- `tool.regenie_baseline_variant_limit=1000`: override the baseline bound. When
+  unset, bounded smoke runs reuse `tool.variant_limit`; the harness writes a
+  REGENIE `--extract` list from the first variants in the matching `.pvar` or
+  `.bim` file so the original REGENIE run is comparable to `g`'s first-N
+variant workload.
+
+Queue timings in `*.stage_timings.json` need direction-aware interpretation:
+`result_queue:put` and blocked `result_in_flight_slots:acquire` are producer
+backpressure signals. `result_queue:consumer_wait` is normally the writer
+thread sleeping while JAX/native work is still upstream, so it is expected idle
+time unless paired with blocked producer puts. `dosage_buffer_pool:consumer_wait`
+blocks native callback delivery while waiting for a reusable decode buffer; tune
+`tool.staging_depths`, `tool.result_in_flight_limits`, and
+`tool.dosage_buffer_limits` before treating that wait as lost wall time.
+In the GLA-47 binary sweep, larger dosage-buffer capacity removed most
+`dosage_buffer_pool:consumer_wait`, but the same runs shifted time into
+`dosage_queue:producer_blocking` because the bounded staging queue correctly
+throttled native delivery behind JAX compute. With `result_queue:put` still at
+zero blocked seconds and mixed CPU/GPU headline results, that pattern did not
+justify increasing packaged queue-capacity defaults.
+
+The summary separates successful direct ratios from unsupported comparisons
+such as disabled baselines, missing REGENIE binaries, or missing `.pvar`/`.bim`
+metadata for bounded pairs. Failed comparisons are reserved for attempted runs
+that did not produce measured runtimes. `artifact_manifest.json` records the
+baseline commands, resolved binaries, input files, generated extract lists, and
+baseline scope used for the run.
 
 ### chr10 Binary And Linear Step 2 Matrix
 
@@ -799,6 +925,45 @@ uv run --no-sync python -m tooling.cli.profile_regenie2_deep \
   tool.smoke=true \
   tool.variant_limit=1000
 ```
+
+### Quantitative Startup Amortization
+
+Use the linear fresh-process script when a profile shows quantitative Step 2 is
+dominated by one-time Python or JAX backend startup. The deep profiler's headline
+trials are isolated subprocesses; this is the right baseline for separate CLI
+invocations, but it overstates repeated Python API workflows and batched
+multi-phenotype runs.
+
+Run CPU checks on a CPU compute node and GPU checks through `landau`:
+
+```bash
+uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py \
+  --device cpu \
+  --data-dir /mnt/beegfs/kirill/Projects/g/data \
+  --output-dir data/benchmarks/linear_startup_cpu \
+  --trials 3 \
+  --same-process-trials 3 \
+  --emit-stage-timings
+
+just slurm-gpu-run 'uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --data-dir /mnt/beegfs/kirill/Projects/g/data --output-dir data/benchmarks/linear_startup_gpu --trials 3 --same-process-trials 3 --emit-stage-timings'
+```
+
+Use `--multi-phenotype-count N` when the question is whether one process can do
+more useful work per BGEN decode/JAX initialization. The generated phenotype and
+prediction-list inputs live under the benchmark output directory and are for
+timing only; do not use cloned traits as scientific evidence.
+
+Interpretation:
+
+- Fresh-process wall time includes import, JAX plugin discovery, backend
+  initialization, dynamic library loading, BGEN delivery, compute, and output.
+- Same-process hot trials reuse Python imports, compatible JAX runtime policy,
+  and process-global native runtime setup. Their stage timings should show
+  `jax_device_configuration_backend_init` near zero after warmup.
+- Multi-phenotype timing is only a valid production recommendation when the
+  requested sample mode matches the user's intended statistics. `complete-case`
+  can batch traits on one shared sample intersection, but it is not equivalent
+  to separate per-phenotype scans when missingness differs.
 
 ### GPU Tuning
 
