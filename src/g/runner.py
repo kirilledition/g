@@ -267,7 +267,7 @@ def initialize_logging(
 
 def regenie(regenie_config: config.RegenieConfig) -> RunArtifacts:
     """Run the shared REGENIE-compatible config path."""
-    config.validate_config(regenie_config)
+    config.validate_config_for_run(regenie_config)
     telemetry_session = telemetry.build_telemetry_session(regenie_config)
     initialize_logging(regenie_config.g_diagnostics, telemetry_session.paths)
     association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)

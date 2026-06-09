@@ -7,6 +7,69 @@ use super::domain::{
     MultiPhenotypeSampleModeValue, NullLogisticNonconvergencePolicyValue, OutputFormatValue, ParquetCompressionValue,
     RegenieTraitTypeValue, ResumeModeValue, SampleKeyModeValue, TelemetryModeValue, TrustedBgenValidationModeValue,
 };
+use super::partial::PartialConfig;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ConfigProvenance {
+    pub(crate) trait_config: TraitConfigProvenance,
+    pub(crate) binary: BinaryConfigProvenance,
+}
+
+impl ConfigProvenance {
+    pub(crate) fn from_partial_config(partial_config: &PartialConfig) -> Self {
+        Self {
+            trait_config: TraitConfigProvenance {
+                trait_type: partial_config.trait_config.trait_type.is_some(),
+                qt: partial_config.trait_config.qt.is_some(),
+                bt: partial_config.trait_config.bt.is_some(),
+            },
+            binary: BinaryConfigProvenance {
+                firth: partial_config.binary.firth.is_some(),
+                approx: partial_config.binary.approx.is_some(),
+                p_threshold: partial_config.binary.p_threshold.is_some(),
+                firth_se: partial_config.binary.firth_se.is_some(),
+            },
+        }
+    }
+
+    pub(crate) fn overlay(&mut self, override_provenance: Self) {
+        self.trait_config.overlay(override_provenance.trait_config);
+        self.binary.overlay(override_provenance.binary);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TraitConfigProvenance {
+    pub(crate) trait_type: bool,
+    pub(crate) qt: bool,
+    pub(crate) bt: bool,
+}
+
+impl TraitConfigProvenance {
+    fn overlay(&mut self, override_provenance: Self) {
+        self.trait_type |= override_provenance.trait_type;
+        self.qt |= override_provenance.qt;
+        self.bt |= override_provenance.bt;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[expect(clippy::struct_excessive_bools, reason = "Provenance mirrors validation-relevant explicit binary options.")]
+pub(crate) struct BinaryConfigProvenance {
+    pub(crate) firth: bool,
+    pub(crate) approx: bool,
+    pub(crate) p_threshold: bool,
+    pub(crate) firth_se: bool,
+}
+
+impl BinaryConfigProvenance {
+    fn overlay(&mut self, override_provenance: Self) {
+        self.firth |= override_provenance.firth;
+        self.approx |= override_provenance.approx;
+        self.p_threshold |= override_provenance.p_threshold;
+        self.firth_se |= override_provenance.firth_se;
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct InputConfigData {
@@ -63,6 +126,10 @@ pub struct BinaryConfigData {
 pub struct GComputeConfigData {
     pub device: DeviceValue,
     pub staging_depth: NonZeroU32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_in_flight_limit: Option<NonZeroU32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dosage_buffer_limit: Option<NonZeroU32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variant_limit: Option<NonZeroU32>,
     pub trusted_no_missing_diploid: bool,
@@ -171,6 +238,8 @@ pub struct RegenieConfigData {
     pub g_output: GOutputConfigData,
     #[serde(rename = "diagnostics")]
     pub g_diagnostics: GDiagnosticsConfigData,
+    #[serde(skip)]
+    pub(crate) provenance: ConfigProvenance,
     #[serde(skip)]
     pub is_validated: bool,
 }

@@ -1,41 +1,19 @@
 use std::collections::BTreeSet;
-use std::path::Path;
 
-use super::data::RegenieConfigData;
-use super::defaults::load_packaged_config_data;
 use super::domain::{DeviceValue, FloatingPointDtypeValue, GpuGenotypeFormatValue, RegenieTraitTypeValue};
+use super::resolved::RegenieConfigData;
 use super::{ConfigError, ConfigResult};
 
 /// Validate a resolved runtime config before execution.
 ///
 /// # Errors
 ///
-/// Returns an error when required inputs are missing, paths do not exist, or options conflict semantically.
+/// Returns an error when required inputs are missing or options conflict semantically.
 pub fn validate_config(config: &RegenieConfigData) -> ConfigResult<()> {
     validate_trait_config(config)?;
     validate_required_input_config(config)?;
-    validate_existing_input_paths(config)?;
     validate_compute_config(config)?;
     validate_binary_config(config)?;
-    Ok(())
-}
-
-fn validate_existing_input_paths(config: &RegenieConfigData) -> ConfigResult<()> {
-    validate_existing_path("--bgen", config.input.bgen.as_ref())?;
-    validate_existing_path("--sample", config.input.sample.as_ref())?;
-    validate_existing_path("--phenoFile", config.input.pheno_file.as_ref())?;
-    validate_existing_path("--covarFile", config.input.covar_file.as_ref())?;
-    validate_existing_path("--pred", config.input.pred.as_ref())?;
-    Ok(())
-}
-
-fn validate_existing_path(option_name: &str, path: Option<&String>) -> ConfigResult<()> {
-    let Some(path) = path else {
-        return Ok(());
-    };
-    if !Path::new(path).exists() {
-        return Err(ConfigError::new(format!("{option_name} path does not exist: {path}.")));
-    }
     Ok(())
 }
 
@@ -112,17 +90,17 @@ fn validate_quantitative_binary_config(config: &RegenieConfigData) -> ConfigResu
         return Ok(());
     }
     let mut binary_only_option_names = Vec::new();
-    if config.binary.firth {
+    if config.provenance.binary.firth {
         binary_only_option_names.push("firth");
     }
-    if config.binary.approx {
+    if config.provenance.binary.approx {
         binary_only_option_names.push("approx");
     }
-    if config.binary.firth_se {
-        binary_only_option_names.push("firth_se");
+    if config.provenance.binary.firth_se {
+        binary_only_option_names.push("firth-se");
     }
-    if config.binary.p_threshold.to_bits() != load_packaged_config_data()?.binary.p_threshold.to_bits() {
-        binary_only_option_names.push("p_threshold");
+    if config.provenance.binary.p_threshold {
+        binary_only_option_names.push("pThresh");
     }
     raise_for_quantitative_binary_only_options(&binary_only_option_names)
 }

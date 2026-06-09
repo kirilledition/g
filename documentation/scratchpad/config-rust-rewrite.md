@@ -26,9 +26,10 @@ Status for the `rust-cli-config-pyo3` follow-up pass:
 
 * Implemented: Rust owns the public interface module under `src/interface`, the packaged default TOML lives beside that module, and Python remains a thin PyO3 consumer.
 * Implemented: `config.default.toml` remains the single packaged default source and is parsed through a cached `OnceLock`; build-time default generation is intentionally not restored.
-* Planned in this pass: split the Rust interface into resolved data, partial TOML schema, overlay/provenance, TOML IO, pure validation, run-boundary validation, and grouped CLI parser modules.
-* Planned in this pass: add internal provenance for validation-relevant explicit fields and use it for trait/binary-only validation instead of comparing values to defaults.
-* Planned in this pass: keep `from_toml` and TOML-shaped Python `from_options` free of filesystem existence checks; use run validation at CLI and runner execution boundaries.
+* Implemented in this pass: split the Rust interface into resolved data, partial TOML schema, overlay/provenance, TOML IO, pure validation, run-boundary validation, and grouped CLI parser modules.
+* Implemented in this pass: added internal provenance for validation-relevant explicit fields and use it for trait/binary-only validation instead of comparing values to defaults.
+* Implemented in this pass: keep `from_toml` and TOML-shaped Python `from_options` free of filesystem existence checks; use run validation at CLI and runner execution boundaries.
+* Implemented in this pass: effective TOML with matching metadata clears provenance for default binary-only fields so generated quantitative configs round-trip without being mistaken for user-explicit binary options.
 * Intentionally adjusted: non-REGENIE CLI flags remain snake_case, for example `--staging_depth`, `--writer_threads`, and `--jax_persistent_cache`, matching the product decision for this branch.
 * Intentionally adjusted: effective TOML keeps direct Serde serialization for now; no custom render tree is introduced unless internal names later diverge from the public TOML contract.
 * Deferred: tests are not edited in this pass. Existing tests may need follow-up updates for the new internal provenance and run-validation boundary.

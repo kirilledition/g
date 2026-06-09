@@ -42,6 +42,11 @@ def validate_config(config: RegenieConfig) -> None:
     g._core.validate_regenie_config(config)
 
 
+def validate_config_for_run(config: RegenieConfig) -> None:
+    """Validate a complete normalized config at the execution boundary."""
+    g._core.validate_regenie_config_for_run(config)
+
+
 def write_toml(config: RegenieConfig, path: Path | str) -> None:
     """Write deterministic TOML."""
     g._core.write_config_toml(config, path)

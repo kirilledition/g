@@ -1,22 +1,23 @@
 use std::fmt;
 
 mod cli;
-mod data;
 mod defaults;
 mod domain;
-mod resolve;
-mod schema;
-mod serialization;
+mod overlay;
+mod partial;
+mod resolved;
+mod run_validation;
+mod toml;
 mod validation;
 
 pub use cli::{CliOutcomeData, dispatch_cli};
-pub use data::{
+pub use defaults::load_packaged_config_data;
+pub use resolved::{
     BinaryConfigData, GComputeConfigData, GDiagnosticsConfigData, GOutputConfigData, InputConfigData,
     RegenieConfigData, TraitConfigData,
 };
-pub use defaults::load_packaged_config_data;
-pub use resolve::{from_options, from_toml_path};
-pub use serialization::{dumps_toml, write_toml};
+pub use run_validation::validate_config_for_run;
+pub use toml::{dumps_toml, from_options, from_toml_path, write_toml};
 pub use validation::validate_config;
 
 const DEFAULT_CONFIG_TOML: &str = include_str!("config.default.toml");

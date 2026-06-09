@@ -233,6 +233,16 @@ impl GComputeConfig {
     }
 
     #[getter]
+    fn result_in_flight_limit(&self) -> Option<i64> {
+        self.data.result_in_flight_limit.map(|value| i64::from(value.get()))
+    }
+
+    #[getter]
+    fn dosage_buffer_limit(&self) -> Option<i64> {
+        self.data.dosage_buffer_limit.map(|value| i64::from(value.get()))
+    }
+
+    #[getter]
     fn variant_limit(&self) -> Option<i64> {
         self.data.variant_limit.map(|value| i64::from(value.get()))
     }
@@ -753,6 +763,11 @@ fn validate_regenie_config(config: &RegenieConfig) -> PyResult<()> {
 }
 
 #[pyfunction]
+fn validate_regenie_config_for_run(config: &RegenieConfig) -> PyResult<()> {
+    interface::validate_config_for_run(config.data()).map_err(config_error_to_py)
+}
+
+#[pyfunction]
 #[expect(clippy::needless_pass_by_value, reason = "PyO3 extracts Python list arguments into owned Vec values.")]
 fn dispatch_cli(args: Vec<String>, direct_regenie: bool) -> CliOutcome {
     CliOutcome::new(interface::dispatch_cli(&args, direct_regenie))
@@ -773,6 +788,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(dumps_config_toml, module)?)?;
     module.add_function(wrap_pyfunction!(write_config_toml, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_regenie_config_for_run, module)?)?;
     module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
     Ok(())
 }
