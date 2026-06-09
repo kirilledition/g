@@ -332,7 +332,7 @@ class Regenie2RunEngine:
         covariate_path: str | None = None,
         covariate_names: list[str] | None = None,
         is_binary_trait: bool = False,
-        sample_key_mode: str = "iid",
+        sample_key_mode: g.types.SampleKeyMode | str = "iid",
     ) -> NativeAlignedSampleData: ...
     def align_multi_sample_data(
         self,
@@ -342,7 +342,7 @@ class Regenie2RunEngine:
         covariate_path: str | None = None,
         covariate_names: list[str] | None = None,
         is_binary_trait: bool = False,
-        sample_key_mode: str = "iid",
+        sample_key_mode: g.types.SampleKeyMode | str = "iid",
     ) -> NativeMultiAlignedSampleData: ...
     def align_grouped_sample_data(
         self,
@@ -352,7 +352,7 @@ class Regenie2RunEngine:
         covariate_path: str | None = None,
         covariate_names: list[str] | None = None,
         is_binary_trait: bool = False,
-        sample_key_mode: str = "iid",
+        sample_key_mode: g.types.SampleKeyMode | str = "iid",
     ) -> NativeGroupedAlignedSampleData: ...
     def chromosome_boundary_indices(self) -> list[int]: ...
     def required_chromosomes(self, variant_limit: int | None = None) -> list[str]: ...
@@ -409,14 +409,14 @@ class RegeniePredictionSource:
         phenotype_name: str,
         sample_family_identifiers: list[str],
         sample_individual_identifiers: list[str],
-        sample_key_mode: str = "iid",
+        sample_key_mode: g.types.SampleKeyMode | str = "iid",
     ) -> None: ...
     @staticmethod
     def from_native_aligned_sample_data(
         prediction_list_path: str,
         phenotype_name: str,
         aligned_sample_data: NativeAlignedSampleData,
-        sample_key_mode: str = "iid",
+        sample_key_mode: g.types.SampleKeyMode | str = "iid",
     ) -> RegeniePredictionSource: ...
     def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]: ...
 
@@ -427,19 +427,19 @@ class MultiRegeniePredictionSource:
         phenotype_names: list[str],
         sample_family_identifiers: list[str],
         sample_individual_identifiers: list[str],
-        sample_key_mode: str = "iid",
+        sample_key_mode: g.types.SampleKeyMode | str = "iid",
     ) -> None: ...
     @staticmethod
     def from_native_multi_aligned_sample_data(
         prediction_list_path: str,
         aligned_sample_data: NativeMultiAlignedSampleData,
-        sample_key_mode: str = "iid",
+        sample_key_mode: g.types.SampleKeyMode | str = "iid",
     ) -> MultiRegeniePredictionSource: ...
     @staticmethod
     def from_native_grouped_aligned_sample_data(
         prediction_list_path: str,
         grouped_aligned_sample_data: NativeGroupedAlignedSampleData,
-        sample_key_mode: str = "iid",
+        sample_key_mode: g.types.SampleKeyMode | str = "iid",
     ) -> list[MultiRegeniePredictionSource]: ...
     def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]: ...
 
@@ -460,14 +460,14 @@ class OutputWriterSession:
         self,
         run_directory: str,
         chunks_directory: str,
-        association_mode: str,
+        association_mode: g.types.AssociationMode | str,
         writer_thread_count: int,
         writer_queue_depth: int,
-        output_format: str,
+        output_format: g.types.OutputFormat | str,
         finalize_parquet: bool,
         chunks_per_arrow_file: int,
-        arrow_compression: str,
-        parquet_compression: str,
+        arrow_compression: g.types.ArrowCompression | str,
+        parquet_compression: g.types.ParquetCompression | str,
         collect_stage_timings: bool,
     ) -> None: ...
     def write_regenie2_native_chunk(
@@ -521,14 +521,18 @@ def summarize_variant_major_dosage_chunk_stats(
 def finalize_output_run_chunks(
     run_directory: str,
     chunks_directory: str,
-    association_mode: str,
-    output_format: str,
+    association_mode: g.types.AssociationMode | str,
+    output_format: g.types.OutputFormat | str,
 ) -> str: ...
-def resolve_output_run_paths(output_root: str, association_mode: str, output_format: str) -> NativeOutputRunPaths: ...
+def resolve_output_run_paths(
+    output_root: str,
+    association_mode: g.types.AssociationMode | str,
+    output_format: g.types.OutputFormat | str,
+) -> NativeOutputRunPaths: ...
 def prepare_output_run(
     output_root: str,
-    association_mode: str,
-    output_format: str,
+    association_mode: g.types.AssociationMode | str,
+    output_format: g.types.OutputFormat | str,
     resume: bool,
 ) -> NativePreparedOutputRun: ...
 def load_run_manifest_json(run_directory: str) -> str | None: ...
@@ -541,7 +545,7 @@ def initialize_output_run(
     existing_manifest_json: str | None,
     current_header_json: str,
     resume: bool,
-    resume_mode: str,
+    resume_mode: g.types.ResumeMode | str,
 ) -> NativeInitializedOutputRun: ...
 def configure_bgen_decode_tile_variant_count(tile_variant_count: int) -> None: ...
 def configure_rayon_global_thread_pool(thread_count: int) -> None: ...
@@ -577,7 +581,7 @@ def align_sample_data(
     covariate_path: str | None = None,
     covariate_names: list[str] | None = None,
     is_binary_trait: bool = False,
-    sample_key_mode: str = "iid",
+    sample_key_mode: g.types.SampleKeyMode | str = "iid",
 ) -> NativeAlignedSampleData: ...
 def align_multi_sample_data(
     sample_indices: npt.NDArray[np.int64],
@@ -588,7 +592,7 @@ def align_multi_sample_data(
     covariate_path: str | None = None,
     covariate_names: list[str] | None = None,
     is_binary_trait: bool = False,
-    sample_key_mode: str = "iid",
+    sample_key_mode: g.types.SampleKeyMode | str = "iid",
 ) -> NativeMultiAlignedSampleData: ...
 def align_grouped_sample_data(
     sample_indices: npt.NDArray[np.int64],
@@ -599,7 +603,7 @@ def align_grouped_sample_data(
     covariate_path: str | None = None,
     covariate_names: list[str] | None = None,
     is_binary_trait: bool = False,
-    sample_key_mode: str = "iid",
+    sample_key_mode: g.types.SampleKeyMode | str = "iid",
 ) -> NativeGroupedAlignedSampleData: ...
 def config_from_options(raw_options: typing.Mapping[str, typing.Any]) -> RegenieConfig: ...
 def config_from_toml(path: str | Path) -> RegenieConfig: ...
@@ -617,7 +621,7 @@ def align_sample_data_from_sample_file(
     covariate_path: str | None = None,
     covariate_names: list[str] | None = None,
     is_binary_trait: bool = False,
-    sample_key_mode: str = "iid",
+    sample_key_mode: g.types.SampleKeyMode | str = "iid",
 ) -> NativeAlignedSampleData: ...
 def align_multi_sample_data_from_sample_file(
     sample_path: str,
@@ -627,5 +631,5 @@ def align_multi_sample_data_from_sample_file(
     covariate_path: str | None = None,
     covariate_names: list[str] | None = None,
     is_binary_trait: bool = False,
-    sample_key_mode: str = "iid",
+    sample_key_mode: g.types.SampleKeyMode | str = "iid",
 ) -> NativeMultiAlignedSampleData: ...
