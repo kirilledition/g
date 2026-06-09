@@ -122,7 +122,7 @@ impl TelemetryLineWriter {
 impl io::Write for TelemetryLineWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         if self.event_cap_state.event_cap.is_none() {
-            let event_count = buffer.iter().fold(0_usize, |count, byte| count + usize::from(*byte == b'\n'));
+            let event_count = memchr::memchr_iter(b'\n', buffer).count();
             if event_count > 0 {
                 self.event_cap_state.written_event_count.fetch_add(event_count, Ordering::Relaxed);
             }

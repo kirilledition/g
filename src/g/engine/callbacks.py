@@ -914,6 +914,8 @@ class NativeBgenCallbackRunner(abc.ABC):
         *,
         worker_name: str,
         staging_depth: int = 1,
+        result_in_flight_limit: int | None = None,
+        dosage_buffer_limit: int | None = None,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
     ) -> None:
@@ -921,14 +923,20 @@ class NativeBgenCallbackRunner(abc.ABC):
         if staging_depth <= 0:
             message = "staging_depth must be positive."
             raise ValueError(message)
+        if result_in_flight_limit is not None and result_in_flight_limit <= 0:
+            message = "result_in_flight_limit must be positive when provided."
+            raise ValueError(message)
+        if dosage_buffer_limit is not None and dosage_buffer_limit <= 0:
+            message = "dosage_buffer_limit must be positive when provided."
+            raise ValueError(message)
         self.processed_chunk_count = 0
         self.stage_timing_recorder = stage_timing_recorder
         self.telemetry_session = telemetry_session
         self.current_progress_chromosome: str | None = None
         self.dosage_queue_depth = staging_depth
         self.result_queue_depth = staging_depth
-        self.result_in_flight_limit = self.result_queue_depth + 1
-        self.dosage_buffer_limit = self.dosage_queue_depth + 1
+        self.result_in_flight_limit = result_in_flight_limit or self.result_queue_depth + 1
+        self.dosage_buffer_limit = dosage_buffer_limit or self.dosage_queue_depth + 1
         self.result_in_flight_slot_count = 0
         self.result_in_flight_slot_lock = threading.Lock()
         self.dosage_queue: queue.Queue[
@@ -1674,6 +1682,8 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         prediction_source: RegeniePredictionSourceProtocol,
         writer_session: typing.Any,
         staging_depth: int = 1,
+        result_in_flight_limit: int | None = None,
+        dosage_buffer_limit: int | None = None,
         score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
         linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
@@ -1697,6 +1707,8 @@ class LinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         super().__init__(
             worker_name="regenie2-linear-callback",
             staging_depth=staging_depth,
+            result_in_flight_limit=result_in_flight_limit,
+            dosage_buffer_limit=dosage_buffer_limit,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
         )
@@ -1979,6 +1991,8 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         writer_sessions: tuple[typing.Any, ...],
         committed_chunk_identifier_sets: tuple[set[int], ...],
         staging_depth: int = 1,
+        result_in_flight_limit: int | None = None,
+        dosage_buffer_limit: int | None = None,
         score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
         linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None = None,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
@@ -2003,6 +2017,8 @@ class MultiLinearRegenie2PipelineCallback(NativeBgenCallbackRunner):
         super().__init__(
             worker_name="regenie2-multi-linear-callback",
             staging_depth=staging_depth,
+            result_in_flight_limit=result_in_flight_limit,
+            dosage_buffer_limit=dosage_buffer_limit,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
         )
@@ -2282,6 +2298,8 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             types.NullLogisticNonconvergencePolicy.FAIL
         ),
         staging_depth: int = 1,
+        result_in_flight_limit: int | None = None,
+        dosage_buffer_limit: int | None = None,
         score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
@@ -2306,6 +2324,8 @@ class BinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         super().__init__(
             worker_name="regenie2-binary-callback",
             staging_depth=staging_depth,
+            result_in_flight_limit=result_in_flight_limit,
+            dosage_buffer_limit=dosage_buffer_limit,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
         )
@@ -2651,6 +2671,8 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
             types.NullLogisticNonconvergencePolicy.FAIL
         ),
         staging_depth: int = 1,
+        result_in_flight_limit: int | None = None,
+        dosage_buffer_limit: int | None = None,
         score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
         stage_timing_recorder: timing.StageTimingRecorder | None = None,
         telemetry_session: telemetry.TelemetrySession | None = None,
@@ -2676,6 +2698,8 @@ class MultiBinaryRegenie2PipelineCallback(NativeBgenCallbackRunner):
         super().__init__(
             worker_name="regenie2-multi-binary-callback",
             staging_depth=staging_depth,
+            result_in_flight_limit=result_in_flight_limit,
+            dosage_buffer_limit=dosage_buffer_limit,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
         )

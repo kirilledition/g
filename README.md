@@ -25,11 +25,14 @@ The package is designed for reproducible, large-scale association runs where the
 
 ## Documentation
 
-User-facing documentation lives under `docs/public/` and is built with Zensical. Development-team docs live under `docs/development/`; internal work artifacts and historical notes live under `docs/scratchpad/`. GitHub Pages deployment is defined in `.github/workflows/docs.yml`; the expected published URL is:
+User-facing documentation lives under `documentation/public/` and is built with Zensical. Development-team docs live under `documentation/development/`; internal work artifacts and historical notes live under `documentation/scratchpad/`. GitHub Pages deployment is defined in `.github/workflows/docs.yml`; the expected published URL is:
 
 ```text
 https://kirilledition.github.io/g/
 ```
+
+The public guide includes an algorithm reference at `documentation/public/algorithm.md`
+covering the Step 2 mathematics, parameter effects, and output interpretation.
 
 Local documentation commands:
 
@@ -77,19 +80,19 @@ REGENIE is already a very strong CPU implementation. `g` focuses on architecture
 - preserve run manifests and effective configs for reproducibility;
 - expose profiling-grade telemetry for performance work.
 
-For single-phenotype scans, speedups can be limited by BGEN decode, host-device transfer, and output. The long-term performance path is to decode each genotype chunk once and reuse it across more useful work, especially multi-phenotype quantitative scans.
+For single-phenotype scans, speedups can be limited by BGEN decode, host-device transfer, output, and first-process Python/JAX startup. The long-term performance path is to keep repeated work in one process and decode each genotype chunk once for more useful work, especially multi-phenotype quantitative scans.
 
 ---
 
 ## Requirements
 
-The project is managed with `uv`, `just`, Rust/Cargo, and `maturin`.
+The project is installed from a Git checkout because it is not published on PyPI.
 
 - Python: `>=3.14,<3.15`
 - Runtime Python dependencies: JAX, NumPy
 - Native extension: Rust 2024 + PyO3 ABI3 for Python 3.14
 - Optional GPU workflow: CUDA-capable JAX environment
-- Development/benchmark tools: `plink`, `plink2`, `regenie`, `zstd`, and optionally Nix/SLURM
+- Development/benchmark tools: `just`, `maturin`, `plink`, `plink2`, `regenie`, `zstd`, and optionally Nix/SLURM
 
 Install-time runtime dependency policy is intentionally small. Python table libraries such as Polars and PyArrow are development/inspection dependencies, not core runtime dependencies.
 
@@ -97,48 +100,19 @@ Install-time runtime dependency policy is intentionally small. Python table libr
 
 ## Setup
 
-### Nix development shell
+Use [documentation/public/installation.md](documentation/public/installation.md) for the consumer install path. It
+installs from source into a checkout-local `.venv/` through `uv`, so it does not modify your system
+Python or an existing Conda environment.
 
-```bash
-nix develop
-```
-
-### CPU-oriented local setup
-
-```bash
-just bootstrap
-just doctor
-just check-local
-```
-
-### GPU-capable setup
-
-```bash
-just bootstrap-gpu
-just doctor-jax
-```
-
-### Ubuntu / SLURM server setup
-
-On the server, bootstrap repo-local tools and source the generated environment script:
-
-```bash
-UV_CACHE_DIR=/tmp/g-uv-cache uv run --no-project python scripts/bootstrap_server_tools.py
-source scripts/server_env.sh
-```
-
-Useful server checks:
-
-```bash
-just doctor-server
-just doctor-baselines
-```
-
-See `docs/development/NO_NIX_DEVELOPMENT.md` and `docs/development/UBUNTU_SLURM_DEVELOPMENT.md` for environment-specific workflows.
+Development setup uses `just`, development dependency groups, and optional server-specific wrappers.
+Start from [documentation/development/index.md](documentation/development/index.md) when changing code.
 
 ---
 
 ## Quick start
+
+For user commands against your own files, start with [documentation/public/quickstart.md](documentation/public/quickstart.md).
+The local fixture commands below are development and evaluation conveniences for this checkout.
 
 Prepare the local 1000 Genomes chromosome 22 benchmark data and simulated phenotypes:
 
@@ -403,7 +377,7 @@ Opt-in batching mode:
 --g-multi-phenotype-sample-mode complete-case
 ```
 
-This runs a shared complete-case sample intersection for all requested phenotypes and can reuse genotype decoding/transfer across traits. It is faster when applicable, but it is **not statistically equivalent** to running each phenotype with its own sample set. Use it only when the shared complete-case intersection is intended.
+This runs a shared complete-case sample intersection for all requested phenotypes and can reuse genotype decoding/transfer across traits. It also amortizes one-time Python and JAX backend startup over more work when the run is launched once. It is faster when applicable, but it is **not statistically equivalent** to running each phenotype with its own sample set. Use it only when the shared complete-case intersection is intended.
 
 ---
 
@@ -643,20 +617,16 @@ just coverage-rust
 just coverage
 ```
 
-Codex task-farm helpers:
+Symphony orchestration helpers:
 
 ```bash
-just codex-tasks-sync
-just codex-tasks-doctor
-just codex-tasks-list
-just codex-tasks-run --jobs 4
-just codex-tasks-status
-just codex-tasks-review 1
-just codex-tasks-integrate 1
-just codex-tasks-integrate-ready
+just symphony-doctor
+just symphony-run
+just symphony-cleanup
+just symphony-cleanup-apply
 ```
 
-The task farm uses isolated Git worktrees for worker branches and an integration workflow for reviewed branches. See `docs/development/codex-task-farm.md`.
+Symphony uses Linear-dispatched issue worktrees and direct validated branch integration. See `documentation/development/symphony.md`.
 
 ---
 
@@ -664,16 +634,16 @@ The task farm uses isolated Git worktrees for worker branches and an integration
 
 Useful docs:
 
-- `docs/public/` — user-facing setup, CLI, configuration, input/output, and troubleshooting guidance
-- `docs/development/STYLEGUIDE.md` — coding rules and review expectations
-- `docs/development/NO_NIX_DEVELOPMENT.md` — local reduced-toolchain workflow
-- `docs/development/UBUNTU_SLURM_DEVELOPMENT.md` — server and SLURM workflow
-- `docs/development/simd-optimization-reference.md` — SIMD decisions and BGEN decode optimization notes
-- `docs/development/logging-setup.md` — telemetry and logging design notes
-- `docs/development/codex-task-farm.md` — Codex worktree automation
-- `docs/scratchpad/` — internal learning notes, profiling results, and review-derived work products
+- `documentation/public/` — user-facing setup, CLI, configuration, input/output, and troubleshooting guidance
+- `documentation/development/STYLEGUIDE.md` — coding rules and review expectations
+- `documentation/development/NO_NIX_DEVELOPMENT.md` — local reduced-toolchain workflow
+- `documentation/development/UBUNTU_SLURM_DEVELOPMENT.md` — server and SLURM workflow
+- `documentation/development/simd-optimization-reference.md` — SIMD decisions and BGEN decode optimization notes
+- `documentation/development/logging-setup.md` — telemetry and logging design notes
+- `documentation/development/symphony.md` — Linear-backed multi-agent orchestration
+- `documentation/scratchpad/` — internal learning notes, profiling results, and review-derived work products
 
-Some older docs may be historical or pending cleanup. Prefer this README, `docs/development/ROADMAP.md`, and the focused public/development docs for current orientation.
+Some older docs may be historical or pending cleanup. Prefer this README, `documentation/development/ROADMAP.md`, and the focused public/development docs for current orientation.
 
 ---
 

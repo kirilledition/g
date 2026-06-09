@@ -1,0 +1,184 @@
+# Agent Learning
+
+This document consolidates task-oriented planning notes that used to be spread
+across multiple markdown files. It is intended to preserve useful engineering
+context without keeping stale task lists in the docs tree.
+
+## Audit Result
+
+The June 2026 task-doc audit found that most historical plans were already
+implemented:
+
+- Configuration defaults now come from `src/g/config.default.toml`, option
+  metadata lives in Rust `OptionSpec`, and TOML loading is owned by the Rust
+  frontend.
+- Native grouped alignment, prediction-source grouping, telemetry stream
+  ownership, trusted packed8 decode improvements, output streaming, and setup
+  reuse work have landed.
+- Non-custom-kernel compute optimizations have landed: production timing no
+  longer synchronizes by default, public result statistics narrow on device,
+  warm-cache coverage reaches production entrypoints, score kernels stack shared
+  genotype products, chunk stats are bundled through PyO3, Firth candidate
+  dispatch has tiny/small tiers, and sparse approximate Firth can use compact
+  carrier lanes.
+- Firth hot-path capacity selection uses fixed-shape tiny/small/bounded tiers,
+  multi-binary approximate Firth is batched over flattened trait-variant lanes,
+  and the benchmark harness can sweep trait counts, storage modes, Firth batch
+  sizes, candidate capacities, and fallback densities.
+
+The standalone task-plan documents were removed after their durable lessons were
+merged here. Current implementation work should be tracked in Linear, not as
+free-floating task sections in docs.
+
+## Generated Follow-Ups
+
+The audit created these bounded Linear follow-ups:
+
+- [GLA-23](https://linear.app/glaphyra/issue/GLA-23/profile-packed8-score-custom-kernel-gate): profile the packed8 score custom-kernel gate before any Pallas/CUDA prototype.
+- [GLA-24](https://linear.app/glaphyra/issue/GLA-24/add-regenie-compatible-step-2-text-output): add typed REGENIE Step 2-compatible text output.
+- [GLA-25](https://linear.app/glaphyra/issue/GLA-25/add-bounded-trace-mode-telemetry-event-caps): added bounded trace-mode telemetry event caps.
+- [GLA-26](https://linear.app/glaphyra/issue/GLA-26/persist-binary-benchmark-diagnostics-in-summaries): persist richer binary benchmark diagnostics in summary JSON.
+
+## Configuration
+
+The live configuration contract is documented in
+[Configuration and CLI Architecture](../development/configuration_cli_architecture.md).
+Historical config rewrite notes reduced to these rules:
+
+- `config.default.toml` owns user-tunable defaults.
+- Rust `OptionSpec` owns canonical CLI names, config sections, value types,
+  choices, support level, and default policy.
+- Rust decodes TOML, overlays defaults, user TOML, and CLI/Python overrides,
+  then exposes resolved PyO3 config objects to Python.
+- Runtime subsystems should receive resolved `RegenieConfig` or
+  `ExecutionPlan` values, not raw CLI dictionaries, environment variables, or
+  packaged default views.
+- Config tests should continue guarding against reintroducing configurable
+  `DEFAULT_*` constants outside the default catalog path.
+
+## Native Boundaries
+
+The stable ownership split is:
+
+```text
+Rust:
+  BGEN decode/preprocessing
+  sample, covariate, phenotype, and prediction alignment primitives
+  output writing/finalization
+  manifest/resume validation
+  low-overhead telemetry streams
+
+Python:
+  public API
+  CLI/TOML/config normalization
+  execution planning
+  JAX runtime setup
+  high-level orchestration
+
+JAX:
+  multi-phenotype kernels
+  binary Firth and approximate Firth
+  dense linear algebra where batching is large enough
+```
+
+Production association paths should stay variant-major. Row-major BGEN decode
+paths are useful for parity/reference tests, but production BGEN dispatch uses
+variant-major dosage or packed8 delivery.
+
+Rust optimization work improved local native paths, but app-level GPU hot
+benchmarks were effectively flat on the measured workloads because JAX,
+worker, and output orchestration dominated. Future native performance work
+should start with an app-level bottleneck signal rather than isolated native
+microbenchmarks alone.
+
+## Binary And Firth
+
+Binary approximate Firth remains the most performance-sensitive scientific
+surface. Durable constraints from the completed work:
+
+- Keep the rare full-chunk overflow path in a separate executable. A 2026-06-09
+  GLA-42 attempt to fold bounded-vs-overflow routing into the common JAX
+  dispatch removed one scalar candidate-count synchronization, but regressed
+  chr22 binary headline performance because the common executable then carried
+  the full-chunk overflow branch.
+- Capacity selection inside the common executable should stay fixed-shape across
+  tiny, small, and bounded tiers.
+- Multi-binary capacity is based on flattened trait-variant lanes.
+- Single-trait and multi-trait correction paths must preserve the same overflow
+  semantics and failure labels.
+- Sparse masks are modifiers for already-selected Firth lanes, not candidate
+  selectors.
+- Larger Firth batch/capacity sweeps did not justify changing the current
+  defaults: `firth-batch-size = 1024` and
+  `firth-candidate-capacity = 2048`.
+- Binary null logistic non-convergence fails by default; warning mode is an
+  explicit opt-in.
+- Invalid binary score statistics should emit NaN public statistics, not
+  misleading zero chi-square or p-value fields.
+
+Exact Firth without `--approx` and SPA remain unsupported public features.
+Those are scientific parity projects and should be scoped as explicit Linear
+issues before implementation.
+
+## Custom Kernels
+
+Custom kernels are still possible, but they need profiling proof first. The
+current order of attack is:
+
+1. Profile packed8 score-only runs to see whether packed8 decode plus score
+   reductions are memory-traffic limited.
+2. Prefer a Pallas prototype before CUDA FFI because it stays inside JAX
+   tracing and shape specialization.
+3. Keep the current JAX implementation as a runtime fallback.
+4. Add parity tests before making any benchmark claims.
+5. Move to Firth kernels only after traces show solver reductions, compact
+   sparse carrier work, or candidate preparation dominates high-Firth runs.
+
+Stop custom-kernel work if it improves microbenchmarks but not chr10/chr22 hot
+runs after warmup, requires wider numerical tolerances than current packed8
+versus variant-major tests, or makes CPU/non-CUDA test runs fragile.
+
+## Output
+
+Arrow chunks and Parquet run outputs remain the fast path. Public association
+statistics are currently written as float32. A future float64 public output
+schema would need schema/versioning, writer, manifest, resume, and native
+dispatch changes, not just a compute dtype option.
+
+REGENIE-compatible text output is still a useful compatibility gap. It should
+be implemented as a typed writer/finalizer, not as Python table formatting.
+That work is tracked in GLA-24.
+
+## Telemetry And Benchmarking
+
+Production timing should not force JAX synchronization by default. Exact stage
+timings are diagnostic and should be requested deliberately when the user needs
+synchronized attribution.
+
+Trace mode is also diagnostic and can perturb performance. It has a bounded
+event-cap policy so accidental high-volume tracing fails clearly or drops
+events only under the documented lossy policy.
+
+Binary hot benchmark summaries should persist enough diagnostic information to
+interpret Firth performance across runs: score candidates, Firth candidates,
+correction branch counts, failure/correction codes, and the relevant stage
+timing paths. That work is tracked in GLA-26.
+
+## Validation Anchors
+
+Useful commands from the completed campaigns:
+
+```bash
+uv run pytest tests/test_interface.py tests/test_cli.py -q
+uv run pytest tests/test_regenie2_binary.py tests/test_regenie2_pipeline.py -q
+uv run pytest tests/test_regenie2_linear.py tests/test_regenie2_binary.py tests/test_timing.py tests/test_telemetry.py tests/test_warm_cache.py tests/test_regenie2_pipeline.py -q
+uv run pytest tests/test_regenie_comparison_scripts.py -q -k binary_hot
+uv run ty check src/g tests
+uv run ruff check src tests
+. scripts/server_env.sh && cargo test --lib --quiet
+. scripts/server_env.sh && cargo test --test rust_python_bindings --quiet
+```
+
+GPU work must run through SLURM on `landau`. Use `--stage-timing-mode off` for
+production throughput and `--stage-timing-mode exact` for synchronized stage
+attribution.

@@ -23,6 +23,20 @@ tool:
   variant_limit: null
   dry_run: false
   include_regenie_baseline: true
+  regenie_executable: null
+  regenie_baseline_trait_types:
+    - quantitative
+  regenie_baseline_variant_limit: null
+  regenie_baseline_warmups: 0
+  regenie_baseline_trials: 1
+  workload_keys:
+    - quantitative_cpu
+    - quantitative_gpu
+    - binary_cpu
+    - binary_gpu
+  max_subprocess_runs: 1000
+  max_major_profiler_runs: 64
+  allow_over_budget: false
   smoke: false
   skip_deep_profiles: false
   enable_jax_trace: true
@@ -47,6 +61,10 @@ tool:
   staging_depths:
     - 1
     - 2
+  result_in_flight_limits:
+    - null
+  dosage_buffer_limits:
+    - null
   output_writer_thread_counts:
     - 1
     - 2

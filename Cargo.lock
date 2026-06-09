@@ -723,6 +723,7 @@ dependencies = [
  "crossbeam-channel",
  "csv",
  "flate2",
+ "memchr",
  "memmap2",
  "numpy",
  "parquet",

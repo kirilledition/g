@@ -2,7 +2,7 @@
 /data/
 /outputs/
 /results/
-/site/
+/documentation_rendered_website/
 /.tools/
 .direnv/
 .venv/
@@ -25,6 +25,5 @@ src/g/_core*.so
 
 *.ruff_cache
 
-.codex-task-worktrees/
 .symphony/
 .env.symphony

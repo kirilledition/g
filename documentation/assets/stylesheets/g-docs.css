@@ -1,0 +1,55 @@
+.md-content__inner > .g-section-scroll-page {
+  border-top: 0.05rem solid var(--md-default-fg-color--lightest);
+  margin-top: 3rem;
+  padding-top: 2.2rem;
+}
+
+.md-content__inner > .g-section-scroll-page:first-child {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.md-content__inner > .g-section-scroll-page > h1[id]:first-of-type {
+  margin-top: 0;
+  scroll-margin-top: 4rem;
+}
+
+.g-section-scroll-loading .md-content__inner::after {
+  animation: g-section-scroll-spin 0.8s linear infinite;
+  border: 0.12rem solid var(--md-default-fg-color--lightest);
+  border-top-color: var(--md-accent-fg-color);
+  border-radius: 999rem;
+  content: "";
+  display: block;
+  height: 1.2rem;
+  margin: 2rem auto;
+  width: 1.2rem;
+}
+
+.md-typeset .arithmatex {
+  overflow-x: auto;
+}
+
+.md-typeset .arithmatex mjx-container[display="true"] {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.md-typeset .mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 1.2rem 0;
+}
+
+@keyframes g-section-scroll-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media print {
+  .md-content__inner > .g-section-scroll-page {
+    break-before: page;
+  }
+}

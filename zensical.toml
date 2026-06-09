@@ -5,18 +5,17 @@ site_author = "kirill denisov"
 site_url = "https://kirilledition.github.io/g/"
 repo_url = "https://github.com/kirilledition/g"
 repo_name = "kirilledition/g"
-edit_uri = "edit/main/docs/"
-docs_dir = "docs"
-site_dir = "site"
+edit_uri = "edit/main/documentation/"
+docs_dir = "documentation"
+site_dir = "documentation_rendered_website"
 nav = [
   { "Home" = "index.md" },
-  { "Public User Guide" = [
+  { "User Guide" = [
     "public/index.md",
     "public/getting-started.md",
     "public/installation.md",
     "public/quickstart.md",
-  ] },
-  { "User Guide" = [
+    "public/algorithm.md",
     "public/cli.md",
     "public/configuration.md",
     "public/input-output.md",
@@ -38,7 +37,6 @@ nav = [
     "development/logging-setup.md",
     "development/performance-discovery.md",
     "development/simd-optimization-reference.md",
-    "development/codex-task-farm.md",
     "development/symphony.md",
   ] },
   { "Scratchpad" = [
@@ -49,9 +47,22 @@ nav = [
     "scratchpad/output-performance-results.md",
   ] },
 ]
+extra_css = ["assets/stylesheets/g-docs.css"]
+extra_javascript = [
+  "assets/javascripts/section-scroll.js",
+  "assets/javascripts/mathjax.js",
+  "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
+  "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js",
+  "assets/javascripts/mermaid.js",
+]
+
+[project.extra]
+generator = false
 
 [project.theme]
 variant = "modern"
+logo = "assets/images/sparkles-logo.svg"
+favicon = "assets/images/sparkles-favicon.svg"
 features = [
   "navigation.sections",
   "navigation.expand",
