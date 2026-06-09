@@ -1046,100 +1046,138 @@ def compute_firth_variantwise_fixed_batches(
             dense_lane_mask = active_mask & (~compact_sparse_lane_mask)
             dense_stream_plan = build_firth_lane_stream_plan(dense_lane_mask)
             compact_stream_plan = build_firth_lane_stream_plan(compact_sparse_lane_mask)
-            compact_null_failed_mask = (
-                ~jnp.isfinite(null_penalized_log_likelihood)
-                if null_penalized_log_likelihood.ndim == 0
-                else ~jnp.isfinite(jnp.take(null_penalized_log_likelihood, compact_stream_plan.lane_indices, axis=0))
+            empty_fallback_result = regenie2_binary_firth_types.build_empty_firth_variant_result(
+                firth_batch_size
             )
-            dense_null_penalized_log_likelihood = (
-                null_penalized_log_likelihood
-                if null_penalized_log_likelihood.ndim == 0
-                else jnp.take(
-                    null_penalized_log_likelihood,
-                    dense_stream_plan.lane_indices,
+            empty_result = regenie2_binary_firth_types.build_empty_firth_variant_result(active_mask.shape[0])
+            dense_stream_has_lanes = dense_stream_plan.active_count > 0
+            compact_stream_has_lanes = compact_stream_plan.active_count > 0
+
+            def compute_dense_stream(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
+                dense_null_penalized_log_likelihood = (
+                    null_penalized_log_likelihood
+                    if null_penalized_log_likelihood.ndim == 0
+                    else jnp.take(
+                        null_penalized_log_likelihood,
+                        dense_stream_plan.lane_indices,
+                        axis=0,
+                    )
+                )
+                return compute_firth_variantwise_fixed_batches_without_sparse_compaction(
+                    covariate_matrix=covariate_matrix,
+                    null_logistic_coefficients=null_logistic_coefficients,
+                    null_firth_offset=null_firth_offset,
+                    phenotype_vector=phenotype_vector,
+                    genotype_matrix_by_variant=jnp.take(
+                        genotype_matrix_by_variant,
+                        dense_stream_plan.lane_indices,
+                        axis=0,
+                    ),
+                    raw_genotype_matrix_by_variant=jnp.take(
+                        raw_genotype_matrix_by_variant,
+                        dense_stream_plan.lane_indices,
+                        axis=0,
+                    ),
+                    loco_offset=loco_offset,
+                    initial_coefficients=jnp.take(initial_coefficients, dense_stream_plan.lane_indices, axis=0),
+                    active_mask=dense_stream_plan.active_mask,
+                    sparse_correction_mask=jnp.take(sparse_correction_mask, dense_stream_plan.lane_indices, axis=0),
+                    fallback_count=dense_stream_plan.active_count,
+                    firth_batch_size=firth_batch_size,
+                    null_penalized_log_likelihood=dense_null_penalized_log_likelihood,
+                    kernel_config=kernel_config,
+                )
+
+            dense_result = jax.lax.cond(
+                dense_stream_has_lanes,
+                compute_dense_stream,
+                lambda _: empty_fallback_result,
+                operand=None,
+            )
+
+            def compute_compact_stream(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
+                compact_null_failed_mask = (
+                    ~jnp.isfinite(null_penalized_log_likelihood)
+                    if null_penalized_log_likelihood.ndim == 0
+                    else ~jnp.isfinite(
+                        jnp.take(null_penalized_log_likelihood, compact_stream_plan.lane_indices, axis=0)
+                    )
+                )
+                compact_lane_raw_genotype_matrix = jnp.take(
+                    raw_genotype_matrix_by_variant,
+                    compact_stream_plan.lane_indices,
                     axis=0,
                 )
-            )
-
-            dense_result = compute_firth_variantwise_fixed_batches_without_sparse_compaction(
-                covariate_matrix=covariate_matrix,
-                null_logistic_coefficients=null_logistic_coefficients,
-                null_firth_offset=null_firth_offset,
-                phenotype_vector=phenotype_vector,
-                genotype_matrix_by_variant=jnp.take(genotype_matrix_by_variant, dense_stream_plan.lane_indices, axis=0),
-                raw_genotype_matrix_by_variant=jnp.take(
-                    raw_genotype_matrix_by_variant,
-                    dense_stream_plan.lane_indices,
+                compact_carrier_indices = build_compact_sparse_carrier_indices(
+                    raw_genotype_matrix_by_variant=compact_lane_raw_genotype_matrix,
+                    sparse_carrier_dosage_threshold=kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
+                )
+                compact_carrier_count = jnp.take(carrier_count, compact_stream_plan.lane_indices, axis=0)
+                compact_carrier_slot_mask = (
+                    jnp.arange(SPARSE_FIRTH_CARRIER_CAPACITY, dtype=jnp.int32)[None, :]
+                    < compact_carrier_count[:, None]
+                ) & compact_stream_plan.active_mask[:, None]
+                compact_lane_genotype_matrix = jnp.take(
+                    genotype_matrix_by_variant,
+                    compact_stream_plan.lane_indices,
                     axis=0,
+                )
+                compact_genotype_matrix = jnp.take_along_axis(
+                    compact_lane_genotype_matrix,
+                    compact_carrier_indices,
+                    axis=1,
+                )
+                compact_phenotype_matrix = jnp.take(
+                    jnp.asarray(phenotype_vector, dtype=jnp.float64),
+                    compact_carrier_indices,
+                    axis=0,
+                )
+                compact_offset_matrix = jnp.take(
+                    jnp.asarray(null_firth_offset, dtype=jnp.float64),
+                    compact_carrier_indices,
+                    axis=0,
+                )
+                return compute_compact_sparse_firth_variantwise_fixed_batches(
+                    phenotype_matrix=compact_phenotype_matrix,
+                    genotype_matrix_by_variant=jnp.asarray(compact_genotype_matrix, dtype=jnp.float64),
+                    offset_matrix=compact_offset_matrix,
+                    active_carrier_slot_mask=compact_carrier_slot_mask,
+                    full_null_deviance=jnp.asarray(full_null_deviance, dtype=jnp.float64),
+                    active_mask=compact_stream_plan.active_mask,
+                    fallback_count=compact_stream_plan.active_count,
+                    firth_batch_size=firth_batch_size,
+                    null_failed_mask=compact_null_failed_mask,
+                    kernel_config=kernel_config,
+                )
+
+            compact_result = jax.lax.cond(
+                compact_stream_has_lanes,
+                compute_compact_stream,
+                lambda _: empty_fallback_result,
+                operand=None,
+            )
+
+            scattered_dense_result = jax.lax.cond(
+                dense_stream_has_lanes,
+                lambda base: scatter_firth_variant_result_by_lane_stream(
+                    base_result=base,
+                    lane_indices=dense_stream_plan.lane_indices,
+                    active_mask=dense_stream_plan.active_mask,
+                    stream_result=dense_result,
                 ),
-                loco_offset=loco_offset,
-                initial_coefficients=jnp.take(initial_coefficients, dense_stream_plan.lane_indices, axis=0),
-                active_mask=dense_stream_plan.active_mask,
-                sparse_correction_mask=jnp.take(sparse_correction_mask, dense_stream_plan.lane_indices, axis=0),
-                fallback_count=dense_stream_plan.active_count,
-                firth_batch_size=firth_batch_size,
-                null_penalized_log_likelihood=dense_null_penalized_log_likelihood,
-                kernel_config=kernel_config,
+                lambda base: base,
+                empty_result,
             )
-
-            compact_lane_raw_genotype_matrix = jnp.take(
-                raw_genotype_matrix_by_variant,
-                compact_stream_plan.lane_indices,
-                axis=0,
-            )
-            compact_carrier_indices = build_compact_sparse_carrier_indices(
-                raw_genotype_matrix_by_variant=compact_lane_raw_genotype_matrix,
-                sparse_carrier_dosage_threshold=kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
-            )
-            compact_carrier_count = jnp.take(carrier_count, compact_stream_plan.lane_indices, axis=0)
-            compact_carrier_slot_mask = (
-                jnp.arange(SPARSE_FIRTH_CARRIER_CAPACITY, dtype=jnp.int32)[None, :] < compact_carrier_count[:, None]
-            ) & compact_stream_plan.active_mask[:, None]
-            compact_lane_genotype_matrix = jnp.take(
-                genotype_matrix_by_variant,
-                compact_stream_plan.lane_indices,
-                axis=0,
-            )
-            compact_genotype_matrix = jnp.take_along_axis(
-                compact_lane_genotype_matrix,
-                compact_carrier_indices,
-                axis=1,
-            )
-            compact_phenotype_matrix = jnp.take(
-                jnp.asarray(phenotype_vector, dtype=jnp.float64),
-                compact_carrier_indices,
-                axis=0,
-            )
-            compact_offset_matrix = jnp.take(
-                jnp.asarray(null_firth_offset, dtype=jnp.float64),
-                compact_carrier_indices,
-                axis=0,
-            )
-            compact_result = compute_compact_sparse_firth_variantwise_fixed_batches(
-                phenotype_matrix=compact_phenotype_matrix,
-                genotype_matrix_by_variant=jnp.asarray(compact_genotype_matrix, dtype=jnp.float64),
-                offset_matrix=compact_offset_matrix,
-                active_carrier_slot_mask=compact_carrier_slot_mask,
-                full_null_deviance=jnp.asarray(full_null_deviance, dtype=jnp.float64),
-                active_mask=compact_stream_plan.active_mask,
-                fallback_count=compact_stream_plan.active_count,
-                firth_batch_size=firth_batch_size,
-                null_failed_mask=compact_null_failed_mask,
-                kernel_config=kernel_config,
-            )
-
-            empty_result = regenie2_binary_firth_types.build_empty_firth_variant_result(active_mask.shape[0])
-            scattered_dense_result = scatter_firth_variant_result_by_lane_stream(
-                base_result=empty_result,
-                lane_indices=dense_stream_plan.lane_indices,
-                active_mask=dense_stream_plan.active_mask,
-                stream_result=dense_result,
-            )
-            return scatter_firth_variant_result_by_lane_stream(
-                base_result=scattered_dense_result,
-                lane_indices=compact_stream_plan.lane_indices,
-                active_mask=compact_stream_plan.active_mask,
-                stream_result=compact_result,
+            return jax.lax.cond(
+                compact_stream_has_lanes,
+                lambda base: scatter_firth_variant_result_by_lane_stream(
+                    base_result=base,
+                    lane_indices=compact_stream_plan.lane_indices,
+                    active_mask=compact_stream_plan.active_mask,
+                    stream_result=compact_result,
+                ),
+                lambda base: base,
+                scattered_dense_result,
             )
 
         return jax.lax.cond(
@@ -1211,90 +1249,133 @@ def compute_firth_multi_variantwise_fixed_batches(
             dense_lane_mask = active_mask & (~compact_sparse_lane_mask)
             dense_stream_plan = build_firth_lane_stream_plan(dense_lane_mask)
             compact_stream_plan = build_firth_lane_stream_plan(compact_sparse_lane_mask)
-
-            dense_result = compute_firth_multi_variantwise_fixed_batches_without_sparse_compaction(
-                covariate_matrix=covariate_matrix,
-                null_logistic_coefficients=jnp.take(null_logistic_coefficients, dense_stream_plan.lane_indices, axis=0),
-                null_firth_offset_matrix=jnp.take(null_firth_offset_matrix, dense_stream_plan.lane_indices, axis=0),
-                phenotype_matrix=jnp.take(phenotype_matrix, dense_stream_plan.lane_indices, axis=0),
-                genotype_matrix_by_variant=jnp.take(genotype_matrix_by_variant, dense_stream_plan.lane_indices, axis=0),
-                raw_genotype_matrix_by_variant=jnp.take(
-                    raw_genotype_matrix_by_variant,
-                    dense_stream_plan.lane_indices,
-                    axis=0,
-                ),
-                loco_offset_matrix=jnp.take(loco_offset_matrix, dense_stream_plan.lane_indices, axis=0),
-                initial_coefficients=jnp.take(initial_coefficients, dense_stream_plan.lane_indices, axis=0),
-                active_mask=dense_stream_plan.active_mask,
-                sparse_correction_mask=jnp.take(sparse_correction_mask, dense_stream_plan.lane_indices, axis=0),
-                fallback_count=dense_stream_plan.active_count,
-                firth_batch_size=firth_batch_size,
-                null_penalized_log_likelihood=jnp.take(
-                    null_penalized_log_likelihood,
-                    dense_stream_plan.lane_indices,
-                    axis=0,
-                ),
-                kernel_config=kernel_config,
+            empty_fallback_result = regenie2_binary_firth_types.build_empty_firth_variant_result(
+                firth_batch_size
             )
-
-            compact_lane_raw_genotype_matrix = jnp.take(
-                raw_genotype_matrix_by_variant,
-                compact_stream_plan.lane_indices,
-                axis=0,
-            )
-            compact_carrier_indices = build_compact_sparse_carrier_indices(
-                raw_genotype_matrix_by_variant=compact_lane_raw_genotype_matrix,
-                sparse_carrier_dosage_threshold=kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
-            )
-            compact_carrier_count = jnp.take(carrier_count, compact_stream_plan.lane_indices, axis=0)
-            compact_carrier_slot_mask = (
-                jnp.arange(SPARSE_FIRTH_CARRIER_CAPACITY, dtype=jnp.int32)[None, :] < compact_carrier_count[:, None]
-            ) & compact_stream_plan.active_mask[:, None]
-            compact_lane_genotype_matrix = jnp.take(
-                genotype_matrix_by_variant,
-                compact_stream_plan.lane_indices,
-                axis=0,
-            )
-            compact_lane_phenotype_matrix = jnp.take(phenotype_matrix, compact_stream_plan.lane_indices, axis=0)
-            compact_lane_offset_matrix = jnp.take(null_firth_offset_matrix, compact_stream_plan.lane_indices, axis=0)
-            compact_genotype_matrix = jnp.take_along_axis(
-                compact_lane_genotype_matrix,
-                compact_carrier_indices,
-                axis=1,
-            )
-            compact_phenotype_matrix = jnp.take_along_axis(
-                compact_lane_phenotype_matrix,
-                compact_carrier_indices,
-                axis=1,
-            )
-            compact_offset_matrix = jnp.take_along_axis(compact_lane_offset_matrix, compact_carrier_indices, axis=1)
-            compact_result = compute_compact_sparse_firth_variantwise_fixed_batches(
-                phenotype_matrix=jnp.asarray(compact_phenotype_matrix, dtype=jnp.float64),
-                genotype_matrix_by_variant=jnp.asarray(compact_genotype_matrix, dtype=jnp.float64),
-                offset_matrix=jnp.asarray(compact_offset_matrix, dtype=jnp.float64),
-                active_carrier_slot_mask=compact_carrier_slot_mask,
-                full_null_deviance=jnp.take(full_null_deviance, compact_stream_plan.lane_indices, axis=0),
-                active_mask=compact_stream_plan.active_mask,
-                fallback_count=compact_stream_plan.active_count,
-                firth_batch_size=firth_batch_size,
-                null_failed_mask=~jnp.isfinite(
-                    jnp.take(null_penalized_log_likelihood, compact_stream_plan.lane_indices)
-                ),
-                kernel_config=kernel_config,
-            )
-
             empty_result = regenie2_binary_firth_types.build_empty_firth_variant_result(active_mask.shape[0])
-            scattered_dense_result = scatter_firth_variant_result_by_lane_stream(
-                base_result=empty_result,
-                lane_indices=dense_stream_plan.lane_indices,
-                active_mask=dense_stream_plan.active_mask,
-                stream_result=dense_result,
+            dense_stream_has_lanes = dense_stream_plan.active_count > 0
+            compact_stream_has_lanes = compact_stream_plan.active_count > 0
+
+            def compute_dense_stream(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
+                return compute_firth_multi_variantwise_fixed_batches_without_sparse_compaction(
+                    covariate_matrix=covariate_matrix,
+                    null_logistic_coefficients=jnp.take(
+                        null_logistic_coefficients, dense_stream_plan.lane_indices, axis=0
+                    ),
+                    null_firth_offset_matrix=jnp.take(
+                        null_firth_offset_matrix, dense_stream_plan.lane_indices, axis=0
+                    ),
+                    phenotype_matrix=jnp.take(phenotype_matrix, dense_stream_plan.lane_indices, axis=0),
+                    genotype_matrix_by_variant=jnp.take(
+                        genotype_matrix_by_variant, dense_stream_plan.lane_indices, axis=0
+                    ),
+                    raw_genotype_matrix_by_variant=jnp.take(
+                        raw_genotype_matrix_by_variant,
+                        dense_stream_plan.lane_indices,
+                        axis=0,
+                    ),
+                    loco_offset_matrix=jnp.take(loco_offset_matrix, dense_stream_plan.lane_indices, axis=0),
+                    initial_coefficients=jnp.take(initial_coefficients, dense_stream_plan.lane_indices, axis=0),
+                    active_mask=dense_stream_plan.active_mask,
+                    sparse_correction_mask=jnp.take(sparse_correction_mask, dense_stream_plan.lane_indices, axis=0),
+                    fallback_count=dense_stream_plan.active_count,
+                    firth_batch_size=firth_batch_size,
+                    null_penalized_log_likelihood=jnp.take(
+                        null_penalized_log_likelihood,
+                        dense_stream_plan.lane_indices,
+                        axis=0,
+                    ),
+                    kernel_config=kernel_config,
+                )
+
+            dense_result = jax.lax.cond(
+                dense_stream_has_lanes,
+                compute_dense_stream,
+                lambda _: empty_fallback_result,
+                operand=None,
             )
-            return scatter_firth_variant_result_by_lane_stream(
-                base_result=scattered_dense_result,
-                lane_indices=compact_stream_plan.lane_indices,
-                active_mask=compact_stream_plan.active_mask,
-                stream_result=compact_result,
+
+            def compute_compact_stream(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
+                compact_null_failed_mask = ~jnp.isfinite(
+                    jnp.take(null_penalized_log_likelihood, compact_stream_plan.lane_indices)
+                )
+                compact_lane_raw_genotype_matrix = jnp.take(
+                    raw_genotype_matrix_by_variant,
+                    compact_stream_plan.lane_indices,
+                    axis=0,
+                )
+                compact_carrier_indices = build_compact_sparse_carrier_indices(
+                    raw_genotype_matrix_by_variant=compact_lane_raw_genotype_matrix,
+                    sparse_carrier_dosage_threshold=kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
+                )
+                compact_carrier_count = jnp.take(carrier_count, compact_stream_plan.lane_indices, axis=0)
+                compact_carrier_slot_mask = (
+                    jnp.arange(SPARSE_FIRTH_CARRIER_CAPACITY, dtype=jnp.int32)[None, :]
+                    < compact_carrier_count[:, None]
+                ) & compact_stream_plan.active_mask[:, None]
+                compact_lane_genotype_matrix = jnp.take(
+                    genotype_matrix_by_variant,
+                    compact_stream_plan.lane_indices,
+                    axis=0,
+                )
+                compact_lane_phenotype_matrix = jnp.take(
+                    phenotype_matrix, compact_stream_plan.lane_indices, axis=0
+                )
+                compact_lane_offset_matrix = jnp.take(
+                    null_firth_offset_matrix, compact_stream_plan.lane_indices, axis=0
+                )
+                compact_genotype_matrix = jnp.take_along_axis(
+                    compact_lane_genotype_matrix,
+                    compact_carrier_indices,
+                    axis=1,
+                )
+                compact_phenotype_matrix = jnp.take_along_axis(
+                    compact_lane_phenotype_matrix,
+                    compact_carrier_indices,
+                    axis=1,
+                )
+                compact_offset_matrix = jnp.take_along_axis(compact_lane_offset_matrix, compact_carrier_indices, axis=1)
+                return compute_compact_sparse_firth_variantwise_fixed_batches(
+                    phenotype_matrix=jnp.asarray(compact_phenotype_matrix, dtype=jnp.float64),
+                    genotype_matrix_by_variant=jnp.asarray(compact_genotype_matrix, dtype=jnp.float64),
+                    offset_matrix=jnp.asarray(compact_offset_matrix, dtype=jnp.float64),
+                    active_carrier_slot_mask=compact_carrier_slot_mask,
+                    full_null_deviance=jnp.take(full_null_deviance, compact_stream_plan.lane_indices, axis=0),
+                    active_mask=compact_stream_plan.active_mask,
+                    fallback_count=compact_stream_plan.active_count,
+                    firth_batch_size=firth_batch_size,
+                    null_failed_mask=compact_null_failed_mask,
+                    kernel_config=kernel_config,
+                )
+
+            compact_result = jax.lax.cond(
+                compact_stream_has_lanes,
+                compute_compact_stream,
+                lambda _: empty_fallback_result,
+                operand=None,
+            )
+
+            scattered_dense_result = jax.lax.cond(
+                dense_stream_has_lanes,
+                lambda base: scatter_firth_variant_result_by_lane_stream(
+                    base_result=base,
+                    lane_indices=dense_stream_plan.lane_indices,
+                    active_mask=dense_stream_plan.active_mask,
+                    stream_result=dense_result,
+                ),
+                lambda base: base,
+                empty_result,
+            )
+            return jax.lax.cond(
+                compact_stream_has_lanes,
+                lambda base: scatter_firth_variant_result_by_lane_stream(
+                    base_result=base,
+                    lane_indices=compact_stream_plan.lane_indices,
+                    active_mask=compact_stream_plan.active_mask,
+                    stream_result=compact_result,
+                ),
+                lambda base: base,
+                scattered_dense_result,
             )
 
         return jax.lax.cond(
