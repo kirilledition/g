@@ -457,6 +457,39 @@ The full run writes:
 - Rust Criterion output for `bgen_read` and `preprocess` when
   `tool.enable_rust_criterion=true`.
 
+### Profile JAX Cache Locations
+
+The deep profile harness always passes an explicit `--g-jax-cache-dir` to each
+`g` child process, but the effective persistent-cache location is selected by
+device:
+
+- CPU profile children use
+  `${G_PROFILE_CPU_JAX_CACHE_PARENT:-/tmp/g-jax-cpu-profile-cache}/host-<hostname>/features-<cpu-fingerprint>/<logical-cache-name>-<logical-path-hash>`.
+  The CPU fingerprint is derived from `/proc/cpuinfo` CPU identity and feature
+  flags. This intentionally prevents CPU AOT artifacts compiled on one SLURM
+  node or CPU feature set from being reused by another node when profile outputs
+  live on BeeGFS.
+- GPU profile children keep the existing node-local layout
+  `${G_PROFILE_GPU_JAX_CACHE_PARENT:-/tmp/g-jax-profile-cache}/<SLURM_JOB_ID-or-pid>/<logical-cache-name>`.
+- The binary-hot GPU benchmark keeps its existing node-local default
+  `${G_PROFILE_GPU_JAX_CACHE_PARENT:-/tmp/g-jax-binary-hot-cache}/<SLURM_JOB_ID-or-pid>/<output-dir-name>`.
+
+The JAX cache table in `summary.md` and the `jax_cache_diagnostics` payload in
+`summary.json` report the effective cache directory used by each child process,
+so cold/warm and hit/miss diagnostics remain tied to the actual path.
+
+To clear profiling caches on the current node, remove the relevant parent:
+
+```bash
+rm -rf "${G_PROFILE_CPU_JAX_CACHE_PARENT:-/tmp/g-jax-cpu-profile-cache}"
+rm -rf "${G_PROFILE_GPU_JAX_CACHE_PARENT:-/tmp/g-jax-profile-cache}"
+rm -rf /tmp/g-jax-binary-hot-cache
+```
+
+Set `G_PROFILE_CPU_JAX_CACHE_PARENT` or `G_PROFILE_GPU_JAX_CACHE_PARENT` to use
+another parent. Keep CPU parents node-local unless you intentionally want the
+host and CPU-feature subdirectories to partition a shared filesystem cache.
+
 The defaults profile chr22 through `dataset=local_1kg`. To profile chr10 with
 the same harness, use the chr10 dataset and matching baseline paths:
 
@@ -559,6 +592,11 @@ The `gpu` and `gpu_cached` runs use separate Python subprocesses and the same
 JAX persistent cache directory. With the default timestamped output directory,
 the first GPU run starts from a fresh cache and the cached run reuses the cache
 populated by that first GPU run.
+
+If `tool.cpu_jax_persistent_cache=true` is enabled for a matrix run, CPU
+commands use the same node and CPU-feature-aware cache layout as the deep
+profile harness. GPU and `gpu_cached` commands continue to share
+`tool.jax_cache_dir/gpu` so the cached GPU comparison remains stable.
 
 First inspect the commands without running heavy work:
 
