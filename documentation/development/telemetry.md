@@ -60,12 +60,28 @@ The default stream layout is:
 accepted as a compatibility alias for the same stream. If both are configured,
 they must point at the same path.
 
+Progress and profile telemetry install the unified JSONL tracing layer with
+`g-log-filter`, so durable operational diagnostics are present by default.
+Trace telemetry uses `g-trace-filter` for targeted high-volume native tracing.
+
 ## Lifecycle Events
 
 Run lifecycle facts are represented once as structured payloads and then used
 for both terminal rendering and the JSONL diagnostics stream. `g regenie`
 success and graceful-interruption messages are derived from these typed
 lifecycle events.
+
+Native frontend diagnostics are also included as structured tracing events.
+`g.cli` mirrors user-facing native stdout/stderr text and
+run-completion/interruption rendering lines through the native tracing bridge:
+
+- `native_cli_stdout`
+- `native_cli_stderr`
+- `native_cli_completed_line`
+- `native_cli_interrupted_line`
+
+These events are emitted before the CLI prints the same text on stdout/stderr,
+so current CLI behavior is preserved while the JSONL stream remains durable.
 
 `run_completed` includes the user-visible output artifacts needed by operators
 and diagnostic tools:

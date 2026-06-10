@@ -28,7 +28,7 @@ mod config;
 mod logging;
 mod output;
 
-use logging::{NativeTelemetrySession, initialize_logging, shutdown_logging};
+use logging::{NativeTelemetrySession, emit_diagnostic_event, initialize_logging, shutdown_logging};
 use output::{
     NativeInitializedOutputRun, NativeOutputRunPaths, NativePreparedOutputRun, OutputWriterSession,
     finalize_output_run_chunks, initialize_output_run, load_run_manifest_json, prepare_output_run,
@@ -444,7 +444,7 @@ impl Regenie2RunEngine {
             variant_limit,
             trusted_no_missing_diploid,
         )
-        .map_err(convert_bgen_error)?;
+        .map_err(|error| convert_bgen_error("open_bgen", error))?;
         Ok(Self { engine })
     }
 
@@ -671,7 +671,7 @@ impl Regenie2RunEngine {
             .reader()
             .variant_metadata_slice(variant_start, variant_stop)
             .map(convert_variant_metadata_columns_to_tuple)
-            .map_err(convert_bgen_error)
+            .map_err(|error| convert_bgen_error("read_variant_metadata_slice", error))
     }
 
     #[pyo3(signature = (variant_limit=None))]
@@ -693,7 +693,7 @@ impl Regenie2RunEngine {
                 .engine
                 .reader()
                 .variant_metadata_slice(chromosome_start_index, chromosome_start_index + 1)
-                .map_err(convert_bgen_error)?;
+                .map_err(|error| convert_bgen_error("read_variant_metadata_slice", error))?;
             let chromosome_label = metadata.chromosome.into_iter().next().ok_or_else(|| {
                 PyRuntimeError::new_err("Chromosome boundary metadata contained no chromosome label.")
             })?;
@@ -711,11 +711,17 @@ impl Regenie2RunEngine {
     }
 
     fn validate_trusted_no_missing_diploid(&self) -> PyResult<()> {
-        self.engine.reader().validate_trusted_no_missing_diploid().map_err(convert_bgen_error)
+        self.engine
+            .reader()
+            .validate_trusted_no_missing_diploid()
+            .map_err(|error| convert_bgen_error("validate_trusted_no_missing_diploid", error))
     }
 
     fn mark_trusted_no_missing_diploid_validated(&self) -> PyResult<()> {
-        self.engine.reader().mark_trusted_no_missing_diploid_validated().map_err(convert_bgen_error)
+        self.engine
+            .reader()
+            .mark_trusted_no_missing_diploid_validated()
+            .map_err(|error| convert_bgen_error("mark_trusted_no_missing_diploid_validated", error))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -849,7 +855,7 @@ impl RegeniePredictionSource {
             &sample_individual_identifiers,
             parsed_sample_key_mode,
         )
-        .map_err(convert_prediction_error)?;
+        .map_err(|error| convert_prediction_error("load_prediction_source", &error))?;
         Ok(Self { source })
     }
 
@@ -875,7 +881,7 @@ impl RegeniePredictionSource {
             &aligned_sample_data.data.individual_identifiers,
             parsed_sample_key_mode,
         )
-        .map_err(convert_prediction_error)?;
+        .map_err(|error| convert_prediction_error("load_prediction_source_from_native_aligned_sample_data", &error))?;
         Ok(Self { source })
     }
 
@@ -885,7 +891,10 @@ impl RegeniePredictionSource {
         py: Python<'py>,
         chromosome: String,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let prediction_values = self.source.chromosome_predictions(&chromosome).map_err(convert_prediction_error)?;
+        let prediction_values = self
+            .source
+            .chromosome_predictions(&chromosome)
+            .map_err(|error| convert_prediction_error("chromosome_predictions", &error))?;
         Ok(Array1::from_vec(prediction_values.to_vec()).into_pyarray(py))
     }
 }
@@ -916,7 +925,7 @@ impl MultiRegeniePredictionSource {
             &sample_individual_identifiers,
             parsed_sample_key_mode,
         )
-        .map_err(convert_prediction_error)?;
+        .map_err(|error| convert_prediction_error("load_multi_prediction_source", &error))?;
         Ok(Self { source })
     }
 
@@ -940,7 +949,7 @@ impl MultiRegeniePredictionSource {
             &aligned_sample_data.data.individual_identifiers,
             parsed_sample_key_mode,
         )
-        .map_err(convert_prediction_error)?;
+        .map_err(|error| convert_prediction_error("load_multi_prediction_source_from_aligned_samples", &error))?;
         Ok(Self { source })
     }
 
@@ -964,7 +973,7 @@ impl MultiRegeniePredictionSource {
             &aligned_sample_data_groups,
             parsed_sample_key_mode,
         )
-        .map_err(convert_prediction_error)?;
+        .map_err(|error| convert_prediction_error("load_multi_prediction_source_from_grouped_samples", &error))?;
         Ok(sources.into_iter().map(|source| Self { source }).collect())
     }
 
@@ -974,8 +983,10 @@ impl MultiRegeniePredictionSource {
         py: Python<'py>,
         chromosome: String,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
-        let (trait_count, sample_count, prediction_values) =
-            self.source.chromosome_prediction_matrix(&chromosome).map_err(convert_prediction_error)?;
+        let (trait_count, sample_count, prediction_values) = self
+            .source
+            .chromosome_prediction_matrix(&chromosome)
+            .map_err(|error| convert_prediction_error("chromosome_prediction_matrix", &error))?;
         let prediction_matrix = Array2::from_shape_vec((trait_count, sample_count), prediction_values)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(prediction_matrix.into_pyarray(py))
@@ -990,7 +1001,10 @@ impl Regenie2RunEngine {
         callback: &Bound<'py, PyAny>,
         committed_chunk_identifiers: Option<Vec<usize>>,
     ) -> PyResult<usize> {
-        self.engine.reader().prepare_sample_selection(sample_index_values).map_err(convert_bgen_error)?;
+        self.engine
+            .reader()
+            .prepare_sample_selection(sample_index_values)
+            .map_err(|error| convert_bgen_error("prepare_sample_selection", error))?;
 
         let run_result = self.run_prepared_bgen_variant_major_dosage_buffered_chunks(
             py,
@@ -998,7 +1012,11 @@ impl Regenie2RunEngine {
             callback,
             committed_chunk_identifiers,
         );
-        let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
+        let clear_result = self
+            .engine
+            .reader()
+            .clear_prepared_sample_selection()
+            .map_err(|error| convert_bgen_error("clear_prepared_sample_selection", error));
         match (run_result, clear_result) {
             (Err(error), _) | (Ok(_), Err(error)) => Err(error),
             (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
@@ -1012,7 +1030,10 @@ impl Regenie2RunEngine {
         callback: &Bound<'py, PyAny>,
         committed_chunk_identifiers: Option<Vec<usize>>,
     ) -> PyResult<usize> {
-        self.engine.reader().prepare_sample_selection(sample_index_values).map_err(convert_bgen_error)?;
+        self.engine
+            .reader()
+            .prepare_sample_selection(sample_index_values)
+            .map_err(|error| convert_bgen_error("prepare_sample_selection", error))?;
 
         let run_result = self.run_prepared_bgen_variant_major_packed8_probability_pair_buffered_chunks(
             py,
@@ -1020,7 +1041,11 @@ impl Regenie2RunEngine {
             callback,
             committed_chunk_identifiers,
         );
-        let clear_result = self.engine.reader().clear_prepared_sample_selection().map_err(convert_bgen_error);
+        let clear_result = self
+            .engine
+            .reader()
+            .clear_prepared_sample_selection()
+            .map_err(|error| convert_bgen_error("clear_prepared_sample_selection", error));
         match (run_result, clear_result) {
             (Err(error), _) | (Ok(_), Err(error)) => Err(error),
             (Ok(processed_chunk_count), Ok(())) => Ok(processed_chunk_count),
@@ -1035,7 +1060,10 @@ impl Regenie2RunEngine {
         committed_chunk_identifiers: Option<Vec<usize>>,
     ) -> PyResult<usize> {
         let committed_identifier_set = build_committed_identifier_set(committed_chunk_identifiers);
-        let chunk_specs = self.engine.plan_chunks(&committed_identifier_set).map_err(convert_genotype_error)?;
+        let chunk_specs = self
+            .engine
+            .plan_chunks(&committed_identifier_set)
+            .map_err(|error| convert_genotype_error("plan_chunks", error))?;
         for chunk_spec in &chunk_specs {
             py.check_signals()?;
             let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
@@ -1071,14 +1099,16 @@ impl Regenie2RunEngine {
                             output_value_count,
                         )
                     })
-                    .map_err(convert_bgen_error)?;
+                    .map_err(|error| {
+                        convert_bgen_error("read_preprocessed_variant_major_dosage_f32_into_address_prepared", error)
+                    })?;
                 Py::new(py, ChunkStats::new(chunk_stats))?
             };
             let metadata_columns = self
                 .engine
                 .reader()
                 .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
-                .map_err(convert_bgen_error)?;
+                .map_err(|error| convert_bgen_error("variant_metadata_slice", error))?;
             let metadata = Py::new(
                 py,
                 VariantMetadata::new(chunk_spec.variant_start_index, chunk_spec.variant_stop_index, metadata_columns),
@@ -1099,7 +1129,10 @@ impl Regenie2RunEngine {
         committed_chunk_identifiers: Option<Vec<usize>>,
     ) -> PyResult<usize> {
         let committed_identifier_set = build_committed_identifier_set(committed_chunk_identifiers);
-        let chunk_specs = self.engine.plan_chunks(&committed_identifier_set).map_err(convert_genotype_error)?;
+        let chunk_specs = self
+            .engine
+            .plan_chunks(&committed_identifier_set)
+            .map_err(|error| convert_genotype_error("plan_chunks", error))?;
         for chunk_spec in &chunk_specs {
             py.check_signals()?;
             let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
@@ -1139,14 +1172,19 @@ impl Regenie2RunEngine {
                                 output_value_count,
                             )
                     })
-                    .map_err(convert_bgen_error)?;
+                    .map_err(|error| {
+                        convert_bgen_error(
+                            "read_preprocessed_variant_major_packed8_probability_pairs_into_address_prepared",
+                            error,
+                        )
+                    })?;
                 Py::new(py, ChunkStats::new(chunk_stats))?
             };
             let metadata_columns = self
                 .engine
                 .reader()
                 .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)
-                .map_err(convert_bgen_error)?;
+                .map_err(|error| convert_bgen_error("variant_metadata_slice", error))?;
             let metadata = Py::new(
                 py,
                 VariantMetadata::new(chunk_spec.variant_start_index, chunk_spec.variant_stop_index, metadata_columns),
@@ -1392,7 +1430,7 @@ fn plan_genotype_chunks(
         &chromosome_boundary_indices,
         &committed_identifier_set,
     )
-    .map_err(convert_genotype_error)?;
+    .map_err(|error| convert_genotype_error("plan_chromosome_homogeneous_chunks", error))?;
     Ok(chunk_specs.into_iter().map(|chunk_spec| ChunkSpec { chunk_spec }).collect())
 }
 
@@ -1406,7 +1444,22 @@ fn parse_sample_key_mode(sample_key_mode: &str) -> PyResult<SampleKeyMode> {
     }
 }
 
-fn convert_bgen_error(error: BgenError) -> PyErr {
+fn convert_bgen_error(operation: &str, error: BgenError) -> PyErr {
+    let (error_class, message) = match &error {
+        BgenError::InvalidFormat(message) | BgenError::UnsupportedFormat(message) | BgenError::Range(message) => {
+            ("bgen_input", message.clone())
+        }
+        BgenError::Io(io_error) => ("bgen_io", io_error.to_string()),
+    };
+    tracing::warn!(
+        target: "g.python",
+        g_event = "native_boundary_error",
+        subsystem = "bgen",
+        operation = operation,
+        error_class = error_class,
+        error_message = %message,
+        "Converting Rust BGEN error to Python."
+    );
     match error {
         BgenError::InvalidFormat(message) | BgenError::UnsupportedFormat(message) | BgenError::Range(message) => {
             PyValueError::new_err(message)
@@ -1415,25 +1468,79 @@ fn convert_bgen_error(error: BgenError) -> PyErr {
     }
 }
 
-fn convert_genotype_error(error: GenotypeError) -> PyErr {
+fn convert_genotype_error(operation: &str, error: GenotypeError) -> PyErr {
+    let (error_class, message) = match &error {
+        GenotypeError::InvalidInput(message) => ("genotype_input", message.clone()),
+        GenotypeError::Reader(message) => ("genotype_reader", message.clone()),
+    };
+    tracing::warn!(
+        target: "g.python",
+        g_event = "native_boundary_error",
+        subsystem = "genotype",
+        operation = operation,
+        error_class = error_class,
+        error_message = %message,
+        "Converting Rust genotype error to Python."
+    );
     match error {
         GenotypeError::InvalidInput(message) => PyValueError::new_err(message),
         GenotypeError::Reader(message) => PyRuntimeError::new_err(message),
     }
 }
 
-fn convert_prediction_error(error: PredictionError) -> PyErr {
-    match error {
-        PredictionError::PredictionListNotFound(path) => pyo3::exceptions::PyFileNotFoundError::new_err(format!(
-            "Prediction list file not found: {}",
-            path.display()
-        )),
-        PredictionError::LocoFileNotFound(path) => {
-            pyo3::exceptions::PyFileNotFoundError::new_err(format!("LOCO file not found: {}", path.display()))
+fn convert_prediction_error(operation: &str, error: &PredictionError) -> PyErr {
+    let error_message = match error {
+        PredictionError::PredictionListNotFound(path) => {
+            let message = format!("Prediction list file not found: {}", path.display());
+            tracing::warn!(
+                target: "g.python",
+                g_event = "native_boundary_error",
+                subsystem = "prediction",
+                operation = operation,
+                error_class = "prediction_list_not_found",
+                error_message = %message,
+                "Converting Rust prediction error to Python."
+            );
+            return pyo3::exceptions::PyFileNotFoundError::new_err(message);
         }
-        PredictionError::Io(io_error) => PyRuntimeError::new_err(io_error.to_string()),
-        other_error => PyValueError::new_err(other_error.to_string()),
-    }
+        PredictionError::LocoFileNotFound(path) => {
+            let message = format!("LOCO file not found: {}", path.display());
+            tracing::warn!(
+                target: "g.python",
+                g_event = "native_boundary_error",
+                subsystem = "prediction",
+                operation = operation,
+                error_class = "loco_file_not_found",
+                error_message = %message,
+                "Converting Rust prediction error to Python."
+            );
+            return pyo3::exceptions::PyFileNotFoundError::new_err(message);
+        }
+        PredictionError::Io(io_error) => {
+            let message = io_error.to_string();
+            tracing::warn!(
+                target: "g.python",
+                g_event = "native_boundary_error",
+                subsystem = "prediction",
+                operation = operation,
+                error_class = "prediction_io",
+                error_message = %message,
+                "Converting Rust prediction error to Python."
+            );
+            return PyRuntimeError::new_err(message);
+        }
+        other_error => other_error.to_string(),
+    };
+    tracing::warn!(
+        target: "g.python",
+        g_event = "native_boundary_error",
+        subsystem = "prediction",
+        operation = operation,
+        error_class = "prediction_error",
+        error_message = %error_message,
+        "Converting Rust prediction error to Python."
+    );
+    PyValueError::new_err(error_message)
 }
 
 fn build_committed_identifier_set(committed_chunk_identifiers: Option<Vec<usize>>) -> BTreeSet<usize> {
@@ -1477,7 +1584,8 @@ fn build_profile_snapshot_dict(profile_snapshot: &ReaderProfileSnapshot) -> Hash
 #[pyfunction]
 #[allow(clippy::missing_errors_doc)]
 fn configure_bgen_decode_tile_variant_count(tile_variant_count: usize) -> PyResult<()> {
-    set_bgen_decode_tile_variant_count(tile_variant_count).map_err(convert_bgen_error)
+    set_bgen_decode_tile_variant_count(tile_variant_count)
+        .map_err(|error| convert_bgen_error("configure_bgen_decode_tile_variant_count", error))
 }
 
 #[pyfunction]
@@ -1525,6 +1633,7 @@ pub fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(write_run_manifest_json, module)?)?;
     module.add_function(wrap_pyfunction!(configure_bgen_decode_tile_variant_count, module)?)?;
     module.add_function(wrap_pyfunction!(configure_rayon_global_thread_pool, module)?)?;
+    module.add_function(wrap_pyfunction!(emit_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;
     module.add_function(wrap_pyfunction!(shutdown_logging, module)?)?;
     module.add_function(wrap_pyfunction!(plan_genotype_chunks, module)?)?;

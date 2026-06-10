@@ -84,7 +84,7 @@ impl OutputWriterSession {
             parquet_compression,
             collect_stage_timings,
         )
-        .map_err(output_writer_error_to_py)?;
+        .map_err(|error| output_writer_error_to_py(error, "new_output_writer_session"))?;
         Ok(Self { inner })
     }
 
@@ -126,22 +126,23 @@ impl OutputWriterSession {
                 log10_p_value_array,
                 extra_code_array,
             )
-            .map_err(output_writer_error_to_py)
+            .map_err(|error| output_writer_error_to_py(error, "write_regenie2_native_chunk"))
     }
 
     fn finish(&self, py: Python<'_>) -> PyResult<Option<String>> {
         py.detach(|| self.inner.finish())
             .map(|maybe_path| maybe_path.map(|path| path.display().to_string()))
-            .map_err(output_writer_error_to_py)
+            .map_err(|error| output_writer_error_to_py(error, "finish_output_writer"))
     }
 
     #[allow(clippy::needless_pass_by_value)]
     fn finish_interrupted(&self, py: Python<'_>, signal_name: String) -> PyResult<()> {
-        py.detach(|| self.inner.finish_interrupted(&signal_name)).map_err(output_writer_error_to_py)
+        py.detach(|| self.inner.finish_interrupted(&signal_name))
+            .map_err(|error| output_writer_error_to_py(error, "finish_interrupted"))
     }
 
     fn abort(&self, py: Python<'_>) -> PyResult<()> {
-        py.detach(|| self.inner.abort()).map_err(output_writer_error_to_py)
+        py.detach(|| self.inner.abort()).map_err(|error| output_writer_error_to_py(error, "abort_output_writer"))
     }
 }
 
@@ -227,7 +228,7 @@ pub(crate) fn write_regenie2_multi_native_chunk(
                 log10_p_value_array,
                 extra_code_array,
             )
-            .map_err(output_writer_error_to_py)?;
+            .map_err(|error| output_writer_error_to_py(error, "write_regenie2_multi_native_chunk"))?;
     }
     Ok(())
 }
@@ -248,7 +249,7 @@ pub(crate) fn finalize_output_run_chunks(
         native_output_format,
     )
     .map(|path| path.display().to_string())
-    .map_err(output_writer_error_to_py)
+    .map_err(|error| output_writer_error_to_py(error, "finalize_output_run_chunks"))
 }
 
 #[pyfunction]
@@ -278,7 +279,7 @@ pub(crate) fn prepare_output_run(
     let native_output_format = crate::output::OutputFileFormat::parse(&output_format).map_err(PyValueError::new_err)?;
     let prepared_output_run =
         prepare_native_output_run(Path::new(&output_root), &association_mode, native_output_format, resume)
-            .map_err(output_writer_error_to_py)?;
+            .map_err(|error| output_writer_error_to_py(error, "prepare_output_run"))?;
     Ok(NativePreparedOutputRun {
         run_directory: prepared_output_run.output_run_paths.run_directory.display().to_string(),
         chunks_directory: prepared_output_run.output_run_paths.chunks_directory.display().to_string(),
@@ -289,25 +290,29 @@ pub(crate) fn prepare_output_run(
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn load_run_manifest_json(run_directory: String) -> PyResult<Option<String>> {
-    load_native_run_manifest_json(Path::new(&run_directory)).map_err(output_writer_error_to_py)
+    load_native_run_manifest_json(Path::new(&run_directory))
+        .map_err(|error| output_writer_error_to_py(error, "load_run_manifest_json"))
 }
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn write_run_manifest_json(run_directory: String, manifest_json: String) -> PyResult<()> {
-    write_native_run_manifest_json(Path::new(&run_directory), &manifest_json).map_err(output_writer_error_to_py)
+    write_native_run_manifest_json(Path::new(&run_directory), &manifest_json)
+        .map_err(|error| output_writer_error_to_py(error, "write_run_manifest_json"))
 }
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn validate_run_manifest_compatibility(manifest_json: String, current_header_json: String) -> PyResult<()> {
-    validate_native_run_manifest_compatibility(&manifest_json, &current_header_json).map_err(output_writer_error_to_py)
+    validate_native_run_manifest_compatibility(&manifest_json, &current_header_json)
+        .map_err(|error| output_writer_error_to_py(error, "validate_run_manifest_compatibility"))
 }
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn read_manifest_committed_chunk_identifiers(manifest_json: String) -> PyResult<Vec<i64>> {
-    read_native_manifest_committed_chunk_identifiers(&manifest_json).map_err(output_writer_error_to_py)
+    read_native_manifest_committed_chunk_identifiers(&manifest_json)
+        .map_err(|error| output_writer_error_to_py(error, "read_manifest_committed_chunk_identifiers"))
 }
 
 #[pyfunction]
@@ -320,7 +325,8 @@ pub(crate) fn initialize_output_run(
     resume: bool,
     resume_mode: String,
 ) -> PyResult<NativeInitializedOutputRun> {
-    let native_resume_mode = OutputResumeMode::parse(&resume_mode).map_err(output_writer_error_to_py)?;
+    let native_resume_mode = OutputResumeMode::parse(&resume_mode)
+        .map_err(|error| output_writer_error_to_py(error, "parse_output_resume_mode"))?;
     let initialized_output_run = initialize_native_output_run(
         Path::new(&run_directory),
         Path::new(&chunks_directory),
@@ -329,21 +335,22 @@ pub(crate) fn initialize_output_run(
         resume,
         native_resume_mode,
     )
-    .map_err(output_writer_error_to_py)?;
+    .map_err(|error| output_writer_error_to_py(error, "initialize_output_run"))?;
     Ok(NativeInitializedOutputRun { committed_chunk_identifiers: initialized_output_run.committed_chunk_identifiers })
 }
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn scan_committed_chunk_identifiers(chunks_directory: String) -> PyResult<Vec<i64>> {
-    scan_native_committed_chunk_identifiers(Path::new(&chunks_directory)).map_err(output_writer_error_to_py)
+    scan_native_committed_chunk_identifiers(Path::new(&chunks_directory))
+        .map_err(|error| output_writer_error_to_py(error, "scan_committed_chunk_identifiers"))
 }
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn validate_strict_manifest_chunks(chunks_directory: String, manifest_json: String) -> PyResult<Vec<i64>> {
     validate_native_strict_manifest_chunks(Path::new(&chunks_directory), &manifest_json)
-        .map_err(output_writer_error_to_py)
+        .map_err(|error| output_writer_error_to_py(error, "validate_strict_manifest_chunks"))
 }
 
 #[pyfunction]
@@ -353,7 +360,7 @@ pub(crate) fn repair_strict_manifest_chunk_commits(
     manifest_json: String,
 ) -> PyResult<String> {
     let chunk_commits = repair_native_strict_manifest_chunk_commits(Path::new(&chunks_directory), &manifest_json)
-        .map_err(output_writer_error_to_py)?;
+        .map_err(|error| output_writer_error_to_py(error, "repair_strict_manifest_chunk_commits"))?;
     serde_json::to_string(
         &chunk_commits
             .into_iter()
@@ -373,7 +380,19 @@ pub(crate) fn repair_strict_manifest_chunk_commits(
     .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
-fn output_writer_error_to_py(error: OutputWriterError) -> PyErr {
+fn output_writer_error_to_py(error: OutputWriterError, operation: &str) -> PyErr {
+    let (error_kind, message) = match &error {
+        OutputWriterError::InvalidInput(message) => ("invalid_input", message.clone()),
+        OutputWriterError::Runtime(message) => ("runtime", message.clone()),
+    };
+    tracing::warn!(
+        target: "g.python.output",
+        g_event = "native_output_writer_error",
+        operation = operation,
+        error_kind = error_kind,
+        error_message = %message,
+        "Native output writer conversion error."
+    );
     match error {
         OutputWriterError::InvalidInput(message) => PyValueError::new_err(message),
         OutputWriterError::Runtime(message) => PyRuntimeError::new_err(message),
