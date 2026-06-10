@@ -2713,7 +2713,7 @@ def test_binary_callback_warn_policy_allows_null_logistic_nonconvergence(
         callback.finish()
 
     assert callback.current_chromosome == "22"
-    assert any("--g-null-logistic-nonconvergence=warn" in record.message for record in caplog.records)
+    assert any("--null_logistic_nonconvergence_policy=warn" in record.message for record in caplog.records)
 
 
 def test_multi_binary_callback_fails_when_any_null_logistic_trait_does_not_converge() -> None:

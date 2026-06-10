@@ -2130,7 +2130,28 @@ def build_g_step2_child_command(
             jax.profiler.start_trace(trace_directory)
         try:
             start_time = time.perf_counter()
-            artifacts = api.regenie.from_options({{
+            diagnostics_options = dict({diagnostic_options_expression})
+            if {stage_timing_path!r} is not None:
+                diagnostics_options["stage_timings_json"] = {stage_timing_path!r}
+            compute_options = {{
+                "device": {device!r},
+                "staging_depth": {staging_depth},
+                "bgen_decode_tile_variant_count": {bgen_tile_expression},
+                "firth_batch_size": {firth_batch_expression},
+                "jax_persistent_cache": True,
+                "jax_persistent_cache_min_entry_size_bytes": -1,
+                "jax_persistent_cache_min_compile_time_seconds": 0,
+                "jax_xla_autotune_cache": {enable_xla_autotune_cache},
+            }}
+            if {variant_limit_expression} is not None:
+                compute_options["variant_limit"] = {variant_limit_expression}
+            if {result_in_flight_limit_expression} is not None:
+                compute_options["result_in_flight_limit"] = {result_in_flight_limit_expression}
+            if {dosage_buffer_limit_expression} is not None:
+                compute_options["dosage_buffer_limit"] = {dosage_buffer_limit_expression}
+            if {jax_cache_directory_expression} is not None:
+                compute_options["jax_cache_dir"] = {jax_cache_directory_expression}
+            regenie_options = {{
                 "step": 2,
                 "bt" if {trait_type!r} == "binary" else "qt": True,
                 "bgen": {bgen_path!r},
@@ -2141,27 +2162,18 @@ def build_g_step2_child_command(
                 "covarFile": {covariate_path!r},
                 "covarColList": "age,sex",
                 "pred": {prediction_path!r},
-                "g-device": {device!r},
                 "bsize": {chunk_size},
-                "g-variant-limit": {variant_limit_expression},
-                "g-staging-depth": {staging_depth},
-                "g-result-in-flight-limit": {result_in_flight_limit_expression},
-                "g-dosage-buffer-limit": {dosage_buffer_limit_expression},
-                "g-output-format": "parquet",
-                "g-writer-threads": {writer_thread_count},
-                "g-writer-queue-depth": {writer_queue_depth},
-                "g-bgen-decode-tile-variant-count": {bgen_tile_expression},
-                "g-firth-batch-size": {firth_batch_expression},
                 "threads": {rayon_thread_expression},
-                "g-jax-cache-dir": {jax_cache_directory_expression},
-                "g-jax-persistent-cache": True,
-                "g-jax-persistent-cache-min-entry-size-bytes": -1,
-                "g-jax-persistent-cache-min-compile-time-seconds": 0,
-                "g-jax-xla-autotune-cache": {enable_xla_autotune_cache},
-                "g-stage-timings-json": {stage_timing_path!r},
-                **{diagnostic_options_expression},
+                "compute": compute_options,
+                "output": {{
+                    "format": "parquet",
+                    "writer_threads": {writer_thread_count},
+                    "writer_queue_depth": {writer_queue_depth},
+                }},
+                "diagnostics": diagnostics_options,
                 **{binary_options_expression},
-            }})
+            }}
+            artifacts = api.regenie.from_options(regenie_options)
             wall_time_seconds = time.perf_counter() - start_time
             output_row_count, output_paths = count_artifact_rows(artifacts)
             probe_array = jax.device_put(0)
@@ -3269,14 +3281,14 @@ def candidate_from_aggregate_name(winner_key: str, aggregate_result: AggregateRe
         trait_type=trait_type,
         device=device,
         chunk_size=read_int('"bsize": ', 8192),
-        staging_depth=read_int('"g-staging-depth": ', 1),
-        result_in_flight_limit=read_optional_int('"g-result-in-flight-limit": '),
-        dosage_buffer_limit=read_optional_int('"g-dosage-buffer-limit": '),
-        output_writer_thread_count=read_int('"g-writer-threads": ', 8),
-        output_writer_queue_depth=read_int('"g-writer-queue-depth": ', 4),
-        bgen_decode_tile_variant_count=read_int('"g-bgen-decode-tile-variant-count": ', 64),
+        staging_depth=read_int('"staging_depth": ', 1),
+        result_in_flight_limit=read_optional_int('"result_in_flight_limit": '),
+        dosage_buffer_limit=read_optional_int('"dosage_buffer_limit": '),
+        output_writer_thread_count=read_int('"writer_threads": ', 8),
+        output_writer_queue_depth=read_int('"writer_queue_depth": ', 4),
+        bgen_decode_tile_variant_count=read_int('"bgen_decode_tile_variant_count": ', 64),
         rayon_thread_count=read_int('"threads": ', 0) or None,
-        firth_batch_size=read_int('"g-firth-batch-size": ', 1024),
+        firth_batch_size=read_int('"firth_batch_size": ', 1024),
     )
 
 
@@ -4905,39 +4917,39 @@ def build_logging_perturbation_cases(
         LoggingPerturbationCase(
             name="telemetry_off",
             diagnostic_options={
-                "g-telemetry": "off",
-                "g-log-stderr": False,
+                "telemetry": "off",
+                "log_stderr": False,
             },
         ),
         LoggingPerturbationCase(
             name="progress_file_lossy",
             diagnostic_options={
-                "g-telemetry": "progress",
-                "g-log-dir": str(perturbation_directory / "progress_file_lossy_logs"),
-                "g-log-stderr": False,
-                "g-log-lossy": True,
-                "g-log-queue-size": 8192,
+                "telemetry": "progress",
+                "log_dir": str(perturbation_directory / "progress_file_lossy_logs"),
+                "log_stderr": False,
+                "log_lossy": True,
+                "log_queue_size": 8192,
             },
         ),
         LoggingPerturbationCase(
             name="profile_file_lossy",
             diagnostic_options={
-                "g-telemetry": "profile",
-                "g-log-dir": str(perturbation_directory / "profile_file_lossy_logs"),
-                "g-log-stderr": False,
-                "g-log-lossy": True,
-                "g-log-queue-size": 8192,
+                "telemetry": "profile",
+                "log_dir": str(perturbation_directory / "profile_file_lossy_logs"),
+                "log_stderr": False,
+                "log_lossy": True,
+                "log_queue_size": 8192,
             },
         ),
         LoggingPerturbationCase(
             name="trace_file_lossy_capped",
             diagnostic_options={
-                "g-telemetry": "trace",
-                "g-log-dir": str(perturbation_directory / "trace_file_lossy_capped_logs"),
-                "g-log-stderr": False,
-                "g-log-lossy": True,
-                "g-log-queue-size": 8192,
-                "g-trace-event-cap": 100_000,
+                "telemetry": "trace",
+                "log_dir": str(perturbation_directory / "trace_file_lossy_capped_logs"),
+                "log_stderr": False,
+                "log_lossy": True,
+                "log_queue_size": 8192,
+                "trace_event_cap": 100_000,
             },
         ),
     )
@@ -4970,8 +4982,8 @@ def run_logging_perturbation_profiles(
             smoke=arguments.smoke,
         ):
             diagnostic_options = dict(perturbation_case.diagnostic_options)
-            if diagnostic_options.get("g-telemetry") != "off":
-                diagnostic_options["g-log-dir"] = str(
+            if diagnostic_options.get("telemetry") != "off":
+                diagnostic_options["log_dir"] = str(
                     perturbation_directory / f"{winner_key}_{perturbation_case.name}_logs"
                 )
             trial_result = run_g_trial(

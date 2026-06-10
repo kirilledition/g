@@ -409,20 +409,20 @@ def test_hydra_tooling_config_converts_to_tool_arguments() -> None:
         "linear_gpu",
         "linear_gpu_cached",
     ]
-    assert "--g-variant-limit" in chr10_run_specs[0].command_arguments
+    assert "--variant_limit" in chr10_run_specs[0].command_arguments
     assert "1000" in chr10_run_specs[0].command_arguments
-    assert "--g-firth-batch-size" in chr10_run_specs[0].command_arguments
+    assert "--firth_batch_size" in chr10_run_specs[0].command_arguments
     assert "64" in chr10_run_specs[0].command_arguments
-    assert "--g-firth-candidate-capacity" in chr10_run_specs[0].command_arguments
+    assert "--firth_candidate_capacity" in chr10_run_specs[0].command_arguments
     assert "1024" in chr10_run_specs[0].command_arguments
-    assert "--g-firth-batch-size" not in chr10_run_specs[3].command_arguments
-    assert "--g-firth-candidate-capacity" not in chr10_run_specs[3].command_arguments
-    assert "--no-g-jax-persistent-cache" in chr10_run_specs[0].command_arguments
-    assert "--g-jax-cache-dir" in gpu_cache_arguments
-    assert "--g-jax-cache-dir" in cached_gpu_arguments
+    assert "--firth_batch_size" not in chr10_run_specs[3].command_arguments
+    assert "--firth_candidate_capacity" not in chr10_run_specs[3].command_arguments
+    assert "--no-jax_persistent_cache" in chr10_run_specs[0].command_arguments
+    assert "--jax_cache_dir" in gpu_cache_arguments
+    assert "--jax_cache_dir" in cached_gpu_arguments
     assert (
-        gpu_cache_arguments[gpu_cache_arguments.index("--g-jax-cache-dir") + 1]
-        == cached_gpu_arguments[cached_gpu_arguments.index("--g-jax-cache-dir") + 1]
+        gpu_cache_arguments[gpu_cache_arguments.index("--jax_cache_dir") + 1]
+        == cached_gpu_arguments[cached_gpu_arguments.index("--jax_cache_dir") + 1]
     )
 
     chr22_arguments = regenie2_matrix.build_arguments_from_overrides(
@@ -441,7 +441,7 @@ def test_hydra_tooling_config_converts_to_tool_arguments() -> None:
     assert chr22_arguments.linear_prediction_list_path == (
         chr22_arguments.data_directory / "baselines" / "regenie_step1_qt_pred.list"
     )
-    assert "--g-variant-limit" in chr22_run_specs[0].command_arguments
+    assert "--variant_limit" in chr22_run_specs[0].command_arguments
     assert "1000" in chr22_run_specs[0].command_arguments
 
 

@@ -52,7 +52,7 @@ Every run follows that execution shape:
    file or embedded BGEN samples.
 3. Align genotype samples, phenotype rows, covariate rows, and Step 1 LOCO
    predictions using `IID` or `(FID, IID)` according to
-   `--g-sample-key-mode`.
+   `--sample_key_mode`.
 4. Drop rows that are incomplete for the requested phenotype and covariates.
    Require Step 1 LOCO predictions for the remaining aligned samples. Binary
    phenotypes are recoded from REGENIE coding `1 = control`, `2 = case` to
@@ -62,7 +62,7 @@ Every run follows that execution shape:
 7. Decode each chunk to allele-one dosages in `[0, 2]`, mean-impute missing
    genotypes for the compute matrix, and retain observed genotype counts for
    output and numerical statistics.
-8. Dispatch the chunk to JAX on `--g-device cpu` or `--g-device gpu`.
+8. Dispatch the chunk to JAX on `--device cpu` or `--device gpu`.
 9. Write Arrow, Parquet, or REGENIE-text result chunks with a run manifest and
    effective config.
 
@@ -245,8 +245,8 @@ Numerical safeguards:
   this constant shift does not change the residualized genotype or statistic;
   it reduces float32 cancellation for high-frequency allele-one variants.
 - A variant is marked invalid when residualized genotype variance is not larger
-  than `max(--g-linear-minimum-variance, raw_sum_squares *
-  --g-linear-relative-variance-tolerance)`.
+  than `max(--linear_minimum_variance, raw_sum_squares *
+  --linear_relative_variance_tolerance)`.
 - A phenotype/chromosome state is invalid if the adjusted residual variance is
   not positive.
 
@@ -288,8 +288,8 @@ $$
 
 The null coefficients are estimated by iteratively reweighted least squares
 (IRLS). The maximum iteration count and coefficient tolerance are controlled by
-`--g-binary-null-maximum-iterations` and
-`--g-binary-null-coefficient-tolerance`.
+`--binary_null_maximum_iterations` and
+`--binary_null_coefficient_tolerance`.
 
 After the null model is fitted:
 
@@ -405,13 +405,13 @@ the approximate Firth fallback replaces that row.[^source-binary]
 
 Numerical safeguards:
 
-- Fitted probabilities are clipped by `--g-binary-minimum-probability`.
-- Binary variance and information matrices use `--g-binary-minimum-variance`
+- Fitted probabilities are clipped by `--binary_minimum_probability`.
+- Binary variance and information matrices use `--binary_minimum_variance`
   as an absolute floor.
 - The score statistic is invalid when `scoreInformation` is not larger than
-  `max(--g-binary-minimum-variance, weighted_sum_squares *
-  --g-binary-relative-variance-tolerance)`.
-- By default, `--g-null-logistic-nonconvergence fail` aborts when a
+  `max(--binary_minimum_variance, weighted_sum_squares *
+  --binary_relative_variance_tolerance)`.
+- By default, `--null_logistic_nonconvergence_policy fail` aborts when a
   chromosome's null logistic model does not converge. With `warn`, the run
   continues, but nonconverged chromosome/trait rows fail the statistic mask.
 - High-frequency allele-one variants may be tested internally after flipping
@@ -549,10 +549,10 @@ for corrected rows with positive `CHISQ`. This ties the standard error to the
 likelihood-ratio statistic. It does not change candidate selection, the Firth
 fit, `BETA`, `CHISQ`, or `LOG10P`.[^source-firth-se]
 
-Firth-specific tuning options such as `--g-firth-batch-size`,
-`--g-firth-candidate-capacity`, `--g-firth-maximum-iterations`,
-`--g-firth-gradient-tolerance`, `--g-firth-coefficient-tolerance`,
-`--g-firth-likelihood-tolerance`, line-search limits, and sparse-carrier
+Firth-specific tuning options such as `--firth_batch_size`,
+`--firth_candidate_capacity`, `--firth_maximum_iterations`,
+`--firth_gradient_tolerance`, `--firth_coefficient_tolerance`,
+`--firth_likelihood_tolerance`, line-search limits, and sparse-carrier
 thresholds should normally stay at their defaults. They affect performance,
 convergence, or numerical acceptance of candidate rows, not the intended
 scientific model.
@@ -657,9 +657,9 @@ $$
 \right)
 $$
 
-The trusted fast path controlled by `--g-trusted-no-missing-diploid` assumes the
+The trusted fast path controlled by `--trusted_no_missing_diploid` assumes the
 BGEN records are diploid, unphased, no-missing records that match the optimized
-decoder's constraints. `--g-trusted-bgen-validation-mode` controls whether that
+decoder's constraints. `--trusted_bgen_validation_mode` controls whether that
 assumption is validated on cache miss, always validated, or assumed by the user.
 
 ## Multi-Phenotype Behavior
@@ -667,12 +667,12 @@ assumption is validated on cache miss, always validated, or assumed by the user.
 Multiple phenotypes can be requested with repeated `--phenoCol` flags or
 `--phenoColList`.
 
-`--g-multi-phenotype-sample-mode per-phenotype` is the default. Each phenotype
+`--multi_phenotype_sample_mode per-phenotype` is the default. Each phenotype
 keeps its own complete-case sample set. `g` may group phenotypes that happen to
 share compatible aligned samples, but the statistical semantics match separate
 single-phenotype runs.
 
-`--g-multi-phenotype-sample-mode complete-case` builds one shared complete-case
+`--multi_phenotype_sample_mode complete-case` builds one shared complete-case
 intersection across all requested phenotypes. This can reuse genotype decode and
 device transfer work across traits, but it is not equivalent to per-phenotype
 analysis when missingness differs across phenotypes. It changes `sampleCount`,
@@ -688,23 +688,23 @@ Statistical parameters:
 | `--phenoCol`, `--phenoColList` | Yes | Selects the trait vector or trait matrix. |
 | `--covarCol`, `--covarColList` | Yes | Changes `covariateDesignMatrix`, residualization, degrees of freedom, and null model fits. |
 | `--pred` | Yes | Supplies chromosome-specific LOCO predictions or offsets. Different Step 1 models produce different Step 2 adjustments. |
-| `--sample`, `--g-sample-key-mode` | Yes | Changes sample identity resolution and row alignment. |
-| `--g-multi-phenotype-sample-mode` | Yes | Controls whether phenotypes keep independent complete-case samples or share one intersection. |
+| `--sample`, `--sample_key_mode` | Yes | Changes sample identity resolution and row alignment. |
+| `--multi_phenotype_sample_mode` | Yes | Controls whether phenotypes keep independent complete-case samples or share one intersection. |
 | `--firth --approx` | Yes, for binary | Replaces selected score-test rows with approximate Firth-corrected rows. |
 | `--pThresh` | Yes, for binary Firth | Sets the score-test p-value threshold for Firth candidates. |
 | `--firth-se` | Yes, for reported `SE` only | Recomputes successful Firth `SE` as `abs(BETA) / sqrt(CHISQ)`. |
-| `--g-score-dtype` | Can | Changes score-test compute precision. Public statistics still write as `float32`. |
+| `--score_dtype` | Can | Changes score-test compute precision. Public statistics still write as `float32`. |
 
 Numerical policy parameters:
 
 | Option | Effect |
 | --- | --- |
-| `--g-linear-minimum-variance`, `--g-linear-relative-variance-tolerance` | Decide when a residualized quantitative genotype is too close to zero variance to test safely. |
-| `--g-binary-minimum-probability` | Clips binary fitted probabilities away from exact `0` and `1`. |
-| `--g-binary-minimum-variance`, `--g-binary-relative-variance-tolerance` | Stabilize binary score variances and information matrices. |
-| `--g-binary-null-maximum-iterations`, `--g-binary-null-coefficient-tolerance` | Control binary null logistic IRLS termination. |
-| `--g-null-logistic-nonconvergence` | Chooses whether nonconverged binary null fits abort the run or warn and continue with invalid statistic rows. |
-| `--g-firth-*`, `--g-null-firth-*` | Control approximate-Firth iteration limits, tolerances, line search, step halving, and sparse-carrier behavior. |
+| `--linear_minimum_variance`, `--linear_relative_variance_tolerance` | Decide when a residualized quantitative genotype is too close to zero variance to test safely. |
+| `--binary_minimum_probability` | Clips binary fitted probabilities away from exact `0` and `1`. |
+| `--binary_minimum_variance`, `--binary_relative_variance_tolerance` | Stabilize binary score variances and information matrices. |
+| `--binary_null_maximum_iterations`, `--binary_null_coefficient_tolerance` | Control binary null logistic IRLS termination. |
+| `--null_logistic_nonconvergence_policy` | Chooses whether nonconverged binary null fits abort the run or warn and continue with invalid statistic rows. |
+| `--firth_*`, `--null_firth_*` | Control approximate-Firth iteration limits, tolerances, line search, step halving, and sparse-carrier behavior. |
 
 Runtime and output parameters:
 
@@ -712,13 +712,13 @@ Runtime and output parameters:
 | --- | --- | --- |
 | `--bsize` | No intended change | Number of variants decoded and dispatched per chunk. It affects memory, compile shape, and throughput. |
 | `--threads` | No intended change | Requested native CPU thread count for Rust-owned work. |
-| `--g-device` | No intended change | Selects JAX CPU or GPU execution. |
-| `--g-staging-depth` | No intended change | Controls how far native chunk delivery can stage callback work. |
-| `--g-bgen-decode-tile-variant-count` | No intended change | Native BGEN decode tile size. |
-| `--g-gpu-genotype-format` | No intended change | Selects dosage transfer or packed8 transfer/decode for GPU-compatible paths. |
-| `--g-output-format` | No | Chooses Arrow, Parquet, or REGENIE-text materialization. |
-| `--g-resume`, `--g-resume-mode` | No | Reuses previously committed chunks when the manifest accepts the execution plan. |
-| `--g-telemetry`, `--g-log-*` | No | Controls diagnostics and logging. Profile and trace modes can add synchronization overhead. |
+| `--device` | No intended change | Selects JAX CPU or GPU execution. |
+| `--staging_depth` | No intended change | Controls how far native chunk delivery can stage callback work. |
+| `--bgen_decode_tile_variant_count` | No intended change | Native BGEN decode tile size. |
+| `--gpu_genotype_format` | No intended change | Selects dosage transfer or packed8 transfer/decode for GPU-compatible paths. |
+| `--format` | No | Chooses Arrow, Parquet, or REGENIE-text materialization. |
+| `--resume`, `--resume_mode` | No | Reuses previously committed chunks when the manifest accepts the execution plan. |
+| `--telemetry`, `--log_*`, `--trace_*` | No | Controls diagnostics and logging. Profile and trace modes can add synchronization overhead. |
 
 Runtime parameters should not be used to change scientific conclusions. If a
 runtime-only parameter changes results beyond normal floating-point tolerance,
@@ -757,7 +757,7 @@ places to inspect correction-plan behavior.
 - Approximate Firth is intentionally slower than score-only binary testing
   because candidate variants require iterative correction.
 - Resume checks compare the manifest against execution-plan-affecting inputs
-  and settings. Use `--g-resume-mode strict` when restart correctness matters
+  and settings. Use `--resume_mode strict` when restart correctness matters
   more than startup speed.
 - Result p-values are not multiple-testing corrected. Genome-wide significance
   thresholds and downstream quality control remain the user's responsibility.

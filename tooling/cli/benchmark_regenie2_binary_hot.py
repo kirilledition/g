@@ -823,30 +823,38 @@ def build_compute_config(
     stage_timing_path: Path | None,
 ) -> dict[str, object]:
     """Build g-specific options for one trial."""
-    return {
-        "g-device": configuration.device.value,
-        "bsize": configuration.chunk_size,
-        "g-variant-limit": configuration.variant_limit,
-        "g-staging-depth": configuration.staging_depth,
-        "g-output-run-directory": output_root,
-        "g-output-format": "parquet" if finalize_parquet else "arrow",
-        "g-telemetry": "off",
-        "g-jax-cache-dir": configuration.jax_cache_directory,
-        "g-jax-persistent-cache-min-entry-size-bytes": -1,
-        "g-jax-persistent-cache-min-compile-time-seconds": 0,
-        "g-jax-xla-autotune-cache": ENABLE_XLA_AUTOTUNE_CACHE,
-        "g-firth-batch-size": benchmark_case.firth_batch_size,
-        "g-firth-candidate-capacity": benchmark_case.firth_candidate_capacity,
-        "g-gpu-genotype-format": benchmark_case.gpu_genotype_format.value,
-        "g-stage-timings-json": stage_timing_path,
-        "g-writer-threads": configuration.output_writer_thread_count,
-        "g-writer-queue-depth": configuration.output_writer_queue_depth,
-        "g-trusted-no-missing-diploid": configuration.trusted_no_missing_diploid,
-        "g-trusted-bgen-validation-mode": (
+    compute_options: dict[str, object] = {
+        "device": configuration.device.value,
+        "staging_depth": configuration.staging_depth,
+        "jax_cache_dir": configuration.jax_cache_directory,
+        "jax_persistent_cache_min_entry_size_bytes": -1,
+        "jax_persistent_cache_min_compile_time_seconds": 0,
+        "jax_xla_autotune_cache": ENABLE_XLA_AUTOTUNE_CACHE,
+        "firth_batch_size": benchmark_case.firth_batch_size,
+        "firth_candidate_capacity": benchmark_case.firth_candidate_capacity,
+        "gpu_genotype_format": benchmark_case.gpu_genotype_format.value,
+        "trusted_no_missing_diploid": configuration.trusted_no_missing_diploid,
+        "trusted_bgen_validation_mode": (
             types.TrustedBgenValidationMode.ASSUME_VALIDATED
             if configuration.assume_trusted_validated
             else types.TrustedBgenValidationMode.CACHE_ON_MISS
         ).value,
+    }
+    if configuration.variant_limit is not None:
+        compute_options["variant_limit"] = configuration.variant_limit
+    diagnostics_options: dict[str, object] = {"telemetry": "off"}
+    if stage_timing_path is not None:
+        diagnostics_options["stage_timings_json"] = stage_timing_path
+    return {
+        "bsize": configuration.chunk_size,
+        "compute": compute_options,
+        "output": {
+            "output_run_directory": output_root,
+            "format": "parquet" if finalize_parquet else "arrow",
+            "writer_threads": configuration.output_writer_thread_count,
+            "writer_queue_depth": configuration.output_writer_queue_depth,
+        },
+        "diagnostics": diagnostics_options,
     }
 
 

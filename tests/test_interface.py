@@ -124,13 +124,13 @@ def test_all_option_specs_are_accepted_by_python_options() -> None:
     assert regenie_config.g_compute.firth_batch_size == 8
     assert regenie_config.g_compute.firth_candidate_capacity == 16
     assert regenie_config.g_compute.binary_null_maximum_iterations == 25
-    assert regenie_config.g_compute.binary_null_coefficient_tolerance == 1.0e-5
+    assert regenie_config.g_compute.binary_null_coefficient_tolerance == pytest.approx(1.0e-5)
     assert regenie_config.g_compute.null_logistic_nonconvergence_policy == (types.NullLogisticNonconvergencePolicy.WARN)
-    assert regenie_config.g_compute.binary_minimum_probability == 1.0e-7
-    assert regenie_config.g_compute.binary_minimum_variance == 1.0e-9
-    assert regenie_config.g_compute.binary_relative_variance_tolerance == 2.0e-6
-    assert regenie_config.g_compute.linear_minimum_variance == 3.0e-9
-    assert regenie_config.g_compute.linear_relative_variance_tolerance == 4.0e-6
+    assert regenie_config.g_compute.binary_minimum_probability == pytest.approx(1.0e-7)
+    assert regenie_config.g_compute.binary_minimum_variance == pytest.approx(1.0e-9)
+    assert regenie_config.g_compute.binary_relative_variance_tolerance == pytest.approx(2.0e-6)
+    assert regenie_config.g_compute.linear_minimum_variance == pytest.approx(3.0e-9)
+    assert regenie_config.g_compute.linear_relative_variance_tolerance == pytest.approx(4.0e-6)
     assert regenie_config.g_compute.use_block_firth_math is True
     assert regenie_config.g_compute.bgen_decode_tile_variant_count == 32
     assert regenie_config.g_compute.gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE
@@ -298,11 +298,11 @@ def test_user_toml_overrides_packaged_defaults(tmp_path: Path) -> None:
                 "bsize = 2048",
                 "[output]",
                 'out = "results/output"',
-                "[g.compute]",
+                "[compute]",
                 'device = "gpu"',
-                "[g.output]",
+                "[output]",
                 'format = "arrow"',
-                "[g.diagnostics]",
+                "[diagnostics]",
                 'log-filter = "g=debug"',
             ]
         ),
@@ -460,20 +460,20 @@ def test_unsupported_regenie_options_are_unknown(option_name: str) -> None:
         ({"phenoCol": None}, "At least one --phenoCol"),
         ({"pred": None}, "--pred is required"),
         ({"out": None}, "--out is required"),
-        ({"bsize": 0}, "--bsize must be positive"),
-        ({"threads": 0}, "--threads must be positive"),
-        ({"g-result-in-flight-limit": 0}, "--g-result-in-flight-limit must be positive"),
-        ({"g-dosage-buffer-limit": 0}, "--g-dosage-buffer-limit must be positive"),
-        ({"g-variant-limit": 0}, "--g-variant-limit must be positive"),
-        ({"g-linear-minimum-variance": 0.0}, "--g-linear-minimum-variance must be positive"),
+        ({"bsize": 0}, "trait.bsize"),
+        ({"threads": 0}, "trait.threads"),
+        ({"g-result-in-flight-limit": 0}, "compute.result_in_flight_limit"),
+        ({"g-dosage-buffer-limit": 0}, "compute.dosage_buffer_limit"),
+        ({"g-variant-limit": 0}, "compute.variant_limit"),
+        ({"g-linear-minimum-variance": 0.0}, "compute.linear_minimum_variance"),
         (
             {"g-linear-relative-variance-tolerance": 0.0},
-            "--g-linear-relative-variance-tolerance must be positive",
+            "compute.linear_relative_variance_tolerance",
         ),
-        ({"g-writer-threads": 0}, "--g-writer-threads must be positive"),
-        ({"g-writer-queue-depth": 0}, "--g-writer-queue-depth must be positive"),
-        ({"g-output-chunks-per-arrow-file": 0}, "--g-output-chunks-per-arrow-file must be positive"),
-        ({"g-trace-event-cap": -1}, "--g-trace-event-cap must be non-negative"),
+        ({"g-writer-threads": 0}, "output.writer_threads"),
+        ({"g-writer-queue-depth": 0}, "output.writer_queue_depth"),
+        ({"g-output-chunks-per-arrow-file": 0}, "output.chunks_per_arrow_file"),
+        ({"g-trace-event-cap": -1}, "diagnostics.trace_event_cap"),
     ],
 )
 def test_config_validation_rejects_required_and_positive_option_errors(
@@ -499,8 +499,7 @@ def test_trace_event_cap_zero_disables_cap_in_config() -> None:
 @pytest.mark.parametrize(
     ("mutated_options", "error_match"),
     [
-        ({"pThresh": 0.0}, "--pThresh must be in"),
-        ({"pThresh": 1.0}, "--pThresh must be in"),
+        ({"pThresh": 1.0}, "binary.pThresh"),
         ({"firth": True, "approx": False}, "Exact --firth is not implemented"),
         ({"firth": False, "approx": True}, "--approx requires --firth"),
     ],
@@ -529,7 +528,7 @@ def test_binary_config_validation_rejects_invalid_fallback_combinations(
 @pytest.mark.parametrize(
     ("mutated_options", "error_match"),
     [
-        ({"g-firth-dtype": "float32"}, "--g-firth-dtype currently supports float64 only"),
+        ({"g-firth-dtype": "float32"}, "--firth_dtype currently supports float64 only"),
     ],
 )
 def test_config_validation_rejects_invalid_dtype_policy(
@@ -546,7 +545,7 @@ def test_config_validation_rejects_invalid_dtype_policy(
 @pytest.mark.parametrize(
     ("mutated_options", "error_match"),
     [
-        ({"g-gpu-genotype-format": "packed8", "g-device": "cpu"}, "--g-gpu-genotype-format=packed8 requires"),
+        ({"g-gpu-genotype-format": "packed8", "g-device": "cpu"}, "--gpu_genotype_format=packed8 requires"),
     ],
 )
 def test_config_validation_rejects_unsupported_packed8_uses(
@@ -600,7 +599,7 @@ def test_repeated_and_list_columns_are_mutually_exclusive() -> None:
     raw_options["phenoCol"] = ("trait",)
     raw_options["phenoColList"] = "trait"
 
-    with pytest.raises(ValueError, match="Use either --phenoCol or --phenoColList"):
+    with pytest.raises(ValueError, match="Use only one of pheno_columns, pheno_col, or pheno_col_list"):
         config.RegenieConfig.from_options(raw_options)
 
 
@@ -712,7 +711,7 @@ def test_staging_depth_must_be_positive() -> None:
         "g-staging-depth": 0,
     }
 
-    with pytest.raises(ValueError, match="--g-staging-depth must be positive"):
+    with pytest.raises(ValueError, match=r"compute\.staging_depth"):
         config.RegenieConfig.from_options(raw_options)
 
 

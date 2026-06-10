@@ -25,18 +25,18 @@ Each phenotype then gets a deterministic directory:
 Binary runs use `.regenie2_binary.run`. Unsafe characters in phenotype names are
 replaced with underscores and long names are truncated in directory slugs.
 
-`--g-output-run-directory PATH` overrides the default `<out>.g` run root.
+`--output_run_directory PATH` overrides the default `<out>.g` run root.
 
 ## Format-Specific Chunk Directories
 
-| `--g-output-format` | Chunk directory | Chunk files | Final artifact behavior |
+| `--format` | Chunk directory | Chunk files | Final artifact behavior |
 | --- | --- | --- | --- |
 | `parquet` | `parts/` | `part_<first>[_<last>].parquet` | Part dataset is the primary output. `final.parquet` is written only with finalization. |
 | `arrow` | `chunks/` | `chunk_<first>[_<last>].arrow` | Arrow IPC chunks are primary. `final.parquet` is written only with finalization. |
 | `regenie` | `regenie/` | `part_<first>[_<last>].regenie` plus `.regenie.json` sidecars | `final.regenie` is written at successful finish. |
 
 The `first` and `last` identifiers are zero-padded chunk identifiers. Files can
-group multiple engine chunks when `--g-output-chunks-per-arrow-file` is greater
+group multiple engine chunks when `--chunks_per_arrow_file` is greater
 than one.
 
 ## Typical Parquet Layout
@@ -46,7 +46,7 @@ Given:
 ```bash
 --out results/example
 --phenoCol phenotype_continuous
---g-output-format parquet
+--format parquet
 ```
 
 a typical completed run writes:
@@ -63,7 +63,7 @@ results/example.g/
     run_manifest.json
 ```
 
-If `--g-finalize-parquet` is enabled, the run directory also contains:
+If `--finalize_parquet` is enabled, the run directory also contains:
 
 ```text
 final.parquet
@@ -74,7 +74,7 @@ final.parquet
 With:
 
 ```bash
---g-output-format regenie
+--format regenie
 ```
 
 the run directory contains:
@@ -154,8 +154,8 @@ Common files:
 | `stage-timings.json` | Profile/trace or explicit path | Stage timing snapshots. |
 | `profile.summary.json` | Profile/trace or explicit path | Aggregate profile summary. |
 
-Use `--g-log-dir`, `--g-log-file`, `--g-stage-timings-json`, and
-`--g-profile-summary-json` to route diagnostics explicitly.
+Use `--log_dir`, `--log_file`, `--stage_timings_json`, and
+`--profile_summary_json` to route diagnostics explicitly.
 
 Successful CLI runs print the generated run directory and any final dataset,
 final Parquet, or final REGENIE text path returned by the engine.

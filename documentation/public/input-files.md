@@ -38,8 +38,8 @@ Recognized but not implemented:
 The trusted BGEN fast path is controlled by:
 
 ```bash
---g-trusted-no-missing-diploid
---g-trusted-bgen-validation-mode cache_on_miss
+--trusted_no_missing_diploid
+--trusted_bgen_validation_mode cache_on_miss
 ```
 
 Validation modes:
@@ -69,7 +69,7 @@ covariate rows, and prediction rows.
 
 Phenotype and covariate tables are parsed by the native Rust path. Tables are
 expected to include `IID`; `FID` is also required when
-`--g-sample-key-mode fid_iid` is used.
+`--sample_key_mode fid_iid` is used.
 
 Column selection rules:
 

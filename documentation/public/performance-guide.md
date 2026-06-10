@@ -43,20 +43,20 @@ Use the current packaged defaults first. Override only with measurements.
 | --- | --- |
 | `--bsize` | Variants per chunk; affects memory, JAX shapes, compilation, and per-chunk overhead. |
 | `--threads` | Native Rayon thread request for Rust-owned work. |
-| `--g-device` | JAX execution target, `cpu` or `gpu`. |
-| `--g-staging-depth` | Native callback staging depth. |
-| `--g-result-in-flight-limit` | Optional cap for result chunks awaiting materialization. |
-| `--g-dosage-buffer-limit` | Optional cap for reusable native dosage decode buffers. |
-| `--g-bgen-decode-tile-variant-count` | Native BGEN decode tile size. |
-| `--g-gpu-genotype-format` | Host-to-device genotype representation for GPU-compatible paths. |
-| `--g-output-format` | Arrow, Parquet, or REGENIE text materialization. |
-| `--g-writer-threads` | Output writer worker count. |
-| `--g-writer-queue-depth` | Output writer queue depth. |
-| `--g-output-chunks-per-arrow-file` | Number of engine chunks grouped into each Arrow/Parquet/text part. |
-| `--g-firth-batch-size` | Approximate-Firth candidate batch size. |
-| `--g-firth-candidate-capacity` | Candidate capacity for binary fallback staging. |
-| `--g-jax-persistent-cache` and `--g-jax-cache-dir` | JAX compilation cache behavior. |
-| `--g-telemetry` | Progress, profile, and trace modes. Profile/trace can perturb timing. |
+| `--device` | JAX execution target, `cpu` or `gpu`. |
+| `--staging_depth` | Native callback staging depth. |
+| `--result_in_flight_limit` | Optional cap for result chunks awaiting materialization. |
+| `--dosage_buffer_limit` | Optional cap for reusable native dosage decode buffers. |
+| `--bgen_decode_tile_variant_count` | Native BGEN decode tile size. |
+| `--gpu_genotype_format` | Host-to-device genotype representation for GPU-compatible paths. |
+| `--format` | Arrow, Parquet, or REGENIE text materialization. |
+| `--writer_threads` | Output writer worker count. |
+| `--writer_queue_depth` | Output writer queue depth. |
+| `--chunks_per_arrow_file` | Number of engine chunks grouped into each Arrow/Parquet/text part. |
+| `--firth_batch_size` | Approximate-Firth candidate batch size. |
+| `--firth_candidate_capacity` | Candidate capacity for binary fallback staging. |
+| `--jax_persistent_cache` and `--jax_cache_dir` | JAX compilation cache behavior. |
+| `--telemetry` | Progress, profile, and trace modes. Profile/trace can perturb timing. |
 
 Current default values are in `src/g/config.default.toml`.
 
@@ -83,7 +83,7 @@ uv run --no-sync g regenie \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_cpu_regenie2 \
   --threads "${SLURM_CPUS_PER_TASK:-16}" \
-  --g-device cpu
+  --device cpu
 ```
 
 ## GPU Runs
@@ -96,7 +96,7 @@ Useful GPU checks:
 
 ```bash
 uv run python -c "import jax; print(jax.devices())"
-uv run --no-sync g regenie --g-device gpu ...
+uv run --no-sync g regenie --device gpu ...
 ```
 
 Multi-phenotype quantitative runs can amortize BGEN decode and process startup
@@ -123,29 +123,29 @@ before changing production scripts.
 | `regenie` | You need REGENIE Step 2-style text compatibility. |
 
 Finalizing a single `final.parquet` adds work after chunk output. Keep
-`--g-finalize-parquet` off when the parts dataset is sufficient.
+`--finalize_parquet` off when the parts dataset is sufficient.
 
 ## Measuring
 
 Production mode:
 
 ```bash
---g-telemetry progress
+--telemetry progress
 ```
 
 Profile mode:
 
 ```bash
---g-telemetry profile
---g-log-dir /path/to/logs
+--telemetry profile
+--log_dir /path/to/logs
 ```
 
 Trace mode is for small or capped runs:
 
 ```bash
---g-telemetry trace
---g-variant-limit 1000
---g-trace-event-cap 1000000
+--telemetry trace
+--variant_limit 1000
+--trace_event_cap 1000000
 ```
 
 Trace can perturb performance and generate high-volume logs. Use it to diagnose

@@ -72,15 +72,15 @@ configurable defaults do not reappear as production constants.
 | --- | --- |
 | `SUPPORTED` | Option is accepted and executable. |
 | `RECOGNIZED_UNSUPPORTED` | Option is accepted for migration diagnostics, then rejected when active. |
-| `G_EXTENSION` | Engine-specific option with a `--g-*` CLI name. |
+| `G_EXTENSION` | Engine-specific native CLI option outside REGENIE's original option set. |
 | `DEPRECATED_ALIAS` | Reserved for compatibility aliases. |
 
 Recognized unsupported options must never be silently ignored.
 
 ## Boolean And Trait Rules
 
-Boolean CLI options use paired Click flags such as `--g-resume` and
-`--no-g-resume`. Only command-line-provided options are converted into the CLI
+Boolean CLI options use paired Click flags such as `--resume` and
+`--no-resume`. Only command-line-provided options are converted into the CLI
 override layer.
 
 Trait flags have layer-aware semantics:

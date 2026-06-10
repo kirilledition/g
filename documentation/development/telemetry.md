@@ -22,25 +22,25 @@ The normalized configuration lives in `GDiagnosticsConfig` and is reachable
 from CLI, TOML, and Python config options. The main options are:
 
 ```text
-g-telemetry
-g-log-dir
-g-stage-timings-json
-g-log-filter
-g-log-file
-g-log-stderr
-g-progress-interval-seconds
-g-progress-interval-chunks
-g-profile-summary-json
-g-trace-file
-g-trace-filter
-g-trace-event-cap
-g-log-queue-size
-g-log-lossy
-g-include-source-location
-g-include-span-events
+telemetry
+log_dir
+stage_timings_json
+log_filter
+log_file
+log_stderr
+progress_interval_seconds
+progress_interval_chunks
+profile_summary_json
+trace_file
+trace_filter
+trace_event_cap
+log_queue_size
+log_lossy
+include_source_location
+include_span_events
 ```
 
-By default, telemetry mode is `progress`. If `g-log-dir` is not set and
+By default, telemetry mode is `progress`. If `log_dir` is not set and
 telemetry is enabled, paths resolve under:
 
 ```text
@@ -56,7 +56,7 @@ The default stream layout is:
   stage-timings.json      # Python profile or trace mode, unless explicitly configured
 ```
 
-`g-log-file` configures the unified JSONL stream path. `g-trace-file` remains
+`log_file` configures the unified JSONL stream path. `trace_file` remains
 accepted as a compatibility alias for the same stream. If both are configured,
 they must point at the same path.
 
@@ -198,7 +198,7 @@ log-stderr = false
 log-lossy = true
 ```
 
-Trace mode is for small runs, targeted chromosomes, or `--g-variant-limit`.
+Trace mode is for small runs, targeted chromosomes, or `--variant_limit`.
 It may emit high-volume native events and can perturb performance. Do not use
 it for full production-scale scans unless the goal is to diagnose a specific
 runtime problem.
@@ -213,7 +213,7 @@ prints one stderr diagnostic that additional trace events are being dropped.
 When `log-lossy = false`, the run fails with:
 
 ```text
-Trace telemetry event cap exceeded at <cap> events for <path>. Increase --g-trace-event-cap or set --g-trace-event-cap 0 to disable the cap for intentional deep traces. Use --g-log-lossy to drop events after the cap instead of failing.
+Trace telemetry event cap exceeded at <cap> events for <path>. Increase --trace_event_cap or set --trace_event_cap 0 to disable the cap for intentional deep traces. Use --log_lossy to drop events after the cap instead of failing.
 ```
 
 Raise the cap for a planned deep trace, or set it to `0` to disable cap
@@ -226,7 +226,7 @@ trace-event-cap = 5000000
 ```
 
 ```bash
-g regenie --g-telemetry trace --g-trace-event-cap 0
+g regenie --telemetry trace --trace_event_cap 0
 ```
 
 Telemetry sessions record native writer counters on close. The final
@@ -244,9 +244,9 @@ Production default with an explicit log directory:
 g regenie \
   --step 2 \
   --qt \
-  --g-telemetry progress \
-  --g-log-dir results/bmi.g/logs \
-  --g-log-filter g=info
+  --telemetry progress \
+  --log_dir results/bmi.g/logs \
+  --log_filter g=info
 ```
 
 Benchmark profile mode:
@@ -255,9 +255,9 @@ Benchmark profile mode:
 g regenie \
   --step 2 \
   --bt \
-  --g-telemetry profile \
-  --g-log-dir results/binary-profile.g/logs \
-  --no-g-log-stderr
+  --telemetry profile \
+  --log_dir results/binary-profile.g/logs \
+  --no-log_stderr
 ```
 
 Focused trace:
@@ -266,10 +266,10 @@ Focused trace:
 g regenie \
   --step 2 \
   --bt \
-  --g-telemetry trace \
-  --g-variant-limit 1000 \
-  --g-trace-filter g.native.bgen=trace,g.output=debug \
-  --g-trace-event-cap 1000000
+  --telemetry trace \
+  --variant_limit 1000 \
+  --trace_filter g.native.bgen=trace,g.output=debug \
+  --trace_event_cap 1000000
 ```
 
 ## Production-Safe Logging

@@ -51,8 +51,8 @@ class ProfileComparisonArguments:
     cpu_only: bool
     output_dir: Path
     sample_interval_seconds: float
-    g_variant_limit: int | None
-    g_chunk_size: int
+    variant_limit: int | None
+    chunk_size: int
     enable_jax_trace: bool
     enable_memory_profile: bool
 
@@ -66,8 +66,8 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileComparis
         output_dir=tooling_hydra_arguments.path_or_none(tool_values["output_dir"])
         or Path("data/profiles/regenie_comparison"),
         sample_interval_seconds=float(tool_values["sample_interval_seconds"]),
-        g_variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("g_variant_limit")),
-        g_chunk_size=int(tool_values["g_chunk_size"]),
+        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
+        chunk_size=int(tool_values["chunk_size"]),
         enable_jax_trace=tooling_hydra_arguments.boolean_value(tool_values["enable_jax_trace"]),
         enable_memory_profile=tooling_hydra_arguments.boolean_value(tool_values["enable_memory_profile"]),
     )
@@ -249,18 +249,18 @@ def _run_g_profile(
         "age,sex",
         "--pred",
         str(prediction_list_path),
-        "--g-device",
+        "--device",
         device,
         "--bsize",
         str(chunk_size),
         "--out",
         str(output_prefix),
-        "--g-output-format",
+        "--format",
         "parquet",
     ]
     command_arguments.extend(binary_correction_arguments)
     if variant_limit is not None:
-        command_arguments.extend(["--g-variant-limit", str(variant_limit)])
+        command_arguments.extend(["--variant_limit", str(variant_limit)])
     stdout_log_path = profile_run_directory / "stdout.log"
     stderr_log_path = profile_run_directory / "stderr.log"
     success, duration_seconds, peak_rss_megabytes, cpu_user_seconds, cpu_system_seconds, error_message = (
@@ -429,8 +429,8 @@ def run_tool(arguments: ProfileComparisonArguments) -> None:
             device="cpu",
             baseline_paths=baseline_paths,
             output_dir=arguments.output_dir,
-            variant_limit=arguments.g_variant_limit,
-            chunk_size=arguments.g_chunk_size,
+            variant_limit=arguments.variant_limit,
+            chunk_size=arguments.chunk_size,
             enable_jax_trace=arguments.enable_jax_trace,
             enable_memory_profile=arguments.enable_memory_profile,
         )
@@ -443,8 +443,8 @@ def run_tool(arguments: ProfileComparisonArguments) -> None:
                 device="gpu",
                 baseline_paths=baseline_paths,
                 output_dir=arguments.output_dir,
-                variant_limit=arguments.g_variant_limit,
-                chunk_size=arguments.g_chunk_size,
+                variant_limit=arguments.variant_limit,
+                chunk_size=arguments.chunk_size,
                 enable_jax_trace=arguments.enable_jax_trace,
                 enable_memory_profile=arguments.enable_memory_profile,
             )
@@ -477,8 +477,8 @@ def run_tool(arguments: ProfileComparisonArguments) -> None:
             device="cpu",
             baseline_paths=baseline_paths,
             output_dir=arguments.output_dir,
-            variant_limit=arguments.g_variant_limit,
-            chunk_size=arguments.g_chunk_size,
+            variant_limit=arguments.variant_limit,
+            chunk_size=arguments.chunk_size,
             enable_jax_trace=arguments.enable_jax_trace,
             enable_memory_profile=arguments.enable_memory_profile,
         )
@@ -491,8 +491,8 @@ def run_tool(arguments: ProfileComparisonArguments) -> None:
                 device="gpu",
                 baseline_paths=baseline_paths,
                 output_dir=arguments.output_dir,
-                variant_limit=arguments.g_variant_limit,
-                chunk_size=arguments.g_chunk_size,
+                variant_limit=arguments.variant_limit,
+                chunk_size=arguments.chunk_size,
                 enable_jax_trace=arguments.enable_jax_trace,
                 enable_memory_profile=arguments.enable_memory_profile,
             )

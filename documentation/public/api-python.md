@@ -56,9 +56,9 @@ artifacts = api.regenie.from_options(
 
 ## Option Names
 
-`from_options()` accepts canonical CLI names such as `phenoFile`, `pThresh`, and
-`g-device`, plus Python destination aliases such as `pheno_file` and
-`g_device`.
+`from_options()` accepts canonical REGENIE names such as `phenoFile` and
+`pThresh`, plus native configuration sections such as
+`{"compute": {"device": "gpu"}}`.
 
 The same validation applies as the CLI:
 

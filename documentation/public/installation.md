@@ -75,10 +75,10 @@ measuring performance.
 Run `g` with:
 
 ```bash
---g-device gpu
+--device gpu
 ```
 
-Use `--g-device cpu` for CPU execution. CPU mode is installed by the base runtime dependencies.
+Use `--device cpu` for CPU execution. CPU mode is installed by the base runtime dependencies.
 
 ## Run Your GWAS
 
@@ -99,11 +99,11 @@ uv run g regenie \
   --covarColList age,sex \
   --pred /path/to/regenie_step1_pred.list \
   --out /path/to/output/g_regenie2 \
-  --g-device cpu \
-  --g-output-format parquet
+  --device cpu \
+  --format parquet
 ```
 
-For a GPU run, use the same command with `--g-device gpu` and submit it on a GPU node rather than a
+For a GPU run, use the same command with `--device gpu` and submit it on a GPU node rather than a
 login node.
 
 See [Quickstart](quickstart.md) for quantitative and binary command examples, [CLI](cli.md) for
@@ -156,7 +156,7 @@ uv run --no-sync g regenie \
   --phenoCol phenotype_name \
   --pred /path/to/regenie_step1_pred.list \
   --out /path/to/output/g_regenie2 \
-  --g-device gpu
+  --device gpu
 ```
 
 Adjust scheduler options for your cluster. Do not run GPU scans or large CPU scans on a login node.

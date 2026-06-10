@@ -320,7 +320,7 @@ def build_step2_child_command(
         from g import api
 
         start_time = time.perf_counter()
-        artifacts = api.regenie.from_options({{
+        regenie_options = {{
             "step": 2,
             "bt" if {trait_type!r} == "binary" else "qt": True,
             "bgen": {bgen_path!r},
@@ -331,18 +331,24 @@ def build_step2_child_command(
             "covarFile": {covariate_path!r},
             "covarColList": "age,sex",
             "pred": {prediction_path!r},
-            "g-device": "gpu",
             "bsize": {chunk_size},
-            "g-variant-limit": {variant_limit_expression},
-            "g-staging-depth": {staging_depth},
-            "g-output-format": "parquet",
-            "g-writer-threads": {output_writer_thread_count},
-            "g-writer-queue-depth": {output_writer_queue_depth},
-            "g-bgen-decode-tile-variant-count": {bgen_tile_expression},
-            "g-firth-batch-size": {firth_batch_expression},
             "threads": {rayon_thread_expression},
+            "compute": {{
+                "device": "gpu",
+                "staging_depth": {staging_depth},
+                "bgen_decode_tile_variant_count": {bgen_tile_expression},
+                "firth_batch_size": {firth_batch_expression},
+            }},
+            "output": {{
+                "format": "parquet",
+                "writer_threads": {output_writer_thread_count},
+                "writer_queue_depth": {output_writer_queue_depth},
+            }},
             **{binary_options_expression},
-        }})
+        }}
+        if {variant_limit_expression} is not None:
+            regenie_options["compute"]["variant_limit"] = {variant_limit_expression}
+        artifacts = api.regenie.from_options(regenie_options)
         wall_time_seconds = time.perf_counter() - start_time
         output_row_count = pl.scan_parquet(artifacts.final_parquet).select(pl.len()).collect().item()
         print(

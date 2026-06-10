@@ -333,7 +333,7 @@ def append_boolean_flag(
     enabled_flag: str,
     disabled_flag: str | None = None,
 ) -> None:
-    """Append a Click boolean flag."""
+    """Append a CLI boolean flag."""
     if enabled:
         command_arguments.append(enabled_flag)
     elif disabled_flag is not None:
@@ -363,10 +363,10 @@ def build_trait_arguments(arguments: MatrixArguments, trait: TraitKind) -> list[
         ]
         append_boolean_flag(command_arguments, enabled=arguments.binary_firth, enabled_flag="--firth")
         append_boolean_flag(command_arguments, enabled=arguments.binary_approx, enabled_flag="--approx")
-        append_optional_option(command_arguments, "--g-firth-batch-size", arguments.binary_firth_batch_size)
+        append_optional_option(command_arguments, "--firth_batch_size", arguments.binary_firth_batch_size)
         append_optional_option(
             command_arguments,
-            "--g-firth-candidate-capacity",
+            "--firth_candidate_capacity",
             arguments.binary_firth_candidate_capacity,
         )
         return command_arguments
@@ -418,58 +418,58 @@ def build_run_command(arguments: MatrixArguments, spec: RunSpec) -> list[str]:
             arguments.covariate_columns,
             "--out",
             str(spec.output_prefix),
-            "--g-device",
+            "--device",
             "cpu" if spec.mode == ExecutionMode.CPU else "gpu",
             "--bsize",
             str(arguments.chunk_size),
-            "--g-staging-depth",
+            "--staging_depth",
             str(arguments.staging_depth),
-            "--g-output-format",
+            "--format",
             arguments.output_format,
-            "--g-writer-threads",
+            "--writer_threads",
             str(arguments.output_writer_thread_count),
-            "--g-writer-queue-depth",
+            "--writer_queue_depth",
             str(arguments.output_writer_queue_depth),
-            "--g-stage-timings-json",
+            "--stage_timings_json",
             str(spec.stage_timing_path),
-            "--g-profile-summary-json",
+            "--profile_summary_json",
             str(spec.profile_summary_path),
-            "--g-log-dir",
+            "--log_dir",
             str(spec.event_log_path.parent),
-            "--g-log-file",
+            "--log_file",
             str(spec.event_log_path),
-            "--g-telemetry",
+            "--telemetry",
             arguments.telemetry_mode,
-            "--g-log-filter",
+            "--log_filter",
             arguments.log_filter,
-            "--g-progress-interval-seconds",
+            "--progress_interval_seconds",
             str(arguments.progress_interval_seconds),
-            "--g-progress-interval-chunks",
+            "--progress_interval_chunks",
             str(arguments.progress_interval_chunks),
-            "--g-trusted-bgen-validation-mode",
+            "--trusted_bgen_validation_mode",
             arguments.trusted_bgen_validation_mode,
         ]
     )
     command_arguments.extend(build_trait_arguments(arguments, spec.trait))
-    append_optional_option(command_arguments, "--g-variant-limit", arguments.variant_limit)
+    append_optional_option(command_arguments, "--variant_limit", arguments.variant_limit)
     append_optional_option(command_arguments, "--threads", arguments.cpu_threads)
     append_boolean_flag(
         command_arguments,
         enabled=arguments.trusted_no_missing_diploid,
-        enabled_flag="--g-trusted-no-missing-diploid",
-        disabled_flag="--no-g-trusted-no-missing-diploid",
+        enabled_flag="--trusted_no_missing_diploid",
+        disabled_flag="--no-trusted_no_missing_diploid",
     )
     append_boolean_flag(
         command_arguments,
         enabled=arguments.finalize_parquet,
-        enabled_flag="--g-finalize-parquet",
-        disabled_flag="--no-g-finalize-parquet",
+        enabled_flag="--finalize_parquet",
+        disabled_flag="--no-finalize_parquet",
     )
     append_boolean_flag(
         command_arguments,
         enabled=arguments.log_stderr,
-        enabled_flag="--g-log-stderr",
-        disabled_flag="--no-g-log-stderr",
+        enabled_flag="--log_stderr",
+        disabled_flag="--no-log_stderr",
     )
     persistent_cache_enabled = (
         arguments.cpu_jax_persistent_cache if spec.mode == ExecutionMode.CPU else arguments.gpu_jax_persistent_cache
@@ -477,28 +477,28 @@ def build_run_command(arguments: MatrixArguments, spec: RunSpec) -> list[str]:
     append_boolean_flag(
         command_arguments,
         enabled=persistent_cache_enabled,
-        enabled_flag="--g-jax-persistent-cache",
-        disabled_flag="--no-g-jax-persistent-cache",
+        enabled_flag="--jax_persistent_cache",
+        disabled_flag="--no-jax_persistent_cache",
     )
     if persistent_cache_enabled:
         cache_directory = resolve_jax_cache_directory_for_mode(arguments, spec.mode)
         command_arguments.extend(
             [
-                "--g-jax-cache-dir",
+                "--jax_cache_dir",
                 str(cache_directory),
-                "--g-jax-persistent-cache-min-entry-size-bytes",
+                "--jax_persistent_cache_min_entry_size_bytes",
                 str(arguments.jax_persistent_cache_min_entry_size_bytes),
-                "--g-jax-persistent-cache-min-compile-time-seconds",
+                "--jax_persistent_cache_min_compile_time_seconds",
                 str(arguments.jax_persistent_cache_min_compile_time_seconds),
             ]
         )
     if spec.mode != ExecutionMode.CPU:
-        command_arguments.extend(["--g-gpu-genotype-format", arguments.gpu_genotype_format])
+        command_arguments.extend(["--gpu_genotype_format", arguments.gpu_genotype_format])
         append_boolean_flag(
             command_arguments,
             enabled=arguments.jax_xla_autotune_cache,
-            enabled_flag="--g-jax-xla-autotune-cache",
-            disabled_flag="--no-g-jax-xla-autotune-cache",
+            enabled_flag="--jax_xla_autotune_cache",
+            disabled_flag="--no-jax_xla_autotune_cache",
         )
     return command_arguments
 

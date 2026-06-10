@@ -1048,14 +1048,15 @@ def test_g_comparison_runner_builds_cpu_and_gpu_commands() -> None:
     assert "--step" in cpu_command
     assert cpu_command[cpu_command.index("--step") + 1] == "2"
     assert "--qt" in cpu_command
-    assert "--g-device" in cpu_command
-    assert cpu_command[cpu_command.index("--g-device") + 1] == "cpu"
-    assert "--g-output-format" in cpu_command
-    assert cpu_command[cpu_command.index("--g-output-format") + 1] == "parquet"
-    assert "--g-variant-limit" in cpu_command
+    assert "--device" in cpu_command
+    assert cpu_command[cpu_command.index("--device") + 1] == "cpu"
+    assert "--format" in cpu_command
+    assert cpu_command[cpu_command.index("--format") + 1] == "parquet"
+    assert "--variant_limit" in cpu_command
     assert "--variant-limit" not in cpu_command
-    assert gpu_command[gpu_command.index("--g-device") + 1] == "gpu"
-    assert "--g-variant-limit" not in gpu_command
+    assert "--g-device" not in cpu_command
+    assert gpu_command[gpu_command.index("--device") + 1] == "gpu"
+    assert "--variant_limit" not in gpu_command
     assert "--bt" in binary_command
     assert "--firth" in binary_command
     assert "--approx" in binary_command
@@ -1303,8 +1304,8 @@ def test_fresh_process_benchmark_child_command_wires_multi_phenotype_options(tmp
     child_code = command_arguments[2]
 
     assert "'phenoColList': 'trait_a,trait_b'" in child_code
-    assert "'g-multi-phenotype-sample-mode': 'complete-case'" in child_code
-    assert "'g-stage-timings-json':" in child_code
+    assert "'multi_phenotype_sample_mode': 'complete-case'" in child_code
+    assert "'stage_timings_json':" in child_code
 
 
 def test_fresh_process_benchmark_summary_tracks_output_metrics() -> None:
@@ -1468,10 +1469,10 @@ def test_binary_hot_benchmark_expands_multi_binary_firth_sweep(tmp_path: Path) -
         finalize_parquet=False,
         stage_timing_path=tmp_path / "stage.json",
     )
-    assert compute_config["g-firth-batch-size"] == 32
-    assert compute_config["g-firth-candidate-capacity"] == 128
-    assert compute_config["g-gpu-genotype-format"] == "packed8"
-    assert compute_config["g-telemetry"] == "off"
+    assert typing.cast("dict[str, object]", compute_config["compute"])["firth_batch_size"] == 32
+    assert typing.cast("dict[str, object]", compute_config["compute"])["firth_candidate_capacity"] == 128
+    assert typing.cast("dict[str, object]", compute_config["compute"])["gpu_genotype_format"] == "packed8"
+    assert typing.cast("dict[str, object]", compute_config["diagnostics"])["telemetry"] == "off"
     assert packed_high_case.firth_p_threshold == 0.5
 
 
@@ -1529,7 +1530,7 @@ def test_binary_hot_benchmark_can_disable_exact_stage_timings(tmp_path: Path) ->
 
     assert configuration.stage_timing_mode == binary_hot_benchmark.StageTimingMode.OFF
     assert restored_configuration.stage_timing_mode == binary_hot_benchmark.StageTimingMode.OFF
-    assert compute_config["g-stage-timings-json"] is None
+    assert "stage_timings_json" not in typing.cast("dict[str, object]", compute_config["diagnostics"])
     assert "stage_timing_path_value = None" in child_command.command_arguments[2]
     assert (
         binary_hot_benchmark.trial_result_from_json_dict(
@@ -1898,11 +1899,11 @@ def test_deep_profile_child_command_contains_binary_controls() -> None:
     command_text = command[2]
     assert command[:2] == [sys.executable, "-c"]
     assert "phenotype_binary" in command_text
-    assert "\"g-device\": 'cpu'" in command_text
+    assert "\"device\": 'cpu'" in command_text
     assert '"bsize": 4096' in command_text
-    assert '"g-variant-limit": 1000' in command_text
+    assert 'compute_options["variant_limit"] = 1000' in command_text
     assert '"firth": True' in command_text
-    assert '"g-jax-persistent-cache": True' in command_text
+    assert '"jax_persistent_cache": True' in command_text
     assert "jax_explain_cache_misses" in command_text
     assert "jax_log_compiles" in command_text
     assert "count_artifact_rows" in command_text
@@ -2411,7 +2412,7 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
         assert profile_result["stage_timing_path"] == str(expected_stage_timing_path)
         script_text = (profile_directory / f"{profile_name}_child.py").read_text(encoding="utf-8")
         assert f"\"out\": '{profile_directory / profile_name}'" in script_text
-        assert f"\"g-stage-timings-json\": '{expected_stage_timing_path}'" in script_text
+        assert f"diagnostics_options[\"stage_timings_json\"] = '{expected_stage_timing_path}'" in script_text
         assert "profile_binary_gpu_profiler" not in script_text
     application_output_run_directories = {
         str(profile["application_output_run_directory"])

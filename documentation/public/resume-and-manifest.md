@@ -37,21 +37,21 @@ name check.
 
 ## Starting A New Run
 
-Without `--g-resume`, `g` refuses to reuse a non-empty output run directory:
+Without `--resume`, `g` refuses to reuse a non-empty output run directory:
 
 ```text
 Output run directory '<path>' already exists and is not empty. Use --resume or choose a new output path.
 ```
 
 Choose a new `--out` prefix, delete stale local output intentionally, or run
-with `--g-resume` when the existing manifest belongs to the same planned run.
+with `--resume` when the existing manifest belongs to the same planned run.
 
 ## Resume Controls
 
 ```bash
---g-resume
---g-resume-mode fast
---g-resume-mode strict
+--resume
+--resume_mode fast
+--resume_mode strict
 ```
 
 | Mode | Behavior |
@@ -93,7 +93,7 @@ SIGINT.
 After that, rerun the same command with:
 
 ```bash
---g-resume --g-resume-mode strict
+--resume --resume_mode strict
 ```
 
 or use `fast` when the previous interruption was clean and storage is trusted.

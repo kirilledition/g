@@ -312,14 +312,14 @@ def build_g_step2_command(
         str(output_prefix),
         "--bsize",
         str(chunk_size),
-        "--g-device",
+        "--device",
         device,
-        "--g-output-format",
+        "--format",
         "parquet",
     ]
     command_arguments.extend(binary_correction_arguments)
     if variant_limit is not None:
-        command_arguments.extend(["--g-variant-limit", str(variant_limit)])
+        command_arguments.extend(["--variant_limit", str(variant_limit)])
     return command_arguments
 
 

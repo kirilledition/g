@@ -3,8 +3,8 @@
 `g` executes statistical kernels through JAX. Choose the target device with:
 
 ```bash
---g-device cpu
---g-device gpu
+--device cpu
+--device gpu
 ```
 
 CPU support is installed by the base runtime dependencies. GPU support requires the
@@ -22,7 +22,7 @@ run:
 ```bash
 hostname
 uv run python -c "import jax; print(jax.devices())"
-uv run g config explain g-device
+uv run g regenie --help
 ```
 
 If JAX does not list the expected GPU, fix the node allocation, driver, CUDA, or
@@ -69,7 +69,7 @@ uv run --no-sync g regenie \
   --phenoCol phenotype_continuous \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_gpu_regenie2 \
-  --g-device gpu
+  --device gpu
 ```
 
 Adjust `#SBATCH` options for your site's partitions, accounts, GPU resource syntax, and memory
@@ -102,7 +102,7 @@ uv run --no-sync g regenie \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_cpu_regenie2 \
   --threads "${SLURM_CPUS_PER_TASK:-16}" \
-  --g-device cpu
+  --device cpu
 ```
 
 ## Cluster Notes
@@ -123,17 +123,17 @@ Important runtime knobs include:
 | Option | Purpose |
 | --- | --- |
 | `--bsize` | Variants per chunk. |
-| `--g-device` | JAX execution target. |
-| `--g-staging-depth` | Native callback staging depth. |
-| `--g-trusted-no-missing-diploid` | Enables trusted BGEN fast path after validation policy. |
-| `--g-bgen-decode-tile-variant-count` | Native BGEN decode tile size. |
-| `--g-writer-threads` | Output writer worker count. |
-| `--g-writer-queue-depth` | Output writer queue depth. |
-| `--g-firth-batch-size` | Binary approximate-Firth batch size. |
-| `--g-jax-persistent-cache` | Enable JAX persistent compilation cache. |
-| `--g-jax-cache-dir` | Persistent JAX compilation cache directory. |
-| `--g-jax-xla-autotune-cache` | Enable XLA auxiliary autotune caches only when the cache directory is node-local. |
-| `--g-jax-transfer-guard` | Enable JAX transfer guard diagnostics. |
+| `--device` | JAX execution target. |
+| `--staging_depth` | Native callback staging depth. |
+| `--trusted_no_missing_diploid` | Enables trusted BGEN fast path after validation policy. |
+| `--bgen_decode_tile_variant_count` | Native BGEN decode tile size. |
+| `--writer_threads` | Output writer worker count. |
+| `--writer_queue_depth` | Output writer queue depth. |
+| `--firth_batch_size` | Binary approximate-Firth batch size. |
+| `--jax_persistent_cache` | Enable JAX persistent compilation cache. |
+| `--jax_cache_dir` | Persistent JAX compilation cache directory. |
+| `--jax_xla_autotune_cache` | Enable XLA auxiliary autotune caches only when the cache directory is node-local. |
+| `--jax_transfer_guard` | Enable JAX transfer guard diagnostics. |
 
 Fair performance comparisons require equivalent statistical modes. Compare score-only to score-only,
 and compare approximate Firth only when both tools use approximate Firth with the same fallback

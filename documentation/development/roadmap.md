@@ -15,7 +15,7 @@ Arrow/Parquet output.
 - BGEN 1.2 input with Oxford `.sample` metadata.
 - TOML, CLI, and Python entry points normalized into `RegenieConfig`.
 - Arrow chunk output and final Parquet materialization.
-- REGENIE-compatible Step 2 text output through `--g-output-format regenie`.
+- REGENIE-compatible Step 2 text output through `--format regenie`.
 - Runtime telemetry, progress logging, profile summaries, and trace mode.
 
 ## Not Yet Supported

@@ -264,6 +264,12 @@ def build_regenie_options(
     disable_telemetry: bool,
 ) -> dict[str, object]:
     """Build g API options for one benchmark trial."""
+    compute_options: dict[str, object] = {"device": device}
+    output_options: dict[str, object] = {
+        "format": "parquet" if finalize_parquet else "arrow",
+        "writer_threads": output_writer_thread_count,
+    }
+    diagnostics_options: dict[str, object] = {}
     regenie_options: dict[str, object] = {
         "step": 2,
         "qt": True,
@@ -274,20 +280,20 @@ def build_regenie_options(
         "covarFile": str(benchmark_inputs.covariate_path),
         "covarColList": "age,sex",
         "pred": str(benchmark_inputs.prediction_list_path),
-        "g-device": device,
         "bsize": chunk_size,
-        "g-output-format": "parquet" if finalize_parquet else "arrow",
-        "g-writer-threads": output_writer_thread_count,
+        "compute": compute_options,
+        "output": output_options,
+        "diagnostics": diagnostics_options,
     }
     if len(benchmark_inputs.phenotype_names) == 1:
         regenie_options["phenoCol"] = benchmark_inputs.phenotype_names[0]
     else:
         regenie_options["phenoColList"] = ",".join(benchmark_inputs.phenotype_names)
-        regenie_options["g-multi-phenotype-sample-mode"] = multi_phenotype_sample_mode
+        compute_options["multi_phenotype_sample_mode"] = multi_phenotype_sample_mode
     if stage_timing_path is not None:
-        regenie_options["g-stage-timings-json"] = str(stage_timing_path)
+        diagnostics_options["stage_timings_json"] = str(stage_timing_path)
     if disable_telemetry:
-        regenie_options["g-telemetry"] = "off"
+        diagnostics_options["telemetry"] = "off"
     return regenie_options
 
 

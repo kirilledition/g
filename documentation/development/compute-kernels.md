@@ -64,7 +64,7 @@ user-visible statistics or tuning semantics change.
 
 ## Numerical Configuration
 
-Numerical settings are public `--g-*` options and must be threaded from
+Numerical settings are public CLI options and must be threaded from
 `src/g/config.default.toml` through `RegenieConfig`, `ExecutionPlan`, and kernel
 config dataclasses.
 

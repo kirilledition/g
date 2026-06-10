@@ -624,7 +624,7 @@ head node; the real matrix should go through SLURM.
 Historical full-chr10 artifacts under
 `data/benchmarks/chr10_regenie_g_20260605` used a different profile from the
 matrix default: `bsize=8192`, `threads=72`, binary
-`g-firth-batch-size=64`, binary `g-firth-candidate-capacity=1024`, writer
+`firth_batch_size=64`, binary `firth_candidate_capacity=1024`, writer
 threads `4`, writer queue depth `16`, finalized Parquet, and profile telemetry.
 Use those settings when the task is to reproduce or compare against those older
 full-chromosome data points:

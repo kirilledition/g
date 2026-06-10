@@ -52,7 +52,7 @@ Important migration limits:
 - Keep BGEN Step 2 inputs; BED/PGEN Step 2 inputs are not accepted.
 - Compare equivalent statistical modes only. A binary score-only `g` run should
   not be compared to upstream REGENIE output that used approximate Firth.
-- REGENIE text output is selected with `--g-output-format regenie`; Arrow and
+- REGENIE text output is selected with `--format regenie`; Arrow and
   Parquet are the performance-oriented defaults for this engine.
 
 ## Versioning Expectations

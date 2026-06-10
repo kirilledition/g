@@ -46,7 +46,7 @@ def enforce_null_logistic_nonconvergence_policy(
         message = f"Binary null logistic model did not converge for chromosome {chromosome}: {failed_traits}."
     if policy == types.NullLogisticNonconvergencePolicy.FAIL:
         raise RuntimeError(message)
-    logger.warning("%s Continuing because --g-null-logistic-nonconvergence=warn.", message)
+    logger.warning("%s Continuing because --null_logistic_nonconvergence_policy=warn.", message)
 
 
 def record_binary_chunk_diagnostics(

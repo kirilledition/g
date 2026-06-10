@@ -480,6 +480,9 @@ def run_trial(
     output_root = output_directory / "outputs" / trial_name
     python_stage_timing_path = output_directory / "stage_timings" / f"{trial_name}.json"
     python_stage_timing_path.parent.mkdir(parents=True, exist_ok=True)
+    compute_options: dict[str, object] = {"device": device.value}
+    if variant_limit is not None:
+        compute_options["variant_limit"] = variant_limit
     options: dict[str, object] = {
         "step": 2,
         "qt": True,
@@ -490,15 +493,16 @@ def run_trial(
         "covarFile": data_directory / "covariates.txt",
         "covarColList": "age,sex",
         "pred": phenotype_resources.prediction_list_path,
-        "g-device": device.value,
         "bsize": benchmark_case.chunk_size,
-        "g-variant-limit": variant_limit,
-        "g-output-format": "parquet" if benchmark_case.finalize_parquet else "arrow",
-        "g-stage-timings-json": python_stage_timing_path,
-        "g-writer-threads": benchmark_case.writer_thread_count,
-        "g-writer-queue-depth": benchmark_case.writer_queue_depth,
-        "g-output-chunks-per-arrow-file": benchmark_case.chunks_per_arrow_file,
-        "g-output-arrow-compression": benchmark_case.arrow_compression.value,
+        "compute": compute_options,
+        "output": {
+            "format": "parquet" if benchmark_case.finalize_parquet else "arrow",
+            "writer_threads": benchmark_case.writer_thread_count,
+            "writer_queue_depth": benchmark_case.writer_queue_depth,
+            "chunks_per_arrow_file": benchmark_case.chunks_per_arrow_file,
+            "arrow_compression": benchmark_case.arrow_compression.value,
+        },
+        "diagnostics": {"stage_timings_json": python_stage_timing_path},
     }
     if benchmark_case.phenotype_count == 1:
         options["phenoCol"] = phenotype_resources.phenotype_names[0]
