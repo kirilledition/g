@@ -17,6 +17,26 @@ just bootstrap-gpu
 just doctor-jax
 ```
 
+On a personal NixOS machine with a modern NVIDIA card, use the dedicated GPU
+development shell (it adds CUDA libraries from nixpkgs, ensures the host
+driver at `/run/opengl-driver/lib` is on `LD_LIBRARY_PATH`, and provides a
+pinned Rust toolchain matching `rust-toolchain.toml`):
+
+```bash
+nix develop .#gpu
+# inside the shell (Python + JAX CUDA is managed by uv, per project convention):
+just bootstrap-gpu
+just doctor-jax
+# quick end-to-end smoke using the committed chr22 fixtures (data/1kg_chr22_full.*):
+just regenie2-binary-gpu-smoke
+```
+
+`bootstrap-gpu` performs the equivalent of the cluster flow
+(`uv python install 3.14` + `uv sync --group dev --group gpu`). The nix shell
+supplies `uv`, the pinned Rust, system libraries, and the CUDA bits; uv owns
+the Python interpreters and project environments.
+```
+
 Server-specific CPU/GPU routing, SLURM nodes, caches, and environment variables
 belong in [Server Gauss SLURM](server-gauss-slurm.md). Reduced-toolchain local
 setup belongs in [No-Nix Development](no-nix-development.md).
