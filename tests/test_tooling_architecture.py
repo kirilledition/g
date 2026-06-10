@@ -56,6 +56,15 @@ def test_hydra_tooling_config_accepts_group_overrides() -> None:
     assert typed_config.sweep.trusted_no_missing_diploid_modes == [True]
 
 
+def test_grouped_hydra_tooling_configs_compose() -> None:
+    config_names = ["benchmark", "data", "debug", "performance", "server"]
+
+    for config_name in config_names:
+        config = tooling_configuration.compose_config(config_name=config_name, include_hydra_config=True)
+        assert "tool" in config
+        assert config.hydra.job.chdir is False
+
+
 def test_hydra_chr10_matrix_config_composes() -> None:
     config = tooling_configuration.compose_config(
         config_name="run_regenie2_chr10_matrix",

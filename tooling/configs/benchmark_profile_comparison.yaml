@@ -1,0 +1,19 @@
+defaults:
+  - dataset: local_1kg
+  - machine: local
+  - workload: regenie2_chr22_matrix
+  - _self_
+
+tool:
+  include_gpu: false
+  cpu_only: true
+  output_dir: data/profiles/regenie_comparison
+  sample_interval_seconds: 0.1
+  g_variant_limit: ${workload.variant_limit}
+  g_chunk_size: ${workload.chunk_size}
+  enable_jax_trace: false
+  enable_memory_profile: false
+
+hydra:
+  job:
+    chdir: false

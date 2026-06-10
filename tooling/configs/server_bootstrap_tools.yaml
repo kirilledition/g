@@ -1,0 +1,6 @@
+tool:
+  tools_dir: null
+
+hydra:
+  job:
+    chdir: false

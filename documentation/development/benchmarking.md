@@ -17,7 +17,7 @@ Public tuning guidance lives in [Performance Guide](../public/performance-guide.
 | Binary hot path | Measure binary Step 2 score/Firth runtime without full campaign overhead. | `tooling.cli.benchmark_regenie2_binary_hot`. |
 | Matrix comparisons | Compare CPU/GPU/cache combinations for standard workloads. | `tooling.cli.run_regenie2_matrix`. |
 | Deep profiling | Run multi-tool profiling campaigns with JAX and native evidence. | `tooling.cli.profile_regenie2_deep`. |
-| External comparison | Compare `g` with upstream or patched REGENIE under equivalent modes. | `scripts/benchmark_regenie_comparison.py`. |
+| External comparison | Compare `g` with upstream or patched REGENIE under equivalent modes. | `-m tooling.cli.benchmark tool.name=regenie_comparison`. |
 
 See [Tooling](tooling.md) and [Justfile Command Reference](justfile.md) for
 the current command surface.

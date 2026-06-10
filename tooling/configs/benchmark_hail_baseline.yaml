@@ -1,0 +1,17 @@
+tool:
+  bfile: null
+  pheno: null
+  pheno_name: phenotype_continuous
+  covar: null
+  covar_names: age,sex
+  glm: linear
+  logistic_test: wald
+  out: null
+  log_path: null
+  matrix_table_cache: null
+  cache_mode: reuse
+  prepare_cache_only: false
+
+hydra:
+  job:
+    chdir: false

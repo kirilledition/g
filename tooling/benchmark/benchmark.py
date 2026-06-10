@@ -14,7 +14,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import cpuinfo
+import hydra
 import psutil
+
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+
+if typing.TYPE_CHECKING:
+    import omegaconf
 
 GPUtilModule: typing.Any | None
 try:
@@ -25,11 +32,12 @@ else:
     GPUtilModule = GPUtilModuleImport
 
 
-REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 HAIL_ENVIRONMENT_DIRECTORY_NAME = ".venv-hail"
 HAIL_REQUIREMENT = "hail==0.2.137"
 HAIL_PYSPARK_REQUIREMENT = "pyspark==3.5.3"
 HAIL_PY4J_REQUIREMENT = "py4j==0.10.9.7"
+HAIL_HYDRA_REQUIREMENT = "hydra-core>=1.3.2"
 HAIL_COVARIATE_NAMES = "age,sex"
 
 
@@ -82,6 +90,20 @@ class BaselinePaths:
     hail_suite_report_path: Path
     regenie_prediction_list_path: Path
     regenie_qt_prediction_list_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class BaselineBenchmarkArguments:
+    """Resolved parameters for the baseline benchmark workflow.
+
+    Attributes:
+        data_directory: Data directory containing prepared 1KG inputs.
+        include_hail: Whether to run the slow cached Hail suite.
+
+    """
+
+    data_directory: Path
+    include_hail: bool
 
 
 def resolve_required_executable(environment_name: str, default_command: str) -> str:
@@ -186,22 +208,22 @@ def run_command(command_name: str, command_arguments: list[str], output_prefix: 
     )
 
 
-def build_baseline_paths() -> BaselinePaths:
+def build_baseline_paths(data_directory: Path | None = None) -> BaselinePaths:
     """Build the standard Phase 0 file paths."""
-    data_directory = Path(os.environ.get("GWAS_ENGINE_DATA_DIR", "data"))
-    baseline_directory = data_directory / "baselines"
-    bed_prefix = data_directory / "1kg_chr22_full"
+    resolved_data_directory = data_directory or Path(os.environ.get("GWAS_ENGINE_DATA_DIR", "data"))
+    baseline_directory = resolved_data_directory / "baselines"
+    bed_prefix = resolved_data_directory / "1kg_chr22_full"
     return BaselinePaths(
-        data_directory=data_directory,
+        data_directory=resolved_data_directory,
         baseline_directory=baseline_directory,
         bed_prefix=bed_prefix,
-        bgen_path=data_directory / "1kg_chr22_full.bgen",
-        sample_path=data_directory / "1kg_chr22_full.sample",
-        continuous_phenotype_path=data_directory / "pheno_cont.txt",
-        binary_phenotype_path=data_directory / "pheno_bin.txt",
-        covariate_path=data_directory / "covariates.txt",
-        hail_directory=data_directory / "hail",
-        hail_matrix_table_path=data_directory / "hail" / "1kg_chr22_full.mt",
+        bgen_path=resolved_data_directory / "1kg_chr22_full.bgen",
+        sample_path=resolved_data_directory / "1kg_chr22_full.sample",
+        continuous_phenotype_path=resolved_data_directory / "pheno_cont.txt",
+        binary_phenotype_path=resolved_data_directory / "pheno_bin.txt",
+        covariate_path=resolved_data_directory / "covariates.txt",
+        hail_directory=resolved_data_directory / "hail",
+        hail_matrix_table_path=resolved_data_directory / "hail" / "1kg_chr22_full.mt",
         hail_suite_report_path=baseline_directory / "hail_suite_report.json",
         regenie_prediction_list_path=baseline_directory / "regenie_step1_pred.list",
         regenie_qt_prediction_list_path=baseline_directory / "regenie_step1_qt_pred.list",
@@ -249,13 +271,13 @@ def run_setup_command(command_arguments: list[str]) -> subprocess.CompletedProce
 
 
 def hail_runner_path() -> Path:
-    """Return the Hail baseline runner script path."""
-    return REPOSITORY_ROOT / "scripts" / "run_hail_baseline.py"
+    """Return the Hail baseline runner module path for diagnostics."""
+    return REPOSITORY_ROOT / "tooling" / "benchmark" / "run_hail_baseline.py"
 
 
 def hail_suite_runner_path() -> Path:
-    """Return the Hail benchmark suite runner path."""
-    return REPOSITORY_ROOT / "scripts" / "run_hail_benchmark_suite.py"
+    """Return the Hail benchmark suite runner module path for diagnostics."""
+    return REPOSITORY_ROOT / "tooling" / "benchmark" / "run_hail_benchmark_suite.py"
 
 
 def hail_environment_directory() -> Path:
@@ -279,9 +301,9 @@ def hail_log_path(baseline_paths: BaselinePaths, output_name: str) -> Path:
 
 
 def hail_python_has_expected_package(hail_python_executable: Path) -> bool:
-    """Return whether the managed Python can import the pinned Hail version."""
+    """Return whether the managed Python can import the pinned Hail and Hydra packages."""
     completed_process = subprocess.run(
-        [str(hail_python_executable), "-c", "import hail; print(hail.__version__)"],
+        [str(hail_python_executable), "-c", "import hail, hydra; print(hail.__version__)"],
         check=False,
         capture_output=True,
         text=True,
@@ -320,6 +342,7 @@ def ensure_hail_environment() -> str:
             HAIL_REQUIREMENT,
             HAIL_PYSPARK_REQUIREMENT,
             HAIL_PY4J_REQUIREMENT,
+            HAIL_HYDRA_REQUIREMENT,
         ]
     )
     if not hail_python_has_expected_package(managed_hail_python_path):
@@ -500,27 +523,18 @@ def build_hail_linear_command(hail_python_executable: str, baseline_paths: Basel
     output_name = "hail_cont"
     return [
         hail_python_executable,
-        str(hail_runner_path()),
-        "--matrix-table-cache",
-        str(baseline_paths.hail_matrix_table_path),
-        "--cache-mode",
-        "require",
-        "--bfile",
-        str(baseline_paths.bed_prefix),
-        "--pheno",
-        str(baseline_paths.continuous_phenotype_path),
-        "--pheno-name",
-        "phenotype_continuous",
-        "--covar",
-        str(baseline_paths.covariate_path),
-        "--covar-names",
-        HAIL_COVARIATE_NAMES,
-        "--glm",
-        "linear",
-        "--out",
-        str(hail_output_path(baseline_paths, output_name)),
-        "--log-path",
-        str(hail_log_path(baseline_paths, output_name)),
+        "-m",
+        "tooling.benchmark.run_hail_baseline",
+        f"tool.matrix_table_cache={baseline_paths.hail_matrix_table_path}",
+        "tool.cache_mode=require",
+        f"tool.bfile={baseline_paths.bed_prefix}",
+        f"tool.pheno={baseline_paths.continuous_phenotype_path}",
+        "tool.pheno_name=phenotype_continuous",
+        f"tool.covar={baseline_paths.covariate_path}",
+        f"tool.covar_names={HAIL_COVARIATE_NAMES}",
+        "tool.glm=linear",
+        f"tool.out={hail_output_path(baseline_paths, output_name)}",
+        f"tool.log_path={hail_log_path(baseline_paths, output_name)}",
     ]
 
 
@@ -533,29 +547,19 @@ def build_hail_logistic_command(
     output_name = f"hail_bin_{test_name}"
     return [
         hail_python_executable,
-        str(hail_runner_path()),
-        "--matrix-table-cache",
-        str(baseline_paths.hail_matrix_table_path),
-        "--cache-mode",
-        "require",
-        "--bfile",
-        str(baseline_paths.bed_prefix),
-        "--pheno",
-        str(baseline_paths.binary_phenotype_path),
-        "--pheno-name",
-        "phenotype_binary",
-        "--covar",
-        str(baseline_paths.covariate_path),
-        "--covar-names",
-        HAIL_COVARIATE_NAMES,
-        "--glm",
-        "logistic",
-        "--logistic-test",
-        test_name,
-        "--out",
-        str(hail_output_path(baseline_paths, output_name)),
-        "--log-path",
-        str(hail_log_path(baseline_paths, output_name)),
+        "-m",
+        "tooling.benchmark.run_hail_baseline",
+        f"tool.matrix_table_cache={baseline_paths.hail_matrix_table_path}",
+        "tool.cache_mode=require",
+        f"tool.bfile={baseline_paths.bed_prefix}",
+        f"tool.pheno={baseline_paths.binary_phenotype_path}",
+        "tool.pheno_name=phenotype_binary",
+        f"tool.covar={baseline_paths.covariate_path}",
+        f"tool.covar_names={HAIL_COVARIATE_NAMES}",
+        "tool.glm=logistic",
+        f"tool.logistic_test={test_name}",
+        f"tool.out={hail_output_path(baseline_paths, output_name)}",
+        f"tool.log_path={hail_log_path(baseline_paths, output_name)}",
     ]
 
 
@@ -567,28 +571,19 @@ def build_hail_cache_prepare_command(
     """Build the Hail MatrixTable cache preparation command."""
     return [
         hail_python_executable,
-        str(hail_runner_path()),
-        "--matrix-table-cache",
-        str(baseline_paths.hail_matrix_table_path),
-        "--cache-mode",
-        cache_mode,
-        "--prepare-cache-only",
-        "--bfile",
-        str(baseline_paths.bed_prefix),
-        "--pheno",
-        str(baseline_paths.continuous_phenotype_path),
-        "--pheno-name",
-        "phenotype_continuous",
-        "--covar",
-        str(baseline_paths.covariate_path),
-        "--covar-names",
-        HAIL_COVARIATE_NAMES,
-        "--glm",
-        "linear",
-        "--out",
-        str(hail_output_path(baseline_paths, "hail_cache_prepare")),
-        "--log-path",
-        str(hail_log_path(baseline_paths, "hail_cache_prepare")),
+        "-m",
+        "tooling.benchmark.run_hail_baseline",
+        f"tool.matrix_table_cache={baseline_paths.hail_matrix_table_path}",
+        f"tool.cache_mode={cache_mode}",
+        "tool.prepare_cache_only=true",
+        f"tool.bfile={baseline_paths.bed_prefix}",
+        f"tool.pheno={baseline_paths.continuous_phenotype_path}",
+        "tool.pheno_name=phenotype_continuous",
+        f"tool.covar={baseline_paths.covariate_path}",
+        f"tool.covar_names={HAIL_COVARIATE_NAMES}",
+        "tool.glm=linear",
+        f"tool.out={hail_output_path(baseline_paths, 'hail_cache_prepare')}",
+        f"tool.log_path={hail_log_path(baseline_paths, 'hail_cache_prepare')}",
     ]
 
 
@@ -600,35 +595,22 @@ def build_hail_suite_command(
     """Build the one-session cached Hail benchmark suite command."""
     return [
         hail_python_executable,
-        str(hail_suite_runner_path()),
-        "--matrix-table-cache",
-        str(baseline_paths.hail_matrix_table_path),
-        "--cache-mode",
-        cache_mode,
-        "--bfile",
-        str(baseline_paths.bed_prefix),
-        "--covar",
-        str(baseline_paths.covariate_path),
-        "--covar-names",
-        HAIL_COVARIATE_NAMES,
-        "--continuous-pheno",
-        str(baseline_paths.continuous_phenotype_path),
-        "--continuous-pheno-name",
-        "phenotype_continuous",
-        "--binary-pheno",
-        str(baseline_paths.binary_phenotype_path),
-        "--binary-pheno-name",
-        "phenotype_binary",
-        "--linear-out",
-        str(hail_output_path(baseline_paths, "hail_cont")),
-        "--wald-out",
-        str(hail_output_path(baseline_paths, "hail_bin_wald")),
-        "--firth-out",
-        str(hail_output_path(baseline_paths, "hail_bin_firth")),
-        "--log-path",
-        str(hail_log_path(baseline_paths, "hail_suite")),
-        "--report-path",
-        str(baseline_paths.hail_suite_report_path),
+        "-m",
+        "tooling.benchmark.run_hail_benchmark_suite",
+        f"tool.matrix_table_cache={baseline_paths.hail_matrix_table_path}",
+        f"tool.cache_mode={cache_mode}",
+        f"tool.bfile={baseline_paths.bed_prefix}",
+        f"tool.covar={baseline_paths.covariate_path}",
+        f"tool.covar_names={HAIL_COVARIATE_NAMES}",
+        f"tool.continuous_pheno={baseline_paths.continuous_phenotype_path}",
+        "tool.continuous_pheno_name=phenotype_continuous",
+        f"tool.binary_pheno={baseline_paths.binary_phenotype_path}",
+        "tool.binary_pheno_name=phenotype_binary",
+        f"tool.linear_out={hail_output_path(baseline_paths, 'hail_cont')}",
+        f"tool.wald_out={hail_output_path(baseline_paths, 'hail_bin_wald')}",
+        f"tool.firth_out={hail_output_path(baseline_paths, 'hail_bin_firth')}",
+        f"tool.log_path={hail_log_path(baseline_paths, 'hail_suite')}",
+        f"tool.report_path={baseline_paths.hail_suite_report_path}",
     ]
 
 
@@ -658,16 +640,16 @@ def serialize_results(results_by_name: dict[str, CommandResult]) -> dict[str, di
     return {result_name: asdict(command_result) for result_name, command_result in results_by_name.items()}
 
 
-def main() -> None:
+def run_tool(arguments: BaselineBenchmarkArguments) -> None:
     """Run all Phase 0 baseline commands and save the benchmark report."""
     plink1_executable = resolve_required_executable("PLINK1_BIN", "plink")
     plink2_executable = resolve_required_executable("PLINK2_BIN", "plink2")
     regenie_executable = resolve_required_executable("REGENIE_BIN", "regenie")
     hail_python_executable = ensure_hail_environment()
 
-    baseline_paths = build_baseline_paths()
-    baseline_paths.baseline_directory.mkdir(exist_ok=True)
-    baseline_paths.hail_directory.mkdir(exist_ok=True)
+    baseline_paths = build_baseline_paths(arguments.data_directory)
+    baseline_paths.baseline_directory.mkdir(parents=True, exist_ok=True)
+    baseline_paths.hail_directory.mkdir(parents=True, exist_ok=True)
     validate_input_files(baseline_paths)
 
     print("Gathering hardware specs...")
@@ -696,7 +678,7 @@ def main() -> None:
     )
 
     # Conditionally run Hail benchmarks (slow - ~10+ minutes for full chr22)
-    if os.environ.get("HAIL_INCLUDE"):
+    if arguments.include_hail or os.environ.get("HAIL_INCLUDE"):
         results_by_name["hail_matrix_table_prepare"] = run_command(
             "Hail MatrixTable Prepare",
             build_hail_cache_prepare_command(hail_python_executable, baseline_paths, cache_mode="refresh"),
@@ -812,6 +794,27 @@ def main() -> None:
     report_path = baseline_paths.data_directory / "benchmark_report.json"
     report_path.write_text(f"{json.dumps(report, indent=2)}\n")
     print(f"\nBenchmark complete. Report saved to {report_path}")
+
+
+def build_arguments_from_config(config: omegaconf.DictConfig) -> BaselineBenchmarkArguments:
+    """Resolve baseline benchmark parameters from Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return BaselineBenchmarkArguments(
+        data_directory=tooling_hydra_arguments.path_or_none(tool_values["data_directory"]) or Path("data"),
+        include_hail=tooling_hydra_arguments.boolean_value(tool_values["include_hail"]),
+    )
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="benchmark_baselines")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run the baseline benchmark from Hydra configuration."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run the baseline benchmark from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import subprocess
 import time
@@ -12,15 +11,15 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import hydra
 import psutil
 
+from tooling.benchmark import benchmark as baseline_benchmark
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+
 if typing.TYPE_CHECKING:
-    from scripts import benchmark as baseline_benchmark
-else:
-    try:
-        from scripts import benchmark as baseline_benchmark
-    except ModuleNotFoundError:
-        import benchmark as baseline_benchmark
+    import omegaconf
 
 
 @dataclass(frozen=True)
@@ -44,27 +43,34 @@ class ExternalProfileResult:
     notes: str | None = None
 
 
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Build CLI parser."""
-    parser = argparse.ArgumentParser(description="Unified regenie comparison profiling.")
-    parser.add_argument("--include-gpu", action="store_true", help="Run GPU profile for g.")
-    parser.add_argument("--cpu-only", action="store_true", help="Skip GPU profile.")
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("data/profiles/regenie_comparison"),
-        help="Directory where profile reports and logs are written.",
+@dataclass(frozen=True)
+class ProfileComparisonArguments:
+    """Resolved configuration for profiling comparison workflow."""
+
+    include_gpu: bool
+    cpu_only: bool
+    output_dir: Path
+    sample_interval_seconds: float
+    g_variant_limit: int | None
+    g_chunk_size: int
+    enable_jax_trace: bool
+    enable_memory_profile: bool
+
+
+def build_arguments_from_config(config: omegaconf.DictConfig) -> ProfileComparisonArguments:
+    """Build workflow arguments from composed Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return ProfileComparisonArguments(
+        include_gpu=tooling_hydra_arguments.boolean_value(tool_values["include_gpu"]),
+        cpu_only=tooling_hydra_arguments.boolean_value(tool_values["cpu_only"]),
+        output_dir=tooling_hydra_arguments.path_or_none(tool_values["output_dir"])
+        or Path("data/profiles/regenie_comparison"),
+        sample_interval_seconds=float(tool_values["sample_interval_seconds"]),
+        g_variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("g_variant_limit")),
+        g_chunk_size=int(tool_values["g_chunk_size"]),
+        enable_jax_trace=tooling_hydra_arguments.boolean_value(tool_values["enable_jax_trace"]),
+        enable_memory_profile=tooling_hydra_arguments.boolean_value(tool_values["enable_memory_profile"]),
     )
-    parser.add_argument("--sample-interval-seconds", type=float, default=0.05, help="psutil sampling interval.")
-    parser.add_argument("--g-variant-limit", type=int, help="Optional variant cap for g profiling runs.")
-    parser.add_argument("--g-chunk-size", type=int, default=1024, help="Chunk size for g profiling runs.")
-    parser.add_argument("--enable-jax-trace", action="store_true", help="Enable JAX tracing for g profiles.")
-    parser.add_argument(
-        "--enable-memory-profile",
-        action="store_true",
-        help="Enable JAX memory profile for g profiles.",
-    )
-    return parser
 
 
 def _collect_tree_metrics(process_handle: psutil.Process) -> tuple[float, float, float]:
@@ -73,14 +79,14 @@ def _collect_tree_metrics(process_handle: psutil.Process) -> tuple[float, float,
     total_system_seconds = 0.0
     try:
         child_processes = process_handle.children(recursive=True)
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
+    except psutil.NoSuchProcess, psutil.AccessDenied:
         child_processes = []
     process_list = [process_handle, *child_processes]
     for process in process_list:
         try:
             memory_info = process.memory_info()
             cpu_times = process.cpu_times()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+        except psutil.NoSuchProcess, psutil.AccessDenied:
             continue
         total_rss_bytes += float(memory_info.rss)
         total_user_seconds += float(cpu_times.user)
@@ -345,10 +351,8 @@ def _write_text_summary(report_path: Path, report_data: dict[str, typing.Any]) -
     report_path.write_text("\n".join(lines) + "\n")
 
 
-def main() -> None:
+def run_tool(arguments: ProfileComparisonArguments) -> None:
     """Run profiling comparison suite."""
-    parser = build_argument_parser()
-    arguments = parser.parse_args()
     baseline_paths = baseline_benchmark.build_baseline_paths()
     baseline_benchmark.validate_input_files(baseline_paths)
     regenie_executable = baseline_benchmark.resolve_required_executable("REGENIE_BIN", "regenie")
@@ -462,7 +466,7 @@ def main() -> None:
                 stdout_log_path=None,
                 stderr_log_path=None,
                 output_paths=[],
-                notes="GPU run skipped (enable with --include-gpu).",
+                notes="GPU run skipped (enable with tool.include_gpu=true).",
             )
         )
 
@@ -510,7 +514,7 @@ def main() -> None:
                 stdout_log_path=None,
                 stderr_log_path=None,
                 output_paths=[],
-                notes="GPU run skipped (enable with --include-gpu).",
+                notes="GPU run skipped (enable with tool.include_gpu=true).",
             )
         )
 
@@ -539,6 +543,18 @@ def main() -> None:
     _write_text_summary(text_report_path, report_data)
     print(f"Wrote profiling report: {json_report_path}")
     print(f"Wrote profiling summary: {text_report_path}")
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="benchmark_profile_comparison")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run the profiling comparison from Hydra configuration."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run profiling comparison from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

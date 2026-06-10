@@ -1,0 +1,19 @@
+tool:
+  bfile: null
+  covar: null
+  covar_names: age,sex
+  continuous_pheno: null
+  continuous_pheno_name: phenotype_continuous
+  binary_pheno: null
+  binary_pheno_name: phenotype_binary
+  linear_out: null
+  wald_out: null
+  firth_out: null
+  log_path: null
+  report_path: null
+  matrix_table_cache: null
+  cache_mode: reuse
+
+hydra:
+  job:
+    chdir: false

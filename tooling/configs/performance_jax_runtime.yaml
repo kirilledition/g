@@ -1,0 +1,8 @@
+tool:
+  include_default: true
+  include_gpu_driver_path: true
+  include_cpu_forced: true
+
+hydra:
+  job:
+    chdir: false

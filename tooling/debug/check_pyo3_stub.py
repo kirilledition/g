@@ -5,8 +5,15 @@ from __future__ import annotations
 
 import re
 import sys
+import typing
 from pathlib import Path
 
+import hydra
+
+from tooling.common import hydra_compat as tooling_hydra_compat
+
+if typing.TYPE_CHECKING:
+    import omegaconf
 
 RUST_EXPORT_FILES = (
     Path("src/python/mod.rs"),
@@ -20,6 +27,7 @@ ALLOWED_STUB_ONLY_CLASSES = {"ChunkStatsComputeArrays"}
 
 
 def read_rust_exports(paths: tuple[Path, ...]) -> tuple[set[str], set[str]]:
+    """Read exported PyO3 classes and functions from Rust registration files."""
     rust_classes: set[str] = set()
     rust_functions: set[str] = set()
 
@@ -32,6 +40,7 @@ def read_rust_exports(paths: tuple[Path, ...]) -> tuple[set[str], set[str]]:
 
 
 def read_stub_exports(stub_path: Path) -> tuple[set[str], set[str]]:
+    """Read declared classes and functions from the `_core` Python stub."""
     stub_classes: set[str] = set()
     stub_functions: set[str] = set()
 
@@ -45,12 +54,14 @@ def read_stub_exports(stub_path: Path) -> tuple[set[str], set[str]]:
 
 
 def format_list(values: set[str]) -> str:
+    """Format a set of names as a human-readable indented list."""
     if not values:
         return "none"
     return "\n".join(f"  - {value}" for value in sorted(values))
 
 
-def main() -> int:
+def run_tool() -> int:
+    """Verify that Rust `_core` registrations match the Python stub."""
     rust_classes, rust_functions = read_rust_exports(RUST_EXPORT_FILES)
     stub_classes, stub_functions = read_stub_exports(STUB_FILE)
 
@@ -72,6 +83,22 @@ def main() -> int:
         return 1
 
     print("`src/g/_core.pyi` matches top-level Rust `_core` registrations.")
+    return 0
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="debug_check_pyo3_stub")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run the stub checker from Hydra configuration."""
+    del config
+    exit_code = run_tool()
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
+def main() -> int:
+    """Run the stub checker from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
     return 0
 
 

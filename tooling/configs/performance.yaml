@@ -1,0 +1,15 @@
+tool:
+  name: smoke
+  output_root: results/perf/smoke
+  output_dir: null
+  iterations: 48
+  items: 4096
+  baseline_json: null
+  new_json: null
+  include_default: true
+  include_gpu_driver_path: true
+  include_cpu_forced: true
+
+hydra:
+  job:
+    chdir: false

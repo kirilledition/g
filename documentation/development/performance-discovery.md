@@ -84,7 +84,7 @@ Keep profile, benchmark, and trace artifacts under ignored paths such as
    import or backend changes, include either a same-process hot measurement or a
    multi-phenotype measurement that shows the cost still matters after users can
    batch work in one process. Use
-   `scripts/benchmark_regenie2_linear_fresh_process.py --same-process-trials`
+   `-m tooling.cli.benchmark tool.name=linear_startup tool.same_process_trials=3`
    for quantitative Step 2 startup questions.
 
    GLA-43 measured this on 2026-06-09: fresh CPU median was 15.77s versus

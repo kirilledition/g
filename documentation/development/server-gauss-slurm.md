@@ -27,8 +27,8 @@ The repo-local bootstrap installs `just`, `cargo`, `rustc`, `plink`, `plink2`, a
 First-run setup before `just` is available:
 
 ```bash
-UV_CACHE_DIR=/tmp/g-uv-cache uv run --no-project python scripts/bootstrap_server_tools.py
-source scripts/server_env.sh
+UV_CACHE_DIR=/tmp/g-uv-cache uv run --group dev python -m tooling.cli.server tool.name=bootstrap_tools
+source tooling/server/server_env.sh
 ```
 
 CPU-oriented login-node setup after the first-run bootstrap:
@@ -140,7 +140,7 @@ just slurm-cpu-just test
 just slurm-cpu-just rust-test
 ```
 
-Inside CPU SLURM jobs, `scripts/server_env.sh` derives
+Inside CPU SLURM jobs, `tooling/server/server_env.sh` derives
 `GWAS_ENGINE_ALLOCATED_CPU_COUNT` from `SLURM_CPUS_PER_TASK`,
 `SLURM_CPUS_ON_NODE`, or `nproc`; sets `CARGO_BUILD_JOBS` to that count unless
 already configured; and sets `GWAS_ENGINE_PYTEST_WORKERS` for pytest. Python
@@ -193,7 +193,7 @@ Run a one-off command on the GPU node:
 
 ```bash
 just slurm-gpu-run 'nvidia-smi'
-just slurm-gpu-run 'uv run python scripts/probe_jax_runtime.py'
+just slurm-gpu-run 'uv run python -m tooling.cli.performance tool.name=jax_runtime'
 ```
 
 Run existing repo recipes on the GPU node while keeping `just` as the top-level interface:
@@ -281,7 +281,7 @@ data/regenie2_binary_chr22_gpu.regenie2_binary.run/
 - `.tools/` and `data/` are local server state and must not be committed.
 - `results/` contains local benchmark output, including `perf-*` summaries, and
   must not be committed.
-- `scripts/server_env.sh` sets repo-local tools on `PATH`,
+- `tooling/server/server_env.sh` sets repo-local tools on `PATH`,
   `UV_CACHE_DIR=/tmp/g-uv-cache`, `UV_LINK_MODE=copy`, repo-local Rust homes
   unless those variables are already set, and CPU allocation-derived variables
   when a CPU SLURM wrapper calls `gwas_engine_configure_cpu_parallelism`.

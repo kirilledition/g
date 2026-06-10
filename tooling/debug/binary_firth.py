@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import typing
 from dataclasses import dataclass
-from pathlib import Path
 
+import hydra
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -18,6 +17,13 @@ from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.interface import config as interface_config
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+
+if typing.TYPE_CHECKING:
+    from pathlib import Path
+
+    import omegaconf
 
 
 @dataclass(frozen=True)
@@ -92,25 +98,26 @@ class NumericColumnComparison:
     mismatch_message: str | None
 
 
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser."""
-    parser = argparse.ArgumentParser(
-        description="Compare binary Firth production sample-major and variant-major compute paths."
-    )
-    parser.add_argument(
-        "--input-npz",
-        type=Path,
-        help=(
-            "Optional NPZ containing covariate_matrix, phenotype_vector, genotype_matrix, "
-            "and optional loco_offset arrays. Omit for the built-in small fixture."
-        ),
-    )
-    parser.add_argument("--p-threshold", type=float, default=0.05, help="Firth fallback p-value threshold.")
-    parser.add_argument("--firth-se", action="store_true", help="Use LRT-derived Firth standard errors.")
-    parser.add_argument("--rtol", type=float, default=1.0e-5, help="Relative tolerance for numeric comparisons.")
-    parser.add_argument("--atol", type=float, default=1.0e-5, help="Absolute tolerance for numeric comparisons.")
-    parser.add_argument("--output-json", type=Path, help="Optional path for a JSON comparison summary.")
-    return parser
+@dataclass(frozen=True)
+class BinaryFirthArguments:
+    """Resolved parameters for the binary Firth path parity harness.
+
+    Attributes:
+        input_npz: Optional NPZ fixture path.
+        p_threshold: Firth fallback p-value threshold.
+        firth_se: Whether to use LRT-derived Firth standard errors.
+        relative_tolerance: Relative tolerance for numeric comparisons.
+        absolute_tolerance: Absolute tolerance for numeric comparisons.
+        output_json: Optional JSON comparison summary path.
+
+    """
+
+    input_npz: Path | None
+    p_threshold: float
+    firth_se: bool
+    relative_tolerance: float
+    absolute_tolerance: float
+    output_json: Path | None
 
 
 def build_synthetic_inputs() -> BinaryParityInputs:
@@ -187,13 +194,20 @@ def prepare_chromosome_state(
 def compute_path_metrics(
     *,
     score_test_result: regenie2_binary_result.Regenie2BinaryScoreChunkResult,
-    corrected_result: regenie2_binary_result.Regenie2BinaryChunkResult,
+    corrected_result: (
+        regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult
+    ),
 ) -> BinaryPathMetrics:
     """Compute parity metrics for one path."""
     score_extra_code = np.asarray(score_test_result.extra_code)
     corrected_extra_code = np.asarray(corrected_result.extra_code)
     firth_candidate_mask = score_extra_code == types.BinaryExtraCode.FIRTH.value
-    firth_failure_code = np.asarray(corrected_result.firth_failure_code)
+    if isinstance(corrected_result, regenie2_binary_result.Regenie2BinaryChunkResult):
+        firth_failure_code = np.asarray(corrected_result.firth_failure_code)
+    else:
+        firth_failure_code = np.asarray(
+            regenie2_binary_result.build_empty_firth_integer_array(corrected_result.extra_code)
+        )
     unique_extra_codes, extra_code_counts = np.unique(corrected_extra_code, return_counts=True)
     return BinaryPathMetrics(
         score_test_count=int(np.count_nonzero(score_extra_code == types.BinaryExtraCode.SCORE.value)),
@@ -332,21 +346,19 @@ def comparison_to_json_dict(comparison: BinaryPathComparison) -> dict[str, typin
     }
 
 
-def main() -> None:
+def run_tool(arguments: BinaryFirthArguments) -> None:
     """Run the parity harness."""
-    argument_parser = build_argument_parser()
-    arguments = argument_parser.parse_args()
     inputs = load_npz_inputs(arguments.input_npz) if arguments.input_npz is not None else build_synthetic_inputs()
     correction_plan = types.BinaryCorrectionPlan(
         method=types.BinaryFallbackMethod.FIRTH_APPROXIMATE,
-        p_threshold=float(arguments.p_threshold),
-        firth_se=bool(arguments.firth_se),
+        p_threshold=arguments.p_threshold,
+        firth_se=arguments.firth_se,
     )
     comparison = compare_binary_paths(
         inputs=inputs,
         correction_plan=correction_plan,
-        relative_tolerance=float(arguments.rtol),
-        absolute_tolerance=float(arguments.atol),
+        relative_tolerance=arguments.relative_tolerance,
+        absolute_tolerance=arguments.absolute_tolerance,
     )
     payload = comparison_to_json_dict(comparison)
     rendered_payload = json.dumps(payload, indent=2, sort_keys=True)
@@ -355,6 +367,31 @@ def main() -> None:
     print(rendered_payload)
     if not comparison.passed:
         raise SystemExit(1)
+
+
+def build_arguments_from_config(config: omegaconf.DictConfig) -> BinaryFirthArguments:
+    """Resolve binary Firth parity parameters from Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return BinaryFirthArguments(
+        input_npz=tooling_hydra_arguments.path_or_none(tool_values["input_npz"]),
+        p_threshold=float(tool_values["p_threshold"]),
+        firth_se=tooling_hydra_arguments.boolean_value(tool_values["firth_se"]),
+        relative_tolerance=float(tool_values["relative_tolerance"]),
+        absolute_tolerance=float(tool_values["absolute_tolerance"]),
+        output_json=tooling_hydra_arguments.path_or_none(tool_values["output_json"]),
+    )
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="debug_binary_firth")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run the binary Firth parity harness from Hydra configuration."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run the binary Firth parity harness from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

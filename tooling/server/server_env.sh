@@ -3,7 +3,7 @@
 set -euo pipefail
 
 if [ -n "${BASH_SOURCE:-}" ]; then
-  repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 else
   repository_root="$(pwd)"
 fi

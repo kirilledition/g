@@ -1,0 +1,9 @@
+tool:
+  output_root: results/perf/smoke
+  output_dir: null
+  iterations: 48
+  items: 4096
+
+hydra:
+  job:
+    chdir: false

@@ -3,17 +3,25 @@
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import os
 import platform
 import re
 import shutil
 import subprocess
+import typing
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+
+import hydra
+
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+
+if typing.TYPE_CHECKING:
+    import omegaconf
 
 
 @dataclass(frozen=True)
@@ -50,7 +58,7 @@ class CudaToolkitVersion:
     minor: int
 
 
-REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TOOLS_DIRECTORY = REPOSITORY_ROOT / ".tools"
 CUDA_REPOSITORY_BASE_URL = "https://developer.download.nvidia.com/compute/cuda/repos"
 NSIGHT_COMPUTE_META_PACKAGE_PREFIX = "cuda-nsight-compute-"
@@ -68,39 +76,24 @@ NSIGHT_TOOLS = (
 )
 
 
-def parse_arguments() -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--tools-dir",
-        type=Path,
-        default=Path(os.environ.get("GWAS_ENGINE_TOOLS_DIR", str(DEFAULT_TOOLS_DIRECTORY))),
-        help="Repo-local tool directory that contains bin/, downloads/, and nsight/.",
-    )
-    parser.add_argument(
-        "--repository-url",
-        default=None,
-        help="CUDA repository URL. Defaults to the host Ubuntu and architecture repository.",
-    )
-    parser.add_argument(
-        "--nsight-systems-package",
-        default=None,
-        help="Exact nsight-systems package name to install instead of the newest package.",
-    )
-    parser.add_argument(
-        "--nsight-compute-package",
-        default=None,
-        help="Exact nsight-compute package name to install instead of the newest package.",
-    )
-    parser.add_argument(
-        "--nsight-compute-cuda-version",
-        default=os.environ.get("GWAS_ENGINE_NSIGHT_COMPUTE_CUDA_VERSION"),
-        help=(
-            "Maximum CUDA toolkit compatibility version for Nsight Compute, such as 12.2. "
-            "Defaults to GWAS_ENGINE_NSIGHT_COMPUTE_CUDA_VERSION or the CUDA version parsed from nvidia-smi."
-        ),
-    )
-    return parser.parse_args()
+@dataclass(frozen=True)
+class NsightInstallArguments:
+    """Resolved parameters for Nsight tool installation.
+
+    Attributes:
+        tools_dir: Repo-local tool directory containing bin, downloads, and nsight.
+        repository_url: CUDA repository URL override.
+        nsight_systems_package: Exact Nsight Systems package override.
+        nsight_compute_package: Exact Nsight Compute package override.
+        nsight_compute_cuda_version: Maximum CUDA toolkit compatibility version.
+
+    """
+
+    tools_dir: Path
+    repository_url: str | None
+    nsight_systems_package: str | None
+    nsight_compute_package: str | None
+    nsight_compute_cuda_version: str | None
 
 
 def parse_os_release(os_release_path: Path) -> dict[str, str]:
@@ -398,12 +391,12 @@ def link_executable(*, executable_path: Path, bin_directory: Path, executable_na
     return link_path
 
 
-def requested_package_name_for_tool(arguments: argparse.Namespace, tool: NsightTool) -> str | None:
+def requested_package_name_for_tool(arguments: NsightInstallArguments, tool: NsightTool) -> str | None:
     """Return the requested package override for one tool."""
     if tool.package_prefix == "nsight-systems-":
-        return str(arguments.nsight_systems_package) if arguments.nsight_systems_package is not None else None
+        return arguments.nsight_systems_package
     if tool.package_prefix == "nsight-compute-":
-        return str(arguments.nsight_compute_package) if arguments.nsight_compute_package is not None else None
+        return arguments.nsight_compute_package
     return None
 
 
@@ -444,11 +437,10 @@ def install_tool(
     )
 
 
-def main() -> None:
+def run_tool(arguments: NsightInstallArguments) -> None:
     """Install Nsight CLI tools."""
-    arguments = parse_arguments()
-    repository_url = str(arguments.repository_url) if arguments.repository_url is not None else default_repository_url()
-    tools_directory = Path(arguments.tools_dir).expanduser().resolve()
+    repository_url = arguments.repository_url if arguments.repository_url is not None else default_repository_url()
+    tools_directory = arguments.tools_dir.expanduser().resolve()
     package_index_url = urllib.parse.urljoin(repository_url.rstrip("/") + "/", "Packages")
     packages = parse_package_index(read_url_text(package_index_url))
     if not packages:
@@ -473,6 +465,40 @@ def main() -> None:
             nsight_compute_cuda_version=nsight_compute_cuda_version,
         )
     print(f"Nsight tools ready in {tools_directory / 'bin'}")
+
+
+def build_arguments_from_config(config: omegaconf.DictConfig) -> NsightInstallArguments:
+    """Resolve Nsight install parameters from Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    tools_directory = tooling_hydra_arguments.path_or_none(tool_values["tools_dir"]) or Path(
+        os.environ.get("GWAS_ENGINE_TOOLS_DIR", str(DEFAULT_TOOLS_DIRECTORY))
+    )
+    nsight_compute_cuda_version = tool_values["nsight_compute_cuda_version"]
+    return NsightInstallArguments(
+        tools_dir=tools_directory,
+        repository_url=str(tool_values["repository_url"]) if tool_values["repository_url"] is not None else None,
+        nsight_systems_package=(
+            str(tool_values["nsight_systems_package"]) if tool_values["nsight_systems_package"] is not None else None
+        ),
+        nsight_compute_package=(
+            str(tool_values["nsight_compute_package"]) if tool_values["nsight_compute_package"] is not None else None
+        ),
+        nsight_compute_cuda_version=(
+            str(nsight_compute_cuda_version) if nsight_compute_cuda_version is not None else None
+        ),
+    )
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="server_nsight_tools")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Install Nsight CLI tools from Hydra configuration."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Install Nsight CLI tools from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

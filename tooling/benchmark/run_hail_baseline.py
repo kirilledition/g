@@ -3,13 +3,21 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import time
+import typing
 from dataclasses import asdict, dataclass
-from pathlib import Path
 
 import hail as hail_library  # type: ignore
+import hydra
+
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+
+if typing.TYPE_CHECKING:
+    from pathlib import Path
+
+    import omegaconf
 
 DEFAULT_HAIL_MASTER = "local[1]"
 DEFAULT_HAIL_DRIVER_MEMORY = "8g"
@@ -53,39 +61,38 @@ class MatrixTableLoadResult:
     cache_prepare_seconds: float
 
 
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser for Hail baseline runs."""
-    argument_parser = argparse.ArgumentParser(description=__doc__)
-    argument_parser.add_argument("--bfile", required=True, help="PLINK dataset prefix without suffix.")
-    argument_parser.add_argument("--pheno", required=True, help="Phenotype table path.")
-    argument_parser.add_argument("--pheno-name", required=True, help="Phenotype column name.")
-    argument_parser.add_argument("--covar", required=True, help="Covariate table path.")
-    argument_parser.add_argument("--covar-names", required=True, help="Comma-separated covariate names.")
-    argument_parser.add_argument("--glm", required=True, choices=("linear", "logistic"), help="Association model.")
-    argument_parser.add_argument(
-        "--logistic-test",
-        choices=("wald", "firth"),
-        default="wald",
-        help="Hail logistic test to run when --glm=logistic.",
-    )
-    argument_parser.add_argument("--out", required=True, help="Output TSV path.")
-    argument_parser.add_argument("--log-path", required=True, help="Hail log path.")
-    argument_parser.add_argument(
-        "--matrix-table-cache",
-        help="Optional MatrixTable cache path stored under local data/.",
-    )
-    argument_parser.add_argument(
-        "--cache-mode",
-        choices=("reuse", "refresh", "require", "disable"),
-        default="reuse",
-        help="How to use the optional MatrixTable cache.",
-    )
-    argument_parser.add_argument(
-        "--prepare-cache-only",
-        action="store_true",
-        help="Only import and cache the MatrixTable without running a regression.",
-    )
-    return argument_parser
+@dataclass(frozen=True)
+class HailBaselineArguments:
+    """Resolved parameters for one Hail baseline run.
+
+    Attributes:
+        bfile: PLINK dataset prefix without suffix.
+        pheno: Phenotype table path.
+        pheno_name: Phenotype column name.
+        covar: Covariate table path.
+        covar_names: Comma-separated covariate names.
+        glm: Association model.
+        logistic_test: Hail logistic test for logistic models.
+        out: Output TSV path.
+        log_path: Hail log path.
+        matrix_table_cache: Optional MatrixTable cache path.
+        cache_mode: MatrixTable cache mode.
+        prepare_cache_only: Whether to import/cache without regression.
+
+    """
+
+    bfile: Path
+    pheno: Path
+    pheno_name: str
+    covar: Path
+    covar_names: str
+    glm: str
+    logistic_test: str
+    out: Path
+    log_path: Path
+    matrix_table_cache: Path | None
+    cache_mode: str
+    prepare_cache_only: bool
 
 
 def import_keyed_table(table_path: Path) -> hail_library.Table:
@@ -320,20 +327,15 @@ def run_logistic_baseline(
     )
 
 
-def main() -> None:
+def run_tool(arguments: HailBaselineArguments) -> None:
     """Execute one Hail baseline run and export its result table."""
-    command_line_arguments = build_argument_parser().parse_args()
-    bed_prefix = Path(command_line_arguments.bfile)
-    phenotype_path = Path(command_line_arguments.pheno)
-    covariate_path = Path(command_line_arguments.covar)
-    output_path = Path(command_line_arguments.out)
-    log_path = Path(command_line_arguments.log_path)
-    matrix_table_cache_path = (
-        Path(command_line_arguments.matrix_table_cache)
-        if command_line_arguments.matrix_table_cache is not None
-        else None
-    )
-    covariate_names = tuple(name.strip() for name in command_line_arguments.covar_names.split(",") if name.strip())
+    bed_prefix = arguments.bfile
+    phenotype_path = arguments.pheno
+    covariate_path = arguments.covar
+    output_path = arguments.out
+    log_path = arguments.log_path
+    matrix_table_cache_path = arguments.matrix_table_cache
+    covariate_names = tuple(name.strip() for name in arguments.covar_names.split(",") if name.strip())
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -347,17 +349,17 @@ def main() -> None:
     matrix_table_load_result = load_or_prepare_matrix_table(
         bed_prefix=bed_prefix,
         matrix_table_cache_path=matrix_table_cache_path,
-        cache_mode=command_line_arguments.cache_mode,
+        cache_mode=arguments.cache_mode,
     )
-    if command_line_arguments.prepare_cache_only:
+    if arguments.prepare_cache_only:
         hail_library.stop()
         run_report = HailRunReport(
-            model_name=command_line_arguments.glm,
+            model_name=arguments.glm,
             test_name=None,
             sample_count=0,
             variant_count=0,
             cache_path=str(matrix_table_cache_path) if matrix_table_cache_path is not None else None,
-            cache_mode=command_line_arguments.cache_mode,
+            cache_mode=arguments.cache_mode,
             cache_used=matrix_table_load_result.cache_used,
             cache_refreshed=matrix_table_load_result.cache_refreshed,
             cache_prepare_seconds=matrix_table_load_result.cache_prepare_seconds,
@@ -374,17 +376,17 @@ def main() -> None:
         matrix_table=matrix_table_load_result.matrix_table,
         phenotype_path=phenotype_path,
         covariate_path=covariate_path,
-        phenotype_name=command_line_arguments.pheno_name,
+        phenotype_name=arguments.pheno_name,
         covariate_names=covariate_names,
-        is_binary_trait=command_line_arguments.glm == "logistic",
+        is_binary_trait=arguments.glm == "logistic",
     )
 
     association_start_time = time.perf_counter()
-    if command_line_arguments.glm == "linear":
+    if arguments.glm == "linear":
         result_table = run_linear_baseline(matrix_table=matrix_table, covariate_names=covariate_names)
         test_name: str | None = None
     else:
-        test_name = command_line_arguments.logistic_test
+        test_name = arguments.logistic_test
         sample_count = matrix_table.count_cols()
         result_table = run_logistic_baseline(
             matrix_table=matrix_table,
@@ -401,12 +403,12 @@ def main() -> None:
     hail_library.stop()
 
     run_report = HailRunReport(
-        model_name=command_line_arguments.glm,
+        model_name=arguments.glm,
         test_name=test_name,
         sample_count=sample_count,
         variant_count=variant_count,
         cache_path=str(matrix_table_cache_path) if matrix_table_cache_path is not None else None,
-        cache_mode=command_line_arguments.cache_mode,
+        cache_mode=arguments.cache_mode,
         cache_used=matrix_table_load_result.cache_used,
         cache_refreshed=matrix_table_load_result.cache_refreshed,
         cache_prepare_seconds=matrix_table_load_result.cache_prepare_seconds,
@@ -417,6 +419,46 @@ def main() -> None:
         hail_version=hail_library.__version__,
     )
     print(json.dumps(asdict(run_report), indent=2))
+
+
+def required_path(tool_values: dict[str, typing.Any], key: str) -> Path:
+    """Return a required path from a Hydra tool config."""
+    path = tooling_hydra_arguments.path_or_none(tool_values[key])
+    if path is None:
+        message = f"tool.{key} is required."
+        raise ValueError(message)
+    return path
+
+
+def build_arguments_from_config(config: omegaconf.DictConfig) -> HailBaselineArguments:
+    """Resolve Hail baseline parameters from Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return HailBaselineArguments(
+        bfile=required_path(tool_values, "bfile"),
+        pheno=required_path(tool_values, "pheno"),
+        pheno_name=str(tool_values["pheno_name"]),
+        covar=required_path(tool_values, "covar"),
+        covar_names=str(tool_values["covar_names"]),
+        glm=str(tool_values["glm"]),
+        logistic_test=str(tool_values["logistic_test"]),
+        out=required_path(tool_values, "out"),
+        log_path=required_path(tool_values, "log_path"),
+        matrix_table_cache=tooling_hydra_arguments.path_or_none(tool_values["matrix_table_cache"]),
+        cache_mode=str(tool_values["cache_mode"]),
+        prepare_cache_only=tooling_hydra_arguments.boolean_value(tool_values["prepare_cache_only"]),
+    )
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="benchmark_hail_baseline")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run one Hail baseline from Hydra configuration."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run one Hail baseline from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

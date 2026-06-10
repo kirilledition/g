@@ -23,10 +23,10 @@ from pathlib import Path
 
 import hydra
 
-import scripts.benchmark as baseline_benchmark
-import scripts.benchmark_regenie_comparison as comparison_benchmark
 import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
 import tooling.configuration as tooling_configuration
+from tooling.benchmark import benchmark as baseline_benchmark
+from tooling.benchmark import comparison as comparison_benchmark
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import logging as tooling_logging
@@ -2254,18 +2254,17 @@ def run_logged_command(
             env=environment,
             timeout=timeout_seconds,
         )
-        command_stdout = completed_process.stdout or ""
-        command_stderr = completed_process.stderr or ""
+        command_stdout = subprocess_output_text(completed_process.stdout)
+        command_stderr = subprocess_output_text(completed_process.stderr)
         status = "success" if completed_process.returncode == 0 else "failed"
         if completed_process.returncode != 0:
             notes = completed_process.stderr.strip() or completed_process.stdout.strip()
     except subprocess.TimeoutExpired as error:
         timeout_reached = True
-        command_stdout = error.stdout or ""
-        command_stderr = error.stderr or ""
+        command_stdout = subprocess_output_text(error.stdout)
+        command_stderr = subprocess_output_text(error.stderr)
         notes = (
-            f"{name} timed out after {float(timeout_seconds or 0):.3f}s with no completion "
-            f"(limit={timeout_seconds}s)."
+            f"{name} timed out after {float(timeout_seconds or 0):.3f}s with no completion (limit={timeout_seconds}s)."
         )
         status = "failed"
     wall_time_seconds = time.perf_counter() - start_time
@@ -2300,6 +2299,15 @@ def run_logged_command(
         environment_overrides=environment_overrides,
         notes=notes,
     )
+
+
+def subprocess_output_text(value: str | bytes | None) -> str:
+    """Normalize subprocess captured output to text."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
 
 
 def permission_blocked_profiler_note(*, stdout: str, stderr: str) -> str | None:

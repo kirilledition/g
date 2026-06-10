@@ -25,12 +25,22 @@ TOML-backed `RegenieConfig`, `ExecutionPlan`, and existing `g` command flow.
 
 ```text
 tooling/
+  benchmark/
+    benchmark.py
+    comparison.py
+    linear_startup.py
+    profile_comparison.py
   cli/
+    benchmark.py
     benchmark_bgen_reader.py
     benchmark_output_stages.py
     benchmark_regenie2_binary_hot.py
+    data.py
+    debug.py
+    performance.py
     profile_regenie2_deep.py
     run_regenie2_matrix.py
+    server.py
     tune_regenie2_gpu.py
   common/
     commands.py
@@ -54,8 +64,22 @@ tooling/
     sweep/
     telemetry/
     workload/
+  data/
+    fetch.py
+    simulate.py
+  debug/
+    binary_firth.py
+    binary_regenie_parity.py
+    check_pyo3_stub.py
+    linear_regenie_parity.py
+  performance/
+    jax_runtime.py
   regenie/
     bgen_reader.py
+  server/
+    bootstrap_tools.py
+    nsight_tools.py
+    server_env.sh
   configuration.py
 ```
 
@@ -67,6 +91,8 @@ execution and pass Hydra overrides:
 ```bash
 uv run --no-sync python -m tooling.cli.benchmark_bgen_reader
 uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot machine=landau_gpu tool.variant_limit=1000
+uv run --no-sync python -m tooling.cli.data tool.name=fetch
+uv run --no-sync python -m tooling.cli.benchmark tool.name=regenie_comparison tool.cpu_only=true
 ```
 
 Use `--cfg job` to inspect the composed tool config:
@@ -141,14 +167,14 @@ machine-readable headline/finalist aggregates to `summary.json`; runs with
 `telemetry.stage_timing_mode=off` mark those diagnostics unavailable instead of
 emitting per-chunk timing artifacts.
 
-`scripts/benchmark_regenie2_linear_fresh_process.py`
+`-m tooling.cli.benchmark tool.name=linear_startup`
 
 Benchmarks quantitative REGENIE step 2 startup behavior. By default it measures
 fresh Python child-process wall time, including interpreter startup, imports,
-JAX backend setup, and the run itself. Pass `--same-process-trials` to append a
-hot same-process section to the JSON report, `--multi-phenotype-count` to
+JAX backend setup, and the run itself. Set `tool.same_process_trials` to append
+a hot same-process section to the JSON report, `tool.multi_phenotype_count` to
 generate cloned quantitative traits for amortization measurements, and
-`--emit-stage-timings` to write per-trial stage timing JSON. Same-process trials
+`tool.emit_stage_timings=true` to write per-trial stage timing JSON. Same-process trials
 disable telemetry output so repeated runs can share one process-global logging
 configuration.
 
@@ -307,7 +333,7 @@ just install-nsight-tools
 and Nsight Compute (`ncu`) CLIs without root by reading NVIDIA's CUDA package
 index, verifying package SHA256 digests, and extracting the `.deb` payloads into
 `.tools/nsight`. It links `nsys` and `ncu` into `.tools/bin`, which
-`scripts/server_env.sh` already puts on `PATH`.
+`tooling/server/server_env.sh` already puts on `PATH`.
 On gauss/landau the recipe defaults `ncu` to the CUDA 12.2-compatible Nsight
 Compute package because `landau` advertises driver CUDA compatibility 12.2, and
 it reads NVIDIA's Ubuntu 22.04 CUDA package index because the Ubuntu 24.04 index
@@ -943,18 +969,18 @@ multi-phenotype runs.
 Run CPU checks on a CPU compute node and GPU checks through `landau`:
 
 ```bash
-uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py \
-  --device cpu \
-  --data-dir /mnt/beegfs/kirill/Projects/g/data \
-  --output-dir data/benchmarks/linear_startup_cpu \
-  --trials 3 \
-  --same-process-trials 3 \
-  --emit-stage-timings
+uv run --no-sync python -m tooling.cli.benchmark tool.name=linear_startup \
+  tool.device=cpu \
+  tool.data_dir=/mnt/beegfs/kirill/Projects/g/data \
+  tool.output_dir=data/benchmarks/linear_startup_cpu \
+  tool.trials=3 \
+  tool.same_process_trials=3 \
+  tool.emit_stage_timings=true
 
-just slurm-gpu-run 'uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --data-dir /mnt/beegfs/kirill/Projects/g/data --output-dir data/benchmarks/linear_startup_gpu --trials 3 --same-process-trials 3 --emit-stage-timings'
+just slurm-gpu-run 'uv run --no-sync python -m tooling.cli.benchmark tool.name=linear_startup tool.device=gpu tool.data_dir=/mnt/beegfs/kirill/Projects/g/data tool.output_dir=data/benchmarks/linear_startup_gpu tool.trials=3 tool.same_process_trials=3 tool.emit_stage_timings=true'
 ```
 
-Use `--multi-phenotype-count N` when the question is whether one process can do
+Use `tool.multi_phenotype_count=N` when the question is whether one process can do
 more useful work per BGEN decode/JAX initialization. The generated phenotype and
 prediction-list inputs live under the benchmark output directory and are for
 timing only; do not use cloned traits as scientific evidence.

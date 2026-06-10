@@ -1118,8 +1118,7 @@ def compute_firth_variantwise_fixed_batches(
                 )
                 compact_carrier_count = jnp.take(carrier_count, compact_stream_plan.lane_indices, axis=0)
                 compact_carrier_slot_mask = (
-                    jnp.arange(SPARSE_FIRTH_CARRIER_CAPACITY, dtype=jnp.int32)[None, :]
-                    < compact_carrier_count[:, None]
+                    jnp.arange(SPARSE_FIRTH_CARRIER_CAPACITY, dtype=jnp.int32)[None, :] < compact_carrier_count[:, None]
                 ) & compact_stream_plan.active_mask[:, None]
                 compact_lane_genotype_matrix = jnp.take(
                     genotype_matrix_by_variant,
@@ -1270,9 +1269,7 @@ def compute_firth_multi_variantwise_fixed_batches(
                     null_logistic_coefficients=jnp.take(
                         null_logistic_coefficients, dense_stream_plan.lane_indices, axis=0
                     ),
-                    null_firth_offset_matrix=jnp.take(
-                        null_firth_offset_matrix, dense_stream_plan.lane_indices, axis=0
-                    ),
+                    null_firth_offset_matrix=jnp.take(null_firth_offset_matrix, dense_stream_plan.lane_indices, axis=0),
                     phenotype_matrix=jnp.take(phenotype_matrix, dense_stream_plan.lane_indices, axis=0),
                     genotype_matrix_by_variant=jnp.take(
                         genotype_matrix_by_variant, dense_stream_plan.lane_indices, axis=0
@@ -1318,17 +1315,14 @@ def compute_firth_multi_variantwise_fixed_batches(
                 )
                 compact_carrier_count = jnp.take(carrier_count, compact_stream_plan.lane_indices, axis=0)
                 compact_carrier_slot_mask = (
-                    jnp.arange(SPARSE_FIRTH_CARRIER_CAPACITY, dtype=jnp.int32)[None, :]
-                    < compact_carrier_count[:, None]
+                    jnp.arange(SPARSE_FIRTH_CARRIER_CAPACITY, dtype=jnp.int32)[None, :] < compact_carrier_count[:, None]
                 ) & compact_stream_plan.active_mask[:, None]
                 compact_lane_genotype_matrix = jnp.take(
                     genotype_matrix_by_variant,
                     compact_stream_plan.lane_indices,
                     axis=0,
                 )
-                compact_lane_phenotype_matrix = jnp.take(
-                    phenotype_matrix, compact_stream_plan.lane_indices, axis=0
-                )
+                compact_lane_phenotype_matrix = jnp.take(phenotype_matrix, compact_stream_plan.lane_indices, axis=0)
                 compact_lane_offset_matrix = jnp.take(
                     null_firth_offset_matrix, compact_stream_plan.lane_indices, axis=0
                 )

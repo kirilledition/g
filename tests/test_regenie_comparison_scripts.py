@@ -9,18 +9,19 @@ from pathlib import Path
 
 import polars as pl
 
-import scripts.benchmark as baseline_benchmark
-import scripts.benchmark_regenie2_linear_fresh_process as fresh_process_benchmark
-import scripts.benchmark_regenie_comparison as comparison_benchmark
-import scripts.compare_binary_firth_paths as binary_firth_parity
-import scripts.debug_binary_regenie_parity as binary_regenie_debug
-import scripts.debug_linear_regenie_parity as linear_regenie_debug
-import scripts.profile_regenie_comparison as comparison_profile
+import tooling.benchmark.benchmark as baseline_benchmark
+import tooling.benchmark.comparison as comparison_benchmark
+import tooling.benchmark.linear_startup as fresh_process_benchmark
+import tooling.benchmark.profile_comparison as comparison_profile
 import tooling.cli.benchmark_bgen_reader as bgen_reader_benchmark
 import tooling.cli.benchmark_output_stages as output_stage_benchmark
 import tooling.cli.benchmark_regenie2_binary_hot as binary_hot_benchmark
 import tooling.cli.profile_regenie2_deep as deep_profile
 import tooling.cli.tune_regenie2_gpu as tuning_benchmark
+import tooling.configuration as tooling_configuration
+import tooling.debug.binary_firth as binary_firth_parity
+import tooling.debug.binary_regenie_parity as binary_regenie_debug
+import tooling.debug.linear_regenie_parity as linear_regenie_debug
 
 if typing.TYPE_CHECKING:
     import pytest
@@ -104,8 +105,8 @@ def test_run_logged_command_marks_timeout_as_failed(
     assert result.status == "failed"
     assert result.notes is not None
     assert "timed out" in result.notes
-    assert "partial output" == Path(result.stdout_log_path).read_text(encoding="utf-8")
-    assert "partial error" == Path(result.stderr_log_path).read_text(encoding="utf-8")
+    assert Path(result.stdout_log_path).read_text(encoding="utf-8") == "partial output"
+    assert Path(result.stderr_log_path).read_text(encoding="utf-8") == "partial error"
 
 
 def test_bgen_reader_benchmark_parses_sweep_lists() -> None:
@@ -913,11 +914,11 @@ def test_deep_profile_algorithmic_findings_respect_speedup_direction() -> None:
     assert any("binary/cpu: REGENIE remains faster in output" in finding for finding in findings)
 
 
-def test_binary_firth_parity_harness_synthetic_fixture_passes() -> None:
+def test_binary_path_parity_harness_synthetic_score_only_fixture_passes() -> None:
     comparison = binary_firth_parity.compare_binary_paths(
         inputs=binary_firth_parity.build_synthetic_inputs(),
         correction_plan=binary_firth_parity.types.BinaryCorrectionPlan(
-            method=binary_firth_parity.types.BinaryFallbackMethod.FIRTH_APPROXIMATE
+            method=binary_firth_parity.types.BinaryFallbackMethod.SCORE_ONLY
         ),
     )
 
@@ -1240,13 +1241,12 @@ def test_quantitative_step2_comparison_wires_parity_logic(tmp_path: Path) -> Non
     assert agreement.top_variant_differences is not None
 
 
-def test_fresh_process_benchmark_parser_accepts_output_writer_options() -> None:
-    arguments = fresh_process_benchmark.build_argument_parser().parse_args(
-        [
-            "--output-writer-thread-count",
-            "2",
-        ]
+def test_fresh_process_benchmark_config_accepts_output_writer_options() -> None:
+    config = tooling_configuration.compose_config(
+        config_name="benchmark_linear_startup",
+        overrides=["tool.output_writer_thread_count=2"],
     )
+    arguments = fresh_process_benchmark.build_arguments_from_config(config)
     assert arguments.output_writer_thread_count == 2
 
 
@@ -2417,7 +2417,9 @@ def test_deep_profile_full_bundle_builds_profiler_commands(
     assert len(results["sampling_profiles"]) == 7
 
 
-def test_deep_profile_deep_profiles_continue_after_timed_out_profiler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_deep_profile_deep_profiles_continue_after_timed_out_profiler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     baseline_paths = baseline_benchmark.build_baseline_paths()
     candidate = deep_profile.Step2Candidate(
         trait_type="binary",

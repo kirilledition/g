@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
 import json
 import os
@@ -15,6 +14,14 @@ import time
 import typing
 from dataclasses import dataclass
 from pathlib import Path
+
+import hydra
+
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+
+if typing.TYPE_CHECKING:
+    import omegaconf
 
 DEFAULT_DATA_DIRECTORY = Path("data")
 DEFAULT_OUTPUT_DIRECTORY = Path("data/benchmarks/regenie2_linear_fresh_process")
@@ -85,63 +92,42 @@ class BenchmarkReport:
     comparisons: dict[str, float]
 
 
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser."""
-    parser = argparse.ArgumentParser(description="Benchmark g REGENIE step 2 in fresh Python processes.")
-    parser.add_argument("--device", default="gpu", choices=("cpu", "gpu"), help="Execution device.")
-    parser.add_argument("--chunk-size", type=int, default=8192, help="Variants per chunk.")
-    parser.add_argument(
-        "--finalize-parquet",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Finalize Arrow chunks into Parquet before finishing the trial.",
-    )
-    parser.add_argument(
-        "--output-writer-thread-count",
-        type=int,
-        default=1,
-        help="Background writer thread count.",
-    )
-    parser.add_argument("--trials", type=int, default=3, help="Measured fresh-process trial count.")
-    parser.add_argument("--warmup-trials", type=int, default=1, help="Unreported fresh-process warmup trials.")
-    parser.add_argument(
-        "--same-process-trials",
-        type=int,
-        default=0,
-        help="Measured hot trials to run in one already-imported Python process.",
-    )
-    parser.add_argument(
-        "--same-process-warmup-trials",
-        type=int,
-        default=1,
-        help="Unreported same-process warmup trials before hot measurements.",
-    )
-    parser.add_argument(
-        "--multi-phenotype-count",
-        type=int,
-        default=1,
-        help="Generate this many cloned quantitative phenotypes for amortization measurements.",
-    )
-    parser.add_argument(
-        "--multi-phenotype-sample-mode",
-        default="complete-case",
-        choices=("per-phenotype", "complete-case"),
-        help="Sample handling mode used when --multi-phenotype-count is greater than one.",
-    )
-    parser.add_argument(
-        "--emit-stage-timings",
-        action="store_true",
-        help="Write per-trial g stage timing JSON for measured trials.",
-    )
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIRECTORY, help="Input data directory.")
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=DEFAULT_OUTPUT_DIRECTORY,
-        help="Directory for benchmark outputs and summary files.",
-    )
-    parser.add_argument("--json-summary-path", type=Path, help="Optional explicit JSON summary output path.")
-    return parser
+@dataclass(frozen=True)
+class LinearStartupArguments:
+    """Resolved fresh-process benchmark parameters.
+
+    Attributes:
+        device: Execution device.
+        chunk_size: Variants per chunk.
+        finalize_parquet: Whether each trial finalizes Parquet output.
+        output_writer_thread_count: Background writer thread count.
+        trials: Measured fresh-process trial count.
+        warmup_trials: Unreported fresh-process warmup count.
+        same_process_trials: Measured same-process trial count.
+        same_process_warmup_trials: Unreported same-process warmup count.
+        multi_phenotype_count: Number of cloned quantitative phenotypes.
+        multi_phenotype_sample_mode: Multi-trait sample handling mode.
+        emit_stage_timings: Whether measured trials write stage timing JSON.
+        data_dir: Input data directory.
+        output_dir: Benchmark output directory.
+        json_summary_path: Optional explicit JSON summary path.
+
+    """
+
+    device: str
+    chunk_size: int
+    finalize_parquet: bool
+    output_writer_thread_count: int
+    trials: int
+    warmup_trials: int
+    same_process_trials: int
+    same_process_warmup_trials: int
+    multi_phenotype_count: int
+    multi_phenotype_sample_mode: str
+    emit_stage_timings: bool
+    data_dir: Path
+    output_dir: Path
+    json_summary_path: Path | None
 
 
 def prepare_benchmark_inputs(
@@ -798,25 +784,20 @@ def build_benchmark_report(
     )
 
 
-def main() -> None:
+def run_tool(arguments: LinearStartupArguments) -> None:
     """Run the fresh-process benchmark."""
-    argument_parser = build_argument_parser()
-    arguments = argument_parser.parse_args()
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        require_positive_count("--trials", arguments.trials)
-        require_non_negative_count("--warmup-trials", arguments.warmup_trials)
-        require_non_negative_count("--same-process-trials", arguments.same_process_trials)
-        require_non_negative_count("--same-process-warmup-trials", arguments.same_process_warmup_trials)
-        require_positive_count("--multi-phenotype-count", arguments.multi_phenotype_count)
-        benchmark_inputs = prepare_benchmark_inputs(
-            data_directory=arguments.data_dir,
-            output_directory=arguments.output_dir,
-            phenotype_count=arguments.multi_phenotype_count,
-        )
-    except ValueError as error:
-        argument_parser.error(str(error))
+    require_positive_count("tool.trials", arguments.trials)
+    require_non_negative_count("tool.warmup_trials", arguments.warmup_trials)
+    require_non_negative_count("tool.same_process_trials", arguments.same_process_trials)
+    require_non_negative_count("tool.same_process_warmup_trials", arguments.same_process_warmup_trials)
+    require_positive_count("tool.multi_phenotype_count", arguments.multi_phenotype_count)
+    benchmark_inputs = prepare_benchmark_inputs(
+        data_directory=arguments.data_dir,
+        output_directory=arguments.output_dir,
+        phenotype_count=arguments.multi_phenotype_count,
+    )
 
     measured_trial_results = run_fresh_process_trials(
         benchmark_inputs=benchmark_inputs,
@@ -884,6 +865,39 @@ def main() -> None:
     json_summary_path = arguments.json_summary_path or (arguments.output_dir / default_summary_filename)
     json_summary_path.write_text(json.dumps(output_payload, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(output_payload, indent=2))
+
+
+def build_arguments_from_config(config: omegaconf.DictConfig) -> LinearStartupArguments:
+    """Resolve fresh-process benchmark parameters from Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return LinearStartupArguments(
+        device=str(tool_values["device"]),
+        chunk_size=int(tool_values["chunk_size"]),
+        finalize_parquet=tooling_hydra_arguments.boolean_value(tool_values["finalize_parquet"]),
+        output_writer_thread_count=int(tool_values["output_writer_thread_count"]),
+        trials=int(tool_values["trials"]),
+        warmup_trials=int(tool_values["warmup_trials"]),
+        same_process_trials=int(tool_values["same_process_trials"]),
+        same_process_warmup_trials=int(tool_values["same_process_warmup_trials"]),
+        multi_phenotype_count=int(tool_values["multi_phenotype_count"]),
+        multi_phenotype_sample_mode=str(tool_values["multi_phenotype_sample_mode"]),
+        emit_stage_timings=tooling_hydra_arguments.boolean_value(tool_values["emit_stage_timings"]),
+        data_dir=tooling_hydra_arguments.path_or_none(tool_values["data_dir"]) or DEFAULT_DATA_DIRECTORY,
+        output_dir=tooling_hydra_arguments.path_or_none(tool_values["output_dir"]) or DEFAULT_OUTPUT_DIRECTORY,
+        json_summary_path=tooling_hydra_arguments.path_or_none(tool_values["json_summary_path"]),
+    )
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="benchmark_linear_startup")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run the fresh-process benchmark from Hydra configuration."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run the fresh-process benchmark from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

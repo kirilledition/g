@@ -146,5 +146,5 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 
 * Keep `src/g/_core.pyi` aligned with the exported Rust API in `src/python/mod.rs` and `src/python/config/mod.rs`.
 * Update the stub whenever Rust `#[pyclass]`, `#[pyfunction]`, `add_class`, or `add_function` changes touch argument or return types used by Python callers.
-* Run `uv run python scripts/check_pyo3_stub.py` (or `just check-core-stub`) before reviewing Rust/native-facing type updates.
+* Run `uv run python -m tooling.cli.debug tool.name=check_pyo3_stub` (or `just check-core-stub`) before reviewing Rust/native-facing type updates.
 * Treat `just check` failures from `check-core-stub` as mandatory follow-up work when modifying native API exports.

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
 import os
 import platform
@@ -14,7 +13,14 @@ import tracemalloc
 import typing
 from pathlib import Path
 
+import hydra
+
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import reports as tooling_reports
+
+if typing.TYPE_CHECKING:
+    import omegaconf
 
 DEFAULT_OUTPUT_ROOT = Path("results/perf/smoke")
 DEFAULT_ITERATION_COUNT = 48
@@ -39,6 +45,24 @@ class SmokeBenchmarkResult:
     checksum: float
     iteration_count: int
     item_count: int
+
+
+@dataclasses.dataclass(frozen=True)
+class PerformanceSmokeArguments:
+    """Resolved parameters for the performance smoke benchmark.
+
+    Attributes:
+        output_root: Parent directory for smoke runs.
+        output_dir: Exact output directory for this smoke run.
+        iterations: Tiny workload iteration count.
+        items: Tiny workload item count.
+
+    """
+
+    output_root: Path
+    output_dir: Path | None
+    iterations: int
+    items: int
 
 
 def timestamped_output_directory(output_root: Path) -> Path:
@@ -162,47 +186,43 @@ def build_summary(result: SmokeBenchmarkResult) -> dict[str, typing.Any]:
     }
 
 
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser.
-
-    Returns:
-        Configured argument parser.
-
-    """
-    parser = argparse.ArgumentParser(description="Run a login-node-safe benchmark harness smoke test.")
-    parser.add_argument(
-        "--output-root",
-        type=Path,
-        default=DEFAULT_OUTPUT_ROOT,
-        help="Parent directory for smoke runs.",
-    )
-    parser.add_argument("--output-dir", type=Path, help="Exact output directory for this smoke run.")
-    parser.add_argument(
-        "--iterations",
-        type=int,
-        default=DEFAULT_ITERATION_COUNT,
-        help="Tiny workload iteration count.",
-    )
-    parser.add_argument("--items", type=int, default=DEFAULT_ITEM_COUNT, help="Tiny workload item count.")
-    return parser
-
-
-def main() -> None:
+def run_tool(arguments: PerformanceSmokeArguments) -> None:
     """Run the performance smoke benchmark CLI."""
-    parser = build_argument_parser()
-    arguments = parser.parse_args()
     output_directory = arguments.output_dir or timestamped_output_directory(arguments.output_root)
-    try:
-        result = run_smoke_workload(iteration_count=int(arguments.iterations), item_count=int(arguments.items))
-    except ValueError as error:
-        print(f"error: {error}", file=sys.stderr)
-        raise SystemExit(2) from error
+    result = run_smoke_workload(iteration_count=arguments.iterations, item_count=arguments.items)
     summary_path = output_directory / "performance_smoke_summary.json"
     tooling_reports.write_json_report(summary_path, build_summary(result), sort_keys=True)
     print(f"Smoke benchmark wall_time_seconds={result.wall_time_seconds:.6g}")
     print(f"Smoke benchmark peak_memory_bytes={result.peak_memory_bytes}")
     print(f"Smoke benchmark checksum={result.checksum:.6g}")
     print(f"Wrote summary: {summary_path}")
+
+
+def build_arguments_from_config(config: omegaconf.DictConfig) -> PerformanceSmokeArguments:
+    """Resolve performance smoke parameters from Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return PerformanceSmokeArguments(
+        output_root=tooling_hydra_arguments.path_or_none(tool_values["output_root"]) or DEFAULT_OUTPUT_ROOT,
+        output_dir=tooling_hydra_arguments.path_or_none(tool_values["output_dir"]),
+        iterations=int(tool_values["iterations"]),
+        items=int(tool_values["items"]),
+    )
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="performance_smoke")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run the performance smoke benchmark from Hydra configuration."""
+    try:
+        run_tool(build_arguments_from_config(config))
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        raise SystemExit(2) from error
+
+
+def main() -> None:
+    """Run the performance smoke benchmark from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

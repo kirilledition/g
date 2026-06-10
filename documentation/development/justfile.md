@@ -45,7 +45,7 @@ The recipes read these environment variables:
 | `SYMPHONY_PORT` | `4000` | Port passed to the Symphony daemon. |
 | `SYMPHONY_WORKTREE_ROOT` | `/mnt/beegfs/kirill/Projects/g-worktrees/symphony` | Worktree root for unattended Symphony task branches. |
 
-Most recipes source `scripts/server_env.sh`, which sets repo-local tool paths
+Most recipes source `tooling/server/server_env.sh`, which sets repo-local tool paths
 and server cache defaults.
 
 Do not run GPU workloads, Rust dependency builds, large benchmark sweeps, or
@@ -122,7 +122,7 @@ also accept the same overrides when run directly with `uv run --no-sync python
 
 - Inputs: internet access and a writable server tool/cache directory.
 - Output: repo-local server command-line tools installed by
-  `scripts/bootstrap_server_tools.py`.
+  `-m tooling.cli.server tool.name=bootstrap_tools`.
 - Use when: bootstrapping a fresh Ubuntu/SLURM server environment.
 
 ### `bootstrap`
@@ -271,7 +271,7 @@ GWAS_ENGINE_REGENIE_BGEN_PATH=/path/to/bgen \
 ### `doctor-jax`
 
 - Inputs: Python environment.
-- Output: JAX runtime/device probe from `scripts/probe_jax_runtime.py`.
+- Output: JAX runtime/device probe from `-m tooling.cli.performance tool.name=jax_runtime`.
 - Use when: checking CPU/GPU visibility for JAX.
 
 ### `probe-jax`
@@ -301,7 +301,7 @@ Example:
 
 ```bash
 just slurm-gpu-run 'nvidia-smi'
-just slurm-gpu-run 'uv run python scripts/probe_jax_runtime.py'
+just slurm-gpu-run 'uv run python -m tooling.cli.performance tool.name=jax_runtime'
 ```
 
 ### `slurm-gpu-just +just_arguments`
@@ -352,7 +352,7 @@ just slurm-cpu-just check
 just slurm-cpu-just test
 ```
 
-Inside CPU jobs, the wrapper sources `scripts/server_env.sh`, derives allocated
+Inside CPU jobs, the wrapper sources `tooling/server/server_env.sh`, derives allocated
 CPU count from SLURM, sets `CARGO_BUILD_JOBS` to that count, and defaults pytest
 xdist to at most 8 workers unless `GWAS_ENGINE_CPU_PYTEST_WORKERS` is set.
 
@@ -541,7 +541,7 @@ GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
 ### `benchmark-baselines`
 
 - Inputs: prepared data and external baseline tools.
-- Output: baseline benchmark report from `scripts/benchmark.py`, excluding slow
+- Output: baseline benchmark report from `-m tooling.cli.benchmark tool.name=baselines`, excluding slow
   Hail runs by default.
 - Use when: refreshing PLINK2/REGENIE baseline timings.
 
@@ -581,15 +581,12 @@ GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data \
 
 ### `benchmark-regenie2-linear-fresh-gpu`
 
-- Inputs: installed perf extension, GPU access, fresh-process benchmark script
-  inputs.
+- Inputs: installed perf extension, GPU access, fresh-process benchmark inputs.
 - Output: REGENIE step 2 fresh-process GPU benchmark report. The underlying
-  script also accepts `--same-process-trials`, `--multi-phenotype-count`, and
-  `--emit-stage-timings` when run directly for startup-amortization studies.
-- Use when: measuring linear quantitative startup behavior. The recipe still
-  uses a `scripts/` entrypoint rather than the new Hydra-backed `tooling/`
-  interface; run it through `just slurm-gpu-run` for custom same-process
-  options on `landau`.
+  Hydra tool accepts overrides such as `tool.same_process_trials=3`,
+  `tool.multi_phenotype_count=4`, and `tool.emit_stage_timings=true`.
+- Use when: measuring linear quantitative startup behavior. Run it through
+  `just slurm-gpu-run` for custom same-process options on `landau`.
 
 ### `benchmark-regenie2-linear-fresh-gpu-parquet`
 

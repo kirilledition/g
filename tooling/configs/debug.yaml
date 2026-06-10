@@ -1,0 +1,30 @@
+defaults:
+  - dataset: local_1kg
+  - workload: regenie2_chr22_matrix
+  - _self_
+
+tool:
+  name: check_pyo3_stub
+  input_npz: null
+  p_threshold: 0.05
+  firth_se: false
+  relative_tolerance: 1.0e-5
+  absolute_tolerance: 1.0e-5
+  bgen: ${dataset.data_directory}/${dataset.bgen_file}
+  sample: ${dataset.data_directory}/${dataset.sample_file}
+  pheno_file: ${dataset.data_directory}/${dataset.phenotype_file}
+  pheno_col: phenotype_binary
+  covar_file: ${dataset.data_directory}/covariates.txt
+  covar_col_list: age,sex
+  pred: ${dataset.data_directory}/${dataset.prediction_list}
+  variant_ids: []
+  variant_indices: []
+  chunk_size: ${workload.chunk_size}
+  variant_limit: ${workload.variant_limit}
+  output_json: data/debug/tooling_debug.json
+  regenie_debug_jsonl: null
+  trusted_no_missing_diploid: false
+
+hydra:
+  job:
+    chdir: false

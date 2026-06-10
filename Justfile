@@ -27,7 +27,7 @@ slurm_cpu_extra_arguments := env_var_or_default('GWAS_ENGINE_CPU_EXTRA_ARGS', en
 slurm_cpu_exclusive := env_var_or_default('GWAS_ENGINE_SLURM_EXCLUSIVE', '1')
 perf_results_dir := env_var_or_default('GWAS_ENGINE_PERF_RESULTS_DIR', 'results/perf')
 deep_profile_landau_budget_overrides := 'tool.chunk_sizes=[2048,4096] tool.staging_depths=[1,2] tool.output_writer_thread_counts=[1,4] tool.writer_queue_depth_multipliers=[1,2] tool.firth_batch_sizes=[32] tool.bgen_decode_tile_variant_counts=[64,128] tool.rayon_thread_counts=[4,8] tool.top_bgen_candidates=1 tool.top_finalists=2 tool.tuning_warmups=0 tool.tuning_trials=1 tool.finalist_warmups=0 tool.finalist_trials=2 tool.headline_warmups=0 tool.headline_trials=3 tool.max_subprocess_runs=1000 tool.max_major_profiler_runs=64'
-server_env := '. scripts/server_env.sh'
+server_env := '. tooling/server/server_env.sh'
 symphony_elixir_dir := env_var_or_default('SYMPHONY_ELIXIR_DIR', '/mnt/beegfs/kirill/Projects/symphony/elixir')
 symphony_port := env_var_or_default('SYMPHONY_PORT', '4000')
 symphony_worktree_root := env_var_or_default('SYMPHONY_WORKTREE_ROOT', '/mnt/beegfs/kirill/Projects/g-worktrees/symphony')
@@ -44,14 +44,14 @@ help:
 
 # Download local 1KG fixture data and simulate phenotypes
 setup-data:
-    {{ server_env }} && uv run python scripts/fetch_1kg.py
-    {{ server_env }} && uv run python scripts/simulate_phenos.py
+    {{ server_env }} && uv run python -m tooling.cli.data tool.name=fetch
+    {{ server_env }} && uv run python -m tooling.cli.data tool.name=simulate
 
 # Generate binary REGENIE step 1 predictions required by g binary step 2
 setup-binary-baseline: setup-data
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     mkdir -p "{{ data_dir }}/baselines"
     regenie \
       --step 1 \
@@ -81,7 +81,7 @@ verify-regenie2-binary-gpu-inputs:
 
 # Run PLINK2/Regenie baselines and generate hardware report (excludes slow Hail benchmarks by default)
 benchmark-baselines: setup-data
-    {{ server_env }} && uv run python scripts/benchmark.py
+    {{ server_env }} && uv run python -m tooling.cli.benchmark tool.name=baselines
 
 # Build and install the Rust extension using the opt-in native performance profile
 install-perf-extension:
@@ -89,24 +89,24 @@ install-perf-extension:
 
 # Compare original regenie (all 4 programs) vs g quantitative step2 CPU
 benchmark-regenie-comparison-cpu: setup-data install-perf-extension
-    {{ server_env }} && uv run --no-sync python scripts/benchmark_regenie_comparison.py --cpu-only
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=regenie_comparison tool.cpu_only=true tool.include_gpu=false
 
 # Compare original regenie (all 4 programs) vs g quantitative step2 CPU+GPU
 benchmark-regenie-comparison-gpu: setup-data install-perf-extension
-    {{ server_env }} && uv run --no-sync python scripts/benchmark_regenie_comparison.py --include-gpu
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=regenie_comparison tool.cpu_only=false tool.include_gpu=true machine=landau_gpu
 
 # Alias for comparison benchmark (CPU-only default)
 benchmark-regenie-comparison: benchmark-regenie-comparison-cpu
 
 # Run full baselines including Hail (slow - requires cached MatrixTable)
 benchmark-baselines-full: setup-data
-    {{ server_env }} && HAIL_INCLUDE=1 uv run python scripts/benchmark.py
+    {{ server_env }} && uv run python -m tooling.cli.benchmark tool.name=baselines tool.include_hail=true
 
 # --- Development ---
 
 # Install repo-local command-line tools for the Ubuntu SLURM server
 setup-server-tools:
-    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/g-uv-cache}" UV_LINK_MODE="${UV_LINK_MODE:-copy}" uv run --no-project python scripts/bootstrap_server_tools.py
+    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/g-uv-cache}" UV_LINK_MODE="${UV_LINK_MODE:-copy}" uv run --group dev python -m tooling.cli.server tool.name=bootstrap_tools
 
 # Bootstrap a CPU-only development environment on the login node
 bootstrap:
@@ -132,13 +132,13 @@ install-profiling-tools:
 
 # Install Nsight Systems and Nsight Compute into the repo-local tool directory
 install-nsight-tools:
-    {{ server_env }} && uv run --no-project python scripts/install_nsight_tools.py --repository-url {{ cuda_repository_url }} --nsight-compute-cuda-version {{ nsight_compute_cuda_version }}
+    {{ server_env }} && uv run --group dev python -m tooling.cli.server tool.name=nsight_tools "tool.repository_url='{{ cuda_repository_url }}'" "tool.nsight_compute_cuda_version='{{ nsight_compute_cuda_version }}'"
 
 # Check local toolchain prerequisites for development on the current host
 doctor:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     required_commands=(uv cargo rustc)
     for command_name in "${required_commands[@]}"; do
       if ! command -v "${command_name}" >/dev/null 2>&1; then
@@ -159,7 +159,7 @@ doctor:
 doctor-server:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     required_commands=(git just uv srun zstd cargo cargo-clippy cargo-fmt rustc rustfmt plink plink2 regenie)
     for command_name in "${required_commands[@]}"; do
       if ! command -v "${command_name}" >/dev/null 2>&1; then
@@ -179,7 +179,7 @@ doctor-server:
 symphony-doctor:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
     if [[ -f "${symphony_env_file}" ]]; then
       set -a
@@ -209,7 +209,7 @@ docs-build:
 symphony-run:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
     if [[ -f "${symphony_env_file}" ]]; then
       set -a
@@ -246,14 +246,14 @@ symphony-sync-main *arguments:
     set -euo pipefail
     repository_root="{{ justfile_directory() }}"
     cd "${repository_root}"
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     uv run --no-sync python -m tooling.cli.symphony_sync_main --repository "${repository_root}" {{ arguments }}
 
 # Dry-run stale Symphony worktree and branch cleanup
 symphony-cleanup *arguments:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
     if [[ -f "${symphony_env_file}" ]]; then
       set -a
@@ -267,7 +267,7 @@ symphony-cleanup *arguments:
 symphony-cleanup-apply *arguments:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     symphony_env_file="${SYMPHONY_ENV_FILE:-$HOME/.config/g-symphony/env}"
     if [[ -f "${symphony_env_file}" ]]; then
       set -a
@@ -281,7 +281,7 @@ symphony-cleanup-apply *arguments:
 doctor-baselines:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     required_commands=(plink plink2 regenie)
     for command_name in "${required_commands[@]}"; do
       if ! command -v "${command_name}" >/dev/null 2>&1; then
@@ -295,7 +295,7 @@ doctor-baselines:
 build-patched-regenie:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     source_directory="{{ regenie_patched_source_dir }}"
     output_directory="{{ regenie_patched_output_dir }}"
     bgen_path="${GWAS_ENGINE_REGENIE_BGEN_PATH:-${BGEN_PATH:-}}"
@@ -359,7 +359,7 @@ build-patched-regenie:
 slurm-build-patched-regenie node='':
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     build_node="{{ node }}"
     if [[ -z "${build_node}" ]]; then
       build_node="${GWAS_ENGINE_REGENIE_BUILD_NODE:-{{ slurm_cpu_node }}}"
@@ -390,13 +390,13 @@ slurm-build-patched-regenie node='':
 
 # Probe JAX runtime on the current host
 doctor-jax:
-    {{ server_env }} && uv run --python {{ python_version }} python scripts/probe_jax_runtime.py
+    {{ server_env }} && uv run --python {{ python_version }} python -m tooling.cli.performance tool.name=jax_runtime
 
 # Start an interactive SLURM shell on the configured GPU node
 slurm-gpu-shell:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     slurm_arguments=(
       "--ntasks=1"
       "--nodelist={{ slurm_gpu_node }}"
@@ -421,7 +421,7 @@ slurm-gpu-shell:
 slurm-gpu-run command:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     command='{{ command }}'
     slurm_arguments=(
       "--ntasks=1"
@@ -447,14 +447,14 @@ slurm-gpu-run command:
 slurm-gpu-just +just_arguments:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     exec just slurm-gpu-run 'just {{ just_arguments }}'
 
 # Start an interactive SLURM shell on the configured CPU node
 slurm-cpu-shell:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     repository_root="{{ justfile_directory() }}"
     slurm_arguments=(
       "--nodes=1"
@@ -483,14 +483,14 @@ slurm-cpu-shell:
       read -r -a extra_arguments <<< "{{ slurm_cpu_extra_arguments }}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
-    printf -v job_command 'cd %q && . scripts/server_env.sh && gwas_engine_configure_cpu_parallelism && echo "GWAS_ENGINE_ALLOCATED_CPU_COUNT=${GWAS_ENGINE_ALLOCATED_CPU_COUNT}" && echo "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}" && echo "GWAS_ENGINE_PYTEST_WORKERS=${GWAS_ENGINE_PYTEST_WORKERS}" && exec bash -l' "${repository_root}"
+    printf -v job_command 'cd %q && . tooling/server/server_env.sh && gwas_engine_configure_cpu_parallelism && echo "GWAS_ENGINE_ALLOCATED_CPU_COUNT=${GWAS_ENGINE_ALLOCATED_CPU_COUNT}" && echo "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}" && echo "GWAS_ENGINE_PYTEST_WORKERS=${GWAS_ENGINE_PYTEST_WORKERS}" && exec bash -l' "${repository_root}"
     exec srun "${slurm_arguments[@]}" --pty bash -lc "${job_command}"
 
 # Run a shell command through SLURM on the configured CPU node
 slurm-cpu-run command:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     repository_root="{{ justfile_directory() }}"
     command='{{ command }}'
     slurm_arguments=(
@@ -520,14 +520,14 @@ slurm-cpu-run command:
       read -r -a extra_arguments <<< "{{ slurm_cpu_extra_arguments }}"
       slurm_arguments+=("${extra_arguments[@]}")
     fi
-    printf -v job_command 'cd %q && . scripts/server_env.sh && gwas_engine_configure_cpu_parallelism && %s' "${repository_root}" "${command}"
+    printf -v job_command 'cd %q && . tooling/server/server_env.sh && gwas_engine_configure_cpu_parallelism && %s' "${repository_root}" "${command}"
     exec srun "${slurm_arguments[@]}" bash -lc "${job_command}"
 
 # Run another just recipe through SLURM on the configured CPU node
 slurm-cpu-just +just_arguments:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     exec just slurm-cpu-run 'just {{ just_arguments }}'
 
 # Run REGENIE step 2 with local baseline predictions
@@ -601,11 +601,11 @@ benchmark-bgen-reader *overrides: install-perf-extension
 
 # Benchmark REGENIE step 2 in fresh Python processes
 benchmark-regenie2-linear-fresh-gpu: install-perf-extension
-    {{ server_env }} && uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=linear_startup machine=landau_gpu tool.device=gpu
 
 # Benchmark REGENIE step 2 in fresh Python processes using Parquet dataset output plus finalization
 benchmark-regenie2-linear-fresh-gpu-parquet: install-perf-extension
-    {{ server_env }} && uv run --no-sync python scripts/benchmark_regenie2_linear_fresh_process.py --device gpu --finalize-parquet
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=linear_startup machine=landau_gpu tool.device=gpu tool.finalize_parquet=true
 
 # Benchmark binary REGENIE step 2 with cold, same-process hot, chunk-only, and finalized timings
 benchmark-regenie2-binary-hot-gpu *overrides: install-perf-extension
@@ -625,13 +625,13 @@ slurm-benchmark-regenie2-binary-hot-gpu *overrides:
 
 # Run the login-node-safe performance harness smoke benchmark
 perf-smoke *arguments:
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.performance_smoke --output-root "{{ perf_results_dir }}/smoke" {{ arguments }}
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.performance tool.name=smoke tool.output_root="{{ perf_results_dir }}/smoke" {{ arguments }}
 
 # Submit the standard CPU performance benchmark through the configured CPU SLURM node
 perf-cpu *overrides:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     run_directory="{{ perf_results_dir }}/cpu/bgen_reader_$(date -u +%Y%m%dT%H%M%SZ)"
     exec just slurm-cpu-just benchmark-bgen-reader "telemetry.json_summary_path=${run_directory}/bgen_reader_summary.json" "telemetry.markdown_summary_path=${run_directory}/bgen_reader_summary.md" {{ overrides }}
 
@@ -639,13 +639,13 @@ perf-cpu *overrides:
 perf-gpu *overrides:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     run_directory="{{ perf_results_dir }}/gpu/regenie2_binary_hot_$(date -u +%Y%m%dT%H%M%SZ)"
     exec just slurm-benchmark-regenie2-binary-hot-gpu "tool.output_dir=${run_directory}" "telemetry.json_summary_path=${run_directory}/regenie2_binary_hot_summary.json" {{ overrides }}
 
 # Compare two benchmark JSON summaries
 perf-compare baseline_json new_json:
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.performance_compare '{{ baseline_json }}' '{{ new_json }}'
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.performance tool.name=compare tool.baseline_json='{{ baseline_json }}' tool.new_json='{{ new_json }}'
 
 # Sequentially tune GPU REGENIE step 2 and active BGEN reader knobs
 tune-regenie2-gpu *overrides: install-perf-extension
@@ -657,11 +657,11 @@ benchmark-rust:
 
 # Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU
 profile-regenie-comparison-cpu: setup-data install-perf-extension
-    {{ server_env }} && uv run --no-sync python scripts/profile_regenie_comparison.py --cpu-only
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=profile_comparison tool.cpu_only=true tool.include_gpu=false
 
 # Unified profiling comparison: original regenie (4 programs) + g quantitative step2 CPU+GPU
 profile-regenie-comparison-gpu: setup-data install-perf-extension
-    {{ server_env }} && uv run --no-sync python scripts/profile_regenie_comparison.py --include-gpu
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark tool.name=profile_comparison tool.cpu_only=false tool.include_gpu=true machine=landau_gpu
 
 # Alias for unified profiling comparison (CPU-only default)
 profile-regenie-comparison: profile-regenie-comparison-cpu
@@ -690,23 +690,23 @@ profile-app-full-smoke *overrides: install-gpu-dependencies install-perf-extensi
 profile-regenie2-deep-landau *overrides:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     export GWAS_ENGINE_SLURM_TIME="${GWAS_ENGINE_SLURM_TIME:-12:00:00}"
     export GWAS_ENGINE_SLURM_CPUS_PER_TASK="${GWAS_ENGINE_SLURM_CPUS_PER_TASK:-8}"
     export GWAS_ENGINE_SLURM_MEMORY="${GWAS_ENGINE_SLURM_MEMORY:-64G}"
     export GWAS_ENGINE_SLURM_GPUS_PER_TASK="${GWAS_ENGINE_SLURM_GPUS_PER_TASK:-1}"
-    exec just slurm-gpu-run '. scripts/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false {{ deep_profile_landau_budget_overrides }} {{ overrides }}'
+    exec just slurm-gpu-run '. tooling/server/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false {{ deep_profile_landau_budget_overrides }} {{ overrides }}'
 
 # Submit one long landau SLURM job for the full app profiling bundle
 profile-app-full-landau *overrides:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     export GWAS_ENGINE_SLURM_TIME="${GWAS_ENGINE_SLURM_TIME:-12:00:00}"
     export GWAS_ENGINE_SLURM_CPUS_PER_TASK="${GWAS_ENGINE_SLURM_CPUS_PER_TASK:-8}"
     export GWAS_ENGINE_SLURM_MEMORY="${GWAS_ENGINE_SLURM_MEMORY:-64G}"
     export GWAS_ENGINE_SLURM_GPUS_PER_TASK="${GWAS_ENGINE_SLURM_GPUS_PER_TASK:-1}"
-    exec just slurm-gpu-run '. scripts/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false {{ deep_profile_landau_budget_overrides }} {{ overrides }}'
+    exec just slurm-gpu-run '. tooling/server/server_env.sh && just install-gpu-dependencies && just install-perf-extension && uv run --no-sync python -m tooling.cli.profile_regenie2_deep machine=landau_gpu tool.include_regenie_baseline=false {{ deep_profile_landau_budget_overrides }} {{ overrides }}'
 
 # Format code
 format:
@@ -743,7 +743,7 @@ test-local-focused:
 
 # Verify Python type stub exports are in sync with Rust `_core` registrations
 check-core-stub:
-    uv run python scripts/check_pyo3_stub.py
+    uv run python -m tooling.cli.debug tool.name=check_pyo3_stub
 
 # Non-heavy no-Nix test suite
 test-local:
@@ -771,7 +771,7 @@ ci-test:
 test-cpu:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     pytest_arguments=()
     if gwas_engine_is_positive_integer "${GWAS_ENGINE_PYTEST_WORKERS:-}" && [[ "${GWAS_ENGINE_PYTEST_WORKERS}" -gt 1 ]]; then
       gwas_engine_configure_parallel_pytest_thread_limits
@@ -783,7 +783,7 @@ test-cpu:
 test:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     pytest_arguments=()
     if gwas_engine_is_positive_integer "${GWAS_ENGINE_PYTEST_WORKERS:-}" && [[ "${GWAS_ENGINE_PYTEST_WORKERS}" -gt 1 ]]; then
       gwas_engine_configure_parallel_pytest_thread_limits
@@ -798,7 +798,7 @@ test-full: test
 coverage-python:
     #!/usr/bin/env bash
     set -euo pipefail
-    . scripts/server_env.sh
+    . tooling/server/server_env.sh
     pytest_arguments=()
     if gwas_engine_is_positive_integer "${GWAS_ENGINE_PYTEST_WORKERS:-}" && [[ "${GWAS_ENGINE_PYTEST_WORKERS}" -gt 1 ]]; then
       gwas_engine_configure_parallel_pytest_thread_limits

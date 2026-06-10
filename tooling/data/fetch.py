@@ -5,9 +5,18 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import typing
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+
+import hydra
+
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+
+if typing.TYPE_CHECKING:
+    import omegaconf
 
 DOWNLOAD_URL_BY_SUFFIX = {
     "pgen.zst": "https://www.dropbox.com/s/w9wwua4pe9em280/chr22_phase3.pgen.zst?dl=1",
@@ -15,6 +24,7 @@ DOWNLOAD_URL_BY_SUFFIX = {
     "psam": "https://www.dropbox.com/s/6ppo144ikdzery5/phase3_corrected.psam?dl=1",
 }
 TOY_VARIANT_COUNT = 5_000
+DEFAULT_DATA_DIRECTORY = Path("data")
 
 
 @dataclass(frozen=True)
@@ -219,7 +229,7 @@ def create_toy_slice(dataset_paths: DatasetPaths) -> None:
 
 def build_dataset_paths() -> DatasetPaths:
     """Construct the standard Phase 0 dataset paths."""
-    data_directory = Path("data")
+    data_directory = DEFAULT_DATA_DIRECTORY
     return DatasetPaths(
         data_directory=data_directory,
         full_dataset_prefix=data_directory / "1kg_chr22_full",
@@ -227,17 +237,58 @@ def build_dataset_paths() -> DatasetPaths:
     )
 
 
-def main() -> None:
-    """Download and prepare the benchmark datasets required for Phase 0."""
+@dataclass(frozen=True)
+class FetchArguments:
+    """Resolved parameters for dataset fetching."""
+
+    data_directory: Path
+
+
+def build_dataset_paths_with_data_directory(data_directory: Path) -> DatasetPaths:
+    """Construct dataset paths under a non-default data root."""
+    return DatasetPaths(
+        data_directory=data_directory,
+        full_dataset_prefix=data_directory / "1kg_chr22_full",
+        toy_dataset_prefix=data_directory / "1kg_chr22_toy",
+    )
+
+
+def run_tool(arguments: FetchArguments) -> None:
+    """Fetch and prepare benchmark data under the configured directory."""
     ensure_command_available("plink2")
     ensure_command_available("zstd")
 
-    dataset_paths = build_dataset_paths()
+    dataset_paths = build_dataset_paths_with_data_directory(arguments.data_directory)
     download_source_files(dataset_paths)
     create_plink_binary_files(dataset_paths)
     create_bgen_files(dataset_paths)
     create_toy_slice(dataset_paths)
     print("Data fetching and preparation complete.")
+
+
+def build_arguments_from_config(config: omegaconf.DictConfig) -> FetchArguments:
+    """Resolve fetch parameters from Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return FetchArguments(
+        data_directory=Path(str(tool_values["data_directory"])),
+    )
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="data_fetch")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run dataset fetching from Hydra configuration."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Download and prepare benchmark data from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
+
+
+def main_hydra() -> None:
+    """Hydra entrypoint for direct module execution."""
+    hydra_main()
 
 
 if __name__ == "__main__":

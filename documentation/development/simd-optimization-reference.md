@@ -353,7 +353,7 @@ head node.
 Representative command shape:
 
 ```text
-srun --nodelist=cantor --cpus-per-task=40 --mem=16G --time=00:45:00 bash -lc 'cd /mnt/beegfs/kirill/Projects/g && . scripts/server_env.sh && RUSTFLAGS="-C target-cpu=native" CARGO_BUILD_JOBS=40 cargo bench --bench bgen_read <benchmark-filter> -- --sample-size 10 --measurement-time 1 --warm-up-time 1'
+srun --nodelist=cantor --cpus-per-task=40 --mem=16G --time=00:45:00 bash -lc 'cd /mnt/beegfs/kirill/Projects/g && . tooling/server/server_env.sh && RUSTFLAGS="-C target-cpu=native" CARGO_BUILD_JOBS=40 cargo bench --bench bgen_read <benchmark-filter> -- --sample-size 10 --measurement-time 1 --warm-up-time 1'
 ```
 
 Keep benchmark-only mode switches temporary. Once a faster implementation is selected, remove alternate public runtime

@@ -1,0 +1,11 @@
+defaults:
+  - dataset: local_1kg
+  - _self_
+
+tool:
+  data_directory: ${dataset.data_directory}
+  include_hail: false
+
+hydra:
+  job:
+    chdir: false

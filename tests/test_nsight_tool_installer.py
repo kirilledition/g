@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-import scripts.install_nsight_tools as nsight_installer
+from tooling.server import nsight_tools as nsight_installer
 
 
 def test_nsight_installer_selects_newest_systems_package_and_compatible_compute_package() -> None:

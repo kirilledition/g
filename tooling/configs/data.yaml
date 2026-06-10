@@ -1,0 +1,12 @@
+defaults:
+  - dataset: local_1kg
+  - _self_
+
+tool:
+  name: fetch
+  data_directory: ${dataset.data_directory}
+  family_file: 1kg_chr22_full.fam
+
+hydra:
+  job:
+    chdir: false

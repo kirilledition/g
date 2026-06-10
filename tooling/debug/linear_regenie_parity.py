@@ -3,14 +3,13 @@
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
 import json
 import math
 import typing
 from dataclasses import dataclass
-from pathlib import Path
 
+import hydra
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -20,6 +19,13 @@ from g import _core
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import state as regenie2_linear_state
 from g.engine import native_dispatch
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+
+if typing.TYPE_CHECKING:
+    from pathlib import Path
+
+    import omegaconf
 
 
 @dataclass(frozen=True)
@@ -107,24 +113,42 @@ class VariantDebugComparison:
     missing_reference: bool
 
 
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Build CLI parser for the per-variant debug harness."""
-    parser = argparse.ArgumentParser(description="Capture quantitative REGENIE step 2 parity diagnostics.")
-    parser.add_argument("--bgen", type=Path, required=True)
-    parser.add_argument("--sample", type=Path, required=True)
-    parser.add_argument("--pheno-file", type=Path, required=True)
-    parser.add_argument("--pheno-col", required=True)
-    parser.add_argument("--covar-file", type=Path, required=True)
-    parser.add_argument("--covar-col-list", required=True)
-    parser.add_argument("--pred", type=Path, required=True)
-    parser.add_argument("--variant-id", action="append", default=[])
-    parser.add_argument("--variant-index", action="append", type=int, default=[])
-    parser.add_argument("--chunk-size", type=int, default=8192)
-    parser.add_argument("--variant-limit", type=int)
-    parser.add_argument("--output-json", type=Path, required=True)
-    parser.add_argument("--regenie-debug-jsonl", type=Path)
-    parser.add_argument("--trusted-no-missing-diploid", action="store_true")
-    return parser
+@dataclass(frozen=True)
+class LinearDebugArguments:
+    """Resolved parameters for quantitative per-variant debug capture.
+
+    Attributes:
+        bgen: Input BGEN path.
+        sample: BGEN sample path.
+        pheno_file: Phenotype table path.
+        pheno_col: Quantitative phenotype column.
+        covar_file: Covariate table path.
+        covar_col_list: Comma-separated covariate columns.
+        pred: REGENIE prediction list path.
+        variant_ids: Requested variant identifiers.
+        variant_indices: Requested zero-based variant indices.
+        chunk_size: BGEN chunk size.
+        variant_limit: Optional variant cap.
+        output_json: Output JSON path.
+        regenie_debug_jsonl: Optional reference debug JSONL path.
+        trusted_no_missing_diploid: Whether to use the trusted BGEN path.
+
+    """
+
+    bgen: Path
+    sample: Path
+    pheno_file: Path
+    pheno_col: str
+    covar_file: Path
+    covar_col_list: str
+    pred: Path
+    variant_ids: tuple[str, ...]
+    variant_indices: tuple[int, ...]
+    chunk_size: int
+    variant_limit: int | None
+    output_json: Path
+    regenie_debug_jsonl: Path | None
+    trusted_no_missing_diploid: bool
 
 
 def finite_float_or_none(value: typing.Any) -> float | None:
@@ -152,12 +176,12 @@ def parse_covar_column_list(raw_column_list: str) -> tuple[str, ...]:
     return tuple(column_name.strip() for column_name in raw_column_list.split(",") if column_name.strip())
 
 
-def build_selector(arguments: argparse.Namespace) -> VariantSelector:
+def build_selector(arguments: LinearDebugArguments) -> VariantSelector:
     """Build selected-variant matcher from CLI arguments."""
-    variant_identifiers = frozenset(typing.cast("list[str]", arguments.variant_id))
-    variant_indices = frozenset(typing.cast("list[int]", arguments.variant_index))
+    variant_identifiers = frozenset(arguments.variant_ids)
+    variant_indices = frozenset(arguments.variant_indices)
     if not variant_identifiers and not variant_indices:
-        message = "Provide at least one --variant-id or --variant-index."
+        message = "Provide at least one tool.variant_ids entry or tool.variant_indices entry."
         raise ValueError(message)
     return VariantSelector(variant_identifiers=variant_identifiers, variant_indices=variant_indices)
 
@@ -283,6 +307,7 @@ class LinearVariantDebugCaptureCallback:
         prediction_source: _core.RegeniePredictionSource,
         selector: VariantSelector,
     ) -> None:
+        """Initialize the callback state for selected quantitative variant capture."""
         self.run_input = run_input
         self.prediction_source = prediction_source
         self.selector = selector
@@ -439,12 +464,12 @@ def count_missing_selections(*, records: list[VariantDebugRecord], selector: Var
     return len(missing_identifiers) + len(missing_indices)
 
 
-def capture_g_records(arguments: argparse.Namespace, selector: VariantSelector) -> list[VariantDebugRecord]:
+def capture_g_records(arguments: LinearDebugArguments, selector: VariantSelector) -> list[VariantDebugRecord]:
     """Run native BGEN streaming and capture selected `g` quantitative debug records."""
     engine = _core.Regenie2RunEngine(
         str(arguments.bgen),
         int(arguments.chunk_size),
-        typing.cast("int | None", arguments.variant_limit),
+        arguments.variant_limit,
         bool(arguments.trusted_no_missing_diploid),
     )
     run_input = native_dispatch.build_native_bgen_run_input(
@@ -471,10 +496,8 @@ def capture_g_records(arguments: argparse.Namespace, selector: VariantSelector) 
     return sorted(callback.records, key=lambda record: record.variant_index)
 
 
-def main() -> None:
+def run_tool(arguments: LinearDebugArguments) -> None:
     """Run the debug harness."""
-    parser = build_argument_parser()
-    arguments = parser.parse_args()
     selector = build_selector(arguments)
     records = capture_g_records(arguments, selector)
     reference_records = load_reference_debug_records(arguments.regenie_debug_jsonl)
@@ -494,6 +517,48 @@ def main() -> None:
     }
     arguments.output_json.parent.mkdir(parents=True, exist_ok=True)
     arguments.output_json.write_text(f"{json.dumps(output_payload, indent=2)}\n", encoding="utf-8")
+
+
+def required_path(tool_values: dict[str, typing.Any], key: str) -> Path:
+    """Return a required path from a Hydra tool config."""
+    path = tooling_hydra_arguments.path_or_none(tool_values[key])
+    if path is None:
+        message = f"tool.{key} is required."
+        raise ValueError(message)
+    return path
+
+
+def build_arguments_from_config(config: omegaconf.DictConfig) -> LinearDebugArguments:
+    """Resolve quantitative debug parameters from Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return LinearDebugArguments(
+        bgen=required_path(tool_values, "bgen"),
+        sample=required_path(tool_values, "sample"),
+        pheno_file=required_path(tool_values, "pheno_file"),
+        pheno_col=str(tool_values["pheno_col"]),
+        covar_file=required_path(tool_values, "covar_file"),
+        covar_col_list=str(tool_values["covar_col_list"]),
+        pred=required_path(tool_values, "pred"),
+        variant_ids=tuple(str(value) for value in typing.cast("list[typing.Any]", tool_values["variant_ids"])),
+        variant_indices=tuple(int(value) for value in typing.cast("list[typing.Any]", tool_values["variant_indices"])),
+        chunk_size=int(tool_values["chunk_size"]),
+        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values["variant_limit"]),
+        output_json=required_path(tool_values, "output_json"),
+        regenie_debug_jsonl=tooling_hydra_arguments.path_or_none(tool_values["regenie_debug_jsonl"]),
+        trusted_no_missing_diploid=tooling_hydra_arguments.boolean_value(tool_values["trusted_no_missing_diploid"]),
+    )
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="debug_linear_regenie_parity")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run quantitative per-variant debug capture from Hydra configuration."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run quantitative per-variant debug capture from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

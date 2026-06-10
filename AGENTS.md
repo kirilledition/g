@@ -16,7 +16,8 @@ You are an AI coding assistant working on high-performance GPU-accelerated GWAS 
 
 * src/: Unified source directory.  
 * tests/: Pytest suite for mathematical regressions and correctness.  
-* scripts/: Dev-ops and preparation scripts (fetch\_1kg.py, benchmark.py).  
+* tooling/: Hydra-based internal CLI tools and reusable development tooling modules.
+* scripts/: Symphony-specific automation left untouched by the tooling migration.
 * data/: Local git-ignored directory for 1KG variants and simulated phenotypes. **Never commit files in this directory.**  
 * documentation/: Project documentation.
 

@@ -3,11 +3,19 @@
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
 from pathlib import Path
 
+import hydra
 import numpy as np
 import polars as pl
+
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+
+if typing.TYPE_CHECKING:
+    import omegaconf
 
 RANDOM_SEED = 42
 CASE_PREVALENCE = 0.3
@@ -27,6 +35,20 @@ class PhenotypeTables:
     covariate_table: pl.DataFrame
 
 
+@dataclass(frozen=True)
+class SimulateArguments:
+    """Resolved phenotype simulation parameters.
+
+    Attributes:
+        data_directory: Directory containing the PLINK family file and receiving outputs.
+        family_file: Family file name relative to the data directory.
+
+    """
+
+    data_directory: Path
+    family_file: str
+
+
 def load_family_table(family_path: Path) -> pl.DataFrame:
     """Load the PLINK family file used for phenotype generation.
 
@@ -41,7 +63,9 @@ def load_family_table(family_path: Path) -> pl.DataFrame:
 
     """
     if not family_path.exists():
-        raise FileNotFoundError(f"Could not find {family_path}. Run scripts/fetch_1kg.py first.")
+        raise FileNotFoundError(
+            f"Could not find {family_path}. Run `python -m tooling.cli.data tool.name=fetch` first.",
+        )
 
     print(f"Reading {family_path}...")
     family_lines = [line.strip() for line in family_path.read_text().splitlines() if line.strip()]
@@ -153,19 +177,39 @@ def write_output_tables(
     print(f"Saved {covariate_path}")
 
 
-def main() -> None:
+def run_tool(arguments: SimulateArguments) -> None:
     """Generate deterministic phenotype and covariate files for Phase 0."""
-    data_directory = Path("data")
-    family_path = data_directory / "1kg_chr22_full.fam"
+    family_path = arguments.data_directory / arguments.family_file
     family_table = load_family_table(family_path)
     phenotype_tables = create_phenotype_and_covariate_tables(family_table)
     write_output_tables(
-        data_directory,
+        arguments.data_directory,
         phenotype_tables.continuous_table,
         phenotype_tables.binary_table,
         phenotype_tables.covariate_table,
     )
     print("Phenotype simulation complete.")
+
+
+def build_arguments_from_config(config: omegaconf.DictConfig) -> SimulateArguments:
+    """Resolve phenotype simulation parameters from Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return SimulateArguments(
+        data_directory=tooling_hydra_arguments.path_or_none(tool_values["data_directory"]) or Path("data"),
+        family_file=str(tool_values["family_file"]),
+    )
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="data_simulate")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run phenotype simulation from Hydra configuration."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run phenotype simulation from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

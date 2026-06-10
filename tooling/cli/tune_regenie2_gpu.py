@@ -16,12 +16,12 @@ from pathlib import Path
 
 import hydra
 
-import scripts.benchmark as baseline_benchmark
-import scripts.benchmark_regenie_comparison as benchmark_regenie_comparison
 import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
 import tooling.configuration as tooling_configuration
 from g import types
 from g.interface import config as interface_config
+from tooling.benchmark import benchmark as baseline_benchmark
+from tooling.benchmark import comparison as benchmark_regenie_comparison
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 

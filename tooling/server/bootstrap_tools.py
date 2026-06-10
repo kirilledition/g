@@ -11,10 +11,19 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import typing
 import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+
+import hydra
+
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+
+if typing.TYPE_CHECKING:
+    import omegaconf
 
 
 class ArchiveFormat(enum.StrEnum):
@@ -45,7 +54,7 @@ class ToolArchive:
     binary_members: tuple[BinaryMember, ...]
 
 
-REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TOOLS_DIRECTORY = REPOSITORY_ROOT / ".tools"
 JUST_VERSION = "1.51.0"
 RUST_TOOLCHAIN_VERSION = "1.96.0"
@@ -96,6 +105,18 @@ TOOL_ARCHIVES = (
         ),
     ),
 )
+
+
+@dataclass(frozen=True)
+class BootstrapToolsArguments:
+    """Resolved parameters for server tool bootstrap.
+
+    Attributes:
+        tools_dir: Optional repo-local tools directory override.
+
+    """
+
+    tools_dir: Path | None
 
 
 def resolve_tools_directory() -> Path:
@@ -278,9 +299,11 @@ def ensure_installed_command(command_name: str, bin_directory: Path) -> None:
         raise RuntimeError(message)
 
 
-def main() -> None:
+def run_tool(arguments: BootstrapToolsArguments) -> None:
     """Install all server development tools."""
-    tools_directory = resolve_tools_directory()
+    tools_directory = (
+        arguments.tools_dir.expanduser().resolve() if arguments.tools_dir is not None else resolve_tools_directory()
+    )
     downloads_directory = tools_directory / "downloads"
     bin_directory = tools_directory / "bin"
     downloads_directory.mkdir(parents=True, exist_ok=True)
@@ -299,7 +322,27 @@ def main() -> None:
             raise RuntimeError(message)
 
     print(f"Server tools ready in {tools_directory}")
-    print("Run: source scripts/server_env.sh")
+    print("Run: source tooling/server/server_env.sh")
+
+
+def build_arguments_from_config(config: omegaconf.DictConfig) -> BootstrapToolsArguments:
+    """Resolve server bootstrap parameters from Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return BootstrapToolsArguments(
+        tools_dir=tooling_hydra_arguments.path_or_none(tool_values["tools_dir"]),
+    )
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="server_bootstrap_tools")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Install server development tools from Hydra configuration."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Install server development tools from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

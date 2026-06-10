@@ -1,0 +1,7 @@
+tool:
+  baseline_json: null
+  new_json: null
+
+hydra:
+  job:
+    chdir: false

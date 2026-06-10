@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import shutil
 import subprocess
@@ -13,15 +12,15 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import hydra
 import polars as pl
 
+import tooling.benchmark.benchmark as baseline_benchmark
+from tooling.common import hydra_arguments as tooling_hydra_arguments
+from tooling.common import hydra_compat as tooling_hydra_compat
+
 if typing.TYPE_CHECKING:
-    from scripts import benchmark as baseline_benchmark
-else:
-    try:
-        from scripts import benchmark as baseline_benchmark
-    except ModuleNotFoundError:
-        import benchmark as baseline_benchmark
+    import omegaconf
 
 
 PARITY_BETA_ATOL = 1.0e-3
@@ -88,30 +87,32 @@ class BinaryStep2Agreement:
     notes: str | None = None
 
 
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Build CLI parser."""
-    parser = argparse.ArgumentParser(description="Benchmark original regenie against g REGENIE step 2.")
-    parser.add_argument("--include-gpu", action="store_true", help="Run g quantitative step 2 on GPU.")
-    parser.add_argument("--cpu-only", action="store_true", help="Skip GPU benchmark even if available.")
-    parser.add_argument("--variant-limit", type=int, help="Optional variant cap for g runs.")
-    parser.add_argument("--chunk-size", type=int, default=8192, help="Chunk size for g runs.")
-    parser.add_argument(
-        "--only-quantitative-step2",
-        action="store_true",
-        help="Benchmark only original regenie quantitative step 2 against g step 2.",
+@dataclass(frozen=True)
+class ComparisonArguments:
+    """Resolved configuration for the benchmark comparison workflow."""
+
+    include_gpu: bool
+    cpu_only: bool
+    variant_limit: int | None
+    chunk_size: int
+    only_quantitative_step2: bool
+    only_binary_step2: bool
+    output_dir: Path
+
+
+def build_arguments_from_config(config: omegaconf.DictConfig) -> ComparisonArguments:
+    """Build workflow arguments from composed Hydra config."""
+    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    return ComparisonArguments(
+        include_gpu=tooling_hydra_arguments.boolean_value(tool_values["include_gpu"]),
+        cpu_only=tooling_hydra_arguments.boolean_value(tool_values["cpu_only"]),
+        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
+        chunk_size=int(tool_values["chunk_size"]),
+        only_quantitative_step2=tooling_hydra_arguments.boolean_value(tool_values["only_quantitative_step2"]),
+        only_binary_step2=tooling_hydra_arguments.boolean_value(tool_values["only_binary_step2"]),
+        output_dir=tooling_hydra_arguments.path_or_none(tool_values["output_dir"])
+        or Path("data/benchmarks/regenie_comparison"),
     )
-    parser.add_argument(
-        "--only-binary-step2",
-        action="store_true",
-        help="Benchmark only original regenie binary step 2 against g step 2.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("data/benchmarks/regenie_comparison"),
-        help="Directory where report and logs are written.",
-    )
-    return parser
 
 
 def run_command_with_logs(
@@ -782,11 +783,8 @@ def write_text_summary(
     report_path.write_text("\n".join(lines) + "\n")
 
 
-def main() -> None:
+def run_tool(arguments: ComparisonArguments) -> None:
     """Run the comparison benchmark."""
-    parser = build_argument_parser()
-    arguments = parser.parse_args()
-
     baseline_paths = baseline_benchmark.build_baseline_paths()
     baseline_benchmark.validate_input_files(baseline_paths)
     regenie_executable = baseline_benchmark.resolve_required_executable("REGENIE_BIN", "regenie")
@@ -898,7 +896,7 @@ def main() -> None:
                 output_paths=[],
                 output_row_count=None,
                 prediction_list_present=None,
-                notes="GPU run skipped (enable with --include-gpu).",
+                notes="GPU run skipped (enable with tool.include_gpu=true).",
             )
         )
 
@@ -961,7 +959,7 @@ def main() -> None:
                     output_paths=[],
                     output_row_count=None,
                     prediction_list_present=None,
-                    notes="GPU run skipped (enable with --include-gpu).",
+                    notes="GPU run skipped (enable with tool.include_gpu=true).",
                 )
             )
 
@@ -1066,6 +1064,18 @@ def main() -> None:
     )
     print(f"Wrote benchmark report: {json_report_path}")
     print(f"Wrote benchmark summary: {text_report_path}")
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="benchmark_regenie_comparison")
+def hydra_main(config: omegaconf.DictConfig) -> None:
+    """Run the comparison benchmark from Hydra configuration."""
+    run_tool(build_arguments_from_config(config))
+
+
+def main() -> None:
+    """Run the comparison benchmark from default Hydra configuration."""
+    tooling_hydra_compat.apply_argparse_help_patch()
+    hydra_main()
 
 
 if __name__ == "__main__":

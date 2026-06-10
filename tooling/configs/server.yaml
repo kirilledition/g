@@ -1,0 +1,11 @@
+tool:
+  name: bootstrap_tools
+  tools_dir: null
+  repository_url: null
+  nsight_systems_package: null
+  nsight_compute_package: null
+  nsight_compute_cuda_version: ${oc.env:GWAS_ENGINE_NSIGHT_COMPUTE_CUDA_VERSION,null}
+
+hydra:
+  job:
+    chdir: false

@@ -1,0 +1,18 @@
+defaults:
+  - dataset: local_1kg
+  - machine: local
+  - workload: regenie2_chr22_matrix
+  - _self_
+
+tool:
+  include_gpu: false
+  cpu_only: true
+  variant_limit: ${workload.variant_limit}
+  chunk_size: ${workload.chunk_size}
+  only_quantitative_step2: false
+  only_binary_step2: false
+  output_dir: data/benchmarks/regenie_comparison
+
+hydra:
+  job:
+    chdir: false
