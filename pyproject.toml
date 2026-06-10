@@ -28,7 +28,7 @@ dev = [
 ]
 docs = [
     "mkdocstrings-python>=2.0.4",
-    "zensical>=0.0.44",
+    "zensical>=0.0.45",
 ]
 gpu = ["jax[cuda12]>=0.10.1"]
 
